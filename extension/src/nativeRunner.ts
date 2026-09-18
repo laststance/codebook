@@ -79,7 +79,7 @@ async function exercise(descriptorPath: string, scenario: Scenario): Promise<{ r
     result.firstSnapshotMs = performance.now() - startedMs;
     const serverSnapshot = await agent.json(serverState.participants.server.snapshotUri!, snapshotSchema);
     assert.deepEqual(serverSnapshot.values, { operationId: serverState.runtimeRunId, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 0, admittedCount: 2 });
-    assert.equal(serverSnapshot.frame.line, 19);
+    assert.equal(serverSnapshot.frame.line, 23);
     await assert.rejects(agent.tool('codebook_continue', { ...serverState.participants.server.continueArguments!, instanceId: randomUUID() }, z.unknown()), /STALE_INSTANCE/);
     await assert.rejects(agent.tool('codebook_continue', { ...serverState.participants.server.continueArguments!, runId: randomUUID() }, z.unknown()), /NOT_FOUND/);
     await assert.rejects(agent.tool('codebook_explain', { ...identity, key: 'bad-source', snapshotUri: serverState.participants.server.snapshotUri, sourceHash: '0'.repeat(64), valuePaths: ['price'], interpretation: 'Not committed.' }, z.unknown()), /INVALID_REFERENCE/);
@@ -131,7 +131,7 @@ async function exercise(descriptorPath: string, scenario: Scenario): Promise<{ r
     for (const participant of ['server', 'browser'] as const) {
       const paused: State = participant === 'server' ? serverState : await observed(agent, receipt.runUri, state => state.participants.browser.resumable && state.captures.some(capture => capture.phase === 'paused-browser' && capture.status !== 'pending'));
       const snapshotUri = paused.participants[participant].snapshotUri!, snapshot = await agent.json(snapshotUri, snapshotSchema);
-      assert.equal(snapshot.values.price, 24); assert.equal(snapshot.values.productId, 'tote-01'); assert.equal(snapshot.values.cartCount, participant === 'server' ? 0 : 1); assert.equal(snapshot.frame.line, participant === 'server' ? 19 : 23);
+      assert.equal(snapshot.values.price, 24); assert.equal(snapshot.values.productId, 'tote-01'); assert.equal(snapshot.values.cartCount, participant === 'server' ? 0 : 1); assert.equal(snapshot.frame.line, participant === 'server' ? 23 : 29);
       for (const kind of ['typescript', 'javascript', 'map'] as const) {
         const content = (await agent.read(`${snapshotUri}/source/${kind}`)).contents[0]; assert.ok(content && 'text' in content && typeof content.text === 'string');
         const expected = kind === 'typescript' ? snapshot.source.typescriptHash : kind === 'javascript' ? snapshot.source.javascriptHash : snapshot.source.sourceMapHash;

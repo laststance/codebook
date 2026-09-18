@@ -5,6 +5,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { profileSchema } from './studySchemas';
+import type { StudyItemId } from 'codebook-cycle-0004/dist/constants';
 import { readHostInstallation } from 'codebook-cycle-0001/dist/utils/readHostInstallation';
 import { selectHost } from 'codebook-cycle-0001/dist/utils/selectHost';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
@@ -16,8 +18,9 @@ import { nativeStudyResultSchema, type NativeStudyAction } from './nativeStudySc
 import { NATIVE_EDITOR_START_TIMEOUT_MS, NATIVE_OBSERVATION_TIMEOUT_MS, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, PROFILE_ID } from './constants';
 
 const packageRoot = resolve(__dirname, '..'), hostId = selectHost(process.env.CODEBOOK_HOST);
+const selectedProfile = profileSchema.parse(process.env.CODEBOOK_PROFILE ?? PROFILE_ID), checkout = selectedProfile === 'checkout-demo';
 const scenario = z.enum(['normal', 'history']).parse(process.argv[2] ?? 'normal');
-const suiteDirectory = join(packageRoot, '../artifacts/cycle-0006', hostId, `${scenario}-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}`);
+const suiteDirectory = join(packageRoot, '../artifacts/cycle-0007/product', hostId, selectedProfile, `${scenario}-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}`);
 type State = z.infer<typeof stateSchema>;
 
 /** Runs actual MCP execution and native learner command assertions in one isolated profile, then reloads saved history. @example CODEBOOK_HOST=cursor node dist/nativeStudyRunner.js history */
@@ -35,8 +38,8 @@ async function main(): Promise<void> {
     return { child, exit, arguments_ };
   };
   let editor = launch(false), sequence = 0, agent: StudyClient | undefined, activeIdentity: { instanceId: string; runId: string } | undefined;
-  const bridge = async (action?: NativeStudyAction) => {
-    if (action) { sequence++; await writeFile(join(suiteDirectory, 'study-command.json'), JSON.stringify({ sequence, action })); }
+  const bridge = async (action?: NativeStudyAction, itemId?: StudyItemId) => {
+    if (action) { sequence++; await writeFile(join(suiteDirectory, 'study-command.json'), JSON.stringify({ sequence, action, itemId })); }
     const result = await waitUntil(async () => { try { return nativeStudyResultSchema.parse(JSON.parse(await readFile(join(suiteDirectory, `live-${sequence}.json`), 'utf8'))); } catch { return undefined; } }, 'native learner assertion', NATIVE_EDITOR_START_TIMEOUT_MS);
     if (result.error) throw new Error(result.error); return result;
   };
@@ -51,42 +54,73 @@ async function main(): Promise<void> {
     agent = await StudyClient.connect(connectionSchema.parse(JSON.parse(await readFile(ready.descriptorPath, 'utf8'))));
     const status = await agent.tool('codebook_status', {}, statusSchema); assert.equal(status.prerequisites.ready, true);
     results.checks.environment = status;
-    const receipt = await agent.tool('codebook_start', { instanceId: status.instanceId, profile: PROFILE_ID, key: scenario }, receiptSchema);
+    const receipt = await agent.tool('codebook_start', { instanceId: status.instanceId, profile: selectedProfile, key: scenario }, receiptSchema);
     const identity = { instanceId: receipt.instanceId, runId: receipt.runId };
     activeIdentity = identity;
-    await observe(receipt.runUri, state => state.nextActions.includes('add-to-cart'));
-    await agent.tool('codebook_action', { ...identity, key: 'single-input', action: 'add-to-cart' }, z.unknown());
-    const server = await observe(receipt.runUri, state => state.participants.server.resumable && state.captures.some(capture => capture.phase === 'paused-server' && capture.status === 'captured'));
-    await bridge('open-paused');
-    if (scenario === 'history') await bridge('select-history');
-    else await bridge('move-source');
-    for (const participant of ['server', 'browser'] as const) {
-      const paused = participant === 'server' ? server : await observe(receipt.runUri, state => state.participants.browser.resumable && state.captures.some(capture => capture.phase === 'paused-browser' && capture.status !== 'pending'));
-      const snapshotUri = paused.participants[participant].snapshotUri!;
-      const snapshot: z.infer<typeof snapshotSchema> = await agent.json(snapshotUri, snapshotSchema);
-      assert.equal(snapshot.values.cartCount, participant === 'server' ? 0 : 1);
-      if (participant === 'browser') {
-        if (scenario === 'history') {
-          await bridge('assert-history');
-          await assert.rejects(agent.tool('codebook_reveal', { ...identity, snapshotUri }, z.unknown()), /BUSY/);
-          results.checks.historyCapture = paused.captures.find(capture => capture.phase === 'paused-browser');
-          assert.equal(paused.captures.find(capture => capture.phase === 'paused-browser')?.status, 'failed', 'Hidden live pixels never qualify a historical reader receipt');
-          await bridge('return-current');
-        } else await bridge('assert-current');
+    const readyState = await observe(receipt.runUri, state => state.nextActions.includes('add-to-cart'));
+    assert.ok(readyState.manifestUri); const manifest = await agent.read(readyState.manifestUri);
+    results.checks.manifest = manifest;
+    if (checkout) await assert.rejects(agent.tool('codebook_action', { ...identity, key: 'too-early', action: 'checkout' }, z.unknown()), /BUSY/);
+    const originalAction = await agent.tool('codebook_action', { ...identity, key: 'single-input', action: 'add-to-cart' }, z.unknown());
+    const steps: { itemId: StudyItemId; participant: 'server' | 'browser'; phase: string; cartCount: number; line: number; orderCount?: number }[] = checkout ? [
+      { itemId: 'checkout-demo/cart-mutation', participant: 'server', phase: 'paused-cart-mutation', cartCount: 0, line: 23 },
+      { itemId: 'checkout-demo/cart-update', participant: 'browser', phase: 'paused-cart-update', cartCount: 1, line: 29 },
+      { itemId: 'checkout-demo/order-creation', participant: 'server', phase: 'paused-order-creation', cartCount: 1, line: 38, orderCount: 0 },
+      { itemId: 'checkout-demo/purchase-confirmation', participant: 'browser', phase: 'paused-purchase-confirmation', cartCount: 1, line: 54, orderCount: 1 },
+    ] : [
+      { itemId: 'paired-cart-demo/server', participant: 'server', phase: 'paused-server', cartCount: 0, line: 23 },
+      { itemId: 'paired-cart-demo/browser', participant: 'browser', phase: 'paused-browser', cartCount: 1, line: 29 },
+    ];
+    const originals: { uri: string; value: unknown }[] = [];
+    let initialPause: State['participants']['server']['continueArguments'];
+    for (const [index, step] of steps.entries()) {
+      if (checkout && index === 2) {
+        const ready = await observe(receipt.runUri, state => state.nextActions.includes('checkout'));
+        assert.deepEqual(ready.observed, { cartCount: 1, completedClicks: 1 });
+        await agent.tool('codebook_action', { ...identity, key: 'checkout-input', action: 'checkout' }, z.unknown());
+        assert.deepEqual(await agent.tool('codebook_action', { ...identity, key: 'single-input', action: 'add-to-cart' }, z.unknown()), originalAction);
       }
-      await agent.tool('codebook_explain', { ...identity, key: `explain-${participant}`, snapshotUri, sourceHash: snapshot.source.typescriptHash, valuePaths: ['productId', 'price', 'cartCount'], interpretation: participant === 'server' ? 'This captured server statement is before cart mutation. The tote costs 24 and the cart count is zero.' : 'This captured browser statement has received cart count one and is before the DOM update.' }, z.unknown());
-      await agent.tool('codebook_reveal', { ...identity, snapshotUri }, z.unknown());
-      if (participant === 'browser' && scenario === 'history') await bridge('continue-current');
-      else await agent.tool('codebook_continue', paused.participants[participant].continueArguments!, z.unknown());
+      const paused = await observe(receipt.runUri, state => state.participants[step.participant].resumable && state.participants[step.participant].itemId === step.itemId && state.captures.some(capture => capture.phase === step.phase && capture.status !== 'pending'));
+      const snapshotUri = paused.participants[step.participant].snapshotUri!;
+      const snapshot: z.infer<typeof snapshotSchema> = await agent.json(snapshotUri, snapshotSchema);
+      assert.equal(snapshot.itemId, step.itemId); assert.equal(snapshot.frame.line, step.line);
+      const cart = { operationId: paused.runtimeRunId, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: step.cartCount, admittedCount: 2 };
+      assert.deepEqual(snapshot.values, step.orderCount === undefined ? cart : { ...cart, operationId: `${paused.runtimeRunId}-checkout`, cartOperationId: paused.runtimeRunId, orderId: `order-${paused.runtimeRunId}`, total: 24, orderCount: step.orderCount });
+      if (index === 0) {
+        initialPause = paused.participants.server.continueArguments;
+        await bridge('open-paused');
+        if (scenario === 'history') await bridge('select-history'); else await bridge('move-source');
+      } else if (scenario === 'history' && (checkout ? index <= 2 : index === 1)) {
+        await bridge('assert-history', step.itemId);
+        await assert.rejects(agent.tool('codebook_reveal', { ...identity, snapshotUri }, z.unknown()), /BUSY/);
+        assert.equal(paused.captures.find(capture => capture.phase === step.phase)?.status, 'failed', 'A hidden live viewport cannot use the historical image as a receipt');
+        if (!checkout || index === 2) await bridge('return-current', step.itemId);
+      } else await bridge('assert-current', step.itemId);
+      if (checkout && index === 2) await assert.rejects(agent.tool('codebook_continue', initialPause!, z.unknown()), /STALE_PAUSE/);
+      const interpretation = step.orderCount === undefined
+        ? `${step.itemId}: captured tote-01 price 24, cart count ${step.cartCount}, immediately before the selected mutation or display update.`
+        : `${step.itemId}: the selected order total is 24 and its captured order count is ${step.orderCount}; this source line is before the selected order mutation or confirmation display.`;
+      await agent.tool('codebook_explain', { ...identity, key: `explain-${step.itemId}`, snapshotUri, sourceHash: snapshot.source.typescriptHash, valuePaths: step.orderCount === undefined ? ['productId', 'price', 'cartCount'] : ['orderId', 'total', 'orderCount', 'cartOperationId'], interpretation }, z.unknown());
+      // History intentionally stays on the earlier cart item until the later same-server stop is inspected.
+      if (!(scenario === 'history' && checkout && index === 1)) await agent.tool('codebook_reveal', { ...identity, snapshotUri }, z.unknown());
+      originals.push({ uri: snapshotUri, value: await agent.read(snapshotUri) }, { uri: snapshot.sourceUri, value: await agent.read(snapshot.sourceUri) });
+      if (scenario === 'history' && index === steps.length - 1) await bridge('continue-current', step.itemId);
+      else await agent.tool('codebook_continue', paused.participants[step.participant].continueArguments!, z.unknown());
     }
-    const final = await observe(receipt.runUri, state => state.cleaned);
-    assert.deepEqual(final.observed, { cartCount: 1, completedClicks: 1 }); assert.deepEqual(final.activeSessionIds, []);
-    assert.equal(final.finalOutcome, scenario === 'normal' ? 'demonstrated' : 'partial');
+    const final = await waitUntil(async () => {
+      const state = await agent!.json(receipt.runUri, stateSchema);
+      return state.cleaned && ['saved', 'failed'].includes(state.historyOutcome.status) ? state : undefined;
+    }, 'terminal runtime and reader checkpoint', NATIVE_OBSERVATION_TIMEOUT_MS);
+    assert.deepEqual(final.observed, checkout ? { cartCount: 1, completedClicks: 1, orderId: `order-${final.runtimeRunId}`, total: 24, status: 'confirmed', completedCheckouts: 1 } : { cartCount: 1, completedClicks: 1 });
+    assert.deepEqual(final.activeSessionIds, []); assert.equal(final.finalOutcome, scenario === 'normal' ? 'demonstrated' : 'partial');
+    assert.equal(final.historyOutcome.status, 'saved'); assert.equal(final.studyOutcome, scenario === 'normal' ? 'demonstrated' : 'partial');
+    assert.equal(final.observations.length, checkout ? 4 : 2); assert.equal(final.links?.length, checkout ? 11 : 5);
+    for (const original of originals) assert.deepEqual(await agent.read(original.uri), original.value, 'Earlier evidence remains immutable after later stops and cleanup');
     const recorded: z.infer<typeof eventsSchema>['events'] = []; let eventsUri: string | undefined = final.eventsUri;
     while (eventsUri) { const page: z.infer<typeof eventsSchema> = await agent.json(eventsUri, eventsSchema); recorded.push(...page.events); eventsUri = page.nextUri; }
-    assert.equal(recorded.filter(event => event.type === 'input.dispatched').length, 1);
-    assert.equal(recorded.filter(event => event.type === 'continue.accepted').length, 2);
-    results.checks.final = final; results.checks.oneInput = true;
+    assert.equal(recorded.filter(event => event.type === 'input.dispatched').length, checkout ? 2 : 1);
+    assert.equal(recorded.filter(event => event.type === 'continue.accepted').length, checkout ? 4 : 2);
+    results.checks.final = final; results.checks.exactDeclaredInputs = true;
     await bridge('close-reader');
     await writeFile(join(suiteDirectory, 'transcript.json'), JSON.stringify(agent.transcript, null, 2));
     await agent.close(); agent = undefined;

@@ -15,6 +15,7 @@ import { NATIVE_COMMAND_POLL_MS, NATIVE_OBSERVATION_TIMEOUT_MS, PRIVATE_FILE_MOD
 export async function run(): Promise<void> {
   const directory = process.env.CODEBOOK_STUDY_SUITE;
   if (!directory) throw new Error('Missing learner native suite');
+  const checkout = process.env.CODEBOOK_PROFILE === 'checkout-demo', firstItem = checkout ? 'checkout-demo/cart-mutation' : 'paired-cart-demo/server';
   const reload = process.env.CODEBOOK_STUDY_RELOAD === '1', prefix = reload ? 'reload' : 'live';
   const extension = vscode.extensions.getExtension<ReturnType<typeof activate>>('laststance.codebook');
   assert.ok(extension); const api = await extension.activate();
@@ -48,11 +49,11 @@ export async function run(): Promise<void> {
     checks.presentation = { revision: state.view!.revision, selection: state.view!.model.selection, outlineSelection: state.outlineSelection, observation: state.view!.model.observation, currentParticipant: state.view!.model.currentParticipant, matching: state.view!.model.matching, loading: state.view!.loading, errors: state.view!.errors, sourceUri: state.sourceUri, rendered: state.rendered, opened: state.opened, leaseId: state.leaseId };
     checks.groups = vscode.window.tabGroups.all.map(group => ({ column: group.viewColumn, active: group.activeTab?.label, tabs: group.tabs.map(tab => ({ label: tab.label, dirty: tab.isDirty, active: tab.isActive, uri: tab.input instanceof vscode.TabInputText ? tab.input.uri.toString() : undefined })) }));
   };
-  const exercise = async (action: NativeStudyAction) => {
+  const exercise = async (action: NativeStudyAction, expectedItem?: StudyItemId) => {
     if (action === 'open-paused') {
       const leaseId = inspect().leaseId; assert.ok(leaseId);
       await vscode.commands.executeCommand('codebook.openStudyWorkspace');
-      const { state, view } = await rendered('paired-cart-demo/server', true);
+      const { state, view } = await rendered(firstItem, true);
       assert.equal(state.leaseId, leaseId, 'Opening adopts the existing runtime viewport');
       assert.equal(view.model.observation?.values.cartCount, 0); assert.equal(view.model.observation?.values.price, 24);
       assert.equal(view.model.understoodCount, 0, 'Execution never marks understanding');
@@ -60,26 +61,26 @@ export async function run(): Promise<void> {
     }
     if (action === 'select-history') {
       await vscode.commands.executeCommand('codebook.markUnderstanding', true);
-      await vscode.commands.executeCommand('codebook.selectLearningItem', 'paired-cart-demo/server');
-      const { state, view } = await rendered('paired-cart-demo/server', true); historyUri = state.sourceUri;
+      await vscode.commands.executeCommand('codebook.selectLearningItem', firstItem);
+      const { state, view } = await rendered(firstItem, true); historyUri = state.sourceUri;
       assert.equal(view.model.selection.follow, false); assert.equal(view.model.understoodCount, 1);
       checks.explicitLearnerDecision = true;
     }
     if (action === 'assert-history') {
-      const { state, view } = await rendered('paired-cart-demo/server', false);
-      assert.equal(view.model.currentParticipant, 'browser'); assert.equal(state.sourceUri, historyUri);
+      const { state, view } = await rendered(firstItem, false);
+      assert.equal(view.model.currentItemId, expectedItem ?? 'paired-cart-demo/browser'); assert.equal(state.sourceUri, historyUri);
       assert.equal(view.model.observation?.values.cartCount, 0); assert.equal(view.model.continueArguments, undefined);
       await assert.rejects(Promise.resolve(vscode.commands.executeCommand('codebook.study.continue')), /Inspect the current pause/);
       checks.historyStayedOnServer = true; checks.historicalContinueRejected = true;
     }
     if (action === 'return-current') {
       await vscode.commands.executeCommand('codebook.study.return-current');
-      const { view } = await rendered('paired-cart-demo/browser', true);
+      const { view } = await rendered(expectedItem ?? 'paired-cart-demo/browser', true);
       assert.equal(view.model.observation?.values.cartCount, 1); assert.equal(view.model.selection.follow, true);
       checks.returnedToBrowserPause = true;
     }
     if (action === 'continue-current') {
-      await rendered('paired-cart-demo/browser', true); await vscode.commands.executeCommand('codebook.study.continue');
+      await rendered(expectedItem ?? 'paired-cart-demo/browser', true); await vscode.commands.executeCommand('codebook.study.continue');
       checks.learnerContinuedInspectedBrowser = true;
     }
     if (action === 'move-source') {
@@ -91,7 +92,7 @@ export async function run(): Promise<void> {
       movedSourceUri = state.sourceUri;
     }
     if (action === 'assert-current') {
-      const { state, view, group } = await rendered('paired-cart-demo/browser', true);
+      const { state, view, group } = await rendered(expectedItem ?? 'paired-cart-demo/browser', true);
       assert.equal(view.model.observation?.values.cartCount, 1);
       // Cursor may replace API wrapper objects; the owned URI remains the group identity anchor.
       if (movedSourceUri) assert.ok(group.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === movedSourceUri), 'Background pause follows the group containing the manually moved source');
@@ -110,8 +111,10 @@ export async function run(): Promise<void> {
       const state = inspect(); assert.ok(state.libraryDirectory); const workspaceKey = state.libraryDirectory.split('/').at(-1)!;
       const library = new LearningLibrary(state.libraryDirectory, workspaceKey), catalog = await library.list();
       assert.equal(catalog.length, 1); const archive = await library.readStudy(catalog[0]!.id);
-      assert.equal(archive.terminal, true); assert.equal(archive.observations.length, 2);
-      assert.equal(archive.observations.flatMap(observation => observation.interpretations).length, 2, 'Shutdown takes an explicit final checkpoint');
+      assert.equal(archive.terminal, true); assert.equal(archive.observations.length, checkout ? 4 : 2);
+      assert.equal(catalog[0]!.metadata, 'validated');
+      assert.equal(archive.profile, checkout ? 'checkout-demo' : 'paired-cart-demo');
+      assert.equal(archive.observations.flatMap(observation => observation.interpretations).length, checkout ? 4 : 2, 'Shutdown takes an explicit final checkpoint');
       checks.finalArchive = archive; checks.finalProgress = await library.readProgress();
       checks.finalCheckpoint = true;
     }
@@ -135,7 +138,7 @@ export async function run(): Promise<void> {
       catch { await delay(NATIVE_COMMAND_POLL_MS); continue; }
       if (command.sequence <= sequence) { await delay(NATIVE_COMMAND_POLL_MS); continue; }
       sequence = command.sequence;
-      try { await exercise(command.action); await publish(); if (command.action === 'finish') return; }
+      try { await exercise(command.action, command.itemId); await publish(); if (command.action === 'finish') return; }
       catch (error) { record(); await publish(error); }
     }
   } catch (error) { await publish(error); throw error; }
