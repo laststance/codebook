@@ -32,7 +32,7 @@ export class ControlledRuntime implements StudyRuntime {
   action(key: string) {
     this.dispatches += 1; this.operation = { id: randomUUID(), key, inputAcknowledged: true }; this.status = 'paused-server';
     const pause = this.gate.stop('server-session', 1);
-    this.snapshot = { id: 'server-session:1', participant: 'server', pause, frame: { id: 1, name: 'update', source: { path: this.seal.sourcePath }, line: 1, column: 1 },
+    this.snapshot = { id: 'server-session:1', participant: 'server', itemId: 'paired-cart-demo/server', actionId: 'add-to-cart', capturePhase: 'paused-server', pause, frame: { id: 1, name: 'update', source: { path: this.seal.sourcePath }, line: 1, column: 1 },
       values: { operationId: this.id, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 0, admittedCount: 2 }, evaluations: [],
       source: verifySource(this.seal, this.seal.javascript, this.seal.source, { scriptId: '1', lineNumber: 0, columnNumber: 0 }, 1, 'cart.ts') };
     this.evidence.record('snapshot.committed', { snapshotId: this.snapshot.id }); return this.operation;

@@ -41,7 +41,9 @@ Pending the bounded reviews above. Required categories: one successful full sequ
 
 ## Attempts and evidence
 
-No implementation observations yet. Source baseline `5abd16a`; previous clean native implementation `c873b43`. Independent native visual acceptance remains unavailable under the previously observed desktop lock; do not bypass or repeat an unchanged lock probe.
+Source baseline `5abd16a`; previous clean native implementation `c873b43`. Independent native visual acceptance remains unavailable under the previously observed desktop lock; do not bypass or repeat an unchanged lock probe.
+
+Stage 1, 2026-09-19: fixed typed profiles and item-specific source seals added; the live coordinator still selects the original paired profile. Snapshot metadata now carries item/action/capture identity while keeping existing paired behavior. `pnpm --dir experiments/cycle-0004 test` passed **32/32** (including four new profile/source checks); `pnpm --dir extension test` passed **63/63**. This is refactoring/unit-boundary evidence, not native checkout execution. The next stage connects the checkout fixture and multi-action coordinator.
 
 ## Result and handoff
 

@@ -22,6 +22,7 @@ import { sealFixture } from './utils/sealFixture';
 import { readBackendEndpoint, type BackendEndpoint } from './utils/readBackendEndpoint';
 import { backendProcesses } from './utils/backendProcesses';
 import type { BrowserViewportFactory } from 'codebook-cycle-0001/dist/browserViewport';
+import { STUDY_PROFILES } from './profiles';
 
 export interface HarnessConfig {
   artifactRoot: string; templateRoot: string; descriptorPath: string;
@@ -44,6 +45,9 @@ interface CausalLink { id: string; status: 'unknown' | 'observed' | 'ambiguous' 
 export class PairedRun {
   readonly id = randomUUID();
   readonly evidence: Evidence;
+  readonly profile = STUDY_PROFILES['paired-cart-demo'];
+  readonly sources = new Map<ParticipantSnapshot['itemId'], SealedSource>();
+  readonly snapshots: ParticipantSnapshot[] = [];
   readonly participants: Record<ParticipantName, Participant> = {
     server: { gate: new PauseGate(), expectedRequests: 0 }, browser: { gate: new PauseGate(), expectedRequests: 0 },
   };
@@ -114,15 +118,18 @@ export class PairedRun {
   private async prepareOwned(): Promise<void> {
     await this.evidence.initialize();
     this.evidence.record('run.created', { runId: this.id, scenario: this.scenario, expectedRequests: 2, expectedLinks: this.links.map(link => link.id) });
-    const sources = await sealFixture(this.config.templateRoot, this.evidence.directory, this.id, this.scenario);
+    const sources = await sealFixture(this.config.templateRoot, this.evidence.directory, this.id, this.scenario, this.profile.id);
+    for (const [itemId, source] of sources) this.sources.set(itemId, source);
     for (const name of PARTICIPANTS) {
-      const participant = this.participants[name]; participant.source = sources[name];
-      participant.breakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(sources[name].sourcePath), new vscode.Position(sources[name].breakpointLine - 1, 0)), true, name === 'server' ? "tuple.cartId === 'selected'" : undefined);
+      const item = this.profile.items.find(item => item.participant === name)!;
+      const source = this.sources.get(item.id)!;
+      const participant = this.participants[name]; participant.source = source;
+      participant.breakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source.sourcePath), new vscode.Position(source.breakpointLine - 1, 0)), true, name === 'server' ? "tuple.cartId === 'selected'" : undefined);
       vscode.debug.addBreakpoints([participant.breakpoint]);
-      this.evidence.record('breakpoint.requested', { participant: name, source: sources[name].sourcePath, line: sources[name].breakpointLine });
+      this.evidence.record('breakpoint.requested', { participant: name, itemId: item.id, source: source.sourcePath, line: source.breakpointLine });
       // Keep both debugger source reveals outside the owned browser group, as in the synchronous coordinator.
-      if (this.config.prepareSource) await this.config.prepareSource(sources[name].sourcePath);
-      else await vscode.window.showTextDocument(vscode.Uri.file(sources[name].sourcePath), { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true });
+      if (this.config.prepareSource) await this.config.prepareSource(source.sourcePath);
+      else await vscode.window.showTextDocument(vscode.Uri.file(source.sourcePath), { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true });
     }
     await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
     this.assertAlive();
@@ -303,12 +310,13 @@ export class PairedRun {
     const assertCurrent = () => { this.assertAlive(); if (!participant.gate.matches(pause)) throw new Error('Pause invalidated during participant inspection'); };
     const stopped = await waitUntil(() => participant.stopped, 'paired CDP stop', CAPTURE_TIMEOUT_MS, this.abort.signal);
     assertCurrent();
-    const snapshot = await inspectParticipant(name, participant.selected!, this.requireCdp(name), pause, stopped, participant.source!, assertCurrent, this.abort.signal, this.evidence);
+    const item = this.profile.items.find(item => item.participant === name)!;
+    const snapshot = await inspectParticipant(name, participant.selected!, this.requireCdp(name), pause, stopped, participant.source!, assertCurrent, this.abort.signal, this.evidence, item);
     assertCurrent();
     const expected = { operationId: this.id, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: name === 'server' ? 0 : 1, admittedCount: 2 };
     if (JSON.stringify(snapshot.values) !== JSON.stringify(expected)) throw new Error('Paused identity or values differ from the frozen expectation');
     await this.evidence.save(`${name}-snapshot.json`, snapshot); assertCurrent();
-    participant.snapshot = snapshot; this.evidence.record('snapshot.committed', { participant: name, snapshotId: snapshot.id });
+    participant.snapshot = snapshot; this.snapshots.push(snapshot); this.evidence.record('snapshot.committed', { participant: name, itemId: item.id, snapshotId: snapshot.id });
     await this.evidence.save(`${name}-explanation.md`, `# ${name} captured stop\n\nSnapshot ${snapshot.id}; source ${participant.source!.breakpointLine}.\n\nOperation ${snapshot.values.operationId} selected cart ${snapshot.values.cartId}, product ${snapshot.values.productId}, price ${snapshot.values.price}. Captured cart count ${snapshot.values.cartCount}; admitted requests ${snapshot.values.admittedCount}. ${name === 'server' ? 'The next statement mutates the selected server cart.' : 'The response has arrived; the next statement updates the displayed count.'}\n\nOnly this verified frame is described. Request correspondence remains pending until the complete network observation set is closed.\n`);
     await this.persist();
     if (name === 'server' && this.scenario === 'decoy') {

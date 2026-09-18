@@ -11,10 +11,14 @@ import { verifySource } from 'codebook-cycle-0001/dist/verifySource';
 import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { STACK_FRAME_LIMIT, type ParticipantName } from './constants';
 import type { CartResponse } from './networkEvidence';
+import type { StudyItem } from './profiles';
 
 export interface ParticipantSnapshot {
   id: string;
   participant: ParticipantName;
+  itemId: StudyItem['id'];
+  actionId: StudyItem['action'];
+  capturePhase: StudyItem['capturePhase'];
   pause: PauseIdentity;
   frame: DebugProtocol.StackFrame;
   values: CartResponse;
@@ -23,8 +27,9 @@ export interface ParticipantSnapshot {
 }
 
 /** Captures one owned participant's actual values and executed source, called after its DAP/CDP stop pair is available. @example await inspectParticipant('server', session, cdp, pause, paused, seal, assertCurrent, signal, evidence) */
-export async function inspectParticipant(name: ParticipantName, session: vscode.DebugSession, cdp: Cdp, pause: PauseIdentity, paused: Protocol.Debugger.PausedEvent, seal: SealedSource, assertCurrent: () => void, signal: AbortSignal, evidence: Evidence): Promise<ParticipantSnapshot> {
+export async function inspectParticipant(name: ParticipantName, session: vscode.DebugSession, cdp: Cdp, pause: PauseIdentity, paused: Protocol.Debugger.PausedEvent, seal: SealedSource, assertCurrent: () => void, signal: AbortSignal, evidence: Evidence, item: StudyItem): Promise<ParticipantSnapshot> {
   assertCurrent();
+  if (item.participant !== name) throw new Error('Learning item belongs to another participant');
   const stack: DebugProtocol.StackTraceResponse['body'] = await awaitResponse(session.customRequest('stackTrace', { threadId: pause.threadId, startFrame: 0, levels: STACK_FRAME_LIMIT }), 'participant stack', signal);
   assertCurrent();
   const frame = stack.stackFrames[0];
@@ -55,10 +60,10 @@ export async function inspectParticipant(name: ParticipantName, session: vscode.
   if (!location) throw new Error('Missing participant CDP call frame');
   const executed = await cdp.request('Debugger.getScriptSource', { scriptId: location.scriptId });
   assertCurrent();
-  await evidence.save(`${name}-executed.mjs`, executed.scriptSource);
+  await evidence.save(`${item.artifactPrefix}-executed.mjs`, executed.scriptSource);
   assertCurrent();
   const local = await readFile(seal.sourcePath, 'utf8');
   assertCurrent();
   const source = verifySource(seal, executed.scriptSource, local, location, frame.line, `../fixture/${name === 'server' ? 'server' : 'client'}.mts`);
-  return { id: `${pause.sessionId}:${pause.generation}`, participant: name, pause: { ...pause }, frame, values: { operationId, cartId, productId, price, cartCount, admittedCount }, evaluations, source };
+  return { id: `${pause.sessionId}:${pause.generation}`, participant: name, itemId: item.id, actionId: item.action, capturePhase: item.capturePhase, pause: { ...pause }, frame, values: { operationId, cartId, productId, price, cartCount, admittedCount }, evaluations, source };
 }

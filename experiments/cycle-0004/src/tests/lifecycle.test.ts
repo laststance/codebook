@@ -54,7 +54,7 @@ for (const fault of [false, true]) {
 
 /** Supplies a historical snapshot reference at the inspector boundary, without pretending to validate a real debugger. @example snapshot({ sessionId: 'server', threadId: 0, generation: 1 }) */
 function snapshot(pause: PauseIdentity): ParticipantSnapshot {
-  return { id: 'server:1', participant: 'server', pause, frame: { id: 1, name: 'addProduct', line: 1, column: 1 }, values: { operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 0, admittedCount: 2 }, evaluations: [], source: { scriptId: 'script', scriptLocation: { scriptId: 'script', lineNumber: 0 }, mapping: { generatedLine: 0, generatedColumn: 0, originalSource: 'server.mts', originalLine: 0, originalColumn: 0 }, typescriptHash: 'typescript', javascriptHash: 'javascript', sourceMapHash: 'map' } };
+  return { id: 'server:1', participant: 'server', itemId: 'paired-cart-demo/server', actionId: 'add-to-cart', capturePhase: 'paused-server', pause, frame: { id: 1, name: 'addProduct', line: 1, column: 1 }, values: { operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 0, admittedCount: 2 }, evaluations: [], source: { scriptId: 'script', scriptLocation: { scriptId: 'script', lineNumber: 0 }, mapping: { generatedLine: 0, generatedColumn: 0, originalSource: 'server.mts', originalLine: 0, originalColumn: 0 }, typescriptHash: 'typescript', javascriptHash: 'javascript', sourceMapHash: 'map' } };
 }
 
 test('two concurrent continuation calls dispatch once and a foreign participant cannot consume the pause', async () => {
