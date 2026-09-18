@@ -1,9 +1,9 @@
 # Cycle 0004 — Correlate one browser-to-server request
 
 Type: experiment  
-Status: implementing\
-Result: pending  
-Delivery: implemented locally; native matrix and review pending\
+Status: closed\
+Result: demonstrated for the frozen instrumented request boundary
+Delivery: committed evidence; no product packaging or publication\
 Goal version: 3  
 Tracking issue: https://github.com/laststance/codebook/issues/5  
 Goal issue: https://github.com/laststance/codebook/issues/1  
@@ -159,10 +159,10 @@ Reuse `Cdp`, `PauseGate`, `Evidence`, `HostBrowser`/`BrowserViewport`, `awaitRes
 
 ### Implementation Tasks
 
-- [ ] **T1 (P1, human ~3 h / agent ~25 min)** — Network correlation: retain bounded session-scoped observations, reject unsupported hop/transport paths, and require completed response bodies. From Architecture 1; verify pure event matrix and native redirect/identity faults.
-- [ ] **T2 (P2, human ~2 h / agent ~20 min)** — Shared source verification: extract source-only validation, import shared declarations, preserve old fixture guards. From Code quality 2; verify both inspectors plus old complete unit suite/affected native cases.
-- [ ] **T3 (P1, human ~4 h / agent ~35 min)** — Paired lifecycle: implement actual Node/browser stops, order-independent links, exact continuation and terminal-state protection. From Tests 3; verify both host matrices, decoy, manual conflict and cancellation.
-- [ ] **T4 (P2, human ~1 h / agent ~15 min)** — Bounds: enforce candidate/body/deadline limits and union pause accounting. From Performance 4; verify hard-coded overflow and overlap tests plus native 40-second hold.
+- [x] **T1 (P1, human ~3 h / agent ~25 min)** — Network correlation: retain bounded session-scoped observations, reject unsupported hop/transport paths, and require completed response bodies. From Architecture 1; verify pure event matrix and native redirect/identity faults.
+- [x] **T2 (P2, human ~2 h / agent ~20 min)** — Shared source verification: extract source-only validation, import shared declarations, preserve old fixture guards. From Code quality 2; verify both inspectors plus old complete unit suite/affected native cases.
+- [x] **T3 (P1, human ~4 h / agent ~35 min)** — Paired lifecycle: implement actual Node/browser stops, order-independent links, exact continuation and terminal-state protection. From Tests 3; verify both host matrices, decoy, manual conflict and cancellation.
+- [x] **T4 (P2, human ~1 h / agent ~15 min)** — Bounds: enforce candidate/body/deadline limits and union pause accounting. From Performance 4; verify hard-coded overflow and overlap tests plus native 40-second hold.
 
 Sequential implementation, no parallelization opportunity: the fixture, participant schema and coordinator contract depend on each other. Independent reviewers may inspect the frozen plan/diff, but no parallel mutation stream is required. No separate TODO list is added; deferred final obligations already have stable goal IDs.
 
@@ -172,14 +172,20 @@ Parent summary: scope retained as the minimum paired experiment under delegated 
 
 Claude Code outside invocation timed out after 300000 ms; external coverage is unavailable. Fresh in-host `/root/cycle0004_plan_review` completed a read-only plan/interface review and found two concrete gaps: (P1, confidence 8/10) close the complete two-request observation set before success; (P2, confidence 9/10) application waits must not inherit the helpers' 20-second wall-clock deadline across a 40-second debugger hold. Both technical remedies are adopted under D008 delegated implementation authority and specified above. This is an in-host development review, not cross-model agreement or a member of the final ten-review gate.
 
-- [ ] **T5 (P1, human ~1 h / agent ~15 min)** — Expected set: require two requests, both terminal bodies and actual server admission count 2 before finalizing; retain late contradictions. Verify delayed background observation never permits early completion.
-- [ ] **T6 (P2, human ~1 h / agent ~15 min)** — Application waiting: advance on events under the active clock; keep individual protocol deadlines unchanged. Verify requests pending before the native 40-second hold finish after resume.
+- [x] **T5 (P1, human ~1 h / agent ~15 min)** — Expected set: require two requests, both terminal bodies and actual server admission count 2 before finalizing; retain late contradictions. Verify delayed background observation never permits early completion.
+- [x] **T6 (P2, human ~1 h / agent ~15 min)** — Application waiting: advance on events under the active clock; keep individual protocol deadlines unchanged. Verify requests pending before the native 40-second hold finish after resume.
 
 No separate durable learning is added before the proposed remedies have implementation evidence. Review tasks/test-plan artifacts are under `~/.gstack/projects/codebook/`; private provider output is under `artifacts/cycle-0004/review/`. This file preserves the durable decisions.
 
 ## Result and handoff
 
-Pending final validation. The paired coordinator, two-runtime fixture, bounded network evidence and runner are implemented. Six engineering-review remedies are reflected in code. Exploratory normal and focused-decoy runs passed in both hosts, including four exact image receipts, both source/value snapshots and owned cleanup. The paired unit suite now has 26 passing tests; the shared suite has 40. Shared native normal/stale-script/source-drift regressions passed in both hosts at the unchanged shared source. Final clean-revision matrices, shared native source regressions and implementation review are pending. Mac lock blocks independent native screenshots, but does not erase Cycle 0003 transport evidence or authorize bypassing the lock. Full checkout, product MCP, recording/replay, wiki/progress, three layouts, real-repository use and packaging remain final obligations.
+**Demonstrated** on the bounded instrumented fixture at clean `f968e02`, fingerprint `e89d14e46d5763ec88ba02508ae0a8a29d0b3633c7b0aa06c04928a0aee94717`. Both actual hosts pass 18/18 final scenarios; 26 paired and 40 shared unit tests pass. The shared normal/stale-script/source-drift native regressions pass in both hosts, with unchanged shared source hashes. [Sanitized evidence, reproduction links and limits](evidence/0004/README.md) preserve 816 verified exported files and earlier unsuccessful attempts.
+
+**Keep:** explicit operation/request identity, two-participant pause generations, complete expected-request set, source sealing, independent control lanes, final persistence gate and owned cleanup. **Revise for product use:** expose a discoverable extension-owned MCP interface; the temporary HTTP harness and hard-coded fixture are not that interface. The current evidence updates only partial G01/G03/G06/G11 mechanism coverage.
+
+Six concrete implementation review findings were fixed. Review ended after three fixing passes, **not converged**, with outside coverage unavailable. Native presentation remains unverified while the Mac is locked. All owned final-suite editor/browser/backend processes exited. No sibling repository changed, PR/CI approval, VSIX or release was produced.
+
+**Selected next candidate under D008:** an external MCP client discovers the extension's supported study operations, controls this proven live boundary, reads exact evidence/source resources, submits an explanation linked to a captured pause, and recovers after reconnect without a duplicate click. Plan only that interface and connected behavior next, using `/plan-devex-review` then `/plan-eng-review`; preserve the complete product destination. Full checkout, real repositories, recording/replay, wiki/progress, three layouts, installed compatibility and Raphtalia acceptance remain open. Final ten-review gate: 0/10, not started.
 
 ## GSTACK REVIEW REPORT
 
@@ -233,3 +239,7 @@ The two outside passes again timed out after 540000 ms, with no findings supplie
 At `518e54c`, parent/full-source and native testing/maintainability reviews found no additional issue; fresh adversarial review reproduced one P2 in the actual compiled coordinator: final manifest persistence could fail after `cleaned` had already become true. A subsequent GET then falsely exposed `demonstrated`. Public cleanup completion now waits for successful persistence; storage failures remain in the failed control state. Existing evidence errors block a prospective final manifest before it is written. Two regressions cover an in-flight final write, a rejected write, and an earlier append failure. Twenty-six paired unit tests pass.
 
 The skill's maximum three fixing passes have been reached. `/review` ends **DONE_WITH_CONCERNS / not converged**: all six concrete findings are fixed, outside coverage is unavailable, and the latest repair has focused regression validation rather than a fourth full review. This qualifies a bounded experimental conclusion; it is not a release approval, final product acceptance, or part of the final ten-review gate. Final native matrices run on the repaired clean revision before closure.
+
+## Closure
+
+Final source `f968e02` completed both native matrices after the persistence repair. The latest page pixels are byte-identical to the inspected previous baselines; all new receipts and source/value/link hashes were checked. Final result and evidence are distinct from review convergence and from native UX acceptance. Issue #5 closes only after these records reach the remote repository. See PROJECT_STATE.md for subsequent cycle selection.

@@ -1,0 +1,278 @@
+{
+  "runId": "0a22e75c-e303-42ff-a70c-37f7fd6d7dc1",
+  "scenario": "wrong-response-id",
+  "status": "failed",
+  "cleaned": true,
+  "runtimeOutcome": "not-demonstrated",
+  "captureOutcome": "incomplete",
+  "finalOutcome": "not-demonstrated",
+  "participants": {
+    "server": {
+      "sessionId": "86c12b02-0a82-4bac-86fe-4b901bb1545f",
+      "phase": "running",
+      "snapshot": {
+        "id": "86c12b02-0a82-4bac-86fe-4b901bb1545f:1",
+        "participant": "server",
+        "pause": {
+          "sessionId": "86c12b02-0a82-4bac-86fe-4b901bb1545f",
+          "threadId": 14,
+          "generation": 1
+        },
+        "frame": {
+          "id": 327,
+          "name": "addProduct",
+          "line": 19,
+          "column": 9,
+          "source": {
+            "name": "<repo>/artifacts/cycle-0004/vscode/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1/fixture/server.mts",
+            "path": "<repo>/artifacts/cycle-0004/vscode/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1/fixture/server.mts",
+            "sourceReference": 0
+          },
+          "presentationHint": "normal",
+          "canRestart": true
+        },
+        "values": {
+          "operationId": "0a22e75c-e303-42ff-a70c-37f7fd6d7dc1",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 0,
+          "admittedCount": 2
+        },
+        "evaluations": [
+          {
+            "expression": "tuple.operationId",
+            "value": {
+              "type": "string",
+              "result": "'0a22e75c-e303-42ff-a70c-37f7fd6d7dc1'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.cartId",
+            "value": {
+              "type": "string",
+              "result": "'selected'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.productId",
+            "value": {
+              "type": "string",
+              "result": "'tote-01'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.price",
+            "value": {
+              "type": "number",
+              "result": "24",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "state.items.length",
+            "value": {
+              "type": "number",
+              "result": "0",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "admittedCount",
+            "value": {
+              "type": "number",
+              "result": "2",
+              "variablesReference": 0
+            }
+          }
+        ],
+        "source": {
+          "scriptId": "178",
+          "scriptLocation": {
+            "scriptId": "178",
+            "lineNumber": 15,
+            "columnNumber": 10
+          },
+          "mapping": {
+            "generatedLine": 15,
+            "generatedColumn": 10,
+            "originalSource": "../fixture/server.mts",
+            "originalLine": 18,
+            "originalColumn": 8
+          },
+          "typescriptHash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+          "javascriptHash": "9e805dee5d6e67ae8e74aa82383f1e7d69f7a3b97c7ad775c6ea2e3494d7b04b",
+          "sourceMapHash": "faafc0c2eb72a72df7cdcd5ebcc3a2058ff3f0358c539f4a6d13db90174ca834"
+        }
+      },
+      "continued": {
+        "sessionId": "86c12b02-0a82-4bac-86fe-4b901bb1545f",
+        "threadId": 14,
+        "generation": 1
+      },
+      "conflict": false
+    },
+    "browser": {
+      "sessionId": "26b40619-5c82-45df-894f-f18c18def2ab",
+      "phase": "running",
+      "conflict": false
+    }
+  },
+  "operation": {
+    "id": "e4cea10d-e061-44b7-8303-06124188ebdd",
+    "key": "one-click",
+    "inputAcknowledged": true
+  },
+  "network": {
+    "requests": [
+      {
+        "requestId": "69865.6",
+        "sequence": 90,
+        "tuple": {
+          "operationId": "0a22e75c-e303-42ff-a70c-37f7fd6d7dc1",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:55283/runs/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1/client.mjs",
+          "http://127.0.0.1:55283/runs/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1/client.mjs",
+          "http://127.0.0.1:55283/runs/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1/client.mjs"
+        ],
+        "response": {
+          "status": 200,
+          "url": "http://127.0.0.1:55283/runs/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1/api/cart"
+        },
+        "finishedSequence": 121,
+        "body": {
+          "operationId": "wrong-operation",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 1,
+          "admittedCount": 2
+        },
+        "bodyHash": "7e4c6a169e7c3aaf434fcaafad5308cc40c5542664b1c0ce66430be38bf2716f"
+      },
+      {
+        "requestId": "69865.7",
+        "sequence": 91,
+        "tuple": {
+          "operationId": "0a22e75c-e303-42ff-a70c-37f7fd6d7dc1-background",
+          "cartId": "background",
+          "productId": "background-02",
+          "price": 99
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:55283/runs/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1/client.mjs",
+          "http://127.0.0.1:55283/runs/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1/client.mjs",
+          "http://127.0.0.1:55283/runs/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1/client.mjs"
+        ],
+        "response": {
+          "status": 200,
+          "url": "http://127.0.0.1:55283/runs/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1/api/cart"
+        },
+        "finishedSequence": 123,
+        "body": {
+          "operationId": "0a22e75c-e303-42ff-a70c-37f7fd6d7dc1-background",
+          "cartId": "background",
+          "productId": "background-02",
+          "price": 99,
+          "cartCount": 1,
+          "admittedCount": 2
+        },
+        "bodyHash": "a97ec52959d554a9d50eb61854d81a2deb9e105cf0b7f8726dd51149b0b35171"
+      }
+    ],
+    "closed": false,
+    "errors": [
+      "Response identity or values differ from the frozen expectation"
+    ]
+  },
+  "links": [
+    {
+      "id": "intent-request",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "request-server",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "server-response",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "response-browser",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "browser-screen",
+      "status": "mismatched",
+      "evidence": []
+    }
+  ],
+  "captures": {
+    "before": {
+      "status": "captured",
+      "file": "before.png",
+      "renderer": {
+        "epoch": "0877c543-26cf-40f3-a46c-7f0c7bd79104",
+        "id": 5,
+        "hash": "93090fc9decd8daaed0b4d724d1aeb1f43f9ff4788f50c3644a8c9f6297f390c"
+      }
+    },
+    "paused-server": {
+      "status": "captured",
+      "file": "paused-server.png",
+      "renderer": {
+        "epoch": "0877c543-26cf-40f3-a46c-7f0c7bd79104",
+        "id": 8,
+        "hash": "728b573855689c6545bc789d616822282c3061cb9f25430f1e7894f0e5200c50"
+      }
+    },
+    "paused-browser": {
+      "status": "failed",
+      "error": "Error: CDP disconnected"
+    }
+  },
+  "failures": [
+    "Response identity or values differ from the frozen expectation"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0004/vscode/0a22e75c-e303-42ff-a70c-37f7fd6d7dc1",
+  "activeSessionIds": [],
+  "backend": {
+    "runId": "0a22e75c-e303-42ff-a70c-37f7fd6d7dc1",
+    "pid": 69826,
+    "origin": "http://127.0.0.1:55283",
+    "executable": "/opt/homebrew/Cellar/node/26.8.2/bin/node",
+    "version": "v26.8.2"
+  },
+  "environment": {
+    "host": {
+      "id": "vscode",
+      "productVersion": "1.138.0",
+      "apiVersion": "1.138.0",
+      "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+      "browserBackend": "managed",
+      "chrome": {
+        "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "version": "Google Chrome 153.0.8010.50"
+      }
+    },
+    "api": "1.138.0",
+    "node": "24.18.1",
+    "jsDebug": "1.117.0"
+  },
+  "revision": "f968e02a7219743d121a01176d4a56ac6df1d779",
+  "dirty": false,
+  "sourceHash": "e89d14e46d5763ec88ba02508ae0a8a29d0b3633c7b0aa06c04928a0aee94717",
+  "nativePresentationVerified": false
+}

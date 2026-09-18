@@ -1,0 +1,405 @@
+{
+  "runId": "e91ea2ef-d665-4365-92b1-79ece5b668dd",
+  "scenario": "capture-timeout",
+  "status": "completed",
+  "cleaned": true,
+  "runtimeOutcome": "demonstrated",
+  "captureOutcome": "incomplete",
+  "finalOutcome": "partial",
+  "participants": {
+    "server": {
+      "sessionId": "d4579da0-6908-418c-b88a-068c21d6dffe",
+      "phase": "running",
+      "snapshot": {
+        "id": "d4579da0-6908-418c-b88a-068c21d6dffe:1",
+        "participant": "server",
+        "pause": {
+          "sessionId": "d4579da0-6908-418c-b88a-068c21d6dffe",
+          "threadId": 32,
+          "generation": 1
+        },
+        "frame": {
+          "id": 755,
+          "name": "addProduct",
+          "line": 19,
+          "column": 9,
+          "source": {
+            "name": "<repo>/artifacts/cycle-0004/vscode/e91ea2ef-d665-4365-92b1-79ece5b668dd/fixture/server.mts",
+            "path": "<repo>/artifacts/cycle-0004/vscode/e91ea2ef-d665-4365-92b1-79ece5b668dd/fixture/server.mts",
+            "sourceReference": 0
+          },
+          "presentationHint": "normal",
+          "canRestart": true
+        },
+        "values": {
+          "operationId": "e91ea2ef-d665-4365-92b1-79ece5b668dd",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 0,
+          "admittedCount": 2
+        },
+        "evaluations": [
+          {
+            "expression": "tuple.operationId",
+            "value": {
+              "type": "string",
+              "result": "'e91ea2ef-d665-4365-92b1-79ece5b668dd'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.cartId",
+            "value": {
+              "type": "string",
+              "result": "'selected'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.productId",
+            "value": {
+              "type": "string",
+              "result": "'tote-01'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.price",
+            "value": {
+              "type": "number",
+              "result": "24",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "state.items.length",
+            "value": {
+              "type": "number",
+              "result": "0",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "admittedCount",
+            "value": {
+              "type": "number",
+              "result": "2",
+              "variablesReference": 0
+            }
+          }
+        ],
+        "source": {
+          "scriptId": "178",
+          "scriptLocation": {
+            "scriptId": "178",
+            "lineNumber": 15,
+            "columnNumber": 10
+          },
+          "mapping": {
+            "generatedLine": 15,
+            "generatedColumn": 10,
+            "originalSource": "../fixture/server.mts",
+            "originalLine": 18,
+            "originalColumn": 8
+          },
+          "typescriptHash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+          "javascriptHash": "9e805dee5d6e67ae8e74aa82383f1e7d69f7a3b97c7ad775c6ea2e3494d7b04b",
+          "sourceMapHash": "faafc0c2eb72a72df7cdcd5ebcc3a2058ff3f0358c539f4a6d13db90174ca834"
+        }
+      },
+      "continued": {
+        "sessionId": "d4579da0-6908-418c-b88a-068c21d6dffe",
+        "threadId": 32,
+        "generation": 1
+      },
+      "conflict": false
+    },
+    "browser": {
+      "sessionId": "3a53ea1c-c726-45d8-ac84-424aa5b1ec30",
+      "phase": "running",
+      "snapshot": {
+        "id": "3a53ea1c-c726-45d8-ac84-424aa5b1ec30:1",
+        "participant": "browser",
+        "pause": {
+          "sessionId": "3a53ea1c-c726-45d8-ac84-424aa5b1ec30",
+          "threadId": 33,
+          "generation": 1
+        },
+        "frame": {
+          "id": 807,
+          "name": "<anonymous>",
+          "line": 23,
+          "column": 5,
+          "source": {
+            "name": "fixture/client.mts",
+            "path": "<repo>/artifacts/cycle-0004/vscode/e91ea2ef-d665-4365-92b1-79ece5b668dd/fixture/client.mts",
+            "sourceReference": 0
+          },
+          "presentationHint": "normal",
+          "canRestart": false
+        },
+        "values": {
+          "operationId": "e91ea2ef-d665-4365-92b1-79ece5b668dd",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 1,
+          "admittedCount": 2
+        },
+        "evaluations": [
+          {
+            "expression": "result.operationId",
+            "value": {
+              "type": "string",
+              "result": "'e91ea2ef-d665-4365-92b1-79ece5b668dd'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "result.cartId",
+            "value": {
+              "type": "string",
+              "result": "'selected'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "result.productId",
+            "value": {
+              "type": "string",
+              "result": "'tote-01'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "result.price",
+            "value": {
+              "type": "number",
+              "result": "24",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "result.cartCount",
+            "value": {
+              "type": "number",
+              "result": "1",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "result.admittedCount",
+            "value": {
+              "type": "number",
+              "result": "2",
+              "variablesReference": 0
+            }
+          }
+        ],
+        "source": {
+          "scriptId": "3",
+          "scriptLocation": {
+            "scriptId": "3",
+            "lineNumber": 19,
+            "columnNumber": 8
+          },
+          "mapping": {
+            "generatedLine": 19,
+            "generatedColumn": 8,
+            "originalSource": "../fixture/client.mts",
+            "originalLine": 22,
+            "originalColumn": 4
+          },
+          "typescriptHash": "99aef6024807ac655e3d9a2b5790d9a720c70d57ea92467ffb2649873e8b4108",
+          "javascriptHash": "1f068e0e1b797b26da67b865ab886d87d2f6f204d056a62c3e1d6415d68c8007",
+          "sourceMapHash": "60e9cbee9cb556348de692690a9f796a2ae21c13533c0db182bebd7e075ec008"
+        }
+      },
+      "continued": {
+        "sessionId": "3a53ea1c-c726-45d8-ac84-424aa5b1ec30",
+        "threadId": 33,
+        "generation": 1
+      },
+      "conflict": false
+    }
+  },
+  "operation": {
+    "id": "0fddf88f-e1d8-4e10-8640-ee14dfb8fe20",
+    "key": "one-click",
+    "inputAcknowledged": true
+  },
+  "observed": {
+    "cartCount": 1,
+    "completedClicks": 1
+  },
+  "network": {
+    "requests": [
+      {
+        "requestId": "71160.6",
+        "sequence": 90,
+        "tuple": {
+          "operationId": "e91ea2ef-d665-4365-92b1-79ece5b668dd",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:55579/runs/e91ea2ef-d665-4365-92b1-79ece5b668dd/client.mjs",
+          "http://127.0.0.1:55579/runs/e91ea2ef-d665-4365-92b1-79ece5b668dd/client.mjs",
+          "http://127.0.0.1:55579/runs/e91ea2ef-d665-4365-92b1-79ece5b668dd/client.mjs"
+        ],
+        "response": {
+          "status": 200,
+          "url": "http://127.0.0.1:55579/runs/e91ea2ef-d665-4365-92b1-79ece5b668dd/api/cart"
+        },
+        "finishedSequence": 114,
+        "body": {
+          "operationId": "e91ea2ef-d665-4365-92b1-79ece5b668dd",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 1,
+          "admittedCount": 2
+        },
+        "bodyHash": "378260bf115c7cf5a914d3127f12a3128a97ecaec4d19cec97704033b37aa2ab"
+      },
+      {
+        "requestId": "71160.7",
+        "sequence": 91,
+        "tuple": {
+          "operationId": "e91ea2ef-d665-4365-92b1-79ece5b668dd-background",
+          "cartId": "background",
+          "productId": "background-02",
+          "price": 99
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:55579/runs/e91ea2ef-d665-4365-92b1-79ece5b668dd/client.mjs",
+          "http://127.0.0.1:55579/runs/e91ea2ef-d665-4365-92b1-79ece5b668dd/client.mjs",
+          "http://127.0.0.1:55579/runs/e91ea2ef-d665-4365-92b1-79ece5b668dd/client.mjs"
+        ],
+        "response": {
+          "status": 200,
+          "url": "http://127.0.0.1:55579/runs/e91ea2ef-d665-4365-92b1-79ece5b668dd/api/cart"
+        },
+        "finishedSequence": 117,
+        "body": {
+          "operationId": "e91ea2ef-d665-4365-92b1-79ece5b668dd-background",
+          "cartId": "background",
+          "productId": "background-02",
+          "price": 99,
+          "cartCount": 1,
+          "admittedCount": 2
+        },
+        "bodyHash": "938f1d8f04189afd89203b83b627ccd7b3bff3dd3e3ecd598d20352734e14a6b"
+      }
+    ],
+    "closed": true,
+    "errors": []
+  },
+  "links": [
+    {
+      "id": "intent-request",
+      "status": "observed",
+      "evidence": [
+        "0fddf88f-e1d8-4e10-8640-ee14dfb8fe20",
+        "71160.6"
+      ]
+    },
+    {
+      "id": "request-server",
+      "status": "observed",
+      "evidence": [
+        "71160.6",
+        "d4579da0-6908-418c-b88a-068c21d6dffe:1"
+      ]
+    },
+    {
+      "id": "server-response",
+      "status": "observed",
+      "evidence": [
+        "d4579da0-6908-418c-b88a-068c21d6dffe:1",
+        "378260bf115c7cf5a914d3127f12a3128a97ecaec4d19cec97704033b37aa2ab"
+      ]
+    },
+    {
+      "id": "response-browser",
+      "status": "observed",
+      "evidence": [
+        "378260bf115c7cf5a914d3127f12a3128a97ecaec4d19cec97704033b37aa2ab",
+        "3a53ea1c-c726-45d8-ac84-424aa5b1ec30:1"
+      ]
+    },
+    {
+      "id": "browser-screen",
+      "status": "observed",
+      "evidence": [
+        "3a53ea1c-c726-45d8-ac84-424aa5b1ec30:1",
+        "event:148"
+      ]
+    }
+  ],
+  "captures": {
+    "before": {
+      "status": "captured",
+      "file": "before.png",
+      "renderer": {
+        "epoch": "62ce1938-6bba-4101-b128-770852726778",
+        "id": 5,
+        "hash": "93090fc9decd8daaed0b4d724d1aeb1f43f9ff4788f50c3644a8c9f6297f390c"
+      }
+    },
+    "paused-server": {
+      "status": "failed",
+      "error": "Error: CDP Page.captureScreenshot timed out"
+    },
+    "paused-browser": {
+      "status": "captured",
+      "file": "paused-browser.png",
+      "renderer": {
+        "epoch": "62ce1938-6bba-4101-b128-770852726778",
+        "id": 9,
+        "hash": "728b573855689c6545bc789d616822282c3061cb9f25430f1e7894f0e5200c50"
+      }
+    },
+    "after": {
+      "status": "captured",
+      "file": "after.png",
+      "renderer": {
+        "epoch": "62ce1938-6bba-4101-b128-770852726778",
+        "id": 15,
+        "hash": "5f284a6c0dd00b3343c96b2087bf41b7d8b82a4810b22982e0fac1f2f48e7da0"
+      }
+    }
+  },
+  "failures": [],
+  "artifactDirectory": "<repo>/artifacts/cycle-0004/vscode/e91ea2ef-d665-4365-92b1-79ece5b668dd",
+  "activeSessionIds": [],
+  "backend": {
+    "runId": "e91ea2ef-d665-4365-92b1-79ece5b668dd",
+    "pid": 71148,
+    "origin": "http://127.0.0.1:55579",
+    "executable": "/opt/homebrew/Cellar/node/26.8.2/bin/node",
+    "version": "v26.8.2"
+  },
+  "environment": {
+    "host": {
+      "id": "vscode",
+      "productVersion": "1.138.0",
+      "apiVersion": "1.138.0",
+      "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+      "browserBackend": "managed",
+      "chrome": {
+        "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "version": "Google Chrome 153.0.8010.50"
+      }
+    },
+    "api": "1.138.0",
+    "node": "24.18.1",
+    "jsDebug": "1.117.0"
+  },
+  "revision": "f968e02a7219743d121a01176d4a56ac6df1d779",
+  "dirty": false,
+  "sourceHash": "e89d14e46d5763ec88ba02508ae0a8a29d0b3633c7b0aa06c04928a0aee94717",
+  "nativePresentationVerified": false
+}

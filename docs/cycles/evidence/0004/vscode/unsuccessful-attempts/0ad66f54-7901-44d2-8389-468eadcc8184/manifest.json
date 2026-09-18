@@ -1,0 +1,80 @@
+{
+  "runId": "0ad66f54-7901-44d2-8389-468eadcc8184",
+  "scenario": "normal",
+  "status": "failed",
+  "cleaned": true,
+  "participants": {
+    "server": {
+      "sessionId": "9ec8e543-3df2-4449-a4a3-864710448390",
+      "phase": "running",
+      "conflict": false
+    },
+    "browser": {
+      "sessionId": "ad91f91a-08ee-4de8-bf94-b14a0715741c",
+      "phase": "running",
+      "conflict": false
+    }
+  },
+  "links": [
+    {
+      "id": "intent-request",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "request-server",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "server-response",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "response-browser",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "browser-screen",
+      "status": "mismatched",
+      "evidence": []
+    }
+  ],
+  "captures": {},
+  "failures": [
+    "Application progress deadline exceeded; no request retry or automatic continuation",
+    "AbortError: The operation was aborted"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0004/vscode/0ad66f54-7901-44d2-8389-468eadcc8184",
+  "activeSessionIds": [],
+  "backend": {
+    "runId": "0ad66f54-7901-44d2-8389-468eadcc8184",
+    "pid": 55963,
+    "origin": "http://127.0.0.1:61549",
+    "executable": "/opt/homebrew/Cellar/node/26.8.2/bin/node",
+    "version": "v26.8.2"
+  },
+  "environment": {
+    "host": {
+      "id": "vscode",
+      "productVersion": "1.138.0",
+      "apiVersion": "1.138.0",
+      "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+      "browserBackend": "managed",
+      "chrome": {
+        "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "version": "Google Chrome 153.0.8010.50"
+      }
+    },
+    "api": "1.138.0",
+    "node": "24.18.1",
+    "jsDebug": "1.117.0"
+  },
+  "revision": "1113e24d0bcda602c670291cfa6304856e9992c3",
+  "dirty": true,
+  "sourceHash": "ffa2d632a6505ffe30dc338a1f59b5bb25912b7ac0d70083601d8065f3b31a4d",
+  "finalOutcome": "not-demonstrated",
+  "nativePresentationVerified": false
+}

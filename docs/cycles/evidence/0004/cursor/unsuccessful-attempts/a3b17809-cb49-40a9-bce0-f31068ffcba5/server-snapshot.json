@@ -1,0 +1,98 @@
+{
+  "id": "d315685f-8b9e-45f9-9c52-84c0b99c388e:1",
+  "participant": "server",
+  "pause": {
+    "sessionId": "d315685f-8b9e-45f9-9c52-84c0b99c388e",
+    "threadId": 0,
+    "generation": 1
+  },
+  "frame": {
+    "id": 0,
+    "name": "addProduct",
+    "line": 19,
+    "column": 9,
+    "source": {
+      "name": "<repo>/artifacts/cycle-0004/cursor/a3b17809-cb49-40a9-bce0-f31068ffcba5/fixture/server.mts",
+      "path": "<repo>/artifacts/cycle-0004/cursor/a3b17809-cb49-40a9-bce0-f31068ffcba5/fixture/server.mts",
+      "sourceReference": 0
+    },
+    "presentationHint": "normal",
+    "canRestart": true
+  },
+  "values": {
+    "operationId": "a3b17809-cb49-40a9-bce0-f31068ffcba5",
+    "cartId": "selected",
+    "productId": "tote-01",
+    "price": 24,
+    "cartCount": 0,
+    "admittedCount": 2
+  },
+  "evaluations": [
+    {
+      "expression": "tuple.operationId",
+      "value": {
+        "type": "string",
+        "result": "'a3b17809-cb49-40a9-bce0-f31068ffcba5'",
+        "variablesReference": 0
+      }
+    },
+    {
+      "expression": "tuple.cartId",
+      "value": {
+        "type": "string",
+        "result": "'selected'",
+        "variablesReference": 0
+      }
+    },
+    {
+      "expression": "tuple.productId",
+      "value": {
+        "type": "string",
+        "result": "'tote-01'",
+        "variablesReference": 0
+      }
+    },
+    {
+      "expression": "tuple.price",
+      "value": {
+        "type": "number",
+        "result": "24",
+        "variablesReference": 0
+      }
+    },
+    {
+      "expression": "state.items.length",
+      "value": {
+        "type": "number",
+        "result": "0",
+        "variablesReference": 0
+      }
+    },
+    {
+      "expression": "admittedCount",
+      "value": {
+        "type": "number",
+        "result": "2",
+        "variablesReference": 0
+      }
+    }
+  ],
+  "source": {
+    "scriptId": "177",
+    "scriptLocation": {
+      "scriptId": "177",
+      "lineNumber": 15,
+      "columnNumber": 10
+    },
+    "mapping": {
+      "generatedLine": 15,
+      "generatedColumn": 10,
+      "originalSource": "../fixture/server.mts",
+      "originalLine": 18,
+      "originalColumn": 8
+    },
+    "typescriptHash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+    "javascriptHash": "9e805dee5d6e67ae8e74aa82383f1e7d69f7a3b97c7ad775c6ea2e3494d7b04b",
+    "sourceMapHash": "faafc0c2eb72a72df7cdcd5ebcc3a2058ff3f0358c539f4a6d13db90174ca834"
+  }
+}

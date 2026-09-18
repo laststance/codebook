@@ -1,0 +1,85 @@
+{
+  "sourceRevision": "f968e02a7219743d121a01176d4a56ac6df1d779",
+  "sourceFingerprint": "e89d14e46d5763ec88ba02508ae0a8a29d0b3633c7b0aa06c04928a0aee94717",
+  "unitTests": {
+    "paired": 26,
+    "shared": 40
+  },
+  "exportedFilesVerified": 816,
+  "pngBytesUnchanged": true,
+  "sourceAndMapHashesVerified": true,
+  "credentialAndHomePathScan": "passed",
+  "nativePresentation": "unverified: locked Mac, page PNG and renderer receipt are separate evidence",
+  "hostResults": {
+    "vscode": {
+      "nativePassed": 18,
+      "total": 18,
+      "baselineRunId": "f3bb60a6-4532-4668-984f-63b3fa25eda1",
+      "hold": {
+        "bootstrapCannotControlRun": true,
+        "acceptanceMs": 0.8009579999998095,
+        "holdMs": 40008.392125000006,
+        "controlMs": 6.408625000003667,
+        "serverContinueMs": 6.441333000002487,
+        "browserContinueMs": 2.2114999999976135
+      },
+      "automaticCleanupWithoutDelete": true,
+      "exactImageReceipts": 4,
+      "samePixelsAsInspectedRevision518e54c": {
+        "before": true,
+        "paused-server": true,
+        "paused-browser": true,
+        "after": true
+      },
+      "nativePresentationVerified": false
+    },
+    "cursor": {
+      "nativePassed": 18,
+      "total": 18,
+      "baselineRunId": "43929613-fe22-4421-b431-cb9220ba7c64",
+      "hold": {
+        "bootstrapCannotControlRun": true,
+        "acceptanceMs": 1.3242499999996653,
+        "holdMs": 40008.243084,
+        "controlMs": 6.244874999996682,
+        "serverContinueMs": 7.040666000000783,
+        "browserContinueMs": 4.83916699999827
+      },
+      "automaticCleanupWithoutDelete": true,
+      "exactImageReceipts": 4,
+      "samePixelsAsInspectedRevision518e54c": {
+        "before": true,
+        "paused-server": true,
+        "paused-browser": true,
+        "after": true
+      },
+      "nativePresentationVerified": false
+    }
+  },
+  "sharedRegressions": {
+    "vscode": {
+      "suite": "suite-2026-09-18T15-33-22.556Z-f26b3091",
+      "passed": 3,
+      "cases": [
+        "normal",
+        "stale-script",
+        "source-drift"
+      ],
+      "sharedSourceHashesMatchFinalTree": true,
+      "originalRevision": "37420c115c0455a25753e9c7a65237f8f674aac5",
+      "originalDirty": false
+    },
+    "cursor": {
+      "suite": "suite-2026-09-18T15-33-27.738Z-4ec76086",
+      "passed": 3,
+      "cases": [
+        "normal",
+        "stale-script",
+        "source-drift"
+      ],
+      "sharedSourceHashesMatchFinalTree": true,
+      "originalRevision": "37420c115c0455a25753e9c7a65237f8f674aac5",
+      "originalDirty": false
+    }
+  }
+}

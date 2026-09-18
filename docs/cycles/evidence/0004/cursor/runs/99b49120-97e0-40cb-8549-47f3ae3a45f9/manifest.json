@@ -1,0 +1,137 @@
+{
+  "runId": "99b49120-97e0-40cb-8549-47f3ae3a45f9",
+  "scenario": "stale-server",
+  "status": "failed",
+  "cleaned": true,
+  "runtimeOutcome": "not-demonstrated",
+  "captureOutcome": "incomplete",
+  "finalOutcome": "not-demonstrated",
+  "participants": {
+    "server": {
+      "sessionId": "bdb292a2-50ee-4955-ab7e-7cc4d9241de0",
+      "phase": "running",
+      "conflict": false
+    },
+    "browser": {
+      "sessionId": "235c58cd-dc75-4cca-a137-98752b3593e9",
+      "phase": "running",
+      "conflict": false
+    }
+  },
+  "operation": {
+    "id": "31f21965-c9ad-4301-8314-308eba453700",
+    "key": "one-click",
+    "inputAcknowledged": true
+  },
+  "network": {
+    "requests": [
+      {
+        "requestId": "74397.6",
+        "sequence": 92,
+        "tuple": {
+          "operationId": "99b49120-97e0-40cb-8549-47f3ae3a45f9",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:57967/runs/99b49120-97e0-40cb-8549-47f3ae3a45f9/client.mjs",
+          "http://127.0.0.1:57967/runs/99b49120-97e0-40cb-8549-47f3ae3a45f9/client.mjs",
+          "http://127.0.0.1:57967/runs/99b49120-97e0-40cb-8549-47f3ae3a45f9/client.mjs"
+        ]
+      },
+      {
+        "requestId": "74397.7",
+        "sequence": 93,
+        "tuple": {
+          "operationId": "99b49120-97e0-40cb-8549-47f3ae3a45f9-background",
+          "cartId": "background",
+          "productId": "background-02",
+          "price": 99
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:57967/runs/99b49120-97e0-40cb-8549-47f3ae3a45f9/client.mjs",
+          "http://127.0.0.1:57967/runs/99b49120-97e0-40cb-8549-47f3ae3a45f9/client.mjs",
+          "http://127.0.0.1:57967/runs/99b49120-97e0-40cb-8549-47f3ae3a45f9/client.mjs"
+        ]
+      }
+    ],
+    "closed": false,
+    "errors": []
+  },
+  "links": [
+    {
+      "id": "intent-request",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "request-server",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "server-response",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "response-browser",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "browser-screen",
+      "status": "mismatched",
+      "evidence": []
+    }
+  ],
+  "captures": {
+    "before": {
+      "status": "captured",
+      "file": "before.png",
+      "renderer": {
+        "epoch": "0123b724-88bd-4f0f-accc-d8531fa4c539",
+        "id": 5,
+        "hash": "93090fc9decd8daaed0b4d724d1aeb1f43f9ff4788f50c3644a8c9f6297f390c"
+      }
+    },
+    "paused-server": {
+      "status": "failed",
+      "file": "paused-server.png",
+      "error": "AbortError: The operation was aborted"
+    }
+  },
+  "failures": [
+    "Error: Executed JavaScript does not match the sealed build"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0004/cursor/99b49120-97e0-40cb-8549-47f3ae3a45f9",
+  "activeSessionIds": [],
+  "backend": {
+    "runId": "99b49120-97e0-40cb-8549-47f3ae3a45f9",
+    "pid": 74363,
+    "origin": "http://127.0.0.1:57967",
+    "executable": "/opt/homebrew/Cellar/node/26.8.2/bin/node",
+    "version": "v26.8.2"
+  },
+  "environment": {
+    "host": {
+      "id": "cursor",
+      "productVersion": "3.21.12",
+      "apiVersion": "1.128.0",
+      "commit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20",
+      "browserBackend": "managed",
+      "chrome": {
+        "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "version": "Google Chrome 153.0.8010.50"
+      }
+    },
+    "api": "1.128.0",
+    "node": "24.18.1",
+    "jsDebug": "1.93.0"
+  },
+  "revision": "f968e02a7219743d121a01176d4a56ac6df1d779",
+  "dirty": false,
+  "sourceHash": "e89d14e46d5763ec88ba02508ae0a8a29d0b3633c7b0aa06c04928a0aee94717",
+  "nativePresentationVerified": false
+}

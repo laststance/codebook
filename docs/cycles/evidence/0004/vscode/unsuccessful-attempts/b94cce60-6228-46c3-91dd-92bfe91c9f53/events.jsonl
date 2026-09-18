@@ -1,0 +1,20 @@
+{"sequence": 1, "elapsedMs": 0.117667, "wallTime": "2026-09-18T15:39:25.781Z", "type": "run.created", "detail": {"runId": "b94cce60-6228-46c3-91dd-92bfe91c9f53", "scenario": "cancel-launch", "expectedRequests": 2, "expectedLinks": ["intent-request", "request-server", "server-response", "response-browser", "browser-screen"]}}
+{"sequence": 2, "elapsedMs": 2.817209, "wallTime": "2026-09-18T15:39:25.784Z", "type": "breakpoint.requested", "detail": {"participant": "server", "source": "<repo>/artifacts/cycle-0004/vscode/b94cce60-6228-46c3-91dd-92bfe91c9f53/fixture/server.mts", "line": 19}}
+{"sequence": 3, "elapsedMs": 19.630875, "wallTime": "2026-09-18T15:39:25.800Z", "type": "breakpoint.requested", "detail": {"participant": "browser", "source": "<repo>/artifacts/cycle-0004/vscode/b94cce60-6228-46c3-91dd-92bfe91c9f53/fixture/client.mts", "line": 23}}
+{"sequence": 4, "elapsedMs": 70.811334, "wallTime": "2026-09-18T15:39:25.852Z", "type": "fault.launch-held", "detail": {}}
+{"sequence": 5, "elapsedMs": 106.160542, "wallTime": "2026-09-18T15:39:25.887Z", "type": "cleanup.started", "detail": {}}
+{"sequence": 6, "elapsedMs": 120.452542, "wallTime": "2026-09-18T15:39:25.901Z", "type": "session.started", "detail": {"participant": "server", "sessionId": "71e3b4b4-1bbc-4629-b5d2-db4fbd249c32"}}
+{"sequence": 7, "elapsedMs": 122.942209, "wallTime": "2026-09-18T15:39:25.904Z", "type": "focus.changed", "detail": {"sessionId": "71e3b4b4-1bbc-4629-b5d2-db4fbd249c32"}}
+{"sequence": 8, "elapsedMs": 624.647709, "wallTime": "2026-09-18T15:39:26.405Z", "type": "session.terminated", "detail": {"sessionId": "71e3b4b4-1bbc-4629-b5d2-db4fbd249c32"}}
+{"sequence": 9, "elapsedMs": 625.173875, "wallTime": "2026-09-18T15:39:26.406Z", "type": "focus.changed", "detail": {}}
+{"sequence": 10, "elapsedMs": 3159.321917, "wallTime": "2026-09-18T15:39:28.940Z", "type": "cleanup.failed", "detail": {"failures": ["backend identity recovery: Error: Timed out waiting for cancelled backend identity"]}}
+{"sequence": 11, "elapsedMs": 3162.599459, "wallTime": "2026-09-18T15:39:28.943Z", "type": "cleanup.started", "detail": {}}
+{"sequence": 12, "elapsedMs": 6193.662417, "wallTime": "2026-09-18T15:39:31.974Z", "type": "cleanup.failed", "detail": {"failures": ["backend identity recovery: Error: Timed out waiting for cancelled backend identity"]}}
+{"sequence": 13, "elapsedMs": 6363.858459, "wallTime": "2026-09-18T15:39:32.145Z", "type": "focus.changed", "detail": {"sessionId": "3f76d795-b346-4065-96b0-1ec93d63338f"}}
+{"sequence": 14, "elapsedMs": 6470.086959, "wallTime": "2026-09-18T15:39:32.251Z", "type": "focus.changed", "detail": {"sessionId": "531a271b-1317-41c9-bc02-36e5ae3c55dd"}}
+{"sequence": 15, "elapsedMs": 10508.978625, "wallTime": "2026-09-18T15:39:36.290Z", "type": "focus.changed", "detail": {"sessionId": "88c559ec-d946-40e4-a093-c02371cb0326"}}
+{"sequence": 16, "elapsedMs": 10621.166292, "wallTime": "2026-09-18T15:39:36.402Z", "type": "focus.changed", "detail": {}}
+{"sequence": 17, "elapsedMs": 10801.883542, "wallTime": "2026-09-18T15:39:36.583Z", "type": "focus.changed", "detail": {"sessionId": "863a371b-5679-44c8-b60e-d864d906396d"}}
+{"sequence": 18, "elapsedMs": 10918.44825, "wallTime": "2026-09-18T15:39:36.699Z", "type": "focus.changed", "detail": {"sessionId": "194cc904-5b1a-46bd-8762-7b393255deca"}}
+{"sequence": 19, "elapsedMs": 12104.228084, "wallTime": "2026-09-18T15:39:37.885Z", "type": "focus.changed", "detail": {"sessionId": "3793f8d0-899e-43bf-a66c-a3dcd172ace2"}}
+{"sequence": 20, "elapsedMs": 12216.458625, "wallTime": "2026-09-18T15:39:37.997Z", "type": "focus.changed", "detail": {}}

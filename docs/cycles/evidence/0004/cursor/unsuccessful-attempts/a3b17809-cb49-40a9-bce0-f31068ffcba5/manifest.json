@@ -1,0 +1,410 @@
+{
+  "runId": "a3b17809-cb49-40a9-bce0-f31068ffcba5",
+  "scenario": "normal",
+  "status": "completed",
+  "cleaned": false,
+  "participants": {
+    "server": {
+      "sessionId": "d315685f-8b9e-45f9-9c52-84c0b99c388e",
+      "phase": "running",
+      "snapshot": {
+        "id": "d315685f-8b9e-45f9-9c52-84c0b99c388e:1",
+        "participant": "server",
+        "pause": {
+          "sessionId": "d315685f-8b9e-45f9-9c52-84c0b99c388e",
+          "threadId": 0,
+          "generation": 1
+        },
+        "frame": {
+          "id": 0,
+          "name": "addProduct",
+          "line": 19,
+          "column": 9,
+          "source": {
+            "name": "<repo>/artifacts/cycle-0004/cursor/a3b17809-cb49-40a9-bce0-f31068ffcba5/fixture/server.mts",
+            "path": "<repo>/artifacts/cycle-0004/cursor/a3b17809-cb49-40a9-bce0-f31068ffcba5/fixture/server.mts",
+            "sourceReference": 0
+          },
+          "presentationHint": "normal",
+          "canRestart": true
+        },
+        "values": {
+          "operationId": "a3b17809-cb49-40a9-bce0-f31068ffcba5",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 0,
+          "admittedCount": 2
+        },
+        "evaluations": [
+          {
+            "expression": "tuple.operationId",
+            "value": {
+              "type": "string",
+              "result": "'a3b17809-cb49-40a9-bce0-f31068ffcba5'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.cartId",
+            "value": {
+              "type": "string",
+              "result": "'selected'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.productId",
+            "value": {
+              "type": "string",
+              "result": "'tote-01'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.price",
+            "value": {
+              "type": "number",
+              "result": "24",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "state.items.length",
+            "value": {
+              "type": "number",
+              "result": "0",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "admittedCount",
+            "value": {
+              "type": "number",
+              "result": "2",
+              "variablesReference": 0
+            }
+          }
+        ],
+        "source": {
+          "scriptId": "177",
+          "scriptLocation": {
+            "scriptId": "177",
+            "lineNumber": 15,
+            "columnNumber": 10
+          },
+          "mapping": {
+            "generatedLine": 15,
+            "generatedColumn": 10,
+            "originalSource": "../fixture/server.mts",
+            "originalLine": 18,
+            "originalColumn": 8
+          },
+          "typescriptHash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+          "javascriptHash": "9e805dee5d6e67ae8e74aa82383f1e7d69f7a3b97c7ad775c6ea2e3494d7b04b",
+          "sourceMapHash": "faafc0c2eb72a72df7cdcd5ebcc3a2058ff3f0358c539f4a6d13db90174ca834"
+        }
+      },
+      "continued": {
+        "sessionId": "d315685f-8b9e-45f9-9c52-84c0b99c388e",
+        "threadId": 0,
+        "generation": 1
+      },
+      "conflict": false
+    },
+    "browser": {
+      "sessionId": "f2000676-efbb-4897-b460-1c72cf281630",
+      "phase": "running",
+      "snapshot": {
+        "id": "f2000676-efbb-4897-b460-1c72cf281630:1",
+        "participant": "browser",
+        "pause": {
+          "sessionId": "f2000676-efbb-4897-b460-1c72cf281630",
+          "threadId": 1,
+          "generation": 1
+        },
+        "frame": {
+          "id": 52,
+          "name": "<anonymous>",
+          "line": 23,
+          "column": 5,
+          "source": {
+            "name": "fixture/client.mts",
+            "path": "<repo>/artifacts/cycle-0004/cursor/a3b17809-cb49-40a9-bce0-f31068ffcba5/fixture/client.mts",
+            "sourceReference": 0
+          },
+          "presentationHint": "normal",
+          "canRestart": false
+        },
+        "values": {
+          "operationId": "a3b17809-cb49-40a9-bce0-f31068ffcba5",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 1,
+          "admittedCount": 2
+        },
+        "evaluations": [
+          {
+            "expression": "result.operationId",
+            "value": {
+              "type": "string",
+              "result": "'a3b17809-cb49-40a9-bce0-f31068ffcba5'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "result.cartId",
+            "value": {
+              "type": "string",
+              "result": "'selected'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "result.productId",
+            "value": {
+              "type": "string",
+              "result": "'tote-01'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "result.price",
+            "value": {
+              "type": "number",
+              "result": "24",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "result.cartCount",
+            "value": {
+              "type": "number",
+              "result": "1",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "result.admittedCount",
+            "value": {
+              "type": "number",
+              "result": "2",
+              "variablesReference": 0
+            }
+          }
+        ],
+        "source": {
+          "scriptId": "3",
+          "scriptLocation": {
+            "scriptId": "3",
+            "lineNumber": 19,
+            "columnNumber": 8
+          },
+          "mapping": {
+            "generatedLine": 19,
+            "generatedColumn": 8,
+            "originalSource": "../fixture/client.mts",
+            "originalLine": 22,
+            "originalColumn": 4
+          },
+          "typescriptHash": "99aef6024807ac655e3d9a2b5790d9a720c70d57ea92467ffb2649873e8b4108",
+          "javascriptHash": "1f068e0e1b797b26da67b865ab886d87d2f6f204d056a62c3e1d6415d68c8007",
+          "sourceMapHash": "60e9cbee9cb556348de692690a9f796a2ae21c13533c0db182bebd7e075ec008"
+        }
+      },
+      "continued": {
+        "sessionId": "f2000676-efbb-4897-b460-1c72cf281630",
+        "threadId": 1,
+        "generation": 1
+      },
+      "conflict": false
+    }
+  },
+  "operation": {
+    "id": "46714bd5-80b2-4638-8496-f5fb568e84f5",
+    "key": "one-click",
+    "inputAcknowledged": true
+  },
+  "observed": {
+    "cartCount": 1,
+    "completedClicks": 1
+  },
+  "network": {
+    "requests": [
+      {
+        "requestId": "68440.6",
+        "sequence": 95,
+        "tuple": {
+          "operationId": "a3b17809-cb49-40a9-bce0-f31068ffcba5",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:57216/runs/a3b17809-cb49-40a9-bce0-f31068ffcba5/client.mjs",
+          "http://127.0.0.1:57216/runs/a3b17809-cb49-40a9-bce0-f31068ffcba5/client.mjs",
+          "http://127.0.0.1:57216/runs/a3b17809-cb49-40a9-bce0-f31068ffcba5/client.mjs"
+        ],
+        "response": {
+          "status": 200,
+          "url": "http://127.0.0.1:57216/runs/a3b17809-cb49-40a9-bce0-f31068ffcba5/api/cart"
+        },
+        "finishedSequence": 128,
+        "body": {
+          "operationId": "a3b17809-cb49-40a9-bce0-f31068ffcba5",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 1,
+          "admittedCount": 2
+        },
+        "bodyHash": "4ebe83132c27fdb1c15c31cd0fde331bcd02bbdecaa7305d5121ce66ccc1259a"
+      },
+      {
+        "requestId": "68440.7",
+        "sequence": 96,
+        "tuple": {
+          "operationId": "a3b17809-cb49-40a9-bce0-f31068ffcba5-background",
+          "cartId": "background",
+          "productId": "background-02",
+          "price": 99
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:57216/runs/a3b17809-cb49-40a9-bce0-f31068ffcba5/client.mjs",
+          "http://127.0.0.1:57216/runs/a3b17809-cb49-40a9-bce0-f31068ffcba5/client.mjs",
+          "http://127.0.0.1:57216/runs/a3b17809-cb49-40a9-bce0-f31068ffcba5/client.mjs"
+        ],
+        "response": {
+          "status": 200,
+          "url": "http://127.0.0.1:57216/runs/a3b17809-cb49-40a9-bce0-f31068ffcba5/api/cart"
+        },
+        "finishedSequence": 130,
+        "body": {
+          "operationId": "a3b17809-cb49-40a9-bce0-f31068ffcba5-background",
+          "cartId": "background",
+          "productId": "background-02",
+          "price": 99,
+          "cartCount": 1,
+          "admittedCount": 2
+        },
+        "bodyHash": "d92afb0130cb14afc6848eb608085e04d183017176a28f0e156557f1cb25ccd8"
+      }
+    ],
+    "closed": true,
+    "errors": []
+  },
+  "links": [
+    {
+      "id": "intent-request",
+      "status": "observed",
+      "evidence": [
+        "46714bd5-80b2-4638-8496-f5fb568e84f5",
+        "68440.6"
+      ]
+    },
+    {
+      "id": "request-server",
+      "status": "observed",
+      "evidence": [
+        "68440.6",
+        "d315685f-8b9e-45f9-9c52-84c0b99c388e:1"
+      ]
+    },
+    {
+      "id": "server-response",
+      "status": "observed",
+      "evidence": [
+        "d315685f-8b9e-45f9-9c52-84c0b99c388e:1",
+        "4ebe83132c27fdb1c15c31cd0fde331bcd02bbdecaa7305d5121ce66ccc1259a"
+      ]
+    },
+    {
+      "id": "response-browser",
+      "status": "observed",
+      "evidence": [
+        "4ebe83132c27fdb1c15c31cd0fde331bcd02bbdecaa7305d5121ce66ccc1259a",
+        "f2000676-efbb-4897-b460-1c72cf281630:1"
+      ]
+    },
+    {
+      "id": "browser-screen",
+      "status": "observed",
+      "evidence": [
+        "f2000676-efbb-4897-b460-1c72cf281630:1",
+        "after.png"
+      ]
+    }
+  ],
+  "captures": {
+    "before": {
+      "status": "captured",
+      "file": "before.png",
+      "renderer": {
+        "epoch": "e01519a2-fcdc-4551-99d2-72b818b0fa3d",
+        "id": 6,
+        "hash": "93090fc9decd8daaed0b4d724d1aeb1f43f9ff4788f50c3644a8c9f6297f390c"
+      }
+    },
+    "paused-server": {
+      "status": "captured",
+      "file": "paused-server.png",
+      "renderer": {
+        "epoch": "e01519a2-fcdc-4551-99d2-72b818b0fa3d",
+        "id": 9,
+        "hash": "728b573855689c6545bc789d616822282c3061cb9f25430f1e7894f0e5200c50"
+      }
+    },
+    "paused-browser": {
+      "status": "captured",
+      "file": "paused-browser.png",
+      "renderer": {
+        "epoch": "e01519a2-fcdc-4551-99d2-72b818b0fa3d",
+        "id": 13,
+        "hash": "728b573855689c6545bc789d616822282c3061cb9f25430f1e7894f0e5200c50"
+      }
+    },
+    "after": {
+      "status": "captured",
+      "file": "after.png",
+      "renderer": {
+        "epoch": "e01519a2-fcdc-4551-99d2-72b818b0fa3d",
+        "id": 19,
+        "hash": "5f284a6c0dd00b3343c96b2087bf41b7d8b82a4810b22982e0fac1f2f48e7da0"
+      }
+    }
+  },
+  "failures": [
+    "Cleanup incomplete: owned source editor close: Error: Tab close: Invalid tab not found!"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0004/cursor/a3b17809-cb49-40a9-bce0-f31068ffcba5",
+  "activeSessionIds": [],
+  "backend": {
+    "runId": "a3b17809-cb49-40a9-bce0-f31068ffcba5",
+    "pid": 68368,
+    "origin": "http://127.0.0.1:57216",
+    "executable": "/opt/homebrew/Cellar/node/26.8.2/bin/node",
+    "version": "v26.8.2"
+  },
+  "environment": {
+    "host": {
+      "id": "cursor",
+      "productVersion": "3.21.12",
+      "apiVersion": "1.128.0",
+      "commit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20",
+      "browserBackend": "managed",
+      "chrome": {
+        "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "version": "Google Chrome 153.0.8010.50"
+      }
+    },
+    "api": "1.128.0",
+    "node": "24.18.1",
+    "jsDebug": "1.93.0"
+  },
+  "revision": "1113e24d0bcda602c670291cfa6304856e9992c3",
+  "dirty": true,
+  "sourceHash": "a99a96ac3c8527cff174045831e2d6520763f22912598d8b664852bd323edeb1",
+  "finalOutcome": "pending-teardown",
+  "nativePresentationVerified": false
+}

@@ -1,0 +1,119 @@
+{
+  "runId": "1a77fc02-c90c-476f-8e9e-f426bb67f45d",
+  "scenario": "missing-id",
+  "status": "failed",
+  "cleaned": true,
+  "runtimeOutcome": "not-demonstrated",
+  "captureOutcome": "incomplete",
+  "finalOutcome": "not-demonstrated",
+  "participants": {
+    "server": {
+      "sessionId": "52ce5d56-9d22-4e45-90c3-86b86cc7828e",
+      "phase": "running",
+      "conflict": false
+    },
+    "browser": {
+      "sessionId": "f830be56-4aa8-42b1-bd1e-9d002eb41810",
+      "phase": "running",
+      "conflict": false
+    }
+  },
+  "operation": {
+    "id": "076530b7-90c0-45d7-ac13-5275f73ab3ac",
+    "key": "one-click",
+    "inputAcknowledged": false
+  },
+  "network": {
+    "requests": [
+      {
+        "requestId": "69691.6",
+        "sequence": 88,
+        "tuple": {
+          "operationId": "",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:55227/runs/1a77fc02-c90c-476f-8e9e-f426bb67f45d/client.mjs",
+          "http://127.0.0.1:55227/runs/1a77fc02-c90c-476f-8e9e-f426bb67f45d/client.mjs",
+          "http://127.0.0.1:55227/runs/1a77fc02-c90c-476f-8e9e-f426bb67f45d/client.mjs"
+        ]
+      }
+    ],
+    "closed": false,
+    "errors": [
+      "Error: Missing operation identity"
+    ]
+  },
+  "links": [
+    {
+      "id": "intent-request",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "request-server",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "server-response",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "response-browser",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "browser-screen",
+      "status": "mismatched",
+      "evidence": []
+    }
+  ],
+  "captures": {
+    "before": {
+      "status": "captured",
+      "file": "before.png",
+      "renderer": {
+        "epoch": "18fac302-c5ae-4d90-affe-e17d1dc40d9a",
+        "id": 5,
+        "hash": "93090fc9decd8daaed0b4d724d1aeb1f43f9ff4788f50c3644a8c9f6297f390c"
+      }
+    }
+  },
+  "failures": [
+    "Error: Missing operation identity"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0004/vscode/1a77fc02-c90c-476f-8e9e-f426bb67f45d",
+  "activeSessionIds": [],
+  "backend": {
+    "runId": "1a77fc02-c90c-476f-8e9e-f426bb67f45d",
+    "pid": 69679,
+    "origin": "http://127.0.0.1:55227",
+    "executable": "/opt/homebrew/Cellar/node/26.8.2/bin/node",
+    "version": "v26.8.2"
+  },
+  "environment": {
+    "host": {
+      "id": "vscode",
+      "productVersion": "1.138.0",
+      "apiVersion": "1.138.0",
+      "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+      "browserBackend": "managed",
+      "chrome": {
+        "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "version": "Google Chrome 153.0.8010.50"
+      }
+    },
+    "api": "1.138.0",
+    "node": "24.18.1",
+    "jsDebug": "1.117.0"
+  },
+  "revision": "f968e02a7219743d121a01176d4a56ac6df1d779",
+  "dirty": false,
+  "sourceHash": "e89d14e46d5763ec88ba02508ae0a8a29d0b3633c7b0aa06c04928a0aee94717",
+  "nativePresentationVerified": false
+}

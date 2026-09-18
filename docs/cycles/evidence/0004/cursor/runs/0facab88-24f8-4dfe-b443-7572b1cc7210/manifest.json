@@ -1,0 +1,258 @@
+{
+  "runId": "0facab88-24f8-4dfe-b443-7572b1cc7210",
+  "scenario": "absent-response",
+  "status": "failed",
+  "cleaned": true,
+  "runtimeOutcome": "not-demonstrated",
+  "captureOutcome": "incomplete",
+  "finalOutcome": "not-demonstrated",
+  "participants": {
+    "server": {
+      "sessionId": "8bec832b-45b7-4b32-a8be-1ef84a6765d9",
+      "phase": "running",
+      "snapshot": {
+        "id": "8bec832b-45b7-4b32-a8be-1ef84a6765d9:1",
+        "participant": "server",
+        "pause": {
+          "sessionId": "8bec832b-45b7-4b32-a8be-1ef84a6765d9",
+          "threadId": 24,
+          "generation": 1
+        },
+        "frame": {
+          "id": 645,
+          "name": "addProduct",
+          "line": 19,
+          "column": 9,
+          "source": {
+            "name": "<repo>/artifacts/cycle-0004/cursor/0facab88-24f8-4dfe-b443-7572b1cc7210/fixture/server.mts",
+            "path": "<repo>/artifacts/cycle-0004/cursor/0facab88-24f8-4dfe-b443-7572b1cc7210/fixture/server.mts",
+            "sourceReference": 0
+          },
+          "presentationHint": "normal",
+          "canRestart": true
+        },
+        "values": {
+          "operationId": "0facab88-24f8-4dfe-b443-7572b1cc7210",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 0,
+          "admittedCount": 2
+        },
+        "evaluations": [
+          {
+            "expression": "tuple.operationId",
+            "value": {
+              "type": "string",
+              "result": "'0facab88-24f8-4dfe-b443-7572b1cc7210'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.cartId",
+            "value": {
+              "type": "string",
+              "result": "'selected'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.productId",
+            "value": {
+              "type": "string",
+              "result": "'tote-01'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.price",
+            "value": {
+              "type": "number",
+              "result": "24",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "state.items.length",
+            "value": {
+              "type": "number",
+              "result": "0",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "admittedCount",
+            "value": {
+              "type": "number",
+              "result": "2",
+              "variablesReference": 0
+            }
+          }
+        ],
+        "source": {
+          "scriptId": "177",
+          "scriptLocation": {
+            "scriptId": "177",
+            "lineNumber": 15,
+            "columnNumber": 10
+          },
+          "mapping": {
+            "generatedLine": 15,
+            "generatedColumn": 10,
+            "originalSource": "../fixture/server.mts",
+            "originalLine": 18,
+            "originalColumn": 8
+          },
+          "typescriptHash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+          "javascriptHash": "9e805dee5d6e67ae8e74aa82383f1e7d69f7a3b97c7ad775c6ea2e3494d7b04b",
+          "sourceMapHash": "faafc0c2eb72a72df7cdcd5ebcc3a2058ff3f0358c539f4a6d13db90174ca834"
+        }
+      },
+      "continued": {
+        "sessionId": "8bec832b-45b7-4b32-a8be-1ef84a6765d9",
+        "threadId": 24,
+        "generation": 1
+      },
+      "conflict": false
+    },
+    "browser": {
+      "sessionId": "93a8d38c-6837-427f-84fb-608a475b2879",
+      "phase": "running",
+      "conflict": false
+    }
+  },
+  "operation": {
+    "id": "3185eb90-9a95-4521-a6ac-18c20aa72c60",
+    "key": "one-click",
+    "inputAcknowledged": true
+  },
+  "network": {
+    "requests": [
+      {
+        "requestId": "74732.6",
+        "sequence": 90,
+        "tuple": {
+          "operationId": "0facab88-24f8-4dfe-b443-7572b1cc7210",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:58083/runs/0facab88-24f8-4dfe-b443-7572b1cc7210/client.mjs",
+          "http://127.0.0.1:58083/runs/0facab88-24f8-4dfe-b443-7572b1cc7210/client.mjs",
+          "http://127.0.0.1:58083/runs/0facab88-24f8-4dfe-b443-7572b1cc7210/client.mjs"
+        ]
+      },
+      {
+        "requestId": "74732.7",
+        "sequence": 93,
+        "tuple": {
+          "operationId": "0facab88-24f8-4dfe-b443-7572b1cc7210-background",
+          "cartId": "background",
+          "productId": "background-02",
+          "price": 99
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:58083/runs/0facab88-24f8-4dfe-b443-7572b1cc7210/client.mjs",
+          "http://127.0.0.1:58083/runs/0facab88-24f8-4dfe-b443-7572b1cc7210/client.mjs",
+          "http://127.0.0.1:58083/runs/0facab88-24f8-4dfe-b443-7572b1cc7210/client.mjs"
+        ],
+        "response": {
+          "status": 200,
+          "url": "http://127.0.0.1:58083/runs/0facab88-24f8-4dfe-b443-7572b1cc7210/api/cart"
+        },
+        "finishedSequence": 127,
+        "body": {
+          "operationId": "0facab88-24f8-4dfe-b443-7572b1cc7210-background",
+          "cartId": "background",
+          "productId": "background-02",
+          "price": 99,
+          "cartCount": 1,
+          "admittedCount": 2
+        },
+        "bodyHash": "b91fe4e8e1ad384f2ac890b74eda12b47dce1e441f8004013ea91a8e38b559a5"
+      }
+    ],
+    "closed": false,
+    "errors": []
+  },
+  "links": [
+    {
+      "id": "intent-request",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "request-server",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "server-response",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "response-browser",
+      "status": "mismatched",
+      "evidence": []
+    },
+    {
+      "id": "browser-screen",
+      "status": "mismatched",
+      "evidence": []
+    }
+  ],
+  "captures": {
+    "before": {
+      "status": "captured",
+      "file": "before.png",
+      "renderer": {
+        "epoch": "ebea489c-cc18-43af-8a0f-0d32f3d5d893",
+        "id": 5,
+        "hash": "93090fc9decd8daaed0b4d724d1aeb1f43f9ff4788f50c3644a8c9f6297f390c"
+      }
+    },
+    "paused-server": {
+      "status": "captured",
+      "file": "paused-server.png",
+      "renderer": {
+        "epoch": "ebea489c-cc18-43af-8a0f-0d32f3d5d893",
+        "id": 9,
+        "hash": "728b573855689c6545bc789d616822282c3061cb9f25430f1e7894f0e5200c50"
+      }
+    }
+  },
+  "failures": [
+    "Application progress deadline exceeded; no request retry or automatic continuation"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0004/cursor/0facab88-24f8-4dfe-b443-7572b1cc7210",
+  "activeSessionIds": [],
+  "backend": {
+    "runId": "0facab88-24f8-4dfe-b443-7572b1cc7210",
+    "pid": 74692,
+    "origin": "http://127.0.0.1:58083",
+    "executable": "/opt/homebrew/Cellar/node/26.8.2/bin/node",
+    "version": "v26.8.2"
+  },
+  "environment": {
+    "host": {
+      "id": "cursor",
+      "productVersion": "3.21.12",
+      "apiVersion": "1.128.0",
+      "commit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20",
+      "browserBackend": "managed",
+      "chrome": {
+        "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "version": "Google Chrome 153.0.8010.50"
+      }
+    },
+    "api": "1.128.0",
+    "node": "24.18.1",
+    "jsDebug": "1.93.0"
+  },
+  "revision": "f968e02a7219743d121a01176d4a56ac6df1d779",
+  "dirty": false,
+  "sourceHash": "e89d14e46d5763ec88ba02508ae0a8a29d0b3633c7b0aa06c04928a0aee94717",
+  "nativePresentationVerified": false
+}

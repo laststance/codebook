@@ -1,0 +1,30 @@
+{"sequence": 1, "elapsedMs": 0.138958, "wallTime": "2026-09-18T16:08:34.606Z", "type": "run.created", "detail": {"runId": "d817e5ad-1564-4fbd-86d3-4d63765c7852", "scenario": "cancel-launch", "expectedRequests": 2, "expectedLinks": ["intent-request", "request-server", "server-response", "response-browser", "browser-screen"]}}
+{"sequence": 2, "elapsedMs": 3.213792, "wallTime": "2026-09-18T16:08:34.609Z", "type": "breakpoint.requested", "detail": {"participant": "server", "source": "<repo>/artifacts/cycle-0004/cursor/d817e5ad-1564-4fbd-86d3-4d63765c7852/fixture/server.mts", "line": 19}}
+{"sequence": 3, "elapsedMs": 20.5145, "wallTime": "2026-09-18T16:08:34.627Z", "type": "breakpoint.requested", "detail": {"participant": "browser", "source": "<repo>/artifacts/cycle-0004/cursor/d817e5ad-1564-4fbd-86d3-4d63765c7852/fixture/client.mts", "line": 23}}
+{"sequence": 4, "elapsedMs": 82.46525, "wallTime": "2026-09-18T16:08:34.689Z", "type": "fault.launch-held", "detail": {}}
+{"sequence": 5, "elapsedMs": 106.274292, "wallTime": "2026-09-18T16:08:34.712Z", "type": "cleanup.started", "detail": {}}
+{"sequence": 6, "elapsedMs": 133.847458, "wallTime": "2026-09-18T16:08:34.740Z", "type": "session.started", "detail": {"participant": "server", "sessionId": "85da82be-90c5-4d94-86b8-3112e7511052"}}
+{"sequence": 7, "elapsedMs": 141.572792, "wallTime": "2026-09-18T16:08:34.748Z", "type": "focus.changed", "detail": {"sessionId": "85da82be-90c5-4d94-86b8-3112e7511052"}}
+{"sequence": 8, "elapsedMs": 644.620208, "wallTime": "2026-09-18T16:08:35.251Z", "type": "session.terminated", "detail": {"sessionId": "85da82be-90c5-4d94-86b8-3112e7511052"}}
+{"sequence": 9, "elapsedMs": 645.099417, "wallTime": "2026-09-18T16:08:35.251Z", "type": "focus.changed", "detail": {}}
+{"sequence": 10, "elapsedMs": 690.876542, "wallTime": "2026-09-18T16:08:35.297Z", "type": "backend.program-absent", "detail": {"program": "build/server.mjs", "endpointPublished": false}}
+{"sequence": 11, "elapsedMs": 690.929208, "wallTime": "2026-09-18T16:08:35.297Z", "type": "cleanup.completed", "detail": {"backendObservation": "program-verified-endpoint-unpublished", "backendProcessAbsent": true}}
+{"sequence": 12, "elapsedMs": 863.488708, "wallTime": "2026-09-18T16:08:35.470Z", "type": "focus.changed", "detail": {"sessionId": "1da4ee59-92cb-451c-ba71-bd82008a6353"}}
+{"sequence": 13, "elapsedMs": 976.445333, "wallTime": "2026-09-18T16:08:35.583Z", "type": "focus.changed", "detail": {"sessionId": "be2af929-68b4-4abd-a551-4106497b5f5e"}}
+{"sequence": 14, "elapsedMs": 2433.151125, "wallTime": "2026-09-18T16:08:37.039Z", "type": "focus.changed", "detail": {"sessionId": "51fd4b97-13f1-4a88-a551-861abb313302"}}
+{"sequence": 15, "elapsedMs": 2536.408667, "wallTime": "2026-09-18T16:08:37.143Z", "type": "focus.changed", "detail": {}}
+{"sequence": 16, "elapsedMs": 2753.332875, "wallTime": "2026-09-18T16:08:37.360Z", "type": "focus.changed", "detail": {"sessionId": "025087c4-3468-4ed4-8428-5382bb4f43eb"}}
+{"sequence": 17, "elapsedMs": 2865.502167, "wallTime": "2026-09-18T16:08:37.472Z", "type": "focus.changed", "detail": {"sessionId": "850c2e28-6066-4b78-8f76-dd8d2986e6a5"}}
+{"sequence": 18, "elapsedMs": 5848.614125, "wallTime": "2026-09-18T16:08:40.455Z", "type": "focus.changed", "detail": {"sessionId": "2d76a7ef-2788-4d51-a90f-19e27bc2788d"}}
+{"sequence": 19, "elapsedMs": 5855.963833, "wallTime": "2026-09-18T16:08:40.462Z", "type": "focus.changed", "detail": {"sessionId": "a6170b38-b900-4663-91fb-9fd7676e6d30"}}
+{"sequence": 20, "elapsedMs": 5958.510292, "wallTime": "2026-09-18T16:08:40.565Z", "type": "focus.changed", "detail": {"sessionId": "c98e8437-a917-4cb6-9893-b5500b7cf74f"}}
+{"sequence": 21, "elapsedMs": 7482.248375, "wallTime": "2026-09-18T16:08:42.088Z", "type": "focus.changed", "detail": {"sessionId": "8a70a258-7351-4304-9492-463eb246fa17"}}
+{"sequence": 22, "elapsedMs": 7589.28975, "wallTime": "2026-09-18T16:08:42.195Z", "type": "focus.changed", "detail": {}}
+{"sequence": 23, "elapsedMs": 7810.914375, "wallTime": "2026-09-18T16:08:42.417Z", "type": "focus.changed", "detail": {"sessionId": "662895eb-31a4-497c-ba69-78678c89fc4b"}}
+{"sequence": 24, "elapsedMs": 7926.683417, "wallTime": "2026-09-18T16:08:42.533Z", "type": "focus.changed", "detail": {"sessionId": "ed201a43-6794-446d-9c58-adcbe4c2d676"}}
+{"sequence": 25, "elapsedMs": 13004.97725, "wallTime": "2026-09-18T16:08:47.611Z", "type": "focus.changed", "detail": {"sessionId": "7f3edec2-ceca-436b-a227-6696040d541c"}}
+{"sequence": 26, "elapsedMs": 13112.603708, "wallTime": "2026-09-18T16:08:47.719Z", "type": "focus.changed", "detail": {}}
+{"sequence": 27, "elapsedMs": 13354.577375, "wallTime": "2026-09-18T16:08:47.961Z", "type": "focus.changed", "detail": {"sessionId": "a48b7f74-09c9-422d-8b55-fd0ebc604c1f"}}
+{"sequence": 28, "elapsedMs": 13464.111833, "wallTime": "2026-09-18T16:08:48.070Z", "type": "focus.changed", "detail": {"sessionId": "69a08f66-b6b2-438a-b3c0-cd0183fb019b"}}
+{"sequence": 29, "elapsedMs": 15264.17875, "wallTime": "2026-09-18T16:08:49.870Z", "type": "focus.changed", "detail": {"sessionId": "58f99eb6-2725-4994-8407-8c79876b169e"}}
+{"sequence": 30, "elapsedMs": 15372.757292, "wallTime": "2026-09-18T16:08:49.979Z", "type": "focus.changed", "detail": {}}

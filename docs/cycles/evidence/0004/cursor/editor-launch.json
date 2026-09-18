@@ -1,0 +1,17 @@
+{
+  "executable": "/Applications/Cursor.app/Contents/MacOS/Cursor",
+  "arguments": [
+    "--new-window",
+    "--disable-workspace-trust",
+    "--skip-welcome",
+    "--skip-release-notes",
+    "--skip-onboarding",
+    "--user-data-dir",
+    "<owned-runtime:be94c7be2910>/profile",
+    "--extensions-dir",
+    "<owned-runtime:be94c7be2910>/extensions",
+    "--extensionDevelopmentPath",
+    "<repo>/experiments/cycle-0004",
+    "<repo>/artifacts/cycle-0004/cursor/suite-2026-09-18T16-07-03.475Z-758c7f44/workspace"
+  ]
+}

@@ -1,24 +1,23 @@
 # Current project state
 
-Updated: 2026-09-18\
-Product stage: design approved; scoped runtime transport demonstrated in both required editors; native presentation remains unverified\
-Active cycle: [0004 — Correlate one browser-to-server request](docs/cycles/0004-async-request-boundary.md) — implementing\
-Last cycle: [0003 — Browser-scoped runtime transport](docs/cycles/0003-scoped-browser-transport.md) — closed, inconclusive for full native presentation; transport mechanics demonstrated\
+Updated: 2026-09-19\
+Product stage: synchronous and browser/server runtime mechanisms demonstrated; product MCP and learner UI not yet implemented\
+Active cycle: none; selecting the next bounded increment\
+Last cycle: [0004 — Correlate one browser-to-server request](docs/cycles/0004-async-request-boundary.md) — closed, demonstrated on the instrumented fixture\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: [#5](https://github.com/laststance/codebook/issues/5) — open\
-Last cycle issue: [#4](https://github.com/laststance/codebook/issues/4) — closed with committed evidence and explicit inconclusive result\
+Last cycle issue: [#5](https://github.com/laststance/codebook/issues/5) — closure synchronization follows this commit\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
 ## Verified facts
 
-- Architecture B and Study workspace default remain approved; Living book and Guided walkthrough remain required. All share learning items, runtime evidence, recording correspondence and independent personal progress.
-- [Cycle 0003 evidence](docs/cycles/evidence/0003/README.md): **38 unit tests**, **21/21 native runtime cases per host**, clean implementation `8ceb901`, fingerprint `acacf9c45d07548db803a1dd8a6acb2905b5edbb3ef91591a82793454d5a14e5`. Actual TS line 9 and tote-01 / 24 / 0; executed JS/map/TS match; continue produces cart 1 / one completed click.
-- Shared coordinator now supports js-debug-owned Chrome with a debugging pipe and selected-child CDP. Neither editor launches with remote debugging in this route. Exact PNG/renderer receipts, independent control, owned process/panel/session cleanup and decoy survival are verified. The viewport remains a read-only experiment, not product UX.
-- VS Code 1.138.0 / js-debug 1.117.0; Cursor 3.21.12 / API 1.128.0 / js-debug 1.93.0; Chrome 153.0.8010.50; extension-host Node 24.18.1 / Electron 42.10.0; macOS arm64. Forty-second hold control observations: VS Code GET/continue 6.18/9.26 ms, Cursor 1.41/10.04 ms.
-- Review fixes address canonical profile discovery, missing executable modal, destroyed renderer readiness, continuation during reload and terminated-pause presentation; the early-close negative assertion is corrected. Fresh in-host development review of `8ceb901`: NO_FINDINGS. External adversarial/structured reviews timed out. Whole-tree review is not certified converged; managed evidence/docs were added after the source read.
-- Page PNGs inspected in both hosts, with exact hashes and source/event checks over 546 exported files. Independent current native editor before/pause/after images remain **unverified**: CUA refused while the Mac was locked. This makes the full Cycle 0003 presentation criterion inconclusive; a renderer ACK is separate evidence.
-- [Cycle 0001](docs/cycles/0001-click-pause-resume.md) and [Cycle 0002](docs/cycles/0002-cursor-runtime-compatibility.md) remain immutable historical results. Cycle 0002's editor-wide Cursor route and non-converged review are not promoted to product deployment. Its earlier native observations have their original source/version limits. No sibling repository changed.
+- Architecture B and Study workspace remain approved; Living book and Guided walkthrough remain required. Learning items, evidence, recording correspondence and personal progress share one model.
+- [Cycle 0004 evidence](docs/cycles/evidence/0004/README.md): clean implementation `f968e02`, fingerprint `e89d14e46d5763ec88ba02508ae0a8a29d0b3633c7b0aa06c04928a0aee94717`; **26 paired and 40 shared unit tests; 18/18 native cases in each host**. One real click, two distinguishable concurrent POSTs, server TS line 19 at cart 0, browser TS line 23 at result cart 1, then screen cart 1 with one handler. Actual JS/map/TS, pause values, request/response and four page images agree.
+- Forty-second server holds retain responsive control. GET/server continue/browser continue: VS Code 6.41/6.44/2.21 ms; Cursor 6.24/7.04/4.84 ms. These are observations on this machine. Duplicate input/continue, manual interference, decoy isolation, malformed correlation, stale source, missing response, cancellation, late contradictions and cleanup were exercised. Missing images remain partial; failed runs clean themselves without an external DELETE; final public success waits for evidence persistence.
+- Current recorded versions: VS Code 1.138.0 / js-debug 1.117.0; Cursor 3.21.12 / API 1.128.0 / js-debug 1.93.0; Chrome 153.0.8010.50; extension-host Node 24.18.1 / Electron 42.10.0; runner Node 26.8.2; macOS arm64.
+- Shared source extraction retains all previous behavior: native normal/stale-script/source-drift checks pass in both hosts, and their shared source hashes match the final tree. Earlier [Cycle 0003](docs/cycles/0003-scoped-browser-transport.md) proved managed Chrome via debugging pipe without editor-wide CDP. Its full native-presentation criterion remains inconclusive.
+- Independent editor presentation is **unverified**: CUA reported the Mac locked. Current page PNGs and renderer ACKs are distinct evidence. Do not retry against an unchanged lock or bypass it.
+- Six concrete Cycle 0004 review findings were repaired. The latest persistence fix has two focused regression tests and final native matrices. `/review` reached three fixing passes, **not converged**; four outside invocations timed out. No final-product review, PR approval or release claim follows.
 
 ## Capability evidence
 
@@ -26,30 +25,24 @@ A fixture proves mechanisms, not the integrated final product.
 
 | Goal | State | Evidence and remaining gap |
 | --- | --- | --- |
-| G01 | partial | One cart click in both hosts; no natural-language orchestration/full checkout. |
-| G02 | unverified | Shared learning-item design; no wiki/codemap cross-navigation. |
-| G03 | partial | Bound executed-source/value/pause identity and conflicts verified on synchronous fixture; instrumented browser/backend boundary demonstrated in exploratory runs; final matrix/review pending. |
-| G04 | partial | Timestamped page frames; no video, offline synchronized replay UI, or export. |
+| G01 | partial | Single synchronous/paired cart click in both hosts; no chat-driven full checkout. |
+| G02 | unverified | Approved linked-item design; no wiki/codemap navigation. |
+| G03 | partial | Exact executed source, values, target/pause identities and an instrumented async boundary verified; arbitrary repository causal links remain unverified. |
+| G04 | partial | Ordered page frames and evidence; no video or offline synchronized replay/export. |
 | G05 | unverified | No durable learner progress implementation. |
-| G06 | partial | External Node controls temporary authenticated HTTP; owned-browser pipe demonstrated in isolated profiles. No product MCP or packaged ordinary-workspace proof. |
+| G06 | partial | External Node controls temporary HTTP; no extension-owned product MCP or ordinary-workspace package. |
 | G07 | unverified | Approved Study workspace reference; experiment panes do not establish product UX. |
-| G08 | unverified | Living book required; no implementation. |
-| G09 | unverified | Guided walkthrough required; no implementation. |
-| G10 | unverified | No VSIX, installation, or three real-repository use cases/learning feedback. |
-| G11 | partial | Both real hosts pass the scoped synchronous runtime matrix; full package, three modes, recording and native product UX remain unverified. |
-
-## Current bottleneck and next cycle
-
-**Selected next question:** can one browser-to-backend asynchronous action be connected to the correct server pause and response, even with an unrelated concurrent request? Freeze the intended causal links before the run, use actual browser/network and server-debugger evidence, and reject missing or ambiguous correlation. Timing alone is insufficient. Use the proven managed transport while leaving native presentation acceptance open.
-
-**Later required:** full chat-driven checkout; product MCP; recording/replay; wiki/codemap/progress; all three layouts; packaged installation and three real-repository uses in both editors. Their order remains adaptive. Do not spend repeated cycles polishing the solved synchronous transport while these core product gaps remain.
+| G08 | unverified | Living book required; not implemented. |
+| G09 | unverified | Guided walkthrough required; not implemented. |
+| G10 | unverified | No packaged installation, three real-repository uses or learning feedback. |
+| G11 | partial | Both actual editors pass runtime fixtures; full packaged experience and native UX remain unverified. |
 
 ## Exact resume action
 
-Review Cycle 0004's implemented paired request experiment, then run the complete native matrix in both hosts on a clean source revision. Engineering review produced four parent remedies and two fresh in-host remedies; Claude Code timed out, so outside coverage is unavailable. Require the complete two-request observation set and event-driven application waits across debugger holds. The user authorized continuous cycles. When native UI is needed, first confirm the Mac is unlocked and select the dedicated experiment window; no repeated attempt against the same lock condition and no unrelated screenshots.
+Synchronize Cycle 0004 evidence/closure to remote main and issue #5, then open one MCP integration cycle. The next question is whether a real external MCP client can discover supported operations, control the proven runtime, retrieve bound source/evidence, attach a grounded explanation, and reconnect without repeating input. Review the lasting interface using `/plan-devex-review` and `/plan-eng-review`. Select its implementation only after that bounded contract is written. User delegated continuous execution under D008; do not stop after this experiment or re-plan the whole product.
 
-Runtime: all owned matrix/observer editor processes exited, owned browser cleanup verified; private logs/profiles retained under ignored artifacts. Delivery: Cycle 0003 implementation/evidence `9de870c` verified on remote main; issue #4 closed. Current branch `feat/cycle-0004-async-boundary` contains the plan and pending implementation checkpoint. Cycle 0004 exploratory normal and focused-decoy cases passed in both hosts; 26 paired unit tests and 40 shared tests passed. Both hosts passed the expanded 18-case matrix at `9cad86f`; automatic failure cleanup has since been added and passed focused native checks; implementation review found six reporting/cleanup defects across three passes, now fixed with unit/native regressions. Four outside review invocations timed out. Earlier failures remain in ignored artifacts. Final matrix on the last persistence fix remains pending; shared native regressions passed. Implementation review ended after three fixing passes, not converged, with outside coverage unavailable. No CI, PR approval, release, VSIX, or installed-product claim.
+No owned final-matrix process remains. Private profiles/logs stay under ignored artifacts. No CI, PR approval, VSIX, installed-product or publication claim. Full checkout, recording/replay, wiki/codemap/progress, all three layouts and real-repository support are the remaining product work; do not spend repeated cycles polishing the proven transport layer.
 
 ## Full-product completion gate
 
-[Ten consecutive sequential independent reviews](docs/acceptance/FINAL_REVIEW.md) begin only after the complete candidate and G01–G11 evidence exist. **0/10, not started.** A failure requires a fix and restart at reviewer 1. Raphtalia's intended-use acceptance also remains outstanding. Goal #1 stays open.
+[Ten consecutive sequential independent reviews](docs/acceptance/FINAL_REVIEW.md) start only once the complete candidate and G01–G11 evidence exist. **0/10, not started.** Any failure restarts at reviewer 1 after fixes. Raphtalia's intended-use acceptance remains outstanding. Goal #1 stays open.
