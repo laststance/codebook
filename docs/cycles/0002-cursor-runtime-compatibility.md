@@ -3,7 +3,7 @@
 Type: experiment
 Status: closed
 Result: demonstrated
-Delivery: local-only
+Delivery: committed — implementation/evidence 89eb43e; no package or release
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/3
 Goal issue: https://github.com/laststance/codebook/issues/1

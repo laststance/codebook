@@ -50,7 +50,7 @@ This resolves a deployment risk before committing to a lasting MCP contract. The
 
 Verify checkout/remote/issue state. Integrate Cycle 0002 evidence, synchronize/close issue #3, then create the single Cycle 0003 document/issue for scoped transport and investigate that question. The user has authorized continuous cycles through the final product. Preserve native/fixture/review/package distinctions.
 
-Runtime: final owned experiment processes exited; local private profiles/logs remain under ignored artifacts. Delivery: local final-source evidence ready; commit/push and issue sync pending. No CI, PR approval, release, package, or installed-product claim.
+Runtime: final owned experiment processes exited; local private profiles/logs remain under ignored artifacts. Delivery: implementation/evidence committed as `89eb43e`; push and issue sync pending. No CI, PR approval, release, package, or installed-product claim.
 
 ## Full-product completion gate
 
