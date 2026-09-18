@@ -3,7 +3,7 @@
 Type: experiment
 Status: closed
 Result: inconclusive (transport demonstrated; independent native presentation unverified)
-Delivery: committed; remote integration pending
+Delivery: merged; fast-forward integrated and verified on remote main at `9de870c`
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/4
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -56,7 +56,7 @@ Next select one browser-to-backend asynchronous boundary with an unrelated concu
 
 ## Handoff
 
-No owned experiment processes remain. Integrate the recorded experiment/evidence, sync issue #4 as an **inconclusive** closed investigation, then open the single async-boundary cycle. Recheck native before/pause/after presentation when the Mac is unlocked; the failed observer attempt has no screenshot. Do not infer native UI acceptance from a render ACK.
+No owned experiment processes remain. Implementation/evidence integrated on main at `9de870c`; issue #4 is closed as an **inconclusive** investigation. Continue with Cycle 0004's async boundary. Recheck native before/pause/after presentation when the Mac is unlocked; the failed observer attempt has no screenshot. Do not infer native UI acceptance from a render ACK.
 
 
 ## Bounded implementation plan and engineering review

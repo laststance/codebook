@@ -2,11 +2,11 @@
 
 Updated: 2026-09-18\
 Product stage: design approved; scoped runtime transport demonstrated in both required editors; native presentation remains unverified\
-Active cycle: none; Cycle 0004 async-boundary candidate selected, not yet opened\
+Active cycle: [0004 — Correlate one browser-to-server request](docs/cycles/0004-async-request-boundary.md) — planning\
 Last cycle: [0003 — Browser-scoped runtime transport](docs/cycles/0003-scoped-browser-transport.md) — closed, inconclusive for full native presentation; transport mechanics demonstrated\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: none\
-Last cycle issue: [#4](https://github.com/laststance/codebook/issues/4) — closure sync pending committed evidence\
+Active cycle issue: [#5](https://github.com/laststance/codebook/issues/5) — open\
+Last cycle issue: [#4](https://github.com/laststance/codebook/issues/4) — closed with committed evidence and explicit inconclusive result\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
@@ -46,9 +46,9 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Commit/integrate Cycle 0003 results and evidence, sync issue #4 as **inconclusive**, then create and review only Cycle 0004's async-boundary plan. The user authorized continuous cycles. When native UI is needed, first confirm the Mac is unlocked and select the dedicated experiment window; no repeated attempt against the same lock condition and no unrelated screenshots.
+Complete the engineering review of Cycle 0004, then implement its paired request experiment. The user authorized continuous cycles. When native UI is needed, first confirm the Mac is unlocked and select the dedicated experiment window; no repeated attempt against the same lock condition and no unrelated screenshots.
 
-Runtime: all owned matrix/observer editor processes exited, owned browser cleanup verified; private logs/profiles retained under ignored artifacts. Delivery: current branch `feat/cycle-0003-scoped-browser`, source `8ceb901`; cycle/evidence integration and issue sync pending. No CI, PR approval, release, VSIX, or installed-product claim.
+Runtime: all owned matrix/observer editor processes exited, owned browser cleanup verified; private logs/profiles retained under ignored artifacts. Delivery: Cycle 0003 implementation/evidence `9de870c` verified on remote main; issue #4 closed. Current branch `feat/cycle-0004-async-boundary` contains only the next plan/state so far. No CI, PR approval, release, VSIX, or installed-product claim.
 
 ## Full-product completion gate
 
