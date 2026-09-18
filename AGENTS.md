@@ -4,7 +4,7 @@
 
 1. Read [PRODUCT_GOAL.md](PRODUCT_GOAL.md), [PROJECT_STATE.md](PROJECT_STATE.md), and [DEVELOPMENT.md](DEVELOPMENT.md).
 2. Read the active cycle linked by PROJECT_STATE.md, then relevant entries in [DECISIONS.md](DECISIONS.md).
-3. Verify the actual branch, working tree, available tools, and relevant runtime/PR state before relying on saved status. Read the approved design only as needed for the current work.
+3. Verify the actual branch, working tree, available tools, and relevant runtime/PR state before relying on saved status. Use DESIGN.md as the stable GStack design entry point; read the approved design only as needed for the current work.
 
 ## Execute the development loop
 
@@ -12,7 +12,7 @@
 - Keep one active cycle. Plan its next observable outcome, implement or experiment, obtain the specified evidence, and update the cycle plus PROJECT_STATE.md before finishing the session.
 - Choose GStack skills with DEVELOPMENT.md. Pass the current cycle path and scope explicitly; the product design supplies context, not a request to implement the whole product.
 - Follow an invoked skill's applicable requirements for the bounded cycle. Honor explicit scope gates and existing user authorization; do not misrepresent an agent-selected target as a user-named target to bypass a skill gate.
-- The driving agent owns state updates. GStack does not automatically maintain these project files.
+- The driving agent owns state updates. GStack does not automatically maintain these project files. Keep the linked cycle issue consistent with committed records using DEVELOPMENT.md; keep the goal issue open until final acceptance.
 - Use an evidence-backed next action after a failed experiment. An inconclusive result may close an investigation, but never verifies a product capability. Do not repeat the same attempt without a changed hypothesis.
 - Complete the requested cycle and recommend the next one. Continue across additional cycles when the user has authorized that scope. Do not create background jobs, separate tasks, or recurring automations from these instructions alone.
 

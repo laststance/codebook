@@ -22,3 +22,9 @@ Source: agent-selected implementation route within D002; not a new product requi
 Decision: begin with one click → real debugger pause → captured source/values → continue → changed application screen, including basic capture correspondence.  
 Reason: this tests the hardest coupling with less code and setup than full checkout or any polished layout.  
 Revisit: if current-source inspection shows a smaller experiment resolves the same uncertainty better, update the still-unstarted cycle with the reason. This is not permission to remove final capabilities. Status: active candidate.
+
+## D004 — Private GitHub persistence with two initial issues, 2026-09-18
+
+Source: explicit user authorization to create a Laststance repository if GitHub issues or repository persistence help the process.  
+Decision: create private laststance/codebook, preserve project records in Git, and start with one final-goal issue and one current-cycle issue. Agent entry documents are intentionally tracked through project-local ignore exceptions; global ignore settings remain unchanged.  
+Reason: cross-session and off-machine continuity without a premature backlog or a second source of truth. More issues follow evidence; no complete waterfall task tree is created. Status: active.

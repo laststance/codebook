@@ -4,6 +4,9 @@ Updated: 2026-09-18
 Product stage: design approved; development loop established; runtime feasibility unverified  
 Active cycle: [0001 — Click, pause, inspect, continue](docs/cycles/0001-click-pause-resume.md)  
 Active cycle status: ready  
+Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open  
+Active cycle issue: [#2](https://github.com/laststance/codebook/issues/2) — open  
+Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main  
 Current authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 1
 
 ## Facts at handoff
@@ -12,7 +15,8 @@ Current authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 1
 - The approved design and all three mockups are stored in this project. Its two-round specification review resolved two findings and ended at 9/10 with no remaining specification-review findings.
 - No extension implementation or combined browser/debugger/recording proof exists in this project yet. The images are design references.
 - Read-only inspection identified reuse candidates in Entrance, deep-trace-extension, and vscode-debug-mcp. Recheck their current source and dirty state before reuse; this project does not own their existing edits.
-- No external issue board, remote repository, publication pipeline, or supported-version matrix has been established by this setup.
+- The private laststance/codebook repository stores the process and approved references. Goal issue #1 and cycle issue #2 are open. There is no detailed future issue backlog.
+- No publication pipeline or supported-version matrix exists yet; neither is required to begin the bounded experiment.
 
 ## Capability evidence
 
@@ -54,7 +58,7 @@ Read cycle 0001. Inspect the current reusable tools and choose the smallest repr
 
 ## Session handoff
 
-Last completed work: project progression structure and portable approved references.  
+Last completed work: project progression structure, portable approved references, and private GitHub repository/issue tracking.  
 Current experiment result: pending; no runtime attempts yet.  
 Next executable action: bounded cycle-0001 planning as described above.  
 Uncommitted/runtime state: verify with git and the actual environment when resuming.  

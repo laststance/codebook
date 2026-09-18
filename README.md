@@ -28,8 +28,17 @@ Japanese equivalent:
 
 This requests one cycle by default. A request to continue across cycles permits repeating the loop within the authorized scope. Each cycle still records its result before choosing the next one.
 
+## GitHub tracking
+
+Repository: [laststance/codebook](https://github.com/laststance/codebook), private.
+
+- [Final product goal — issue #1](https://github.com/laststance/codebook/issues/1) stays open through all cycles.
+- [Current cycle — issue #2](https://github.com/laststance/codebook/issues/2) tracks the first bounded experiment.
+
+Issues provide a discoverable queue; the linked repository documents own scope, state, and evidence. Create the next cycle issue after learning from the current result, not by decomposing the entire future product now.
+
 ## Current baseline
 
 Product design and three visual directions are approved. The project currently contains planning and development-process documents, not a working extension. [Cycle 0001](docs/cycles/0001-click-pause-resume.md) is ready for bounded planning; no runtime claim is verified yet.
 
-Repository files are the portable project record. GStack's local cache, chat history, and optional GitHub issues are supporting views of that record. Local Git history provides versioning; it is not an off-machine backup.
+Repository files are the portable project record. GStack's local cache, chat history, and optional GitHub issues are supporting views of that record. Commits are also stored in the private GitHub repository. Ignored private recordings still require an explicit durable evidence location.

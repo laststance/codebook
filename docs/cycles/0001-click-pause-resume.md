@@ -5,6 +5,8 @@ Status: ready
 Result: pending  
 Delivery: not-applicable  
 Goal version: 1  
+Tracking issue: [#2](https://github.com/laststance/codebook/issues/2)  
+Goal issue: [#1](https://github.com/laststance/codebook/issues/1)  
 Goal links: G01, G03, G04, G06 (partial evidence only)  
 Source state: [initial project state](../../PROJECT_STATE.md)
 

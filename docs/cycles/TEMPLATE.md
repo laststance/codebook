@@ -5,6 +5,8 @@ Status: ready
 Result: pending  
 Delivery: not-applicable  
 Goal version: 1  
+Tracking issue: link after cycle selection  
+Goal issue: https://github.com/laststance/codebook/issues/1  
 Goal links: Gxx  
 Source state: link to preceding cycle or initial PROJECT_STATE.md
 

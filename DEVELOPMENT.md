@@ -26,10 +26,10 @@ GStack supplies specialized review, debugging, QA, and delivery workflows. It do
 | PROJECT_STATE.md | Latest observed capability state, active cycle, uncertainties, and exact resume action. Update after meaningful evidence and at every session/cycle handoff. |
 | docs/cycles/NNNN-topic.md | One cycle's hypothesis, scope, plan, checks, observations, evidence, and decision. Update throughout the cycle; retain closed results. |
 | DECISIONS.md | Durable product/process/architecture decisions, their source, and supersession. Routine check output stays in the cycle. |
-| docs/designs/ | Approved product baseline and visual references. New operational decisions may supersede its build-order suggestions without rewriting historical approval. |
+| DESIGN.md and docs/designs/ | Stable GStack discovery entry, approved product baseline, and visual references. New operational decisions may supersede its build-order suggestions without rewriting historical approval. |
 | GStack files under ~/.gstack | Supplemental review reports, working context, and caches. Reference or preserve useful results in the cycle; never leave the sole project decision/evidence reference only in a chat or temporary file. |
 
-Git records changes together. An issue board, if later adopted, mirrors cycle IDs and links; it does not become a competing product goal. Do not create an external issue or change publication state just to make a planning tool appear complete.
+Git records changes together. GitHub issues mirror cycle IDs and links; they do not become a competing product goal. Do not create an external issue or change publication state just to make a planning tool appear complete.
 
 ## 1. Resume and select
 
@@ -78,6 +78,8 @@ Browser QA alone does not validate a native VS Code extension, DAP targeting, th
 
 ### Invocation contract
 
+DESIGN.md is a stable discovery entry because installed plan-review skills prefer a root DESIGN.md and otherwise may select the newest file under docs/designs/. It points to the real goal, state, decisions, and approved baseline; it does not duplicate them.
+
 For each review, pass the current cycle file and explain: the final goal is context; this cycle is the review scope; other modes and later capabilities remain in the goal but are not today's implementation. Preserve skill-required artifacts and summarize their relevant findings in the cycle record. Do not assume selecting a recommended option once authorizes every later product change.
 
 Example request for a named scope:
@@ -111,6 +113,19 @@ At closure:
 Run a goal-gap check every closure: which required capability is still furthest from proof, whether the current route still reaches recording and all three modes, and whether the next candidate addresses the actual bottleneck. Run integrated acceptance when multiple capability claims begin to depend on each other, not only after all features are written.
 
 A material change to the product goal is escalated with its evidence and a concrete alternative. The agent can freely adjust the route inside the approved goal. Repeated inconclusive experiments require a smaller question or a different approach; they do not justify quietly dropping a required feature.
+
+## GitHub tracking and reconciliation
+
+The private repository is [laststance/codebook](https://github.com/laststance/codebook). [Goal issue #1](https://github.com/laststance/codebook/issues/1) is the persistent entry point. The active cycle is linked from PROJECT_STATE.md; initially it is [issue #2](https://github.com/laststance/codebook/issues/2).
+
+- Use the goal label for final-product tracking and the cycle label for a bounded cycle. Keep at most one active cycle; other ideas stay as short candidates in PROJECT_STATE.md until selected.
+- A selected cycle gets one document and one issue linked to each other and the goal issue. Link PRs and evidence to that cycle when they exist. Do not invent future implementation issues to fill a roadmap.
+- Repository records own requirements and observations. Issue bodies link those records and summarize the current task; avoid maintaining another full goal checklist that can drift.
+- At cycle closure, commit/push the updated cycle and state, then report the result with the commit/evidence links on its issue and close it. Clearly say demonstrated, falsified, or inconclusive; closed never implies the final goal succeeded. If external updates are unavailable or outside the authorized task, record the pending sync in PROJECT_STATE.md and keep that distinction visible.
+- Open the next cycle issue only after selecting the next question from evidence. The goal issue remains open until PRODUCT_GOAL.md's final acceptance is demonstrated and accepted.
+- On resume, compare issue status with the actual cycle record and code. An issue closed without evidence does not verify a capability; a stale issue summary does not override newer committed observations. Resolve a mismatch and record it before making a completion claim.
+
+These are project tracking operations within the authorized development work. Remote publication, production deployment, and creating separate recurring automations remain separate actions governed by the user's actual request.
 
 ## Completion and restart
 
