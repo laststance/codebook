@@ -1,0 +1,13 @@
+# Local agent state and credentials
+.gstack/
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Large or private runtime evidence; keep sanitized manifests in cycle records
+artifacts/
+
+# Share this project's agent entry points despite user-global ignore rules
+!/AGENTS.md
+!/CLAUDE.md
