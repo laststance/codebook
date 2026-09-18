@@ -9,13 +9,16 @@ import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './constants';
 let stopExtension: (() => Promise<void>) | undefined;
 
 /** Registers explicit trusted commands without reading auto-run instructions from repository files. @example VS Code calls activate(context) */
-export function activate(context: vscode.ExtensionContext): void {
+export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & { globalStorageUri: Pick<vscode.Uri, 'fsPath'> }): void {
   type Running = { endpoint: Awaited<ReturnType<typeof startServer>>; environment: Awaited<ReturnType<typeof createEnvironment>>; descriptorPath: string };
   let starting: Promise<Running> | undefined, running: Running | undefined, stopping: Promise<void> | undefined;
   const start = async () => {
     requireWorkspace();
     if (stopping) throw new Error('Codebook server is stopping; wait for cleanup before starting.');
-    if (running) return running.descriptorPath;
+    if (running) {
+      if (!running.endpoint.listening) throw new Error('Previous server shutdown is incomplete. Retry Codebook: Stop Agent Server before starting a new instance.');
+      return running.descriptorPath;
+    }
     const attempt = starting ??= (async () => {
       const environment = await createEnvironment(context);
       const directory = join(context.globalStorageUri.fsPath, 'agent');
@@ -38,10 +41,17 @@ export function activate(context: vscode.ExtensionContext): void {
     const attempt = stopping ??= (async () => {
       const target = running ?? await starting?.catch(() => undefined);
       if (!target) return;
-      await target.endpoint.close();
+      let finalizationError: unknown;
+      try { await target.endpoint.close(); }
+      catch (error) {
+        // Keep ownership when physical release failed; a persistence-only failure can retire the closed endpoint.
+        if (!target.endpoint.resourcesReleased) throw error;
+        finalizationError = error;
+      }
       // This unique descriptor belongs only to the stopped instance, never to another window.
       await unlink(target.descriptorPath).catch(error => { if (error.code !== 'ENOENT') throw error; });
       target.environment.dispose(); if (running === target) running = undefined;
+      if (finalizationError) throw finalizationError;
     })();
     try { await attempt; } finally { if (stopping === attempt) stopping = undefined; }
   };

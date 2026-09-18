@@ -29,6 +29,9 @@ export class StudyService {
   private stopping = false;
   private shutdownPromise?: Promise<void>;
 
+  /** Lets editor shutdown retire only physically released owners when final evidence persistence fails. @example service.resourcesReleased // true after all release checks */
+  get resourcesReleased(): boolean { return [...this.records.values()].every(record => record.stopped || record.runtime?.view().resourcesReleased === true); }
+
   constructor(readonly environment: StudyEnvironment, readonly storageRoot: string, private readonly now = Date.now) {
     // MCP transports -> one service -> owned runtime. Transport close never replays input.
     this.maintenance = setInterval(() => this.maintain(), MAINTENANCE_INTERVAL_MS);
@@ -174,7 +177,7 @@ export class StudyService {
       nextActions, participants, operation: record.action?.receipt, observed: runtime?.observed, links: runtime?.links,
       runtimeOutcome: runtime?.runtimeOutcome, captureOutcome: runtime?.captureOutcome,
       finalOutcome: terminalReason ? 'not-demonstrated' : runtime?.finalOutcome ?? 'pending-teardown',
-      terminalReason, error: record.error?.describe(), cleanupError: record.cleanupError?.describe(), cleaned: record.stopped, activeSessionIds: runtime?.activeSessionIds ?? [],
+      terminalReason, error: record.error?.describe(), cleanupError: record.cleanupError?.describe(), cleaned: record.stopped, resourcesReleased: runtime?.resourcesReleased ?? record.stopped, activeSessionIds: runtime?.activeSessionIds ?? [],
       captures: Object.entries(runtime?.captures ?? {}).map(([phase, capture]) => ({ phase, status: capture.status, error: capture.error, uri: capture.status === 'captured' ? this.uri(record.id, `images/${phase}`) : undefined })),
       explanations: [...record.explanations.values()].map(value => this.uri(record.id, `explanations/${value.id}`)),
       eventsUri: this.uri(record.id, 'events/0'), runUri: this.uri(record.id) };

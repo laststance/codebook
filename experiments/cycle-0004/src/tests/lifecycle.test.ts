@@ -106,7 +106,8 @@ test('one participant release failure still releases the other debugger and brow
     failClose = false; await run.cleanup();
     // Assert
     assert.deepEqual(released.slice(0, 4), ['server', 'browser', 'debugger', 'viewport']);
-    assert.equal(partial.cleaned, false); assert.match(partial.failures.join('\n'), /server CDP close/); assert.equal(run.view().cleaned, true);
+    assert.equal(partial.cleaned, false); assert.equal(partial.resourcesReleased, false); assert.match(partial.failures.join('\n'), /server CDP close/);
+    assert.equal(run.view().cleaned, true); assert.equal(run.view().resourcesReleased, true);
   } finally { failClose = false; await run.cleanup(); await rm(directory, { recursive: true }); }
 });
 
@@ -143,7 +144,7 @@ test('pending or failed final evidence persistence never publishes a demonstrate
     const pending = run.view(); rejectWrite(new Error('ENOSPC: final evidence write')); await rejected;
     // Assert
     assert.equal(pending.cleaned, false); assert.equal(pending.finalOutcome, 'pending-teardown');
-    assert.equal(run.view().cleaned, false); assert.equal(run.view().status, 'failed');
+    assert.equal(run.view().cleaned, false); assert.equal(run.view().resourcesReleased, true); assert.equal(run.view().status, 'failed');
     assert.equal(run.view().runtimeOutcome, 'not-demonstrated'); assert.equal(run.view().finalOutcome, 'pending-teardown');
     assert.match(run.view().failures.join('\n'), /Final evidence persistence failed: Error: ENOSPC/);
   } finally { run.evidence.save = save; await run.cleanup(); await rm(directory, { recursive: true }); }
@@ -159,7 +160,7 @@ test('an earlier evidence write failure blocks the final manifest before success
     // Act
     await assert.rejects(run.cleanup(), /ENOSPC: event append/);
     // Assert
-    assert.equal(writes, 0); assert.equal(run.view().cleaned, false); assert.equal(run.view().status, 'failed');
+    assert.equal(writes, 0); assert.equal(run.view().cleaned, false); assert.equal(run.view().resourcesReleased, true); assert.equal(run.view().status, 'failed');
     assert.match(run.view().failures.join('\n'), /Final evidence persistence failed/);
   } finally { run.evidence.failure = undefined; await run.cleanup(); await rm(directory, { recursive: true }); }
 });

@@ -93,6 +93,8 @@ export async function startServer(service: StudyService, now = Date.now) {
   const descriptor: ConnectionDescriptor = { url: `${origin}/mcp`, token, instanceId: service.instanceId, workspace: service.environment.workspace, apiVersion: API_VERSION };
   let closePromise: Promise<void> | undefined;
   return { descriptor, expire,
+    get listening(): boolean { return server.listening && !stopping; },
+    get resourcesReleased(): boolean { return service.resourcesReleased; },
     /** Closes transport independently of owned cleanup failures; editor commands can retry service release. @example await endpoint.close() */
     async close(): Promise<void> {
       stopping = true; clearInterval(timer);

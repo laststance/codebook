@@ -64,6 +64,7 @@ export class PairedRun {
   private cleanupPromise?: Promise<void>;
   private cleaning = false;
   private cleaned = false;
+  private resourcesReleased = false;
   private finalizing = false;
   private readonly watchdog: ReturnType<typeof setInterval>;
 
@@ -371,7 +372,7 @@ export class PairedRun {
     const runtimeOutcome = this.status === 'completed' && !this.failures.length ? 'demonstrated' : 'not-demonstrated';
     const captureOutcome = REQUIRED_CAPTURE_PHASES.every(phase => this.captures[phase]?.status === 'captured' && this.captures[phase]?.file && this.captures[phase]?.renderer) ? 'demonstrated' : 'incomplete';
     const finalOutcome = !cleaned ? 'pending-teardown' : runtimeOutcome !== 'demonstrated' ? 'not-demonstrated' : captureOutcome === 'demonstrated' ? 'demonstrated' : 'partial';
-    return { runId: this.id, scenario: this.scenario, status: this.status, cleaned, runtimeOutcome, captureOutcome, finalOutcome, participants: { server: participantView('server'), browser: participantView('browser') }, operation: this.operation, observed: this.observed, network: this.network && { requests: [...this.network.requests.values()], closed: this.network.closed, errors: this.network.errors }, links: this.links, captures: this.captures, failures: this.failures, events: this.evidence.events, artifactDirectory: this.evidence.directory, activeSessionIds: [...this.activeSessions], backend: this.endpoint };
+    return { runId: this.id, scenario: this.scenario, status: this.status, cleaned, resourcesReleased: this.resourcesReleased, runtimeOutcome, captureOutcome, finalOutcome, participants: { server: participantView('server'), browser: participantView('browser') }, operation: this.operation, observed: this.observed, network: this.network && { requests: [...this.network.requests.values()], closed: this.network.closed, errors: this.network.errors }, links: this.links, captures: this.captures, failures: this.failures, events: this.evidence.events, artifactDirectory: this.evidence.directory, activeSessionIds: [...this.activeSessions], backend: this.endpoint };
   }
 
   /** Prevents incomplete or contradictory observations becoming a final success, including late extras after candidate completion. @example run.fail('ambiguous request') */
@@ -457,6 +458,8 @@ export class PairedRun {
     ]));
     if (failures.length) { this.failures.push(...failures.map(reason => `Cleanup incomplete: ${reason}`)); this.evidence.record('cleanup.failed', { failures }); }
     else this.evidence.record('cleanup.completed', { backendObservation: this.endpoint ? 'pid-and-program-verified' : this.nodeLaunch ? 'program-verified-endpoint-unpublished' : 'not-launched', backendProcessAbsent: this.endpoint || this.nodeLaunch ? true : undefined, backendListenerRefused: this.endpoint ? true : undefined });
+    // A storage failure must not hide whether every owned process, session and connection was released.
+    this.resourcesReleased = failures.length === 0;
     try { await this.persist(failures.length === 0); this.cleaned = failures.length === 0; }
     catch (error) {
       // GET must retain failed finalization even if DELETE rejects before it can return a body.

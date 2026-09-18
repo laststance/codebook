@@ -16,7 +16,7 @@ export class ControlledRuntime implements StudyRuntime {
   readonly evidence: Evidence;
   readonly gate = new PauseGate();
   readonly seal: SealedSource;
-  status = 'preparing'; stopped = false; dispatches = 0; releases = 0;
+  status = 'preparing'; stopped = false; resourcesReleased = false; dispatches = 0; releases = 0;
   snapshot?: ParticipantSnapshot;
   operation?: RuntimeView['operation'];
   preparationWait?: Promise<void>;
@@ -43,14 +43,14 @@ export class ControlledRuntime implements StudyRuntime {
   }
   /** Exposes the existing runtime projection shape for typed adapter tests. @example runtime.view().cleaned */
   view(): RuntimeView {
-    return { runId: this.id, scenario: 'normal', status: this.status, cleaned: this.stopped, runtimeOutcome: 'not-demonstrated', captureOutcome: 'incomplete', finalOutcome: this.stopped ? 'not-demonstrated' : 'pending-teardown',
+    return { runId: this.id, scenario: 'normal', status: this.status, cleaned: this.stopped, resourcesReleased: this.resourcesReleased, runtimeOutcome: 'not-demonstrated', captureOutcome: 'incomplete', finalOutcome: this.stopped ? 'not-demonstrated' : 'pending-teardown',
       participants: { server: { sessionId: 'server-session', pause: this.gate.current, phase: this.gate.phase, snapshot: this.snapshot, continued: undefined, conflict: this.gate.conflict },
         browser: { sessionId: undefined, pause: undefined, phase: 'running', snapshot: undefined, continued: undefined, conflict: false } },
       operation: this.operation, observed: undefined, network: undefined, links: [], captures: {}, failures: [], events: this.evidence.events,
       artifactDirectory: this.evidence.directory, activeSessionIds: this.stopped ? [] : ['server-session'], backend: undefined };
   }
   /** Persists cleanup using the real writer so storage failures are observable. @example await runtime.stop() */
-  async stop(): Promise<void> { this.releases += 1; this.gate.invalidate(); await this.evidence.flush(); this.stopped = true; }
+  async stop(): Promise<void> { this.releases += 1; this.gate.invalidate(); this.resourcesReleased = true; await this.evidence.flush(); this.stopped = true; }
   /** Makes service-driven failure visible without implying a real debugger fault. @example runtime.fail('expired') */
   fail(_reason: string): void { this.status = 'failed'; this.gate.invalidate(); }
   /** Supplies sealed history independent of local file contents. @example runtime.source('server').source */
