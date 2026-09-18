@@ -1,0 +1,11 @@
+{
+  "name": "codebook-cycle-0003-probe",
+  "displayName": "codebook Scoped Browser Probe",
+  "publisher": "laststance",
+  "version": "0.0.1",
+  "private": true,
+  "engines": { "vscode": "^1.120.0", "node": ">=24" },
+  "main": "./extension.cjs",
+  "activationEvents": ["onStartupFinished"],
+  "scripts": { "probe": "node runner.mjs" }
+}
