@@ -1,0 +1,27 @@
+{
+  "host": {
+    "id": "cursor",
+    "productVersion": "3.21.12",
+    "apiVersion": "1.128.0",
+    "commit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20"
+  },
+  "executable": "/Applications/Cursor.app/Contents/MacOS/Cursor",
+  "arguments": [
+    "--new-window",
+    "--disable-workspace-trust",
+    "--skip-welcome",
+    "--skip-release-notes",
+    "--skip-onboarding",
+    "--user-data-dir",
+    "<owned-profile>",
+    "--extensions-dir",
+    "<repo>/artifacts/cycle-0006/cursor/history-2026-09-18T20-57-44.343Z-3aeff784/extensions",
+    "--extensionDevelopmentPath",
+    "<repo>/extension",
+    "--extensionTestsPath",
+    "<repo>/extension/dist/nativeStudyBootstrap.js",
+    "<repo>/artifacts/cycle-0006/cursor/history-2026-09-18T20-57-44.343Z-3aeff784/workspace"
+  ],
+  "runnerNode": "v24.21.0",
+  "independentNativeVisualInspection": false
+}

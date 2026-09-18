@@ -1,0 +1,34 @@
+### Result
+[{"name":"roomy-dark","width":520,"height":900,"theme":"dark","zoom":1,"geometry":{"width":520,"scrollWidth":520,"stripHeight":157},"focus":{"tag":"INPUT","outline":"solid","top":440,"stripBottom":157},"overflow":false},{"name":"narrow-dark","width":360,"height":768,"theme":"dark","zoom":1,"geometry":{"width":360,"scrollWidth":360,"stripHeight":181},"focus":{"tag":"INPUT","outline":"solid","top":374,"stripBottom":181},"overflow":false},{"name":"compact-light","width":280,"height":700,"theme":"light","zoom":1,"geometry":{"width":280,"scrollWidth":280,"stripHeight":251},"focus":{"tag":"INPUT","outline":"solid","top":340,"stripBottom":-1004},"overflow":false},{"name":"compact-zoom","width":360,"height":768,"theme":"dark","zoom":2,"geometry":{"width":360,"scrollWidth":360,"stripHeight":790},"focus":{"tag":"INPUT","outline":"solid","top":364,"stripBottom":-2950},"overflow":false},{"name":"high-contrast","width":360,"height":768,"theme":"contrast","zoom":1,"geometry":{"width":360,"scrollWidth":360,"stripHeight":181},"focus":{"tag":"INPUT","outline":"solid","top":374,"stripBottom":181},"overflow":false}]
+### Ran Playwright code
+```js
+await (async page => {
+ const cases = [
+  {name:'roomy-dark',width:520,height:900,theme:'dark',zoom:1},
+  {name:'narrow-dark',width:360,height:768,theme:'dark',zoom:1},
+  {name:'compact-light',width:280,height:700,theme:'light',zoom:1},
+  {name:'compact-zoom',width:360,height:768,theme:'dark',zoom:2},
+  {name:'high-contrast',width:360,height:768,theme:'contrast',zoom:1}
+ ];
+ const results=[];
+ for(const entry of cases) {
+  await page.setViewportSize({width:entry.width,height:entry.height});
+  await page.goto('http://127.0.0.1:62129/context?state=server');
+  await page.getByRole('heading',{name:'Captured values'}).waitFor();
+  await page.evaluate(entry=>{
+   document.documentElement.style.zoom=String(entry.zoom);
+   if(entry.theme==='light') for(const [name,value] of Object.entries({'foreground':'#333333','editor-background':'#ffffff','descriptionForeground':'#616161','button-secondaryBackground':'#e5e5e5','button-secondaryForeground':'#3b3b3b','panel-border':'#e5e5e5','textLink-foreground':'#005fb8','dropdown-background':'#ffffff','dropdown-foreground':'#3b3b3b'}))document.documentElement.style.setProperty('--vscode-'+name,value);
+   if(entry.theme==='contrast'){document.body.classList.add('vscode-high-contrast');document.documentElement.style.setProperty('--vscode-contrastBorder','#ffffff');document.documentElement.style.setProperty('--vscode-focusBorder','#f38518');}
+  },entry);
+  const geometry=await page.evaluate(()=>({width:document.documentElement.clientWidth,scrollWidth:document.documentElement.scrollWidth,stripHeight:document.querySelector('.live-strip').getBoundingClientRect().height}));
+  await page.screenshot({path:'artifacts/cycle-0006/webview-qa/screenshots/after-'+entry.name+'.png',fullPage:true});
+  await page.getByRole('checkbox').focus();
+  const focus=await page.evaluate(()=>({tag:document.activeElement.tagName,outline:getComputedStyle(document.activeElement).outlineStyle,top:document.activeElement.getBoundingClientRect().top,stripBottom:document.querySelector('.live-strip').getBoundingClientRect().bottom}));
+  results.push({...entry,geometry,focus,overflow:geometry.scrollWidth>geometry.width});
+ }
+ return results;
+}
+)(page);
+```
+### Page
+- Page URL: http://127.0.0.1:62129/context?state=server

@@ -1,0 +1,68 @@
+{
+  "findings": [
+    {
+      "severity": "INFORMATIONAL",
+      "confidence": 10,
+      "path": "extension/src/studyWorkspace.ts",
+      "line": 513,
+      "category": "layout-lifecycle",
+      "summary": "Close completes while an accepted arrangement is pending; evenEditorWidths is newly issued afterward.",
+      "evidence": "arrange awaited setEditorLayout then unconditionally called evenEditorWidths; close drained source/archive only. Focused pre-fix test failed because closedWhileArrangementPending was true.",
+      "fix": "Drain accepted arrangement on Close and fence subsequent host layout commands by reader lifetime.",
+      "fingerprint": "extension/src/studyWorkspace.ts:513:layout-lifecycle",
+      "specialist": "core",
+      "action": "fixed"
+    },
+    {
+      "severity": "INFORMATIONAL",
+      "confidence": 9,
+      "path": "extension/src/studyWorkspace.ts",
+      "line": 195,
+      "category": "testing",
+      "summary": "The failed-understanding retry path is untested: explicit Retry clears the save error without retrying the learner decision.",
+      "fix": "Retain the failed explicit learner intent with its original participant, source hash and idempotency ID, and replay it only after the learner chooses Retry. Add a controller-level failure/recovery test that preserves the old checkbox while storage fails, then saves exactly one decision and updates the checkbox after explicit retry.",
+      "evidence": "understand creates the decision inline in library.decide (224), but catch only reports \"Not saved\" and discards the intent (225). action(retry) deletes the progress error, then runs \"this.progress = await this.library!.readProgress()\" and retries only pendingArchives (196-198); it never calls decide. A deterministic harness executing the current methods injected failure on the first decide call, recovered storage, and invoked action(retry): decisionCallsAfterRetry=1, savedUnderstandingAfterRetry=false, errorsAfterRetry=[]. D6.3 specifies \"Not saved\" and Retry with prior persisted state retained, and extension/README.md describes Retry Study Storage as explicit recovery. learning.test.ts checks library failure/retained bytes, while webview QA checks only that clicking Retry emits its message; neither exercises the controller recovery end to end.",
+      "test_stub": "test('retrying a failed understanding save persists the original learner choice once', async () => { /* Arrange readable progress with no decisions and a decide write that fails once. */ await assert.rejects(reader.understand(true), /storage failure/); assert.equal(reader.inspect().view.model.selectedUnderstanding.understood, false); await reader.action('retry'); const progress = await library.readProgress(); assert.equal(progress.decisions.length, 1); assert.equal(progress.decisions[0].item, 'server'); assert.equal(progress.decisions[0].sourceHash, originalServerHash); assert.equal(progress.decisions[0].understood, true); assert.equal(reader.inspect().view.model.selectedUnderstanding.understood, true); });",
+      "fingerprint": "extension/src/studyWorkspace.ts:195:testing",
+      "specialist": "testing",
+      "action": "fixed"
+    },
+    {
+      "severity": "INFORMATIONAL",
+      "confidence": 10,
+      "path": "extension/src/ui/studyHtml.ts",
+      "line": 65,
+      "category": "red-team",
+      "summary": "Saved failed or partial studies lose their outcome and failure reason at the reader boundary, so reopening them shows only a generic history/not-running state.",
+      "fix": "Render the selected study's terminal state, final outcome and recorded reason in a dedicated text status, independently of the current runtime strip. Preserve that status after service retirement and reload, and cover a failed/partial archive in the browser regression.",
+      "evidence": "captureStudy retains `reason: state.terminalReason ?? state.cleanupError?.message`; StudyWorkspace.message sends `state`, `terminal`, `reason` and `finalOutcome`. However, studyClient renders `Runtime — ${message.liveState ?? 'not running'}` and the observation label only; it never displays study.state, study.finalOutcome or study.reason. A deterministic harness executing the actual studyClient script with a retired archive `{state:'stopped', terminal:true, finalOutcome:'not-demonstrated', reason:'Study wall deadline expired; history only.'}` produced runtimeText='Runtime — not running', errorText='', reasonVisibleAnywhere=false and outcomeVisibleAnywhere=false. This is controller-to-view code-path evidence, not native visual QA. D6.3 requires the partial-run reason and ended-run label to remain available with historical moments; the omission also hides asynchronous prerequisite failures once their records become stopped.",
+      "test_stub": "test('reloaded failed study keeps its recorded outcome and reason visible', async () => { /* Arrange a validated saved terminal archive with finalOutcome: 'not-demonstrated' and reason: 'Study wall deadline expired; history only.'; retire the service, reopen the archive and post the resulting StudyViewMessage to the real reader client. */ await expect(page.getByText('Study wall deadline expired; history only.', { exact: true })).toBeVisible(); await expect(page.getByText(/not.demonstrated/i)).toBeVisible(); });",
+      "fingerprint": "extension/src/ui/studyHtml.ts:65:red-team",
+      "specialist": "red-team",
+      "action": "fixed"
+    },
+    {
+      "severity": "INFORMATIONAL",
+      "confidence": 10,
+      "path": "extension/src/studyWorkspace.ts",
+      "line": 107,
+      "category": "reveal-success",
+      "summary": "Captured source reveal resolved successfully after renderer source open failed.",
+      "specialist": "adversarial",
+      "fingerprint": "extension/src/studyWorkspace.ts:107:reveal-success",
+      "action": "fixed"
+    },
+    {
+      "severity": "INFORMATIONAL",
+      "confidence": 10,
+      "path": "extension/src/studyWorkspace.ts",
+      "line": 262,
+      "category": "offline-history",
+      "summary": "Unavailable current source prevented loading self-contained saved history.",
+      "specialist": "adversarial",
+      "fingerprint": "extension/src/studyWorkspace.ts:262:offline-history",
+      "action": "fixed"
+    }
+  ],
+  "coverage": "Reused contexts; outside unavailable; fixing pass not fixed-tree certification"
+}

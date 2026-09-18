@@ -1,0 +1,72 @@
+{
+  "revision": "c873b43a0d744c539b4fff8d5ea4080aa3146bda",
+  "sourceFingerprint": "f9836a7d23a8b9cdacb0b6babfcd0927aa443b2808969640e53e8d13b9345d46",
+  "hosts": {
+    "vscode": {
+      "normal": {
+        "passed": true,
+        "suite": "normal-2026-09-18T20-56-24.592Z-c8c05a1c",
+        "nativeCapturedSelection": true,
+        "restartWithoutRuntime": true,
+        "foreignDraftPreserved": true,
+        "finalOutcome": "demonstrated",
+        "learnerDecisions": 0
+      },
+      "history": {
+        "passed": true,
+        "suite": "history-2026-09-18T20-56-32.225Z-b828fe26",
+        "nativeCapturedSelection": true,
+        "restartWithoutRuntime": true,
+        "foreignDraftPreserved": true,
+        "finalOutcome": "partial",
+        "learnerDecisions": 1
+      },
+      "mcpRegressions": {
+        "passed": 3,
+        "cases": [
+          "normal",
+          "hold",
+          "source-drift"
+        ],
+        "suite": "suite-2026-09-18T20-56-39.712Z-fe0a3d76"
+      }
+    },
+    "cursor": {
+      "normal": {
+        "passed": true,
+        "suite": "normal-2026-09-18T20-57-30.392Z-0f895755",
+        "nativeCapturedSelection": true,
+        "restartWithoutRuntime": true,
+        "foreignDraftPreserved": true,
+        "finalOutcome": "demonstrated",
+        "learnerDecisions": 0
+      },
+      "history": {
+        "passed": true,
+        "suite": "history-2026-09-18T20-57-44.343Z-3aeff784",
+        "nativeCapturedSelection": true,
+        "restartWithoutRuntime": true,
+        "foreignDraftPreserved": true,
+        "finalOutcome": "partial",
+        "learnerDecisions": 1
+      },
+      "mcpRegressions": {
+        "passed": 3,
+        "cases": [
+          "normal",
+          "hold",
+          "source-drift"
+        ],
+        "suite": "suite-2026-09-18T20-57-59.157Z-71345f2e"
+      }
+    }
+  },
+  "unitTests": {
+    "product": 63,
+    "shared": 44,
+    "paired": 28
+  },
+  "webviewChecks": 27,
+  "independentNativePixels": "unverified; locked desktop",
+  "finalProductReview": "0/10, not started"
+}

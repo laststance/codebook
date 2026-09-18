@@ -1,0 +1,39 @@
+$ pnpm build && node --test dist/tests/*.test.js
+$ pnpm --dir ../cycle-0001 build && tsc -p tsconfig.json && tsc -p fixture/tsconfig.json
+$ tsc -p tsconfig.json && tsc -p fixture/tsconfig.json
+✔ cancelled-backend observation detects its exact script process and excludes a prefix-sharing argument (93.112834ms)
+✔ cleanup closes both owned source tabs even when closing a tab replaces its siblings handles (11.18975ms)
+✔ a normal candidate revoked during successful teardown makes the external case fail (1.064959ms)
+✔ missing image evidence only passes the explicitly injected partial-capture case (0.181208ms)
+✔ explicit cleanup drains a late source tab and prevents post-release evidence (63.708542ms)
+✔ automatic failure cleanup drains a late source tab and prevents post-release evidence (54.800042ms)
+✔ two concurrent continuation calls dispatch once and a foreign participant cannot consume the pause (3.025958ms)
+✔ a rejected debugger continuation fails immediately instead of leaving an unresumable run until its whole-run deadline (1.935208ms)
+✔ a late contradictory request during teardown invalidates a candidate success rather than disappearing with the connection (1.827916ms)
+✔ a completed runtime with one missing image remains partial after owned teardown (1.671083ms)
+✔ one participant release failure still releases the other debugger and browser and preserves retryable cleanup evidence (1.985375ms)
+✔ a failed run releases owned resources without any external delete request (53.495959ms)
+✔ pending or failed final evidence persistence never publishes a demonstrated run (53.697583ms)
+✔ an earlier evidence write failure blocks the final manifest before success bytes are written (2.141292ms)
+✔ a complete selected response cannot certify success before the late background request is observed (1.133583ms)
+✔ both legal request and response arrival orders produce the same selected chain (0.330167ms)
+✔ two requests sharing an operation identity remain ambiguous even when their carts differ (0.116208ms)
+✔ a redirected HTTP hop cannot reuse an earlier request identity as successful evidence (0.072541ms)
+✔ cached and service-worker responses never certify the direct fixture request boundary (0.586667ms)
+✔ missing identity, absent initiator and oversized request data stay explicit failures (0.146375ms)
+✔ missing transport completion, malformed base64 and oversized responses cannot supply snapshot values (0.158625ms)
+✔ a late third request invalidates a previously closed candidate instead of being ignored (0.083209ms)
+✔ a response with a different operation identity cannot masquerade as the selected result (0.071291ms)
+✔ the actual Node child remains selectable without querying a launcher that has no CDP target (11.945584ms)
+✔ a forty-second server pause does not exhaust the active application deadline (0.33975ms)
+✔ overlapping participant stops exclude their union rather than double-counting pause time (0.062958ms)
+✔ the actual runner fails a normal candidate revoked after successful owned teardown (16.693ms)
+✔ the actual runner fails a normal candidate whose final image evidence is partial (2.098625ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 28
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 278.346208

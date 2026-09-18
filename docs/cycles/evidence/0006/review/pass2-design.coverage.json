@@ -1,0 +1,50 @@
+{
+  "pass": 2,
+  "reviewStartToken": "c82c286d-bb3d-475d-9d35-c04df1b93fc2",
+  "head": "5c883a1891b75ff47d4ef30f3605b8dddadfee44",
+  "base": "9ce3ddcd04d701633a78ce178329d7d72b1a2f10",
+  "scope": "Cycle 0006 bounded two-item Study workspace; tracked working-tree diff against origin/main plus relevant untracked source.",
+  "context": "Reused the same in-host agent context from the prior engineering planning and pass 1 reviews because the parent encountered the agent thread limit. This is not a fresh-context review or one of the final product reviewers.",
+  "sourceReadCompletedAt": "2026-09-18T20:40:27.860787+00:00",
+  "concurrentWorkLimit": "Parent was repairing pass 2 core layout-close lifetime handling and testing finding about retrying a failed understanding intent. These specialist results do not certify the post-repair tree or supersede those findings. The performance paths were last re-read at StudyWorkspace SHA256 8e5fd13c0eb21e165f1ff316686e429531ffade78b940c798dfaa933dc73eb76; layout/intent repairs were outside this lens conclusion.",
+  "findings": 0,
+  "limitations": [
+    "No native editor runs or native-pixel acceptance. Desktop pixel acceptance remains blocked by the known lock.",
+    "No product code edits, test additions, dependency installation, external-provider calls, or delegation.",
+    "Serena symbol overview was previously attempted but unavailable: Active language servers: []; bounded direct source inspection used."
+  ],
+  "specialist": "design",
+  "method": "Applied current review/design-checklist.md, DESIGN.md and active D6 contract. Read complete generated-HTML/CSS files and current projection plumbing. Calibrated to intentionally approved native host theme and bounded Operate/Read surface.",
+  "detector": {
+    "command": "bun --no-env-file run <home>/.claude/skills/gstack/bin/gstack-design-detect.ts probe --host claude",
+    "result": "IMPECCABLE_NOT_CACHED",
+    "scan": "Not run; no installation or fetch.",
+    "ignoredRules": [],
+    "ignoredFiles": [],
+    "ignoredValues": [],
+    "scope": "Explicit delegated design lens includes untracked generated-HTML .ts files that the prior tracked-diff classifier did not recognize as frontend."
+  },
+  "checks": [
+    "Stable runtime controls, distinct current vs historical identity, visible loading replacement, explicit storage errors, accessible associated tabs and bounded overflow remain aligned with D6.",
+    "Flow controls are outside the hidden selected-content container; actual compiled browser flow retained focus before, during, and after a loading projection.",
+    "Existing five size/theme variants and previous 200% focus repair evidence were reviewed as browser-only artifacts; no desktop/native or actual screenreader acceptance claimed."
+  ],
+  "validation": {
+    "browser": "Existing http://127.0.0.1:62129 QA server with actual compiled webviews and deterministic bridge.",
+    "proof": "artifacts/cycle-0006/review/pass2-design-focus.txt",
+    "result": {
+      "before": "BUTTON/browser/flow",
+      "during": "BUTTON/browser/flow",
+      "after": "BUTTON/browser/flow",
+      "focusPreserved": true,
+      "nextTab": "Focus application"
+    },
+    "session": "cycle6-design-pass2; isolated named browser closed after verification; QA server untouched."
+  },
+  "sourceSha256AtCoverageWrite": {
+    "extension/src/ui/studyHtml.ts": "dfb384fc47d28a4a005ea381d1e0a103d2c145d34052d8aaf4618f939e390e6b",
+    "extension/src/ui/constants.ts": "0c713f5ca248a10786ec425d31ae01020d1888065cb00179cc92044047dfced2",
+    "extension/src/utils/capturedAppHtml.ts": "03f13bca6e44e6919bb5fef7478a880b2654800799832c249951e39692acbac9",
+    "extension/src/studyModel.ts": "3697cae16f7b23682e309c11633af348b52b579dc498ba17c882e1f52599644f"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "instanceId": "d4204dc7-78bc-448d-9b89-3c63ee6370c6",
+  "apiVersion": "1.0",
+  "workspace": "<repo>/artifacts/cycle-0005/cursor/suite-2026-09-18T20-57-59.157Z-71345f2e/workspace",
+  "host": {
+    "id": "cursor",
+    "productVersion": "3.21.12",
+    "apiVersion": "1.128.0"
+  },
+  "prerequisites": {
+    "ready": true,
+    "missing": []
+  },
+  "build": {
+    "revision": "c873b43a0d744c539b4fff8d5ea4080aa3146bda",
+    "dirty": false,
+    "sourceHash": "f9836a7d23a8b9cdacb0b6babfcd0927aa443b2808969640e53e8d13b9345d46"
+  }
+}

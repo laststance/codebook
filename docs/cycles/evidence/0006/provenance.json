@@ -1,0 +1,511 @@
+{
+  "revision": "c873b43a0d744c539b4fff8d5ea4080aa3146bda",
+  "sourceFingerprint": "f9836a7d23a8b9cdacb0b6babfcd0927aa443b2808969640e53e8d13b9345d46",
+  "files": [
+    {
+      "raw": "artifacts/cycle-0006/vscode/normal-2026-09-18T20-56-24.592Z-c8c05a1c/result.json",
+      "shared": "vscode/normal/result.json",
+      "rawSha256": "858b66b1e2475446b5d2ed0f14faeb222f0811429ff1ce53883f3826a9d35134",
+      "sharedSha256": "81d471e7b084e29305de2c267f7b27ba1df9f56126f36f9b63ee42854b8c7706"
+    },
+    {
+      "raw": "artifacts/cycle-0006/vscode/normal-2026-09-18T20-56-24.592Z-c8c05a1c/transcript.json",
+      "shared": "vscode/normal/transcript.json",
+      "rawSha256": "5c4f45086ed682106a78697d7617357aa28c1ae6609ac5874b08b3bc0b2baaa4",
+      "sharedSha256": "73fc770f201d415e895809a55aded0005c3a98658d2c359d20c0985d82aaca18"
+    },
+    {
+      "raw": "artifacts/cycle-0006/vscode/normal-2026-09-18T20-56-24.592Z-c8c05a1c/launch.json",
+      "shared": "vscode/normal/launch.json",
+      "rawSha256": "6e0a28fc3ac8f6b1edf236a334677f2462f4782bc28cae00d63b9ad384334c68",
+      "sharedSha256": "7aadf9bb0b0481f2aa006c54f0a61162cbe9612b6b8ce948b07222008b34571e"
+    },
+    {
+      "raw": "artifacts/cycle-0006/vscode/normal-2026-09-18T20-56-24.592Z-c8c05a1c/reload-0.json",
+      "shared": "vscode/normal/reload-0.json",
+      "rawSha256": "8fd6d80ba88df1f61d13c7570c498c437e3a7ddfe9f1428ec58d11af6dbe5c5c",
+      "sharedSha256": "1609bbc5ea318f6220600bf42f651421357b6e5f967862ea9d6c08f045aadf31"
+    },
+    {
+      "raw": "artifacts/cycle-0006/vscode/history-2026-09-18T20-56-32.225Z-b828fe26/result.json",
+      "shared": "vscode/history/result.json",
+      "rawSha256": "aa93b081a5291ef9eb0515541206121db4797cf62ec2fbc7ca4b35875beeeeea",
+      "sharedSha256": "b419a5d7a9a847e8843f0d9c87e222593e1f309c5c326ad43ebf27fc5bcfe02f"
+    },
+    {
+      "raw": "artifacts/cycle-0006/vscode/history-2026-09-18T20-56-32.225Z-b828fe26/transcript.json",
+      "shared": "vscode/history/transcript.json",
+      "rawSha256": "67fa6df9e9cbcc3ad3633fc36c736869046a880e1142eb91098b8694ce7b810e",
+      "sharedSha256": "511e4d83cd8fc9adf5c46b52cc6b6b58c1edab4e325cf2fffbc496a765182601"
+    },
+    {
+      "raw": "artifacts/cycle-0006/vscode/history-2026-09-18T20-56-32.225Z-b828fe26/launch.json",
+      "shared": "vscode/history/launch.json",
+      "rawSha256": "f9d44f8fd97280d6b4ffe18542bde2f32af81f63fab922ba5a86c426de495211",
+      "sharedSha256": "55ca1ef74ed6ebd245cdfbf9978f9e8cc13e3d92d7e53d62dafbeae94339a8c1"
+    },
+    {
+      "raw": "artifacts/cycle-0006/vscode/history-2026-09-18T20-56-32.225Z-b828fe26/reload-0.json",
+      "shared": "vscode/history/reload-0.json",
+      "rawSha256": "c4a365844051381f0cc5c40b99748772eb2cbb2c5e2652ae61fd77d060ab417e",
+      "sharedSha256": "d3c6cfa2c19044ff33df81af03a0b9ddd8f1e523d14f800af0b23b90c33ce1e9"
+    },
+    {
+      "raw": "artifacts/cycle-0006/cursor/normal-2026-09-18T20-57-30.392Z-0f895755/result.json",
+      "shared": "cursor/normal/result.json",
+      "rawSha256": "3a636b8e7fca884bb565c6e13c909bde131e4b54c4890084e5b8739640c4904c",
+      "sharedSha256": "15ecc19668ccc82c009049b8f1cad35605b34b1ad8c7dc831ec6caae3f8d1b36"
+    },
+    {
+      "raw": "artifacts/cycle-0006/cursor/normal-2026-09-18T20-57-30.392Z-0f895755/transcript.json",
+      "shared": "cursor/normal/transcript.json",
+      "rawSha256": "a9c74a85249f44ba2e8b4ef2e256d25b03929dabd91e6510fd4b5614ecdae89b",
+      "sharedSha256": "4ff374809cafce011ba0b9d2d8b06325d30639ed6bed349326e7a41b0ab5e349"
+    },
+    {
+      "raw": "artifacts/cycle-0006/cursor/normal-2026-09-18T20-57-30.392Z-0f895755/launch.json",
+      "shared": "cursor/normal/launch.json",
+      "rawSha256": "e75a431f71f8d2ca3def0143ebfeb867ca87d73f642539379b2b647a05981973",
+      "sharedSha256": "69af37950e932de22aaf3dfecbfdb6e6c4a161f028065cd7b7e3db776dfa281f"
+    },
+    {
+      "raw": "artifacts/cycle-0006/cursor/normal-2026-09-18T20-57-30.392Z-0f895755/reload-0.json",
+      "shared": "cursor/normal/reload-0.json",
+      "rawSha256": "6c749d18ec55ac56b5761507926c4ddac2c4ef3a550309418b8cb1c99161a5b1",
+      "sharedSha256": "f6abd1c7d253936359b94b1e236032ee3712c26b6b3272155acb0feeb0b4233b"
+    },
+    {
+      "raw": "artifacts/cycle-0006/cursor/history-2026-09-18T20-57-44.343Z-3aeff784/result.json",
+      "shared": "cursor/history/result.json",
+      "rawSha256": "420f244cd1cf9f856b7b31fbdc2f3f70cdd44ac165d060c128387e5aa661380d",
+      "sharedSha256": "55ae2e81e05e68579768b735ee78933f1a3009a87cda83f42a1f8d8a8aa0da97"
+    },
+    {
+      "raw": "artifacts/cycle-0006/cursor/history-2026-09-18T20-57-44.343Z-3aeff784/transcript.json",
+      "shared": "cursor/history/transcript.json",
+      "rawSha256": "e414c386cac18389799b92806c5e5d29db750b6ba34901a39a21583acaf2b680",
+      "sharedSha256": "4629555cacc433fcc28a0f41590f3d80c0c95f9f0fce2c1cddca4c4a0702ab5c"
+    },
+    {
+      "raw": "artifacts/cycle-0006/cursor/history-2026-09-18T20-57-44.343Z-3aeff784/launch.json",
+      "shared": "cursor/history/launch.json",
+      "rawSha256": "75cff9d1e4dbc3936dd4808fbf584a495e29eda24e893cc8de2a1dc8de0db274",
+      "sharedSha256": "8ee60b8467c3eb2628de057ebebb872d22b51093e4223a2ac4fbd895dbee1e8e"
+    },
+    {
+      "raw": "artifacts/cycle-0006/cursor/history-2026-09-18T20-57-44.343Z-3aeff784/reload-0.json",
+      "shared": "cursor/history/reload-0.json",
+      "rawSha256": "c1f8acdd5d541d58e4e937e84249feab1bc6d11bc0ee7512b4d2e88d314c4e85",
+      "sharedSha256": "b2694230d3ab3eee8648fce3413d6066b0a3aa1da421ccef85c54043ca0aa283"
+    },
+    {
+      "raw": "artifacts/cycle-0005/vscode/suite-2026-09-18T20-56-39.712Z-fe0a3d76/normal/environment.json",
+      "shared": "mcp-regressions/vscode/normal/environment.json",
+      "rawSha256": "e884b0dea544930a4c4c60d2e9fff2166b9bbd066a01da661ed5f4ece3cb8e05",
+      "sharedSha256": "ea7a4a67d064577d8d30b1648221fae648b94989c107e014d9d59f7cc7d525a4"
+    },
+    {
+      "raw": "artifacts/cycle-0005/vscode/suite-2026-09-18T20-56-39.712Z-fe0a3d76/normal/result.json",
+      "shared": "mcp-regressions/vscode/normal/result.json",
+      "rawSha256": "70d0afaf3daa2cc0e07b1ec86da8dac59e387a9ba82673a5f9389ccc5f53a043",
+      "sharedSha256": "5b8c3c3bded78ebccef91d347deffa6a56bd583d81ef5b6e40262e86652abfde"
+    },
+    {
+      "raw": "artifacts/cycle-0005/vscode/suite-2026-09-18T20-56-39.712Z-fe0a3d76/hold/environment.json",
+      "shared": "mcp-regressions/vscode/hold/environment.json",
+      "rawSha256": "e884b0dea544930a4c4c60d2e9fff2166b9bbd066a01da661ed5f4ece3cb8e05",
+      "sharedSha256": "ea7a4a67d064577d8d30b1648221fae648b94989c107e014d9d59f7cc7d525a4"
+    },
+    {
+      "raw": "artifacts/cycle-0005/vscode/suite-2026-09-18T20-56-39.712Z-fe0a3d76/hold/result.json",
+      "shared": "mcp-regressions/vscode/hold/result.json",
+      "rawSha256": "3bbce9e86ea7dbede9168f82d9440757f5f926dcca314cfda955472fb1e3a8a8",
+      "sharedSha256": "c0dc7d8bb3663c9885cbb5a72cb360eaec635be7828a2d354d3218bc31dfcd2c"
+    },
+    {
+      "raw": "artifacts/cycle-0005/vscode/suite-2026-09-18T20-56-39.712Z-fe0a3d76/source-drift/environment.json",
+      "shared": "mcp-regressions/vscode/source-drift/environment.json",
+      "rawSha256": "e884b0dea544930a4c4c60d2e9fff2166b9bbd066a01da661ed5f4ece3cb8e05",
+      "sharedSha256": "ea7a4a67d064577d8d30b1648221fae648b94989c107e014d9d59f7cc7d525a4"
+    },
+    {
+      "raw": "artifacts/cycle-0005/vscode/suite-2026-09-18T20-56-39.712Z-fe0a3d76/source-drift/result.json",
+      "shared": "mcp-regressions/vscode/source-drift/result.json",
+      "rawSha256": "f4e9f429e15410aea0cb1a92277bba9acd385622db51cc1af9ee21a7ee4a40ef",
+      "sharedSha256": "6e22d2d967bdf4acd19815b8938966321601fc231ec854f18a9d73031e58c9cf"
+    },
+    {
+      "raw": "artifacts/cycle-0005/vscode/suite-2026-09-18T20-56-39.712Z-fe0a3d76/results.json",
+      "shared": "mcp-regressions/vscode/results.json",
+      "rawSha256": "a78ae6293f8013da2666ade30b7cea0ad69bb1d099cdd19963a940d773405896",
+      "sharedSha256": "1513bbaa14ccd0ef53faba6771e4a916c48c3ed3eb8867b332c16ae9c579b7ab"
+    },
+    {
+      "raw": "artifacts/cycle-0005/vscode/suite-2026-09-18T20-56-39.712Z-fe0a3d76/teardown.json",
+      "shared": "mcp-regressions/vscode/teardown.json",
+      "rawSha256": "85f314c6357d2eda737e3372a0d64c5098bb8f80f5ca42e61b6ce1f88e42334c",
+      "sharedSha256": "013cb72ef7b1270382c4cd48fd6461a96842f8cfe8630ebd178e1e931aad7649"
+    },
+    {
+      "raw": "artifacts/cycle-0005/cursor/suite-2026-09-18T20-57-59.157Z-71345f2e/normal/environment.json",
+      "shared": "mcp-regressions/cursor/normal/environment.json",
+      "rawSha256": "7b1e2db2b6ffd6d5c45ddb2035a72cb137944206d2ef128c9a2bb9c62e8b5410",
+      "sharedSha256": "2778c564acf83015c1f3ab3b5d0b0f93456026efcc3c1732ec501b9469c44356"
+    },
+    {
+      "raw": "artifacts/cycle-0005/cursor/suite-2026-09-18T20-57-59.157Z-71345f2e/normal/result.json",
+      "shared": "mcp-regressions/cursor/normal/result.json",
+      "rawSha256": "c11d9c4bec2b5bdd5c0e31b11f87e55f125e249e0d96d502af45bc8e1f718069",
+      "sharedSha256": "8c4ea2e2a60daf9df5bcefabd0eecf7dfee53d51ca717607ad904c731b7da3b3"
+    },
+    {
+      "raw": "artifacts/cycle-0005/cursor/suite-2026-09-18T20-57-59.157Z-71345f2e/hold/environment.json",
+      "shared": "mcp-regressions/cursor/hold/environment.json",
+      "rawSha256": "7b1e2db2b6ffd6d5c45ddb2035a72cb137944206d2ef128c9a2bb9c62e8b5410",
+      "sharedSha256": "2778c564acf83015c1f3ab3b5d0b0f93456026efcc3c1732ec501b9469c44356"
+    },
+    {
+      "raw": "artifacts/cycle-0005/cursor/suite-2026-09-18T20-57-59.157Z-71345f2e/hold/result.json",
+      "shared": "mcp-regressions/cursor/hold/result.json",
+      "rawSha256": "d4573ebec7e87424e695477f2120b32f787db77dccda089d77e6ad7da0281831",
+      "sharedSha256": "c7218a671db93ec56206e6a0d173123ab6f938678dbf8b6fbd3fd21beb9bb576"
+    },
+    {
+      "raw": "artifacts/cycle-0005/cursor/suite-2026-09-18T20-57-59.157Z-71345f2e/source-drift/environment.json",
+      "shared": "mcp-regressions/cursor/source-drift/environment.json",
+      "rawSha256": "7b1e2db2b6ffd6d5c45ddb2035a72cb137944206d2ef128c9a2bb9c62e8b5410",
+      "sharedSha256": "2778c564acf83015c1f3ab3b5d0b0f93456026efcc3c1732ec501b9469c44356"
+    },
+    {
+      "raw": "artifacts/cycle-0005/cursor/suite-2026-09-18T20-57-59.157Z-71345f2e/source-drift/result.json",
+      "shared": "mcp-regressions/cursor/source-drift/result.json",
+      "rawSha256": "36c23f5d42e756618b8be6095dc2e1b1a991dea0d9e11a23cdddc5f69a4c6462",
+      "sharedSha256": "5343b34be750431491fb73b3c05b31f5d454e67ab8f30cc3cf880542b2ae6159"
+    },
+    {
+      "raw": "artifacts/cycle-0005/cursor/suite-2026-09-18T20-57-59.157Z-71345f2e/results.json",
+      "shared": "mcp-regressions/cursor/results.json",
+      "rawSha256": "ef083821685298f85e91e3558119f6622913d1fbaab876c98082d8995fb7d94d",
+      "sharedSha256": "fea18a991400841360d7bcbe431dc0c8b2f00d80573153b01fc7718a2cb9286b"
+    },
+    {
+      "raw": "artifacts/cycle-0005/cursor/suite-2026-09-18T20-57-59.157Z-71345f2e/teardown.json",
+      "shared": "mcp-regressions/cursor/teardown.json",
+      "rawSha256": "b919e1ccdf34e5c7230785c5b2894dd55547d1c62683a2d381140624a044964b",
+      "sharedSha256": "013cb72ef7b1270382c4cd48fd6461a96842f8cfe8630ebd178e1e931aad7649"
+    },
+    {
+      "raw": "artifacts/cycle-0006/product-tests.log",
+      "shared": "tests/product-tests.log",
+      "rawSha256": "5eb1508fb8025899073355fc4f414f0e4613791cf0a53f3db2fe61f5cea54121",
+      "sharedSha256": "5eb1508fb8025899073355fc4f414f0e4613791cf0a53f3db2fe61f5cea54121"
+    },
+    {
+      "raw": "artifacts/cycle-0006/shared-tests.log",
+      "shared": "tests/shared-tests.log",
+      "rawSha256": "1f5a36facb601ef8af6f5804fb658957181d1b50c6fe95944e6c9bf28b38ebed",
+      "sharedSha256": "1f5a36facb601ef8af6f5804fb658957181d1b50c6fe95944e6c9bf28b38ebed"
+    },
+    {
+      "raw": "artifacts/cycle-0006/paired-tests.log",
+      "shared": "tests/paired-tests.log",
+      "rawSha256": "c416c0d392c26d3123678bc6b464e3cb39fe0d1fbda8c27331f4b02acb428bbc",
+      "sharedSha256": "c416c0d392c26d3123678bc6b464e3cb39fe0d1fbda8c27331f4b02acb428bbc"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-adversarial.md",
+      "shared": "review/pass1-adversarial.md",
+      "rawSha256": "7f2507a4143edacbce58c780087e97f5a835957bb3142e01346d2c834dbbbe7b",
+      "sharedSha256": "7f2507a4143edacbce58c780087e97f5a835957bb3142e01346d2c834dbbbe7b"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-core.jsonl",
+      "shared": "review/pass1-core.jsonl",
+      "rawSha256": "858623ac0e9714e93eace2b76493abd89308c26c321d9b7d5534a9f2ea8aa234",
+      "sharedSha256": "858623ac0e9714e93eace2b76493abd89308c26c321d9b7d5534a9f2ea8aa234"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-design.coverage.json",
+      "shared": "review/pass1-design.coverage.json",
+      "rawSha256": "630e3f9b257b906acbc9e1ae0f145614f12341a8b016d42efe6fbee8aefac430",
+      "sharedSha256": "630e3f9b257b906acbc9e1ae0f145614f12341a8b016d42efe6fbee8aefac430"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-design.jsonl",
+      "shared": "review/pass1-design.jsonl",
+      "rawSha256": "1e77e55ef0586f32c5a7f79dd235bc1c80464b0a2266a8c7b27cdc33927fda83",
+      "sharedSha256": "d7c46bb0dc488597a042f73eb91d83f012a88866ee2a8b5575482f6f7e83d595"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-maintainability.jsonl",
+      "shared": "review/pass1-maintainability.jsonl",
+      "rawSha256": "ec5c5b742901c93827177a6d55d767ef241ab88265663cab3230f0b62c094304",
+      "sharedSha256": "74f4501518b8691d0ff881e413944681aa4ba7cc5f59e1bd34f39c174311c8f9"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-merged.json",
+      "shared": "review/pass1-merged.json",
+      "rawSha256": "cf36bf610a834e688800973ab3c0569cc7fc843e228844b6e9b0b5f8327c13ca",
+      "sharedSha256": "d593130064f3633513c832ccb0b1879e98e925daec48f59ec6624ec48efb2457"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-performance.coverage.json",
+      "shared": "review/pass1-performance.coverage.json",
+      "rawSha256": "77542960199693ec7de9ea5400ddcdce483a9ebddbd4464e1ba3b12a8c1ed32e",
+      "sharedSha256": "77542960199693ec7de9ea5400ddcdce483a9ebddbd4464e1ba3b12a8c1ed32e"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-performance.jsonl",
+      "shared": "review/pass1-performance.jsonl",
+      "rawSha256": "85fd33413ed9b878b60bde023e2a1217b250d58aca1e6cee1eb42c4b63f1182f",
+      "sharedSha256": "f1c8dd2131c66da67cf3397e43a3915ed767b18ddd1aabdc3fa3d3e5750509df"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-red-team.jsonl",
+      "shared": "review/pass1-red-team.jsonl",
+      "rawSha256": "ec3c6154c75bb294e7a127bec32a0a61577bde1a96e6ad9fabd9ba7771928b57",
+      "sharedSha256": "ec3c6154c75bb294e7a127bec32a0a61577bde1a96e6ad9fabd9ba7771928b57"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-security.jsonl",
+      "shared": "review/pass1-security.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-simplification.jsonl",
+      "shared": "review/pass1-simplification.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass1-testing.jsonl",
+      "shared": "review/pass1-testing.jsonl",
+      "rawSha256": "10702e32501298b553f131d850292ca277978be36e0c48e72be1eeb28590d447",
+      "sharedSha256": "10702e32501298b553f131d850292ca277978be36e0c48e72be1eeb28590d447"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-adversarial.md",
+      "shared": "review/pass2-adversarial.md",
+      "rawSha256": "3a8991d4949f8729e4cb2ab04cf3d97965caf4139960c2e8841e269803a63ecc",
+      "sharedSha256": "3a8991d4949f8729e4cb2ab04cf3d97965caf4139960c2e8841e269803a63ecc"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-core.jsonl",
+      "shared": "review/pass2-core.jsonl",
+      "rawSha256": "33f7de4909a67101915b2db319f858b50ae283bd9ef459a9baffc558617f9ba0",
+      "sharedSha256": "a2ab745d4f4d678087cd04e4a6901e14db5be8e4cca9d331c11291e5a98864c4"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-design.coverage.json",
+      "shared": "review/pass2-design.coverage.json",
+      "rawSha256": "194bb7b8cc52ee095b12016d3d99831330977f39f2ab9823dc44dc9ea96e2bcb",
+      "sharedSha256": "32d0e3741df2ba74f8c5b26d8a507a03fb7e1293ef58e69651f6b65f5c305982"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-design.jsonl",
+      "shared": "review/pass2-design.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-maintainability-security.coverage.json",
+      "shared": "review/pass2-maintainability-security.coverage.json",
+      "rawSha256": "0192a915eac21e4c8e96cf4999e9103d71c8aad0700718cc3cecd49b5cfae663",
+      "sharedSha256": "270a6248c3556c35a6bb2bb0beac5c05157edaf137ba4cd4a725e4bbf2977218"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-maintainability.jsonl",
+      "shared": "review/pass2-maintainability.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-merged.json",
+      "shared": "review/pass2-merged.json",
+      "rawSha256": "da9de73cc7af68cc65883c4fa196624e38f0d210253085885b599e595791b168",
+      "sharedSha256": "e354f0ec14bc8adc0880e4830e81548daae74b4930b5c230a59c432c69d30ded"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-performance.coverage.json",
+      "shared": "review/pass2-performance.coverage.json",
+      "rawSha256": "88455741f3e07309c9a57ae19b33800e1317e6703e3db82aeb6273a670465aff",
+      "sharedSha256": "88455741f3e07309c9a57ae19b33800e1317e6703e3db82aeb6273a670465aff"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-performance.jsonl",
+      "shared": "review/pass2-performance.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-red-team.jsonl",
+      "shared": "review/pass2-red-team.jsonl",
+      "rawSha256": "1b1d685828815e664764709a8dddbb8a4f00e6d5205d4070da27b4c485ea6142",
+      "sharedSha256": "1b1d685828815e664764709a8dddbb8a4f00e6d5205d4070da27b4c485ea6142"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-security.jsonl",
+      "shared": "review/pass2-security.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-simplification.jsonl",
+      "shared": "review/pass2-simplification.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass2-testing.jsonl",
+      "shared": "review/pass2-testing.jsonl",
+      "rawSha256": "32e7af5dabe02bb0c0fc15ef5fb59ee85983ed56b097c3d7f3c261f90879aeb4",
+      "sharedSha256": "32e7af5dabe02bb0c0fc15ef5fb59ee85983ed56b097c3d7f3c261f90879aeb4"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-adversarial.md",
+      "shared": "review/pass3-adversarial.md",
+      "rawSha256": "b796c1a3343a7aaaea3f378bce27570f95ed5232e9b03cda7883d03d50fa6a46",
+      "sharedSha256": "b796c1a3343a7aaaea3f378bce27570f95ed5232e9b03cda7883d03d50fa6a46"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-core.jsonl",
+      "shared": "review/pass3-core.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-design.coverage.json",
+      "shared": "review/pass3-design.coverage.json",
+      "rawSha256": "5d3c16a5d99ca41abfaee3de91cc42d34ada3df27353f1f4f2bdcb73cbc2bc40",
+      "sharedSha256": "4d6c4f2b9ce1f018a2a2d3c7207cd242ef7103e088eb217731562c58d7c26c31"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-design.jsonl",
+      "shared": "review/pass3-design.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-maintainability-security.coverage.json",
+      "shared": "review/pass3-maintainability-security.coverage.json",
+      "rawSha256": "2a58e5102d0ae89eb962e71e72788df8bac434a42e2c876e454c3289c65b0eb1",
+      "sharedSha256": "2a58e5102d0ae89eb962e71e72788df8bac434a42e2c876e454c3289c65b0eb1"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-maintainability.jsonl",
+      "shared": "review/pass3-maintainability.jsonl",
+      "rawSha256": "9e7c92f7000a04fd78f6b159d0f23aaa6f4c9f7474d05ef6e9ca1134dddbc8f9",
+      "sharedSha256": "2b5a9f9e7cce02e9c5d6150dc9248593331e11dd85942eeea7d214d9f52be6f1"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-performance.coverage.json",
+      "shared": "review/pass3-performance.coverage.json",
+      "rawSha256": "d92c687f3be119126a8e8224ab3cfd388dd54d74f02d597041b80010e39de668",
+      "sharedSha256": "d92c687f3be119126a8e8224ab3cfd388dd54d74f02d597041b80010e39de668"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-performance.jsonl",
+      "shared": "review/pass3-performance.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-plan-audit.md",
+      "shared": "review/pass3-plan-audit.md",
+      "rawSha256": "50e08810d9250b216e16d9178893fa4006c32a9e5bb6eea1de77a7429da24200",
+      "sharedSha256": "50e08810d9250b216e16d9178893fa4006c32a9e5bb6eea1de77a7429da24200"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-red-team.jsonl",
+      "shared": "review/pass3-red-team.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-security.jsonl",
+      "shared": "review/pass3-security.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-simplification.jsonl",
+      "shared": "review/pass3-simplification.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/pass3-testing.jsonl",
+      "shared": "review/pass3-testing.jsonl",
+      "rawSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8",
+      "sharedSha256": "42aae4daa4135da3af16a2c64d79facbfc493643ec0af05edc4b96b1e24a01b8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review/plan-audit.md",
+      "shared": "review/plan-audit.md",
+      "rawSha256": "4eedfae58c353e179431b98d50ee078e8dd2d349ab84931b6ac1b17a7c6a7188",
+      "sharedSha256": "4eedfae58c353e179431b98d50ee078e8dd2d349ab84931b6ac1b17a7c6a7188"
+    },
+    {
+      "raw": "artifacts/cycle-0006/webview-qa/report.md",
+      "shared": "webview-qa/report.md",
+      "rawSha256": "5010503f758b884912c85c936645b66a21d4a9f877e773a156d506b5ef8263e8",
+      "sharedSha256": "5010503f758b884912c85c936645b66a21d4a9f877e773a156d506b5ef8263e8"
+    },
+    {
+      "raw": "artifacts/cycle-0006/webview-qa/flow-review-after.txt",
+      "shared": "webview-qa/flow-review-after.txt",
+      "rawSha256": "11eae81efb28997b9749cef8046509c6ecc4dbf2cde4b58b89eda8fe3d0f8deb",
+      "sharedSha256": "11eae81efb28997b9749cef8046509c6ecc4dbf2cde4b58b89eda8fe3d0f8deb"
+    },
+    {
+      "raw": "artifacts/cycle-0006/webview-qa/layout-review-after.txt",
+      "shared": "webview-qa/layout-review-after.txt",
+      "rawSha256": "17359e87eee95820f1b6edc0aeea95892b34978f7392929092540fecf9d6b85a",
+      "sharedSha256": "17359e87eee95820f1b6edc0aeea95892b34978f7392929092540fecf9d6b85a"
+    },
+    {
+      "raw": "artifacts/cycle-0006/webview-qa/screenshots/after-compact-light.png",
+      "shared": "webview-qa/screenshots/after-compact-light.png",
+      "rawSha256": "1385fd1a5f28dd4356dca14840d71444ce7e26465a585f69c5cf776338ecf1c1",
+      "sharedSha256": "1385fd1a5f28dd4356dca14840d71444ce7e26465a585f69c5cf776338ecf1c1"
+    },
+    {
+      "raw": "artifacts/cycle-0006/webview-qa/screenshots/after-compact-zoom.png",
+      "shared": "webview-qa/screenshots/after-compact-zoom.png",
+      "rawSha256": "b16761f12b731d17cc8aa0701ed901c20b317e9ed354a5a83758fa3b2953ef5a",
+      "sharedSha256": "b16761f12b731d17cc8aa0701ed901c20b317e9ed354a5a83758fa3b2953ef5a"
+    },
+    {
+      "raw": "artifacts/cycle-0006/webview-qa/screenshots/after-high-contrast.png",
+      "shared": "webview-qa/screenshots/after-high-contrast.png",
+      "rawSha256": "dea87ee5b4d477cf48f3c1d99ce835a70c2910e5b0b0a76507d60a10acf8455f",
+      "sharedSha256": "dea87ee5b4d477cf48f3c1d99ce835a70c2910e5b0b0a76507d60a10acf8455f"
+    },
+    {
+      "raw": "artifacts/cycle-0006/webview-qa/screenshots/after-narrow-dark.png",
+      "shared": "webview-qa/screenshots/after-narrow-dark.png",
+      "rawSha256": "5e2b907dc29eed2bc9092ac2952a14708786ba0c076773fb4eefd8304f2123e7",
+      "sharedSha256": "5e2b907dc29eed2bc9092ac2952a14708786ba0c076773fb4eefd8304f2123e7"
+    },
+    {
+      "raw": "artifacts/cycle-0006/webview-qa/screenshots/after-roomy-dark.png",
+      "shared": "webview-qa/screenshots/after-roomy-dark.png",
+      "rawSha256": "d3ac1e40465816c12a86ae18a8dac57e65c4e2d5bbcd5dcd09e99f185e03e546",
+      "sharedSha256": "d3ac1e40465816c12a86ae18a8dac57e65c4e2d5bbcd5dcd09e99f185e03e546"
+    },
+    {
+      "raw": "artifacts/cycle-0006/attempts.json",
+      "shared": "attempts.json",
+      "rawSha256": "f9c20e0ec8c923080878600c240e085a8fd8b8fdca224e96af10cf715ea0d513",
+      "sharedSha256": "f9c20e0ec8c923080878600c240e085a8fd8b8fdca224e96af10cf715ea0d513"
+    },
+    {
+      "raw": "artifacts/cycle-0006/review-summary.json",
+      "shared": "review-summary.json",
+      "rawSha256": "be85df334d93c0d0d9099683a5e2af294b0d3683905a4f6256ddc40de9d3ed25",
+      "sharedSha256": "be85df334d93c0d0d9099683a5e2af294b0d3683905a4f6256ddc40de9d3ed25"
+    }
+  ],
+  "sanitization": "Allowlisted demo results only. Private descriptors, profiles, tokens, native logs excluded. Local paths and endpoint URLs redacted. Base64 images extracted unchanged with SHA-256 verification. Derived JSON references extracted PNGs; raw/shared hashes are distinct."
+}

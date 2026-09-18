@@ -1,23 +1,24 @@
 # Current project state
 
 Updated: 2026-09-19\
-Product stage: runtime/MCP fixtures demonstrated; connected Study workspace implemented and under native validation\
-Active cycle: [0006 — Study workspace](docs/cycles/0006-study-workspace.md) — validating\
-Last cycle: [0005 — Live study through MCP](docs/cycles/0005-live-study-mcp.md) — closed, demonstrated on the declared demo\
+Product stage: connected study and durable learning mechanisms demonstrated; full native usability unverified\
+Active cycle: none; Cycle 0007 cart-to-confirmation selected for planning\
+Last cycle: [0006 — Study workspace](docs/cycles/0006-study-workspace.md) — closed, mechanisms demonstrated; native usability inconclusive\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: [#7](https://github.com/laststance/codebook/issues/7) — open\
-Last cycle issue: [#6](https://github.com/laststance/codebook/issues/6) — closed with remote evidence `9ce3ddc`\
+Active cycle issue: none\
+Last cycle issue: [#7](https://github.com/laststance/codebook/issues/7) — closure pending evidence push/link\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
 ## Verified facts
 
-- Cycle 0006 current development code passes **63 product tests and 27 webview interaction checks**, plus **44 shared and 28 paired tests**. The two-item Study workspace links outline, exact captured source, values, agent interpretations and observed moments. Versioned learner decisions and bounded archives persist separately from execution. Preliminary native normal/history cases pass in both hosts on fingerprint `f0d84e2f470ba61976e9d5e413720e767850f316d034edc52b2c3f4828e5abeb` (base HEAD `5c883a1`, dirty); subsequent review repairs still require final clean-revision native evidence. This is development evidence, not installed-product or independent native visual acceptance.
+- [Cycle 0006 evidence](docs/cycles/evidence/0006/README.md): clean implementation `c873b43`, fingerprint `f9836a7d23a8b9cdacb0b6babfcd0927aa443b2808969640e53e8d13b9345d46`; **63 product / 44 shared / 28 paired tests, 27 webview checks, learner normal/history and MCP normal/hold/source-drift in each host**. Two linked observations, exact captured source, values, interpretations, durable personal checks and restart without execution are demonstrated. All runtime cleanup completes; unrelated dirty drafts survive. History cases deliberately remain partial when an invisible page cannot supply a pause receipt. Independent native visual/installed acceptance remains unverified.
+- Cycle 0006 repaired 23 distinct findings in three implementation fixing passes; no convergence is certified. Fresh reviewer creation hit the agent-thread limit, reused reviewers are explicitly limited, and no outside-provider result exists. These reviews do not count toward final acceptance.
 - [Cycle 0005 evidence](docs/cycles/evidence/0005/README.md): clean implementation `c813053`, fingerprint `4be3d512c89df69f9ffea3fb26eab59645241e9a3f7a50acd84a1e8e489b5cde`; **33 product / 43 shared / 28 paired unit tests, 6/6 native MCP cases and 3/3 shared native regressions per host**. The real external client discovers, clicks, reads exact pauses/source/images, saves referenced interpretations, continues, reconnects and cleans up. A separate driving-agent smoke completed both stops and recovered a stale reference; its harness exited 0. Earlier failed/partial attempts remain recorded.
 - MCP server hold/state-read measurements: VS Code 40004.70/3.08 ms; Cursor 40005.60/3.00 ms. One input, two interpretations, both exact source/value snapshots, four image receipts and all five instrumented links agree. Closed resource events match disk and remain stable across later runs. Seven implementation-review findings were repaired; three fixing passes reached the review limit without convergence, and four outside invocations timed out. No final review, CI, PR approval or package claim.
 - [Cycle 0004 evidence](docs/cycles/evidence/0004/README.md): clean implementation `f968e02`, fingerprint `e89d14e46d5763ec88ba02508ae0a8a29d0b3633c7b0aa06c04928a0aee94717`; **26 paired and 40 shared unit tests; 18/18 native cases in each host**. One real click, two distinguishable concurrent POSTs, server TS line 19 at cart 0, browser TS line 23 at result cart 1, then screen cart 1 with one handler. Actual JS/map/TS, pause values, request/response and four page images agree.
 - Forty-second server holds retain responsive control. GET/server continue/browser continue: VS Code 6.41/6.44/2.21 ms; Cursor 6.24/7.04/4.84 ms. These are observations on this machine. Duplicate input/continue, manual interference, decoy isolation, malformed correlation, stale source, missing response, cancellation, late contradictions and cleanup were exercised. Missing images remain partial; failed runs clean themselves without an external DELETE; final public success waits for evidence persistence.
-- Current recorded versions: VS Code 1.138.0 / js-debug 1.117.0; Cursor 3.21.12 / API 1.128.0 / js-debug 1.93.0; Chrome 153.0.8010.50; extension-host Node 24.18.1 / Electron 42.10.0; runner Node 26.8.2; macOS arm64.
+- Current recorded versions: VS Code 1.138.0 / js-debug 1.117.0; Cursor 3.21.12 / API 1.128.0 / js-debug 1.93.0; Chrome 153.0.8010.50; extension-host Node 24.18.1 / Electron 42.10.0; runner Node 24.21.0 for Cycle 0006 (26.8.2 for prior cycles); macOS arm64.
 - Shared source extraction retains all previous behavior: native normal/stale-script/source-drift checks pass in both hosts, and their shared source hashes match the final tree. Earlier [Cycle 0003](docs/cycles/0003-scoped-browser-transport.md) proved managed Chrome via debugging pipe without editor-wide CDP. Its full native-presentation criterion remains inconclusive.
 - Independent editor presentation is **unverified**: CUA reported the Mac locked. Current page PNGs and renderer ACKs are distinct evidence. Do not retry against an unchanged lock or bypass it.
 - Six concrete Cycle 0004 review findings were repaired. The latest persistence fix has two focused regression tests and final native matrices. `/review` reached three fixing passes, **not converged**; four outside invocations timed out. No final-product review, PR approval or release claim follows.
@@ -42,11 +43,9 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Finish Cycle 0006 validation and implementation review. Repaired candidate passes 63 product tests, 27 browser checks and the VS Code learner normal/history matrix. Run the same repaired learner cases in Cursor, preserve the current MCP normal/hold/source-drift regressions, and collect portable evidence against the final implementation revision. Update the active cycle and issue #7 only with observed results. Cycle 0005 remains integrated remotely at `9ce3ddc` and issue #6 is closed. User delegated continuous execution under D008; continue to one next product increment after this bounded closure.
+Finish the Cycle 0006 repository/issue reconciliation, then open one Cycle 0007 plan for a reusable cart-to-confirmation scenario. Review its agent contract, selection/step behavior and engineering failure handling before implementation. Reuse the proven target/pause/source evidence and learner library; expand the connected product instead of refining private transport again. D008 authorizes continuous execution. Keep the full checkout, synchronized recording/replay, repository wiki/codemap, two remaining layouts and real-repository support in the final goal.
 
-The first implementation review found selection/lifecycle/persistence races and coverage gaps; fixes and focused regressions are in the working tree. Three full implementation passes found and repaired 23 distinct issues; the third was a fixing pass, so no convergence is certified. Final native regression evidence remains due. The agent thread limit prevented additional fresh specialists; reused reviewers supply explicitly limited coverage and cannot count toward the final ten-review gate. Outside-provider coverage remains unavailable. No CI, PR approval, VSIX, installed-product or publication claim.
-
-Full checkout, synchronized recording/replay, repository wiki/codemap, the two remaining layouts and real-repository support remain product work. Do not spend repeated cycles polishing the proven transport layer. Desktop-lock-dependent native visual checks remain unverified; do not bypass or repeatedly retry the unchanged lock.
+Cycle 0006 source and final host evidence are frozen at `c873b43`. No CI, PR approval, VSIX, installed-product or publication claim exists. Desktop-lock-dependent native visual checks remain unverified; do not bypass or repeatedly retry the unchanged lock.
 
 ## Full-product completion gate
 

@@ -1,9 +1,9 @@
 # Cycle 0006 — Read the live study and retain personal understanding
 
 Type: product-increment
-Status: validating
-Result: pending
-Delivery: local-only
+Status: closed
+Result: inconclusive (native usability); connected mechanisms demonstrated
+Delivery: committed
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/7
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -40,7 +40,7 @@ StudyService owns explicit run state and sealed resources; codebook_reveal contr
 
 ## Validation contract
 
-Pending bounded design/engineering review. Minimum observations: selection links source/explanation/values to the same item and snapshot; history is labeled and cannot continue; explicit Continue uses only inspected current identity; understanding changes only through a learner action and survives restart; source drift is visible without rewriting prior learning; closing UI cannot leak runtime resources or close unrelated tabs; host-specific live outcomes remain separate.
+Contract fixed by the design/engineering review below. Minimum observations: selection links source/explanation/values to the same item and snapshot; history is labeled and cannot continue; explicit Continue uses only inspected current identity; understanding changes only through a learner action and survives restart; source drift is visible without rewriting prior learning; closing UI cannot leak runtime resources or close unrelated tabs; host-specific live outcomes remain separate.
 
 ## Design review contract — 2026-09-19
 
@@ -137,9 +137,9 @@ Overall (lowest rated pass): **3/10 → 9/10** for the specified plan. Litmus: p
 
 ### Design implementation tasks
 
-- [ ] **D1 (P1, human ~4 h / agent ~35 min)** — Add stable item/selection and current-history projection; verify stale/late/partial observation transitions.
+- [x] **D1 (P1, human ~4 h / agent ~35 min)** — Add stable item/selection and current-history projection; verify stale/late/partial observation transitions.
 - [ ] **D2 (P1, human ~5 h / agent ~45 min)** — Compose the owned native outline/app/source/context/moments and focused views; verify foreign tabs and layout ownership in both hosts.
-- [ ] **D3 (P1, human ~3 h / agent ~25 min)** — Persist learner checks and captured-reading history with source review; verify restart, write failures and workspace separation.
+- [x] **D3 (P1, human ~3 h / agent ~25 min)** — Persist learner checks and captured-reading history with source review; verify restart, write failures and workspace separation.
 - [ ] **D4 (P1, human ~3 h / agent ~30 min)** — Implement state/accessibility/theme coverage and verify wide/narrow/zoom/high contrast plus any motion video.
 
 No new deferred TODO is proposed. Full checkout, generated repository wiki, recording/replay, other layouts and distribution remain outside this cycle because they require their own connected evidence, not because they are optional. Engineering review must freeze the actual ownership/storage/API mechanics before implementation.
@@ -233,9 +233,9 @@ NOT in scope: full checkout/general repository profiles (next product increment 
 
 ### Implementation tasks
 
-- [ ] **E1 (P1)** — Pure study projection and versioned learning library; prove selected/current separation, append-only understanding, corruption/limit/write failure and restart isolation.
+- [x] **E1 (P1)** — Pure study projection and versioned learning library; prove selected/current separation, append-only understanding, corruption/limit/write failure and restart isolation.
 - [ ] **E2 (P1)** — Native reader/controller, exact read-only source, live/history viewport lease and owned cleanup; prove layouts/moves/foreign drafts in both hosts without resetting on updates.
-- [ ] **E3 (P1)** — Thin accessible context/app views, outline, source-linked overview/flow, observed moments and explicit control; prove cross-item/stale/error states and keyboard/narrow/theme behavior.
+- [x] **E3 (P1)** — Thin accessible context/app views, outline, source-linked overview/flow, observed moments and explicit control; prove cross-item/stale/error states and keyboard/narrow/theme behavior.
 - [ ] **E4 (P1)** — Native integration and current implementation review, portable evidence, cycle/issue/state sync. Existing user acceptance and final ten-review gate remain outstanding.
 
 ### Independent engineering challenge and completion
@@ -269,3 +269,18 @@ The first testing specialist used fresh context. Further new reviewer creation h
 Pass 2 repaired five further concrete gaps: draining a pending layout command at Close; retaining the original failed learner intent for explicit Retry; loading self-contained history with missing current files; rejecting MCP reveal when the native source did not render; and retaining a terminal study's outcome/reason in the visible reader. The regression suite now has 63 passing product cases, with 44 shared and 28 paired tests also passing. Browser QA passes 27 checks. An acknowledgment-order bug in the browser driver was investigated separately: valid selection preceded a later rendered ACK, so semantic intent is checked independently of transport order. This was a harness correction, not a product behavior failure.
 
 Pass 3 identified one additional combination: current-source unavailability still prevented explicit storage Retry. Source refresh, personal decisions/navigation and archive recovery now run independently with separate error channels. A real temporary library lock plus missing current files reproduced the failure before the correction; the extended controller regression passes afterward. Across three fixing passes: 23 unique findings repaired. The three-pass limit is reached; **not certified converged**, no fourth full pass and no fresh-context or outside-provider approval. Final clean-revision native checks are next.
+
+
+## Observed result and closure — 2026-09-19
+
+Implementation `c873b43a0d744c539b4fff8d5ea4080aa3146bda`, clean fingerprint `f9836a7d23a8b9cdacb0b6babfcd0927aa443b2808969640e53e8d13b9345d46`: learner **normal/history pass in both VS Code and Cursor**; MCP normal, 40-second hold and source-drift regressions also pass separately in each host. The normal runs demonstrate two linked source/value/explanation observations, one click, cart 1 and complete owned cleanup. History runs intentionally withhold an invisible page's pause capture, retain an honest partial outcome, and restore one explicit learner check after reload without execution. Source group movement, actual outline selection, MCP-first adoption, final checkpoint and unrelated dirty-draft preservation are asserted through actual host APIs.
+
+Portable [evidence and reproduction details](evidence/0006/README.md) include manifests, transcripts, captured PNGs, archival reloads, checksums, 63 product / 44 shared / 28 paired tests, 27 webview interaction checks, theme/scale samples and all three review passes. Earlier failed attempts remain in the ledger. The successful clean matrix follows every repair; no code changed afterward.
+
+Result: **inconclusive for full native usability**, because independent actual-window and constrained-window checks could not run while the desktop was locked. **Demonstrated for the connected reading, selection, persistence and runtime mechanisms on the declared demo.** D2/D4/E2 remain unchecked for their native visual acceptance component; E4's tests, development review and portable evidence are recorded, while no complete review convergence or product acceptance is claimed. Twenty-three concrete review findings were repaired; the three-pass limit was reached, fresh-reviewer coverage was limited and outside review unavailable. Final gate remains 0/10.
+
+Decision: **keep** the shared study projection, versioned learner decisions, self-contained history and separate runtime/reader ownership. **Revise** the route toward a multi-step cart-to-confirmation scenario; do not spend another cycle on the already demonstrated one-click transport. Native visual and installed acceptance stay required and visible. No final requirement is removed.
+
+Goal-gap check: G01 still lacks the requested complete purchase narrative; G04/G08/G09/G10 still lack recording, additional modes and ordinary-repository distribution proof. Choose one next increment: define a reusable scenario sequence and drive cart addition through order confirmation with meaningful pauses and explanations. Recording and the later views must consume its same item/observation identities. Plan only this next question before implementing it.
+
+Delivery: implementation and evidence committed for repository integration; no PR, CI, packaging, publication or installed-product claim. Issue #7 is closed only after the evidence commit is pushed and linked. Goal #1 remains open.

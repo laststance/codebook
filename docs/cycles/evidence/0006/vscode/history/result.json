@@ -1,0 +1,487 @@
+{
+  "passed": true,
+  "scenario": "history",
+  "checks": {
+    "environment": {
+      "instanceId": "2cbc1ced-5997-4dac-b615-69718d7a9b1d",
+      "apiVersion": "1.0",
+      "workspace": "<repo>/artifacts/cycle-0006/vscode/history-2026-09-18T20-56-32.225Z-b828fe26/workspace",
+      "host": {
+        "id": "vscode",
+        "productVersion": "1.138.0",
+        "apiVersion": "1.138.0"
+      },
+      "prerequisites": {
+        "ready": true,
+        "missing": []
+      },
+      "build": {
+        "revision": "c873b43a0d744c539b4fff8d5ea4080aa3146bda",
+        "dirty": false,
+        "sourceHash": "f9836a7d23a8b9cdacb0b6babfcd0927aa443b2808969640e53e8d13b9345d46"
+      }
+    },
+    "historyCapture": {
+      "phase": "paused-browser",
+      "status": "failed"
+    },
+    "final": {
+      "instanceId": "2cbc1ced-5997-4dac-b615-69718d7a9b1d",
+      "runId": "c579008d-aa62-4a14-b827-bd1d173d6b28",
+      "runtimeRunId": "47acb216-be87-48a1-b1e0-60df211cd953",
+      "state": "stopped",
+      "runtimeState": "completed",
+      "cleaned": true,
+      "nextActions": [
+        "read-history"
+      ],
+      "participants": {
+        "server": {
+          "snapshotUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/snapshots/fa7a56d1-0cf8-450b-af2a-c4d7a53d7b60%3A1",
+          "sourceUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/snapshots/fa7a56d1-0cf8-450b-af2a-c4d7a53d7b60%3A1/source/typescript",
+          "resumable": false
+        },
+        "browser": {
+          "snapshotUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/snapshots/caa24477-3b45-45e0-93bd-ee6c3a4468aa%3A1",
+          "sourceUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/snapshots/caa24477-3b45-45e0-93bd-ee6c3a4468aa%3A1/source/typescript",
+          "resumable": false
+        }
+      },
+      "observed": {
+        "cartCount": 1,
+        "completedClicks": 1
+      },
+      "finalOutcome": "partial",
+      "captures": [
+        {
+          "phase": "before",
+          "status": "captured",
+          "uri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/images/before"
+        },
+        {
+          "phase": "paused-server",
+          "status": "captured",
+          "uri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/images/paused-server"
+        },
+        {
+          "phase": "paused-browser",
+          "status": "failed"
+        },
+        {
+          "phase": "after",
+          "status": "captured",
+          "uri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/images/after"
+        }
+      ],
+      "explanations": [
+        "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/explanations/6b9d4d5c-4642-4aba-a322-1636d0bf0e99",
+        "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/explanations/463b418e-df37-4fd4-be65-8d69d872cf25"
+      ],
+      "activeSessionIds": [],
+      "eventsUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/events/0",
+      "runUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28"
+    },
+    "oneInput": true,
+    "native": {
+      "host": "Visual Studio Code",
+      "apiVersion": "1.138.0",
+      "node": "24.18.1",
+      "independentVisualInspection": false,
+      "mcpFirstLeaseRetained": true,
+      "layout": {
+        "orientation": 0,
+        "groups": [
+          {
+            "size": 396,
+            "groups": [
+              {
+                "size": 271
+              },
+              {
+                "size": 272
+              }
+            ]
+          },
+          {
+            "size": 396
+          }
+        ]
+      },
+      "presentation": {
+        "revision": 8,
+        "selection": {
+          "participant": "browser",
+          "follow": true,
+          "tab": "live",
+          "studyId": "2cbc1ced-5997-4dac-b615-69718d7a9b1d_c579008d-aa62-4a14-b827-bd1d173d6b28"
+        },
+        "outlineSelection": [
+          "browser"
+        ],
+        "observation": {
+          "id": "caa24477-3b45-45e0-93bd-ee6c3a4468aa:1",
+          "snapshotUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/snapshots/caa24477-3b45-45e0-93bd-ee6c3a4468aa%3A1",
+          "participant": "browser",
+          "capturedAt": "2026-09-18T20:56:36.084Z",
+          "elapsedMs": 2036.168792,
+          "pause": {
+            "sessionId": "caa24477-3b45-45e0-93bd-ee6c3a4468aa",
+            "threadId": 1,
+            "generation": 1
+          },
+          "source": {
+            "text": "import { PRODUCT, BACKGROUND_PRODUCT } from './constants.mjs';\n\nconst runId = document.documentElement.dataset.runId!;\nconst scenario = document.documentElement.dataset.scenario!;\nconst count = document.querySelector('#count')!;\nconst clicks = document.querySelector('#clicks')!;\nconst status = document.querySelector('#status')!;\ninterface CartResult { operationId: string; cartId: string; productId: string; price: number; cartCount: number; admittedCount: number }\n\n/** Sends each fixture request once from the click handler; its headers and body are debugger correlation evidence. @example requestCart('selected', 'run', PRODUCT) */\nasync function requestCart(cartId: string, operationId: string, product: typeof PRODUCT): Promise<CartResult> {\n  const response = await fetch('api/cart', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) }, body: JSON.stringify({ cartId, productId: product.id, price: product.price }) });\n  if (!response.ok) throw new Error(`Cart HTTP ${response.status}`);\n  return response.json();\n}\n\ndocument.querySelector('#add')!.addEventListener('click', () => {\n  void (async () => {\n    status.textContent = 'Two requests pending; waiting for the server.';\n    const selected = requestCart('selected', scenario === 'missing-id' ? '' : runId, PRODUCT);\n    const background = requestCart('background', scenario === 'duplicate-id' ? runId : `${runId}-background`, BACKGROUND_PRODUCT);\n    const [result, backgroundResult] = await Promise.all([selected, background]);\n    count.textContent = String(result.cartCount); // CODEBOOK_BROWSER_STOP\n    clicks.textContent = String(Number(clicks.textContent) + 1);\n    status.textContent = `Selected cart updated; background cart ${backgroundResult.cartCount}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\ndocument.documentElement.dataset.ready = 'true';\n",
+            "hash": "99aef6024807ac655e3d9a2b5790d9a720c70d57ea92467ffb2649873e8b4108",
+            "line": 23
+          },
+          "values": {
+            "operationId": "47acb216-be87-48a1-b1e0-60df211cd953",
+            "cartId": "selected",
+            "productId": "tote-01",
+            "price": 24,
+            "cartCount": 1,
+            "admittedCount": 2
+          },
+          "interpretations": [
+            {
+              "id": "463b418e-df37-4fd4-be65-8d69d872cf25",
+              "text": "This captured browser statement has received cart count one and is before the DOM update.",
+              "createdAt": "2026-09-18T20:56:36.709Z",
+              "facts": [
+                {
+                  "path": "productId",
+                  "value": "tote-01"
+                },
+                {
+                  "path": "price",
+                  "value": 24
+                },
+                {
+                  "path": "cartCount",
+                  "value": 1
+                }
+              ]
+            }
+          ]
+        },
+        "matching": false,
+        "loading": false,
+        "errors": [],
+        "opened": false
+      },
+      "groups": [
+        {
+          "column": 1,
+          "active": "Keep my unrelated learning notes.",
+          "tabs": [
+            {
+              "label": "Keep my unrelated learning notes.",
+              "dirty": true,
+              "active": true,
+              "uri": "untitled:Untitled-1"
+            }
+          ]
+        }
+      ],
+      "explicitLearnerDecision": true,
+      "historyStayedOnServer": true,
+      "historicalContinueRejected": true,
+      "returnedToBrowserPause": true,
+      "learnerContinuedInspectedBrowser": true,
+      "foreignDraftSurvivesClose": true,
+      "finalArchive": {
+        "version": 1,
+        "workspaceKey": "67bf38abd3f309bf29b1eed73e4f3ea88863995c0f207b70a50eec48d36f8743",
+        "id": "2cbc1ced-5997-4dac-b615-69718d7a9b1d_c579008d-aa62-4a14-b827-bd1d173d6b28",
+        "instanceId": "2cbc1ced-5997-4dac-b615-69718d7a9b1d",
+        "runId": "c579008d-aa62-4a14-b827-bd1d173d6b28",
+        "profile": "paired-cart-demo",
+        "createdAt": "2026-09-18T20:56:33.957Z",
+        "savedAt": "2026-09-18T20:56:37.447Z",
+        "state": "stopped",
+        "terminal": true,
+        "finalOutcome": "partial",
+        "observations": [
+          {
+            "id": "fa7a56d1-0cf8-450b-af2a-c4d7a53d7b60:1",
+            "snapshotUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/snapshots/fa7a56d1-0cf8-450b-af2a-c4d7a53d7b60%3A1",
+            "participant": "server",
+            "capturedAt": "2026-09-18T20:56:35.297Z",
+            "elapsedMs": 1249.042292,
+            "pause": {
+              "sessionId": "fa7a56d1-0cf8-450b-af2a-c4d7a53d7b60",
+              "threadId": 0,
+              "generation": 1
+            },
+            "source": {
+              "text": "import { createServer } from 'node:http';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { BODY_LIMIT_BYTES, EXPECTED_ADMISSIONS } from './constants.mjs';\n\nconst directory = dirname(dirname(fileURLToPath(import.meta.url)));\nconst configuration: { runId: string; scenario: string } = JSON.parse(await readFile(join(directory, 'fixture-config.json'), 'utf8'));\ninterface Tuple { operationId: string; cartId: string; productId: string; price: number }\nconst arrivals: Tuple[] = [];\nconst carts = new Map<string, { items: { id: string; price: number }[] }>();\nlet releaseBarrier: () => void = () => undefined;\nconst barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });\n\n/** Mutates one admitted cart after both requests arrive; the HTTP fixture calls this at the server study stop. @example addProduct({ operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24 }) */\nfunction addProduct(tuple: Tuple) {\n  const state = carts.get(tuple.cartId) ?? { items: [] };\n  const admittedCount = arrivals.length;\n  state.items.push({ id: tuple.productId, price: tuple.price }); // CODEBOOK_SERVER_STOP\n  carts.set(tuple.cartId, state);\n  return { ...tuple, cartCount: state.items.length, admittedCount };\n}\n\nconst server = createServer((request, response) => {\n  void (async () => {\n    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;\n    const prefix = `/runs/${configuration.runId}/`;\n    response.setHeader('cache-control', 'no-store');\n    if (!pathname.startsWith(prefix)) { response.writeHead(404).end(); return; }\n    const route = pathname.slice(prefix.length);\n    if (request.method === 'GET' && ['index.html', 'client.mjs', 'client.mjs.map', 'constants.mjs', 'constants.mjs.map'].includes(route)) {\n      const bytes = await readFile(join(directory, route === 'index.html' ? route : `build/${route}`));\n      response.setHeader('content-type', route === 'index.html' ? 'text/html' : 'text/javascript');\n      response.end(bytes); return;\n    }\n    if (request.method !== 'POST' || !['api/cart', 'api/redirected'].includes(route)) { response.writeHead(404).end(); return; }\n    if (configuration.scenario === 'redirect' && route === 'api/cart') { response.writeHead(307, { location: `${prefix}api/redirected` }).end(); return; }\n    const chunks: Buffer[] = []; let bytes = 0;\n    for await (const chunk of request) {\n      bytes += chunk.length;\n      if (bytes > BODY_LIMIT_BYTES) { response.writeHead(413).end(); return; }\n      chunks.push(chunk);\n    }\n    const body: unknown = JSON.parse(Buffer.concat(chunks).toString());\n    if (!body || typeof body !== 'object' || !('cartId' in body) || typeof body.cartId !== 'string' || !('productId' in body) || typeof body.productId !== 'string' || !('price' in body) || typeof body.price !== 'number') { response.writeHead(400).end(); return; }\n    const tuple: Tuple = { operationId: String(request.headers['x-codebook-operation'] ?? ''), cartId: body.cartId, productId: body.productId, price: body.price };\n    arrivals.push(tuple);\n    if (arrivals.length === EXPECTED_ADMISSIONS) releaseBarrier();\n    await barrier;\n    const result = addProduct(tuple);\n    if (tuple.cartId === 'selected') {\n      if (configuration.scenario === 'backend-exit') process.exit(1);\n      if (configuration.scenario === 'absent-response') return;\n      if (configuration.scenario === 'wrong-response-id') result.operationId = 'wrong-operation';\n      if (configuration.scenario === 'wrong-response-value') result.cartCount = 2;\n    }\n    response.setHeader('content-type', 'application/json');\n    response.end(JSON.stringify(result));\n  })().catch(error => { response.writeHead(500).end(String(error)); });\n});\nserver.listen(0, '127.0.0.1', () => {\n  const address = server.address();\n  if (!address || typeof address === 'string') throw new Error('No owned fixture listener');\n  void writeFile(join(directory, 'backend-endpoint.json'), JSON.stringify({ runId: configuration.runId, pid: process.pid, origin: `http://127.0.0.1:${address.port}`, executable: process.execPath, version: process.version }));\n});\n",
+              "hash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+              "line": 19
+            },
+            "values": {
+              "operationId": "47acb216-be87-48a1-b1e0-60df211cd953",
+              "cartId": "selected",
+              "productId": "tote-01",
+              "price": 24,
+              "cartCount": 0,
+              "admittedCount": 2
+            },
+            "interpretations": [
+              {
+                "id": "6b9d4d5c-4642-4aba-a322-1636d0bf0e99",
+                "text": "This captured server statement is before cart mutation. The tote costs 24 and the cart count is zero.",
+                "createdAt": "2026-09-18T20:56:36.016Z",
+                "facts": [
+                  {
+                    "path": "productId",
+                    "value": "tote-01"
+                  },
+                  {
+                    "path": "price",
+                    "value": 24
+                  },
+                  {
+                    "path": "cartCount",
+                    "value": 0
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "caa24477-3b45-45e0-93bd-ee6c3a4468aa:1",
+            "snapshotUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/snapshots/caa24477-3b45-45e0-93bd-ee6c3a4468aa%3A1",
+            "participant": "browser",
+            "capturedAt": "2026-09-18T20:56:36.084Z",
+            "elapsedMs": 2036.168792,
+            "pause": {
+              "sessionId": "caa24477-3b45-45e0-93bd-ee6c3a4468aa",
+              "threadId": 1,
+              "generation": 1
+            },
+            "source": {
+              "text": "import { PRODUCT, BACKGROUND_PRODUCT } from './constants.mjs';\n\nconst runId = document.documentElement.dataset.runId!;\nconst scenario = document.documentElement.dataset.scenario!;\nconst count = document.querySelector('#count')!;\nconst clicks = document.querySelector('#clicks')!;\nconst status = document.querySelector('#status')!;\ninterface CartResult { operationId: string; cartId: string; productId: string; price: number; cartCount: number; admittedCount: number }\n\n/** Sends each fixture request once from the click handler; its headers and body are debugger correlation evidence. @example requestCart('selected', 'run', PRODUCT) */\nasync function requestCart(cartId: string, operationId: string, product: typeof PRODUCT): Promise<CartResult> {\n  const response = await fetch('api/cart', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) }, body: JSON.stringify({ cartId, productId: product.id, price: product.price }) });\n  if (!response.ok) throw new Error(`Cart HTTP ${response.status}`);\n  return response.json();\n}\n\ndocument.querySelector('#add')!.addEventListener('click', () => {\n  void (async () => {\n    status.textContent = 'Two requests pending; waiting for the server.';\n    const selected = requestCart('selected', scenario === 'missing-id' ? '' : runId, PRODUCT);\n    const background = requestCart('background', scenario === 'duplicate-id' ? runId : `${runId}-background`, BACKGROUND_PRODUCT);\n    const [result, backgroundResult] = await Promise.all([selected, background]);\n    count.textContent = String(result.cartCount); // CODEBOOK_BROWSER_STOP\n    clicks.textContent = String(Number(clicks.textContent) + 1);\n    status.textContent = `Selected cart updated; background cart ${backgroundResult.cartCount}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\ndocument.documentElement.dataset.ready = 'true';\n",
+              "hash": "99aef6024807ac655e3d9a2b5790d9a720c70d57ea92467ffb2649873e8b4108",
+              "line": 23
+            },
+            "values": {
+              "operationId": "47acb216-be87-48a1-b1e0-60df211cd953",
+              "cartId": "selected",
+              "productId": "tote-01",
+              "price": 24,
+              "cartCount": 1,
+              "admittedCount": 2
+            },
+            "interpretations": [
+              {
+                "id": "463b418e-df37-4fd4-be65-8d69d872cf25",
+                "text": "This captured browser statement has received cart count one and is before the DOM update.",
+                "createdAt": "2026-09-18T20:56:36.709Z",
+                "facts": [
+                  {
+                    "path": "productId",
+                    "value": "tote-01"
+                  },
+                  {
+                    "path": "price",
+                    "value": 24
+                  },
+                  {
+                    "path": "cartCount",
+                    "value": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "captures": [
+          {
+            "phase": "before",
+            "status": "captured",
+            "imageFile": "images/93090fc9decd8daaed0b4d724d1aeb1f43f9ff4788f50c3644a8c9f6297f390c.png",
+            "imageBytes": 30171,
+            "hash": "93090fc9decd8daaed0b4d724d1aeb1f43f9ff4788f50c3644a8c9f6297f390c"
+          },
+          {
+            "phase": "paused-server",
+            "status": "captured",
+            "imageFile": "images/728b573855689c6545bc789d616822282c3061cb9f25430f1e7894f0e5200c50.png",
+            "imageBytes": 28555,
+            "hash": "728b573855689c6545bc789d616822282c3061cb9f25430f1e7894f0e5200c50"
+          },
+          {
+            "phase": "paused-browser",
+            "status": "failed",
+            "reason": "Error: Learner is viewing history; current capture was not displayed."
+          },
+          {
+            "phase": "after",
+            "status": "captured",
+            "imageFile": "images/5f284a6c0dd00b3343c96b2087bf41b7d8b82a4810b22982e0fac1f2f48e7da0.png",
+            "imageBytes": 28239,
+            "hash": "5f284a6c0dd00b3343c96b2087bf41b7d8b82a4810b22982e0fac1f2f48e7da0"
+          }
+        ],
+        "links": [
+          {
+            "id": "intent-request",
+            "status": "observed"
+          },
+          {
+            "id": "request-server",
+            "status": "observed"
+          },
+          {
+            "id": "server-response",
+            "status": "observed"
+          },
+          {
+            "id": "response-browser",
+            "status": "observed"
+          },
+          {
+            "id": "browser-screen",
+            "status": "observed"
+          }
+        ]
+      },
+      "finalProgress": {
+        "version": 1,
+        "workspaceKey": "67bf38abd3f309bf29b1eed73e4f3ea88863995c0f207b70a50eec48d36f8743",
+        "decisions": [
+          {
+            "id": "2873e41e-7878-422e-af27-da5f40334558",
+            "item": "server",
+            "sourceHash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+            "understood": true,
+            "at": "2026-09-18T20:56:35.947Z"
+          }
+        ],
+        "selection": {
+          "studyId": "2cbc1ced-5997-4dac-b615-69718d7a9b1d_c579008d-aa62-4a14-b827-bd1d173d6b28",
+          "participant": "server",
+          "follow": false,
+          "tab": "live"
+        }
+      },
+      "finalCheckpoint": true
+    },
+    "reload": {
+      "host": "Visual Studio Code",
+      "apiVersion": "1.138.0",
+      "node": "24.18.1",
+      "independentVisualInspection": false,
+      "presentation": {
+        "revision": 1,
+        "selection": {
+          "studyId": "2cbc1ced-5997-4dac-b615-69718d7a9b1d_c579008d-aa62-4a14-b827-bd1d173d6b28",
+          "participant": "server",
+          "follow": false,
+          "tab": "live"
+        },
+        "outlineSelection": [
+          "server"
+        ],
+        "observation": {
+          "id": "fa7a56d1-0cf8-450b-af2a-c4d7a53d7b60:1",
+          "snapshotUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/snapshots/fa7a56d1-0cf8-450b-af2a-c4d7a53d7b60%3A1",
+          "participant": "server",
+          "capturedAt": "2026-09-18T20:56:35.297Z",
+          "elapsedMs": 1249.042292,
+          "pause": {
+            "sessionId": "fa7a56d1-0cf8-450b-af2a-c4d7a53d7b60",
+            "threadId": 0,
+            "generation": 1
+          },
+          "source": {
+            "text": "import { createServer } from 'node:http';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { BODY_LIMIT_BYTES, EXPECTED_ADMISSIONS } from './constants.mjs';\n\nconst directory = dirname(dirname(fileURLToPath(import.meta.url)));\nconst configuration: { runId: string; scenario: string } = JSON.parse(await readFile(join(directory, 'fixture-config.json'), 'utf8'));\ninterface Tuple { operationId: string; cartId: string; productId: string; price: number }\nconst arrivals: Tuple[] = [];\nconst carts = new Map<string, { items: { id: string; price: number }[] }>();\nlet releaseBarrier: () => void = () => undefined;\nconst barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });\n\n/** Mutates one admitted cart after both requests arrive; the HTTP fixture calls this at the server study stop. @example addProduct({ operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24 }) */\nfunction addProduct(tuple: Tuple) {\n  const state = carts.get(tuple.cartId) ?? { items: [] };\n  const admittedCount = arrivals.length;\n  state.items.push({ id: tuple.productId, price: tuple.price }); // CODEBOOK_SERVER_STOP\n  carts.set(tuple.cartId, state);\n  return { ...tuple, cartCount: state.items.length, admittedCount };\n}\n\nconst server = createServer((request, response) => {\n  void (async () => {\n    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;\n    const prefix = `/runs/${configuration.runId}/`;\n    response.setHeader('cache-control', 'no-store');\n    if (!pathname.startsWith(prefix)) { response.writeHead(404).end(); return; }\n    const route = pathname.slice(prefix.length);\n    if (request.method === 'GET' && ['index.html', 'client.mjs', 'client.mjs.map', 'constants.mjs', 'constants.mjs.map'].includes(route)) {\n      const bytes = await readFile(join(directory, route === 'index.html' ? route : `build/${route}`));\n      response.setHeader('content-type', route === 'index.html' ? 'text/html' : 'text/javascript');\n      response.end(bytes); return;\n    }\n    if (request.method !== 'POST' || !['api/cart', 'api/redirected'].includes(route)) { response.writeHead(404).end(); return; }\n    if (configuration.scenario === 'redirect' && route === 'api/cart') { response.writeHead(307, { location: `${prefix}api/redirected` }).end(); return; }\n    const chunks: Buffer[] = []; let bytes = 0;\n    for await (const chunk of request) {\n      bytes += chunk.length;\n      if (bytes > BODY_LIMIT_BYTES) { response.writeHead(413).end(); return; }\n      chunks.push(chunk);\n    }\n    const body: unknown = JSON.parse(Buffer.concat(chunks).toString());\n    if (!body || typeof body !== 'object' || !('cartId' in body) || typeof body.cartId !== 'string' || !('productId' in body) || typeof body.productId !== 'string' || !('price' in body) || typeof body.price !== 'number') { response.writeHead(400).end(); return; }\n    const tuple: Tuple = { operationId: String(request.headers['x-codebook-operation'] ?? ''), cartId: body.cartId, productId: body.productId, price: body.price };\n    arrivals.push(tuple);\n    if (arrivals.length === EXPECTED_ADMISSIONS) releaseBarrier();\n    await barrier;\n    const result = addProduct(tuple);\n    if (tuple.cartId === 'selected') {\n      if (configuration.scenario === 'backend-exit') process.exit(1);\n      if (configuration.scenario === 'absent-response') return;\n      if (configuration.scenario === 'wrong-response-id') result.operationId = 'wrong-operation';\n      if (configuration.scenario === 'wrong-response-value') result.cartCount = 2;\n    }\n    response.setHeader('content-type', 'application/json');\n    response.end(JSON.stringify(result));\n  })().catch(error => { response.writeHead(500).end(String(error)); });\n});\nserver.listen(0, '127.0.0.1', () => {\n  const address = server.address();\n  if (!address || typeof address === 'string') throw new Error('No owned fixture listener');\n  void writeFile(join(directory, 'backend-endpoint.json'), JSON.stringify({ runId: configuration.runId, pid: process.pid, origin: `http://127.0.0.1:${address.port}`, executable: process.execPath, version: process.version }));\n});\n",
+            "hash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+            "line": 19
+          },
+          "values": {
+            "operationId": "47acb216-be87-48a1-b1e0-60df211cd953",
+            "cartId": "selected",
+            "productId": "tote-01",
+            "price": 24,
+            "cartCount": 0,
+            "admittedCount": 2
+          },
+          "interpretations": [
+            {
+              "id": "6b9d4d5c-4642-4aba-a322-1636d0bf0e99",
+              "text": "This captured server statement is before cart mutation. The tote costs 24 and the cart count is zero.",
+              "createdAt": "2026-09-18T20:56:36.016Z",
+              "facts": [
+                {
+                  "path": "productId",
+                  "value": "tote-01"
+                },
+                {
+                  "path": "price",
+                  "value": 24
+                },
+                {
+                  "path": "cartCount",
+                  "value": 0
+                }
+              ]
+            }
+          ]
+        },
+        "matching": false,
+        "loading": false,
+        "errors": [],
+        "sourceUri": "codebook-source://67bf38abd3f309bf29b1eed73e4f3ea88863995c0f207b70a50eec48d36f8743/2cbc1ced-5997-4dac-b615-69718d7a9b1d_c579008d-aa62-4a14-b827-bd1d173d6b28/server/d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2/Captured-server.mts",
+        "rendered": {
+          "type": "rendered",
+          "revision": 1,
+          "participant": "server",
+          "snapshotUri": "codebook://2cbc1ced-5997-4dac-b615-69718d7a9b1d/runs/c579008d-aa62-4a14-b827-bd1d173d6b28/snapshots/fa7a56d1-0cf8-450b-af2a-c4d7a53d7b60%3A1"
+        },
+        "opened": true
+      },
+      "groups": [
+        {
+          "column": 1,
+          "active": "codebook · Application",
+          "tabs": [
+            {
+              "label": "Keep my unrelated learning notes.",
+              "dirty": true,
+              "active": false,
+              "uri": "untitled:Untitled-1"
+            },
+            {
+              "label": "codebook · Application",
+              "dirty": false,
+              "active": true
+            }
+          ]
+        },
+        {
+          "column": 2,
+          "active": "codebook · Study",
+          "tabs": [
+            {
+              "label": "codebook · Study",
+              "dirty": false,
+              "active": true
+            },
+            {
+              "label": "Captured-server.mts",
+              "dirty": false,
+              "active": false,
+              "uri": "codebook-source://67bf38abd3f309bf29b1eed73e4f3ea88863995c0f207b70a50eec48d36f8743/2cbc1ced-5997-4dac-b615-69718d7a9b1d_c579008d-aa62-4a14-b827-bd1d173d6b28/server/d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2/Captured-server.mts"
+            }
+          ]
+        },
+        {
+          "column": 3,
+          "tabs": []
+        }
+      ],
+      "reloadedWithoutExecution": true
+    }
+  }
+}

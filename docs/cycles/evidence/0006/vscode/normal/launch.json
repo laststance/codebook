@@ -1,0 +1,26 @@
+{
+  "host": {
+    "id": "vscode",
+    "productVersion": "1.138.0",
+    "apiVersion": "1.138.0",
+    "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda"
+  },
+  "executable": "/Applications/Visual Studio Code.app/Contents/MacOS/Code",
+  "arguments": [
+    "--new-window",
+    "--disable-workspace-trust",
+    "--skip-welcome",
+    "--skip-release-notes",
+    "--user-data-dir",
+    "<owned-profile>",
+    "--extensions-dir",
+    "<repo>/artifacts/cycle-0006/vscode/normal-2026-09-18T20-56-24.592Z-c8c05a1c/extensions",
+    "--extensionDevelopmentPath",
+    "<repo>/extension",
+    "--extensionTestsPath",
+    "<repo>/extension/dist/nativeStudyBootstrap.js",
+    "<repo>/artifacts/cycle-0006/vscode/normal-2026-09-18T20-56-24.592Z-c8c05a1c/workspace"
+  ],
+  "runnerNode": "v24.21.0",
+  "independentNativeVisualInspection": false
+}
