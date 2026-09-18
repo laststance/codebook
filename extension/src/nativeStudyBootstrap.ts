@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import type { StudyItemId } from 'codebook-cycle-0004/dist/constants';
 import type { activate } from './extension';
 import { LearningLibrary } from './learningLibrary';
 import { nativeStudyCommandSchema, type NativeStudyAction } from './nativeStudySchemas';
@@ -27,9 +28,9 @@ export async function run(): Promise<void> {
     await writeFile(join(directory, `${prefix}-${sequence}.json`), JSON.stringify({ sequence, descriptorPath, error: error ? String(error) : undefined, checks }, null, 2), { mode: PRIVATE_FILE_MODE });
   };
   const inspect = () => { const state = api.inspectStudy(); assert.ok(state); assert.ok(state.view); return state; };
-  const rendered = async (participant: 'server' | 'browser', current?: boolean) => waitUntil(async () => {
+  const rendered = async (itemId: StudyItemId, current?: boolean) => waitUntil(async () => {
     const state = inspect(), view = state.view!;
-    if (view.loading || view.model.selection.participant !== participant || state.outlineSelection?.[0] !== participant || state.rendered?.revision !== view.revision || state.rendered.snapshotUri !== view.model.observation?.snapshotUri || (current !== undefined && view.model.matching !== current)) return undefined;
+    if (view.loading || view.model.selection.itemId !== itemId || state.outlineSelection?.[0] !== itemId || state.rendered?.revision !== view.revision || state.rendered.snapshotUri !== view.model.observation?.snapshotUri || (current !== undefined && view.model.matching !== current)) return undefined;
     assert.ok(state.sourceUri); const uri = vscode.Uri.parse(state.sourceUri);
     assert.equal(uri.scheme, STUDY_SOURCE_SCHEME);
     const source = await vscode.workspace.openTextDocument(uri);
@@ -51,7 +52,7 @@ export async function run(): Promise<void> {
     if (action === 'open-paused') {
       const leaseId = inspect().leaseId; assert.ok(leaseId);
       await vscode.commands.executeCommand('codebook.openStudyWorkspace');
-      const { state, view } = await rendered('server', true);
+      const { state, view } = await rendered('paired-cart-demo/server', true);
       assert.equal(state.leaseId, leaseId, 'Opening adopts the existing runtime viewport');
       assert.equal(view.model.observation?.values.cartCount, 0); assert.equal(view.model.observation?.values.price, 24);
       assert.equal(view.model.understoodCount, 0, 'Execution never marks understanding');
@@ -59,13 +60,13 @@ export async function run(): Promise<void> {
     }
     if (action === 'select-history') {
       await vscode.commands.executeCommand('codebook.markUnderstanding', true);
-      await vscode.commands.executeCommand('codebook.selectLearningItem', 'server');
-      const { state, view } = await rendered('server', true); historyUri = state.sourceUri;
+      await vscode.commands.executeCommand('codebook.selectLearningItem', 'paired-cart-demo/server');
+      const { state, view } = await rendered('paired-cart-demo/server', true); historyUri = state.sourceUri;
       assert.equal(view.model.selection.follow, false); assert.equal(view.model.understoodCount, 1);
       checks.explicitLearnerDecision = true;
     }
     if (action === 'assert-history') {
-      const { state, view } = await rendered('server', false);
+      const { state, view } = await rendered('paired-cart-demo/server', false);
       assert.equal(view.model.currentParticipant, 'browser'); assert.equal(state.sourceUri, historyUri);
       assert.equal(view.model.observation?.values.cartCount, 0); assert.equal(view.model.continueArguments, undefined);
       await assert.rejects(Promise.resolve(vscode.commands.executeCommand('codebook.study.continue')), /Inspect the current pause/);
@@ -73,12 +74,12 @@ export async function run(): Promise<void> {
     }
     if (action === 'return-current') {
       await vscode.commands.executeCommand('codebook.study.return-current');
-      const { view } = await rendered('browser', true);
+      const { view } = await rendered('paired-cart-demo/browser', true);
       assert.equal(view.model.observation?.values.cartCount, 1); assert.equal(view.model.selection.follow, true);
       checks.returnedToBrowserPause = true;
     }
     if (action === 'continue-current') {
-      await rendered('browser', true); await vscode.commands.executeCommand('codebook.study.continue');
+      await rendered('paired-cart-demo/browser', true); await vscode.commands.executeCommand('codebook.study.continue');
       checks.learnerContinuedInspectedBrowser = true;
     }
     if (action === 'move-source') {
@@ -90,7 +91,7 @@ export async function run(): Promise<void> {
       movedSourceUri = state.sourceUri;
     }
     if (action === 'assert-current') {
-      const { state, view, group } = await rendered('browser', true);
+      const { state, view, group } = await rendered('paired-cart-demo/browser', true);
       assert.equal(view.model.observation?.values.cartCount, 1);
       // Cursor may replace API wrapper objects; the owned URI remains the group identity anchor.
       if (movedSourceUri) assert.ok(group.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === movedSourceUri), 'Background pause follows the group containing the manually moved source');
@@ -120,7 +121,7 @@ export async function run(): Promise<void> {
     if (reload) {
       assert.equal(api.inspectStudy()?.leaseId, undefined);
       await vscode.commands.executeCommand('codebook.openStudyWorkspace');
-      const state = inspect(), selected = state.view!.model.selection.participant;
+      const state = inspect(), selected = state.view!.model.selection.itemId;
       const { view } = await rendered(selected, false);
       assert.equal(view.model.understoodCount, process.env.CODEBOOK_STUDY_CASE === 'history' ? 1 : 0);
       assert.equal(view.study?.terminal, true); assert.equal(view.model.currentParticipant, undefined); assert.equal(view.model.continueArguments, undefined);

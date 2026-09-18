@@ -9,7 +9,7 @@ export function decodeStudyArchive(value: unknown, workspaceKey: string): StudyA
   let normalized = value;
   if (value && typeof value === 'object' && 'version' in value && value.version === 1) {
     const legacy = legacyArchiveSchema.parse(value);
-    normalized = { ...legacy, version: LEARNING_SCHEMA_VERSION_V2, observations: legacy.observations.map(observation => ({ ...observation, itemId: `paired-cart-demo/${observation.participant}`, actionId: 'add-to-cart', capturePhase: `paused-${observation.participant}` })) };
+    normalized = { ...legacy, materialSignature: sha256(JSON.stringify(legacy)), version: LEARNING_SCHEMA_VERSION_V2, observations: legacy.observations.map(observation => ({ ...observation, itemId: `paired-cart-demo/${observation.participant}`, actionId: 'add-to-cart', capturePhase: `paused-${observation.participant}` })) };
   }
   const study = studyArchiveSchema.parse(normalized);
   if (study.workspaceKey !== workspaceKey || study.id !== `${study.instanceId}_${study.runId}`) throw new Error('Study belongs to a different workspace or run.');

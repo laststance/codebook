@@ -6,7 +6,7 @@ import { StudyService } from './service';
 import { startServer } from './server';
 import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './constants';
 import { StudyWorkspace } from './studyWorkspace';
-import { participantSchema } from './studyModel';
+import { itemSchema, profileSchema } from './studySchemas';
 
 let stopExtension: (() => Promise<void>) | undefined;
 
@@ -76,7 +76,8 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     vscode.commands.registerCommand('codebook.copyAgentConnection', connect),
     vscode.commands.registerCommand('codebook.openStudyWorkspace', () => workspace().open()),
     vscode.commands.registerCommand('codebook.closeStudyWorkspace', () => reader?.close()),
-    vscode.commands.registerCommand('codebook.selectLearningItem', participant => workspace().select(participantSchema.parse(participant))),
+    vscode.commands.registerCommand('codebook.selectLearningItem', itemId => workspace().select(itemSchema.parse(itemId))),
+    vscode.commands.registerCommand('codebook.selectStudyProfile', profile => workspace().selectProfile(profileSchema.parse(profile))),
     vscode.commands.registerCommand('codebook.markUnderstanding', understood => { if (understood !== undefined && typeof understood !== 'boolean') throw new Error('Understanding requires a boolean learner choice.'); return workspace().understand(understood); }),
     ...(['run', 'click', 'continue', 'stop', 'return-current', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry'] as const).map(action => vscode.commands.registerCommand(`codebook.study.${action}`, () => workspace().action(action))),
     vscode.workspace.onDidChangeWorkspaceFolders(() => { void stop().then(async () => { await reader?.dispose(); reader = undefined; }).catch(error => vscode.window.showErrorMessage(`Codebook cleanup incomplete: ${String(error)}`)); }));

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { ParticipantSnapshot } from 'codebook-cycle-0004/dist/inspectParticipant';
-import { ACTIVE_TIMEOUT_MS, API_VERSION, MAINTENANCE_INTERVAL_MS, MAX_EXPLANATIONS, MAX_RUNS, RUN_TIMEOUT_MS } from './constants';
+import { ACTIVE_TIMEOUT_MS, API_VERSION, MAINTENANCE_INTERVAL_MS, MAX_EXPLANATIONS, MAX_RUNS, MAX_UI_TEXT_CHARS, RUN_TIMEOUT_MS } from './constants';
 import { PROFILE_IDS, type ProfileId } from 'codebook-cycle-0004/dist/constants';
 import { STUDY_PROFILES } from 'codebook-cycle-0004/dist/profiles';
 import { actionExpectations } from 'codebook-cycle-0004/dist/utils/actionExpectations';
@@ -25,6 +25,7 @@ export interface StudyRecord {
   explanations: Map<string, Explanation>;
   explanationKeys: Map<string, { signature: string; result: Promise<{ explanationUri: string }> }>;
   sourceReveals: Set<Promise<void>>;
+  historyReceipt?: { revision: number; signature: string; status: 'pending' | 'saved' | 'failed'; reason?: string };
 }
 
 /** Owns MCP intent/history independently of transport sessions; commands construct it once per editor instance. @example service.start({instanceId, profile:'paired-cart-demo', key:'study-1'}) */
@@ -179,6 +180,19 @@ export class StudyService {
     throw new StudyError('INVALID_REFERENCE', 'Snapshot is absent, uncommitted, or belongs to another run.');
   }
 
+  /** Reserves a monotonic reader checkpoint before I/O so even same-material retries cannot accept an older completion. @example const revision = service.beginHistory(record, signature) */
+  beginHistory(record: StudyRecord, signature: string): number | undefined {
+    if (this.records.get(record.id) !== record || this.state(record).materialSignature !== signature) return undefined;
+    const revision = (record.historyReceipt?.revision ?? 0) + 1;
+    record.historyReceipt = { revision, signature, status: 'pending' }; return revision;
+  }
+
+  /** Accepts only the latest reader persistence receipt; stale saves cannot certify newer evidence or retries. @example service.reportHistory(record, signature, revision, 'saved') */
+  reportHistory(record: StudyRecord, signature: string, revision: number, status: 'pending' | 'saved' | 'failed', reason?: string): boolean {
+    if (this.records.get(record.id) !== record || record.historyReceipt?.revision !== revision || this.state(record).materialSignature !== signature) return false;
+    record.historyReceipt = { revision, signature, status, reason: reason?.slice(0, MAX_UI_TEXT_CHARS) }; return true;
+  }
+
   /** Projects bounded current state and actionable next steps without copying the full event log. @example service.state(record).nextActions */
   state(record: StudyRecord) {
     const runtime = record.runtime?.view();
@@ -196,7 +210,7 @@ export class StudyService {
     const nextActions = [canControl && record.prepared && runtime?.status === 'ready' ? runtime.nextAction : undefined,
       participants.server.resumable ? 'continue-server' : undefined, participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined, 'read-history'].filter(value => value !== undefined);
-    return { instanceId: this.instanceId, runId: record.id, runtimeRunId: runtime?.runId, profile: record.profile,
+    const material = { instanceId: this.instanceId, runId: record.id, runtimeRunId: runtime?.runId, profile: record.profile,
       state: record.stopped ? 'stopped' : record.stopping ? 'stopping' : terminalReason ? 'failed' : !record.prepared ? 'preparing' : runtime?.status ?? 'preparing',
       runtimeState: runtime?.status, createdAt: new Date(record.createdAt).toISOString(), deadlineAt: new Date(record.deadlineAt).toISOString(), activeTimeoutMs: ACTIVE_TIMEOUT_MS,
       nextActions, participants, operation: record.action?.receipt, operations: [...record.actions.values()].map(action => action.receipt), observed: runtime?.observed, links: runtime?.links,
@@ -208,6 +222,17 @@ export class StudyService {
       captures: Object.entries(runtime?.captures ?? {}).map(([phase, capture]) => ({ phase, status: capture.status, error: capture.error, uri: capture.status === 'captured' ? this.uri(record.id, `images/${phase}`) : undefined })),
       explanations: [...record.explanations.values()].map(value => this.uri(record.id, `explanations/${value.id}`)),
       eventsUri: this.uri(record.id, 'events/0'), runUri: this.uri(record.id) };
+    // Receipt fields are excluded from the signature to avoid a save/report/save feedback loop.
+    const materialSignature = sha256(JSON.stringify(material));
+    const receipt = record.historyReceipt, latest = receipt?.signature === materialSignature;
+    const historyOutcome = { status: !receipt ? 'unavailable' as const : latest ? receipt.status : 'pending' as const,
+      materialSignature, checkpointRevision: receipt?.revision, savedSignature: latest && receipt?.status === 'saved' ? receipt.signature : undefined,
+      reason: latest ? receipt?.reason : undefined };
+    const terminal = record.stopped || material.resourcesReleased;
+    const studyOutcome = material.finalOutcome === 'not-demonstrated' ? 'not-demonstrated' : material.finalOutcome === 'partial' ? 'partial'
+      : material.finalOutcome !== 'demonstrated' || !terminal ? 'pending'
+      : historyOutcome.status === 'saved' ? 'demonstrated' : historyOutcome.status === 'pending' ? 'pending' : 'partial';
+    return { ...material, materialSignature, historyOutcome, studyOutcome };
   }
 
   /** Prevents late acquisitions escaping shutdown while preserving retryable cleanup failures. @example await service.shutdown() */

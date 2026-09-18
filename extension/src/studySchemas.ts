@@ -27,6 +27,7 @@ export const observationSchema = z.discriminatedUnion('actionId', [
 export const studyArchiveSchema = z.strictObject({
   version: z.literal(LEARNING_SCHEMA_VERSION_V2), workspaceKey: hash, id: studyIdSchema, instanceId: z.uuid(), runId: z.uuid(), profile: profileSchema,
   createdAt: z.iso.datetime(), savedAt: z.iso.datetime(), state: shortText, terminal: z.boolean(), finalOutcome: shortText, reason: z.string().max(MAX_UI_TEXT_CHARS).optional(),
+  materialSignature: hash,
   observations: z.array(observationSchema).max(MAX_STUDY_OBSERVATIONS_V2), captures: z.array(capturedImageSchema).max(MAX_STUDY_CAPTURES_V2),
   links: z.array(z.strictObject({ id: shortText, status: z.enum(['unknown', 'observed', 'ambiguous', 'mismatched']) })).max(MAX_STUDY_LINKS_V2),
 });
@@ -34,6 +35,12 @@ export const learnerDecisionSchema = z.strictObject({ id: z.uuid(), item: itemSc
 export const selectionSchema = z.strictObject({ studyId: studyIdSchema.optional(), profile: profileSchema, itemId: itemSchema, follow: z.boolean(), tab: z.enum(['overview', 'live']) })
   .refine(selection => selection.itemId.startsWith(`${selection.profile}/`), 'Selection item belongs to another profile.');
 export const progressSchema = z.strictObject({ version: z.literal(LEARNING_SCHEMA_VERSION_V2), workspaceKey: hash, decisions: z.array(learnerDecisionSchema).max(MAX_LEARNER_DECISIONS), selection: selectionSchema.optional() });
+export const studyMetadataSchema = studyArchiveSchema.pick({ version: true, workspaceKey: true, id: true, profile: true, createdAt: true, savedAt: true, state: true, terminal: true, finalOutcome: true, materialSignature: true })
+  .extend({ archive: z.strictObject({ byteLength: z.number().int().positive(), modifiedMs: z.number().nonnegative(), hash }) });
+export interface StudyCatalogEntry {
+  id: string; savedAt: string; profile?: z.infer<typeof profileSchema>; format: 'legacy-v1' | 'v2';
+  outcome: string; metadata: 'legacy-unverified' | 'validated' | 'unavailable'; reason?: string;
+}
 export type StudyArchive = z.infer<typeof studyArchiveSchema>;
 export type StudySelection = z.infer<typeof selectionSchema>;
 export type LearnerProgress = z.infer<typeof progressSchema>;

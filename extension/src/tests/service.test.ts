@@ -9,6 +9,57 @@ import { readResource } from '../resources';
 import { ControlledRuntime, createHarness } from './helpers';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 
+test('runtime success remains pending or partial until the latest terminal reader checkpoint is saved', async () => {
+  // Arrange: the runtime outcome is injected; this tests the product persistence contract, not execution success.
+  const harness = await createHarness(), service = harness.service;
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'history-outcome' }), record = service.record(receipt);
+  try {
+    await record.preparation;
+    const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime);
+    runtime.view = () => ({ ...view(), finalOutcome: 'demonstrated' });
+    const stopped = await service.stop(receipt);
+    assert.equal(stopped.finalOutcome, 'demonstrated'); assert.equal(stopped.historyOutcome.status, 'unavailable'); assert.equal(stopped.studyOutcome, 'partial');
+    // Act
+    const signature = service.state(record).materialSignature, first = service.beginHistory(record, signature)!;
+    assert.equal(service.state(record).studyOutcome, 'pending');
+    const latest = service.beginHistory(record, signature)!;
+    service.reportHistory(record, signature, latest, 'failed', 'Storage limit exceeded');
+    const acceptedOldSave = service.reportHistory(record, signature, first, 'saved');
+    // Assert
+    assert.equal(acceptedOldSave, false); assert.equal(service.state(record).historyOutcome.status, 'failed');
+    assert.equal((await service.stop(receipt)).studyOutcome, 'partial');
+    assert.equal(service.state(record).historyOutcome.reason, 'Storage limit exceeded');
+    const retry = service.beginHistory(record, signature)!;
+    assert.equal(service.reportHistory(record, signature, retry, 'saved'), true);
+    assert.equal(service.state(record).studyOutcome, 'demonstrated');
+    assert.equal(service.state(record).materialSignature, signature, 'Receipt updates do not invalidate their own checkpoint');
+  } finally { await harness.close(); }
+});
+
+test('a post-stop explanation invalidates the earlier saved checkpoint until its own material revision is persisted', async () => {
+  // Arrange
+  const harness = await createHarness(), service = harness.service;
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'late-interpretation' }), record = service.record(receipt);
+  try {
+    await record.preparation; service.action({ ...receipt, key: 'one', action: 'add-to-cart' });
+    const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime);
+    runtime.view = () => ({ ...view(), finalOutcome: 'demonstrated' });
+    await service.stop(receipt);
+    const old = service.state(record), revision = service.beginHistory(record, old.materialSignature)!;
+    service.reportHistory(record, old.materialSignature, revision, 'saved');
+    assert.equal(service.state(record).studyOutcome, 'demonstrated');
+    // Act
+    await service.explain({ ...receipt, key: 'late', snapshotUri: old.observations[0]!.snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The captured price is 24.' });
+    const changed = service.state(record);
+    // Assert
+    assert.notEqual(changed.materialSignature, old.materialSignature); assert.equal(changed.historyOutcome.status, 'pending'); assert.equal(changed.studyOutcome, 'pending');
+    assert.equal(service.reportHistory(record, old.materialSignature, revision, 'saved'), false);
+    const next = service.beginHistory(record, changed.materialSignature)!;
+    service.reportHistory(record, changed.materialSignature, next, 'saved');
+    assert.equal((await service.stop(receipt)).studyOutcome, 'demonstrated');
+  } finally { await harness.close(); }
+});
+
 test('a cart observation cannot borrow order facts from a later stop on the same participant', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;

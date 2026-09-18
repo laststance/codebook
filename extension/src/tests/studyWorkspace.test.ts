@@ -57,7 +57,7 @@ async function workspaceHarness(attach = true) {
   const controls = { start: async () => harness.service, connect: async () => {} };
   const createReader = () => new boundary.StudyWorkspace({ extensionPath: join(harness.directory, 'extension'), globalStorageUri: { fsPath: join(harness.directory, 'storage') }, subscriptions: [] }, controls);
   const reader = createReader();
-  if (attach) await reader.attach(harness.service);
+  if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
   return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
     holdNextCommand(name: string) {
       let release = () => {}, entered = () => {};
@@ -94,12 +94,79 @@ test('retiring before the next polling tick preserves the last accepted interpre
   } finally { await harness.close(); context.mock.timers.reset(); }
 });
 
+test('a fresh workspace offers four checkout learning items while an explicit paired choice keeps its two-item progress', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    // Act
+    await harness.reader.open();
+    const initial = harness.reader.inspect().view!;
+    await harness.reader.selectProfile('paired-cart-demo');
+    const paired = harness.reader.inspect().view!;
+    // Assert
+    assert.equal(initial.model.selection.profile, 'checkout-demo'); assert.equal(initial.model.selection.itemId, 'checkout-demo/cart-mutation');
+    assert.deepEqual(initial.model.progressByItem.map(item => item.title), ['Cart mutation', 'Cart update', 'Order creation', 'Purchase confirmation']);
+    assert.equal(initial.model.understoodCount, 0); assert.equal(paired.model.progressByItem.length, 2);
+    assert.equal(paired.model.selection.itemId, 'paired-cart-demo/server');
+  } finally { await harness.close(); }
+});
+
+test('a reader keeps the cart moment while the same server reaches order creation and only Return selects the live item', async () => {
+  // Arrange
+  const harness = await workspaceHarness(), service = harness.service;
+  try {
+    await harness.reader.selectProfile('checkout-demo'); await harness.reader.action('run');
+    const record = [...service.records.values()][0]!; await record.preparation;
+    await harness.reader.action('click'); await harness.reader.open();
+    await harness.reader.select('checkout-demo/cart-mutation');
+    const original = harness.reader.inspect().sourceUri;
+    await service.continue(service.state(record).participants.server.continueArguments!);
+    harness.runtimes[0]!.status = 'ready';
+    // Act
+    await harness.reader.action('click'); await harness.reader.open();
+    const history = harness.reader.inspect().view!;
+    await assert.rejects(harness.reader.selectProfile('paired-cart-demo'), /Stop the active study/);
+    // Assert
+    assert.equal(history.model.selection.itemId, 'checkout-demo/cart-mutation'); assert.equal(history.model.currentItemTitle, 'Order creation');
+    assert.equal(history.model.observation?.values.cartCount, 0); assert.equal(history.model.continueArguments, undefined);
+    assert.equal(harness.reader.inspect().sourceUri, original);
+    await harness.reader.action('return-current');
+    assert.equal(harness.reader.inspect().view!.model.selection.itemId, 'checkout-demo/order-creation');
+    assert.equal(harness.reader.inspect().view!.model.observation?.values.cartCount, 1);
+    assert.equal(harness.runtimes[0]!.dispatches, 2);
+  } finally { await harness.close(); }
+});
+
+test('a successful runtime with a rejected final history write stays partial in both service and reader until Retry', async context => {
+  // Arrange
+  const harness = await workspaceHarness(), service = harness.service, saveStudy = LearningLibrary.prototype.saveStudy;
+  let rejectFinal = true;
+  context.mock.method(LearningLibrary.prototype, 'saveStudy', async function (this: LearningLibrary, study: Parameters<LearningLibrary['saveStudy']>[0]) {
+    if (study.terminal && rejectFinal) throw new Error('Injected archive size limit');
+    return saveStudy.call(this, study);
+  });
+  try {
+    await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+    const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime);
+    runtime.view = () => ({ ...view(), finalOutcome: 'demonstrated' });
+    await harness.reader.open();
+    // Act
+    await assert.rejects(harness.reader.action('stop'), /archive size limit/);
+    const stopped = await service.stop({ instanceId: service.instanceId, runId: record.id }), reader = harness.reader.inspect().view!;
+    // Assert
+    assert.equal(stopped.finalOutcome, 'demonstrated'); assert.equal(stopped.historyOutcome.status, 'failed'); assert.equal(stopped.studyOutcome, 'partial');
+    assert.equal(reader.study?.historyOutcome, 'failed'); assert.equal(reader.study?.studyOutcome, 'partial');
+    rejectFinal = false; await harness.reader.action('retry');
+    assert.equal(service.state(record).studyOutcome, 'demonstrated'); assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'demonstrated');
+  } finally { rejectFinal = false; context.mock.restoreAll(); await harness.close(); }
+});
+
 test('a closed source file change marks prior understanding for review without changing the saved learner decision', async () => {
   // Arrange
   const harness = await workspaceHarness();
   try {
     await harness.reader.understand(true);
-    const directory = harness.reader.inspect().libraryDirectory!, before = await readFile(join(directory, 'progress.json'), 'utf8');
+    const directory = harness.reader.inspect().libraryDirectory!, before = await readFile(join(directory, 'progress.v2.json'), 'utf8');
     const updatesBefore = harness.counts().outlineUpdates;
     assert.equal(harness.reader.inspect().view!.model.understoodCount, 1);
     // Act: the editor has no open source document; the filesystem watcher owns this update.
@@ -107,7 +174,7 @@ test('a closed source file change marks prior understanding for review without c
     await waitUntil(() => harness.reader.inspect().view!.model.reviewCount === 1, 'closed source review signal', 1_000);
     // Assert
     assert.equal(harness.reader.inspect().view!.model.understoodCount, 0);
-    assert.equal(await readFile(join(directory, 'progress.json'), 'utf8'), before);
+    assert.equal(await readFile(join(directory, 'progress.v2.json'), 'utf8'), before);
     assert.equal(harness.reader.inspect().view!.model.source.hash, sha256('const price = 25;'));
     assert.ok(harness.counts().outlineUpdates > updatesBefore, 'The closed reader still updates its installed outline');
   } finally { await harness.close(); }
@@ -117,13 +184,13 @@ test('returning to the original item while another source opens cannot display t
   // Arrange
   const harness = await workspaceHarness();
   try {
-    await harness.reader.open(); await harness.reader.select('server'); const held = harness.holdNextSource();
-    const browserSelection = harness.reader.select('browser'); await held.started;
+    await harness.reader.open(); await harness.reader.select('paired-cart-demo/server'); const held = harness.holdNextSource();
+    const browserSelection = harness.reader.select('paired-cart-demo/browser'); await held.started;
     // Act
-    const serverSelection = harness.reader.select('server'); held.release();
+    const serverSelection = harness.reader.select('paired-cart-demo/server'); held.release();
     await Promise.all([browserSelection, serverSelection]);
     // Assert
-    assert.equal(harness.reader.inspect().view!.model.selection.participant, 'server');
+    assert.equal(harness.reader.inspect().view!.model.selection.itemId, 'paired-cart-demo/server');
     assert.match(harness.reader.inspect().sourceUri!, /Captured-server\.mts$/);
     assert.equal(harness.reader.inspect().view!.loading, false);
   } finally { await harness.close(); }
@@ -148,7 +215,7 @@ test('an obsolete source failure cannot clear the loading guard of its replaceme
   const harness = await workspaceHarness();
   try {
     await harness.reader.open(); const first = harness.holdNextSource();
-    const selecting = harness.reader.select('browser'); await first.started;
+    const selecting = harness.reader.select('paired-cart-demo/browser'); await first.started;
     const second = harness.holdNextSource(); const revealing = harness.reader.action('source');
     await waitUntil(() => harness.reader.inspect().view!.revision >= 3, 'replacement selection', 1_000);
     // Act
@@ -166,12 +233,12 @@ test('the first understanding command after reload applies to the restored item 
   try {
     const key = sha256(await realpath(harness.directory));
     const library = new LearningLibrary(join(harness.directory, 'storage/learning', key), key);
-    await library.select({ participant: 'browser', follow: false, tab: 'overview' });
+    await library.select({ profile: 'paired-cart-demo', itemId: 'paired-cart-demo/browser', follow: false, tab: 'overview' });
     // Act
     await harness.reader.understand(true);
     // Assert
     const progress = await library.readProgress();
-    assert.equal(progress.decisions[0]!.item, 'browser');
+    assert.equal(progress.decisions[0]!.item, 'paired-cart-demo/browser');
     assert.equal(progress.decisions[0]!.sourceHash, sha256('const count = 1;'));
   } finally { await harness.close(); }
 });
@@ -258,7 +325,7 @@ test('the latest saved-study choice wins when the earlier archive read completes
     const directory = harness.reader.inspect().libraryDirectory!, workspaceKey = directory.split('/').at(-1)!;
     const library = new LearningLibrary(directory, workspaceKey), instanceId = randomUUID(), firstRun = randomUUID(), latestRun = randomUUID();
     const firstId = `${instanceId}_${firstRun}`, latestId = `${instanceId}_${latestRun}`;
-    for (const runId of [firstRun, latestRun]) await library.saveStudy({ version: 1, workspaceKey, id: `${instanceId}_${runId}`, instanceId, runId, profile: 'paired-cart-demo', createdAt: '2026-09-18T10:00:00.000Z', savedAt: '2026-09-18T10:00:01.000Z', state: 'stopped', terminal: true, finalOutcome: 'partial', observations: [], captures: [], links: [] });
+    for (const runId of [firstRun, latestRun]) await library.saveStudy({ version: 2, workspaceKey, id: `${instanceId}_${runId}`, instanceId, runId, profile: 'paired-cart-demo', createdAt: '2026-09-18T10:00:00.000Z', savedAt: '2026-09-18T10:00:01.000Z', state: 'stopped', terminal: true, finalOutcome: 'partial', materialSignature: sha256('test-checkpoint'), observations: [], captures: [], links: [] });
     await harness.reader.action('retry'); await harness.reader.open();
     const revision = harness.reader.inspect().view!.revision;
     context.mock.method(LearningLibrary.prototype, 'readStudy', async function (this: LearningLibrary, id: string) {
@@ -279,12 +346,12 @@ test('selecting a browser moment updates the native outline without requesting k
   // Arrange
   const harness = await workspaceHarness();
   try {
-    await harness.reader.open(); assert.deepEqual(harness.outline.selection, ['server']);
+    await harness.reader.open(); assert.deepEqual(harness.outline.selection, ['paired-cart-demo/server']);
     // Act
-    harness.receive({ type: 'select', revision: harness.reader.inspect().view!.revision, participant: 'browser' });
-    await waitUntil(() => harness.outline.selection[0] === 'browser', 'native outline selection', 1_000);
+    harness.receive({ type: 'select', revision: harness.reader.inspect().view!.revision, itemId: 'paired-cart-demo/browser' });
+    await waitUntil(() => harness.outline.selection[0] === 'paired-cart-demo/browser', 'native outline selection', 1_000);
     // Assert
-    assert.equal(harness.reader.inspect().view!.model.selection.participant, 'browser');
+    assert.equal(harness.reader.inspect().view!.model.selection.itemId, 'paired-cart-demo/browser');
   } finally { await harness.close(); }
 });
 
@@ -372,13 +439,13 @@ test('Retry saves the failed learner choice for its original item exactly once a
     // Act
     await assert.rejects(harness.reader.understand(true), /Understanding write denied/);
     assert.equal(harness.reader.inspect().view!.model.selectedUnderstanding.understood, false);
-    await harness.reader.select('browser');
+    await harness.reader.select('paired-cart-demo/browser');
     await harness.reader.action('retry'); await harness.reader.action('retry');
     // Assert
     const directory = harness.reader.inspect().libraryDirectory!, library = new LearningLibrary(directory, directory.split('/').at(-1)!);
     const progress = await library.readProgress();
     assert.equal(progress.decisions.length, 1);
-    assert.equal(progress.decisions[0]!.item, 'server');
+    assert.equal(progress.decisions[0]!.item, 'paired-cart-demo/server');
     assert.equal(progress.decisions[0]!.sourceHash, sha256('const price = 24;'));
     assert.equal(progress.decisions[0]!.understood, true);
     assert.equal(attempts[1]!.id, attempts[0]!.id);

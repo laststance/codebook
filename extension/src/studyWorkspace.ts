@@ -5,11 +5,14 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { BrowserViewport } from 'codebook-cycle-0001/dist/browserViewport';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { STUDY_PROFILES } from 'codebook-cycle-0004/dist/profiles';
+import type { ProfileId, StudyItemId } from 'codebook-cycle-0004/dist/constants';
+import { itemSchema, profileSchema, type StudyCatalogEntry } from './studySchemas';
 import { LearningLibrary } from './learningLibrary';
 import { requireWorkspace, type StudyPresentation } from './environment';
 import { StudyError } from './errors';
-import { MAX_SOURCE_DOCUMENTS, PROFILE_ID, SOURCE_LIMIT_BYTES, STUDY_REFRESH_INTERVAL_MS, STUDY_SOURCE_SCHEME } from './constants';
-import { LEARNING_ITEMS, participantSchema, projectStudy, studyIdSchema, type LearnerDecision, type LearnerProgress, type SourceBaselines, type StudyArchive, type StudyParticipant, type StudySelection } from './studyModel';
+import { MAX_SOURCE_DOCUMENTS, SOURCE_LIMIT_BYTES, STUDY_REFRESH_INTERVAL_MS, STUDY_SOURCE_SCHEME } from './constants';
+import { LEARNING_ITEMS, participantSchema, projectStudy, studyIdSchema, type LearnerDecision, type LearnerProgress, type SourceBaselines, type StudyArchive, type StudySelection } from './studyModel';
 import type { StudyRecord, StudyService } from './service';
 import { captureStudy } from './utils/captureStudy';
 import { capturedAppHtml } from './utils/capturedAppHtml';
@@ -20,9 +23,10 @@ const actionSchema = z.enum(['run', 'click', 'continue', 'stop', 'connect', 'ret
 const revisionShape = { revision: z.number().int().nonnegative() };
 const messageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('ready') }),
-  z.strictObject({ type: z.literal('rendered'), ...revisionShape, participant: participantSchema, snapshotUri: z.string().optional() }),
+  z.strictObject({ type: z.literal('rendered'), ...revisionShape, itemId: itemSchema, snapshotUri: z.string().optional() }),
   z.strictObject({ type: z.literal('action'), ...revisionShape, action: actionSchema }),
-  z.strictObject({ type: z.literal('select'), ...revisionShape, participant: participantSchema }),
+  z.strictObject({ type: z.literal('select'), ...revisionShape, itemId: itemSchema }),
+  z.strictObject({ type: z.literal('profile'), ...revisionShape, profile: profileSchema }),
   z.strictObject({ type: z.literal('tab'), ...revisionShape, tab: z.enum(['overview', 'live']) }),
   z.strictObject({ type: z.literal('history'), ...revisionShape, studyId: studyIdSchema }),
   z.strictObject({ type: z.literal('understanding'), ...revisionShape, understood: z.boolean() }),
@@ -39,12 +43,12 @@ export class StudyWorkspace {
   private currentSourceAvailable = true;
   private progress?: LearnerProgress;
   private pendingDecision?: LearnerDecision;
-  private selection: StudySelection = { participant: 'server', follow: true, tab: 'overview' };
+  private selection: StudySelection = { profile: 'checkout-demo', itemId: 'checkout-demo/cart-mutation', follow: true, tab: 'overview' };
   private activeArchive?: StudyArchive;
   private selectedArchive?: StudyArchive;
-  private catalog: { id: string; savedAt: string }[] = [];
+  private catalog: StudyCatalogEntry[] = [];
   private readonly archiveSignatures = new Map<string, string>();
-  private readonly pendingArchives = new Map<string, StudyArchive>();
+  private readonly pendingArchives = new Map<string, { archive: StudyArchive; service: StudyService; record: StudyRecord; signature: string; checkpointRevision: number }>();
   private readonly archiveWrites = new Map<string, Promise<void>>();
   private readonly errors = new Map<string, string>();
   private readonly documents = new Map<string, string>();
@@ -54,8 +58,8 @@ export class StudyWorkspace {
   private moments?: vscode.WebviewView;
   private viewport?: BrowserViewport;
   private leaseId?: string;
-  private outline?: vscode.TreeView<StudyParticipant>;
-  private readonly treeChanges = new vscode.EventEmitter<StudyParticipant | undefined>();
+  private outline?: vscode.TreeView<StudyItemId>;
+  private readonly treeChanges = new vscode.EventEmitter<StudyItemId | undefined>();
   private readonly disposables: vscode.Disposable[] = [];
   private highlight?: vscode.TextEditorDecorationType;
   private sourceUri?: vscode.Uri;
@@ -77,12 +81,12 @@ export class StudyWorkspace {
   private timer?: ReturnType<typeof setInterval>;
   private lastActiveRegion: 'app' | 'context' | 'source' = 'context';
   private restoringSource = false;
-  private lastRendered?: { revision: number; participant: StudyParticipant; snapshotUri?: string };
+  private lastRendered?: { revision: number; itemId: StudyItemId; snapshotUri?: string };
   private lastSelectionKey?: string;
   private lastApplicationKey?: string;
   private lastPublished?: string;
   private outlineRendering: Promise<void> = Promise.resolve();
-  private lastOutlineSelection?: StudyParticipant;
+  private lastOutlineSelection?: StudyItemId;
 
   constructor(private readonly context: WorkspaceContext, private readonly controls: { start(): Promise<StudyService>; connect(): Promise<void> }) { this.installReaders(); }
 
@@ -127,7 +131,7 @@ export class StudyWorkspace {
     await this.initialize(); this.assertLifetime(lifetime);
     const firstOpen = !this.opened; this.opened = true; this.closing = false;
     this.installReaders(); this.ensureApp(); this.ensureContext();
-    if (firstOpen && this.currentRecord()) this.selection = { ...this.selection, follow: true, tab: 'live' };
+    if (firstOpen && this.currentRecord() && this.selection.follow) this.selection = { ...this.selection, follow: true, tab: 'live' };
     await this.refresh(); await this.renderSelection();
     this.assertLifetime(lifetime);
     if (firstOpen) await this.arrange();
@@ -163,13 +167,18 @@ export class StudyWorkspace {
       try {
         if (action === 'run') {
           const service = await this.controls.start(); this.assertLifetime(lifetime);
-          this.pendingHistory = undefined; this.selection = { participant: 'server', follow: true, tab: 'live' };
-          service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: randomUUID() });
+          this.pendingHistory = undefined; const profile = this.selection.profile;
+          this.selection = { profile, itemId: STUDY_PROFILES[profile].items[0]!.id, follow: true, tab: 'live' };
+          service.start({ instanceId: service.instanceId, profile, key: randomUUID() });
         } else {
           const service = this.service, record = this.currentRecord();
           if (!service || !record) throw new Error('No current runtime. Reading saved history never starts one.');
           const identity = { instanceId: service.instanceId, runId: record.id };
-          if (action === 'click') service.action({ ...identity, key: randomUUID(), action: 'add-to-cart' });
+          if (action === 'click') {
+            const nextAction = STUDY_PROFILES[record.profile].actions.find(action => service.state(record).nextActions.includes(action.id));
+            if (!nextAction) throw new Error('No application action is currently available.');
+            service.action({ ...identity, key: randomUUID(), action: nextAction.id });
+          }
           if (action === 'continue') {
             if (!this.sourceReady() || !displayed.continueArguments || this.lastRendered?.revision !== this.revision || this.lastRendered.snapshotUri !== displayed.observation?.snapshotUri) throw new Error('Inspect the current pause before continuing.');
             await service.continue(displayed.continueArguments);
@@ -189,7 +198,7 @@ export class StudyWorkspace {
     if (action === 'outline') await vscode.commands.executeCommand('codebook.learningOutline.focus');
     if (action === 'arrange') await this.arrange();
     if (action === 'current-file') {
-      const baseline = this.baselines![this.selection.participant];
+      const baseline = this.baselines![this.message().model.selectedItem.participant];
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(baseline.path));
       this.assertLifetime(lifetime);
       if (sha256(document.getText()) !== this.message().model.source.hash) this.report('source', new Error('Current file differs from the selected captured source. The captured document remains unchanged.'));
@@ -209,6 +218,9 @@ export class StudyWorkspace {
         } catch (error) { this.report('progress', error); }
         try {
           for (const id of this.pendingArchives.keys()) await this.persistArchive(id);
+          const record = this.currentRecord();
+          if (record && this.service) await this.checkpoint(this.service, record, true);
+          await this.library!.reconcile();
           this.catalog = await this.library!.list(); this.errors.delete('archive');
         } catch (error) { this.report('archive', error); }
       } finally { this.saving = false; this.publish(); }
@@ -217,23 +229,41 @@ export class StudyWorkspace {
     }
   }
 
-  /** Selects a learner-owned item while turning off automatic following of later pauses. @example await workspace.select('server') */
-  async select(participant: StudyParticipant): Promise<void> {
+  /** Selects a learner-owned item while turning off automatic following of later pauses. @example await workspace.select('checkout-demo/cart-mutation') */
+  async select(itemId: StudyItemId): Promise<void> {
     const lifetime = this.lifetime; this.assertLifetime(lifetime);
     await this.initialize(); this.assertLifetime(lifetime);
     if (!this.opened) await this.open();
     this.assertLifetime(lifetime); this.pendingHistory = undefined;
     if (this.selection.studyId === this.activeArchive?.id) this.selectedArchive = this.activeArchive;
-    this.selection = { ...this.selection, participant: participantSchema.parse(participant), follow: false };
+    const selected = itemSchema.parse(itemId);
+    if (!STUDY_PROFILES[this.selection.profile].items.some(item => item.id === selected)) throw new Error('Select the matching study profile first.');
+    this.selection = { ...this.selection, itemId: selected, follow: false };
     await this.renderSelection(); await this.saveSelection();
   }
 
+  /** Chooses the next fixed demo only while no runtime owns control; it never changes a running scenario. @example await workspace.selectProfile('paired-cart-demo') */
+  async selectProfile(profile: ProfileId): Promise<void> {
+    const lifetime = this.lifetime; await this.initialize(); this.assertLifetime(lifetime);
+    if (this.currentRecord() && !this.currentRecord()!.stopped) throw new Error('Stop the active study before choosing another scenario.');
+    const selected = profileSchema.parse(profile);
+    this.pendingHistory = undefined; this.selectedArchive = undefined;
+    this.selection = { profile: selected, itemId: STUDY_PROFILES[selected].items[0]!.id, follow: false, tab: 'overview' };
+    await this.renderSelection(true, true); await this.saveSelection();
+  }
+
+  /** Restores a history profile without changing any live runtime or borrowing a same-participant item. @example this.selectArchive(archive) */
+  private selectArchive(archive: StudyArchive): void {
+    const itemId = this.selection.profile === archive.profile ? this.selection.itemId : STUDY_PROFILES[archive.profile].items[0]!.id;
+    this.selection = { ...this.selection, studyId: archive.id, profile: archive.profile, itemId, follow: false };
+  }
+
   /** Persists only an explicit learner choice, keeping the last saved value visible on failure. @example await workspace.understand(true) */
-  async understand(understood?: boolean, participant?: StudyParticipant, sourceHash?: string): Promise<void> {
+  async understand(understood?: boolean, itemId?: StudyItemId, sourceHash?: string): Promise<void> {
     const lifetime = this.lifetime; this.assertLifetime(lifetime);
     await this.initialize(); this.assertLifetime(lifetime);
     const selected = this.message().model;
-    const item = participant ?? selected.selection.participant;
+    const item = itemId ?? selected.selection.itemId;
     if (this.saving || this.loading) throw new Error('Wait for the current source or pending understanding write.');
     if (!selected.selectedUnderstanding.known) throw new Error('Understanding requires readable source and learning storage.');
     this.saving = true; this.publish();
@@ -280,7 +310,7 @@ export class StudyWorkspace {
       try { this.progress = await this.library.readProgress(); if (this.progress.selection) this.selection = { ...this.progress.selection, follow: false }; }
       catch (error) { this.report('progress', error); }
       try { this.catalog = await this.library.list(); const id = this.selection.studyId ?? this.catalog[0]?.id;
-        if (id) { this.selectedArchive = await this.library.readStudy(id); this.selection.studyId = id; }
+        if (id) { this.selectedArchive = await this.library.readStudy(id); this.selectArchive(this.selectedArchive); }
       } catch (error) { this.report('archive', error); }
     })();
     try { await this.initializing; }
@@ -325,8 +355,10 @@ export class StudyWorkspace {
       if (record && this.service) await this.checkpoint(this.service, record);
       if (this.selection.follow && this.activeArchive) {
         const state = record && this.service?.state(record);
-        const current = LEARNING_ITEMS.find(item => state?.participants[item.participant].resumable)?.participant;
-        this.selection = { ...this.selection, studyId: this.activeArchive.id, participant: current ?? this.selection.participant };
+        const current = Object.values(state?.participants ?? {}).find(participant => participant.resumable)?.itemId;
+        const profile = this.activeArchive.profile;
+        const retained = this.selection.profile === profile ? this.selection.itemId : STUDY_PROFILES[profile].items[0]!.id;
+        this.selection = { ...this.selection, profile, studyId: this.activeArchive.id, itemId: current ?? retained };
       }
       if (this.opened && !this.closing) await this.renderSelection();
     })();
@@ -336,31 +368,47 @@ export class StudyWorkspace {
 
   /** Saves material state only; forced retirement explicitly captures the state after the final observer tick. @example await this.checkpoint(service, record, true) */
   private async checkpoint(service: StudyService, record: StudyRecord, force = false): Promise<void> {
-    const signature = JSON.stringify(service.state(record)), id = `${service.instanceId}_${record.id}`;
+    const signature = service.state(record).materialSignature, id = `${service.instanceId}_${record.id}`;
     if (!force && this.archiveSignatures.get(id) === signature) return;
-    const archive = await captureStudy(service, record, this.library!.workspaceKey);
-    if (!archive) { if (force) throw new Error('Final study changed during checkpoint; history was not certified.'); return; }
-    this.activeArchive = archive; this.archiveSignatures.set(id, signature); this.pendingArchives.set(id, archive);
-    const write = this.persistArchive(id);
-    // Live selection uses committed evidence immediately; final retirement still awaits durable history.
-    if (force) await write;
-    else void write.catch(() => undefined);
+    const checkpointRevision = service.beginHistory(record, signature);
+    if (checkpointRevision === undefined) return;
+    try {
+      const archive = await captureStudy(service, record, this.library!.workspaceKey);
+      if (!archive) { if (force) throw new Error('Final study changed during checkpoint; history was not certified.'); return; }
+      this.activeArchive = archive; this.archiveSignatures.set(id, signature);
+      this.pendingArchives.set(id, { archive, service, record, signature, checkpointRevision });
+      const write = this.persistArchive(id);
+      // Current evidence is inspectable before disk completes; terminal retirement still waits for durability.
+      if (force) await write;
+      else void write.catch(() => undefined);
+    } catch (error) {
+      this.archiveSignatures.set(id, signature); service.reportHistory(record, signature, checkpointRevision, 'failed', String(error)); throw error;
+    }
   }
 
-  /** Coalesces each study's latest checkpoint without letting an older save erase a newer retry. @example await this.persistArchive(study.id) */
+  /** Coalesces writes while only a matching latest receipt can change the combined study outcome. @example await this.persistArchive(study.id) */
   private persistArchive(id: string): Promise<void> {
     const existing = this.archiveWrites.get(id);
     if (existing) return existing.then(() => { if (this.pendingArchives.has(id)) return this.persistArchive(id); });
     const pending = Promise.resolve().then(async () => {
-      let archive = this.pendingArchives.get(id);
-      while (archive) {
-        await this.library!.saveStudy(archive);
-        if (this.pendingArchives.get(id) === archive) this.pendingArchives.delete(id);
-        this.catalog = await this.library!.list(); this.errors.delete('archive'); this.publish();
-        archive = this.pendingArchives.get(id);
+      let checkpoint = this.pendingArchives.get(id);
+      while (checkpoint) {
+        const { archive, service, record, signature, checkpointRevision } = checkpoint;
+        service.reportHistory(record, signature, checkpointRevision, 'pending');
+        try {
+          await this.library!.saveStudy(archive);
+          this.catalog = await this.library!.list();
+          const current = service.reportHistory(record, signature, checkpointRevision, 'saved');
+          if (this.pendingArchives.get(id) === checkpoint) this.pendingArchives.delete(id);
+          if (current) this.errors.delete('archive');
+          this.publish();
+        } catch (error) {
+          service.reportHistory(record, signature, checkpointRevision, 'failed', String(error));
+          this.report('archive', new Error(`History not saved: ${String(error)}`)); throw error;
+        }
+        checkpoint = this.pendingArchives.get(id);
       }
-    }).catch(error => { this.report('archive', new Error(`History not saved: ${String(error)}`)); throw error; })
-      .finally(() => { if (this.archiveWrites.get(id) === pending) this.archiveWrites.delete(id); });
+    }).finally(() => { if (this.archiveWrites.get(id) === pending) this.archiveWrites.delete(id); });
     this.archiveWrites.set(id, pending); return pending;
   }
 
@@ -373,10 +421,14 @@ export class StudyWorkspace {
     const record = this.currentRecord(), live = record && this.service?.state(record);
     const study = this.selection.studyId === this.activeArchive?.id ? this.activeArchive : this.selectedArchive;
     return { type: 'study', revision: this.revision, model: projectStudy({ selection: this.selection, study, live, progress: this.progress, baselines: this.baselines, currentSourceAvailable: this.currentSourceAvailable }),
-      study: study && { id: study.id, state: study.state, terminal: study.terminal, createdAt: study.createdAt, reason: study.reason, finalOutcome: study.finalOutcome, links: study.links },
-      liveState: live?.state, deadlineAt: live?.deadlineAt, busy: this.busy, saving: this.saving, loading: this.loading, errors: [...this.errors.values()],
-      canClick: live?.nextActions.includes('add-to-cart') ?? false, canRun: !record || record.stopped,
-      moments: (study?.observations ?? []).map(observation => ({ participant: observation.participant, title: LEARNING_ITEMS.find(item => item.participant === observation.participant)!.title, at: observation.capturedAt })), studies: this.catalog };
+      study: study && { id: study.id, state: study.state, terminal: study.terminal, profile: study.profile, createdAt: study.createdAt, reason: study.reason, finalOutcome: study.finalOutcome, links: study.links,
+        historyOutcome: live?.runId === study.runId && live.instanceId === study.instanceId ? live.historyOutcome.status : this.catalog.find(entry => entry.id === study.id)?.metadata === 'unavailable' ? 'failed' : 'saved',
+        studyOutcome: live?.runId === study.runId && live.instanceId === study.instanceId ? live.studyOutcome : this.catalog.find(entry => entry.id === study.id)?.metadata === 'unavailable' ? 'partial' : study.terminal && study.finalOutcome === 'demonstrated' ? 'demonstrated' : study.finalOutcome === 'not-demonstrated' ? 'not-demonstrated' : 'partial' },
+      liveState: live?.state, deadlineAt: live?.deadlineAt, busy: this.busy, saving: this.saving, loading: this.loading, errors: [...this.errors.values(), ...this.catalog.flatMap(entry => entry.reason ? [entry.reason] : [])],
+      nextAction: live && STUDY_PROFILES[live.profile].actions.find(action => live.nextActions.includes(action.id)), liveProfile: live?.profile,
+      profiles: Object.values(STUDY_PROFILES).map(profile => ({ id: profile.id, title: profile.title, description: profile.description })),
+      canClick: live ? STUDY_PROFILES[live.profile].actions.some(action => live.nextActions.includes(action.id)) : false, canRun: !record || record.stopped,
+      moments: (study?.observations ?? []).map(observation => ({ id: observation.id, itemId: observation.itemId, title: LEARNING_ITEMS.find(item => item.id === observation.itemId)!.title, at: observation.capturedAt })), studies: this.catalog };
   }
 
   /** Publishes a matching projection with stable DOM controls, excluding images from the context channel. @example this.publish() */
@@ -388,7 +440,7 @@ export class StudyWorkspace {
     if (signature === this.lastPublished) return;
     this.lastPublished = signature;
     void this.contextPanel?.webview.postMessage(compact); void this.moments?.webview.postMessage(compact);
-    if (this.outline) this.outline.message = message.model.currentSourceAvailable ? `${message.model.understoodCount} of 2 understood for current source · ${message.model.reviewCount} needs review` : 'Current source unavailable · historical understanding retained';
+    if (this.outline) this.outline.message = message.model.currentSourceAvailable ? `${message.model.understoodCount} of ${message.model.progressByItem.length} understood for current source · ${message.model.reviewCount} needs review` : 'Current source unavailable · historical understanding retained';
     this.treeChanges.fire(undefined);
     this.syncOutline();
   }
@@ -396,12 +448,12 @@ export class StudyWorkspace {
   /** Aligns visible native selection without opening a hidden outline or stealing keyboard focus. @example this.syncOutline() */
   private syncOutline(): void {
     if (!this.outline?.visible || !this.baselines || this.closing || this.disposed) return;
-    const participant = this.selection.participant;
-    if (this.lastOutlineSelection === participant) return;
-    this.lastOutlineSelection = participant;
+    const itemId = this.selection.itemId;
+    if (this.lastOutlineSelection === itemId) return;
+    this.lastOutlineSelection = itemId;
     this.outlineRendering = this.outlineRendering.then(async () => {
-      if (!this.outline?.visible || this.closing || this.disposed || participant !== this.selection.participant) return;
-      await this.outline.reveal(participant, { select: true, focus: false });
+      if (!this.outline?.visible || this.closing || this.disposed || itemId !== this.selection.itemId) return;
+      await this.outline.reveal(itemId, { select: true, focus: false });
     }).catch(error => this.report('outline', error));
   }
 
@@ -409,7 +461,7 @@ export class StudyWorkspace {
   private renderSelection(preserveFocus = true, forceSource = false): Promise<void> {
     if (!this.opened || this.closing || !this.baselines || this.pendingHistory !== undefined) return Promise.resolve();
     const initial = this.message();
-    const selectionKey = JSON.stringify([initial.model.selection.studyId, initial.model.selection.participant, initial.model.source.hash, initial.model.observation?.id, initial.model.selection.follow]);
+    const selectionKey = JSON.stringify([initial.model.selection.studyId, initial.model.selection.itemId, initial.model.source.hash, initial.model.observation?.id, initial.model.selection.follow]);
     if (!forceSource && preserveFocus && this.lastSelectionKey === selectionKey) {
       this.presentApplication(initial); this.publish(); return Promise.resolve();
     }
@@ -418,8 +470,8 @@ export class StudyWorkspace {
     const pending = this.rendering.catch(() => undefined).then(async () => {
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
       const message = this.message();
-      const participant = message.model.selection.participant, source = message.model.source;
-      const uri = vscode.Uri.from({ scheme: STUDY_SOURCE_SCHEME, authority: this.library!.workspaceKey, path: `/${message.model.observation ? message.study!.id : 'source-derived'}/${participant}/${source.hash}/Captured-${participant}.mts` });
+      const itemId = message.model.selection.itemId, source = message.model.source;
+      const uri = vscode.Uri.from({ scheme: STUDY_SOURCE_SCHEME, authority: this.library!.workspaceKey, path: `/${message.model.observation ? message.study!.id : 'source-derived'}/${encodeURIComponent(itemId)}/${source.hash}/Captured-${itemId.split('/').at(-1)}.mts` });
       this.documents.set(uri.toString(), source.text);
       // Native documents retain their own visible bytes; the provider cache must remain bounded across edits.
       for (const cached of this.documents.keys()) { if (this.documents.size <= MAX_SOURCE_DOCUMENTS) break; this.documents.delete(cached); }
@@ -493,19 +545,19 @@ export class StudyWorkspace {
     this.disposables.push(vscode.workspace.registerTextDocumentContentProvider(STUDY_SOURCE_SCHEME, { provideTextDocumentContent: uri => this.provideSource(uri) }));
     this.outline = vscode.window.createTreeView('codebook.learningOutline', { manageCheckboxStateManually: true, treeDataProvider: {
       onDidChangeTreeData: this.treeChanges.event,
-      getChildren: async () => { await this.initialize(); return LEARNING_ITEMS.map(item => item.participant); },
+      getChildren: async () => { await this.initialize(); return STUDY_PROFILES[this.selection.profile].items.map(item => item.id); },
       getParent: () => undefined,
-      getTreeItem: participant => {
-        const value = this.message().model.progressByItem.find(item => item.participant === participant)!;
+      getTreeItem: itemId => {
+        const value = this.message().model.progressByItem.find(item => item.id === itemId)!;
         const item = new vscode.TreeItem(value.title, vscode.TreeItemCollapsibleState.None); item.id = value.id;
         item.description = !value.known ? 'Current source unavailable' : value.reviewNeeded ? 'Review needed' : value.understood ? 'Learner understood' : 'Not marked';
-        item.command = { command: 'codebook.selectLearningItem', title: 'Read learning item', arguments: [participant] };
+        item.command = { command: 'codebook.selectLearningItem', title: 'Read learning item', arguments: [itemId] };
         if (value.known) item.checkboxState = value.understood ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
         return item;
       },
     } });
     this.disposables.push(this.outline, this.outline.onDidChangeVisibility(() => { this.lastOutlineSelection = undefined; this.syncOutline(); }), this.outline.onDidChangeCheckboxState(event => {
-      for (const [participant, state] of event.items) void this.understand(state === vscode.TreeItemCheckboxState.Checked, participant, this.baselines![participant].hash).catch(error => this.report('progress', error));
+      for (const [itemId, state] of event.items) void this.understand(state === vscode.TreeItemCheckboxState.Checked, itemId, this.baselines![LEARNING_ITEMS.find(item => item.id === itemId)!.participant].hash).catch(error => this.report('progress', error));
     }));
     this.disposables.push(vscode.window.registerWebviewViewProvider('codebook.observedMoments', { resolveWebviewView: view => {
       this.moments = view; view.webview.options = { enableScripts: true, localResourceRoots: [] }; view.webview.html = studyHtml('moments');
@@ -531,8 +583,11 @@ export class StudyWorkspace {
     await this.initialize();
     if (uri.authority !== this.library!.workspaceKey || uri.query || uri.fragment) throw new Error('Captured source belongs to another workspace.');
     const cached = this.documents.get(uri.toString()); if (cached !== undefined) return cached;
-    const [studyId, participantText, hash] = uri.path.split('/').filter(Boolean), participant = participantSchema.parse(participantText);
-    const source = studyId === 'source-derived' ? this.baselines![participant] : (await this.library!.readStudy(studyIdSchema.parse(studyId))).observations.find(value => value.participant === participant)?.source;
+    const [studyId, itemText, hash] = uri.path.split('/').filter(Boolean);
+    const legacy = participantSchema.safeParse(itemText);
+    const itemId = itemSchema.parse(legacy.success ? `paired-cart-demo/${legacy.data}` : decodeURIComponent(itemText ?? ''));
+    const item = LEARNING_ITEMS.find(item => item.id === itemId)!;
+    const source = studyId === 'source-derived' ? this.baselines![item.participant] : (await this.library!.readStudy(studyIdSchema.parse(studyId))).observations.find(value => value.itemId === itemId)?.source;
     if (!source || source.hash !== hash) throw new Error('This captured source revision is unavailable.'); return source.text;
   }
 
@@ -558,12 +613,13 @@ export class StudyWorkspace {
     if (message.type === 'ready') { this.lastPublished = undefined; this.publish(); return; }
     if (message.type === 'rendered') {
       const selected = this.message().model;
-      if (origin === 'context' && !this.loading && message.revision === this.revision && message.participant === selected.selection.participant && message.snapshotUri === selected.observation?.snapshotUri) this.lastRendered = message;
+      if (origin === 'context' && !this.loading && message.revision === this.revision && message.itemId === selected.selection.itemId && message.snapshotUri === selected.observation?.snapshotUri) this.lastRendered = message;
       return;
     }
     if (message.revision !== this.revision) throw new Error('The displayed study changed. Inspect the current view before acting.');
     if (message.type === 'action') await this.action(message.action);
-    if (message.type === 'select') await this.select(message.participant);
+    if (message.type === 'select') await this.select(message.itemId);
+    if (message.type === 'profile') await this.selectProfile(message.profile);
     if (message.type === 'tab') { this.selection = { ...this.selection, tab: message.tab }; this.publish(); await this.saveSelection(); }
     if (message.type === 'understanding') await this.understand(message.understood);
     if (message.type === 'history') {
@@ -572,7 +628,7 @@ export class StudyWorkspace {
         const archive = await this.library!.readStudy(message.studyId);
         if (this.pendingHistory !== request || message.revision !== this.revision || this.closing) return;
         this.pendingHistory = undefined; this.selectedArchive = archive;
-        this.selection = { ...this.selection, studyId: message.studyId, follow: false };
+        this.selectArchive(archive);
         await this.renderSelection(true, true); await this.saveSelection();
       } catch (error) {
         if (this.pendingHistory !== request || message.revision !== this.revision || this.closing) return;

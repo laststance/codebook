@@ -49,11 +49,11 @@
       },
       {
         "command": "codebook.study.run",
-        "title": "Codebook: Run Paired Cart Demo"
+        "title": "Codebook: Run Selected Study Scenario"
       },
       {
         "command": "codebook.study.click",
-        "title": "Codebook: Add to Cart Once"
+        "title": "Codebook: Perform Next Scenario Action Once"
       },
       {
         "command": "codebook.study.continue",

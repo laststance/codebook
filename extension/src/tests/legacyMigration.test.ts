@@ -1,11 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { studyArchiveSchema as legacyArchiveSchema, progressSchema as legacyProgressSchema } from '../legacyStudySchemas';
 import { decodeStudyArchive } from '../utils/decodeStudyArchive';
 import { decodeLearnerProgress } from '../utils/decodeLearnerProgress';
+import { LearningLibrary } from '../learningLibrary';
+import { loadModule } from './utils/loadModule';
+import { atomicPrivateWrite } from '../utils/atomicPrivateWrite';
+import { readBoundedFile } from '../utils/readBoundedFile';
 
 const fixtureDirectory = resolve(__dirname, '../../src/tests/fixtures/cycle-0006-legacy');
 const workspaceKey = '67bf38abd3f309bf29b1eed73e4f3ea88863995c0f207b70a50eec48d36f8743';
@@ -65,4 +71,84 @@ test('normalized history rejects duplicate items, cross-profile labels, altered 
   assert.throws(() => decodeStudyArchive({ ...study, observations: [{ ...first, interpretations: [{ id: '11111111-1111-4111-8111-111111111111', createdAt: '2026-09-18T20:56:35.947Z', text: 'Invalid claim', facts: [{ path: 'orderCount', value: 1 }] }] }] }, workspaceKey), /facts differ/);
   assert.throws(() => decodeStudyArchive({ ...study, captures: [{ phase: 'paused-order-creation', status: 'absent', reason: 'Wrong item' }] }, workspaceKey), /foreign image/);
   assert.throws(() => decodeStudyArchive({ ...study, links: [{ id: 'checkout-server-mutation', status: 'observed' }] }, workspaceKey), /foreign causal link/);
+});
+
+test('reading legacy files leaves their bytes untouched and labels unread catalog outcomes as unverified', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-migration-')); context.after(() => rm(directory, { recursive: true, force: true }));
+  const bytes = await readFile(resolve(fixtureDirectory, 'study.v1.json')), study = decodeStudyArchive(JSON.parse(bytes.toString()), workspaceKey);
+  const progress = await readFile(resolve(fixtureDirectory, 'progress.v1.json'));
+  await writeFile(join(directory, `${study.id}.study.json`), bytes); await writeFile(join(directory, 'progress.json'), progress);
+  const library = new LearningLibrary(directory, workspaceKey);
+  // Act
+  const catalog = await library.list(), loaded = await library.readStudy(study.id), choices = await library.readProgress();
+  // Assert
+  assert.equal(catalog[0]?.format, 'legacy-v1'); assert.equal(catalog[0]?.outcome, 'unverified');
+  assert.equal(loaded.observations.length, 2); assert.equal(choices.decisions[0]?.item, 'paired-cart-demo/server');
+  assert.deepEqual((await readdir(directory)).sort(), [`${study.id}.study.json`, 'progress.json'].sort());
+  assert.deepEqual(await readFile(join(directory, `${study.id}.study.json`)), bytes); assert.deepEqual(await readFile(join(directory, 'progress.json')), progress);
+});
+
+test('two first-migration writers preserve both explicit decisions exactly once after lock contention and Retry', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-migration-')); context.after(() => rm(directory, { recursive: true, force: true }));
+  const legacy = await readFile(resolve(fixtureDirectory, 'progress.v1.json')); await writeFile(join(directory, 'progress.json'), legacy);
+  const first = new LearningLibrary(directory, workspaceKey), second = new LearningLibrary(directory, workspaceKey);
+  await Promise.all([first.readProgress(), second.readProgress()]);
+  const firstDecision = { id: randomUUID(), item: 'checkout-demo/cart-mutation' as const, sourceHash: sha256('cart-source'), understood: true, at: '2026-09-19T00:00:00.000Z' };
+  const secondDecision = { id: randomUUID(), item: 'checkout-demo/order-creation' as const, sourceHash: sha256('order-source'), understood: true, at: '2026-09-19T00:00:01.000Z' };
+  let release = () => {}, entered = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  const read = first.readProgress.bind(first);
+  first.readProgress = async () => { const value = await read(); entered(); await held; return value; };
+  // Act
+  const writing = first.decide(firstDecision); await started;
+  try { await assert.rejects(second.decide(secondDecision), /locked/); } finally { release(); }
+  await writing; await second.decide(secondDecision); await second.decide(secondDecision);
+  const progress = await new LearningLibrary(directory, workspaceKey).readProgress();
+  // Assert
+  assert.equal(progress.decisions.length, 3);
+  assert.deepEqual(progress.decisions.map(decision => decision.id), ['2873e41e-7878-422e-af27-da5f40334558', firstDecision.id, secondDecision.id]);
+  assert.equal(progress.decisions[0]?.item, 'paired-cart-demo/server'); assert.equal(progress.decisions[2]?.item, 'checkout-demo/order-creation');
+  assert.deepEqual(await readFile(join(directory, 'progress.json')), legacy);
+  assert.equal(JSON.parse(await readFile(join(directory, 'progress.v2.json'), 'utf8')).version, 2);
+});
+
+test('a corrupt preferred v2 file never falls back to a valid legacy archive or progress', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-migration-')); context.after(() => rm(directory, { recursive: true, force: true }));
+  const archive = await readFile(resolve(fixtureDirectory, 'study.v1.json')), progress = await readFile(resolve(fixtureDirectory, 'progress.v1.json'));
+  const study = decodeStudyArchive(JSON.parse(archive.toString()), workspaceKey), library = new LearningLibrary(directory, workspaceKey);
+  await writeFile(join(directory, `${study.id}.study.json`), archive); await writeFile(join(directory, 'progress.json'), progress);
+  await library.saveStudy(study);
+  await writeFile(join(directory, 'progress.v2.json'), '{corrupt'); await writeFile(join(directory, `${study.id}.study.v2.json`), '{corrupt');
+  // Act / Assert
+  await assert.rejects(library.readProgress()); await assert.rejects(library.readStudy(study.id));
+  await assert.rejects(library.select({ profile: 'checkout-demo', itemId: 'checkout-demo/order-creation', follow: false, tab: 'live' }));
+  assert.equal((await library.list())[0]?.metadata, 'unavailable');
+  await assert.rejects(library.reconcile());
+  assert.deepEqual(await readFile(join(directory, 'progress.json')), progress); assert.deepEqual(await readFile(join(directory, `${study.id}.study.json`)), archive);
+  assert.equal(await readFile(join(directory, 'progress.v2.json'), 'utf8'), '{corrupt');
+});
+
+test('a failed metadata write retains the archive and explicit reconciliation repairs catalog status without changing evidence', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-migration-')); context.after(() => rm(directory, { recursive: true, force: true }));
+  const study = decodeStudyArchive(JSON.parse(await readFile(resolve(fixtureDirectory, 'study.v1.json'), 'utf8')), workspaceKey);
+  let rejectMetadata = true, rejectArchiveRead = false;
+  const module = await loadModule<typeof import('../learningLibrary')>(resolve(__dirname, '../learningLibrary.js'), {
+    './utils/atomicPrivateWrite': { atomicPrivateWrite: async (...args: Parameters<typeof atomicPrivateWrite>) => { if (rejectMetadata && args[0].endsWith('.study.meta.v2.json')) throw new Error('Injected catalog write denied'); return atomicPrivateWrite(...args); } },
+    './utils/readBoundedFile': { readBoundedFile: async (...args: Parameters<typeof readBoundedFile>) => { if (rejectArchiveRead && args[0].endsWith('.study.v2.json')) throw new Error('Catalog loaded archive image blobs'); return readBoundedFile(...args); } },
+  });
+  const library = new module.LearningLibrary(directory, workspaceKey);
+  // Act
+  await assert.rejects(library.saveStudy(study), /catalog write denied/);
+  const bytes = await readFile(join(directory, `${study.id}.study.v2.json`));
+  assert.equal((await library.list())[0]?.outcome, 'unverified');
+  rejectMetadata = false; await library.reconcile(); rejectArchiveRead = true;
+  const catalog = await library.list();
+  // Assert
+  assert.equal(catalog[0]?.metadata, 'validated'); assert.equal(catalog[0]?.outcome, 'partial');
+  assert.equal(catalog[0]?.profile, 'paired-cart-demo');
+  assert.deepEqual(await readFile(join(directory, `${study.id}.study.v2.json`)), bytes);
 });

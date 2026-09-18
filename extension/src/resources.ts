@@ -19,6 +19,7 @@ export async function readResource(service: StudyService, uri: string): Promise<
     identity: 'Observations are historical item/action references. A later stop on the same participant does not replace them. Follow current continuation arguments, never an old observation.',
     recovery: 'On a lost action response, repeat identical action/key. Wrong order or a new key for an accepted action dispatches nothing. Missing values/images stay unavailable; never fill them from a later stop.',
     limits: 'Discovery gives profile-specific limits. Paused time is excluded from active progress time; the whole-run deadline remains. The old paired-cart-demo stays available.',
+    outcomes: 'finalOutcome is the compatibility runtime/capture evidence result. historyOutcome qualifies the latest materialSignature/checkpointRevision as unavailable, pending, saved or failed. Only a terminal matching saved checkpoint and demonstrated runtime evidence yield studyOutcome demonstrated. An explanation added after Stop requires a newer saved checkpoint. Read the same run again while history is pending; never replay input to recover storage.',
   });
   const url = new URL(uri);
   if (url.protocol !== 'codebook:' || url.search || url.hash || url.username || url.password || url.port) throw new StudyError('INVALID_REFERENCE', 'Use a canonical resource URI.');
