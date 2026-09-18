@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { mkdtemp, readFile, realpath } from 'node:fs/promises';
+import { access, mkdtemp, readFile, realpath } from 'node:fs/promises';
+import { constants as filesystemConstants } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, INTERFERENCE_DELAY_MS, type Scenario } from './constants';
@@ -46,13 +47,17 @@ export class HostBrowser {
     let debugConfiguration = configuration;
     if (this.host.browserBackend === 'managed') {
       if (!this.host.chrome) throw new Error('Managed Chrome installation is missing');
+      const runtimeExecutable = this.scenario === 'missing-browser' ? '/codebook-missing-chrome' : this.host.chrome.binary;
+      // js-debug opens a modal for missing executables; reject before an interactive launch is acquired.
+      await access(runtimeExecutable, filesystemConstants.X_OK).catch(error => { throw new Error(`Managed Chrome executable unavailable: ${String(error)}`); });
+      signal.throwIfAborted();
       this.managedProfile = await realpath(await mkdtemp('/tmp/codebook-browser-'));
       this.record('browser.managed-profile', { profile: this.managedProfile, chrome: this.host.chrome });
       signal.throwIfAborted();
       const { BrowserViewport } = await import('./browserViewport.js');
       signal.throwIfAborted();
       this.viewport = new BrowserViewport(this.runId, this.record, this.fail, this.scenario);
-      debugConfiguration = { ...configuration, type: 'pwa-chrome', request: 'launch', runtimeExecutable: this.scenario === 'missing-browser' ? '/codebook-missing-chrome' : this.host.chrome.binary,
+      debugConfiguration = { ...configuration, type: 'pwa-chrome', request: 'launch', runtimeExecutable,
         runtimeArgs: ['--headless=new', '--remote-debugging-pipe'], userDataDir: this.managedProfile, cleanUp: 'wholeBrowser', browserLaunchLocation: 'workspace' };
     } else if (this.host.id === 'cursor') {
       const commands = await awaitResponse(vscode.commands.getCommands(true), 'Cursor browser capabilities', signal);

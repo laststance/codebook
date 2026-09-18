@@ -78,7 +78,7 @@ Installed js-debug also supports a direct browser debugging **pipe**. Prefer `--
 
 ### Tests (2 gaps to cover)
 
-4. **T1: display lifecycle.** Test stale/wrong ACK, epoch reload, slow renderer, bounded latest-frame queue and disposal. Native cases cover pane close/rehydration, missing browser and frame timeout; fault injection is labeled separately. No mock is native paint proof.
+4. **T1: display lifecycle.** Test stale/wrong ACK, epoch reload, slow renderer, bounded latest-frame queue and disposal. Native cases cover pane close/rehydration, executable preflight failure and frame timeout; fault injection is labeled separately. No mock is native paint proof.
 5. **T2: ownership regression.** Run the 17 common real-debugger cases in both hosts plus managed-specific failure cases. Record editor launch arguments without remote-debugging flags, actual Chrome binary/version, fresh profile, owned process exit and decoy survival. Verify line/source hashes and tote-01 / 24 / 0 -> DOM 1 / one click. Keep 40-second pause and concurrent control checks.
 
 ### Performance (1 finding)
@@ -156,3 +156,10 @@ Completion: scope retained with js-debug reuse, six parent findings plus one nat
 First managed Cursor attempt `6355f786-ab3f-4600-b736-489287bd85ac` selected the correct DAP child but timed out waiting for profile-process discovery. A second diagnostic attempt `105e4c4f-0592-4427-b23e-f844fc10bd8d` inspected actual owned command lines: Chrome uses `/private/tmp/codebook-browser-…`, while the expected path was `/tmp/codebook-browser-…`. The process lookup's exact string comparison therefore missed the running process. Its cleanup absence claim was not reliable on those two pre-fix attempts; they are unsuccessful evidence, not transport success.
 
 Root fix: canonicalize profile paths at creation and observation. The regression uses an explicit symlink, observes the corresponding real child process, excludes a prefix-sharing unrelated profile, then observes absence after exit. **33/33 unit tests passed.** Real Cursor normal rerun `c4b6d21c-0b17-4625-a9d2-2ba8407dace5` passed at source `4c3eeba` plus the canonical-path patch: actual source/values, cart 1, all three exact-PNG renderer ACKs, owned Chrome process discovery/exit and session/panel teardown. Full matrices and native editor observation remain pending. Investigation status DONE for this defect; this does not close Cycle 0003.
+
+
+### Implementation investigation — missing executable modal
+
+VS Code run `8f0b3ee9-1257-4942-b8b5-8100ae910bcc` reached js-debug with a deliberately absent runtime executable. Native AX showed `Unable to launch browser: Unable to find Chrome version /codebook-missing-chrome` and Cancel/Open launch.json buttons. startDebugging stayed pending during the modal; cleanup correctly reported an incomplete acquisition before a later retry completed. This attempt failed; the runner ultimately exited its own editor.
+
+Root fix: inspect executable access before acquiring a debugger launch. Native missing-browser regression `0a43bc88-f97a-4dd9-8344-1b04f8a1b945` now fails preparation explicitly with ENOENT, sends no click, creates no debug session/browser profile, and completes owned cleanup. No modal bypass or user-profile change. Investigation status DONE; remaining matrix still required.
