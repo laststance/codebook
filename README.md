@@ -33,12 +33,14 @@ This requests one cycle by default. A request to continue across cycles permits 
 Repository: [laststance/codebook](https://github.com/laststance/codebook), private.
 
 - [Final product goal — issue #1](https://github.com/laststance/codebook/issues/1) stays open through all cycles.
-- [Current cycle — issue #2](https://github.com/laststance/codebook/issues/2) tracks the first bounded experiment.
+- [Cycle 0001 — issue #2](https://github.com/laststance/codebook/issues/2) records the first bounded experiment and its evidence.
 
 Issues provide a discoverable queue; the linked repository documents own scope, state, and evidence. Create the next cycle issue after learning from the current result, not by decomposing the entire future product now.
 
 ## Current baseline
 
-Product design and three visual directions are approved. The project currently contains planning and development-process documents, not a working extension. [Cycle 0001](docs/cycles/0001-click-pause-resume.md) is ready for bounded planning; no runtime claim is verified yet.
+Product design and three visual directions are approved. [Cycle 0001](docs/cycles/0001-click-pause-resume.md) demonstrated a real integrated-browser click, TypeScript debugger stop, verified source/values, pause-associated capture, and continuation to one cart item. The [isolated experiment](experiments/cycle-0001/README.md) passed 12 unit tests and 15 native scenarios on its recorded macOS/VS Code environment; [portable evidence](docs/cycles/evidence/0001/README.md) preserves the result and earlier failures.
+
+This is a fixed synchronous fixture, not the finished product. Full checkout, recording/replay, product MCP, natural-language orchestration, wiki/progress, all three layouts, and packaged real-repository support remain open. No cycle is active; the next selected question is one correlated browser-to-backend asynchronous boundary, as described in PROJECT_STATE.md.
 
 Repository files are the portable project record. GStack's local cache, chat history, and optional GitHub issues are supporting views of that record. Commits are also stored in the private GitHub repository. Ignored private recordings still require an explicit durable evidence location.

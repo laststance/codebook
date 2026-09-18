@@ -1,0 +1,15 @@
+export const ACTIVE_TIMEOUT_MS = 20_000;
+export const RUN_TIMEOUT_MS = 120_000;
+export const CAPTURE_TIMEOUT_MS = 3_000;
+export const POLL_INTERVAL_MS = 50;
+export const HOLD_DURATION_MS = 40_000;
+export const CONTROL_RESPONSE_LIMIT_MS = 2_000;
+export const INJECTED_DELAY_MS = 4_500;
+export const INTERFERENCE_DELAY_MS = 500;
+export const WATCHDOG_INTERVAL_MS = 100;
+export const HTTP_BODY_LIMIT_BYTES = 4_096;
+export const FOCUS_ATTEMPT_LIMIT = 4;
+export const EXPECTED_VALUES = { productId: 'tote-01', price: 24, cartCount: 0 };
+export const SCENARIOS = ['normal', 'hold', 'duplicate', 'continue-race', 'manual-race', 'cdp-resume', 'decoy', 'stale-script', 'source-drift', 'unbound', 'capture-timeout', 'disconnect', 'terminate', 'disconnect-after', 'cancel-prepare'] as const;
+export type Scenario = (typeof SCENARIOS)[number];
+export const RESUME_COMMANDS = new Set(['continue', 'next', 'stepIn', 'stepOut', 'restartFrame', 'goto']);

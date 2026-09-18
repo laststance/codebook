@@ -1,0 +1,26 @@
+{
+  "suite": "suite-2026-09-18T09-59-13.473Z-a208810b",
+  "rawLocation": "artifacts/cycle-0001/suite-2026-09-18T09-59-13.473Z-a208810b",
+  "runIds": [
+    "4ddfb2ec-a1d6-4f73-97c4-4994f1c15f6b",
+    "6fd51281-512a-4c01-b996-72fa0de0ef86",
+    "c2269ecc-12c3-4da2-97d0-bdeb38acccec",
+    "dafce5d1-4d3f-4c70-a954-14471fe03159",
+    "8b8eb971-ca69-466f-934f-986995addd3f",
+    "9903126d-be3c-4c6a-8a38-9ffec808aaee",
+    "423d8143-5f09-4b4f-b808-e320305e6c60",
+    "5cc4d70b-52ee-4c27-bbe0-d003473ab6c2",
+    "50671d9f-2b67-46e0-853f-69009682e1c3",
+    "0e0bd4c2-c3b0-4895-adb3-ace5b989b783",
+    "bd551adb-e7b8-434b-a75a-aacc84719bab",
+    "a823e4e5-0507-4a0f-af2f-dd3369e1677b",
+    "8bb6b528-b511-41c9-8a7d-19cd76882446",
+    "d3ec7114-7565-4e34-8d8d-15bc45be2ee9",
+    "8e6c424e-0896-4770-b6f2-4a8290d836e1",
+    "2ae0a3d4-3e8e-4c94-bc33-7ee4adb7dd32"
+  ],
+  "baselineRunId": "4ddfb2ec-a1d6-4f73-97c4-4994f1c15f6b",
+  "sanitization": "Text replaces the absolute repository path with <repo>. Only allowlisted fixture, runtime evidence, and PNG files are copied. Connection descriptors, tokens, profiles, native logs, and harness files are excluded. PNG files are unmodified fixture-only captures.",
+  "revisionNote": "Execution used base commit 5294d56fb0d5f56a8a0f2feb8115579c5e995695 with uncommitted implementation. sourceHashes and compiledHashes identify the tested bytes; the implementation commit is required to match those source hashes. Do not reinterpret workingTreeDirty as false.",
+  "captureValidity": "The final manifest capture status/file and events define accepted evidence. A raw file without an accepted manifest reference is not valid pause evidence."
+}

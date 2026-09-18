@@ -1,35 +1,35 @@
 # Current project state
 
-Updated: 2026-09-18  
-Product stage: design approved; development loop established; runtime feasibility unverified  
-Active cycle: [0001 — Click, pause, inspect, continue](docs/cycles/0001-click-pause-resume.md)  
-Active cycle status: ready  
-Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open  
-Active cycle issue: [#2](https://github.com/laststance/codebook/issues/2) — open  
-Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main  
+Updated: 2026-09-18\
+Product stage: design approved; one synchronous runtime fixture demonstrated\
+Active cycle: none\
+Last cycle: [0001 — Click, pause, inspect, continue](docs/cycles/0001-click-pause-resume.md) — closed, demonstrated\
+Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
+Last cycle issue: [#2](https://github.com/laststance/codebook/issues/2) — closure follows the committed evidence\
+Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Current authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 1
 
 ## Facts at handoff
 
-- Architecture B and Study workspace as the default are approved. Living book and Guided walkthrough remain required later modes.
-- The approved design and all three mockups are stored in this project. Its two-round specification review resolved two findings and ended at 9/10 with no remaining specification-review findings.
-- No extension implementation or combined browser/debugger/recording proof exists in this project yet. The images are design references.
-- Read-only inspection identified reuse candidates in Entrance, deep-trace-extension, and vscode-debug-mcp. Recheck their current source and dirty state before reuse; this project does not own their existing edits.
-- The private laststance/codebook repository stores the process and approved references. Goal issue #1 and cycle issue #2 are open. There is no detailed future issue backlog.
-- No publication pipeline or supported-version matrix exists yet; neither is required to begin the bounded experiment.
+- Architecture B and Study workspace as default remain approved. Living book and Guided walkthrough remain required later modes. Approved references remain in DESIGN.md and docs/designs/.
+- [The isolated development extension, fixture, and runner](experiments/cycle-0001/README.md) demonstrate one real click → TS breakpoint → source/value snapshot → continue → visible cart update. No existing sibling tool was modified.
+- Final validation: 12 unit tests and 15 real Extension Host scenarios passed. Baseline stopped at TS line 9 with `tote-01 / 24 / 0`; continuation produced cart count 1 and one completed handler. The 40-second hold kept state/continue responses below 6 ms on this machine.
+- [Durable evidence](docs/cycles/evidence/0001/README.md) contains environment/source hashes, sanitized manifests, events, snapshots, executable sources/maps, explanations, and PNGs. Earlier failed attempts and version-specific browser-layout fixes remain documented.
+- Negative cases verify rejection, stale-response handling, or cleanup. They do not count as successful walkthroughs. The deliberately timed-out pause image remains unavailable, even though that action completed.
+- Native GStack review findings were fixed and targeted rechecked. External-model review, CI, formal GitHub approval, packaging, publication, and installed-VSIX verification have not occurred.
 
 ## Capability evidence
 
-Update a row only when the linked evidence establishes its exact scope. Use unverified, partial, verified, or needs-revalidation. Fixture-only proof remains partial for a goal requiring real-product evidence.
+Fixture proof remains partial for goals requiring integrated real-product behavior.
 
 | Goal | State | Evidence and limits |
 | --- | --- | --- |
-| G01 | unverified | Full natural-language checkout has not run. |
-| G02 | unverified | Shared-learning-item design only. |
-| G03 | unverified | Correctness contracts reviewed; runtime proof pending. |
-| G04 | unverified | Recording/replay design only. |
+| G01 | partial | One fixed cart click and continuation; no natural-language request or full checkout. |
+| G02 | unverified | Shared learning-item design only. |
+| G03 | partial | Actual bound TS location, executed JS/map/TS verification, values, pause identity, conflict rejection; synchronous fixture only. |
+| G04 | partial | Three timestamped frame captures tied to a pause; no video, durable replay UI, or export. |
 | G05 | unverified | Progress behavior specified; no implementation. |
-| G06 | unverified | Existing tool/API research, not an embedded-service proof. |
+| G06 | partial | External Node controls an extension-owned temporary HTTP bridge; no product MCP or stable public contract. |
 | G07 | unverified | Approved Study workspace concept only. |
 | G08 | unverified | Approved Living book concept; later implementation required. |
 | G09 | unverified | Approved Guided walkthrough concept; later implementation required. |
@@ -39,27 +39,26 @@ Update a row only when the linked evidence establishes its exact scope. Use unve
 
 | Question | Why it matters | Next evidence |
 | --- | --- | --- |
-| Can one real browser action coexist with a pending debugger pause, inspection, and continuation? | This is the smallest connected behavior behind the final experience. | Cycle 0001; do not gate it on building the whole UI. |
-| Can frames be associated with the actual pause and its captured values? | Recording must preserve correspondence. | Capture basic before/pause/after evidence in 0001; retain unknown recording limits. |
-| How are async/backend boundaries and unrelated calls distinguished? | Full checkout cannot be called verified with ambiguous causal links. | Select a bounded follow-up after the kernel result. |
-| Which APIs/versions support native layout, browser control, capture, and external-client recovery together? | A public API's existence is not integration proof. | Pin versions and record observed capabilities as each is tested. |
+| Can one UI operation be distinguished from unrelated requests across browser/server debug sessions? | Synchronous fixture success does not establish checkout causality. | Selected next bounded candidate: one async browser-to-backend boundary with a competing request. |
+| How should recorded frames, values, and source versions replay together? | Three captured images do not satisfy recording/replay. | Preserve current identities; choose a replay experiment when observed dependencies justify it. |
+| Can native layout/control recover on other versions and real repositories? | Current workbench commands were tested only on VS Code 1.138.0/macOS arm64. | Revalidate actual versions and browser visibility before extending support claims. |
 
 ## Now, next, later
 
-**Now:** advance cycle 0001 through planning and real execution evidence. It is an experiment, not a promise to ship the complete extension.
+**Now:** Cycle 0001 is complete. Read its result and portable evidence before selecting implementation work. Goal #1 remains open.
 
-**Next candidates, not commitments:** resolve whichever part of 0001 failed; or extend the proven kernel with one asynchronous/backend boundary; or prove replay of one captured stop. Select only after reading the result. These candidates are alternatives, not a mandatory sequence.
+**One next candidate:** correlate one browser action with one backend request and the correct server pause while an unrelated request exists. This advances the hardest remaining correctness gap toward checkout. No implementation or future issue backlog has been created.
 
-**Later capability areas, without task breakdown:** full checkout orchestration; wiki/codemap/progress integration; default-layout usability and recovery; both additional layouts; packaged and real-repository validation. Their order depends on evidence and dependencies. None can disappear from final acceptance without an explicit product-goal decision.
+**Later required capabilities:** full checkout; product MCP; recording/replay; wiki/codemap/progress; usable Study workspace, Living book, and Guided walkthrough; packaged and real-repository validation. Their order remains evidence-driven. The final goal has not been reduced.
 
 ## Exact resume action
 
-Read cycle 0001. Inspect the current reusable tools and choose the smallest reproducible fixture. Write only that cycle's executable plan, then invoke /plan-eng-review with the cycle file path as its bounded target. Add /plan-devex-review if the cycle introduces a lasting MCP contract. Fill real versions, targets, expected source binding, and capture procedure before claiming any validation result.
+Read PRODUCT_GOAL.md, this file, Cycle 0001, and its evidence index. Verify checkout, issue state, and runtime versions. Draft the smallest executable async-boundary experiment, then use `/plan-eng-review` on that named cycle. Add `/plan-devex-review` only for a lasting API contract and `/plan-design-review` only for a concrete user flow. Open one cycle issue after selecting its question; do not start a complete checkout implementation.
 
 ## Session handoff
 
-Last completed work: project progression structure, portable approved references, and private GitHub repository/issue tracking.  
-Current experiment result: pending; no runtime attempts yet.  
-Next executable action: bounded cycle-0001 planning as described above.  
-Uncommitted/runtime state: verify with git and the actual environment when resuming.  
+Last completed work: implemented and demonstrated Cycle 0001; durable evidence and keep/revise decision recorded.\
+Next executable action: bounded async-boundary planning, as described above.\
+Runtime: owned sessions/connections/breakpoints cleaned up; private diagnostic profiles/logs retained locally.\
+Delivery: experiment source and records committed; issue #2 closes after push and evidence attachment. No PR/CI/release claim.\
 Goal changes pending: none.

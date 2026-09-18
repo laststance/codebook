@@ -7,6 +7,9 @@
 
 # Large or private runtime evidence; keep sanitized manifests in cycle records
 artifacts/
+node_modules/
+experiments/*/dist/
+experiments/*/build/
 
 # Share this project's agent entry points despite user-global ignore rules
 !/AGENTS.md

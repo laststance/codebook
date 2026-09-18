@@ -1,0 +1,470 @@
+[
+  {
+    "suite": "suite-2026-09-18T09-05-12.986Z-27b20cb7",
+    "sourceHash": null,
+    "reasonAndFollowUp": "Native startup failed because the nested profile made the macOS IPC socket path too long. Profiles moved to short /tmp paths.",
+    "passed": 0,
+    "total": 0,
+    "cases": [],
+    "rawEvidence": "Ignored local artifacts/cycle-0001/suite-2026-09-18T09-05-12.986Z-27b20cb7",
+    "availability": "Only this sanitized summary is committed; raw profiles/logs remain local."
+  },
+  {
+    "suite": "suite-2026-09-18T09-48-04.653Z-a7afd839",
+    "sourceHash": "e641039ce5ab6259dc4699eccd14507ae4a9b051cdf179230c331d442a53f22c",
+    "reasonAndFollowUp": "First full matrix passed; the next repeat exposed residual browser-view visibility instability.",
+    "passed": 15,
+    "total": 15,
+    "cases": [
+      {
+        "scenario": "normal",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "hold",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "duplicate",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "continue-race",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "manual-race",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Manual or competing DAP resume detected; atomic ownership cannot be guaranteed",
+          "Continued without an owned continuation; external resume detected",
+          "Error: Paused source location does not match the bound TypeScript line"
+        ]
+      },
+      {
+        "scenario": "cdp-resume",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Continued without an owned continuation; external resume detected"
+        ]
+      },
+      {
+        "scenario": "decoy",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "stale-script",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Error: Executed JavaScript does not match the sealed build"
+        ]
+      },
+      {
+        "scenario": "source-drift",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Error: Local TypeScript changed after the build was sealed"
+        ]
+      },
+      {
+        "scenario": "unbound",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Error: Timed out waiting for verified breakpoint"
+        ]
+      },
+      {
+        "scenario": "capture-timeout",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "disconnect",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained",
+          "Error: CDP disconnected"
+        ]
+      },
+      {
+        "scenario": "terminate",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Selected session terminated before completion",
+          "Debug adapter error: connection closed",
+          "Error: Input.dispatchMouseEvent: Connection is closed"
+        ]
+      },
+      {
+        "scenario": "disconnect-after",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained"
+        ]
+      },
+      {
+        "scenario": "cancel-prepare",
+        "passed": true,
+        "error": null,
+        "status": "cancelled",
+        "failures": []
+      }
+    ],
+    "rawEvidence": "Ignored local artifacts/cycle-0001/suite-2026-09-18T09-48-04.653Z-a7afd839",
+    "availability": "Only this sanitized summary is committed; raw profiles/logs remain local."
+  },
+  {
+    "suite": "suite-2026-09-18T09-51-41.618Z-2704da31",
+    "sourceHash": "2115e83929f9bfb82795d0d5f76fcf22208ccc11dfd5cfdd9d19931b85387f57",
+    "reasonAndFollowUp": "Hold and concurrent-continuation cases lost the final screenshot; duplicate preparation saw a zero viewport. Open owned source in a separate editor group and explicitly reveal the browser before final capture.",
+    "passed": 12,
+    "total": 15,
+    "cases": [
+      {
+        "scenario": "normal",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "hold",
+        "passed": false,
+        "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n    'captured',\n    'captured',\n+   'failed'\n-   'captured'\n  ]\n",
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "duplicate",
+        "passed": false,
+        "error": "AssertionError [ERR_ASSERTION]: Watchdog exceeded active deadline; no input retry or automatic resume\n\n'failed' !== 'ready'\n",
+        "status": "failed",
+        "failures": [
+          "Watchdog exceeded active deadline; no input retry or automatic resume"
+        ]
+      },
+      {
+        "scenario": "continue-race",
+        "passed": false,
+        "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n    'captured',\n    'captured',\n+   'failed'\n-   'captured'\n  ]\n",
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "manual-race",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Manual or competing DAP resume detected; atomic ownership cannot be guaranteed",
+          "Continued without an owned continuation; external resume detected"
+        ]
+      },
+      {
+        "scenario": "cdp-resume",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Continued without an owned continuation; external resume detected"
+        ]
+      },
+      {
+        "scenario": "decoy",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "stale-script",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Error: Executed JavaScript does not match the sealed build"
+        ]
+      },
+      {
+        "scenario": "source-drift",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Error: Local TypeScript changed after the build was sealed"
+        ]
+      },
+      {
+        "scenario": "unbound",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Error: Timed out waiting for verified breakpoint"
+        ]
+      },
+      {
+        "scenario": "capture-timeout",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "disconnect",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained",
+          "Error: CDP disconnected"
+        ]
+      },
+      {
+        "scenario": "terminate",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Selected session terminated before completion",
+          "Debug adapter error: connection closed",
+          "Error: Input.dispatchMouseEvent: Connection is closed"
+        ]
+      },
+      {
+        "scenario": "disconnect-after",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained"
+        ]
+      },
+      {
+        "scenario": "cancel-prepare",
+        "passed": true,
+        "error": null,
+        "status": "cancelled",
+        "failures": []
+      }
+    ],
+    "rawEvidence": "Ignored local artifacts/cycle-0001/suite-2026-09-18T09-51-41.618Z-2704da31",
+    "availability": "Only this sanitized summary is committed; raw profiles/logs remain local."
+  },
+  {
+    "suite": "suite-2026-09-18T09-54-47.592Z-4e23eff1",
+    "sourceHash": "6c4af258e53c08c3a97086b1d1380b655c27e25020531b76d786a89faa92270b",
+    "reasonAndFollowUp": "After the layout change, five affected native scenarios passed.",
+    "passed": 5,
+    "total": 5,
+    "cases": [
+      {
+        "scenario": "normal",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "hold",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "duplicate",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "continue-race",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "decoy",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      }
+    ],
+    "rawEvidence": "Ignored local artifacts/cycle-0001/suite-2026-09-18T09-54-47.592Z-4e23eff1",
+    "availability": "Only this sanitized summary is committed; raw profiles/logs remain local."
+  },
+  {
+    "suite": "suite-2026-09-18T09-56-11.350Z-49252c0d",
+    "sourceHash": "6c4af258e53c08c3a97086b1d1380b655c27e25020531b76d786a89faa92270b",
+    "reasonAndFollowUp": "Full matrix passed after layout changes; the final run adds cancellation guards and persists executed source even on mismatch.",
+    "passed": 15,
+    "total": 15,
+    "cases": [
+      {
+        "scenario": "normal",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "hold",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "duplicate",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "continue-race",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "manual-race",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Manual or competing DAP resume detected; atomic ownership cannot be guaranteed",
+          "Continued without an owned continuation; external resume detected",
+          "Error: Paused source location does not match the bound TypeScript line"
+        ]
+      },
+      {
+        "scenario": "cdp-resume",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Continued without an owned continuation; external resume detected"
+        ]
+      },
+      {
+        "scenario": "decoy",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "stale-script",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Error: Executed JavaScript does not match the sealed build"
+        ]
+      },
+      {
+        "scenario": "source-drift",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Error: Local TypeScript changed after the build was sealed"
+        ]
+      },
+      {
+        "scenario": "unbound",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Error: Timed out waiting for verified breakpoint"
+        ]
+      },
+      {
+        "scenario": "capture-timeout",
+        "passed": true,
+        "error": null,
+        "status": "completed",
+        "failures": []
+      },
+      {
+        "scenario": "disconnect",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained",
+          "Error: CDP disconnected"
+        ]
+      },
+      {
+        "scenario": "terminate",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Selected session terminated before completion",
+          "Debug adapter error: connection closed",
+          "Error: Input.dispatchMouseEvent: Connection is closed"
+        ]
+      },
+      {
+        "scenario": "disconnect-after",
+        "passed": true,
+        "error": null,
+        "status": "failed",
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained"
+        ]
+      },
+      {
+        "scenario": "cancel-prepare",
+        "passed": true,
+        "error": null,
+        "status": "cancelled",
+        "failures": []
+      }
+    ],
+    "rawEvidence": "Ignored local artifacts/cycle-0001/suite-2026-09-18T09-56-11.350Z-49252c0d",
+    "availability": "Only this sanitized summary is committed; raw profiles/logs remain local."
+  }
+]

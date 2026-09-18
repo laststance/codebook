@@ -1,0 +1,6 @@
+{"sequence":1,"elapsedMs":0.184167,"wallTime":"2026-09-18T10:00:39.103Z","type":"run.created","detail":{"runId":"8e6c424e-0896-4770-b6f2-4a8290d836e1","scenario":"cancel-prepare"}}
+{"sequence":2,"elapsedMs":5.8785,"wallTime":"2026-09-18T10:00:39.108Z","type":"focus.changed","detail":{}}
+{"sequence":3,"elapsedMs":44.943125,"wallTime":"2026-09-18T10:00:39.147Z","type":"breakpoint.requested","detail":{"id":"3f3cef4d-1575-4a60-92a9-11b6ac848f60","sourcePath":"<repo>/artifacts/cycle-0001/8e6c424e-0896-4770-b6f2-4a8290d836e1/fixture/cart.ts","line":9}}
+{"sequence":4,"elapsedMs":44.951334,"wallTime":"2026-09-18T10:00:39.147Z","type":"fault.preparation-held","detail":{}}
+{"sequence":5,"elapsedMs":53.459375,"wallTime":"2026-09-18T10:00:39.156Z","type":"cleanup.started","detail":{}}
+{"sequence":6,"elapsedMs":62.294042,"wallTime":"2026-09-18T10:00:39.165Z","type":"cleanup.completed","detail":{}}

@@ -1,0 +1,68 @@
+{
+  "runId": "5cc4d70b-52ee-4c27-bbe0-d003473ab6c2",
+  "scenario": "stale-script",
+  "status": "failed",
+  "cleaned": true,
+  "resources": {
+    "activeSessionIds": [],
+    "breakpointPresent": false,
+    "cdpOpen": false
+  },
+  "operation": {
+    "id": "c32f4b4b-45a3-4d46-91b6-5501a63453e0",
+    "key": "one-cart-add",
+    "inputAcknowledged": false,
+    "completed": false
+  },
+  "conflict": false,
+  "sessionId": "8fd19747-2256-4576-a047-7ada1da83f1d",
+  "captures": {
+    "before": {
+      "phase": "before",
+      "requestSequence": 31,
+      "status": "captured",
+      "responseSequence": 34,
+      "file": "before.png"
+    },
+    "paused-1": {
+      "phase": "paused",
+      "generation": 1,
+      "requestSequence": 45,
+      "status": "captured",
+      "responseSequence": 48,
+      "file": "paused-1.png"
+    }
+  },
+  "failures": [
+    "Error: Executed JavaScript does not match the sealed build"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0001/5cc4d70b-52ee-4c27-bbe0-d003473ab6c2",
+  "environment": {
+    "vscode": "1.138.0",
+    "vscodeCommit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+    "node": "24.18.1",
+    "electron": "42.10.0",
+    "jsDebug": "1.117.0"
+  },
+  "revision": "5294d56fb0d5f56a8a0f2feb8115579c5e995695",
+  "workingTreeDirty": true,
+  "sourceHash": "2aee599ba26df79c374daeb55cd2f9007a269c40f5e6b28bd17f373e9888b507",
+  "extensionHash": "25c1e0884e9c7a22ef775b4c63e44a93dd78d53815a124da5fd31bfdfcdf9054",
+  "expected": {
+    "productId": "tote-01",
+    "price": 24,
+    "cartCount": 0,
+    "finalCartCount": 1,
+    "completedClicks": 1
+  },
+  "hashes": {
+    "typescript": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+    "javascript": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+    "sourceMap": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+  },
+  "limits": [
+    "Fixture only; not a production MCP service.",
+    "Receipt ordering is not a causal or simultaneous-paint guarantee.",
+    "DAP cannot atomically compare an expected suspension generation."
+  ]
+}
