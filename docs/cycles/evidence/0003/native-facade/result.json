@@ -1,0 +1,87 @@
+{
+  "runId": "983cb4d9-1fa2-4c7d-a491-bf8ff1d28760",
+  "apiVersion": "1.128.0",
+  "commands": [
+    "cursor.browserView.closeTab",
+    "cursor.browserView.configureDialogHandling",
+    "cursor.browserView.debug.crashRenderer",
+    "cursor.browserView.debug.orphanView",
+    "cursor.browserView.executeJavaScript",
+    "cursor.browserView.focusOrShowTab",
+    "cursor.browserView.getConsoleLogs",
+    "cursor.browserView.getNetworkRequests",
+    "cursor.browserView.getRecordingType",
+    "cursor.browserView.getTitle",
+    "cursor.browserView.getURL",
+    "cursor.browserView.goBack",
+    "cursor.browserView.goForward",
+    "cursor.browserView.hideTab",
+    "cursor.browserView.isHeadless",
+    "cursor.browserView.isLocked",
+    "cursor.browserView.listTabs",
+    "cursor.browserView.navigate",
+    "cursor.browserView.newHeadlessTab",
+    "cursor.browserView.newTab",
+    "cursor.browserView.reload",
+    "cursor.browserView.resize",
+    "cursor.browserView.selectTab",
+    "cursor.browserView.sendCDPCommand",
+    "cursor.browserView.setLocked",
+    "cursor.browserView.setRecordingType",
+    "cursor.browserView.showHeadlessTab",
+    "cursor.browserView.takeScreenshot",
+    "cursor.browserView.updateScreenshot"
+  ],
+  "observations": [
+    {
+      "method": "Runtime.evaluate",
+      "durationMs": 0.7291249999998399,
+      "response": {
+        "result": {
+          "type": "string",
+          "value": "http://127.0.0.1:64647/runs/983cb4d9-1fa2-4c7d-a491-bf8ff1d28760"
+        }
+      }
+    },
+    {
+      "method": "Debugger.enable",
+      "durationMs": 7.481874999999945,
+      "response": {
+        "debuggerId": "-7662861104902750741.-3217375709159429431"
+      }
+    },
+    {
+      "method": "Target.getTargetInfo",
+      "durationMs": 22.862666999999874,
+      "error": "Error: Error invoking remote method 'vscode:webviewSendCDPCommand': Error: CDP method 'Target.getTargetInfo' is not allowed"
+    },
+    {
+      "method": "JsDebug.subscribe",
+      "durationMs": 5.416625000000067,
+      "error": "Error: Error invoking remote method 'vscode:webviewSendCDPCommand': Error: 'JsDebug.subscribe' wasn't found"
+    },
+    {
+      "method": "Page.captureScreenshot",
+      "durationMs": 38.87479099999996,
+      "response": {
+        "hasImage": true
+      }
+    },
+    {
+      "method": "Debugger.disable",
+      "durationMs": 0.9595420000000559,
+      "response": {}
+    }
+  ],
+  "cleanupVerified": true,
+  "browserId": "618785",
+  "automationExtension": {
+    "version": "1.0.0",
+    "isActive": true,
+    "exportKeys": []
+  },
+  "outcome": "observed",
+  "limits": [
+    "Command responses only. No DAP session, source-bound pause, general event stream or packaged product is demonstrated."
+  ]
+}

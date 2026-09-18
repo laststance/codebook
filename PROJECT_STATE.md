@@ -2,7 +2,7 @@
 
 Updated: 2026-09-18\
 Product stage: design approved; synchronous runtime fixture demonstrated in both required editors\
-Active cycle: [0003 — Browser-scoped runtime transport](docs/cycles/0003-scoped-browser-transport.md) — investigating\
+Active cycle: [0003 — Browser-scoped runtime transport](docs/cycles/0003-scoped-browser-transport.md) — planning\
 Last cycle: [0002 — Cursor runtime compatibility](docs/cycles/0002-cursor-runtime-compatibility.md) — closed, demonstrated; integrated on main\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#4](https://github.com/laststance/codebook/issues/4) — open\
@@ -49,9 +49,9 @@ This resolves a deployment risk before committing to a lasting MCP contract. The
 
 ## Exact resume action
 
-Read Cycle 0003, verify checkout and owned process state, then run its native command probe without editor-wide debugging and investigate the event/endpoint boundary. The user has authorized continuous cycles through the final product. Preserve native/fixture/review/package distinctions.
+Read Cycle 0003, verify checkout and owned process state, then finish its bounded engineering review and test the js-debug-owned browser with a real page stream. The native Cursor facade probe is recorded; do not repeat it without a changed hypothesis. The user has authorized continuous cycles through the final product. Preserve native/fixture/review/package distinctions.
 
-Runtime: final owned experiment processes exited; local private profiles/logs remain under ignored artifacts. Delivery: Cycle 0002 implementation/evidence `89eb43e` and closure `a184df3` verified on remote main; issue #3 closed. Cycle 0003 investigation is starting. No CI, PR approval, release, package, or installed-product claim.
+Runtime: final owned experiment processes exited; local private profiles/logs remain under ignored artifacts. Delivery: Cycle 0002 implementation/evidence `89eb43e` and closure `a184df3` verified on remote main; issue #3 closed. Cycle 0003 native command investigation is recorded; scoped-browser implementation plan is under review. No CI, PR approval, release, package, or installed-product claim.
 
 ## Full-product completion gate
 

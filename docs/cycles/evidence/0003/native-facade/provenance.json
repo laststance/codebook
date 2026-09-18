@@ -1,0 +1,18 @@
+{
+  "environment.json": {
+    "original": "4feb376dce95e75741b29f37f23a8f0a816a8cfb45d591e24a625effb3328fe7",
+    "shared": "51e97e34f6be426ac57e6c3f8a0d522871f341eb3b453fdbc824c13bbaf2749f"
+  },
+  "result.json": {
+    "original": "0dfdc5f1a2077d0d416a2a8217d66cabeb3f29784c76fbfb92d05cbaadb9fa78",
+    "shared": "0dfdc5f1a2077d0d416a2a8217d66cabeb3f29784c76fbfb92d05cbaadb9fa78"
+  },
+  "teardown.json": {
+    "original": "9cb25598a72cd378685f84047d91f8c6b66c52abfdf7f8647340dfc5a039aacd",
+    "shared": "9cb25598a72cd378685f84047d91f8c6b66c52abfdf7f8647340dfc5a039aacd"
+  },
+  "page.png": {
+    "original": "9fcc088048f4e11477e924242ce6e77233f6e1031f0b4af6e42f0ece3f05f6cb",
+    "shared": "9fcc088048f4e11477e924242ce6e77233f6e1031f0b4af6e42f0ece3f05f6cb"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "runId": "983cb4d9-1fa2-4c7d-a491-bf8ff1d28760",
+  "host": {
+    "id": "cursor",
+    "productVersion": "3.21.12",
+    "apiVersion": "1.128.0",
+    "commit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20"
+  },
+  "binary": "/Applications/Cursor.app/Contents/MacOS/Cursor",
+  "args": [
+    "--new-window",
+    "--skip-welcome",
+    "--skip-release-notes",
+    "--skip-onboarding",
+    "--disable-workspace-trust",
+    "--user-data-dir",
+    "<owned-runtime>/profile",
+    "--extensions-dir",
+    "<owned-runtime>/extensions",
+    "--extensionDevelopmentPath",
+    "<repository>/experiments/cycle-0003",
+    "<repository>/artifacts/cycle-0003/native-cursor-2026-09-18T13-12-37.139Z/workspace"
+  ],
+  "editorRemoteDebugging": false,
+  "revision": "1ec90ea72ce5bdee9a035a508cc3d4aef3fd9823",
+  "probeHashes": {
+    "extension.cjs": "4020f2a8331f090564be3ea8741b278901456bfad6d1de3ee4ccae1f1dd5608b",
+    "runner.mjs": "6e6033cea8fb06dda42e8b7ff7868ffe3719e681aa1b98403c7f3b09f6ac8be3",
+    "package.json": "eaea6293483463c8847538f4557c38da3e83362194eae71ae0d97d9fe90ce5d0"
+  },
+  "vendorSourceHashes": {
+    "out/main.js": "1b05242359022609f0c7de1b7e47f337b402717b0ea1bd522c8987cf57d346e9",
+    "out/vs/workbench/workbench.desktop.main.js": "27ac171a07a9f847e91892ce48352016f9c9b3d86733b9ba56dfda155cfe7f93",
+    "extensions/cursor-browser-automation/dist/extension.js": "2e87b4b0107518e6dbb04df04dae9c97b46120b07523f696a8d9b0c3dd7b1604"
+  }
+}
