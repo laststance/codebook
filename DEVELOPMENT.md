@@ -27,6 +27,7 @@ GStack supplies specialized review, debugging, QA, and delivery workflows. It do
 | docs/cycles/NNNN-topic.md | One cycle's hypothesis, scope, plan, checks, observations, evidence, and decision. Update throughout the cycle; retain closed results. |
 | DECISIONS.md | Durable product/process/architecture decisions, their source, and supersession. Routine check output stays in the cycle. |
 | DESIGN.md and docs/designs/ | Stable GStack discovery entry, approved product baseline, and visual references. New operational decisions may supersede its build-order suggestions without rewriting historical approval. |
+| TODOS.md, if a skill generates it | Candidate findings only. Reconcile them into the active cycle or the short candidate list; it is not another authoritative roadmap. Preserve the original finding link. |
 | GStack files under ~/.gstack | Supplemental review reports, working context, and caches. Reference or preserve useful results in the cycle; never leave the sole project decision/evidence reference only in a chat or temporary file. |
 
 Git records changes together. GitHub issues mirror cycle IDs and links; they do not become a competing product goal. Do not create an external issue or change publication state just to make a planning tool appear complete.
@@ -80,7 +81,7 @@ Browser QA alone does not validate a native VS Code extension, DAP targeting, th
 
 DESIGN.md is a stable discovery entry because installed plan-review skills prefer a root DESIGN.md and otherwise may select the newest file under docs/designs/. It points to the real goal, state, decisions, and approved baseline; it does not duplicate them.
 
-For each review, pass the current cycle file and explain: the final goal is context; this cycle is the review scope; other modes and later capabilities remain in the goal but are not today's implementation. Preserve skill-required artifacts and summarize their relevant findings in the cycle record. Do not assume selecting a recommended option once authorizes every later product change.
+For each review, pass the current cycle file and explain: the final goal is context; this cycle is the review scope; other modes and later capabilities remain in the goal but are not today's implementation. Preserve skill-required artifacts and summarize their relevant findings in the cycle record. If a skill creates TODOS.md or another follow-up list, reconcile each relevant finding with the active cycle or PROJECT_STATE.md; do not let a second plan silently replace the selected work. Do not assume selecting a recommended option once authorizes every later product change.
 
 Example request for a named scope:
 
