@@ -2,11 +2,11 @@
 
 Connect an external MCP agent to a real browser/server study in **VS Code and Cursor**. This increment exposes the proven `paired-cart-demo`: one product click, a server TypeScript pause before cart mutation, a browser TypeScript pause before rendering the response, and a cart count of one after continuation.
 
-The adapter is intentionally declared in discovery. It does **not** launch an arbitrary repository or implement full checkout, wiki, progress, recording/replay, layouts, or a packaged installation yet. [The full product goal](../PRODUCT_GOAL.md) retains those requirements in both editors.
+The adapter is intentionally declared in discovery. It includes a connected Study workspace and source-versioned personal progress for those two items. It does **not** launch an arbitrary repository or implement full checkout, a generated repository wiki, recording/replay, the other two layouts, or a packaged installation yet. [The full product goal](../PRODUCT_GOAL.md) retains those requirements in both editors.
 
 ## Development setup
 
-Current native matrix: macOS arm64; VS Code 1.138.0 / js-debug 1.117.0, Cursor 3.21.12 / API 1.128.0 / js-debug 1.93.0, Chrome 153.0.8010.50, external Node 26.8.2. Node 24+ and a trusted local file workspace are required. Remote/virtual workspaces are not supported by this adapter.
+Current native matrix: macOS arm64; VS Code 1.138.0 / js-debug 1.117.0, Cursor 3.21.12 / API 1.128.0 / js-debug 1.93.0, Chrome 153.0.8010.50, external Node 24.21.0 in Cycle 0006 (26.8.2 in the earlier Cycle 0005 matrix). Node 24+ and a trusted local file workspace are required. Remote/virtual workspaces are not supported by this adapter.
 
 From the repository root:
 
@@ -34,6 +34,28 @@ All clients with this bearer have workspace-owner authority. The server binds on
 6. Read the final state. Expected demo observations: server `tote-01 / 24 / 0`, browser cart count `1`, then rendered cart `1` and exactly one handler execution. Complete success also requires source/image/causal evidence and persisted teardown. `codebook_stop` releases only that run; historical resources remain available for this server lifetime.
 
 The [external SDK client](src/client.ts) implements authenticated initialization, discovery, tool calls, resources, and credential-free transcripts. The [native runner](src/nativeRunner.ts) is an executable reference for this sequence. Scripted explanation text in that runner is not evidence of natural-language agent planning; a separate agent-use smoke transcript records actual agent choices.
+
+## Study workspace
+
+Run **Codebook: Open Study Workspace** to open the learning outline, application above read-only captured source, contextual Overview/Live explanations, and the Observed moments panel. Opening the reader starts no application. It adopts an existing MCP demo run and its viewport, or **Run Paired Cart Demo** starts one explicitly. **Add to Cart Once** sends the single demo action. The MCP agent can perform the same runtime actions while the learner reads.
+
+Select the server/browser item in the outline, source-linked flow or moments strip. A historical selection stays selected while execution advances. **Return to Current Pause** restores following. **Continue Inspected Pause** is enabled only for the current pause whose matching source and context have rendered; an old snapshot cannot resume execution. The source is a read-only captured version. **Open Current Source File** checks disk/editor bytes and reports drift before opening the current file.
+
+**I understand this source version** is solely the learner's decision. It persists per workspace and source hash; execution and agent explanations never mark it. Source changes show Review needed, and unavailable current source withholds a current-understanding claim. The last committed checkbox remains visible after a storage failure; **Retry Study Storage** retries explicitly. Archives retain captured source, values, explanations and available phase images after runtime exit and editor reload. This is retained study history; **Recording** remains disabled until synchronized replay is implemented.
+
+**Arrange Study Workspace** deliberately restores the supported native layout. Content updates preserve moved groups. **Close Study Workspace** stops its attached execution, drains final history writes and closes only owned readers; unrelated dirty tabs survive. **Stop Agent Server** retires execution/control while keeping readable history. Progress/archive files are private and local to this host's extension storage; there is no cross-editor synchronization. Limits are 1,000 learner decisions, 16 retained studies, 1 MiB progress and 64 MiB per study; full/locked/corrupt storage reports an error without deletion or silent reset.
+
+Native learner checks (build first):
+
+```sh
+pnpm --dir extension build
+CODEBOOK_HOST=vscode node extension/dist/nativeStudyRunner.js normal
+CODEBOOK_HOST=vscode node extension/dist/nativeStudyRunner.js history
+CODEBOOK_HOST=cursor node extension/dist/nativeStudyRunner.js normal
+CODEBOOK_HOST=cursor node extension/dist/nativeStudyRunner.js history
+```
+
+Each uses a separate development profile, preserves an unrelated dirty draft, exercises actual source tabs/outline/renderer acknowledgements, and reopens retained history after execution/server exit. Evidence is under `artifacts/cycle-0006/<host>/`. The history case deliberately hides the current page during a new pause and requires an explicit failed capture/partial study instead of mislabeling a later image. These API checks do not prove independent native editor pixels or installed-product UX.
 
 ## Recovery and resource semantics
 

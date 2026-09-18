@@ -9,7 +9,7 @@ import type * as ViewportModule from '../browserViewport';
 import type { Scenario } from '../constants';
 
 /** Drives actual {@link BrowserViewport} through editor lifecycle boundaries without pretending to verify native paint. @example await viewportHarness('normal') */
-async function viewportHarness(scenario: Scenario) {
+async function viewportHarness(scenario: Scenario, leased = false) {
   const filename = join(__dirname, '../browserViewport.js');
   const nativeRequire = createRequire(filename);
   const exports: Partial<typeof ViewportModule> = {};
@@ -17,15 +17,16 @@ async function viewportHarness(scenario: Scenario) {
   let receive: (message: unknown) => void = () => undefined;
   let visibilityChanged = () => undefined;
   let disposed = () => undefined;
+  let panelDisposals = 0, leaseReleases = 0;
   const panel = {
     visible: true,
     reveal() { panel.visible = true; visibilityChanged(); },
-    dispose() { disposed(); },
-    onDidDispose(callback: () => undefined) { disposed = callback; },
-    onDidChangeViewState(callback: () => undefined) { visibilityChanged = callback; },
+    dispose() { panelDisposals++; disposed(); },
+    onDidDispose(callback: () => undefined) { disposed = callback; return { dispose() { disposed = () => undefined; } }; },
+    onDidChangeViewState(callback: () => undefined) { visibilityChanged = callback; return { dispose() { visibilityChanged = () => undefined; } }; },
     webview: {
       html: '',
-      onDidReceiveMessage(callback: (message: unknown) => void) { receive = callback; },
+      onDidReceiveMessage(callback: (message: unknown) => void) { receive = callback; return { dispose() { receive = () => undefined; } }; },
       postMessage(message: Record<string, unknown>) { messages.push(message); return Promise.resolve(true); },
     },
   };
@@ -34,9 +35,11 @@ async function viewportHarness(scenario: Scenario) {
     require: (name: string) => name === 'vscode' ? { window: { createWebviewPanel: () => panel }, ViewColumn: { One: 1 } } : nativeRequire(name),
   }, { filename });
   assert.ok(exports.BrowserViewport);
-  const viewport = new exports.BrowserViewport('owned-run', () => undefined, () => undefined, scenario);
+  const viewport: ViewportModule.BrowserViewport = runInNewContext('new Viewport("owned-run", () => undefined, () => undefined, scenario, lease)', {
+    Viewport: exports.BrowserViewport, scenario, lease: leased ? { panel, released() { leaseReleases++; } } : undefined,
+  });
   return {
-    viewport, messages,
+    viewport, messages, panel, counts: () => ({ panelDisposals, leaseReleases }),
     hide() { panel.visible = false; visibilityChanged(); },
     ready(epoch: string) {
       receive({ type: 'ready', epoch });
@@ -70,6 +73,23 @@ test('revealing a destroyed renderer cannot confirm an image using its old readi
   harness.receive({ type: 'painted', epoch: secondEpoch, id: sent?.id });
   assert.equal((await capture).epoch, secondEpoch);
   harness.viewport.close();
+});
+
+test('historical reading rejects hidden current captures and releases the runtime without closing its reader panel', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true), epoch = '11111111-1111-1111-1111-111111111111';
+  harness.ready(epoch);
+  // Act
+  harness.viewport.showHistory('<p>Server observation history</p>');
+  await assert.rejects(harness.viewport.present('cGF1c2U=', 'paused-browser'), /viewing history/);
+  harness.receive({ type: 'ready', epoch: '22222222-2222-2222-2222-222222222222' });
+  harness.viewport.close();
+  const messagesAfterClose = harness.messages.length;
+  harness.receive({ type: 'ready', epoch });
+  // Assert
+  assert.equal(harness.panel.webview.html, '<p>Server observation history</p>');
+  assert.deepEqual(harness.counts(), { panelDisposals: 0, leaseReleases: 1 });
+  assert.equal(harness.messages.length, messagesAfterClose);
 });
 
 test('continuation during renderer reload prevents the retired pause from being displayed or acknowledged', async () => {

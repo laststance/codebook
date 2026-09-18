@@ -12,7 +12,7 @@ import { CursorCdpBridge } from './cursorCdpBridge';
 import { settleCleanup } from './utils/settleCleanup';
 import { profileProcesses } from './utils/profileProcesses';
 import type { Cdp } from './cdp';
-import type { BrowserViewport } from './browserViewport';
+import type { BrowserViewport, BrowserViewportFactory } from './browserViewport';
 
 export interface HostConfiguration {
   id: ReturnType<typeof selectHost>;
@@ -38,7 +38,7 @@ export class HostBrowser {
   private managedProfile?: string;
   private viewport?: BrowserViewport;
 
-  constructor(private readonly host: HostConfiguration, private readonly runId: string, private readonly url: string, private readonly record: RecordEvent, private readonly scenario: Scenario, private readonly fail: (reason: string) => void = () => undefined) {
+  constructor(private readonly host: HostConfiguration, private readonly runId: string, private readonly url: string, private readonly record: RecordEvent, private readonly scenario: Scenario, private readonly fail: (reason: string) => void = () => undefined, private readonly createViewport?: BrowserViewportFactory) {
     this.ownerOptions = { ownerAgentId: `codebook-${runId}` };
   }
 
@@ -56,7 +56,7 @@ export class HostBrowser {
       signal.throwIfAborted();
       const { BrowserViewport } = await import('./browserViewport.js');
       signal.throwIfAborted();
-      this.viewport = new BrowserViewport(this.runId, this.record, this.fail, this.scenario);
+      this.viewport = this.createViewport ? this.createViewport(this.runId, this.record, this.fail, this.scenario) : new BrowserViewport(this.runId, this.record, this.fail, this.scenario);
       debugConfiguration = { ...configuration, type: 'pwa-chrome', request: 'launch', runtimeExecutable,
         runtimeArgs: ['--headless=new', '--remote-debugging-pipe'], userDataDir: this.managedProfile, cleanUp: 'wholeBrowser', browserLaunchLocation: 'workspace' };
     } else if (this.host.id === 'cursor') {
@@ -105,7 +105,8 @@ export class HostBrowser {
       debugConfiguration = { ...configuration, type: 'pwa-chrome', request: 'attach', address: '127.0.0.1', port: bridgePort, urlFilter: this.url, targetSelection: 'automatic' };
     }
     signal.throwIfAborted();
-    const launching = this.trackAcquisition(vscode.debug.startDebugging(undefined, debugConfiguration));
+    // Owned fixed builds never require saving unrelated learner documents before launch.
+    const launching = this.trackAcquisition(vscode.debug.startDebugging(undefined, debugConfiguration, { suppressSaveBeforeStart: true }));
     if (this.scenario === 'cancel-attach') {
       this.record('fault.attach-acquisition-held');
       // Even a cancelled hold must drain the already-issued launch before releasing its sessions.

@@ -15,6 +15,7 @@ test('a released study with failed evidence can retire its dead connection and e
   let environments = 0, disposed = 0;
   const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
     vscode: { commands: { registerCommand(name: string, action: () => Promise<string | void>) { commands.set(name, action); return { dispose() {} }; } }, workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) } },
+    './studyWorkspace': { StudyWorkspace: class { presentation = undefined; async attach() {} async retire() {} async dispose() {} } },
     './environment': { requireWorkspace: () => harness.directory, createEnvironment: async () => { environments += 1; return { ...harness.service.environment, dispose() { disposed += 1; } }; } },
     './server': { startServer: async (service: StudyService) => { services.push(service); return startServer(service); } },
   });
@@ -44,6 +45,7 @@ test('a failed physical release keeps its owner and rejects starting or copying 
   let disposed = 0, copied = 0;
   const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
     vscode: { commands: { registerCommand(name: string, action: () => Promise<string | void>) { commands.set(name, action); return { dispose() {} }; } }, workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) }, env: { clipboard: { writeText: async () => { copied += 1; } } } },
+    './studyWorkspace': { StudyWorkspace: class { presentation = undefined; async attach() {} async retire() {} async dispose() {} } },
     './environment': { requireWorkspace: () => harness.directory, createEnvironment: async () => ({ ...harness.service.environment, dispose() { disposed += 1; } }) },
     './server': { startServer: async (service: StudyService) => { services.push(service); return startServer(service); } },
   });

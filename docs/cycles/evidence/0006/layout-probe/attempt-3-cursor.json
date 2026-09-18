@@ -1,0 +1,77 @@
+{
+  "appName": "Cursor",
+  "apiVersion": "1.128.0",
+  "independentVisualInspection": false,
+  "observations": {
+    "baseline": {
+      "orientation": 1,
+      "groups": [
+        {
+          "size": 743
+        }
+      ]
+    },
+    "beforeDistribution": {
+      "orientation": 0,
+      "groups": [
+        {
+          "size": 0.5,
+          "groups": [
+            {
+              "size": 0.5
+            },
+            {
+              "size": 742.5
+            }
+          ]
+        },
+        {
+          "size": 659.5
+        }
+      ]
+    },
+    "arranged": {
+      "orientation": 0,
+      "groups": [
+        {
+          "size": 330,
+          "groups": [
+            {
+              "size": 371
+            },
+            {
+              "size": 372
+            }
+          ]
+        },
+        {
+          "size": 330
+        }
+      ]
+    },
+    "appColumn": 1,
+    "sourceColumn": 2,
+    "contextColumn": 3,
+    "foreignDirtyDocumentPreserved": true,
+    "capturedSourceProvider": true,
+    "afterMove": {
+      "layout": {
+        "orientation": 0,
+        "groups": [
+          {
+            "size": 330
+          },
+          {
+            "size": 330
+          }
+        ]
+      },
+      "sourceColumn": 2,
+      "contextColumn": 2,
+      "appColumn": 1,
+      "groupCount": 2
+    },
+    "ownedClosePreservesForeignDraft": true
+  },
+  "passed": true
+}

@@ -5,26 +5,151 @@
   "publisher": "laststance",
   "version": "0.1.0",
   "private": true,
-  "engines": { "vscode": "^1.120.0", "node": ">=24" },
+  "engines": {
+    "vscode": "^1.120.0",
+    "node": ">=24"
+  },
   "main": "./dist/extension.js",
-  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"],
+  "extensionKind": [
+    "workspace"
+  ],
   "capabilities": {
-    "untrustedWorkspaces": { "supported": "limited", "description": "Agent execution requires a trusted local workspace." },
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Agent execution requires a trusted local workspace."
+    },
     "virtualWorkspaces": false
   },
   "contributes": {
     "commands": [
-      { "command": "codebook.startAgentServer", "title": "Codebook: Start Agent Server" },
-      { "command": "codebook.stopAgentServer", "title": "Codebook: Stop Agent Server" },
-      { "command": "codebook.copyAgentConnection", "title": "Codebook: Copy Agent Connection" }
+      {
+        "command": "codebook.startAgentServer",
+        "title": "Codebook: Start Agent Server"
+      },
+      {
+        "command": "codebook.stopAgentServer",
+        "title": "Codebook: Stop Agent Server"
+      },
+      {
+        "command": "codebook.copyAgentConnection",
+        "title": "Codebook: Copy Agent Connection"
+      },
+      {
+        "command": "codebook.openStudyWorkspace",
+        "title": "Codebook: Open Study Workspace"
+      },
+      {
+        "command": "codebook.closeStudyWorkspace",
+        "title": "Codebook: Close Study Workspace"
+      },
+      {
+        "command": "codebook.markUnderstanding",
+        "title": "Codebook: Toggle Understanding for Selected Source"
+      },
+      {
+        "command": "codebook.study.run",
+        "title": "Codebook: Run Paired Cart Demo"
+      },
+      {
+        "command": "codebook.study.click",
+        "title": "Codebook: Add to Cart Once"
+      },
+      {
+        "command": "codebook.study.continue",
+        "title": "Codebook: Continue Inspected Pause"
+      },
+      {
+        "command": "codebook.study.stop",
+        "title": "Codebook: Stop Study Run"
+      },
+      {
+        "command": "codebook.study.return-current",
+        "title": "Codebook: Return to Current Pause"
+      },
+      {
+        "command": "codebook.study.source",
+        "title": "Codebook: Focus Captured Source"
+      },
+      {
+        "command": "codebook.study.current-file",
+        "title": "Codebook: Open Current Source File"
+      },
+      {
+        "command": "codebook.study.focus-app",
+        "title": "Codebook: Focus Application"
+      },
+      {
+        "command": "codebook.study.focus-context",
+        "title": "Codebook: Focus Explanation"
+      },
+      {
+        "command": "codebook.study.outline",
+        "title": "Codebook: Show Learning Outline"
+      },
+      {
+        "command": "codebook.study.arrange",
+        "title": "Codebook: Arrange Study Workspace"
+      },
+      {
+        "command": "codebook.study.retry",
+        "title": "Codebook: Retry Study Storage"
+      }
     ],
     "configuration": {
       "title": "codebook",
       "properties": {
-        "codebook.nodeExecutable": { "type": "string", "default": "node", "scope": "machine", "description": "External Node.js executable (24 or later); never the editor's Electron binary." },
-        "codebook.chromeExecutable": { "type": "string", "default": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "scope": "machine", "description": "Chrome executable for the explicitly selected local demo profile." }
+        "codebook.nodeExecutable": {
+          "type": "string",
+          "default": "node",
+          "scope": "machine",
+          "description": "External Node.js executable (24 or later); never the editor's Electron binary."
+        },
+        "codebook.chromeExecutable": {
+          "type": "string",
+          "default": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "scope": "machine",
+          "description": "Chrome executable for the explicitly selected local demo profile."
+        }
       }
-    }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codebook",
+          "title": "codebook",
+          "icon": "src/assets/book.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "codebookMoments",
+          "title": "codebook",
+          "icon": "src/assets/book.svg"
+        }
+      ]
+    },
+    "views": {
+      "codebook": [
+        {
+          "id": "codebook.learningOutline",
+          "name": "Learning outline"
+        }
+      ],
+      "codebookMoments": [
+        {
+          "id": "codebook.observedMoments",
+          "name": "Observed moments",
+          "type": "webview"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "codebook.learningOutline",
+        "contents": "Connect the application screen with its actual code.\n[Open Study workspace](command:codebook.openStudyWorkspace)"
+      }
+    ]
   },
   "scripts": {
     "build": "pnpm --dir ../experiments/cycle-0004 build && tsc -p tsconfig.json && node scripts/build-metadata.mjs",
@@ -38,5 +163,9 @@
     "codebook-cycle-0001": "link:../experiments/cycle-0001",
     "codebook-cycle-0004": "link:../experiments/cycle-0004"
   },
-  "devDependencies": { "@types/node": "24.13.5", "@types/vscode": "1.120.0", "typescript": "5.9.3" }
+  "devDependencies": {
+    "@types/node": "24.13.5",
+    "@types/vscode": "1.120.0",
+    "typescript": "5.9.3"
+  }
 }

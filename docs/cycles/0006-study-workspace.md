@@ -1,7 +1,7 @@
 # Cycle 0006 — Read the live study and retain personal understanding
 
 Type: product-increment
-Status: planning
+Status: validating
 Result: pending
 Delivery: local-only
 Goal version: 3
@@ -34,7 +34,7 @@ Authority: agent-selected cycle under D008 continuous delegation and the user's 
 4. Validate in both actual hosts plus webview behavioral/visual QA; record motion with video and inspect frames where motion exists. Independent editor UX remains unverified if the lock persists; do not bypass or retry that unchanged boundary.
 5. `/review` the meaningful diff; retain evidence, update state, then choose one next cycle from the result.
 
-## What already exists
+## Starting baseline
 
 StudyService owns explicit run state and sealed resources; codebook_reveal controls active bound source; PairedRun owns execution/cleanup; BrowserViewport and FrameDelivery preserve actual page/pause images; Evidence records immutable observations. Reuse these boundaries and their tests. No learning model, progress store, Study workspace or general view-switching state exists yet.
 
@@ -146,11 +146,103 @@ No new deferred TODO is proposed. Full checkout, generated repository wiki, reco
 
 ## Attempts and evidence
 
-No implementation observations yet. Review artifacts and final expectations will be recorded before evaluating behavior.
+Implementation is present. The initial candidate passed 44 product tests; implementation review reproduced selection, lifecycle and persistence failures, now covered by 63 passing product tests. Browser-driven webview QA passes 27 interaction checks after correcting narrow/zoom layout, tab semantics and keyboard focus during loading. Repaired VS Code normal/history learner cases pass on source fingerprint `f0d84e2f470ba61976e9d5e413720e767850f316d034edc52b2c3f4828e5abeb` (HEAD `5c883a1`, dirty); Cursor revalidation, final regression matrix and clean-revision evidence are pending.
+
+Earlier failed native attempts remain under `artifacts/cycle-0006/`: debugger save-before-start tried to save an unrelated dirty draft (fixed with owned-session suppression); the test client closed after its server retired (harness order corrected); Cursor returned replacement tab-group wrapper objects (harness compares source URI identity). Current page PNGs, native API assertions and renderer ACKs remain distinct from independent editor UX inspection. No animation was added or claimed.
 
 ## Result and handoff
 
-Pending. Complete the bounded reviews and implementation; no final capability is verified by this draft. Final reviewers remain 0/10, not started. This is the only active cycle.
+Pending final validation/review and portable evidence. The two-item reader/progress increment is implemented; product acceptance and independent native presentation remain unverified. Final reviewers remain 0/10, not started. This is the only active cycle.
+
+## Engineering review contract — 2026-09-19
+
+Scope remains the two-item connected reader. Step 0 identified >8 files and two stateful owners as a complexity smell. Agent decision under D008: retain the complete connected increment, reduce abstraction instead of deleting required behavior. Use one lazily shown presentation owner created at extension activation, one durable library, pure projections and existing runtime ownership. No new server, database, React app, general layout framework or competing debugger coordinator. These are delegated engineering choices; no user answer or native visual acceptance is claimed.
+
+### E6.1 — Native composition and ownership [P1, confidence 10/10]
+
+Motivation: D6.5, "background run/selection updates must not reset that layout." Real API probes disproved two assumptions: a moved source group can disappear and renumber other groups; Cursor interprets fractional/default layout sizes as subpixel values. Supported `vscode.setEditorLayout` followed by `workbench.action.evenEditorWidths` gives usable positive dimensions in both hosts. Track actual owned panel handles and source URI tab groups; never retain a column number as identity. Call layout/distribution only for explicit Open/Arrange/Restore, never on content updates.
+
+[Probe evidence](evidence/0006/layout-probe/): attempts 1/2 retained; attempt 3 passes in both editors. It verifies a native read-only provider, app-above-source/context-right group tree, moving source into context while the empty group collapses, and preservation of an unrelated dirty draft through owned-tab closure. It does not verify pixels, resizing UX, or the product implementation. Layout must preserve existing groups: if foreign groups would be merged or exceed available supported columns, leave their arrangement and show an explicit arrangement limitation instead of rebuilding them.
+
+### E6.2 — One runtime, separate reader lifetime [P1, confidence 9/10]
+
+Motivation: D6.2, "Keep two explicit identities"; existing `BrowserViewport.reveal` fixes Column One, and `PairedRun.cleanup` closes runtime-owned source tabs. Add an optional externally owned viewport lease through the existing browser boundary. The presentation owner exists before Open and supplies every product runtime viewport, including MCP-first runs. Open adopts the same instance/run/lease generation without launching again. Released leases invalidate their listeners/late ACKs before the next run can reuse the reader panel. The reader owns its app panel; the runtime owns its frame delivery, listeners and target. Default experiment callers retain existing ownership. Runtime stop releases its lease without destroying the reader. Closing the live app pane fails/stops only its attached runtime; Close Study awaits owned cleanup and drains pending source acquisition before disposing only its readers.
+
+Reuse BrowserViewport/FrameDelivery with a historical presentation mode, not another CDP/frame pipeline. Historical selection suspends current delivery and renders a labeled exact archived image (or unavailable state). New current captures while history/hidden stay unconfirmed with their actual reason; no hidden renderer ACK or delayed-image substitution. Return to current reattaches live presentation without replaying a click, changing the selected target, or retroactively changing the old capture verdict. Normal following keeps the actual current viewport and its existing frame contract. UI captures and native visual acceptance remain separate evidence.
+
+When the reader is attached, preparation does not populate its source region with mutable fixture tabs. Product MCP reveal resolves the current captured-source identity/group; it rejects BUSY when it would displace learner-selected history, keeping immutable source resources available. Default experiment callers retain existing source behavior. Native debugger auto-reveals are separately observed: if they replace a reader region, immediately invalidate the displayed matching-state assertion, restore the selected captured URI with its known reader focus and no layout reset, and publish matching data only after actual active-tab verification. A host that prevents this preservation is an explicit native validation failure, never a claimed guarantee. Do not mutate global debug focus settings or DAP messages to hide the issue. The learner's explicit current-file command checks disk and open-document bytes and visibly reports drift. Layout is never reapplied on a pause.
+
+```text
+Open reader -> library + source baselines -> native outline/app/source/context
+                     ^                         | selected observation + follow
+MCP / explicit UI -> StudyService -> PairedRun -> BrowserViewport lease
+                     |         committed snapshots / exact phase images
+                     +-> bounded projection -> serialized library checkpoint
+Stop runtime -> drain runtime ownership -> retain reader/archive
+Close reader -> stop attached runtime + drain reader I/O -> dispose owned UI
+Reload reader -> validated archive, never reconstructed execution authority
+```
+
+### E6.3 — Durable, bounded learning state [P1, confidence 9/10]
+
+Motivation: D6.4, "If storage is unreadable ... do not overwrite it with an empty success." Library lives under extension private storage, keyed by canonical workspace identity. Stable IDs are `paired-cart-demo/server` and `paired-cart-demo/browser`. The current source baseline is the installed fixture's current TypeScript bytes, not whichever old observation was selected. Check decisions append item/hash/value/time; current progress requires a true decision for the current baseline and historical positive decisions become review-needed after change. Explicit checks on an old observation remain historical and do not assert current understanding.
+
+Use strict versioned Zod schemas, existing bounded-file/hash utilities, private permissions, exclusive per-library write lock and atomic temp+rename. Serialize local writes and re-read under the lock to prevent another window's decision loss. A locked/corrupt/full/unwritable store stays readable where possible and exposes a save error; it is never silently reset or evicted. No automatic stale-lock deletion. Retry is an explicit user action. Keep at most 1,000 learner decisions and 16 retained studies; refuse additional writes with a specific limit reason. Cap each archive at 64 MiB and progress at 1 MiB; load only one study at a time. List fixed-name archive files using filesystem metadata, avoiding a second index that could disagree after a partial multi-file write. No automatic deletion and no cross-host synchronization claim.
+
+Archive only projections of committed snapshot identities, source text+hash+line, captured primitive values, separate agent interpretations, phase image bytes+hash+recorded status, causal-link statuses, timestamps and terminal state. Do not store tokens or restore active control from disk. Revalidate source/image hashes on read. Missing image or failed history write is explicit and cannot replace live evidence or certify persistence. Atomically replace a study projection only when material observation/status/explanation changes, not on every streamed frame; immutable snapshot/source identities inside it never change; final shutdown first waits runtime cleanup and accepted explanations, then explicitly reprojects the latest final/failed state, enqueues that final checkpoint, awaits its persistence result, and only then drops the service reference. Draining already queued writes without that final projection is insufficient. Archive failure stays distinct even after physical resources are released. Reader history can survive service/server retirement, but a partial archive never becomes a success record.
+
+### E6.4 — Selection, messages and error paths [P1, confidence 9/10]
+
+Motivation: D6.3, "Missing evidence never borrows the previous item's values, prose or later frame." One pure projection joins selected study/item/observation with live pause identity and learner decisions. Selection revision fences every source/image async operation; start with loading placeholders, validate the revision before and after I/O, drain obsolete source opens, then publish one matching projection. Follow-off history remains selected across a new pause. Continue sends the exact displayed participant/session/thread/generation and revalidates at the existing service; stale/busy updates UI and never retries. UI commands are validated discriminated messages with bounded text/opaque IDs, not arbitrary commands, paths or JavaScript. Text uses textContent/escaped content with nonce CSP and no command URIs.
+
+Keep the native tree and source provider in the presentation controller. HTML/JS is a thin view of typed data, with real controls, state-preserving focus and a polite status region. A single 250 ms coalesced observer reads the in-memory service while attached; never execute prerequisite shell probes each tick. Stop polling when detached, avoid concurrent archive/render work, cache immutable captured bytes and send only changed projections. Source/PNG loads are bounded and selection-lazy. Progress persistence failure keeps the last committed checkbox value and an explicit Retry; run failure and archive failure have separate labels.
+
+### E6.5 — Test review and failure coverage
+
+Use existing Node `node:test` + strict assertion suites, real ExtensionHost harnesses, and browser-driven webview behavior QA. All new paths below are planned gaps, not implemented test claims. No critical LLM/prompt change is introduced; agent interpretations remain the existing MCP contract.
+
+```text
+Entry / owner                       Behavior and failure tests
+extension commands                  Open no run; explicit Run/Click; duplicate/busy; stop failure [native]
+StudyWorkspace                      selection A->B delayed source; close during open; follow-off/new pause
+  native composition                draft preservation; >=4 foreign groups; moved groups; focus/close [native]
+  captured source provider          immutable text/line; tampered bytes; current-file drift; post-reload [native]
+  webview messages                  unknown action/run; unsafe markup; keyboard; focus; stale continue
+  renderer/history lease            normal live; history while new pause; hidden/missing image; close [native]
+Study projection                    exact item/snapshot joins; unobserved/loading/partial; terminal history
+  Continue                          displayed=current only; concurrent/stale/manual control [unit + native]
+Learning library                    mark/unmark; source change; old selection; restart/workspace isolation
+  atomic persistence                competing writer; rejected rename; malformed/schema/hash; size/count limits
+  history checkpoint                partial write; final drain; old archive never revives control [unit + native]
+Presentation                        light/dark/high contrast; 1440/1024/800; zoom; keyboard [browser + native]
+Retirement                          halt observer before last tick; explain/stop/reload final checkpoint
+Late reader attachment              MCP start/click/pause -> first Open -> stop/read -> next run [native]
+Raw source interference             move captured group -> next pause/MCP reveal; verify active URI/focus
+Existing behavior                   product/shared/paired unit + normal/hold/source-drift MCP both hosts
+```
+
+Each failure gets visible state and targeted regression proof. Full native visual QA remains blocked by the unchanged desktop lock; do not replace it with API group assertions. If motion is added, record the real interaction and inspect extracted frames. Prefer no optional decorative animation in this slice.
+
+### E6.6 — Performance, distribution and sequencing
+
+[P2, confidence 9/10] Evidence: existing StudyService retains 16 runs and may contain large frame/event state. Never stringify runtime event history into every UI message. Project only selected evidence and compact statuses, memoize immutable bytes, bound archival work and coalesce pending refreshes. Test slow persistence while continue/status remain responsive; one failed archive stops repeated writes until explicit Retry or materially new state, not a 250 ms retry storm.
+
+Sequential implementation: projection/library -> presentation/viewport lease -> native/browser validation -> review. These steps share lifecycle contracts and have no independent implementation lanes. A read-only independent engineering challenge is appropriate before code. Existing prior outside CLI attempts timed out; do not repeat without changed conditions, and never call an in-host review cross-provider validation.
+
+NOT in scope: full checkout/general repository profiles (next product increment from evidence); recording/replay/export (the moments strip makes no video claim); generated whole wiki and two other layouts (same future shared model); packaging/publishing (not introduced as complete by a development reader); cross-editor sync (host-local persistence only). No new TODO file or second active roadmap; these remain final-goal capabilities.
+
+### Implementation tasks
+
+- [ ] **E1 (P1)** — Pure study projection and versioned learning library; prove selected/current separation, append-only understanding, corruption/limit/write failure and restart isolation.
+- [ ] **E2 (P1)** — Native reader/controller, exact read-only source, live/history viewport lease and owned cleanup; prove layouts/moves/foreign drafts in both hosts without resetting on updates.
+- [ ] **E3 (P1)** — Thin accessible context/app views, outline, source-linked overview/flow, observed moments and explicit control; prove cross-item/stale/error states and keyboard/narrow/theme behavior.
+- [ ] **E4 (P1)** — Native integration and current implementation review, portable evidence, cycle/issue/state sync. Existing user acceptance and final ten-review gate remain outstanding.
+
+### Independent engineering challenge and completion
+
+Fresh in-host reviewer completed with three P1 gaps (confidence 9–10): final checkpoint after the last observer tick; MCP-first attachment ownership; native/raw source reveal competition. Agent decisions under D008 incorporated all three into E6.2/E6.3 and the native regression matrix. No cross-provider result or final-product pass is claimed. Outside CLI coverage remains unavailable after prior unchanged timeouts; no new attempt.
+
+Review completion: Step 0 scope retained with two owners and no competing coordinator; Architecture 3 findings plus three independently raised lifecycle clarifications; Code quality 1 joined-selection/message-contract finding; Tests 13 planned behavior/failure groups, all new implementation still pending; Performance 1 bounded-projection finding. NOT in scope and reuse recorded. No additional TODO proposed. Zero silent failure paths intentionally left without a planned test/error state; implementation must prove them. Sequential implementation; no independent code lanes. Lake score N/A (delegated mechanism choices, no user shortcut choice). Unresolved product decisions: none. Native behavioral and visual results are still unknown.
 
 ## GSTACK REVIEW REPORT
 
@@ -158,12 +250,22 @@ Pending. Complete the bounded reviews and implementation; no final capability is
 | --- | --- | --- | --- | --- | --- |
 | CEO Review | Approved destination | Product direction | 0 this cycle | Existing context | No outcome change |
 | Design Review | `/plan-design-review` | Connected learner workspace | 1 | Plan specified, 9/10; implementation unverified | Six agent decisions under D008; all seven passes evaluated |
-| Outside Review | Independent design challenge | Selection, evidence, progress and ownership | 1 native; 0 new external | Native completed; outside unavailable | Three P1 and two P2 findings incorporated; no distinct-provider agreement |
+| Outside Review | Independent design challenge | Selection, evidence, progress and ownership | 2 native phases; 0 new external | Native completed; outside unavailable | Design: three P1 + two P2; engineering: three P1 incorporated; no distinct-provider agreement |
 | DX Review | Existing MCP contract | Agent integration | 0 | Reassess in engineering | No new tool contract frozen yet |
-| Eng Review | `/plan-eng-review` next | Ownership, persistence and validation | 0 | Required | Supported native layout and history mechanisms need concrete validation |
+| Eng Review | `/plan-eng-review` | Ownership, persistence and validation | 1 | Plan clear; implementation pending | Native API probe both hosts; three fresh challenge findings incorporated; bounded failure tests specified |
 
 **OUTSIDE COVERAGE:** Four implementation and one earlier DX provider invocation timed out during Cycle 0005. No unchanged retry or external design result is claimed. Mockup generator unavailable; the prior approved concept and labeled HTML state sketch supply visual context. No additional user design approval or new final-product review occurred.
 
-**VERDICT:** Design contract specified under existing continuous delegation; **eng review required** before implementation. Native visual acceptance remains unverified while the Mac is locked. The approval-by-question loop was not replayed as the user's delegation authorizes routine choices; those choices are agent decisions, not fabricated user answers. No additional durable learning beyond the recorded contract was identified.
+**VERDICT:** Design and engineering contracts specified under existing continuous delegation; **ready to implement the bounded cycle**. Native visual acceptance remains unverified while the Mac is locked. The approval-by-question loop was not replayed as the user's delegation authorizes routine choices; those choices are agent decisions, not fabricated user answers. No additional durable learning beyond the recorded contract was identified.
 
 NO UNRESOLVED DECISIONS
+
+## Implementation review progress — 2026-09-19
+
+Pass 1 found concrete stale-selection, obsolete-render, close/open, cold-restoration, missing-baseline, archive-coalescing and native-outline gaps. Focused tests now demonstrate their fixes, including forty source changes retaining one owned source tab, latest history choice winning, slow storage not blocking inspection, and failed latest archival state surviving an older successful write. Capacity, exact UTF-8 size limits, focus retention and source-cache bounds were added. Documentation now describes the implemented reader.
+
+The first testing specialist used fresh context. Further new reviewer creation hit the agent-thread limit; maintainability, performance, security, design, simplification, red-team and adversarial lenses used named existing reviewer contexts. Their findings are useful but are not independent fresh passes or final-product reviews. No outside provider result exists. Pass 1 is a fixing pass; a full subsequent pass is required before any convergence claim. Routine fixes/tests are agent decisions under D008, not fabricated approvals.
+
+Pass 2 repaired five further concrete gaps: draining a pending layout command at Close; retaining the original failed learner intent for explicit Retry; loading self-contained history with missing current files; rejecting MCP reveal when the native source did not render; and retaining a terminal study's outcome/reason in the visible reader. The regression suite now has 63 passing product cases, with 44 shared and 28 paired tests also passing. Browser QA passes 27 checks. An acknowledgment-order bug in the browser driver was investigated separately: valid selection preceded a later rendered ACK, so semantic intent is checked independently of transport order. This was a harness correction, not a product behavior failure.
+
+Pass 3 identified one additional combination: current-source unavailability still prevented explicit storage Retry. Source refresh, personal decisions/navigation and archive recovery now run independently with separate error channels. A real temporary library lock plus missing current files reproduced the failure before the correction; the extended controller regression passes afterward. Across three fixing passes: 23 unique findings repaired. The three-pass limit is reached; **not certified converged**, no fourth full pass and no fresh-context or outside-provider approval. Final clean-revision native checks are next.

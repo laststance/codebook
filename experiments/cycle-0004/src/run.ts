@@ -21,12 +21,15 @@ import { inspectParticipant, type ParticipantSnapshot } from './inspectParticipa
 import { sealFixture } from './utils/sealFixture';
 import { readBackendEndpoint, type BackendEndpoint } from './utils/readBackendEndpoint';
 import { backendProcesses } from './utils/backendProcesses';
+import type { BrowserViewportFactory } from 'codebook-cycle-0001/dist/browserViewport';
 
 export interface HarnessConfig {
   artifactRoot: string; templateRoot: string; descriptorPath: string;
   revision: string; dirty: boolean; sourceHash: string; nodeExecutable: string;
   host: HostConfiguration;
   evidenceLimits?: EvidenceLimits;
+  createViewport?: BrowserViewportFactory;
+  prepareSource?: (path: string) => Promise<void>;
 }
 interface Participant {
   gate: PauseGate; selected?: vscode.DebugSession; cdp?: Cdp; source?: SealedSource;
@@ -118,7 +121,8 @@ export class PairedRun {
       vscode.debug.addBreakpoints([participant.breakpoint]);
       this.evidence.record('breakpoint.requested', { participant: name, source: sources[name].sourcePath, line: sources[name].breakpointLine });
       // Keep both debugger source reveals outside the owned browser group, as in the synchronous coordinator.
-      await vscode.window.showTextDocument(vscode.Uri.file(sources[name].sourcePath), { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true });
+      if (this.config.prepareSource) await this.config.prepareSource(sources[name].sourcePath);
+      else await vscode.window.showTextDocument(vscode.Uri.file(sources[name].sourcePath), { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true });
     }
     await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
     this.assertAlive();
@@ -127,7 +131,7 @@ export class PairedRun {
       program: join(this.evidence.directory, 'build/server.mjs'), cwd: this.evidence.directory, console: 'internalConsole', stopOnEntry: false,
       autoAttachChildProcesses: false, sourceMaps: true, outFiles: [join(this.evidence.directory, 'build/*.mjs')],
       resolveSourceMapLocations: [join(this.evidence.directory, '**')], env: { CODEBOOK_RUN_ID: this.id },
-    }));
+    }, { suppressSaveBeforeStart: true }));
     if (this.scenario === 'cancel-launch') {
       this.evidence.record('fault.launch-held');
       await delay(ACTIVE_TIMEOUT_MS, undefined, { signal: this.abort.signal });
@@ -138,7 +142,7 @@ export class PairedRun {
     this.evidence.record('backend.endpoint', this.endpoint);
     await this.selectProxy('server');
     const url = `${this.endpoint.origin}/runs/${this.id}/index.html`;
-    this.browser = new HostBrowser(this.config.host, this.id, url, (type, detail) => this.evidence.record(type, detail), 'normal', reason => this.fail(reason));
+    this.browser = new HostBrowser(this.config.host, this.id, url, (type, detail) => this.evidence.record(type, detail), 'normal', reason => this.fail(reason), this.config.createViewport);
     await this.browser.launch({ type: 'pwa-chrome', request: 'launch', name: `codebook ${this.id} browser`, url, webRoot: this.evidence.directory,
       // Browser source maps are fetched by URL; the local-only Node allowlist would silently exclude them.
       outFiles: [join(this.evidence.directory, 'build/*.mjs')], sourceMaps: true, resolveSourceMapLocations: [join(this.evidence.directory, '**'), `${this.endpoint.origin}/runs/${this.id}/*.mjs.map`], sourceMapPathOverrides: { '../fixture/*': join(this.evidence.directory, 'fixture/*') }, timeout: ACTIVE_TIMEOUT_MS }, this.abort.signal);
