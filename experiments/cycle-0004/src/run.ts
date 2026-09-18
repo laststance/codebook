@@ -378,6 +378,9 @@ export class PairedRun {
     for (const name of PARTICIPANTS) this.participants[name].gate.invalidate();
     for (const link of this.links) if (link.status !== 'observed') link.status = reason.includes('Ambiguous') ? 'ambiguous' : 'mismatched';
     void this.persist().catch(error => { this.evidence.failure = String(error); });
+    // Client loss must not leave a failed owned debugger/browser alive; explicit DELETE can retry a failed release.
+    this.evidence.record('cleanup.auto-requested');
+    void this.cleanup().catch(error => console.error('Automatic paired cleanup incomplete', error));
   }
 
   /** Persists qualified evidence; final outcome requires settled owned teardown, not only candidate completion. @example await run.persist() */

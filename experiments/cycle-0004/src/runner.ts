@@ -66,7 +66,14 @@ async function exercise(descriptor: Descriptor, scenario: Scenario): Promise<Cas
     if (['missing-id', 'duplicate-id', 'stale-server', 'redirect'].includes(scenario)) {
       assert.equal(serverStop.status, 'failed');
       const expected = scenario === 'missing-id' ? /Missing operation identity|Paused identity/ : scenario === 'duplicate-id' ? /Ambiguous duplicate/ : scenario === 'stale-server' ? /Executed JavaScript/ : /Redirect|redirect|Unexpected cart/;
-      assert.match(serverStop.failures.join('\n'), expected); assert.equal(serverStop.events.filter(event => event.type === 'continue.accepted').length, 0); result.passed = true; return result;
+      assert.match(serverStop.failures.join('\n'), expected); assert.equal(serverStop.events.filter(event => event.type === 'continue.accepted').length, 0);
+      if (scenario === 'missing-id') {
+        // Observe extension-owned failure cleanup before this client sends any DELETE.
+        const automatic = await waitUntil(async () => { const current = await state(descriptor, runId); return current.cleaned ? current : undefined; }, 'automatic failed-run cleanup', RUN_TIMEOUT_MS);
+        assertFinalScenario(scenario, automatic); assert.equal(automatic.events.some(event => event.type === 'cleanup.auto-requested'), true);
+        result.checks.automaticCleanupWithoutDelete = true;
+      }
+      result.passed = true; return result;
     }
     assert.notEqual(serverStop.status, 'failed', serverStop.failures.join('\n'));
     assert.deepEqual(serverStop.participants.server.snapshot?.values, { operationId: id, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 0, admittedCount: 2 });

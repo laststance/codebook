@@ -179,7 +179,7 @@ No separate durable learning is added before the proposed remedies have implemen
 
 ## Result and handoff
 
-Pending final validation. The paired coordinator, two-runtime fixture, bounded network evidence and runner are implemented. Six engineering-review remedies are reflected in code. Exploratory normal and focused-decoy runs passed in both hosts, including four exact image receipts, both source/value snapshots and owned cleanup. The paired unit suite now has 23 passing tests; the shared suite has 40. Shared native normal/stale-script/source-drift regressions passed in both hosts at the unchanged shared source. Final clean-revision matrices, shared native source regressions and implementation review are pending. Mac lock blocks independent native screenshots, but does not erase Cycle 0003 transport evidence or authorize bypassing the lock. Full checkout, product MCP, recording/replay, wiki/progress, three layouts, real-repository use and packaging remain final obligations.
+Pending final validation. The paired coordinator, two-runtime fixture, bounded network evidence and runner are implemented. Six engineering-review remedies are reflected in code. Exploratory normal and focused-decoy runs passed in both hosts, including four exact image receipts, both source/value snapshots and owned cleanup. The paired unit suite now has 24 passing tests; the shared suite has 40. Shared native normal/stale-script/source-drift regressions passed in both hosts at the unchanged shared source. Final clean-revision matrices, shared native source regressions and implementation review are pending. Mac lock blocks independent native screenshots, but does not erase Cycle 0003 transport evidence or authorize bypassing the lock. Full checkout, product MCP, recording/replay, wiki/progress, three layouts, real-repository use and packaging remain final obligations.
 
 ## GSTACK REVIEW REPORT
 
@@ -221,3 +221,9 @@ Scope: complete branch diff against main at `37420c1`. Parent plus fresh native 
 An initial attempted recovery waited for an endpoint even when the cancelled launcher had already exited before starting its child. Events proved no endpoint could be published in that path; it was replaced by direct, scoped OS process observation. The failed attempt remains in private artifacts.
 
 Both Claude Code outside passes timed out after 540000 ms and supplied no findings. Outside coverage is unavailable, not clean. Fresh review and final matrices of the repaired revision remain pending. The expanded native matrix contains 18 cases, adding `capture-timeout` and `late-request` to test outcome qualification and candidate revocation.
+
+## Implementation review, pass 2
+
+Fresh native testing/maintainability review of `9cad86f` found no additional issue (23 unit tests). Fresh adversarial review found one P2: failure invalidated the run but relied on an external DELETE to release its processes and debuggers. A disconnected client could leave owned resources alive. Failure now initiates the same idempotent cleanup path automatically; explicit DELETE remains a retry for an incomplete release. A unit regression and the real `missing-id` scenario verify cleanup before any DELETE. Twenty-four unit tests plus focused normal/missing-id/backend-exit/cancel-launch checks pass in both hosts after the fix.
+
+The two outside passes again timed out after 540000 ms, with no findings supplied. Four repeated provider timeouts are missing coverage; no further identical provider retry is justified in this cycle. A fresh native full-diff review and the final 18-case matrix follow on the repaired source. The overall review cannot be certified fully converged while outside coverage remains unavailable.

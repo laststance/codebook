@@ -8,6 +8,7 @@ import { runInNewContext } from 'node:vm';
 import type * as RunModule from '../run';
 import type { PauseIdentity } from 'codebook-cycle-0001/dist/pauseGate';
 import type { ParticipantSnapshot } from '../inspectParticipant';
+import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 
 /** Loads the actual paired coordinator with only native VS Code replaced for lifecycle tests. @example const { run, directory } = await harness() */
 async function harness() {
@@ -107,4 +108,23 @@ test('one participant release failure still releases the other debugger and brow
     assert.deepEqual(released.slice(0, 4), ['server', 'browser', 'debugger', 'viewport']);
     assert.equal(partial.cleaned, false); assert.match(partial.failures.join('\n'), /server CDP close/); assert.equal(run.view().cleaned, true);
   } finally { failClose = false; await run.cleanup(); await rm(directory, { recursive: true }); }
+});
+
+test('a failed run releases owned resources without any external delete request', async () => {
+  // Arrange
+  const { run, directory, nativeDebug } = await harness(); const released: string[] = [];
+  Reflect.set(run.participants.server, 'cdp', { close() { released.push('server'); } });
+  Reflect.set(run.participants.browser, 'cdp', { close() { released.push('browser'); } });
+  Reflect.set(run, 'browser', { resumeViewport() {}, async drainAcquisitions() {}, async close() { released.push('viewport'); } });
+  const session = { id: 'owned', name: 'owned', type: 'pwa-node', configuration: { type: 'pwa-node', request: 'launch', name: 'owned' }, workspaceFolder: undefined, customRequest: async () => undefined, getDebugProtocolBreakpoint: async () => undefined };
+  run.sessions.set('owned', { session, name: 'server' }); run.activeSessions.add('owned');
+  nativeDebug.stopDebugging = async () => { released.push('debugger'); run.activeSessions.clear(); return true; };
+  try {
+    // Act: no cleanup call occurs before the externally observable resource state is checked.
+    run.fail('Missing operation identity');
+    await waitUntil(() => run.view().cleaned, 'automatic failure cleanup', 1_000);
+    // Assert
+    assert.deepEqual(released, ['server', 'browser', 'debugger', 'viewport']);
+    assert.equal(run.view().status, 'failed'); assert.equal(run.view().finalOutcome, 'not-demonstrated'); assert.deepEqual([...run.failures], ['Missing operation identity']);
+  } finally { await run.cleanup(); await rm(directory, { recursive: true }); }
 });
