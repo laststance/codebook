@@ -1,0 +1,16 @@
+{
+  "executable": "/Applications/Visual Studio Code.app/Contents/MacOS/Code",
+  "arguments": [
+    "--new-window",
+    "--disable-workspace-trust",
+    "--skip-welcome",
+    "--skip-release-notes",
+    "--user-data-dir",
+    "<owned-runtime:c46f9c4b786a>/profile",
+    "--extensions-dir",
+    "<owned-runtime:c46f9c4b786a>/extensions",
+    "--extensionDevelopmentPath",
+    "<repo>/experiments/cycle-0001",
+    "<repo>/artifacts/cycle-0003/managed/vscode/suite-2026-09-18T13-58-54.106Z-9f8d4e52/workspace"
+  ]
+}

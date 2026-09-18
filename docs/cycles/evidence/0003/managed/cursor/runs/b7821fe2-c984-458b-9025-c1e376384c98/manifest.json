@@ -1,0 +1,155 @@
+{
+  "runId": "b7821fe2-c984-458b-9025-c1e376384c98",
+  "scenario": "duplicate",
+  "status": "completed",
+  "cleaned": true,
+  "resources": {
+    "activeSessionIds": [],
+    "breakpointPresent": false,
+    "cdpOpen": false
+  },
+  "operation": {
+    "id": "b85dfaa7-5bb8-4b23-8f84-8a6ecee99e94",
+    "key": "one-cart-add",
+    "inputAcknowledged": true,
+    "completed": true
+  },
+  "conflict": false,
+  "sessionId": "6169de1d-022a-4368-a49c-a272e7f9a0d8",
+  "snapshot": {
+    "id": "6169de1d-022a-4368-a49c-a272e7f9a0d8:1",
+    "pause": {
+      "sessionId": "6169de1d-022a-4368-a49c-a272e7f9a0d8",
+      "threadId": 2,
+      "generation": 1
+    },
+    "frame": {
+      "id": 2,
+      "name": "button#add.addToCart",
+      "line": 9,
+      "column": 3,
+      "source": {
+        "name": "fixture/cart.ts",
+        "path": "<repo>/artifacts/cycle-0003/managed/cursor/b7821fe2-c984-458b-9025-c1e376384c98/fixture/cart.ts",
+        "sourceReference": 0
+      },
+      "presentationHint": "normal",
+      "canRestart": true
+    },
+    "values": {
+      "productId": "tote-01",
+      "price": 24,
+      "cartCount": 0
+    },
+    "evaluations": [
+      {
+        "type": "string",
+        "result": "'tote-01'",
+        "variablesReference": 0
+      },
+      {
+        "type": "number",
+        "result": "24",
+        "variablesReference": 0
+      },
+      {
+        "type": "number",
+        "result": "0",
+        "variablesReference": 0
+      }
+    ],
+    "source": {
+      "scriptId": "3",
+      "scriptLocation": {
+        "scriptId": "3",
+        "lineNumber": 7,
+        "columnNumber": 4
+      },
+      "mapping": {
+        "generatedLine": 7,
+        "generatedColumn": 4,
+        "originalSource": "../fixture/cart.ts",
+        "originalLine": 8,
+        "originalColumn": 2
+      },
+      "typescriptHash": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+      "javascriptHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+      "sourceMapHash": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+    }
+  },
+  "captures": {
+    "before": {
+      "phase": "before",
+      "requestSequence": 55,
+      "status": "captured",
+      "responseSequence": 63,
+      "file": "before.png",
+      "renderer": {
+        "epoch": "70390020-7dcf-4d06-84e5-50ab06861deb",
+        "id": 4,
+        "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+      }
+    },
+    "paused-1": {
+      "phase": "paused",
+      "generation": 1,
+      "requestSequence": 77,
+      "status": "captured",
+      "responseSequence": 90,
+      "file": "paused-1.png",
+      "renderer": {
+        "epoch": "70390020-7dcf-4d06-84e5-50ab06861deb",
+        "id": 6,
+        "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+      }
+    },
+    "after": {
+      "phase": "after",
+      "requestSequence": 116,
+      "status": "captured",
+      "responseSequence": 122,
+      "file": "after.png",
+      "renderer": {
+        "epoch": "70390020-7dcf-4d06-84e5-50ab06861deb",
+        "id": 10,
+        "hash": "0dbf7e1e0670a5f837909b9d5b534c681a8682eb19688e658c87c5efa70cd908"
+      }
+    }
+  },
+  "observed": {
+    "cartCount": 1,
+    "completedClicks": 1
+  },
+  "failures": [],
+  "artifactDirectory": "<repo>/artifacts/cycle-0003/managed/cursor/b7821fe2-c984-458b-9025-c1e376384c98",
+  "environment": {
+    "host": "cursor",
+    "productVersion": "3.21.12",
+    "apiVersion": "1.128.0",
+    "hostCommit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20",
+    "node": "24.18.1",
+    "electron": "42.10.0",
+    "jsDebug": "1.93.0"
+  },
+  "revision": "8ceb901ee5183ee80cc5060a338446ffba949e7c",
+  "workingTreeDirty": false,
+  "sourceHash": "acacf9c45d07548db803a1dd8a6acb2905b5edbb3ef91591a82793454d5a14e5",
+  "extensionHash": "d066bd9842279afaf1d7c1985d6757f7f1716bc9b301a04aae05ae5b5ffa4cea",
+  "expected": {
+    "productId": "tote-01",
+    "price": 24,
+    "cartCount": 0,
+    "finalCartCount": 1,
+    "completedClicks": 1
+  },
+  "hashes": {
+    "typescript": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+    "javascript": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+    "sourceMap": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+  },
+  "limits": [
+    "Fixture only; not a production MCP service.",
+    "Receipt ordering is not a causal or simultaneous-paint guarantee.",
+    "DAP cannot atomically compare an expected suspension generation."
+  ]
+}

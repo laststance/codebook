@@ -1,0 +1,75 @@
+{
+  "runId": "d6da6f76-e5a9-4823-99d5-5450dededd2a",
+  "scenario": "viewport-close",
+  "status": "failed",
+  "cleaned": true,
+  "resources": {
+    "activeSessionIds": [],
+    "breakpointPresent": false,
+    "cdpOpen": false
+  },
+  "operation": {
+    "id": "3aa317d2-67bd-430b-9a09-8177f8e2b0de",
+    "key": "one-cart-add",
+    "inputAcknowledged": false,
+    "completed": false
+  },
+  "conflict": false,
+  "sessionId": "aace1172-8de4-4502-9df5-cfd88343db48",
+  "captures": {
+    "before": {
+      "phase": "before",
+      "requestSequence": 50,
+      "status": "captured",
+      "responseSequence": 58,
+      "file": "before.png",
+      "renderer": {
+        "epoch": "35aaf2da-d004-42d1-93cf-bc7725604e19",
+        "id": 3,
+        "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+      }
+    },
+    "paused-1": {
+      "phase": "paused",
+      "generation": 1,
+      "requestSequence": 70,
+      "status": "failed",
+      "responseSequence": 83,
+      "error": "Error: Owned viewport closed by injected fault"
+    }
+  },
+  "failures": [
+    "Owned viewport closed before cleanup"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0003/managed/cursor/d6da6f76-e5a9-4823-99d5-5450dededd2a",
+  "environment": {
+    "host": "cursor",
+    "productVersion": "3.21.12",
+    "apiVersion": "1.128.0",
+    "hostCommit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20",
+    "node": "24.18.1",
+    "electron": "42.10.0",
+    "jsDebug": "1.93.0"
+  },
+  "revision": "48d04dde878a4047329981b3d94b8aa6d3643462",
+  "workingTreeDirty": false,
+  "sourceHash": "f0ce7a352cc21568069d91e3b560a4b1316b998b3b7781f8b3be42a360ac1a79",
+  "extensionHash": "f20f0380f5e5c7e5a2622234bf760b5de1de3b1fdd1578026c6606c4b629dce3",
+  "expected": {
+    "productId": "tote-01",
+    "price": 24,
+    "cartCount": 0,
+    "finalCartCount": 1,
+    "completedClicks": 1
+  },
+  "hashes": {
+    "typescript": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+    "javascript": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+    "sourceMap": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+  },
+  "limits": [
+    "Fixture only; not a production MCP service.",
+    "Receipt ordering is not a causal or simultaneous-paint guarantee.",
+    "DAP cannot atomically compare an expected suspension generation."
+  ]
+}

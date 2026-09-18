@@ -4,7 +4,7 @@ Learn an unfamiliar codebase by connecting what an application does on screen wi
 
 The destination is a chat-driven, recorded walkthrough from adding a product to the cart through checkout, linked to a wiki, codemap, and personal learning progress. Study workspace is the default; Living book and Guided walkthrough are required later display modes.
 
-The complete product must work in **both VS Code and Cursor**. Final acceptance includes packaged-extension installation and the full experience in each editor. Cursor support is required but currently unverified; the existing experiment establishes VS Code fixture behavior only.
+The complete product must work in **both VS Code and Cursor**. Final acceptance includes packaged-extension installation and the full experience in each editor. Both hosts have real synchronous-fixture evidence. Full packaged-product compatibility remains unverified.
 
 ## Start here
 
@@ -41,8 +41,8 @@ Issues provide a discoverable queue; the linked repository documents own scope, 
 
 ## Current baseline
 
-Product design and three visual directions are approved. [Cycle 0001](docs/cycles/0001-click-pause-resume.md) demonstrated a real integrated-browser click, TypeScript debugger stop, verified source/values, pause-associated capture, and continuation to one cart item. The [isolated experiment](experiments/cycle-0001/README.md) passed 12 unit tests and 15 native scenarios on its recorded macOS/VS Code environment; [portable evidence](docs/cycles/evidence/0001/README.md) preserves the result and earlier failures.
+Product design and three visual directions are approved. [Cycle 0001](docs/cycles/0001-click-pause-resume.md) proved the synchronous VS Code fixture; [Cycle 0002](docs/cycles/0002-cursor-runtime-compatibility.md) added actual Cursor evidence. [Cycle 0003](docs/cycles/0003-scoped-browser-transport.md) then demonstrated a js-debug-owned Chrome pipe and exact source/value/PNG correspondence in both real hosts, with **38 unit tests and 21/21 native runtime cases per host**. Its full native-presentation result is **inconclusive**: independent editor screenshots were blocked by the locked Mac. [Evidence and limits](docs/cycles/evidence/0003/README.md) preserve that distinction and earlier failures.
 
-This is a fixed synchronous fixture, not the finished product. Full checkout, recording/replay, product MCP, natural-language orchestration, wiki/progress, all three layouts, and packaged real-repository support remain open. No cycle is active; the next selected question is one correlated browser-to-backend asynchronous boundary, as described in PROJECT_STATE.md.
+This remains a fixed synchronous fixture. Full checkout, recording/replay, product MCP, natural-language orchestration, wiki/progress, all three layouts, packaged installation and real-repository usefulness remain open. The next selected question is one correlated browser-to-backend asynchronous boundary; [PROJECT_STATE.md](PROJECT_STATE.md) owns the current cycle and exact resume action.
 
 Repository files are the portable project record. GStack's local cache, chat history, and optional GitHub issues are supporting views of that record. Commits are also stored in the private GitHub repository. Ignored private recordings still require an explicit durable evidence location.

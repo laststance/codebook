@@ -15,7 +15,7 @@ CODEBOOK_HOST=cursor pnpm experiment normal
 pnpm experiment normal hold duplicate continue-race manual-race cdp-resume decoy stale-script source-drift unbound capture-timeout disconnect terminate disconnect-after cancel-prepare
 ```
 
-The runner opens a real Extension Development Host with a separate profile and extension directory. Run one suite at a time. Do not interact with that experiment window during baseline runs; interference is tested separately. It serves the fixture on a dynamic loopback port, performs fixed actions, saves evidence, and stops only its owned debugger sessions/process. The default is the installed macOS editor bundle. `CODEBOOK_VSCODE_BINARY` can select another macOS bundle; metadata and the default CLI resolve beside that actual executable (including symlinks). `CODEBOOK_VSCODE_CLI` may override the CLI, but its version/commit must match the selected binary bundle before launch.
+The runner opens a real Extension Development Host with a separate profile and extension directory. Run one suite per host at a time. Do not interact with that experiment window during baseline runs; interference is tested separately. It serves the fixture on a dynamic loopback port, performs fixed actions, saves evidence, and stops only its owned debugger sessions/process. The default is the installed macOS editor bundle. `CODEBOOK_VSCODE_BINARY` can select another macOS bundle; metadata and the default CLI resolve beside that actual executable (including symlinks). `CODEBOOK_VSCODE_CLI` may override the CLI, but its version/commit must match the selected binary bundle before launch.
 
 Profiles live in `/tmp/codebook-*` because macOS rejects the long IPC socket path created under deeply nested artifact directories. Their locations are recorded in each suite's ignored `runtime.json`. The runner terminates its process but keeps profiles/logs for investigation. These are private working artifacts, not upload candidates.
 
@@ -69,3 +69,20 @@ Additional cases: `cancel-browser` and `cancel-attach` in both hosts; `missing-c
 Native screenshot observation requires selecting the dedicated editor process. This machine's GUI observer can bind to an existing normal Cursor process instead; an identity mismatch must refuse capture, never save the unrelated window. Optional observer failures and missing native before/after coverage are recorded in Cycle 0002. They do not replace page-capture evidence or prove the finished product layouts.
 
 Cleanup releases known resources even if non-cancellable acquisition remains pending. A failed DELETE preserves partial evidence with `cleaned: false`; another DELETE can retry after settlement. Concurrent DELETEs share one attempt. The late-host unit regressions inject delays into the compiled adapter/coordinator; they do not claim naturally delayed native-host coverage.
+
+
+## Cycle 0003: owned Chrome and an in-editor pixel viewport
+
+`CODEBOOK_BROWSER=managed` selects the tested alternative in either host. `native` remains the historical default for reproducing Cycles 0001/0002. Managed mode uses installed Chrome (`CODEBOOK_CHROME_BINARY` overrides the executable), js-debug `pwa-chrome` launch, a fresh canonical profile and `--remote-debugging-pipe`. It never starts the editor with remote debugging. This route is a fixture experiment, not ordinary-workspace or packaged-product support.
+
+```sh
+CODEBOOK_HOST=vscode CODEBOOK_BROWSER=managed pnpm experiment normal
+CODEBOOK_HOST=cursor CODEBOOK_BROWSER=managed pnpm experiment normal
+CODEBOOK_HOST=cursor CODEBOOK_BROWSER=managed pnpm experiment normal hold duplicate continue-race manual-race cdp-resume decoy stale-script source-drift unbound capture-timeout disconnect terminate disconnect-after cancel-prepare cancel-browser cancel-attach missing-browser viewport-close viewport-reload viewport-timeout
+```
+
+The selected page renders at 720 × 640 CSS pixels. Its actual screencast pixels appear in an isolated webview; the source stays in its owned editor group. This viewport is read-only: the runner performs real CDP input. It does not implement final layouts or browser pointer/keyboard controls. Chrome screencast ACKs are independent of the bounded renderer queue. Exact before/pause/after PNGs require matching renderer epoch/frame/hash receipts; pause images stay pinned until invalidation. Hide/reveal uses a fresh readiness request; stale ACKs and continuations during reload cannot certify a retired pause.
+
+Artifacts go to `artifacts/cycle-0003/managed/<host>/`. The run records actual Chrome version/profile/processes and verifies owned process absence after debugger cleanup. `editor-launch.json` preserves the exact editor arguments. A missing executable is rejected before js-debug can open a modal. New negative cases cover missing browser, closed viewport, renderer reload and delayed paint acknowledgement. Deliberate missing images remain partial evidence.
+
+See [Cycle 0003](../../docs/cycles/0003-scoped-browser-transport.md) and its [shared evidence](../../docs/cycles/evidence/0003/README.md). Both real hosts passed 21/21 cases at `8ceb901`; 38 unit tests passed. Native editor screenshots remain unverified because the Mac was locked during observation. Page PNGs and renderer receipts do not replace that check. Resume native observation only with an unlocked desktop and verified dedicated-window identity; never capture another project window.

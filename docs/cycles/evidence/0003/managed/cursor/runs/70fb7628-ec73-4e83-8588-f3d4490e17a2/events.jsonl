@@ -1,0 +1,24 @@
+{"sequence": 1, "elapsedMs": 0.160042, "wallTime": "2026-09-18T14:00:14.505Z", "type": "run.created", "detail": {"runId": "70fb7628-ec73-4e83-8588-f3d4490e17a2", "scenario": "cancel-prepare"}}
+{"sequence": 2, "elapsedMs": 29.422, "wallTime": "2026-09-18T14:00:14.534Z", "type": "breakpoint.requested", "detail": {"id": "52a9101e-5fa5-41e3-be6c-d748dc7c9f2d", "sourcePath": "<repo>/artifacts/cycle-0003/managed/cursor/70fb7628-ec73-4e83-8588-f3d4490e17a2/fixture/cart.ts", "line": 9}}
+{"sequence": 3, "elapsedMs": 29.429917, "wallTime": "2026-09-18T14:00:14.534Z", "type": "fault.preparation-held", "detail": {}}
+{"sequence": 4, "elapsedMs": 54.024417, "wallTime": "2026-09-18T14:00:14.559Z", "type": "cleanup.started", "detail": {}}
+{"sequence": 5, "elapsedMs": 54.163084, "wallTime": "2026-09-18T14:00:14.559Z", "type": "browser.cleanup-verified", "detail": {"host": "cursor", "remainingOwnedTabs": 0}}
+{"sequence": 6, "elapsedMs": 58.355459, "wallTime": "2026-09-18T14:00:14.563Z", "type": "cleanup.completed", "detail": {}}
+{"sequence": 7, "elapsedMs": 451.952125, "wallTime": "2026-09-18T14:00:14.957Z", "type": "focus.changed", "detail": {"sessionId": "c0984186-dc25-4724-bb55-0d5cf0449d3f"}}
+{"sequence": 8, "elapsedMs": 463.023042, "wallTime": "2026-09-18T14:00:14.968Z", "type": "focus.changed", "detail": {"sessionId": "e242df39-760c-4c10-84f8-4a637ec0f447"}}
+{"sequence": 9, "elapsedMs": 1336.665709, "wallTime": "2026-09-18T14:00:15.842Z", "type": "focus.changed", "detail": {"sessionId": "c0984186-dc25-4724-bb55-0d5cf0449d3f"}}
+{"sequence": 10, "elapsedMs": 1338.913, "wallTime": "2026-09-18T14:00:15.844Z", "type": "focus.changed", "detail": {}}
+{"sequence": 11, "elapsedMs": 1498.676542, "wallTime": "2026-09-18T14:00:16.004Z", "type": "focus.changed", "detail": {"sessionId": "56284178-4706-41a0-81a0-5591fb2a8006"}}
+{"sequence": 12, "elapsedMs": 2002.95375, "wallTime": "2026-09-18T14:00:16.508Z", "type": "focus.changed", "detail": {}}
+{"sequence": 13, "elapsedMs": 2484.911292, "wallTime": "2026-09-18T14:00:16.990Z", "type": "focus.changed", "detail": {"sessionId": "12bfce8d-f8e4-47c7-a55a-59549f4efa3f"}}
+{"sequence": 14, "elapsedMs": 2497.988459, "wallTime": "2026-09-18T14:00:17.003Z", "type": "focus.changed", "detail": {"sessionId": "3addfa53-13c8-42b4-8999-cd6874ca39d4"}}
+{"sequence": 15, "elapsedMs": 3826.987917, "wallTime": "2026-09-18T14:00:18.332Z", "type": "focus.changed", "detail": {"sessionId": "12bfce8d-f8e4-47c7-a55a-59549f4efa3f"}}
+{"sequence": 16, "elapsedMs": 3827.829834, "wallTime": "2026-09-18T14:00:18.333Z", "type": "focus.changed", "detail": {}}
+{"sequence": 17, "elapsedMs": 4290.585167, "wallTime": "2026-09-18T14:00:18.796Z", "type": "focus.changed", "detail": {"sessionId": "f6a77705-d48d-40d2-9f89-5970d9d05602"}}
+{"sequence": 18, "elapsedMs": 4296.553292, "wallTime": "2026-09-18T14:00:18.801Z", "type": "focus.changed", "detail": {"sessionId": "d41029d3-df41-47f2-9026-7d55454e4e19"}}
+{"sequence": 19, "elapsedMs": 5429.754584, "wallTime": "2026-09-18T14:00:19.935Z", "type": "focus.changed", "detail": {"sessionId": "f6a77705-d48d-40d2-9f89-5970d9d05602"}}
+{"sequence": 20, "elapsedMs": 5431.422, "wallTime": "2026-09-18T14:00:19.936Z", "type": "focus.changed", "detail": {}}
+{"sequence": 21, "elapsedMs": 5889.901875, "wallTime": "2026-09-18T14:00:20.395Z", "type": "focus.changed", "detail": {"sessionId": "80593fa3-5ea8-4e4e-9714-7687f37503e1"}}
+{"sequence": 22, "elapsedMs": 5900.460125, "wallTime": "2026-09-18T14:00:20.405Z", "type": "focus.changed", "detail": {"sessionId": "fc93b357-20c7-45f5-b96e-47fff1d0b258"}}
+{"sequence": 23, "elapsedMs": 10000.892959, "wallTime": "2026-09-18T14:00:24.506Z", "type": "focus.changed", "detail": {"sessionId": "80593fa3-5ea8-4e4e-9714-7687f37503e1"}}
+{"sequence": 24, "elapsedMs": 10004.409334, "wallTime": "2026-09-18T14:00:24.509Z", "type": "focus.changed", "detail": {}}

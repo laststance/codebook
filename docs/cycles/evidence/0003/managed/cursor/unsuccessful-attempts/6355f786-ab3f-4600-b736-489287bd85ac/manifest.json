@@ -1,0 +1,48 @@
+{
+  "runId": "6355f786-ab3f-4600-b736-489287bd85ac",
+  "scenario": "normal",
+  "status": "failed",
+  "cleaned": true,
+  "resources": {
+    "activeSessionIds": [],
+    "breakpointPresent": false,
+    "cdpOpen": false
+  },
+  "conflict": false,
+  "sessionId": "0a859c87-0f61-49e0-a100-83b240f1a3ff",
+  "captures": {},
+  "failures": [
+    "Watchdog exceeded active deadline; no input retry or automatic resume"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0003/managed/cursor/6355f786-ab3f-4600-b736-489287bd85ac",
+  "environment": {
+    "host": "cursor",
+    "productVersion": "3.21.12",
+    "apiVersion": "1.128.0",
+    "hostCommit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20",
+    "node": "24.18.1",
+    "electron": "42.10.0",
+    "jsDebug": "1.93.0"
+  },
+  "revision": "4c3eeba2e84e24279b5137ffed9385d37455d28d",
+  "workingTreeDirty": false,
+  "sourceHash": "dcff8897fb71ce5c4fed67cf34ec4fdfed60c598d321c6a9fa87b737312fca37",
+  "extensionHash": "069dfb15b3fe986ab0eb604a695b06e6e8ef8dd73a30c334c87a31be3cc3b8e6",
+  "expected": {
+    "productId": "tote-01",
+    "price": 24,
+    "cartCount": 0,
+    "finalCartCount": 1,
+    "completedClicks": 1
+  },
+  "hashes": {
+    "typescript": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+    "javascript": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+    "sourceMap": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+  },
+  "limits": [
+    "Fixture only; not a production MCP service.",
+    "Receipt ordering is not a causal or simultaneous-paint guarantee.",
+    "DAP cannot atomically compare an expected suspension generation."
+  ]
+}

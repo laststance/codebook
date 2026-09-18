@@ -1,0 +1,151 @@
+{
+  "runId": "c77677cb-9cee-41e2-9cf0-b94dcf8c2200",
+  "scenario": "manual-race",
+  "status": "failed",
+  "cleaned": true,
+  "resources": {
+    "activeSessionIds": [],
+    "breakpointPresent": false,
+    "cdpOpen": false
+  },
+  "operation": {
+    "id": "32729e55-19c1-4063-965e-00ff793ff9f0",
+    "key": "one-cart-add",
+    "inputAcknowledged": false,
+    "completed": false
+  },
+  "conflict": true,
+  "sessionId": "d867e109-e0bc-422d-8f66-787ea758baa0",
+  "snapshot": {
+    "id": "d867e109-e0bc-422d-8f66-787ea758baa0:1",
+    "pause": {
+      "sessionId": "d867e109-e0bc-422d-8f66-787ea758baa0",
+      "threadId": 4,
+      "generation": 1
+    },
+    "frame": {
+      "id": 4,
+      "name": "button#add.addToCart",
+      "line": 9,
+      "column": 3,
+      "source": {
+        "name": "fixture/cart.ts",
+        "path": "<repo>/artifacts/cycle-0003/managed/cursor/c77677cb-9cee-41e2-9cf0-b94dcf8c2200/fixture/cart.ts",
+        "sourceReference": 0
+      },
+      "presentationHint": "normal",
+      "canRestart": true
+    },
+    "values": {
+      "productId": "tote-01",
+      "price": 24,
+      "cartCount": 0
+    },
+    "evaluations": [
+      {
+        "type": "string",
+        "result": "'tote-01'",
+        "variablesReference": 0
+      },
+      {
+        "type": "number",
+        "result": "24",
+        "variablesReference": 0
+      },
+      {
+        "type": "number",
+        "result": "0",
+        "variablesReference": 0
+      }
+    ],
+    "source": {
+      "scriptId": "3",
+      "scriptLocation": {
+        "scriptId": "3",
+        "lineNumber": 7,
+        "columnNumber": 4
+      },
+      "mapping": {
+        "generatedLine": 7,
+        "generatedColumn": 4,
+        "originalSource": "../fixture/cart.ts",
+        "originalLine": 8,
+        "originalColumn": 2
+      },
+      "typescriptHash": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+      "javascriptHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+      "sourceMapHash": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+    }
+  },
+  "captures": {
+    "before": {
+      "phase": "before",
+      "requestSequence": 51,
+      "status": "captured",
+      "responseSequence": 59,
+      "file": "before.png",
+      "renderer": {
+        "epoch": "4774e76e-f25d-4f24-873e-f534ae642f48",
+        "id": 4,
+        "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+      }
+    },
+    "paused-1": {
+      "phase": "paused",
+      "generation": 1,
+      "requestSequence": 72,
+      "status": "captured",
+      "responseSequence": 80,
+      "file": "paused-1.png",
+      "renderer": {
+        "epoch": "4774e76e-f25d-4f24-873e-f534ae642f48",
+        "id": 6,
+        "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+      }
+    },
+    "paused-2": {
+      "phase": "paused",
+      "generation": 2,
+      "requestSequence": 96,
+      "status": "failed",
+      "responseSequence": 117,
+      "error": "Error: Pause display invalidated"
+    }
+  },
+  "failures": [
+    "Manual or competing DAP resume detected; atomic ownership cannot be guaranteed",
+    "Continued without an owned continuation; external resume detected",
+    "Error: Paused source location does not match the bound TypeScript line"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0003/managed/cursor/c77677cb-9cee-41e2-9cf0-b94dcf8c2200",
+  "environment": {
+    "host": "cursor",
+    "productVersion": "3.21.12",
+    "apiVersion": "1.128.0",
+    "hostCommit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20",
+    "node": "24.18.1",
+    "electron": "42.10.0",
+    "jsDebug": "1.93.0"
+  },
+  "revision": "8ceb901ee5183ee80cc5060a338446ffba949e7c",
+  "workingTreeDirty": false,
+  "sourceHash": "acacf9c45d07548db803a1dd8a6acb2905b5edbb3ef91591a82793454d5a14e5",
+  "extensionHash": "d066bd9842279afaf1d7c1985d6757f7f1716bc9b301a04aae05ae5b5ffa4cea",
+  "expected": {
+    "productId": "tote-01",
+    "price": 24,
+    "cartCount": 0,
+    "finalCartCount": 1,
+    "completedClicks": 1
+  },
+  "hashes": {
+    "typescript": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+    "javascript": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+    "sourceMap": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+  },
+  "limits": [
+    "Fixture only; not a production MCP service.",
+    "Receipt ordering is not a causal or simultaneous-paint guarantee.",
+    "DAP cannot atomically compare an expected suspension generation."
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "id": "47ebcbfc-6d1d-4d1d-8a66-217b7e582585:1",
+  "pause": {
+    "sessionId": "47ebcbfc-6d1d-4d1d-8a66-217b7e582585",
+    "threadId": 6,
+    "generation": 1
+  },
+  "frame": {
+    "id": 7,
+    "name": "button#add.addToCart",
+    "line": 9,
+    "column": 3,
+    "source": {
+      "name": "fixture/cart.ts",
+      "path": "<repo>/artifacts/cycle-0003/managed/cursor/f8fc8d6b-e3f7-4905-982f-1223af2901f3/fixture/cart.ts",
+      "sourceReference": 0
+    },
+    "presentationHint": "normal",
+    "canRestart": true
+  },
+  "values": {
+    "productId": "tote-01",
+    "price": 24,
+    "cartCount": 0
+  },
+  "evaluations": [
+    {
+      "type": "string",
+      "result": "'tote-01'",
+      "variablesReference": 0
+    },
+    {
+      "type": "number",
+      "result": "24",
+      "variablesReference": 0
+    },
+    {
+      "type": "number",
+      "result": "0",
+      "variablesReference": 0
+    }
+  ],
+  "source": {
+    "scriptId": "3",
+    "scriptLocation": {
+      "scriptId": "3",
+      "lineNumber": 7,
+      "columnNumber": 4
+    },
+    "mapping": {
+      "generatedLine": 7,
+      "generatedColumn": 4,
+      "originalSource": "../fixture/cart.ts",
+      "originalLine": 8,
+      "originalColumn": 2
+    },
+    "typescriptHash": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+    "javascriptHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+    "sourceMapHash": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+  }
+}

@@ -1,0 +1,33 @@
+{"sequence": 1, "elapsedMs": 0.08575, "wallTime": "2026-09-18T14:00:14.565Z", "type": "run.created", "detail": {"runId": "0aca8da0-99d3-46b0-a8d8-a26a24f84206", "scenario": "cancel-browser"}}
+{"sequence": 2, "elapsedMs": 33.371417, "wallTime": "2026-09-18T14:00:14.599Z", "type": "breakpoint.requested", "detail": {"id": "b25a42b6-6688-4699-901e-b10c7a2a86f0", "sourcePath": "<repo>/artifacts/cycle-0003/managed/cursor/0aca8da0-99d3-46b0-a8d8-a26a24f84206/fixture/cart.ts", "line": 9}}
+{"sequence": 3, "elapsedMs": 33.6685, "wallTime": "2026-09-18T14:00:14.599Z", "type": "browser.managed-profile", "detail": {"profile": "<owned-runtime:097354d658b3>", "chrome": {"binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "version": "Google Chrome 153.0.8010.50"}}}
+{"sequence": 4, "elapsedMs": 94.637458, "wallTime": "2026-09-18T14:00:14.660Z", "type": "session.started", "detail": {"sessionId": "c0984186-dc25-4724-bb55-0d5cf0449d3f", "type": "pwa-chrome", "name": "codebook 0aca8da0-99d3-46b0-a8d8-a26a24f84206"}}
+{"sequence": 5, "elapsedMs": 379.818833, "wallTime": "2026-09-18T14:00:14.945Z", "type": "session.started", "detail": {"sessionId": "e242df39-760c-4c10-84f8-4a637ec0f447", "parentId": "c0984186-dc25-4724-bb55-0d5cf0449d3f", "type": "pwa-chrome", "name": "about:blank"}}
+{"sequence": 6, "elapsedMs": 391.709833, "wallTime": "2026-09-18T14:00:14.957Z", "type": "focus.changed", "detail": {"sessionId": "c0984186-dc25-4724-bb55-0d5cf0449d3f"}}
+{"sequence": 7, "elapsedMs": 392.38625, "wallTime": "2026-09-18T14:00:14.958Z", "type": "host.debugger-started", "detail": {"host": "cursor", "type": "pwa-chrome"}}
+{"sequence": 8, "elapsedMs": 402.780542, "wallTime": "2026-09-18T14:00:14.968Z", "type": "focus.changed", "detail": {"sessionId": "e242df39-760c-4c10-84f8-4a637ec0f447"}}
+{"sequence": 9, "elapsedMs": 1060.787042, "wallTime": "2026-09-18T14:00:15.626Z", "type": "viewport.ready", "detail": {"epoch": "05b7cfef-c46b-4216-bf45-1a5070214d48"}}
+{"sequence": 10, "elapsedMs": 1106.309458, "wallTime": "2026-09-18T14:00:15.671Z", "type": "fault.browser-acquisition-held", "detail": {}}
+{"sequence": 11, "elapsedMs": 1158.381, "wallTime": "2026-09-18T14:00:15.724Z", "type": "cleanup.started", "detail": {}}
+{"sequence": 12, "elapsedMs": 1275.822542, "wallTime": "2026-09-18T14:00:15.841Z", "type": "session.terminated", "detail": {"sessionId": "e242df39-760c-4c10-84f8-4a637ec0f447"}}
+{"sequence": 13, "elapsedMs": 1276.423125, "wallTime": "2026-09-18T14:00:15.842Z", "type": "focus.changed", "detail": {"sessionId": "c0984186-dc25-4724-bb55-0d5cf0449d3f"}}
+{"sequence": 14, "elapsedMs": 1278.445667, "wallTime": "2026-09-18T14:00:15.844Z", "type": "session.terminated", "detail": {"sessionId": "c0984186-dc25-4724-bb55-0d5cf0449d3f"}}
+{"sequence": 15, "elapsedMs": 1278.670458, "wallTime": "2026-09-18T14:00:15.844Z", "type": "focus.changed", "detail": {}}
+{"sequence": 16, "elapsedMs": 1278.861042, "wallTime": "2026-09-18T14:00:15.844Z", "type": "viewport.disposed", "detail": {"expected": true}}
+{"sequence": 17, "elapsedMs": 1308.339625, "wallTime": "2026-09-18T14:00:15.874Z", "type": "browser.managed-exit-verified", "detail": {"profile": "<owned-runtime:097354d658b3>", "remainingProcesses": 0}}
+{"sequence": 18, "elapsedMs": 1308.368667, "wallTime": "2026-09-18T14:00:15.874Z", "type": "browser.cleanup-verified", "detail": {"host": "cursor", "remainingOwnedTabs": 0}}
+{"sequence": 19, "elapsedMs": 1311.899292, "wallTime": "2026-09-18T14:00:15.877Z", "type": "cleanup.completed", "detail": {}}
+{"sequence": 20, "elapsedMs": 1438.434417, "wallTime": "2026-09-18T14:00:16.004Z", "type": "focus.changed", "detail": {"sessionId": "56284178-4706-41a0-81a0-5591fb2a8006"}}
+{"sequence": 21, "elapsedMs": 1942.712375, "wallTime": "2026-09-18T14:00:16.508Z", "type": "focus.changed", "detail": {}}
+{"sequence": 22, "elapsedMs": 2424.668833, "wallTime": "2026-09-18T14:00:16.990Z", "type": "focus.changed", "detail": {"sessionId": "12bfce8d-f8e4-47c7-a55a-59549f4efa3f"}}
+{"sequence": 23, "elapsedMs": 2437.746333, "wallTime": "2026-09-18T14:00:17.003Z", "type": "focus.changed", "detail": {"sessionId": "3addfa53-13c8-42b4-8999-cd6874ca39d4"}}
+{"sequence": 24, "elapsedMs": 3766.745583, "wallTime": "2026-09-18T14:00:18.332Z", "type": "focus.changed", "detail": {"sessionId": "12bfce8d-f8e4-47c7-a55a-59549f4efa3f"}}
+{"sequence": 25, "elapsedMs": 3767.58725, "wallTime": "2026-09-18T14:00:18.333Z", "type": "focus.changed", "detail": {}}
+{"sequence": 26, "elapsedMs": 4230.342917, "wallTime": "2026-09-18T14:00:18.796Z", "type": "focus.changed", "detail": {"sessionId": "f6a77705-d48d-40d2-9f89-5970d9d05602"}}
+{"sequence": 27, "elapsedMs": 4236.31125, "wallTime": "2026-09-18T14:00:18.801Z", "type": "focus.changed", "detail": {"sessionId": "d41029d3-df41-47f2-9026-7d55454e4e19"}}
+{"sequence": 28, "elapsedMs": 5369.51225, "wallTime": "2026-09-18T14:00:19.935Z", "type": "focus.changed", "detail": {"sessionId": "f6a77705-d48d-40d2-9f89-5970d9d05602"}}
+{"sequence": 29, "elapsedMs": 5371.179375, "wallTime": "2026-09-18T14:00:19.936Z", "type": "focus.changed", "detail": {}}
+{"sequence": 30, "elapsedMs": 5829.659833, "wallTime": "2026-09-18T14:00:20.395Z", "type": "focus.changed", "detail": {"sessionId": "80593fa3-5ea8-4e4e-9714-7687f37503e1"}}
+{"sequence": 31, "elapsedMs": 5840.217958, "wallTime": "2026-09-18T14:00:20.405Z", "type": "focus.changed", "detail": {"sessionId": "fc93b357-20c7-45f5-b96e-47fff1d0b258"}}
+{"sequence": 32, "elapsedMs": 9940.650667, "wallTime": "2026-09-18T14:00:24.506Z", "type": "focus.changed", "detail": {"sessionId": "80593fa3-5ea8-4e4e-9714-7687f37503e1"}}
+{"sequence": 33, "elapsedMs": 9944.166875, "wallTime": "2026-09-18T14:00:24.509Z", "type": "focus.changed", "detail": {}}

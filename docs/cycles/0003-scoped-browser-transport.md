@@ -1,9 +1,9 @@
 # Cycle 0003 — Browser-scoped runtime transport
 
 Type: experiment
-Status: implementing
-Result: pending
-Delivery: local-only
+Status: closed
+Result: inconclusive (transport demonstrated; independent native presentation unverified)
+Delivery: committed; remote integration pending
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/4
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -48,11 +48,15 @@ Native probe completed at source `1ec90ea`: [durable results and page](evidence/
 
 ## Result and decision
 
-Pending. Preserve the demonstrated Cycle 0002 coordinator. The current final-product review streak remains 0/10. Async browser/backend request correlation remains the next functional uncertainty after transport.
+The full cycle criterion is **inconclusive** because independent native before/pause/after screenshots could not be obtained after the Mac locked. The technical transport result is **demonstrated** in both real hosts: 38 unit tests and 21/21 cases per host at clean implementation revision `8ceb901`, with equal source fingerprint `acacf9c45d07548db803a1dd8a6acb2905b5edbb3ef91591a82793454d5a14e5`. Exact source/values, cart 0 -> 1, PNG/renderer acknowledgements, owned Chrome pipe/process exit and decoy survival are recorded in [durable evidence](evidence/0003/README.md).
+
+**Keep provisionally:** shared coordinator plus js-debug-owned Chrome, explicit selected-page proxy, bounded isolated pixel viewport and phase receipts. **Replace for subsequent experiments:** the Cursor editor-wide endpoint with this owned-browser pipe route. This does not establish packaged ordinary-workspace deployment or final layout UX. Native presentation remains a revalidation obligation before any visual/product acceptance.
+
+Next select one browser-to-backend asynchronous boundary with an unrelated concurrent request. The transport result is enough to test that functional uncertainty; do not spend another cycle polishing the same synchronous fixture. The full product, recording and three modes remain required. Final-product review streak: 0/10.
 
 ## Handoff
 
-Review the bounded owned-browser plan below, then implement and validate it in both hosts. One active cycle only.
+No owned experiment processes remain. Integrate the recorded experiment/evidence, sync issue #4 as an **inconclusive** closed investigation, then open the single async-boundary cycle. Recheck native before/pause/after presentation when the Mac is unlocked; the failed observer attempt has no screenshot. Do not infer native UI acceptance from a render ACK.
 
 
 ## Bounded implementation plan and engineering review
@@ -132,9 +136,9 @@ No new TODOS.md candidates; deferred outcomes already have canonical goal IDs. N
 
 ### Implementation Tasks
 
-- [ ] T1 (P1; human ~3h / agent ~30min): scoped launch and independent teardown proof; A1/Q1. HostBrowser, runner, constants, configuration tests.
-- [ ] T2 (P1; human ~4h / agent ~40min): bounded live presenter with phase/epoch acknowledgement; A2/P1. Presenter, frame helper, ExperimentRun capture, focused unit tests.
-- [ ] T3 (P1; human ~3h / agent ~30min): both-host native matrix and sanitized evidence; T1/T2. Runner, test cases, cycle/state records.
+- [x] T1 (P1; human ~3h / agent ~30min): scoped launch and independent teardown proof; A1/Q1. HostBrowser, runner, constants, configuration tests.
+- [x] T2 (P1; human ~4h / agent ~40min): bounded live presenter with phase/epoch acknowledgement; A2/P1. Presenter, frame helper, ExperimentRun capture, focused unit tests.
+- [x] T3 (P1; human ~3h / agent ~30min): both-host native runtime matrix and sanitized evidence; T1/T2. Runner, test cases, cycle/state records. Independent editor screenshots remain unverified, so the full cycle result is inconclusive.
 
 Review status: parent architecture/code-quality/test/performance review complete; fresh in-host challenge completed with one P2 on pause-image/stream ordering, folded into A2 under the delegated implementation scope. External Claude Code timed out after 300000 ms (unavailable, not clean). Seven issues folded into the plan, zero unresolved decisions, zero known silent critical gaps. Lake score: 3/3 complete lifecycle/evidence/test choices. Implementation remains unverified.
 
@@ -163,3 +167,21 @@ Root fix: canonicalize profile paths at creation and observation. The regression
 VS Code run `8f0b3ee9-1257-4942-b8b5-8100ae910bcc` reached js-debug with a deliberately absent runtime executable. Native AX showed `Unable to launch browser: Unable to find Chrome version /codebook-missing-chrome` and Cancel/Open launch.json buttons. startDebugging stayed pending during the modal; cleanup correctly reported an incomplete acquisition before a later retry completed. This attempt failed; the runner ultimately exited its own editor.
 
 Root fix: inspect executable access before acquiring a debugger launch. Native missing-browser regression `0a43bc88-f97a-4dd9-8344-1b04f8a1b945` now fails preparation explicitly with ENOENT, sends no click, creates no debug session/browser profile, and completes owned cleanup. No modal bypass or user-profile change. Investigation status DONE; remaining matrix still required.
+
+
+### Implementation investigation — renderer and pause lifetimes
+
+Cursor matrix at `48d04dd` passed 19/21. In decoy run `f8fc8d6b-e3f7-4905-982f-1223af2901f3`, a destroyed hidden renderer left its old ready epoch. Reveal returned before the replacement was ready; after-image delivery then failed with `Webview epoch changed`. Viewport-close run `d6da6f76-e5a9-4823-99d5-5450dededd2a` correctly failed/cleaned up, but the runner incorrectly required a committed snapshot before inspecting this early failure.
+
+Fresh native adversarial review independently found the hidden epoch issue and two related P2 defects: continuation during reload could pin an already invalid pause, and termination retired the DAP gate without retiring its pending display. The reviewer reproduced these from frozen `48d04dd` in memory; that harness is causal evidence, not native paint proof.
+
+Fix `8ceb901`: correlate readiness with a fresh request across hide/reveal/reload; suspend outstanding old-renderer delivery; advance presentation revision even before pause pixels are pinned; invalidate presentation on selected failures, later stops and cleanup. The close negative case checks failure/no continue/no completed action without requiring a successful inspection first. Five focused regressions bring the suite to **38/38**; both final real-host matrices pass **21/21**. Scope remains the existing experiment module. Investigation DONE; full editor observation remains a separate concern.
+
+### Final validation and review boundaries
+
+- VS Code baseline `7c49fe35-359f-40a5-8fd0-988e6d304a7c`; Cursor baseline `d6a91dcb-4f16-4d7e-bc7e-766b2beabdb4`. Both clean at `8ceb901`; exact environment, per-file hashes and all cases are linked in the evidence index.
+- Forty-second hold: VS Code GET 6.18 ms / continue 9.26 ms; Cursor GET 1.41 ms / continue 10.04 ms. One local observation each, no latency guarantee.
+- Page PNGs visually inspected: paused cart 0, continued cart 1. Before bytes equal paused bytes; one handler completed. Renderer receipts match exact PNG hashes. Event sequences/times, executed JS hashes and 546 allowlisted files checked; connection tokens/logs/profiles excluded.
+- Native observer run `e81953e4-3860-4f87-8ea7-dbb01cb8788f` could not capture: CUA reported “The Mac is locked and automatic unlock could not unlock it.” Its before checkpoint timed out; no input retry or screenshot substitution. Owned cleanup and editor exit still completed. Cursor native presentation was not retried against a locked desktop.
+- Fresh in-host development review of `8ceb901`: NO_FINDINGS after the three P2 fixes; tests/fixture summary only. Parent inspected relevant test assertions and separately verified the exported evidence. External adversarial and structured Claude Code calls each timed out after 540 seconds: missing coverage. Whole-tree review is not certified converged; evidence/docs were added after the source review. No GitHub approval, product acceptance or final-review credit.
+- Goal-gap check: transport mechanics now permit the async-boundary experiment. G01/G02/G04–G10 still need connected product implementation; G03/G11 retain fixture-only evidence. Native layout QA, packaging, three real-repository uses and learner acceptance remain open. Recording and all three modes still share the future learning/runtime model; this experiment does not choose their product API.

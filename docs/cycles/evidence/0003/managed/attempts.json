@@ -1,0 +1,692 @@
+[
+  {
+    "host": "vscode",
+    "suite": "suite-2026-09-18T13-42-40.341Z-48967101",
+    "sourceHash": "e96cae9eedf90b11f51de29754e2e44bd49eeb3aefe1d5b710e873468e1d0a5b",
+    "revision": "0c75a5818697a6661aa46c0fe730529f5eb52069",
+    "passed": 4,
+    "total": 5,
+    "cases": [
+      {
+        "scenario": "normal",
+        "runId": "e2351581-70ad-4ed4-9910-b95abf17d11b",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "viewport-reload",
+        "runId": "efdf1f76-bc01-4bac-90f5-c151956ced5c",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "viewport-timeout",
+        "runId": "3c6d6fda-4af4-4d21-a653-46db36d648de",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "viewport-close",
+        "runId": "f5018708-9c3a-463c-b1b8-f0b5cca223fe",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Owned viewport closed before cleanup"
+        ]
+      },
+      {
+        "scenario": "missing-browser",
+        "runId": "8f0b3ee9-1257-4942-b8b5-8100ae910bcc",
+        "passed": false,
+        "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /rejected|launch|browser|Chrome|runtimeExecutable/i. Input:\n\n'Debug adapter error: connection closed'\n Cleanup: AssertionError [ERR_ASSERTION]: {\"error\":\"Error: Run cleanup incomplete: owned browser cleanup: Error: Browser cleanup incomplete: pending browser acquisitions: Error: Timed out waiting for owned browser and debugger acquisitions\"}\n\n400 !== 200\n",
+        "failures": [
+          "Debug adapter error: connection closed"
+        ]
+      }
+    ]
+  },
+  {
+    "host": "vscode",
+    "suite": "suite-2026-09-18T13-44-17.740Z-f95dc19a",
+    "sourceHash": "f0ce7a352cc21568069d91e3b560a4b1316b998b3b7781f8b3be42a360ac1a79",
+    "revision": "0c75a5818697a6661aa46c0fe730529f5eb52069",
+    "passed": 1,
+    "total": 1,
+    "cases": [
+      {
+        "scenario": "missing-browser",
+        "runId": "0a43bc88-f97a-4dd9-8344-1b04f8a1b945",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Managed Chrome executable unavailable: Error: ENOENT: no such file or directory, access '/codebook-missing-chrome'"
+        ]
+      }
+    ]
+  },
+  {
+    "host": "vscode",
+    "suite": "suite-2026-09-18T13-58-54.106Z-9f8d4e52",
+    "sourceHash": "acacf9c45d07548db803a1dd8a6acb2905b5edbb3ef91591a82793454d5a14e5",
+    "revision": "8ceb901ee5183ee80cc5060a338446ffba949e7c",
+    "passed": 21,
+    "total": 21,
+    "cases": [
+      {
+        "scenario": "normal",
+        "runId": "7c49fe35-359f-40a5-8fd0-988e6d304a7c",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "hold",
+        "runId": "340d8af4-09b8-46b8-aaf0-04bc2ea84a95",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "duplicate",
+        "runId": "e20120f6-eb3e-4e0e-a04c-529681b7d612",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "continue-race",
+        "runId": "62a664c9-07ff-4f1a-85b5-f46e8d85e94b",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "manual-race",
+        "runId": "01155db7-6365-49b8-a016-35befa8aa92a",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Manual or competing DAP resume detected; atomic ownership cannot be guaranteed",
+          "Continued without an owned continuation; external resume detected",
+          "Error: Paused source location does not match the bound TypeScript line"
+        ]
+      },
+      {
+        "scenario": "cdp-resume",
+        "runId": "4928aaa5-324e-4877-8f52-a65c7ffedbe7",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Continued without an owned continuation; external resume detected"
+        ]
+      },
+      {
+        "scenario": "decoy",
+        "runId": "675a564b-1008-44af-abc6-32094fe1c2a4",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "stale-script",
+        "runId": "e7147119-26ad-4b56-bbb7-36dd017771a7",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Executed JavaScript does not match the sealed build"
+        ]
+      },
+      {
+        "scenario": "source-drift",
+        "runId": "02d77286-8f74-4b8d-a685-daaae636c021",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Local TypeScript changed after the build was sealed"
+        ]
+      },
+      {
+        "scenario": "unbound",
+        "runId": "09ec83ec-ebf5-4347-ad03-e95063992d97",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Timed out waiting for verified breakpoint"
+        ]
+      },
+      {
+        "scenario": "capture-timeout",
+        "runId": "bc707fc4-fffd-41d2-9fb8-00f274dadf21",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "disconnect",
+        "runId": "93c35939-df6b-41b8-92da-205a78609480",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained",
+          "Error: CDP disconnected"
+        ]
+      },
+      {
+        "scenario": "terminate",
+        "runId": "3d4d6243-7db2-4ea8-842d-3b041f308f66",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Selected session terminated before completion",
+          "Debug adapter error: connection closed",
+          "Error: Input.dispatchMouseEvent: Connection is closed"
+        ]
+      },
+      {
+        "scenario": "disconnect-after",
+        "runId": "2c7f2958-30a7-40c7-b179-6b49d23459de",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained"
+        ]
+      },
+      {
+        "scenario": "cancel-prepare",
+        "runId": "1cae9d0f-6ebe-4156-a0ec-c72a68e7005d",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "cancel-browser",
+        "runId": "18776040-3d90-48db-aa66-d7e5bab76dac",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "cancel-attach",
+        "runId": "9bde81eb-7cda-4b06-9639-3196671e8cc8",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "missing-browser",
+        "runId": "e7d20202-6f39-4bbe-8fe5-1ec4aedeae93",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Managed Chrome executable unavailable: Error: ENOENT: no such file or directory, access '/codebook-missing-chrome'"
+        ]
+      },
+      {
+        "scenario": "viewport-close",
+        "runId": "bb7b65cd-235e-4ec1-869e-80277fb9d7b3",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Owned viewport closed before cleanup"
+        ]
+      },
+      {
+        "scenario": "viewport-reload",
+        "runId": "1f589c71-58ee-4165-8da8-1c2605db0187",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "viewport-timeout",
+        "runId": "683d8a95-51e2-4909-a276-e6ad29123d75",
+        "passed": true,
+        "error": null,
+        "failures": []
+      }
+    ]
+  },
+  {
+    "host": "vscode",
+    "suite": "suite-2026-09-18T14-00-38.808Z-e610780d",
+    "sourceHash": "acacf9c45d07548db803a1dd8a6acb2905b5edbb3ef91591a82793454d5a14e5",
+    "revision": "8ceb901ee5183ee80cc5060a338446ffba949e7c",
+    "passed": 0,
+    "total": 1,
+    "cases": [
+      {
+        "scenario": "normal",
+        "runId": "e81953e4-3860-4f87-8ea7-dbb01cb8788f",
+        "passed": false,
+        "error": "Error: Timed out waiting for native before screenshot",
+        "failures": [
+          "Watchdog exceeded active deadline; no input retry or automatic resume"
+        ]
+      }
+    ]
+  },
+  {
+    "host": "cursor",
+    "suite": "suite-2026-09-18T13-39-37.848Z-43332b56",
+    "sourceHash": "dcff8897fb71ce5c4fed67cf34ec4fdfed60c598d321c6a9fa87b737312fca37",
+    "revision": "4c3eeba2e84e24279b5137ffed9385d37455d28d",
+    "passed": 0,
+    "total": 1,
+    "cases": [
+      {
+        "scenario": "normal",
+        "runId": "6355f786-ab3f-4600-b736-489287bd85ac",
+        "passed": false,
+        "error": "AssertionError [ERR_ASSERTION]: Watchdog exceeded active deadline; no input retry or automatic resume\n\n'failed' !== 'ready'\n",
+        "failures": [
+          "Watchdog exceeded active deadline; no input retry or automatic resume"
+        ]
+      }
+    ]
+  },
+  {
+    "host": "cursor",
+    "suite": "suite-2026-09-18T13-40-30.406Z-57de08a4",
+    "sourceHash": "dcff8897fb71ce5c4fed67cf34ec4fdfed60c598d321c6a9fa87b737312fca37",
+    "revision": "4c3eeba2e84e24279b5137ffed9385d37455d28d",
+    "passed": 0,
+    "total": 1,
+    "cases": [
+      {
+        "scenario": "normal",
+        "runId": "105e4c4f-0592-4427-b23e-f844fc10bd8d",
+        "passed": false,
+        "error": "AssertionError [ERR_ASSERTION]: Watchdog exceeded active deadline; no input retry or automatic resume\n\n'failed' !== 'ready'\n",
+        "failures": [
+          "Watchdog exceeded active deadline; no input retry or automatic resume"
+        ]
+      }
+    ]
+  },
+  {
+    "host": "cursor",
+    "suite": "suite-2026-09-18T13-41-38.858Z-a3d911ba",
+    "sourceHash": "e96cae9eedf90b11f51de29754e2e44bd49eeb3aefe1d5b710e873468e1d0a5b",
+    "revision": "4c3eeba2e84e24279b5137ffed9385d37455d28d",
+    "passed": 1,
+    "total": 1,
+    "cases": [
+      {
+        "scenario": "normal",
+        "runId": "c4b6d21c-0b17-4625-a9d2-2ba8407dace5",
+        "passed": true,
+        "error": null,
+        "failures": []
+      }
+    ]
+  },
+  {
+    "host": "cursor",
+    "suite": "suite-2026-09-18T13-45-06.113Z-62db1a06",
+    "sourceHash": "f0ce7a352cc21568069d91e3b560a4b1316b998b3b7781f8b3be42a360ac1a79",
+    "revision": "48d04dde878a4047329981b3d94b8aa6d3643462",
+    "passed": 19,
+    "total": 21,
+    "cases": [
+      {
+        "scenario": "normal",
+        "runId": "8b67a93a-fd7f-4d87-b580-c0f5f0308dbb",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "hold",
+        "runId": "b7a56e8b-e1d7-4005-8942-507eefd75566",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "duplicate",
+        "runId": "d839f223-9a02-42c9-9595-5d3b95a889a1",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "continue-race",
+        "runId": "3704912a-ad56-4d62-b486-d236e286636e",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "manual-race",
+        "runId": "28369211-29b5-4dd7-8b52-b943bd99b351",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Manual or competing DAP resume detected; atomic ownership cannot be guaranteed",
+          "Continued without an owned continuation; external resume detected",
+          "Error: Paused source location does not match the bound TypeScript line"
+        ]
+      },
+      {
+        "scenario": "cdp-resume",
+        "runId": "0fa53eba-8003-4237-a532-cd2293474623",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Continued without an owned continuation; external resume detected"
+        ]
+      },
+      {
+        "scenario": "decoy",
+        "runId": "f8fc8d6b-e3f7-4905-982f-1223af2901f3",
+        "passed": false,
+        "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n    'captured',\n    'captured',\n+   'failed'\n-   'captured'\n  ]\n",
+        "failures": []
+      },
+      {
+        "scenario": "stale-script",
+        "runId": "ac66a777-8901-4c87-ad70-2ed71e9ae669",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Executed JavaScript does not match the sealed build"
+        ]
+      },
+      {
+        "scenario": "source-drift",
+        "runId": "f050c265-98f2-471e-b6a8-dfa6f1facf14",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Local TypeScript changed after the build was sealed"
+        ]
+      },
+      {
+        "scenario": "unbound",
+        "runId": "ddf691bf-eeca-4887-81fd-3545a68106df",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Timed out waiting for verified breakpoint"
+        ]
+      },
+      {
+        "scenario": "capture-timeout",
+        "runId": "96d84940-dec7-4c93-aa3a-e9b1fa7f051e",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "disconnect",
+        "runId": "3cf65a4a-8f55-4ade-9eab-f48d79ac54f6",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained",
+          "Error: CDP disconnected"
+        ]
+      },
+      {
+        "scenario": "terminate",
+        "runId": "9c47d561-3a6d-40f3-bb48-416137fb07e5",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Continued without an owned continuation; external resume detected",
+          "Selected session terminated before completion",
+          "Debug adapter error: connection closed",
+          "Error: Input.dispatchMouseEvent: Connection is closed"
+        ]
+      },
+      {
+        "scenario": "disconnect-after",
+        "runId": "9dab720d-34b6-4e7e-956c-44281667ee5e",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained"
+        ]
+      },
+      {
+        "scenario": "cancel-prepare",
+        "runId": "e3a8ee30-2d13-4f99-bb6f-9447deb9bc35",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "cancel-browser",
+        "runId": "e14da3f2-dc52-48d7-96ec-cf7bd7b1f3d6",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "cancel-attach",
+        "runId": "dace1dcd-102f-4ffe-b90d-44301235d58c",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "missing-browser",
+        "runId": "a5d9d77e-4f27-4671-b449-5b06efc640c1",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Managed Chrome executable unavailable: Error: ENOENT: no such file or directory, access '/codebook-missing-chrome'"
+        ]
+      },
+      {
+        "scenario": "viewport-close",
+        "runId": "d6da6f76-e5a9-4823-99d5-5450dededd2a",
+        "passed": false,
+        "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ undefined\n- {\n-   cartCount: 0,\n-   price: 24,\n-   productId: 'tote-01'\n- }\n",
+        "failures": [
+          "Owned viewport closed before cleanup"
+        ]
+      },
+      {
+        "scenario": "viewport-reload",
+        "runId": "ecd67585-9c71-42a2-9b87-b687142411f4",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "viewport-timeout",
+        "runId": "1611cc5d-ad4b-4bfc-921c-06293756d021",
+        "passed": true,
+        "error": null,
+        "failures": []
+      }
+    ]
+  },
+  {
+    "host": "cursor",
+    "suite": "suite-2026-09-18T13-58-54.104Z-cbac66d1",
+    "sourceHash": "acacf9c45d07548db803a1dd8a6acb2905b5edbb3ef91591a82793454d5a14e5",
+    "revision": "8ceb901ee5183ee80cc5060a338446ffba949e7c",
+    "passed": 21,
+    "total": 21,
+    "cases": [
+      {
+        "scenario": "normal",
+        "runId": "d6a91dcb-4f16-4d7e-bc7e-766b2beabdb4",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "hold",
+        "runId": "79c2aab3-f251-4d56-80f7-5739d00ca8db",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "duplicate",
+        "runId": "b7821fe2-c984-458b-9025-c1e376384c98",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "continue-race",
+        "runId": "5426fcb5-7bca-4d46-a053-b7c68cf9c99c",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "manual-race",
+        "runId": "c77677cb-9cee-41e2-9cf0-b94dcf8c2200",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Manual or competing DAP resume detected; atomic ownership cannot be guaranteed",
+          "Continued without an owned continuation; external resume detected",
+          "Error: Paused source location does not match the bound TypeScript line"
+        ]
+      },
+      {
+        "scenario": "cdp-resume",
+        "runId": "39ca3427-8889-402c-921a-cc1e78e760de",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Continued without an owned continuation; external resume detected"
+        ]
+      },
+      {
+        "scenario": "decoy",
+        "runId": "c651457c-9b84-4032-aa23-07797cf6bf2f",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "stale-script",
+        "runId": "d50c3554-8008-4159-886d-977ab6e28dd9",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Executed JavaScript does not match the sealed build"
+        ]
+      },
+      {
+        "scenario": "source-drift",
+        "runId": "a4ff4353-355b-4fe1-af5e-6e7e7cee9c62",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Local TypeScript changed after the build was sealed"
+        ]
+      },
+      {
+        "scenario": "unbound",
+        "runId": "3d048bf0-125e-4945-92ca-7c2ac4a494ac",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Timed out waiting for verified breakpoint"
+        ]
+      },
+      {
+        "scenario": "capture-timeout",
+        "runId": "605564bc-f9f3-420f-addc-8db47e7b4a1d",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "disconnect",
+        "runId": "25195902-be62-48f9-9430-5d6c02463b64",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained",
+          "Error: CDP disconnected"
+        ]
+      },
+      {
+        "scenario": "terminate",
+        "runId": "e3db27e0-c1f3-4f42-bc29-720846688346",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Continued without an owned continuation; external resume detected",
+          "Selected session terminated before completion",
+          "Debug adapter error: connection closed",
+          "Error: Input.dispatchMouseEvent: Connection is closed"
+        ]
+      },
+      {
+        "scenario": "disconnect-after",
+        "runId": "70891d14-ea7c-4536-8784-7d376416b165",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Selected CDP connection closed; partial evidence retained"
+        ]
+      },
+      {
+        "scenario": "cancel-prepare",
+        "runId": "70fb7628-ec73-4e83-8588-f3d4490e17a2",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "cancel-browser",
+        "runId": "0aca8da0-99d3-46b0-a8d8-a26a24f84206",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "cancel-attach",
+        "runId": "acbcb738-a97a-4887-ba3e-7a493124222e",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "missing-browser",
+        "runId": "2820d6ea-6460-4d47-8ba0-7e337a53ac45",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Error: Managed Chrome executable unavailable: Error: ENOENT: no such file or directory, access '/codebook-missing-chrome'"
+        ]
+      },
+      {
+        "scenario": "viewport-close",
+        "runId": "df481101-3302-4497-a902-d8944fdd6651",
+        "passed": true,
+        "error": null,
+        "failures": [
+          "Owned viewport closed before cleanup"
+        ]
+      },
+      {
+        "scenario": "viewport-reload",
+        "runId": "d1f6c074-9203-4576-a9be-a8bb86d7a6d0",
+        "passed": true,
+        "error": null,
+        "failures": []
+      },
+      {
+        "scenario": "viewport-timeout",
+        "runId": "90f0d71c-a2c2-4c3a-a4c6-897325018f28",
+        "passed": true,
+        "error": null,
+        "failures": []
+      }
+    ]
+  }
+]

@@ -1,25 +1,24 @@
 # Current project state
 
 Updated: 2026-09-18\
-Product stage: design approved; synchronous runtime fixture demonstrated in both required editors\
-Active cycle: [0003 — Browser-scoped runtime transport](docs/cycles/0003-scoped-browser-transport.md) — implementing\
-Last cycle: [0002 — Cursor runtime compatibility](docs/cycles/0002-cursor-runtime-compatibility.md) — closed, demonstrated; integrated on main\
+Product stage: design approved; scoped runtime transport demonstrated in both required editors; native presentation remains unverified\
+Active cycle: none; Cycle 0004 async-boundary candidate selected, not yet opened\
+Last cycle: [0003 — Browser-scoped runtime transport](docs/cycles/0003-scoped-browser-transport.md) — closed, inconclusive for full native presentation; transport mechanics demonstrated\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: [#4](https://github.com/laststance/codebook/issues/4) — open\
-Last cycle issue: [#3](https://github.com/laststance/codebook/issues/3) — closed with result and evidence\
+Active cycle issue: none\
+Last cycle issue: [#4](https://github.com/laststance/codebook/issues/4) — closure sync pending committed evidence\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
 ## Verified facts
 
-- Architecture B and Study workspace default remain approved; Living book and Guided walkthrough remain required. All three share learning items, runtime evidence, recordings and personal progress.
-- [Shared fixture extension/runner](experiments/cycle-0001/README.md) uses one coordinator with host-specific browser acquisition. VS Code uses editor-browser; Cursor required target-restricted webview metadata adaptation for its older bundled debugger. No sibling repository was changed.
-- Final Cycle 0002 validation: **26 unit tests**, **17/17 VS Code native cases**, **20/20 Cursor native cases**. Bound TS line 9, actual tote-01 / 24 / 0, executed JS/map/TS alignment, then cart 1 / one completed handler. Correct negative rejections are not successful walkthroughs.
-- Tested hosts: VS Code 1.138.0 / js-debug 1.117.0; Cursor 3.21.12 / API 1.128.0 / js-debug 1.93.0; Node 24.18.1, Electron 42.10.0, macOS arm64. Current-source fingerprint and dirty capture revision are preserved in [durable evidence](docs/cycles/evidence/0002/README.md).
-- Forty-second pauses remained controllable: state/continue observations were 4.76/8.34 ms in VS Code and 1.80/4.04 ms in Cursor. Per-run owned resources, independent decoy survival, process exit and Cursor endpoint closure were observed.
-- Five development-review P2 findings fixed: late acquisitions; false endpoint-closure proof; browser-wide CDP mutation; cleanup short-circuit/retry; alternate-binary metadata. Review is **non-converged** after three fix cycles; outside adversarial/structured reviews timed out. No current complete/fresh independent review or GitHub approval claim.
-- Native editor observations are versioned separately: earlier VS Code before/pause/after; earlier Cursor pause. Final-source page frames exist in both hosts. Correct-process native before/after observation in Cursor remains a QA limitation; no unrelated screen was retained.
-- [Cycle 0001](docs/cycles/0001-click-pause-resume.md) and its immutable original VS Code evidence remain separate. Its issue #2 is closed.
+- Architecture B and Study workspace default remain approved; Living book and Guided walkthrough remain required. All share learning items, runtime evidence, recording correspondence and independent personal progress.
+- [Cycle 0003 evidence](docs/cycles/evidence/0003/README.md): **38 unit tests**, **21/21 native runtime cases per host**, clean implementation `8ceb901`, fingerprint `acacf9c45d07548db803a1dd8a6acb2905b5edbb3ef91591a82793454d5a14e5`. Actual TS line 9 and tote-01 / 24 / 0; executed JS/map/TS match; continue produces cart 1 / one completed click.
+- Shared coordinator now supports js-debug-owned Chrome with a debugging pipe and selected-child CDP. Neither editor launches with remote debugging in this route. Exact PNG/renderer receipts, independent control, owned process/panel/session cleanup and decoy survival are verified. The viewport remains a read-only experiment, not product UX.
+- VS Code 1.138.0 / js-debug 1.117.0; Cursor 3.21.12 / API 1.128.0 / js-debug 1.93.0; Chrome 153.0.8010.50; extension-host Node 24.18.1 / Electron 42.10.0; macOS arm64. Forty-second hold control observations: VS Code GET/continue 6.18/9.26 ms, Cursor 1.41/10.04 ms.
+- Review fixes address canonical profile discovery, missing executable modal, destroyed renderer readiness, continuation during reload and terminated-pause presentation; the early-close negative assertion is corrected. Fresh in-host development review of `8ceb901`: NO_FINDINGS. External adversarial/structured reviews timed out. Whole-tree review is not certified converged; managed evidence/docs were added after the source read.
+- Page PNGs inspected in both hosts, with exact hashes and source/event checks over 546 exported files. Independent current native editor before/pause/after images remain **unverified**: CUA refused while the Mac was locked. This makes the full Cycle 0003 presentation criterion inconclusive; a renderer ACK is separate evidence.
+- [Cycle 0001](docs/cycles/0001-click-pause-resume.md) and [Cycle 0002](docs/cycles/0002-cursor-runtime-compatibility.md) remain immutable historical results. Cycle 0002's editor-wide Cursor route and non-converged review are not promoted to product deployment. Its earlier native observations have their original source/version limits. No sibling repository changed.
 
 ## Capability evidence
 
@@ -32,26 +31,24 @@ A fixture proves mechanisms, not the integrated final product.
 | G03 | partial | Bound executed-source/value/pause identity and conflicts verified on synchronous fixture; backend/async causality unproven. |
 | G04 | partial | Timestamped page frames; no video, offline synchronized replay UI, or export. |
 | G05 | unverified | No durable learner progress implementation. |
-| G06 | partial | External Node controls temporary authenticated HTTP; no product MCP or ordinary-workspace transport. |
+| G06 | partial | External Node controls temporary authenticated HTTP; owned-browser pipe demonstrated in isolated profiles. No product MCP or packaged ordinary-workspace proof. |
 | G07 | unverified | Approved Study workspace reference; experiment panes do not establish product UX. |
 | G08 | unverified | Living book required; no implementation. |
 | G09 | unverified | Guided walkthrough required; no implementation. |
 | G10 | unverified | No VSIX, installation, or three real-repository use cases/learning feedback. |
-| G11 | partial | Both real hosts pass the synchronous runtime matrix; full packaged experience, three modes, recording and final native UX remain unverified. |
+| G11 | partial | Both real hosts pass the scoped synchronous runtime matrix; full package, three modes, recording and native product UX remain unverified. |
 
 ## Current bottleneck and next cycle
 
-**Selected next question:** can a target-scoped browser/debugger transport preserve the in-editor app/source experience in both hosts without enabling editor-wide remote debugging? First inspect/probe Cursor's installed native command surface; if it cannot deliver the required event stream, record the limitation and test one owned-browser alternative. Keep the established coordinator/evidence contract.
+**Selected next question:** can one browser-to-backend asynchronous action be connected to the correct server pause and response, even with an unrelated concurrent request? Freeze the intended causal links before the run, use actual browser/network and server-debugger evidence, and reject missing or ambiguous correlation. Timing alone is insufficient. Use the proven managed transport while leaving native presentation acceptance open.
 
-This resolves a deployment risk before committing to a lasting MCP contract. The next functional uncertainty remains one browser-to-backend asynchronous boundary with a competing request. Do not claim timing alone establishes request causality.
-
-**Later required:** full chat-driven checkout; product MCP; recording/replay; wiki/codemap/progress; Study workspace, Living book and Guided walkthrough; packaged installation and real-repository usefulness in both hosts. Their order stays adaptive; the destination is unchanged.
+**Later required:** full chat-driven checkout; product MCP; recording/replay; wiki/codemap/progress; all three layouts; packaged installation and three real-repository uses in both editors. Their order remains adaptive. Do not spend repeated cycles polishing the solved synchronous transport while these core product gaps remain.
 
 ## Exact resume action
 
-Read Cycle 0003, verify checkout and owned process state, then implement its reviewed bounded transport plan and test the js-debug-owned browser with a real page stream. The native Cursor facade probe is recorded; do not repeat it without a changed hypothesis. The user has authorized continuous cycles through the final product. Preserve native/fixture/review/package distinctions.
+Commit/integrate Cycle 0003 results and evidence, sync issue #4 as **inconclusive**, then create and review only Cycle 0004's async-boundary plan. The user authorized continuous cycles. When native UI is needed, first confirm the Mac is unlocked and select the dedicated experiment window; no repeated attempt against the same lock condition and no unrelated screenshots.
 
-Runtime: final owned experiment processes exited; local private profiles/logs remain under ignored artifacts. Delivery: Cycle 0002 implementation/evidence `89eb43e` and closure `a184df3` verified on remote main; issue #3 closed. Cycle 0003 native command investigation is recorded; scoped-browser plan review completed with one incorporated native finding; external review unavailable. No CI, PR approval, release, package, or installed-product claim.
+Runtime: all owned matrix/observer editor processes exited, owned browser cleanup verified; private logs/profiles retained under ignored artifacts. Delivery: current branch `feat/cycle-0003-scoped-browser`, source `8ceb901`; cycle/evidence integration and issue sync pending. No CI, PR approval, release, VSIX, or installed-product claim.
 
 ## Full-product completion gate
 

@@ -1,0 +1,75 @@
+{
+  "runId": "d50c3554-8008-4159-886d-977ab6e28dd9",
+  "scenario": "stale-script",
+  "status": "failed",
+  "cleaned": true,
+  "resources": {
+    "activeSessionIds": [],
+    "breakpointPresent": false,
+    "cdpOpen": false
+  },
+  "operation": {
+    "id": "237db63a-32e2-4f29-8f74-aa3b6d225205",
+    "key": "one-cart-add",
+    "inputAcknowledged": false,
+    "completed": false
+  },
+  "conflict": false,
+  "sessionId": "a1e55691-0e99-44da-8016-ac535e8ed926",
+  "captures": {
+    "before": {
+      "phase": "before",
+      "requestSequence": 51,
+      "status": "captured",
+      "responseSequence": 59,
+      "file": "before.png",
+      "renderer": {
+        "epoch": "3eca02c4-f917-494d-94d7-cfc54b02c3ba",
+        "id": 4,
+        "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+      }
+    },
+    "paused-1": {
+      "phase": "paused",
+      "generation": 1,
+      "requestSequence": 73,
+      "status": "failed",
+      "responseSequence": 90,
+      "error": "Error: Pause display invalidated"
+    }
+  },
+  "failures": [
+    "Error: Executed JavaScript does not match the sealed build"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0003/managed/cursor/d50c3554-8008-4159-886d-977ab6e28dd9",
+  "environment": {
+    "host": "cursor",
+    "productVersion": "3.21.12",
+    "apiVersion": "1.128.0",
+    "hostCommit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20",
+    "node": "24.18.1",
+    "electron": "42.10.0",
+    "jsDebug": "1.93.0"
+  },
+  "revision": "8ceb901ee5183ee80cc5060a338446ffba949e7c",
+  "workingTreeDirty": false,
+  "sourceHash": "acacf9c45d07548db803a1dd8a6acb2905b5edbb3ef91591a82793454d5a14e5",
+  "extensionHash": "d066bd9842279afaf1d7c1985d6757f7f1716bc9b301a04aae05ae5b5ffa4cea",
+  "expected": {
+    "productId": "tote-01",
+    "price": 24,
+    "cartCount": 0,
+    "finalCartCount": 1,
+    "completedClicks": 1
+  },
+  "hashes": {
+    "typescript": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+    "javascript": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+    "sourceMap": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+  },
+  "limits": [
+    "Fixture only; not a production MCP service.",
+    "Receipt ordering is not a causal or simultaneous-paint guarantee.",
+    "DAP cannot atomically compare an expected suspension generation."
+  ]
+}

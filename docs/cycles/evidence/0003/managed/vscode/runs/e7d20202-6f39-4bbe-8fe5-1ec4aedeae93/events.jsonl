@@ -1,0 +1,18 @@
+{"sequence": 1, "elapsedMs": 0.138791, "wallTime": "2026-09-18T14:00:01.679Z", "type": "run.created", "detail": {"runId": "e7d20202-6f39-4bbe-8fe5-1ec4aedeae93", "scenario": "missing-browser"}}
+{"sequence": 2, "elapsedMs": 27.153666, "wallTime": "2026-09-18T14:00:01.706Z", "type": "breakpoint.requested", "detail": {"id": "309101be-e85e-429e-84d7-4ff28a07d240", "sourcePath": "<repo>/artifacts/cycle-0003/managed/vscode/e7d20202-6f39-4bbe-8fe5-1ec4aedeae93/fixture/cart.ts", "line": 9}}
+{"sequence": 3, "elapsedMs": 27.279833, "wallTime": "2026-09-18T14:00:01.706Z", "type": "run.failed", "detail": {"reason": "Error: Managed Chrome executable unavailable: Error: ENOENT: no such file or directory, access '/codebook-missing-chrome'"}}
+{"sequence": 4, "elapsedMs": 52.572166, "wallTime": "2026-09-18T14:00:01.731Z", "type": "cleanup.started", "detail": {}}
+{"sequence": 5, "elapsedMs": 52.689125, "wallTime": "2026-09-18T14:00:01.731Z", "type": "browser.cleanup-verified", "detail": {"host": "vscode", "remainingOwnedTabs": 0}}
+{"sequence": 6, "elapsedMs": 56.098291, "wallTime": "2026-09-18T14:00:01.735Z", "type": "cleanup.completed", "detail": {}}
+{"sequence": 7, "elapsedMs": 444.646375, "wallTime": "2026-09-18T14:00:02.123Z", "type": "focus.changed", "detail": {"sessionId": "ea800363-c10c-46ea-bc3c-612df0de59b9"}}
+{"sequence": 8, "elapsedMs": 453.203375, "wallTime": "2026-09-18T14:00:02.132Z", "type": "focus.changed", "detail": {"sessionId": "4748bb8a-882f-4a35-90c1-ed952704a52a"}}
+{"sequence": 9, "elapsedMs": 859.516791, "wallTime": "2026-09-18T14:00:02.538Z", "type": "focus.changed", "detail": {"sessionId": "ea800363-c10c-46ea-bc3c-612df0de59b9"}}
+{"sequence": 10, "elapsedMs": 863.820125, "wallTime": "2026-09-18T14:00:02.543Z", "type": "focus.changed", "detail": {}}
+{"sequence": 11, "elapsedMs": 1371.024083, "wallTime": "2026-09-18T14:00:03.050Z", "type": "focus.changed", "detail": {"sessionId": "66571c36-c46c-45e8-962c-4c32d46726d2"}}
+{"sequence": 12, "elapsedMs": 1383.776583, "wallTime": "2026-09-18T14:00:03.063Z", "type": "focus.changed", "detail": {"sessionId": "012da9cb-b686-4d49-9971-232d46d62f9d"}}
+{"sequence": 13, "elapsedMs": 1995.876791, "wallTime": "2026-09-18T14:00:03.675Z", "type": "focus.changed", "detail": {"sessionId": "66571c36-c46c-45e8-962c-4c32d46726d2"}}
+{"sequence": 14, "elapsedMs": 1997.050416, "wallTime": "2026-09-18T14:00:03.676Z", "type": "focus.changed", "detail": {}}
+{"sequence": 15, "elapsedMs": 2470.519208, "wallTime": "2026-09-18T14:00:04.149Z", "type": "focus.changed", "detail": {"sessionId": "7b495ee3-6010-4f78-a37f-19fdf0294ddf"}}
+{"sequence": 16, "elapsedMs": 2478.762833, "wallTime": "2026-09-18T14:00:04.157Z", "type": "focus.changed", "detail": {"sessionId": "1d8a8ef5-0767-4adf-8af0-0a489605dc54"}}
+{"sequence": 17, "elapsedMs": 6033.1465, "wallTime": "2026-09-18T14:00:07.712Z", "type": "focus.changed", "detail": {"sessionId": "7b495ee3-6010-4f78-a37f-19fdf0294ddf"}}
+{"sequence": 18, "elapsedMs": 6034.334541, "wallTime": "2026-09-18T14:00:07.713Z", "type": "focus.changed", "detail": {}}

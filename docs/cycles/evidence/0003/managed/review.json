@@ -1,0 +1,42 @@
+{
+  "scope": "Cycle 0003 experiment only; no full-product acceptance",
+  "implementationRevision": "8ceb901ee5183ee80cc5060a338446ffba949e7c",
+  "parent": {
+    "completed": true,
+    "remainingKnownFindings": 0,
+    "coverage": "Full changed implementation and relevant test assertions; newly exported evidence separately checked."
+  },
+  "inHostAdversarial": [
+    {
+      "revision": "48d04dde878a4047329981b3d94b8aa6d3643462",
+      "findings": 3,
+      "severity": "P2",
+      "resolution": "8ceb901: readiness handshake, presentation revision, termination/failure invalidation"
+    },
+    {
+      "revision": "8ceb901ee5183ee80cc5060a338446ffba949e7c",
+      "result": "NO_FINDINGS",
+      "sourceLinesRead": 1586,
+      "coverage": "11 implementation files plus callers; tests/fixtures summary only; new managed evidence excluded."
+    }
+  ],
+  "runnerFinding": "Negative viewport-close need not wait for a successful snapshot; corrected in 8ceb901.",
+  "outside": [
+    {
+      "phase": "adversarial",
+      "status": "unavailable",
+      "error": "Claude Code timed out after 540000ms.",
+      "completed": false
+    },
+    {
+      "phase": "structured",
+      "status": "unavailable",
+      "error": "Claude Code timed out after 540000ms.",
+      "completed": false
+    }
+  ],
+  "wholeTreeConverged": false,
+  "reason": "Outside coverage missing; evidence/docs were added after frozen-source read. No clean whole-tree stamp or formal approval.",
+  "fixCycles": 1,
+  "finalProductReviewStreak": 0
+}
