@@ -5,7 +5,7 @@ Product stage: design approved; one synchronous runtime fixture demonstrated\
 Active cycle: none\
 Last cycle: [0001 — Click, pause, inspect, continue](docs/cycles/0001-click-pause-resume.md) — closed, demonstrated\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Last cycle issue: [#2](https://github.com/laststance/codebook/issues/2) — closure follows the committed evidence\
+Last cycle issue: [#2](https://github.com/laststance/codebook/issues/2) — closed; result and three fixture images attached\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Current authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 1
 
@@ -60,5 +60,5 @@ Read PRODUCT_GOAL.md, this file, Cycle 0001, and its evidence index. Verify chec
 Last completed work: implemented and demonstrated Cycle 0001; durable evidence and keep/revise decision recorded.\
 Next executable action: bounded async-boundary planning, as described above.\
 Runtime: owned sessions/connections/breakpoints cleaned up; private diagnostic profiles/logs retained locally.\
-Delivery: experiment source and records committed; issue #2 closes after push and evidence attachment. No PR/CI/release claim.\
+Delivery: [implementation and evidence](https://github.com/laststance/codebook/commit/64c80767411caa518acfe86a7ff6242c0f6cc14e) pushed to main; issue #2 closed after result/image attachment. No PR/CI/release claim.\
 Goal changes pending: none.
