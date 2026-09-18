@@ -2,7 +2,7 @@
 
 Updated: 2026-09-18\
 Product stage: design approved; scoped runtime transport demonstrated in both required editors; native presentation remains unverified\
-Active cycle: [0004 — Correlate one browser-to-server request](docs/cycles/0004-async-request-boundary.md) — planning\
+Active cycle: [0004 — Correlate one browser-to-server request](docs/cycles/0004-async-request-boundary.md) — implementing\
 Last cycle: [0003 — Browser-scoped runtime transport](docs/cycles/0003-scoped-browser-transport.md) — closed, inconclusive for full native presentation; transport mechanics demonstrated\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#5](https://github.com/laststance/codebook/issues/5) — open\
@@ -28,7 +28,7 @@ A fixture proves mechanisms, not the integrated final product.
 | --- | --- | --- |
 | G01 | partial | One cart click in both hosts; no natural-language orchestration/full checkout. |
 | G02 | unverified | Shared learning-item design; no wiki/codemap cross-navigation. |
-| G03 | partial | Bound executed-source/value/pause identity and conflicts verified on synchronous fixture; backend/async causality unproven. |
+| G03 | partial | Bound executed-source/value/pause identity and conflicts verified on synchronous fixture; instrumented browser/backend boundary demonstrated in exploratory runs; final matrix/review pending. |
 | G04 | partial | Timestamped page frames; no video, offline synchronized replay UI, or export. |
 | G05 | unverified | No durable learner progress implementation. |
 | G06 | partial | External Node controls temporary authenticated HTTP; owned-browser pipe demonstrated in isolated profiles. No product MCP or packaged ordinary-workspace proof. |
@@ -46,9 +46,9 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Complete the engineering review of Cycle 0004, then implement its paired request experiment. The user authorized continuous cycles. When native UI is needed, first confirm the Mac is unlocked and select the dedicated experiment window; no repeated attempt against the same lock condition and no unrelated screenshots.
+Review Cycle 0004's implemented paired request experiment, then run the complete native matrix in both hosts on a clean source revision. Engineering review produced four parent remedies and two fresh in-host remedies; Claude Code timed out, so outside coverage is unavailable. Require the complete two-request observation set and event-driven application waits across debugger holds. The user authorized continuous cycles. When native UI is needed, first confirm the Mac is unlocked and select the dedicated experiment window; no repeated attempt against the same lock condition and no unrelated screenshots.
 
-Runtime: all owned matrix/observer editor processes exited, owned browser cleanup verified; private logs/profiles retained under ignored artifacts. Delivery: Cycle 0003 implementation/evidence `9de870c` verified on remote main; issue #4 closed. Current branch `feat/cycle-0004-async-boundary` contains only the next plan/state so far. No CI, PR approval, release, VSIX, or installed-product claim.
+Runtime: all owned matrix/observer editor processes exited, owned browser cleanup verified; private logs/profiles retained under ignored artifacts. Delivery: Cycle 0003 implementation/evidence `9de870c` verified on remote main; issue #4 closed. Current branch `feat/cycle-0004-async-boundary` contains the plan and pending implementation checkpoint. Cycle 0004 exploratory normal and focused-decoy cases passed in both hosts; 16 paired unit tests and 40 shared tests passed. Earlier failures remain in ignored artifacts. Final matrix, source-regression runs and implementation review remain pending. No CI, PR approval, release, VSIX, or installed-product claim.
 
 ## Full-product completion gate
 

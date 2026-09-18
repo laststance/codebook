@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import { SourceMap, type SourceMapPayload } from 'node:module';
 import { resolve } from 'node:path';
 import type * as vscode from 'vscode';
 import type { DebugProtocol } from '@vscode/debugprotocol';
@@ -10,6 +9,7 @@ import { EXPECTED_VALUES } from './constants';
 import type { PauseIdentity } from './pauseGate';
 import { sha256 } from './utils/sha256';
 import { awaitResponse } from './utils/awaitResponse';
+import { verifySource } from './verifySource';
 
 export interface SealedSource {
   sourcePath: string;
@@ -24,14 +24,7 @@ export interface Snapshot {
   frame: DebugProtocol.StackFrame;
   values: typeof EXPECTED_VALUES;
   evaluations: DebugProtocol.EvaluateResponse['body'][];
-  source: {
-    scriptId: string;
-    scriptLocation: Protocol.Debugger.Location;
-    mapping: ReturnType<SourceMap['findEntry']>;
-    typescriptHash: string;
-    javascriptHash: string;
-    sourceMapHash: string;
-  };
+  source: ReturnType<typeof verifySource>;
 }
 
 /** Validates real DAP values against the paused executable and source map before a run commits a snapshot. @example await inspectPause(session, cdp, pause, pausedEvent, source, assertCurrent) */
@@ -80,23 +73,13 @@ export async function inspectPause(
   assertCurrent();
   evidence.record('source.local', { actualHash: sha256(localSource), expectedHash: sha256(source.source) });
   if (sha256(localSource) !== sha256(source.source)) throw new Error('Local TypeScript changed after the build was sealed');
-  const payload: SourceMapPayload = JSON.parse(source.sourceMap);
-  if (payload.sources.length !== 1 || payload.sources[0] !== '../fixture/cart.ts' || payload.sourcesContent?.[0] !== source.source) throw new Error('Source map does not contain the sealed TypeScript');
-  const mapping = new SourceMap(payload).findEntry(javascriptFrame.location.lineNumber, javascriptFrame.location.columnNumber ?? 0);
-  if (!('originalLine' in mapping) || mapping.originalLine + 1 !== frame.line) throw new Error('Executed JavaScript does not map to the DAP TypeScript stop');
+  const verifiedSource = verifySource(source, executed.scriptSource, localSource, javascriptFrame.location, frame.line, '../fixture/cart.ts');
   assertCurrent();
   return {
     snapshot: {
       id: `${pause.sessionId}:${pause.generation}`,
       pause: { ...pause }, frame, values, evaluations,
-      source: {
-        scriptId: javascriptFrame.location.scriptId,
-        scriptLocation: javascriptFrame.location,
-        mapping,
-        typescriptHash: sha256(source.source),
-        javascriptHash: sha256(executed.scriptSource),
-        sourceMapHash: sha256(source.sourceMap),
-      },
+      source: verifiedSource,
     },
     executedJavascript: executed.scriptSource,
   };

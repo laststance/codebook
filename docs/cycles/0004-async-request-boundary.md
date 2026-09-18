@@ -1,9 +1,9 @@
 # Cycle 0004 — Correlate one browser-to-server request
 
 Type: experiment  
-Status: planning  
+Status: implementing\
 Result: pending  
-Delivery: local-only  
+Delivery: implemented locally; native matrix and review pending\
 Goal version: 3  
 Tracking issue: https://github.com/laststance/codebook/issues/5  
 Goal issue: https://github.com/laststance/codebook/issues/1  
@@ -44,6 +44,8 @@ All required links are declared before input. The immutable report stores each l
 
 Request identity is scoped to the selected browser session and one HTTP hop. A repeated CDP request ID with `redirectResponse` invalidates the selected chain; this experiment does not silently follow redirects. Disable cache and bypass service workers before input, reject cached/service-worker responses, and require `loadingFinished` before fetching the response body. Retain `loadingFailed`, absent/truncated bodies and base64 decoding failures explicitly. The fixed same-origin fixture has no preflight, redirect, service worker or retry. Response capture runs independently of pause inspection, so a browser paused immediately after `response.json()` cannot deadlock it.
 
+Close the expected observation set before success: both planned POST request IDs and their operation/cart/product tuples must be retained, both response bodies/terminal states observed, and the real server pause must show barrier admission count 2. Uniqueness is evaluated over that complete set. The client awaits both requests before its pre-render stop. Late arrival of a background observation must keep the candidate incomplete; a later unexpected matching request is an explicit contract violation, never ignored. A candidate completion can be invalidated before teardown; freeze the final outcome only after owned connections close and pending observations settle, retaining the original candidate event and contradiction rather than rewriting history.
+
 ## Control and lifecycle contract
 
 - Register all DAP trackers before launching either participant. Own root names/run IDs, parent-child ancestry and exact fixture URL/server identity determine candidates. Never adopt the focused debugger. Browser and server have distinct CDP proxies, source seals, pause gates and actual thread IDs.
@@ -51,6 +53,7 @@ Request identity is scoped to the selected browser session and one HTTP hop. A r
 - Use the Cycle 0003 managed Chrome route in both hosts. Its native presentation QA remains open; do not turn renderer ACKs into native screenshots.
 - External requests have per-run authorization; action acceptance is nonblocking/idempotent. Continue requires exact participant session/thread/generation and synchronously reserves it. DAP/manual interference fails the relevant claim; no automatic click retry or unexpected continuation.
 - Keep input, debugger inspection, request observation and control independent. Ordinary waits are bounded at 20 seconds; observed pause time is excluded from the run's active budget once, even if two participants overlap. Each capture stays bounded at 3 seconds; total run limit 120 seconds.
+- Single DAP/CDP replies and inspection/capture keep real-time deadlines through the existing helpers. Application progress (response arrival, next stop, expected-set closure) is event driven under the shared active-budget watchdog; do not start a 20-second wall-clock waiter before a 40-second pause. The hold test begins with both network requests already pending and proves completion after continuation.
 - The fixture deliberately holds both requests at a small barrier so overlap is observable, without relying on a sleep. Background cart state is separate. Conditional breakpoints select the intended operation, and captured values independently recheck that condition.
 - Source seals include both actual executing scripts, maps and original TS. Recheck pause ownership before/after every await and before committing source/value/capture/link evidence.
 - Cancellation/failure drains owned acquisitions and releases both participants, breakpoints, CDP connections, backend listener and viewport. Partial evidence survives; failure in one release does not skip the others. A late acquisition cannot certify cleanup prematurely.
@@ -163,8 +166,45 @@ Reuse `Cdp`, `PauseGate`, `Evidence`, `HostBrowser`/`BrowserViewport`, `awaitRes
 
 Sequential implementation, no parallelization opportunity: the fixture, participant schema and coordinator contract depend on each other. Independent reviewers may inspect the frozen plan/diff, but no parallel mutation stream is required. No separate TODO list is added; deferred final obligations already have stable goal IDs.
 
-Parent summary: scope retained as the minimum paired experiment under delegated authority; Architecture 1, Code quality 1, Tests 1, Performance 1; diagram/failure map produced, 0 planned silent critical gaps, Lake Score N/A (implementation kinds rather than shortcut votes). Outside voice pending; this is not completed implementation evidence.
+Parent summary: scope retained as the minimum paired experiment under delegated authority; Architecture 1, Code quality 1, Tests 1, Performance 1; diagram/failure map produced, 0 planned silent critical gaps, Lake Score N/A (implementation kinds rather than shortcut votes). This is not completed implementation evidence.
+
+### Independent challenge
+
+Claude Code outside invocation timed out after 300000 ms; external coverage is unavailable. Fresh in-host `/root/cycle0004_plan_review` completed a read-only plan/interface review and found two concrete gaps: (P1, confidence 8/10) close the complete two-request observation set before success; (P2, confidence 9/10) application waits must not inherit the helpers' 20-second wall-clock deadline across a 40-second debugger hold. Both technical remedies are adopted under D008 delegated implementation authority and specified above. This is an in-host development review, not cross-model agreement or a member of the final ten-review gate.
+
+- [ ] **T5 (P1, human ~1 h / agent ~15 min)** — Expected set: require two requests, both terminal bodies and actual server admission count 2 before finalizing; retain late contradictions. Verify delayed background observation never permits early completion.
+- [ ] **T6 (P2, human ~1 h / agent ~15 min)** — Application waiting: advance on events under the active clock; keep individual protocol deadlines unchanged. Verify requests pending before the native 40-second hold finish after resume.
+
+No separate durable learning is added before the proposed remedies have implementation evidence. Review tasks/test-plan artifacts are under `~/.gstack/projects/codebook/`; private provider output is under `artifacts/cycle-0004/review/`. This file preserves the durable decisions.
 
 ## Result and handoff
 
-Pending. No Cycle 0004 implementation or native result yet. First complete the bounded engineering review, then implement the paired request experiment. Mac lock blocks independent native screenshots, but does not erase Cycle 0003 transport evidence or authorize bypassing the lock. Full checkout, product MCP, recording/replay, wiki/progress, three layouts, real-repository use and packaging remain final obligations.
+Pending final validation. The paired coordinator, two-runtime fixture, bounded network evidence and runner are implemented. Six engineering-review remedies are reflected in code. Exploratory normal and focused-decoy runs passed in both hosts, including four exact image receipts, both source/value snapshots and owned cleanup. The paired unit suite has 16 passing tests; the shared suite has 40. Final clean-revision matrices, shared native source regressions and implementation review are pending. Mac lock blocks independent native screenshots, but does not erase Cycle 0003 transport evidence or authorize bypassing the lock. Full checkout, product MCP, recording/replay, wiki/progress, three layouts, real-repository use and packaging remain final obligations.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+| --- | --- | --- | --- | --- | --- |
+| CEO Review | none this cycle | Goal unchanged | 0 | not triggered | Existing approved destination retained |
+| Outside Review | Claude Code `/plan-eng-review` | Independent challenge | 1 | unavailable | 300000 ms timeout; no findings supplied |
+| Native fallback | fresh in-host agent | Bounded plan challenge | 1 | completed, remedies adopted | Expected-set closure and pause-aware application waits |
+| Eng Review | `/plan-eng-review` | Architecture/code/tests/performance | 1 | clear for implementation | Four parent + two native remedies specified |
+| Design Review | none this cycle | No product layout change | 0 | not triggered | Native presentation gap retained |
+| DX Review | none this cycle | Private fixture harness only | 0 | not triggered | Product MCP still pending |
+
+- **OUTSIDE COVERAGE:** Claude Code plan-review unavailable; native fallback does not supply outside coverage.
+- **VERDICT:** ENG CLEARED for the bounded experiment; runtime success remains unverified. Sequential implementation, no new TODOs, 0 unresolved technical decisions and 0 uncovered planned silent failures. Full-product acceptance remains outstanding.
+
+NO UNRESOLVED DECISIONS
+
+## Implementation investigation record
+
+- js-debug launch parents have no target CDP proxy; querying them delayed selection despite an existing child. Probe owned real children, then independently verify runtime identity. A regression fails when the child filter is removed.
+- Browser source-map resolution must allow the exact served map URL, in addition to local backend paths. Loaded-source evidence exposed the unbound browser breakpoint.
+- Source reveal could hide the browser viewport. Preopen both owned source files in the second group and reveal the viewport for each captured phase. Native renderer receipts verify delivery; independent editor screenshots remain missing.
+- Cursor replaces sibling tab handles when closing one tab. Close owned source tabs with the API's array overload, then verify their absence. A handle-replacement regression preserves unrelated tabs and fails with sequential close.
+- Backend exit can terminate DAP before its continue reply. The negative runner accepts that specific cancellation only while requiring the failed run and observed cleanup.
+- Starting a second paused target does not guarantee debug focus changes. The fixed decoy scenario explicitly cycles the native debug console and waits for verified focus; the original isolation assertion then passes in both editors.
+- One simultaneous-host run missed an initial 3-second renderer receipt. This intermittent observation is retained, not claimed fixed; final host matrices run sequentially.
+
+Private investigation reports and earlier unsuccessful runs remain under `artifacts/cycle-0004/`. Final evidence export must identify its exact revision and preserve these limits.

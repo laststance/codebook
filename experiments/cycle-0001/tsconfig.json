@@ -11,6 +11,7 @@
     "noUnusedParameters": true,
     "esModuleInterop": true,
     "sourceMap": true,
+    "declaration": true,
     "rootDir": "src",
     "outDir": "dist"
   },
