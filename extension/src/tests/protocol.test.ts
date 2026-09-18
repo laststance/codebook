@@ -39,13 +39,49 @@ test('real MCP discovery, action and reconnect retain one runtime and one click 
     const state = await second.client.readResource({ uri: receipt.runUri });
     // Assert
     assert.deepEqual(discovery.tools.map(tool => tool.name).sort(), ['codebook_action', 'codebook_continue', 'codebook_explain', 'codebook_reveal', 'codebook_start', 'codebook_status', 'codebook_stop']);
-    assert.equal(templates.resourceTemplates.length, 6); assert.equal(accepted.isError, undefined);
+    assert.equal(templates.resourceTemplates.length, 7); assert.equal(accepted.isError, undefined);
     assert.deepEqual(repeated.structuredContent, accepted.structuredContent); assert.equal(harness.runtimes[0]?.dispatches, 1);
     assert.match(JSON.stringify(state), /paused-server/);
     const get = await fetch(endpoint.descriptor.url, { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } }); assert.equal(get.status, 405);
     const stopped = await second.client.callTool({ name: 'codebook_stop', arguments: { instanceId: receipt.instanceId, runId: receipt.runId } }); assert.equal(stopped.isError, undefined);
     const history = await second.client.readResource({ uri: receipt.runUri }); assert.match(JSON.stringify(history), /stopped/);
   } finally { await first.client.close(); await second?.close(); await endpoint.close(); await harness.close(); }
+});
+
+test('MCP checkout discovers its action order and preserves the first receipt and observation after the second action', async () => {
+  // Arrange: real HTTP/SDK/service, explicitly synthetic editor effects.
+  const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
+  try {
+    const discovery = await connection.client.callTool({ name: 'codebook_status', arguments: {} });
+    const catalog = z.object({ data: z.object({ apiVersion: z.string(), profiles: z.array(z.object({ id: z.string(), actions: z.array(z.object({ id: z.string() })), items: z.array(z.object({ id: z.string() })), limits: z.object({ runTimeoutMs: z.number() }) })) }) }).parse(discovery.structuredContent).data;
+    assert.equal(catalog.apiVersion, '1.1');
+    const checkout = catalog.profiles.find(profile => profile.id === 'checkout-demo')!;
+    assert.deepEqual(checkout.actions.map(action => action.id), ['add-to-cart', 'checkout']); assert.equal(checkout.items.length, 4); assert.equal(checkout.limits.runTimeoutMs, 300_000);
+    const started = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: 'checkout-demo', key: 'purchase' } });
+    const receipt = z.object({ data: receiptSchema }).parse(started.structuredContent).data;
+    const record = harness.service.record(receipt); await record.preparation;
+    const identity = { instanceId: receipt.instanceId, runId: receipt.runId };
+    const runtime = harness.runtimes[0]!; assert.equal(runtime.profile, 'checkout-demo');
+    // Act / Assert: supported action in the wrong order is a recoverable domain error, not schema rejection.
+    const early = await connection.client.callTool({ name: 'codebook_action', arguments: { ...identity, key: 'early', action: 'checkout' } });
+    assert.equal(early.isError, true); assert.match(JSON.stringify(early.structuredContent), /BUSY.*Expected add-to-cart/); assert.equal(runtime.dispatches, 0);
+    const firstInput = { ...identity, key: 'cart', action: 'add-to-cart' };
+    const first = await connection.client.callTool({ name: 'codebook_action', arguments: firstInput });
+    const original = harness.service.state(record).observations[0]!;
+    const originalPause = harness.service.state(record).participants.server.continueArguments!;
+    const originalBytes = await connection.client.readResource({ uri: original.snapshotUri });
+    await connection.client.callTool({ name: 'codebook_continue', arguments: originalPause });
+    runtime.status = 'ready'; // Synthetic completion boundary; the native matrix verifies actual cart completion.
+    const second = await connection.client.callTool({ name: 'codebook_action', arguments: { ...identity, key: 'order', action: 'checkout' } }); assert.equal(second.isError, undefined);
+    assert.equal(runtime.dispatches, 2); assert.equal(harness.service.state(record).observations.length, 2);
+    assert.deepEqual(await connection.client.readResource({ uri: original.snapshotUri }), originalBytes);
+    const replay = await connection.client.callTool({ name: 'codebook_action', arguments: firstInput }); assert.deepEqual(replay.structuredContent, first.structuredContent);
+    const conflict = await connection.client.callTool({ name: 'codebook_action', arguments: { ...identity, key: 'cart', action: 'checkout' } }); assert.match(JSON.stringify(conflict.structuredContent), /IDEMPOTENCY_CONFLICT/);
+    const stale = await connection.client.callTool({ name: 'codebook_continue', arguments: originalPause }); assert.match(JSON.stringify(stale.structuredContent), /STALE_PAUSE/);
+    assert.equal(runtime.dispatches, 2);
+    await connection.client.callTool({ name: 'codebook_stop', arguments: identity });
+    assert.deepEqual((await connection.client.callTool({ name: 'codebook_action', arguments: firstInput })).structuredContent, first.structuredContent);
+  } finally { await connection.close(); await endpoint.close(); await harness.close(); }
 });
 
 test('authentication and Host Origin body boundaries reject requests even with a valid transport session', async () => {
@@ -167,7 +203,7 @@ test('cancelled MCP calls release HTTP capacity without closing their shared ses
       assert.equal((await connection.client.listTools()).tools.length, 7);
     }
     // Assert
-    assert.equal((await connection.client.listResourceTemplates()).resourceTemplates.length, 6);
+    assert.equal((await connection.client.listResourceTemplates()).resourceTemplates.length, 7);
     assert.equal(harness.runtimes.length, 0);
   } finally { await connection.close(); await endpoint.close(); await harness.close(); }
 });

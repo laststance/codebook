@@ -3,6 +3,7 @@ import type { ParticipantSnapshot } from 'codebook-cycle-0004/dist/inspectPartic
 import type { SealedSource } from 'codebook-cycle-0001/dist/inspect';
 import type { Evidence } from 'codebook-cycle-0001/dist/evidence';
 import type { HostConfiguration } from 'codebook-cycle-0001/dist/hostBrowser';
+import type { ProfileId, StudyItemId } from 'codebook-cycle-0004/dist/constants';
 
 export type RuntimeView = ReturnType<PairedRun['view']>;
 export type Participant = ParticipantSnapshot['participant'];
@@ -16,7 +17,7 @@ export interface StudyRuntime {
   continue: PairedRun['continue'];
   stop: PairedRun['cleanup'];
   fail: PairedRun['fail'];
-  source(participant: Participant): SealedSource | undefined;
+  source(item: Participant | StudyItemId): SealedSource | undefined;
   reveal(snapshot: ParticipantSnapshot): Promise<void>;
 }
 export interface StudyEnvironment {
@@ -24,5 +25,5 @@ export interface StudyEnvironment {
   readonly host: HostConfiguration;
   readonly build: { revision: string; dirty: boolean; sourceHash: string };
   prerequisites(): Promise<{ ready: boolean; missing: string[] }>;
-  createRuntime(directory: string): Promise<StudyRuntime>;
+  createRuntime(directory: string, profile?: ProfileId): Promise<StudyRuntime>;
 }

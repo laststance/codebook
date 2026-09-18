@@ -57,8 +57,8 @@ test('a historical server observation cannot continue a current browser pause ev
   // Arrange
   const study = capturedStudy(), server = study.observations[0]!;
   const live = { instanceId: study.instanceId, runId: study.runId, participants: {
-    server: { snapshotUri: server.snapshotUri, sourceUri: undefined, phase: 'running', resumable: false, continueArguments: undefined },
-    browser: { snapshotUri: 'codebook://new/browser', sourceUri: undefined, phase: 'paused', resumable: true, continueArguments: { instanceId: study.instanceId, runId: study.runId, participant: 'browser', sessionId: 'browser', threadId: 1, generation: 2 } },
+    server: { snapshotUri: server.snapshotUri, sourceUri: undefined, itemId: 'paired-cart-demo/server', actionId: 'add-to-cart', phase: 'running', resumable: false, continueArguments: undefined },
+    browser: { snapshotUri: 'codebook://new/browser', sourceUri: undefined, itemId: 'paired-cart-demo/browser', actionId: 'add-to-cart', phase: 'paused', resumable: true, continueArguments: { instanceId: study.instanceId, runId: study.runId, participant: 'browser', sessionId: 'browser', threadId: 1, generation: 2 } },
   } } satisfies Pick<LiveStudy, 'instanceId' | 'runId' | 'participants'>;
   // Act
   const view = projectStudy({ selection: { studyId: study.id, participant: 'server', follow: false, tab: 'live' }, study, live, baselines });

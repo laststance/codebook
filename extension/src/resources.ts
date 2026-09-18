@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { CAPTURE_PHASES, EVENT_DETAIL_LIMIT_BYTES, EVENT_PAGE_SIZE, IMAGE_LIMIT_BYTES, SOURCE_LIMIT_BYTES } from './constants';
+import { EVENT_DETAIL_LIMIT_BYTES, EVENT_PAGE_SIZE, IMAGE_LIMIT_BYTES, SOURCE_LIMIT_BYTES } from './constants';
+import { CAPTURE_PHASES } from 'codebook-cycle-0004/dist/constants';
 import { ERROR_RECOVERY, StudyError } from './errors';
 import type { StudyService } from './service';
 import { omittedDetail } from './utils/omittedDetail';
@@ -12,12 +13,24 @@ export type ResourceContent = { uri: string; mimeType: string; text: string } | 
 export async function readResource(service: StudyService, uri: string): Promise<ResourceContent> {
   const json = (value: unknown): ResourceContent => ({ uri, mimeType: 'application/json', text: JSON.stringify(value) });
   if (uri === 'codebook://help/errors') return json(ERROR_RECOVERY);
+  if (uri === 'codebook://help/studies') return json({
+    entry: 'Call codebook_status, select a returned profile, then start with a stable key. checkout-demo is one local product and confirmation, without payment or arbitrary repository setup.',
+    sequence: ['Read the returned manifestUri once ready; it freezes source hashes and expected actions/stops.', 'Send only the action named in nextActions, with a stable key unique to that action.', 'For each current pause, read its snapshotUri and sourceUri, save an interpretation using only present captured value paths, then copy its exact continueArguments.', 'After cart completion, use nextActions to submit checkout. Repeat evidence reading at order creation and purchase confirmation.', 'Read the terminal state and stop result. Separate runtime/capture evidence from saved learning history and personal understanding.'],
+    identity: 'Observations are historical item/action references. A later stop on the same participant does not replace them. Follow current continuation arguments, never an old observation.',
+    recovery: 'On a lost action response, repeat identical action/key. Wrong order or a new key for an accepted action dispatches nothing. Missing values/images stay unavailable; never fill them from a later stop.',
+    limits: 'Discovery gives profile-specific limits. Paused time is excluded from active progress time; the whole-run deadline remains. The old paired-cart-demo stays available.',
+  });
   const url = new URL(uri);
   if (url.protocol !== 'codebook:' || url.search || url.hash || url.username || url.password || url.port) throw new StudyError('INVALID_REFERENCE', 'Use a canonical resource URI.');
   const match = /^\/runs\/([a-f0-9-]+)(?:\/(.*))?$/.exec(url.pathname);
   if (!match?.[1]) throw new StudyError('NOT_FOUND', 'Unknown resource.');
   const record = service.record({ instanceId: url.hostname, runId: match[1] }); const suffix = match[2];
   if (!suffix) return json(service.state(record));
+  if (suffix === 'manifest') {
+    const manifest = record.runtime?.view().manifest;
+    if (!manifest) throw new StudyError('EVIDENCE_UNAVAILABLE', 'The run has not frozen its source and scenario manifest.');
+    return json(manifest);
+  }
   if (suffix.startsWith('events/')) {
     const cursorText = suffix.slice('events/'.length);
     if (!/^(0|[1-9]\d*)$/.test(cursorText) || !Number.isSafeInteger(Number(cursorText))) throw new StudyError('INVALID_REFERENCE', 'Event cursor must be a nonnegative sequence number.');
@@ -44,7 +57,7 @@ export async function readResource(service: StudyService, uri: string): Promise<
   if (sourceMatch?.[1]) {
     const snapshotUri = service.uri(record.id, sourceMatch[1]); const snapshot = service.snapshot(record, snapshotUri);
     if (!sourceMatch[2]) return json({ ...snapshot, snapshotUri, historical: true, sourceUri: `${snapshotUri}/source/typescript` });
-    const source = record.runtime?.source(snapshot.participant);
+    const source = record.runtime?.source(snapshot.itemId);
     if (!source) throw new StudyError('EVIDENCE_UNAVAILABLE', 'The sealed source is unavailable.');
     const selection = sourceMatch[2] === 'typescript' ? { text: source.source, hash: snapshot.source.typescriptHash, mimeType: 'text/typescript' }
       : sourceMatch[2] === 'javascript' ? { text: source.javascript, hash: snapshot.source.javascriptHash, mimeType: 'text/javascript' }

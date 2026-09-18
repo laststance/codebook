@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { ParticipantSnapshot } from 'codebook-cycle-0004/dist/inspectParticipant';
-import { ACTIVE_TIMEOUT_MS, API_VERSION, MAINTENANCE_INTERVAL_MS, MAX_EXPLANATIONS, MAX_RUNS, PROFILE_ID, RUN_TIMEOUT_MS } from './constants';
+import { ACTIVE_TIMEOUT_MS, API_VERSION, MAINTENANCE_INTERVAL_MS, MAX_EXPLANATIONS, MAX_RUNS, RUN_TIMEOUT_MS } from './constants';
+import { PROFILE_IDS, type ProfileId } from 'codebook-cycle-0004/dist/constants';
+import { STUDY_PROFILES } from 'codebook-cycle-0004/dist/profiles';
+import { actionExpectations } from 'codebook-cycle-0004/dist/utils/actionExpectations';
+import { stopExpectations } from 'codebook-cycle-0004/dist/utils/stopExpectations';
+import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { StudyError, domainError } from './errors';
 import type { StudyEnvironment, StudyRuntime } from './runtime';
 import type { ActionInput, ContinueInput, ExplainInput, RevealInput, RunInput, StartInput } from './schemas';
@@ -12,10 +17,11 @@ export interface Explanation {
   agentInterpretation: string; createdAt: string; learnerUnderstandingChanged: false;
 }
 export interface StudyRecord {
-  id: string; key: string; profile: string; createdAt: number; deadlineAt: number;
+  id: string; key: string; profile: ProfileId; createdAt: number; deadlineAt: number;
   runtime?: StudyRuntime; prepared: boolean; preparation: Promise<void>;
   stopping: boolean; stopped: boolean; stopPromise?: Promise<void>; cleanupError?: StudyError; error?: StudyError;
   action?: { signature: string; receipt: { operationId: string; runUri: string; key: string } };
+  actions: Map<string, NonNullable<StudyRecord['action']>>;
   explanations: Map<string, Explanation>;
   explanationKeys: Map<string, { signature: string; result: Promise<{ explanationUri: string }> }>;
   sourceReveals: Set<Promise<void>>;
@@ -44,9 +50,13 @@ export class StudyService {
     const prerequisites = await this.environment.prerequisites();
     return { instanceId: this.instanceId, apiVersion: API_VERSION, workspace: this.environment.workspace,
       host: this.environment.host, build: this.environment.build, prerequisites, stopping: this.stopping,
-      profiles: [{ id: PROFILE_ID, description: 'Instrumented TypeScript cart demo; one click, server and browser pauses. Not arbitrary repositories or checkout.' }],
-      capabilities: ['start', 'add-to-cart', 'pause-evidence', 'continue', 'explain', 'reveal-source', 'stop', 'historical-resources'],
-      limits: { activeRuns: 1, retainedRuns: MAX_RUNS, explanationsPerRun: MAX_EXPLANATIONS, activeTimeoutMs: ACTIVE_TIMEOUT_MS, runTimeoutMs: RUN_TIMEOUT_MS },
+      profiles: PROFILE_IDS.map(id => {
+        const definition = STUDY_PROFILES[id];
+        const catalog = { ...definition, items: definition.items.map(item => ({ ...item, expectedValues: stopExpectations('<runtimeRunId>', item) })), expectations: definition.actions.map(action => ({ actionId: action.id, ...actionExpectations('<runtimeRunId>', action.id) })) };
+        return { ...catalog, catalogHash: sha256(JSON.stringify(catalog)) };
+      }),
+      capabilities: ['start', 'add-to-cart', 'checkout', 'pause-evidence', 'continue', 'explain', 'reveal-source', 'stop', 'historical-resources'],
+      limits: { activeRuns: 1, retainedRuns: MAX_RUNS, explanationsPerRun: MAX_EXPLANATIONS, activeTimeoutMs: ACTIVE_TIMEOUT_MS, runTimeoutMs: RUN_TIMEOUT_MS, timeoutFieldsApplyTo: 'paired-cart-demo; use each selected profile.limits for other profiles' },
       runs: [...this.records.values()].map(record => ({ runId: record.id, uri: this.uri(record.id), state: this.state(record).state })),
       recovery: 'Same instance: initialize a new transport and read the existing run. Server restart: copy new credentials first. Never automatically repeat a click.' };
   }
@@ -59,29 +69,35 @@ export class StudyService {
       if (previous.profile !== input.profile) throw new StudyError('IDEMPOTENCY_CONFLICT', 'Start key already names different arguments.');
       return this.receipt(previous);
     }
-    if (input.profile !== PROFILE_ID) throw new StudyError('UNSUPPORTED_PROFILE', `Available profile: ${PROFILE_ID}`);
+    const profile = PROFILE_IDS.find(profile => profile === input.profile);
+    if (!profile) throw new StudyError('UNSUPPORTED_PROFILE', `Available profiles: ${PROFILE_IDS.join(', ')}`);
     if ([...this.records.values()].some(record => !record.stopped)) throw new StudyError('BUSY', 'Another run still owns resources.');
     if (this.records.size >= MAX_RUNS) throw new StudyError('LIMIT_EXCEEDED', `This instance retains at most ${MAX_RUNS} runs; no history was evicted.`);
     const createdAt = this.now();
-    const record: StudyRecord = { id: randomUUID(), key: input.key, profile: input.profile, createdAt, deadlineAt: createdAt + RUN_TIMEOUT_MS,
-      prepared: false, preparation: Promise.resolve(), stopping: false, stopped: false, explanations: new Map(), explanationKeys: new Map(), sourceReveals: new Set() };
+    const record: StudyRecord = { id: randomUUID(), key: input.key, profile, createdAt, deadlineAt: createdAt + STUDY_PROFILES[profile].limits.runTimeoutMs,
+      prepared: false, preparation: Promise.resolve(), stopping: false, stopped: false, actions: new Map(), explanations: new Map(), explanationKeys: new Map(), sourceReveals: new Set() };
     this.records.set(record.id, record); this.startKeys.set(input.key, record);
     record.preparation = this.prepare(record);
     return this.receipt(record);
   }
 
-  /** Accepts exactly one fixed click while returning a stable receipt across reconnects and cleanup. @example service.action({...run, key:'cart', action:'add-to-cart'}) */
+  /** Admits the next fixed action while replaying every original receipt across later steps and cleanup. @example service.action({...run, key:'order', action:'checkout'}) */
   action(input: ActionInput) {
     this.assertMutable(input.instanceId); const record = this.record(input);
     const signature = JSON.stringify([input.key, input.action]);
-    if (record.action) {
-      if (record.action.signature === signature) return record.action.receipt;
-      throw new StudyError('BUSY', 'This demo already accepted one cart action.');
+    const previous = record.actions.get(input.key);
+    if (previous) {
+      if (previous.signature === signature) return previous.receipt;
+      throw new StudyError('IDEMPOTENCY_CONFLICT', 'Action key already names different arguments.', `Read ${this.uri(record.id)} for retained receipts.`);
     }
     if (!record.prepared || record.stopping || record.stopped || record.error || record.runtime?.evidence.failure || this.now() >= record.deadlineAt || record.runtime?.view().status !== 'ready') throw new StudyError('BUSY', 'The run is not ready for input. Read its nextActions.');
-    const operation = record.runtime.action(input.key);
+    const nextAction = record.runtime.view().nextAction;
+    if (nextAction !== input.action) throw new StudyError('BUSY', `Expected ${nextAction ?? 'no further action'}, received ${input.action}.`, `Read ${this.uri(record.id)} for current nextActions; nothing was dispatched.`);
+    let operation: ReturnType<StudyRuntime['action']>;
+    try { operation = record.runtime.action(input.key, input.action); }
+    catch (error) { throw new StudyError(String(error).includes('conflict:') ? 'BUSY' : 'RUNTIME_FAILED', 'The action was not accepted.', String(error)); }
     const receipt = { operationId: operation.id, key: input.key, runUri: this.uri(record.id) };
-    record.action = { signature, receipt }; return receipt;
+    record.action = { signature, receipt }; record.actions.set(input.key, record.action); return receipt;
   }
 
   /** Uses the existing atomic pause reservation, never a focused debug session. @example await service.continue(runState.participants.server.continueArguments) */
@@ -109,8 +125,14 @@ export class StudyService {
     const snapshot = this.snapshot(record, input.snapshotUri);
     if (snapshot.source.typescriptHash !== input.sourceHash || new Set(input.valuePaths).size !== input.valuePaths.length) throw new StudyError('INVALID_REFERENCE', 'Source hash or distinct value paths do not match the snapshot.');
     if (record.explanationKeys.size >= MAX_EXPLANATIONS) throw new StudyError('LIMIT_EXCEEDED', `This run allows ${MAX_EXPLANATIONS} explanation intents.`);
+    const captured = new Map(Object.entries(snapshot.values));
+    const capturedFacts = input.valuePaths.map(path => {
+      const value = captured.get(path);
+      if (typeof value !== 'string' && typeof value !== 'number') throw new StudyError('INVALID_REFERENCE', `The selected snapshot did not capture ${path}.`);
+      return { path, value };
+    });
     const explanation: Explanation = { id: randomUUID(), instanceId: this.instanceId, runId: record.id, snapshotUri: input.snapshotUri,
-      sourceHash: input.sourceHash, capturedFacts: input.valuePaths.map(path => ({ path, value: snapshot.values[path] })),
+      sourceHash: input.sourceHash, capturedFacts,
       agentInterpretation: input.interpretation, createdAt: new Date(this.now()).toISOString(), learnerUnderstandingChanged: false };
     // Reserve before the first await; write latency must not permit duplicate explanations.
     const result = Promise.resolve().then(async () => {
@@ -151,8 +173,7 @@ export class StudyService {
   /** Resolves committed snapshot identity without treating an old capture as a current pause. @example service.snapshot(record, snapshotUri).values */
   snapshot(record: StudyRecord, uri: string): ParticipantSnapshot {
     const runtime = record.runtime?.view();
-    for (const name of ['server', 'browser'] as const) {
-      const snapshot = runtime?.participants[name].snapshot;
+    for (const snapshot of runtime?.snapshots ?? []) {
       if (snapshot && uri === this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}`)) return snapshot;
     }
     throw new StudyError('INVALID_REFERENCE', 'Snapshot is absent, uncommitted, or belongs to another run.');
@@ -168,17 +189,19 @@ export class StudyService {
       const participant = runtime?.participants[name], snapshot = participant?.snapshot;
       const snapshotUri = snapshot ? this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}`) : undefined;
       const resumable = Boolean(canControl && snapshot && participant?.phase === 'paused' && participant.pause?.generation === snapshot.pause.generation && participant.pause.sessionId === snapshot.pause.sessionId && participant.pause.threadId === snapshot.pause.threadId);
-      return { snapshotUri, sourceUri: snapshotUri && `${snapshotUri}/source/typescript`, phase: participant?.phase,
+      return { snapshotUri, sourceUri: snapshotUri && `${snapshotUri}/source/typescript`, itemId: snapshot?.itemId, actionId: snapshot?.actionId, phase: participant?.phase,
         resumable, continueArguments: resumable && snapshot ? { instanceId: this.instanceId, runId: record.id, participant: name, ...snapshot.pause } : undefined };
     };
     const participants = { server: participantView('server'), browser: participantView('browser') };
-    const nextActions = [canControl && record.prepared && runtime?.status === 'ready' ? 'add-to-cart' : undefined,
+    const nextActions = [canControl && record.prepared && runtime?.status === 'ready' ? runtime.nextAction : undefined,
       participants.server.resumable ? 'continue-server' : undefined, participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined, 'read-history'].filter(value => value !== undefined);
     return { instanceId: this.instanceId, runId: record.id, runtimeRunId: runtime?.runId, profile: record.profile,
       state: record.stopped ? 'stopped' : record.stopping ? 'stopping' : terminalReason ? 'failed' : !record.prepared ? 'preparing' : runtime?.status ?? 'preparing',
       runtimeState: runtime?.status, createdAt: new Date(record.createdAt).toISOString(), deadlineAt: new Date(record.deadlineAt).toISOString(), activeTimeoutMs: ACTIVE_TIMEOUT_MS,
-      nextActions, participants, operation: record.action?.receipt, observed: runtime?.observed, links: runtime?.links,
+      nextActions, participants, operation: record.action?.receipt, operations: [...record.actions.values()].map(action => action.receipt), observed: runtime?.observed, links: runtime?.links,
+      manifestUri: runtime?.manifest ? this.uri(record.id, 'manifest') : undefined, manifestHash: runtime?.manifest?.hash,
+      observations: runtime?.snapshots.map(snapshot => ({ id: snapshot.id, itemId: snapshot.itemId, actionId: snapshot.actionId, participant: snapshot.participant, capturePhase: snapshot.capturePhase, snapshotUri: this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}`), sourceUri: this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}/source/typescript`) })) ?? [],
       runtimeOutcome: runtime?.runtimeOutcome, captureOutcome: runtime?.captureOutcome,
       finalOutcome: terminalReason ? 'not-demonstrated' : runtime?.finalOutcome ?? 'pending-teardown',
       terminalReason, error: record.error?.describe(), cleanupError: record.cleanupError?.describe(), cleaned: record.stopped, resourcesReleased: runtime?.resourcesReleased ?? record.stopped, activeSessionIds: runtime?.activeSessionIds ?? [],
@@ -217,7 +240,7 @@ export class StudyService {
       const prerequisites = await this.environment.prerequisites();
       if (!prerequisites.ready) throw new StudyError('PREREQUISITE_MISSING', prerequisites.missing.join('; '));
       if (this.stopping || record.stopping) return;
-      record.runtime = await this.environment.createRuntime(join(this.storageRoot, this.instanceId, record.id));
+      record.runtime = await this.environment.createRuntime(join(this.storageRoot, this.instanceId, record.id), record.profile);
       if (this.stopping || record.stopping) return;
       await record.runtime.prepare(); record.prepared = true;
     } catch (error) { record.error = domainError(error); record.runtime?.fail(record.error.message); }

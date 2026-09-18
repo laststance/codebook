@@ -51,6 +51,19 @@ Verification: **38/38 paired tests, 63/63 product tests**. One test runs the act
 
 Investigation report (`/investigate`, session `40088-1789768550-cb0eeadb`): the new coordinator test first timed out awaiting a captured stop. A diagnostic assertion exposed `ReferenceError: Buffer is not defined` from the VM-isolated test harness. Root cause: earlier lifecycle tests never traversed PNG conversion, and the harness omitted Node's Buffer global. Fix: provide that native global at the existing test boundary; no runtime behavior was changed for this fault. The original test then passed and the full paired suite passed 38/38. The diagnostic remains to distinguish explicit capture failure from a generic timeout. Status **DONE**, limited to this test-harness fault; checkout's native result remains pending. Existing final-persistence regression coverage remains intact.
 
+Stage 2 native runtime evidence, clean commit `4b56ad1`: **5/5 cases in each actual editor** (`normal`, `hold`, `continue-race`, `capture-timeout`, `late-request`). Normal/hold/race finish demonstrated, the injected missing image finishes partial, and the late closed-set contradiction finishes not-demonstrated. All release owned sessions/processes and exit the development editor. Each complete checkout retains four exact TS stops (server 23/client 29/server 38/client 54), selected and background traffic per action, eleven links and seven phase images. Selected order count is 0 before storage and 1 at browser confirmation, total 24, one cart handler and one checkout handler. Older snapshot/executed-source/image bytes remain unchanged. The order hold/state read measured VS Code **40002.16/2.02 ms**, Cursor **40004.44/2.42 ms**; machine observations, not guarantees.
+
+Local raw evidence (credential-bearing connection/workspace bootstrap files remain ignored and are not shareable):
+
+| Host | Normal | Boundary matrix |
+| --- | --- | --- |
+| VS Code | `artifacts/cycle-0007/runtime/vscode/suite-2026-09-18T22-01-10.495Z-ee167eec/` | `artifacts/cycle-0007/runtime/vscode/suite-2026-09-18T22-02-11.661Z-a892adb9/` |
+| Cursor | `artifacts/cycle-0007/runtime/cursor/suite-2026-09-18T22-01-33.615Z-07c5db51/` | `artifacts/cycle-0007/runtime/cursor/suite-2026-09-18T22-03-34.821Z-d8ec9b7e/` |
+
+Original paired runtime normal regression also passes in each host: `artifacts/cycle-0004/vscode/suite-2026-09-18T22-07-34.092Z-c6071976/` and `artifacts/cycle-0004/cursor/suite-2026-09-18T22-09-25.626Z-a03caf21/`. These runs record unrelated product API edits as dirty while using the same runtime bytes. This evidence uses the experimental HTTP runner. **It does not yet establish product MCP checkout, durable four-item learning, actual-agent orchestration or independent native UI presentation.**
+
+Stage 3 implementation: product MCP API 1.1 discovers both profiles and their declared actions/items/limits, preserves every action receipt and immutable observation reference, exposes the pre-input manifest resource, and reads source by learning item rather than latest participant. Checkout order facts are accepted only when present in the selected snapshot. The original v1 archive fact/capture schemas stay unchanged until the explicit migration stage. **66/66 product tests** pass, including the real SDK/HTTP boundary for wrong-order checkout, replay after the second action/stop, old-pause rejection, retained source bytes and unavailable old images. Runtime effects in these protocol tests are synthetic; the native product matrix remains pending. Next: versioned learning/history migration, four-item reader and qualified history/study outcomes, then product-native/actual-agent evidence and implementation review.
+
 ## Result and handoff
 
 Pending. Review only this connected sequence, retain the destination in PRODUCT_GOAL.md, and update this document plus PROJECT_STATE.md as evidence changes.

@@ -1,4 +1,4 @@
-export const API_VERSION = '1.0';
+export const API_VERSION = '1.1';
 export const EXTENSION_VERSION = '0.1.0';
 export const PROFILE_ID = 'paired-cart-demo';
 export const LOOPBACK_ADDRESS = '127.0.0.1';
@@ -18,7 +18,7 @@ export const KEY_LENGTH_LIMIT = 128;
 export const REFERENCE_LENGTH_LIMIT = 1_024;
 export const MAX_EXPLANATION_CHARS = 8_192;
 export const MAX_EXPLANATIONS = 32;
-export const MAX_VALUE_PATHS = 6;
+export const MAX_VALUE_PATHS = 10;
 export const EVENT_PAGE_SIZE = 50;
 export const EVENT_DETAIL_LIMIT_BYTES = 8_192;
 export const MAX_EVENTS = 10_000;
@@ -35,6 +35,8 @@ export const NATIVE_OBSERVATION_TIMEOUT_MS = 25_000;
 export const NATIVE_EXPIRY_MARGIN_MS = 2_000;
 export const NATIVE_AGENT_WINDOW_MS = 300_000;
 export const VALUE_PATHS = ['operationId', 'cartId', 'productId', 'price', 'cartCount', 'admittedCount'] as const;
+// Keep version-1 archive paths fixed while the live API also accepts actual order facts.
+export const CAPTURED_VALUE_PATHS = [...VALUE_PATHS, 'cartOperationId', 'orderId', 'total', 'orderCount'] as const;
 export const CAPTURE_PHASES = ['before', 'paused-server', 'paused-browser', 'after'] as const;
 export const LEARNING_SCHEMA_VERSION = 1;
 export const MAX_LEARNER_DECISIONS = 1_000;

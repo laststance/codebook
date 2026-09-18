@@ -1,12 +1,57 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { PROFILE_ID, RUN_TIMEOUT_MS } from '../constants';
 import { StudyError } from '../errors';
 import { readResource } from '../resources';
 import { ControlledRuntime, createHarness } from './helpers';
+import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+
+test('a cart observation cannot borrow order facts from a later stop on the same participant', async () => {
+  // Arrange
+  const harness = await createHarness(), service = harness.service;
+  const receipt = service.start({ instanceId: service.instanceId, profile: 'checkout-demo', key: 'facts' }), record = service.record(receipt);
+  try {
+    await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
+    const cart = service.state(record).observations[0]!; const hash = service.snapshot(record, cart.snapshotUri).source.typescriptHash;
+    await service.continue(service.state(record).participants.server.continueArguments!); harness.runtimes[0]!.status = 'ready';
+    service.action({ ...receipt, key: 'order', action: 'checkout' });
+    const order = service.state(record).observations[1]!;
+    // Act / Assert
+    assert.throws(() => service.explain({ ...receipt, key: 'invalid-cart-order', snapshotUri: cart.snapshotUri, sourceHash: hash, valuePaths: ['orderId'], interpretation: 'This fact was never captured at the cart stop.' }), error => error instanceof StudyError && error.code === 'INVALID_REFERENCE');
+    const explanation = await service.explain({ ...receipt, key: 'order-facts', snapshotUri: order.snapshotUri, sourceHash: hash, valuePaths: ['total', 'orderCount'], interpretation: 'The order will contain the selected cart total.' });
+    const saved = await readResource(service, explanation.explanationUri); assert.ok('text' in saved);
+    assert.deepEqual(JSON.parse(saved.text).capturedFacts, [{ path: 'total', value: 24 }, { path: 'orderCount', value: 0 }]);
+    assert.equal(record.explanations.size, 1); assert.equal(service.snapshot(record, cart.snapshotUri).values.cartCount, 0);
+  } finally { await harness.close(); }
+});
+
+test('historical source and missing cart image remain bound to their item after order creation', async () => {
+  // Arrange
+  const harness = await createHarness(), service = harness.service;
+  const receipt = service.start({ instanceId: service.instanceId, profile: 'checkout-demo', key: 'assets' }), record = service.record(receipt);
+  try {
+    await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
+    const runtime = harness.runtimes[0]!, cart = service.state(record).observations[0]!;
+    const original = await readResource(service, cart.sourceUri);
+    await service.continue(service.state(record).participants.server.continueArguments!); runtime.status = 'ready';
+    service.action({ ...receipt, key: 'order', action: 'checkout' });
+    const order = service.state(record).observations[1]!;
+    const orderSource = { ...runtime.seal, source: 'const total = 24;' };
+    runtime.snapshot!.source.typescriptHash = sha256(orderSource.source);
+    runtime.source = item => item === 'checkout-demo/cart-mutation' ? runtime.seal : item === 'checkout-demo/order-creation' ? orderSource : undefined;
+    const bytes = Buffer.from('synthetic order image'); await writeFile(join(runtime.evidence.directory, 'paused-order-creation.png'), bytes);
+    const view = runtime.view.bind(runtime);
+    runtime.view = () => ({ ...view(), captures: { 'paused-cart-mutation': { status: 'failed', error: 'No cart image' }, 'paused-order-creation': { status: 'captured', file: 'paused-order-creation.png', renderer: { epoch: 'test', id: 2, hash: sha256(bytes) } } } });
+    // Act / Assert
+    assert.deepEqual(await readResource(service, cart.sourceUri), original);
+    const currentSource = await readResource(service, order.sourceUri); assert.ok('text' in currentSource); assert.equal(currentSource.text, 'const total = 24;');
+    await assert.rejects(readResource(service, service.uri(record.id, 'images/paused-cart-mutation')), error => error instanceof StudyError && error.code === 'EVIDENCE_UNAVAILABLE');
+    const currentImage = await readResource(service, service.uri(record.id, 'images/paused-order-creation')); assert.ok('blob' in currentImage); assert.equal(currentImage.blob, bytes.toString('base64'));
+  } finally { await harness.close(); }
+});
 
 for (const shutdown of ['run stop', 'server shutdown'] as const) {
   test(`${shutdown} drains an accepted source display before releasing ownership and rejects later displays`, async () => {
