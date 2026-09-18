@@ -2,11 +2,13 @@ export { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, RUN_TIMEOUT_MS, WATCHDOG_INTERVA
 export const MAX_REQUESTS = 8;
 export const MAX_BODY_BYTES = 65_536;
 export const MAX_NETWORK_BUFFER_BYTES = 1_048_576;
+export const PROCESS_QUERY_LIMIT_BYTES = 4_194_304;
 export const EXPECTED_REQUEST_COUNT = 2;
 export const FAULT_DELAY_MS = 500;
 export const STACK_FRAME_LIMIT = 10;
 export const KEY_LENGTH_LIMIT = 128;
-export const SCENARIOS = ['normal', 'hold', 'duplicate', 'continue-race', 'manual-resume', 'missing-id', 'duplicate-id', 'wrong-response-id', 'wrong-response-value', 'stale-server', 'redirect', 'backend-exit', 'absent-response', 'cancel-launch', 'cancel-pause', 'decoy'] as const;
+export const SCENARIOS = ['normal', 'hold', 'duplicate', 'continue-race', 'manual-resume', 'missing-id', 'duplicate-id', 'wrong-response-id', 'wrong-response-value', 'stale-server', 'redirect', 'backend-exit', 'absent-response', 'cancel-launch', 'cancel-pause', 'decoy', 'capture-timeout', 'late-request'] as const;
+export const REQUIRED_CAPTURE_PHASES = ['before', 'paused-server', 'paused-browser', 'after'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 export type ParticipantName = 'server' | 'browser';
 export const PARTICIPANTS: readonly ParticipantName[] = ['server', 'browser'];

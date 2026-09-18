@@ -14,13 +14,14 @@ async function harness() {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-paired-lifecycle-'));
   const filename = join(__dirname, '../run.js'), nativeRequire = createRequire(filename);
   const exports: Partial<typeof RunModule> = {};
+  const nativeDebug = { stopDebugging: async () => true, removeBreakpoints: () => undefined };
   runInNewContext(await readFile(filename, 'utf8'), { exports, AbortController, performance, process, setInterval, clearInterval,
-    require: (name: string) => name === 'vscode' ? { version: 'test', extensions: { getExtension: () => undefined }, debug: {}, window: { tabGroups: { all: [] } } }
+    require: (name: string) => name === 'vscode' ? { version: 'test', extensions: { getExtension: () => undefined }, debug: nativeDebug, window: { tabGroups: { all: [] } } }
       : name === 'codebook-cycle-0001/dist/hostBrowser' ? {} : nativeRequire(name),
   }, { filename });
   assert.ok(exports.PairedRun);
   const run = new exports.PairedRun({ artifactRoot: directory, templateRoot: directory, descriptorPath: '', revision: 'test', dirty: true, sourceHash: 'test', nodeExecutable: '/node', host: { id: 'vscode', productVersion: 'test', apiVersion: 'test', commit: 'test' } }, 'normal');
-  return { run, directory };
+  return { run, directory, nativeDebug };
 }
 
 /** Supplies a historical snapshot reference at the inspector boundary, without pretending to validate a real debugger. @example snapshot({ sessionId: 'server', threadId: 0, generation: 1 }) */
@@ -71,4 +72,39 @@ test('a late contradictory request during teardown invalidates a candidate succe
     // Assert
     assert.equal(run.status, 'failed'); assert.equal(manifest.finalOutcome, 'not-demonstrated'); assert.deepEqual([...run.failures], ['Unexpected request after observation closure']);
   } finally { await rm(directory, { recursive: true }); }
+});
+
+test('a completed runtime with one missing image remains partial after owned teardown', async () => {
+  // Arrange
+  const { run, directory } = await harness(); run.status = 'completed';
+  for (const phase of ['before', 'paused-browser', 'after']) run.captures[phase] = { status: 'captured', file: `${phase}.png`, renderer: { epoch: 'epoch', id: 1, hash: 'hash' } };
+  run.captures['paused-server'] = { status: 'failed', error: 'Screenshot timed out' };
+  try {
+    // Act
+    await run.cleanup(); const manifest = JSON.parse(await readFile(join(run.evidence.directory, 'manifest.json'), 'utf8'));
+    // Assert
+    assert.equal(manifest.runtimeOutcome, 'demonstrated'); assert.equal(manifest.captureOutcome, 'incomplete'); assert.equal(manifest.finalOutcome, 'partial');
+    const cleanup = run.evidence.events.find(event => event.type === 'cleanup.completed');
+    assert.equal(JSON.stringify(cleanup?.detail), '{"backendObservation":"not-launched"}');
+  } finally { await rm(directory, { recursive: true }); }
+});
+
+test('one participant release failure still releases the other debugger and browser and preserves retryable cleanup evidence', async () => {
+  // Arrange
+  const { run, directory, nativeDebug } = await harness(); const released: string[] = []; let failClose = true;
+  Reflect.set(run.participants.server, 'cdp', { close() { released.push('server'); if (failClose) throw new Error('injected close failure'); } });
+  Reflect.set(run.participants.browser, 'cdp', { close() { released.push('browser'); } });
+  Reflect.set(run, 'browser', { resumeViewport() {}, async drainAcquisitions() {}, async close() { released.push('viewport'); } });
+  const session = { id: 'owned', name: 'owned', type: 'pwa-node', configuration: { type: 'pwa-node', request: 'launch', name: 'owned' }, workspaceFolder: undefined, customRequest: async () => undefined, getDebugProtocolBreakpoint: async () => undefined };
+  run.sessions.set('owned', { session, name: 'server' }); run.activeSessions.add('owned');
+  nativeDebug.stopDebugging = async () => { released.push('debugger'); run.activeSessions.clear(); return true; };
+  try {
+    // Act
+    await assert.rejects(run.cleanup(), /injected close failure/);
+    const partial = JSON.parse(await readFile(join(run.evidence.directory, 'manifest.json'), 'utf8'));
+    failClose = false; await run.cleanup();
+    // Assert
+    assert.deepEqual(released.slice(0, 4), ['server', 'browser', 'debugger', 'viewport']);
+    assert.equal(partial.cleaned, false); assert.match(partial.failures.join('\n'), /server CDP close/); assert.equal(run.view().cleaned, true);
+  } finally { failClose = false; await run.cleanup(); await rm(directory, { recursive: true }); }
 });

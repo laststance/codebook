@@ -10,8 +10,9 @@ import { selectHost } from 'codebook-cycle-0001/dist/utils/selectHost';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { SCENARIOS, RUN_TIMEOUT_MS, HOLD_DURATION_MS, CONTROL_RESPONSE_LIMIT_MS, type Scenario, type ParticipantName } from './constants';
+import { SCENARIOS, RUN_TIMEOUT_MS, HOLD_DURATION_MS, CONTROL_RESPONSE_LIMIT_MS, REQUIRED_CAPTURE_PHASES, type Scenario, type ParticipantName } from './constants';
 import type { PairedRun, HarnessConfig } from './run';
+import { assertFinalScenario } from './utils/assertFinalScenario';
 
 type RunView = ReturnType<PairedRun['view']>;
 interface Descriptor { origin: string; token: string }
@@ -46,9 +47,16 @@ async function exercise(descriptor: Descriptor, scenario: Scenario): Promise<Cas
     const created = await control(descriptor, '/runs', 'POST', { scenario }); assert.equal(created.status, 202);
     id = created.body.runId; if (!id) throw new Error('Missing run ID'); result.runId = id; const runId = id;
     console.log(`${scenario}: ${id}`);
+    const denied = await fetch(`${descriptor.origin}/runs/${id}`, { headers: { authorization: `Bearer ${descriptor.token}` } });
+    assert.equal(denied.status, 401); await denied.body?.cancel(); result.checks.bootstrapCannotControlRun = true;
     if (scenario === 'cancel-launch') {
       await waitUntil(async () => (await state(descriptor, runId)).events.some(event => event.type === 'fault.launch-held'), 'launch barrier', RUN_TIMEOUT_MS);
-      const removed = await control(descriptor, `/runs/${id}`, 'DELETE'); assert.equal(removed.status, 200); assert.equal(removed.body.cleaned, true); assert.equal(removed.body.status, 'cancelled'); result.passed = true; return result;
+      const removed = await control(descriptor, `/runs/${id}`, 'DELETE'); assert.equal(removed.status, 200); assert.equal(removed.body.cleaned, true); assert.equal(removed.body.status, 'cancelled');
+      assert.equal(removed.body.events.some((event: RunView['events'][number]) => event.type === 'backend.program-absent'), true);
+      const cleanup = removed.body.events.find((event: RunView['events'][number]) => event.type === 'cleanup.completed');
+      assert.equal(cleanup.detail.backendProcessAbsent, true);
+      if (!removed.body.backend) { assert.equal(cleanup.detail.backendObservation, 'program-verified-endpoint-unpublished'); assert.equal(cleanup.detail.backendListenerRefused, undefined); }
+      result.passed = true; return result;
     }
     const ready = await waitUntil(async () => { const current = await state(descriptor, runId); return ['ready', 'failed'].includes(current.status) ? current : undefined; }, 'run ready', RUN_TIMEOUT_MS);
     assert.equal(ready.status, 'ready', ready.failures.join('\n'));
@@ -80,6 +88,8 @@ async function exercise(descriptor: Descriptor, scenario: Scenario): Promise<Cas
     if (scenario === 'decoy') {
       const other = await control(descriptor, '/runs', 'POST', { scenario: 'decoy' }); assert.equal(other.status, 202);
       decoyId = other.body.runId; assert.ok(decoyId); const otherId = decoyId;
+      const foreignToken = await fetch(`${descriptor.origin}/runs/${otherId}`, { headers: { authorization: `Bearer ${tokens.get(runId)}` } });
+      assert.equal(foreignToken.status, 401); await foreignToken.body?.cancel(); result.checks.foreignRunTokenRejected = true;
       const ready = await waitUntil(async () => { const current = await state(descriptor, otherId); return ['ready', 'failed'].includes(current.status) ? current : undefined; }, 'decoy ready', RUN_TIMEOUT_MS);
       assert.equal(ready.status, 'ready', ready.failures.join('\n'));
       assert.equal((await control(descriptor, `/runs/${otherId}/actions`, 'POST', { key: 'decoy-click' })).status, 202);
@@ -114,7 +124,8 @@ async function exercise(descriptor: Descriptor, scenario: Scenario): Promise<Cas
     const completed = await waitUntil(async () => { const current = await state(descriptor, runId); return ['completed', 'failed'].includes(current.status) ? current : undefined; }, 'observed complete chain', RUN_TIMEOUT_MS);
     assert.equal(completed.status, 'completed', completed.failures.join('\n')); assert.deepEqual(completed.observed, { cartCount: 1, completedClicks: 1 }); assert.deepEqual(completed.links.map(link => link.status), ['observed', 'observed', 'observed', 'observed', 'observed']);
     assert.equal(completed.network?.closed, true); assert.equal(completed.events.filter(event => event.type === 'input.dispatched').length, 1); assert.equal(completed.events.filter(event => event.type === 'continue.accepted').length, 2);
-    assert.deepEqual(['before', 'paused-server', 'paused-browser', 'after'].map(phase => completed.captures[phase]?.status), ['captured', 'captured', 'captured', 'captured'], 'Both code reveals must preserve the owned browser viewport');
+    assert.deepEqual(REQUIRED_CAPTURE_PHASES.map(phase => completed.captures[phase]?.status), scenario === 'capture-timeout' ? ['captured', 'failed', 'captured', 'captured'] : ['captured', 'captured', 'captured', 'captured'], 'Both code reveals must preserve the owned browser viewport unless that exact capture fault is injected');
+    if (scenario === 'capture-timeout') { assert.match(completed.captures['paused-server']!.error!, /timed out/); assert.equal(completed.captures['paused-server']!.file, undefined); }
     if (decoyId && decoyStop) {
       const removed = await control(descriptor, `/runs/${runId}`, 'DELETE'); assert.equal(removed.status, 200);
       const surviving = await state(descriptor, decoyId);
@@ -126,7 +137,7 @@ async function exercise(descriptor: Descriptor, scenario: Scenario): Promise<Cas
   } catch (error) { result.error = String(error); console.error(`${scenario}: ${result.error}`); }
   finally {
     if (id) {
-      try { const removed = await control(descriptor, `/runs/${id}`, 'DELETE'); result.final = removed.body; assert.equal(removed.status, 200); assert.equal(removed.body.cleaned, true); assert.deepEqual(removed.body.activeSessionIds, []); }
+      try { const removed = await control(descriptor, `/runs/${id}`, 'DELETE'); result.final = removed.body; assert.equal(removed.status, 200); assertFinalScenario(scenario, removed.body); }
       catch (error) { result.passed = false; result.error = `${result.error ?? ''}\nCleanup: ${String(error)}`; }
     }
     if (decoyId) {
@@ -144,7 +155,7 @@ async function main(): Promise<void> {
   let child: ChildProcess | undefined; let exited: Promise<void> | undefined;
   const results: CaseResult[] = [];
   try {
-    const installation = await readHostInstallation(hostId);
+    const installation = await readHostInstallation(hostId, process.env.CODEBOOK_VSCODE_BINARY, process.env.CODEBOOK_VSCODE_CLI);
     const chromeBinary = await realpath(process.env.CODEBOOK_CHROME_BINARY ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
     const sourceHashes: string[] = [];
     for (const name of ['cycle-0001', 'cycle-0004']) {

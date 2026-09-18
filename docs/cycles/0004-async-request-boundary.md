@@ -179,7 +179,7 @@ No separate durable learning is added before the proposed remedies have implemen
 
 ## Result and handoff
 
-Pending final validation. The paired coordinator, two-runtime fixture, bounded network evidence and runner are implemented. Six engineering-review remedies are reflected in code. Exploratory normal and focused-decoy runs passed in both hosts, including four exact image receipts, both source/value snapshots and owned cleanup. The paired unit suite has 16 passing tests; the shared suite has 40. Final clean-revision matrices, shared native source regressions and implementation review are pending. Mac lock blocks independent native screenshots, but does not erase Cycle 0003 transport evidence or authorize bypassing the lock. Full checkout, product MCP, recording/replay, wiki/progress, three layouts, real-repository use and packaging remain final obligations.
+Pending final validation. The paired coordinator, two-runtime fixture, bounded network evidence and runner are implemented. Six engineering-review remedies are reflected in code. Exploratory normal and focused-decoy runs passed in both hosts, including four exact image receipts, both source/value snapshots and owned cleanup. The paired unit suite now has 23 passing tests; the shared suite has 40. Shared native normal/stale-script/source-drift regressions passed in both hosts at the unchanged shared source. Final clean-revision matrices, shared native source regressions and implementation review are pending. Mac lock blocks independent native screenshots, but does not erase Cycle 0003 transport evidence or authorize bypassing the lock. Full checkout, product MCP, recording/replay, wiki/progress, three layouts, real-repository use and packaging remain final obligations.
 
 ## GSTACK REVIEW REPORT
 
@@ -208,3 +208,16 @@ NO UNRESOLVED DECISIONS
 - One simultaneous-host run missed an initial 3-second renderer receipt. This intermittent observation is retained, not claimed fixed; final host matrices run sequentially.
 
 Private investigation reports and earlier unsuccessful runs remain under `artifacts/cycle-0004/`. Final evidence export must identify its exact revision and preserve these limits.
+
+## Implementation review, pass 1
+
+Scope: complete branch diff against main at `37420c1`. Parent plus fresh native adversarial and testing/maintainability review found four concrete issues; all are addressed under D008 delegated implementation authority. These are development reviews, not the final ten-review gate.
+
+1. Final runner verdict ignored a teardown-time revocation. It now rechecks scenario-specific final state/outcome. The actual compiled-runner regression passes and fails if its final assertion is removed in memory.
+2. Missing image receipts could coexist with `finalOutcome: demonstrated`, and the screen link named an unconfirmed PNG. Runtime/image outcomes are now separate; incomplete images produce `partial`. The screen link references the actual DOM observation event. A real delayed capture tests this partial result.
+3. One CDP/breakpoint release throw skipped remaining cleanup. All participant releases are independently settled; a regression verifies other debugger/browser release and retained retryable failure evidence.
+4. Cancellation before backend endpoint publication claimed PID/TCP checks that never ran. Cleanup now recovers any published identity, observes exact program absence after owned launcher termination, and explicitly records an unpublished endpoint without a fabricated TCP-refusal claim. A native cancellation and a process-identity/prefix regression exercise both paths.
+
+An initial attempted recovery waited for an endpoint even when the cancelled launcher had already exited before starting its child. Events proved no endpoint could be published in that path; it was replaced by direct, scoped OS process observation. The failed attempt remains in private artifacts.
+
+Both Claude Code outside passes timed out after 540000 ms and supplied no findings. Outside coverage is unavailable, not clean. Fresh review and final matrices of the repaired revision remain pending. The expanded native matrix contains 18 cases, adding `capture-timeout` and `late-request` to test outcome qualification and candidate revocation.

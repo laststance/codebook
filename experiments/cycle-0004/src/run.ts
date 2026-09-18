@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -14,12 +13,14 @@ import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { settleCleanup } from 'codebook-cycle-0001/dist/utils/settleCleanup';
 import { isEndpointClosed } from 'codebook-cycle-0001/dist/utils/isEndpointClosed';
-import { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, RUN_TIMEOUT_MS, WATCHDOG_INTERVAL_MS, MAX_BODY_BYTES, MAX_NETWORK_BUFFER_BYTES, FAULT_DELAY_MS, RESUME_COMMANDS, PARTICIPANTS, type ParticipantName, type Scenario } from './constants';
-import { VIEWPORT_WIDTH_PX, VIEWPORT_HEIGHT_PX, FOCUS_ATTEMPT_LIMIT } from 'codebook-cycle-0001/dist/constants';
+import { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, RUN_TIMEOUT_MS, WATCHDOG_INTERVAL_MS, MAX_BODY_BYTES, MAX_NETWORK_BUFFER_BYTES, FAULT_DELAY_MS, RESUME_COMMANDS, PARTICIPANTS, REQUIRED_CAPTURE_PHASES, type ParticipantName, type Scenario } from './constants';
+import { VIEWPORT_WIDTH_PX, VIEWPORT_HEIGHT_PX, FOCUS_ATTEMPT_LIMIT, INJECTED_DELAY_MS } from 'codebook-cycle-0001/dist/constants';
 import { PauseBudget } from './pauseBudget';
 import { NetworkEvidence } from './networkEvidence';
 import { inspectParticipant, type ParticipantSnapshot } from './inspectParticipant';
 import { sealFixture } from './utils/sealFixture';
+import { readBackendEndpoint, type BackendEndpoint } from './utils/readBackendEndpoint';
+import { backendProcesses } from './utils/backendProcesses';
 
 export interface HarnessConfig {
   artifactRoot: string; templateRoot: string; descriptorPath: string;
@@ -32,7 +33,6 @@ interface Participant {
   stopped?: Protocol.Debugger.PausedEvent; snapshot?: ParticipantSnapshot;
   expectedRequests: number; continuation?: PauseIdentity; continued?: PauseIdentity;
 }
-interface BackendEndpoint { runId: string; pid: number; origin: string; executable: string; version: string }
 interface Capture { status: 'pending' | 'captured' | 'failed'; file?: string; error?: string; renderer?: { epoch: string; id: number; hash: string } }
 interface CausalLink { id: string; status: 'unknown' | 'observed' | 'ambiguous' | 'mismatched'; evidence: string[] }
 
@@ -122,13 +122,7 @@ export class PairedRun {
     }
     if (!await awaitResponse(this.nodeLaunch, 'owned Node launch')) throw new Error('Host rejected owned Node launch');
     this.assertAlive();
-    this.endpoint = await waitUntil(async () => {
-      try {
-        const endpoint: BackendEndpoint = JSON.parse(await readFile(join(this.evidence.directory, 'backend-endpoint.json'), 'utf8'));
-        if (endpoint.runId !== this.id || !Number.isInteger(endpoint.pid) || !/^http:\/\/127\.0\.0\.1:\d+$/.test(endpoint.origin)) throw new Error('Invalid owned backend endpoint');
-        return endpoint;
-      } catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined; throw error; }
-    }, 'backend listener', ACTIVE_TIMEOUT_MS, this.abort.signal);
+    this.endpoint = await waitUntil(() => readBackendEndpoint(this.evidence.directory, this.id), 'backend listener', ACTIVE_TIMEOUT_MS, this.abort.signal);
     this.evidence.record('backend.endpoint', this.endpoint);
     await this.selectProxy('server');
     const url = `${this.endpoint.origin}/runs/${this.id}/index.html`;
@@ -343,7 +337,8 @@ export class PairedRun {
       this.assertAlive(); const observed: { cartCount: number; completedClicks: number } = JSON.parse(result.result.value);
       if (observed.cartCount !== 1 || observed.completedClicks !== 1) throw new Error('Visible result differs from one completed cart click');
       this.network!.closeSet(); this.observed = observed;
-      const references = [[this.operation!.id, network.selected.requestId], [network.selected.requestId, server.snapshot.id], [server.snapshot.id, network.selected.bodyHash!], [network.selected.bodyHash!, browser.snapshot.id], [browser.snapshot.id, 'after.png']];
+      const screen = this.evidence.record('screen.observed', { sessionId: browser.selected!.id, snapshotId: browser.snapshot.id, observed });
+      const references = [[this.operation!.id, network.selected.requestId], [network.selected.requestId, server.snapshot.id], [server.snapshot.id, network.selected.bodyHash!], [network.selected.bodyHash!, browser.snapshot.id], [browser.snapshot.id, `event:${screen.sequence}`]];
       this.links.forEach((link, index) => { link.status = 'observed'; link.evidence = references[index]!; });
       await this.browser?.reveal(this.abort.signal); this.assertAlive();
       await this.capture('after'); this.assertAlive();
@@ -357,7 +352,7 @@ export class PairedRun {
     const assertCurrent = () => { this.assertAlive(); if (name && pause && !this.participants[name].gate.matches(pause)) throw new Error('Captured frame no longer belongs to its pause'); };
     this.evidence.record('capture.requested', { phase, pause });
     try {
-      const result = await this.requireCdp('browser').request('Page.captureScreenshot', { format: 'png' }, CAPTURE_TIMEOUT_MS);
+      const result = await this.requireCdp('browser').request('Page.captureScreenshot', { format: 'png' }, CAPTURE_TIMEOUT_MS, this.scenario === 'capture-timeout' && phase === 'paused-server' ? INJECTED_DELAY_MS : 0);
       assertCurrent(); await this.evidence.save(`${phase}.png`, Buffer.from(result.data, 'base64')); assertCurrent();
       capture.file = `${phase}.png`; this.evidence.record('capture.pixels-saved', { phase, pause, file: capture.file });
       await this.browser?.reveal(this.abort.signal); assertCurrent();
@@ -369,7 +364,10 @@ export class PairedRun {
   /** Returns explicit participant identities and immutable references for the control runner, without tokens. @example run.view().participants.server.pause */
   view() {
     const participantView = (name: ParticipantName) => { const participant = this.participants[name]; return { sessionId: participant.selected?.id, pause: participant.gate.current, phase: participant.gate.phase, snapshot: participant.snapshot, continued: participant.continued, conflict: participant.gate.conflict }; };
-    return { runId: this.id, scenario: this.scenario, status: this.status, cleaned: this.cleaned, participants: { server: participantView('server'), browser: participantView('browser') }, operation: this.operation, observed: this.observed, network: this.network && { requests: [...this.network.requests.values()], closed: this.network.closed, errors: this.network.errors }, links: this.links, captures: this.captures, failures: this.failures, events: this.evidence.events, artifactDirectory: this.evidence.directory, activeSessionIds: [...this.activeSessions], backend: this.endpoint };
+    const runtimeOutcome = this.status === 'completed' && !this.failures.length ? 'demonstrated' : 'not-demonstrated';
+    const captureOutcome = REQUIRED_CAPTURE_PHASES.every(phase => this.captures[phase]?.status === 'captured' && this.captures[phase]?.file && this.captures[phase]?.renderer) ? 'demonstrated' : 'incomplete';
+    const finalOutcome = !this.cleaned ? 'pending-teardown' : runtimeOutcome !== 'demonstrated' ? 'not-demonstrated' : captureOutcome === 'demonstrated' ? 'demonstrated' : 'partial';
+    return { runId: this.id, scenario: this.scenario, status: this.status, cleaned: this.cleaned, runtimeOutcome, captureOutcome, finalOutcome, participants: { server: participantView('server'), browser: participantView('browser') }, operation: this.operation, observed: this.observed, network: this.network && { requests: [...this.network.requests.values()], closed: this.network.closed, errors: this.network.errors }, links: this.links, captures: this.captures, failures: this.failures, events: this.evidence.events, artifactDirectory: this.evidence.directory, activeSessionIds: [...this.activeSessions], backend: this.endpoint };
   }
 
   /** Prevents incomplete or contradictory observations becoming a final success, including late extras after candidate completion. @example run.fail('ambiguous request') */
@@ -384,7 +382,7 @@ export class PairedRun {
 
   /** Persists qualified evidence; final outcome requires settled owned teardown, not only candidate completion. @example await run.persist() */
   async persist(): Promise<void> {
-    await this.evidence.save('manifest.json', { ...this.view(), events: undefined, environment: { host: this.config.host, api: vscode.version, node: process.versions.node, jsDebug: vscode.extensions.getExtension('ms-vscode.js-debug')?.packageJSON.version }, revision: this.config.revision, dirty: this.config.dirty, sourceHash: this.config.sourceHash, finalOutcome: this.cleaned ? this.status === 'completed' && !this.failures.length ? 'demonstrated' : 'not-demonstrated' : 'pending-teardown', nativePresentationVerified: false });
+    await this.evidence.save('manifest.json', { ...this.view(), events: undefined, environment: { host: this.config.host, api: vscode.version, node: process.versions.node, jsDebug: vscode.extensions.getExtension('ms-vscode.js-debug')?.packageJSON.version }, revision: this.config.revision, dirty: this.config.dirty, sourceHash: this.config.sourceHash, nativePresentationVerified: false });
     await this.evidence.flush();
   }
 
@@ -405,14 +403,29 @@ export class PairedRun {
       { description: 'Node acquisition', release: () => awaitResponse<unknown>(this.nodeLaunch?.catch(() => undefined) ?? Promise.resolve(), 'Node acquisition') },
       { description: 'browser acquisitions', release: () => this.browser?.drainAcquisitions() },
     ]);
-    for (const name of PARTICIPANTS) {
-      const participant = this.participants[name]; participant.cdp?.close();
-      if (participant.breakpoint) vscode.debug.removeBreakpoints([participant.breakpoint]);
+    failures.push(...await settleCleanup([{ description: 'backend identity recovery', release: async () => {
+      // A cancelled prepare may never adopt the listener file even though its launch succeeded.
+      if (this.nodeLaunch && !this.endpoint) {
+        this.endpoint = await readBackendEndpoint(this.evidence.directory, this.id);
+        if (this.endpoint) this.evidence.record('backend.endpoint-recovered', this.endpoint);
+      }
+    } }]));
+    if (this.scenario === 'late-request' && this.status === 'completed') {
+      // Send one fixed fixture fault while observers still exist, proving final teardown can revoke a candidate.
+      failures.push(...await settleCleanup([{ description: 'late-request fault observation', release: async () => {
+        this.evidence.record('fault.late-request');
+        await this.requireCdp('browser').request('Runtime.evaluate', { expression: 'void fetch("api/cart", {method:"POST", headers:{"content-type":"application/json","x-codebook-operation":document.documentElement.dataset.runId},body:JSON.stringify({cartId:"selected",productId:"tote-01",price:24})})' });
+        await waitUntil(() => this.network?.errors.some(error => error.includes('after the expected observation set closed')), 'late request invalidation', CAPTURE_TIMEOUT_MS);
+      } }]));
     }
+    failures.push(...await settleCleanup(PARTICIPANTS.flatMap(name => [
+      { description: `${name} CDP close`, release: () => this.participants[name].cdp?.close() },
+      { description: `${name} breakpoint removal`, release: () => { const breakpoint = this.participants[name].breakpoint; if (breakpoint) vscode.debug.removeBreakpoints([breakpoint]); } },
+    ])));
     failures.push(...await settleCleanup([...this.sessions.values()].filter(({ session }) => !session.parentSession && this.activeSessions.has(session.id)).map(({ session }) => ({ description: 'owned debug root stop', release: () => awaitResponse(vscode.debug.stopDebugging(session), 'owned root stop') }))));
     const sourcePaths = PARTICIPANTS.map(name => this.participants[name].source?.sourcePath);
-    const sourceTabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputText && sourcePaths.includes(tab.input.uri.fsPath));
     failures.push(...await settleCleanup([{ description: 'owned source editors close', release: async () => {
+      const sourceTabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputText && sourcePaths.includes(tab.input.uri.fsPath));
       // Resolve all tab handles in one host call; closing one tab can replace the remaining API objects.
       if (sourceTabs.length && !await awaitResponse(vscode.window.tabGroups.close(sourceTabs), 'owned source editors close')) throw new Error('Host did not close owned source tabs');
       if (vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tab.input instanceof vscode.TabInputText && sourcePaths.includes(tab.input.uri.fsPath)))) throw new Error('Owned source tab remains after close');
@@ -421,14 +434,20 @@ export class PairedRun {
       { description: 'owned browser close', release: () => this.browser?.close() },
       { description: 'runtime activities settle', release: () => awaitResponse(Promise.all(this.activities), 'runtime activities') },
       { description: 'all owned sessions exit', release: () => waitUntil(() => this.activeSessions.size === 0, 'owned sessions exit', CAPTURE_TIMEOUT_MS) },
-      { description: 'backend listener exit', release: async () => { if (this.endpoint) await waitUntil(() => isEndpointClosed(this.endpoint!.origin), 'backend listener refused'); } },
+      { description: 'backend listener exit', release: async () => {
+        if (this.nodeLaunch && !this.endpoint) this.endpoint = await readBackendEndpoint(this.evidence.directory, this.id);
+        if (this.endpoint) await waitUntil(() => isEndpointClosed(this.endpoint!.origin), 'backend listener refused');
+      } },
       { description: 'backend process exit', release: async () => {
-        if (!this.endpoint) return;
-        await waitUntil(() => { try { process.kill(this.endpoint!.pid, 0); return false; } catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH') return true; throw error; } }, 'owned backend PID absent');
+        if (this.endpoint) await waitUntil(() => { try { process.kill(this.endpoint!.pid, 0); return false; } catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH') return true; throw error; } }, 'owned backend PID absent');
+        if (this.nodeLaunch) {
+          await waitUntil(async () => (await backendProcesses(join(this.evidence.directory, 'build/server.mjs'))).length === 0, 'owned backend program absent');
+          this.evidence.record('backend.program-absent', { program: 'build/server.mjs', endpointPublished: Boolean(this.endpoint) });
+        }
       } },
     ]));
     if (failures.length) { this.failures.push(...failures.map(reason => `Cleanup incomplete: ${reason}`)); this.evidence.record('cleanup.failed', { failures }); }
-    else this.evidence.record('cleanup.completed', { backendProcessAbsent: true, backendListenerRefused: true });
+    else this.evidence.record('cleanup.completed', { backendObservation: this.endpoint ? 'pid-and-program-verified' : this.nodeLaunch ? 'program-verified-endpoint-unpublished' : 'not-launched', backendProcessAbsent: this.endpoint || this.nodeLaunch ? true : undefined, backendListenerRefused: this.endpoint ? true : undefined });
     this.cleaned = failures.length === 0; await this.persist();
     if (failures.length) throw new Error(failures.join('; '));
   }
