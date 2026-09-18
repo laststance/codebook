@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, readdir, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
@@ -13,13 +13,16 @@ import { selectHost } from './utils/selectHost';
 import { awaitResponse } from './utils/awaitResponse';
 import { isEndpointClosed } from './utils/isEndpointClosed';
 import { readHostInstallation } from './utils/readHostInstallation';
+import { selectBrowser } from './utils/selectBrowser';
+import { profileProcesses } from './utils/profileProcesses';
 
 type RunView = ReturnType<ExperimentRun['view']>;
 type Descriptor = { origin: string; token: string; runTokens?: Map<string, string> };
 const packageRoot = resolve(__dirname, '..');
 const repoRoot = resolve(packageRoot, '../..');
 const hostId = selectHost(process.env.CODEBOOK_HOST);
-const artifactRoot = join(repoRoot, 'artifacts/cycle-0002', hostId);
+const browserBackend = selectBrowser(process.env.CODEBOOK_BROWSER);
+const artifactRoot = join(repoRoot, browserBackend === 'managed' ? 'artifacts/cycle-0003/managed' : 'artifacts/cycle-0002', hostId);
 const suiteId = `suite-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}`;
 const suiteDirectory = join(artifactRoot, suiteId);
 const workspace = join(suiteDirectory, 'workspace');
@@ -95,9 +98,9 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
       return result;
     }
     const prepared = await waitUntil(async () => { const current = await state(descriptor, runId); return ['ready', 'failed'].includes(current.status) ? current : undefined; }, 'prepared run', RUN_TIMEOUT_MS);
-    if (['missing-capability', 'missing-endpoint', 'ambiguous-target'].includes(scenario)) {
+    if (['missing-capability', 'missing-endpoint', 'ambiguous-target', 'missing-browser'].includes(scenario)) {
       assert.equal(prepared.status, 'failed');
-      assert.match(prepared.failures.join('\n'), scenario === 'missing-capability' ? /Missing Cursor browser capability/ : scenario === 'missing-endpoint' ? /endpoint descriptor is missing/ : /Ambiguous fixture browser targets/);
+      assert.match(prepared.failures.join('\n'), scenario === 'missing-browser' ? /rejected|launch|browser|Chrome|runtimeExecutable/i : scenario === 'missing-capability' ? /Missing Cursor browser capability/ : scenario === 'missing-endpoint' ? /endpoint descriptor is missing/ : /Ambiguous fixture browser targets/);
       assert.equal(prepared.events.filter(event => event.type === 'input.dispatched').length, 0);
     } else if (scenario === 'unbound') {
       assert.equal(prepared.status, 'failed');
@@ -146,7 +149,7 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
           assert.equal(sameKey.body.operation.id, action.body.operation.id);
           assert.equal(differentKey.status, 409);
         }
-        if (['manual-race', 'cdp-resume', 'disconnect', 'terminate'].includes(scenario)) {
+        if (['manual-race', 'cdp-resume', 'disconnect', 'terminate', 'viewport-close'].includes(scenario)) {
           const failed = await waitUntil(async () => {
             const current = await state(descriptor, runId);
             const restopped = scenario !== 'manual-race' || current.events.filter(event => event.type === 'dap.stopped').length === 2;
@@ -155,7 +158,7 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
           assert.equal(failed.events.filter(event => event.type === 'continue.accepted').length, 0);
           assert.equal(failed.events.filter(event => event.type === 'input.dispatched').length, 1);
           assert.equal(failed.events.filter(event => event.type === 'run.completed').length, 0);
-          assert.match(failed.failures.join('\n'), scenario === 'manual-race' ? /Manual or competing DAP resume/ : scenario === 'cdp-resume' ? /Continued without an owned continuation/ : scenario === 'disconnect' ? /CDP connection closed/ : /terminated|connection closed/);
+          assert.match(failed.failures.join('\n'), scenario === 'viewport-close' ? /Owned viewport closed/ : scenario === 'manual-race' ? /Manual or competing DAP resume/ : scenario === 'cdp-resume' ? /Continued without an owned continuation/ : scenario === 'disconnect' ? /CDP connection closed/ : /terminated|connection closed/);
           if (scenario === 'manual-race') {
             assert.equal(failed.conflict, true);
             assert.equal(failed.snapshot?.pause.generation, 1);
@@ -212,7 +215,12 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
           assert.deepEqual(completed.observed, { cartCount: 1, completedClicks: 1 });
           assert.equal(completed.events.filter(event => event.type === 'input.dispatched').length, 1);
           assert.equal(completed.events.filter(event => event.type === 'continue.accepted').length, 1);
-          if (scenario === 'capture-timeout') {
+          if (scenario === 'viewport-timeout') {
+            assert.equal(completed.captures['paused-1']?.status, 'failed');
+            assert.match(completed.captures['paused-1']?.error ?? '', /acknowledgement timed out/);
+            assert.equal(completed.captures.after?.status, 'captured');
+            await waitUntil(async () => (await state(descriptor, runId)).events.some(event => event.type === 'viewport.stale-ack-ignored'), 'late viewport ACK ignored');
+          } else if (scenario === 'capture-timeout') {
             await waitUntil(async () => (await state(descriptor, runId)).events.some(event => event.type === 'cdp.late-response-ignored'), 'late screenshot ignored');
             assert.equal(completed.captures['paused-1']?.status, 'failed');
             assert.equal(completed.captures['paused-1']?.file, undefined);
@@ -220,6 +228,13 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
             assert.ok(captureEvent && JSON.stringify(captureEvent.detail).includes('"inputAcknowledged":false'));
           } else {
             assert.deepEqual(Object.values(completed.captures).map(capture => capture.status), ['captured', 'captured', 'captured']);
+            if (browserBackend === 'managed') {
+              for (const capture of Object.values(completed.captures)) {
+                assert.ok(capture.renderer);
+                assert.equal(capture.renderer.hash, sha256(await readFile(join(completed.artifactDirectory, capture.file!))));
+              }
+              if (scenario === 'viewport-reload') assert.notEqual(completed.captures.before?.renderer?.epoch, completed.captures['paused-1']?.renderer?.epoch);
+            }
           }
           if (scenario === 'continue-race') {
             const stale = await control(descriptor, `${path}/continue`, 'POST', stopped.pause);
@@ -258,6 +273,13 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
         assert.deepEqual(manifest.captures, cleaned.body.captures);
         assert.equal(manifest.cleaned, true);
         assert.ok(cleaned.body.events.some((event: RunView['events'][number]) => event.type === 'browser.cleanup-verified'));
+        if (browserBackend === 'managed') {
+          const profileEvent = cleaned.body.events.find((event: RunView['events'][number]) => event.type === 'browser.managed-profile');
+          if (profileEvent) {
+            assert.equal((await profileProcesses(profileEvent.detail.profile)).length, 0);
+            assert.ok(cleaned.body.events.some((event: RunView['events'][number]) => event.type === 'browser.managed-exit-verified'));
+          }
+        }
       } catch (error) {
         result.passed = false;
         result.checks.ownedResourcesReleased = false;
@@ -298,21 +320,25 @@ async function awaitMain(): Promise<void> {
     if (!address || typeof address === 'string') throw new Error('No fixture address');
     const installation = await readHostInstallation(hostId, process.env.CODEBOOK_VSCODE_BINARY, process.env.CODEBOOK_VSCODE_CLI);
     const vscodeVersion = installation.cliVersion;
-    const host = { ...installation.host, endpointPath: hostId === 'cursor' ? join(suiteDirectory, 'debug-endpoint.json') : undefined };
+    const chromeBinary = browserBackend === 'managed' ? await realpath(process.env.CODEBOOK_CHROME_BINARY ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome') : undefined;
+    const chrome = chromeBinary ? { binary: chromeBinary, version: execFileSync(chromeBinary, ['--version'], { encoding: 'utf8' }).trim() } : undefined;
+    const host = { ...installation.host, browserBackend, chrome, endpointPath: hostId === 'cursor' && browserBackend === 'native' ? join(suiteDirectory, 'debug-endpoint.json') : undefined };
     const compiledFiles = (await readdir(join(packageRoot, 'dist'), { recursive: true })).filter(file => file.endsWith('.js')).sort();
     const compiledHashes = await Promise.all(compiledFiles.map(async file => `${file}:${sha256(await readFile(join(packageRoot, 'dist', file)))}`));
     const sourceFiles = [...(await readdir(join(packageRoot, 'src'), { recursive: true })).filter(file => file.endsWith('.ts')).map(file => `src/${file}`), 'fixture/cart.ts', 'fixture/index.html', 'fixture/tsconfig.json', 'tsconfig.json', 'package.json', 'pnpm-lock.yaml'].sort();
     const sourceHashes = await Promise.all(sourceFiles.map(async file => `${file}:${sha256(await readFile(join(packageRoot, file)))}`));
     const config: HarnessConfig = { artifactRoot, templateRoot: packageRoot, descriptorPath, fixtureOrigin: `http://127.0.0.1:${address.port}`, revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim(), workingTreeDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim()), sourceHash: sha256(sourceHashes.join('\n')), extensionHash: sha256(compiledHashes.join('\n')), host };
     await writeFile(join(workspace, 'harness.json'), JSON.stringify(config, null, 2));
-    await writeFile(join(suiteDirectory, 'environment.json'), JSON.stringify({ host, executable: installation.binaryPath, cli: installation.cliPath, vscodeVersion, node: process.version, revision: config.revision, workingTreeDirty: config.workingTreeDirty, sourceHash: config.sourceHash, sourceHashes, extensionHash: config.extensionHash, compiledHashes, scenarios }, null, 2));
+    await writeFile(join(suiteDirectory, 'environment.json'), JSON.stringify({ host, executable: installation.binaryPath, cli: installation.cliPath, vscodeVersion, node: process.version, revision: config.revision, workingTreeDirty: config.workingTreeDirty, sourceHash: config.sourceHash, sourceHashes, extensionHash: config.extensionHash, compiledHashes, scenarios, editorRemoteDebugging: hostId === 'cursor' && browserBackend === 'native' }, null, 2));
     const log = await import('node:fs');
     const outputPath = join(suiteDirectory, 'editor.log');
     const output = log.openSync(outputPath, 'w');
     // macOS Unix sockets reject long user-data paths; the evidence directory stays durable.
     const runtimeDirectory = await mkdtemp('/tmp/codebook-');
     await writeFile(join(suiteDirectory, 'runtime.json'), JSON.stringify({ runtimeDirectory }));
-    child = spawn(installation.binaryPath, ['--new-window', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', ...(hostId === 'cursor' ? ['--remote-debugging-port=0', '--skip-onboarding'] : []), '--user-data-dir', join(runtimeDirectory, 'profile'), '--extensions-dir', join(runtimeDirectory, 'extensions'), '--extensionDevelopmentPath', packageRoot, workspace], { env: { ...process.env, VSCODE_CLI: '1' }, stdio: ['ignore', output, output] });
+    const editorArguments = ['--new-window', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', ...(hostId === 'cursor' ? ['--skip-onboarding', ...(browserBackend === 'native' ? ['--remote-debugging-port=0'] : [])] : []), '--user-data-dir', join(runtimeDirectory, 'profile'), '--extensions-dir', join(runtimeDirectory, 'extensions'), '--extensionDevelopmentPath', packageRoot, workspace];
+    await writeFile(join(suiteDirectory, 'editor-launch.json'), JSON.stringify({ executable: installation.binaryPath, arguments: editorArguments }, null, 2));
+    child = spawn(installation.binaryPath, editorArguments, { env: { ...process.env, VSCODE_CLI: '1' }, stdio: ['ignore', output, output] });
     log.closeSync(output);
     const launchAbort = new AbortController();
     child.once('error', error => launchAbort.abort(error));

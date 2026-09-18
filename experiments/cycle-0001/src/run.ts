@@ -35,6 +35,7 @@ interface Capture {
   status: 'pending' | 'captured' | 'failed';
   file?: string;
   error?: string;
+  renderer?: { epoch: string; id: number; hash: string };
 }
 interface Operation {
   id: string;
@@ -81,7 +82,7 @@ export class ExperimentRun {
   constructor(readonly config: HarnessConfig, readonly scenario: Scenario) {
     this.evidence = new Evidence(join(config.artifactRoot, this.id));
     this.url = `${config.fixtureOrigin}/runs/${this.id}/index.html`;
-    this.browser = new HostBrowser(config.host, this.id, this.url, (type, detail) => this.evidence.record(type, detail), scenario);
+    this.browser = new HostBrowser(config.host, this.id, this.url, (type, detail) => this.evidence.record(type, detail), scenario, reason => this.fail(reason));
     this.watchdog = setInterval(() => {
       if (this.cleaning || ['completed', 'failed'].includes(this.status)) return;
       const elapsedMs = performance.now() - this.startedMs;
@@ -186,6 +187,7 @@ export class ExperimentRun {
     });
     cdp.on('Debugger.resumed', () => { this.cdpPause = undefined; this.evidence.record('cdp.resumed'); });
     await cdp.subscribe(['Debugger.paused', 'Debugger.resumed']);
+    await this.browser.attachViewport(cdp, this.abort.signal);
     await waitUntil(async () => (await cdp.request('Runtime.evaluate', { expression: 'document.documentElement.dataset.ready', returnByValue: true })).result.value === 'true', 'fixture ready', ACTIVE_TIMEOUT_MS, this.abort.signal);
     this.binding = await waitUntil(async () => {
       const binding = await awaitResponse(this.selected!.getDebugProtocolBreakpoint(this.breakpoint!), 'breakpoint binding', this.abort.signal);
@@ -249,6 +251,7 @@ export class ExperimentRun {
   /** Watches outbound resume commands to invalidate captures before DAP's later continued event. @example run.onRequest(session, request) */
   onRequest(session: vscode.DebugSession, message: DebugProtocol.Request): void {
     if (session.id !== this.selected?.id || !RESUME_COMMANDS.has(message.command)) return;
+    this.browser.resumeViewport();
     const expected = message.command === 'continue' && this.expectedResumeRequests > 0;
     if (expected) this.expectedResumeRequests -= 1;
     else this.fail('Manual or competing DAP resume detected; atomic ownership cannot be guaranteed');
@@ -273,6 +276,7 @@ export class ExperimentRun {
       this.track(this.capture('paused', pause));
       this.track(this.inspect(pause));
     } else if (message.event === 'continued') {
+      this.browser.resumeViewport();
       // js-debug also reports startup instrumentation resumes before any learner pause.
       if (this.gate.generation > 0 && !this.expectedContinuation) {
         this.gate.invalidate(true);
@@ -414,10 +418,13 @@ export class ExperimentRun {
       capture.file = `${captureKey}.png`;
       await this.evidence.save(capture.file, Buffer.from(result.data, 'base64'));
       if (pause && !this.gate.matches(pause)) throw new Error('Pause invalidated while saving its capture');
+      capture.renderer = await this.browser.presentCapture(result.data, captureKey);
+      if (pause && !this.gate.matches(pause)) throw new Error('Pause invalidated while displaying its capture');
       capture.status = 'captured';
     } catch (error) {
       capture.status = 'failed';
       capture.file = undefined;
+      capture.renderer = undefined;
       capture.error = String(error);
       capture.responseSequence = this.evidence.record('capture.failed', { phase, error: capture.error, generation: pause?.generation }).sequence;
     }
