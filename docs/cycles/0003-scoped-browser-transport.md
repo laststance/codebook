@@ -1,7 +1,7 @@
 # Cycle 0003 — Browser-scoped runtime transport
 
 Type: experiment
-Status: planning
+Status: implementing
 Result: pending
 Delivery: local-only
 Goal version: 3
@@ -65,10 +65,12 @@ Reuse ExperimentRun (target/pause/source/evidence), Cdp (multiplexed requests an
 
 One new browser presenter plus a focused frame-delivery helper. Configuration and test changes span more than eight files because the runner, host route, run coordinator, constants and regression checks share this contract; splitting into another coordinator would duplicate safety logic. Sequential implementation, no parallelization opportunity.
 
+Installed js-debug also supports a direct browser debugging **pipe**. Prefer `--remote-debugging-pipe` for the owned browser; only its selected-session CDP sharing endpoint is exposed by js-debug. Verify actual Chrome arguments and absence of a profile DevToolsActivePort file. A TCP-endpoint teardown check applies only if such an endpoint was actually opened; process absence remains mandatory. The experiment never claims an editor-wide port was needed.
+
 ### Architecture (2 findings)
 
-1. **A1: launch lifecycle.** Use js-debug's launch owner and selected-child CDP proxy, then verify the unique profile's Chrome PID/endpoint and final absence. Missing executable, launch failure or late acquisition cannot be reported as successful cleanup without observation. Preserve abort/late-session drainage. Alternative: custom spawn/attach duplicates lifecycle responsibilities; rejected for this bounded experiment.
-2. **A2: render acknowledgement.** `postMessage` acceptance is not display. A webview-ready epoch and frame ID must match an explicit decode/paint acknowledgement; stale epochs/late ACKs cannot confirm a newer capture. Each before/pause/after capture sends the exact PNG with its hash and phase and receives a bounded acknowledgement. Pause identity is checked again afterward. A missing frame remains a failed capture while continue stays available. Native editor visibility is separate evidence.
+1. **A1: launch lifecycle.** Use js-debug's launch owner and selected-child CDP proxy, then verify the unique profile's Chrome process and final absence. Missing executable, launch failure or late acquisition cannot be reported as successful cleanup without observation. Preserve abort/late-session drainage. Alternative: custom spawn/attach duplicates lifecycle responsibilities; rejected for this bounded experiment.
+2. **A2: render acknowledgement.** `postMessage` acceptance is not display. A webview-ready epoch and frame ID must match an explicit decode/paint acknowledgement; stale epochs/late ACKs cannot confirm a newer capture. Each before/pause/after capture sends the exact PNG with its hash and phase and receives a bounded acknowledgement. Pause identity is checked again afterward. Phase images are never coalesced away. Before sending a pause PNG, discard pending live images and freeze stream presentation until that exact pause is invalidated/continued. On invalidation cancel its pending display and reject late decode/ACK; then resume streaming. Test `old live -> pause PNG -> late live` keeps the pause image. A missing frame remains a failed capture while continue stays available. Native editor visibility is separate evidence.
 
 ### Code quality (1 finding)
 
@@ -77,7 +79,7 @@ One new browser presenter plus a focused frame-delivery helper. Configuration an
 ### Tests (2 gaps to cover)
 
 4. **T1: display lifecycle.** Test stale/wrong ACK, epoch reload, slow renderer, bounded latest-frame queue and disposal. Native cases cover pane close/rehydration, missing browser and frame timeout; fault injection is labeled separately. No mock is native paint proof.
-5. **T2: ownership regression.** Run the 17 common real-debugger cases in both hosts plus managed-specific failure cases. Record editor launch arguments without remote-debugging flags, actual Chrome binary/version, fresh profile, owned process/endpoint exit and decoy survival. Verify line/source hashes and tote-01 / 24 / 0 -> DOM 1 / one click. Keep 40-second pause and concurrent control checks.
+5. **T2: ownership regression.** Run the 17 common real-debugger cases in both hosts plus managed-specific failure cases. Record editor launch arguments without remote-debugging flags, actual Chrome binary/version, fresh profile, owned process exit and decoy survival. Verify line/source hashes and tote-01 / 24 / 0 -> DOM 1 / one click. Keep 40-second pause and concurrent control checks.
 
 ### Performance (1 finding)
 
@@ -113,7 +115,7 @@ The frame-delivery helper gets the inline state diagram `idle -> inFlight + late
 | Dropped, stale or late webview ACK | unit + native fault | bound timeout, mark capture failed, keep continue independent |
 | Pane reload/hidden/disposed | unit + native pane case | new ready epoch, replay latest frame; unexpected disposal fails viewport |
 | CDP/session dies | existing native disconnect/termination cases | fail run and preserve partial evidence, no retry |
-| Cleanup's browser survives | native process/endpoint checks | report cleanup incomplete; never certify success on timeout |
+| Cleanup's browser survives | native profile/process checks | report cleanup incomplete; never certify success on timeout |
 | High screencast rate | bounded queue unit | keep at most one in flight and latest pending, record replacements |
 
 No silent unhandled failure accepted. Planned test coverage is not execution evidence.
@@ -134,4 +136,16 @@ No new TODOS.md candidates; deferred outcomes already have canonical goal IDs. N
 - [ ] T2 (P1; human ~4h / agent ~40min): bounded live presenter with phase/epoch acknowledgement; A2/P1. Presenter, frame helper, ExperimentRun capture, focused unit tests.
 - [ ] T3 (P1; human ~3h / agent ~30min): both-host native matrix and sanitized evidence; T1/T2. Runner, test cases, cycle/state records.
 
-Review status: parent architecture/code-quality/test/performance review complete; independent challenge pending. Six issues folded into the plan, zero unresolved decisions, zero known silent critical gaps. Lake score: 3/3 complete lifecycle/evidence/test choices. Implementation remains unverified.
+Review status: parent architecture/code-quality/test/performance review complete; fresh in-host challenge completed with one P2 on pause-image/stream ordering, folded into A2 under the delegated implementation scope. External Claude Code timed out after 300000 ms (unavailable, not clean). Seven issues folded into the plan, zero unresolved decisions, zero known silent critical gaps. Lake score: 3/3 complete lifecycle/evidence/test choices. Implementation remains unverified.
+
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Status | Findings / limits |
+| --- | --- | --- | --- |
+| Engineering plan | /plan-eng-review, bounded Cycle 0003 | complete | Architecture 2, code quality 1, test gaps 2, performance 1; all planned, not implemented evidence |
+| Independent in-host plan challenge | provider-unavailable fallback | complete with finding | 1 P2: freeze pause image and drop stale live frames; folded into A2 |
+| External Claude Code plan challenge | default-on outside voice | unavailable | timeout after 300000 ms; no evaluation |
+| Product UX / final product review | not triggered for this transport plan | not performed | Full G01–G11 final acceptance and 0/10 streak unchanged |
+
+Completion: scope retained with js-debug reuse, six parent findings plus one native finding incorporated; zero unresolved decisions or known unhandled silent gaps; no new TODOs; sequential implementation; Lake score 3/3. Existing Cycle 0002 diff review remains non-converged and is not cleared by this plan review. No implementation/packaging approval is inferred.
