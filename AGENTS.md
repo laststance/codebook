@@ -8,7 +8,7 @@
 
 ## Execute the development loop
 
-- Preserve the full product goal, including recording and both later display modes. Scope the current cycle narrowly; never treat its scope as a reduction of the destination.
+- Preserve the full product goal, including operation in both VS Code and Cursor, recording, and both later display modes. Scope the current cycle narrowly; never treat its scope as a reduction of the destination. Keep host-specific evidence separate; VS Code success does not verify Cursor.
 - Keep one active cycle. Plan its next observable outcome, implement or experiment, obtain the specified evidence, and update the cycle plus PROJECT_STATE.md before finishing the session.
 - Choose GStack skills with DEVELOPMENT.md. Pass the current cycle path and scope explicitly; the product design supplies context, not a request to implement the whole product.
 - Follow an invoked skill's applicable requirements for the bounded cycle. Honor explicit scope gates and existing user authorization; do not misrepresent an agent-selected target as a user-named target to bypass a skill gate.

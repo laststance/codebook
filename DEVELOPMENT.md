@@ -75,7 +75,7 @@ These mappings were checked against the installed skill definitions on 2026-09-1
 
 Ordinary implementation is the coding agent's work, not an invented GStack implementation command. Small documentation-only changes do not need a full review pipeline. A failed hypothesis does not require a PR or release before its result can inform the next cycle.
 
-Browser QA alone does not validate a native VS Code extension, DAP targeting, the embedded MCP service, or a packaged VSIX. Use the appropriate actual extension/debug integration harness alongside GStack. Missing browser/native tools are reported as missing coverage, not silently replaced by static checks.
+Browser QA alone does not validate a native extension in VS Code or Cursor, DAP targeting, the embedded MCP service, or a packaged VSIX. Use the appropriate actual extension/debug integration harness alongside GStack. Both hosts are required for final acceptance; keep their versions and evidence separate. A cycle may prove behavior in one host without verifying the other. Missing browser/native tools are reported as missing coverage, not silently replaced by static checks.
 
 ### Invocation contract
 

@@ -4,6 +4,8 @@ Learn an unfamiliar codebase by connecting what an application does on screen wi
 
 The destination is a chat-driven, recorded walkthrough from adding a product to the cart through checkout, linked to a wiki, codemap, and personal learning progress. Study workspace is the default; Living book and Guided walkthrough are required later display modes.
 
+The complete product must work in **both VS Code and Cursor**. Final acceptance includes packaged-extension installation and the full experience in each editor. Cursor support is required but currently unverified; the existing experiment establishes VS Code fixture behavior only.
+
 ## Start here
 
 | Question | Source of truth |
