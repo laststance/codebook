@@ -362,12 +362,15 @@ export class PairedRun {
   }
 
   /** Returns explicit participant identities and immutable references for the control runner, without tokens. @example run.view().participants.server.pause */
-  view() {
+  view() { return this.describe(this.cleaned); }
+
+  /** Builds a prospective persisted result without publishing cleanup completion before its write succeeds. @example this.describe(true).finalOutcome */
+  private describe(cleaned: boolean) {
     const participantView = (name: ParticipantName) => { const participant = this.participants[name]; return { sessionId: participant.selected?.id, pause: participant.gate.current, phase: participant.gate.phase, snapshot: participant.snapshot, continued: participant.continued, conflict: participant.gate.conflict }; };
     const runtimeOutcome = this.status === 'completed' && !this.failures.length ? 'demonstrated' : 'not-demonstrated';
     const captureOutcome = REQUIRED_CAPTURE_PHASES.every(phase => this.captures[phase]?.status === 'captured' && this.captures[phase]?.file && this.captures[phase]?.renderer) ? 'demonstrated' : 'incomplete';
-    const finalOutcome = !this.cleaned ? 'pending-teardown' : runtimeOutcome !== 'demonstrated' ? 'not-demonstrated' : captureOutcome === 'demonstrated' ? 'demonstrated' : 'partial';
-    return { runId: this.id, scenario: this.scenario, status: this.status, cleaned: this.cleaned, runtimeOutcome, captureOutcome, finalOutcome, participants: { server: participantView('server'), browser: participantView('browser') }, operation: this.operation, observed: this.observed, network: this.network && { requests: [...this.network.requests.values()], closed: this.network.closed, errors: this.network.errors }, links: this.links, captures: this.captures, failures: this.failures, events: this.evidence.events, artifactDirectory: this.evidence.directory, activeSessionIds: [...this.activeSessions], backend: this.endpoint };
+    const finalOutcome = !cleaned ? 'pending-teardown' : runtimeOutcome !== 'demonstrated' ? 'not-demonstrated' : captureOutcome === 'demonstrated' ? 'demonstrated' : 'partial';
+    return { runId: this.id, scenario: this.scenario, status: this.status, cleaned, runtimeOutcome, captureOutcome, finalOutcome, participants: { server: participantView('server'), browser: participantView('browser') }, operation: this.operation, observed: this.observed, network: this.network && { requests: [...this.network.requests.values()], closed: this.network.closed, errors: this.network.errors }, links: this.links, captures: this.captures, failures: this.failures, events: this.evidence.events, artifactDirectory: this.evidence.directory, activeSessionIds: [...this.activeSessions], backend: this.endpoint };
   }
 
   /** Prevents incomplete or contradictory observations becoming a final success, including late extras after candidate completion. @example run.fail('ambiguous request') */
@@ -383,9 +386,11 @@ export class PairedRun {
     void this.cleanup().catch(error => console.error('Automatic paired cleanup incomplete', error));
   }
 
-  /** Persists qualified evidence; final outcome requires settled owned teardown, not only candidate completion. @example await run.persist() */
-  async persist(): Promise<void> {
-    await this.evidence.save('manifest.json', { ...this.view(), events: undefined, environment: { host: this.config.host, api: vscode.version, node: process.versions.node, jsDebug: vscode.extensions.getExtension('ms-vscode.js-debug')?.packageJSON.version }, revision: this.config.revision, dirty: this.config.dirty, sourceHash: this.config.sourceHash, nativePresentationVerified: false });
+  /** Persists qualified evidence; final outcome requires settled owned teardown, not only candidate completion. @example await this.persist() */
+  private async persist(cleaned = this.cleaned): Promise<void> {
+    // Existing write errors must block a prospective final manifest, even when resource release succeeded.
+    await this.evidence.flush();
+    await this.evidence.save('manifest.json', { ...this.describe(cleaned), events: undefined, environment: { host: this.config.host, api: vscode.version, node: process.versions.node, jsDebug: vscode.extensions.getExtension('ms-vscode.js-debug')?.packageJSON.version }, revision: this.config.revision, dirty: this.config.dirty, sourceHash: this.config.sourceHash, nativePresentationVerified: false });
     await this.evidence.flush();
   }
 
@@ -451,7 +456,13 @@ export class PairedRun {
     ]));
     if (failures.length) { this.failures.push(...failures.map(reason => `Cleanup incomplete: ${reason}`)); this.evidence.record('cleanup.failed', { failures }); }
     else this.evidence.record('cleanup.completed', { backendObservation: this.endpoint ? 'pid-and-program-verified' : this.nodeLaunch ? 'program-verified-endpoint-unpublished' : 'not-launched', backendProcessAbsent: this.endpoint || this.nodeLaunch ? true : undefined, backendListenerRefused: this.endpoint ? true : undefined });
-    this.cleaned = failures.length === 0; await this.persist();
+    try { await this.persist(failures.length === 0); this.cleaned = failures.length === 0; }
+    catch (error) {
+      // GET must retain failed finalization even if DELETE rejects before it can return a body.
+      this.cleaned = false; this.status = 'failed';
+      this.failures.push(`Final evidence persistence failed: ${String(error)}`);
+      throw error;
+    }
     if (failures.length) throw new Error(failures.join('; '));
   }
 

@@ -128,3 +128,38 @@ test('a failed run releases owned resources without any external delete request'
     assert.equal(run.view().status, 'failed'); assert.equal(run.view().finalOutcome, 'not-demonstrated'); assert.deepEqual([...run.failures], ['Missing operation identity']);
   } finally { await run.cleanup(); await rm(directory, { recursive: true }); }
 });
+
+test('pending or failed final evidence persistence never publishes a demonstrated run', async () => {
+  // Arrange: intercept only the real Evidence writer; the coordinator and cleanup flow stay intact.
+  const { run, directory } = await harness(); run.status = 'completed';
+  for (const phase of ['before', 'paused-server', 'paused-browser', 'after']) run.captures[phase] = { status: 'captured', file: `${phase}.png`, renderer: { epoch: 'epoch', id: 1, hash: 'hash' } };
+  const save = run.evidence.save.bind(run.evidence);
+  let entered = false; let rejectWrite: (error: Error) => void = () => undefined;
+  run.evidence.save = async () => { entered = true; await new Promise<void>((_, reject) => { rejectWrite = reject; }); };
+  try {
+    // Act
+    const cleanup = run.cleanup(); const rejected = assert.rejects(cleanup, /ENOSPC: final evidence write/);
+    await waitUntil(() => entered, 'final manifest write started', 1_000);
+    const pending = run.view(); rejectWrite(new Error('ENOSPC: final evidence write')); await rejected;
+    // Assert
+    assert.equal(pending.cleaned, false); assert.equal(pending.finalOutcome, 'pending-teardown');
+    assert.equal(run.view().cleaned, false); assert.equal(run.view().status, 'failed');
+    assert.equal(run.view().runtimeOutcome, 'not-demonstrated'); assert.equal(run.view().finalOutcome, 'pending-teardown');
+    assert.match(run.view().failures.join('\n'), /Final evidence persistence failed: Error: ENOSPC/);
+  } finally { run.evidence.save = save; await run.cleanup(); await rm(directory, { recursive: true }); }
+});
+
+test('an earlier evidence write failure blocks the final manifest before success bytes are written', async () => {
+  // Arrange
+  const { run, directory } = await harness(); run.status = 'completed';
+  const save = run.evidence.save.bind(run.evidence); let writes = 0;
+  run.evidence.save = async (...arguments_) => { writes++; await save(...arguments_); };
+  run.evidence.failure = 'ENOSPC: event append';
+  try {
+    // Act
+    await assert.rejects(run.cleanup(), /ENOSPC: event append/);
+    // Assert
+    assert.equal(writes, 0); assert.equal(run.view().cleaned, false); assert.equal(run.view().status, 'failed');
+    assert.match(run.view().failures.join('\n'), /Final evidence persistence failed/);
+  } finally { run.evidence.failure = undefined; await run.cleanup(); await rm(directory, { recursive: true }); }
+});
