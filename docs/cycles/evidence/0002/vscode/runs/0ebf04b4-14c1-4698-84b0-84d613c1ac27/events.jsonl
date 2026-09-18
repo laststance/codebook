@@ -1,0 +1,76 @@
+{"sequence": 1, "elapsedMs": 0.217583, "wallTime": "2026-09-18T13:00:11.458Z", "type": "run.created", "detail": {"runId": "0ebf04b4-14c1-4698-84b0-84d613c1ac27", "scenario": "disconnect"}}
+{"sequence": 2, "elapsedMs": 5.505041, "wallTime": "2026-09-18T13:00:11.463Z", "type": "focus.changed", "detail": {}}
+{"sequence": 3, "elapsedMs": 38.029041, "wallTime": "2026-09-18T13:00:11.496Z", "type": "breakpoint.requested", "detail": {"id": "4c1875db-c2b6-4c47-8345-2df214927f30", "sourcePath": "<repo>/artifacts/cycle-0002/vscode/0ebf04b4-14c1-4698-84b0-84d613c1ac27/fixture/cart.ts", "line": 9}}
+{"sequence": 4, "elapsedMs": 88.811875, "wallTime": "2026-09-18T13:00:11.547Z", "type": "session.started", "detail": {"sessionId": "a07f5f0d-7cd0-4f0e-a539-be8862b47575", "type": "pwa-editor-browser", "name": "codebook 0ebf04b4-14c1-4698-84b0-84d613c1ac27"}}
+{"sequence": 5, "elapsedMs": 130.840666, "wallTime": "2026-09-18T13:00:11.589Z", "type": "session.started", "detail": {"sessionId": "07bf1772-4755-4fed-8c1b-a6478da7b13c", "parentId": "a07f5f0d-7cd0-4f0e-a539-be8862b47575", "type": "pwa-editor-browser", "name": ""}}
+{"sequence": 6, "elapsedMs": 138.599583, "wallTime": "2026-09-18T13:00:11.596Z", "type": "focus.changed", "detail": {"sessionId": "a07f5f0d-7cd0-4f0e-a539-be8862b47575"}}
+{"sequence": 7, "elapsedMs": 139.804041, "wallTime": "2026-09-18T13:00:11.598Z", "type": "host.debugger-started", "detail": {"host": "vscode", "type": "editor-browser"}}
+{"sequence": 8, "elapsedMs": 147.544875, "wallTime": "2026-09-18T13:00:11.605Z", "type": "cdp.sent", "detail": {"id": 1, "method": "Runtime.evaluate"}}
+{"sequence": 9, "elapsedMs": 185.988291, "wallTime": "2026-09-18T13:00:11.644Z", "type": "cdp.response", "detail": {"id": 1, "method": "Runtime.evaluate", "failed": false}}
+{"sequence": 10, "elapsedMs": 186.028833, "wallTime": "2026-09-18T13:00:11.644Z", "type": "target.selected", "detail": {"sessionId": "07bf1772-4755-4fed-8c1b-a6478da7b13c", "parentId": "a07f5f0d-7cd0-4f0e-a539-be8862b47575", "url": "http://127.0.0.1:62405/runs/0ebf04b4-14c1-4698-84b0-84d613c1ac27/index.html"}}
+{"sequence": 11, "elapsedMs": 186.037625, "wallTime": "2026-09-18T13:00:11.644Z", "type": "cdp.sent", "detail": {"id": 2, "method": "JsDebug.subscribe"}}
+{"sequence": 12, "elapsedMs": 186.430583, "wallTime": "2026-09-18T13:00:11.644Z", "type": "cdp.response", "detail": {"id": 2, "method": "JsDebug.subscribe", "failed": false}}
+{"sequence": 13, "elapsedMs": 186.441, "wallTime": "2026-09-18T13:00:11.644Z", "type": "cdp.sent", "detail": {"id": 3, "method": "Runtime.evaluate"}}
+{"sequence": 14, "elapsedMs": 187.777666, "wallTime": "2026-09-18T13:00:11.646Z", "type": "cdp.response", "detail": {"id": 3, "method": "Runtime.evaluate", "failed": false}}
+{"sequence": 15, "elapsedMs": 189.779875, "wallTime": "2026-09-18T13:00:11.648Z", "type": "focus.changed", "detail": {"sessionId": "07bf1772-4755-4fed-8c1b-a6478da7b13c"}}
+{"sequence": 16, "elapsedMs": 193.166, "wallTime": "2026-09-18T13:00:11.651Z", "type": "cdp.paused", "detail": {"scriptLocation": {"columnNumber": 16, "lineNumber": 0, "scriptId": "4"}, "reason": "instrumentation"}}
+{"sequence": 17, "elapsedMs": 202.9735, "wallTime": "2026-09-18T13:00:11.661Z", "type": "dap.continued", "detail": {"sessionId": "07bf1772-4755-4fed-8c1b-a6478da7b13c", "body": {"threadId": 12, "allThreadsContinued": false}}}
+{"sequence": 18, "elapsedMs": 203.257583, "wallTime": "2026-09-18T13:00:11.661Z", "type": "cdp.resumed", "detail": {}}
+{"sequence": 19, "elapsedMs": 239.218916, "wallTime": "2026-09-18T13:00:11.697Z", "type": "cdp.sent", "detail": {"id": 4, "method": "Runtime.evaluate"}}
+{"sequence": 20, "elapsedMs": 240.465, "wallTime": "2026-09-18T13:00:11.698Z", "type": "cdp.response", "detail": {"id": 4, "method": "Runtime.evaluate", "failed": false}}
+{"sequence": 21, "elapsedMs": 240.6165, "wallTime": "2026-09-18T13:00:11.698Z", "type": "breakpoint.bound", "detail": {"id": 0, "verified": true, "source": {"name": "fixture/cart.ts", "path": "<repo>/artifacts/cycle-0002/vscode/0ebf04b4-14c1-4698-84b0-84d613c1ac27/fixture/cart.ts", "sourceReference": 0}, "line": 9}}
+{"sequence": 22, "elapsedMs": 240.630625, "wallTime": "2026-09-18T13:00:11.698Z", "type": "browser.tabs-before-reveal", "detail": [{"column": 1, "tabs": [{"label": "codebook 0ebf04b4", "isActive": true}]}, {"column": 2, "tabs": [{"label": "cart.ts", "isActive": true, "input": {"uri": {"$mid": 1, "fsPath": "<repo>/artifacts/cycle-0002/vscode/0ebf04b4-14c1-4698-84b0-84d613c1ac27/fixture/cart.ts", "external": "file://<repo>/artifacts/cycle-0002/vscode/0ebf04b4-14c1-4698-84b0-84d613c1ac27/fixture/cart.ts", "path": "<repo>/artifacts/cycle-0002/vscode/0ebf04b4-14c1-4698-84b0-84d613c1ac27/fixture/cart.ts", "scheme": "file"}}}]}]}
+{"sequence": 23, "elapsedMs": 247.079791, "wallTime": "2026-09-18T13:00:11.705Z", "type": "browser.revealed", "detail": {"title": "codebook 0ebf04b4", "index": 0}}
+{"sequence": 24, "elapsedMs": 247.578958, "wallTime": "2026-09-18T13:00:11.705Z", "type": "cdp.sent", "detail": {"id": 5, "method": "Page.bringToFront"}}
+{"sequence": 25, "elapsedMs": 251.966208, "wallTime": "2026-09-18T13:00:11.710Z", "type": "cdp.response", "detail": {"id": 5, "method": "Page.bringToFront", "failed": false}}
+{"sequence": 26, "elapsedMs": 251.990375, "wallTime": "2026-09-18T13:00:11.710Z", "type": "cdp.sent", "detail": {"id": 6, "method": "Page.getLayoutMetrics"}}
+{"sequence": 27, "elapsedMs": 256.468666, "wallTime": "2026-09-18T13:00:11.714Z", "type": "cdp.response", "detail": {"id": 6, "method": "Page.getLayoutMetrics", "failed": false}}
+{"sequence": 28, "elapsedMs": 256.49975, "wallTime": "2026-09-18T13:00:11.714Z", "type": "page.initial-layout", "detail": {"contentSize": {"height": 761, "width": 387, "x": 0, "y": 0}, "cssContentSize": {"height": 761, "width": 387, "x": 0, "y": 0}, "cssLayoutViewport": {"clientHeight": 761, "clientWidth": 387, "pageX": 0, "pageY": 0}, "cssVisualViewport": {"clientHeight": 761, "clientWidth": 387, "offsetX": 0, "offsetY": 0, "pageX": 0, "pageY": 0, "scale": 1, "zoom": 1}, "layoutViewport": {"clientHeight": 761, "clientWidth": 387, "pageX": 0, "pageY": 0}, "visualViewport": {"clientHeight": 761, "clientWidth": 387, "offsetX": 0, "offsetY": 0, "pageX": 0, "pageY": 0, "scale": 1, "zoom": 1}}}
+{"sequence": 29, "elapsedMs": 256.510916, "wallTime": "2026-09-18T13:00:11.714Z", "type": "cdp.sent", "detail": {"id": 7, "method": "Page.getLayoutMetrics"}}
+{"sequence": 30, "elapsedMs": 257.620041, "wallTime": "2026-09-18T13:00:11.715Z", "type": "cdp.response", "detail": {"id": 7, "method": "Page.getLayoutMetrics", "failed": false}}
+{"sequence": 31, "elapsedMs": 257.635666, "wallTime": "2026-09-18T13:00:11.715Z", "type": "page.visible-layout", "detail": {"contentSize": {"height": 761, "width": 387, "x": 0, "y": 0}, "cssContentSize": {"height": 761, "width": 387, "x": 0, "y": 0}, "cssLayoutViewport": {"clientHeight": 761, "clientWidth": 387, "pageX": 0, "pageY": 0}, "cssVisualViewport": {"clientHeight": 761, "clientWidth": 387, "offsetX": 0, "offsetY": 0, "pageX": 0, "pageY": 0, "scale": 1, "zoom": 1}, "layoutViewport": {"clientHeight": 761, "clientWidth": 387, "pageX": 0, "pageY": 0}, "visualViewport": {"clientHeight": 761, "clientWidth": 387, "offsetX": 0, "offsetY": 0, "pageX": 0, "pageY": 0, "scale": 1, "zoom": 1}}}
+{"sequence": 32, "elapsedMs": 257.801833, "wallTime": "2026-09-18T13:00:11.716Z", "type": "capture.requested", "detail": {"phase": "before"}}
+{"sequence": 33, "elapsedMs": 257.810375, "wallTime": "2026-09-18T13:00:11.716Z", "type": "cdp.sent", "detail": {"id": 8, "method": "Page.captureScreenshot"}}
+{"sequence": 34, "elapsedMs": 275.1225, "wallTime": "2026-09-18T13:00:11.733Z", "type": "cdp.response", "detail": {"id": 8, "method": "Page.captureScreenshot", "failed": false}}
+{"sequence": 35, "elapsedMs": 275.149791, "wallTime": "2026-09-18T13:00:11.733Z", "type": "capture.received", "detail": {"phase": "before"}}
+{"sequence": 36, "elapsedMs": 313.93125, "wallTime": "2026-09-18T13:00:11.772Z", "type": "action.accepted", "detail": {"operationId": "7cf4ec22-c17a-4cf2-b8bd-323edcb70bd4", "key": "one-cart-add"}}
+{"sequence": 37, "elapsedMs": 313.941625, "wallTime": "2026-09-18T13:00:11.772Z", "type": "cdp.sent", "detail": {"id": 9, "method": "Runtime.evaluate"}}
+{"sequence": 38, "elapsedMs": 315.215875, "wallTime": "2026-09-18T13:00:11.773Z", "type": "cdp.response", "detail": {"id": 9, "method": "Runtime.evaluate", "failed": false}}
+{"sequence": 39, "elapsedMs": 315.231, "wallTime": "2026-09-18T13:00:11.773Z", "type": "input.coordinates", "detail": {"x": 137.5390625, "y": 437.484375}}
+{"sequence": 40, "elapsedMs": 315.232375, "wallTime": "2026-09-18T13:00:11.773Z", "type": "input.dispatched", "detail": {"operationId": "7cf4ec22-c17a-4cf2-b8bd-323edcb70bd4"}}
+{"sequence": 41, "elapsedMs": 315.237708, "wallTime": "2026-09-18T13:00:11.773Z", "type": "cdp.sent", "detail": {"id": 10, "method": "Input.dispatchMouseEvent"}}
+{"sequence": 42, "elapsedMs": 316.215041, "wallTime": "2026-09-18T13:00:11.774Z", "type": "cdp.response", "detail": {"id": 10, "method": "Input.dispatchMouseEvent", "failed": false}}
+{"sequence": 43, "elapsedMs": 316.2345, "wallTime": "2026-09-18T13:00:11.774Z", "type": "cdp.sent", "detail": {"id": 11, "method": "Input.dispatchMouseEvent"}}
+{"sequence": 44, "elapsedMs": 317.125, "wallTime": "2026-09-18T13:00:11.775Z", "type": "cdp.paused", "detail": {"scriptLocation": {"columnNumber": 4, "lineNumber": 7, "scriptId": "4"}, "reason": "other"}}
+{"sequence": 45, "elapsedMs": 318.612291, "wallTime": "2026-09-18T13:00:11.776Z", "type": "dap.stopped", "detail": {"sessionId": "07bf1772-4755-4fed-8c1b-a6478da7b13c", "threadId": 12, "generation": 1, "reason": "breakpoint", "hitBreakpointIds": [0]}}
+{"sequence": 46, "elapsedMs": 318.615916, "wallTime": "2026-09-18T13:00:11.776Z", "type": "capture.requested", "detail": {"phase": "paused", "generation": 1, "inputAcknowledged": false}}
+{"sequence": 47, "elapsedMs": 318.619833, "wallTime": "2026-09-18T13:00:11.776Z", "type": "cdp.sent", "detail": {"id": 12, "method": "Page.captureScreenshot"}}
+{"sequence": 48, "elapsedMs": 341.215, "wallTime": "2026-09-18T13:00:11.799Z", "type": "cdp.sent", "detail": {"id": 13, "method": "Debugger.getScriptSource"}}
+{"sequence": 49, "elapsedMs": 342.069166, "wallTime": "2026-09-18T13:00:11.800Z", "type": "cdp.response", "detail": {"id": 13, "method": "Debugger.getScriptSource", "failed": false}}
+{"sequence": 50, "elapsedMs": 342.470541, "wallTime": "2026-09-18T13:00:11.800Z", "type": "source.executed", "detail": {"actualHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10", "expectedHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10", "scriptId": "4"}}
+{"sequence": 51, "elapsedMs": 342.617416, "wallTime": "2026-09-18T13:00:11.800Z", "type": "source.local", "detail": {"actualHash": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d", "expectedHash": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d"}}
+{"sequence": 52, "elapsedMs": 343.185875, "wallTime": "2026-09-18T13:00:11.801Z", "type": "snapshot.committed", "detail": {"snapshotId": "07bf1772-4755-4fed-8c1b-a6478da7b13c:1", "pause": {"sessionId": "07bf1772-4755-4fed-8c1b-a6478da7b13c", "threadId": 12, "generation": 1}}}
+{"sequence": 53, "elapsedMs": 348.81575, "wallTime": "2026-09-18T13:00:11.807Z", "type": "cdp.response", "detail": {"id": 12, "method": "Page.captureScreenshot", "failed": false}}
+{"sequence": 54, "elapsedMs": 348.834208, "wallTime": "2026-09-18T13:00:11.807Z", "type": "capture.received", "detail": {"phase": "paused", "generation": 1}}
+{"sequence": 55, "elapsedMs": 845.927958, "wallTime": "2026-09-18T13:00:12.304Z", "type": "fault.injected", "detail": {"scenario": "disconnect"}}
+{"sequence": 56, "elapsedMs": 846.077875, "wallTime": "2026-09-18T13:00:12.304Z", "type": "run.failed", "detail": {"reason": "Selected CDP connection closed; partial evidence retained"}}
+{"sequence": 57, "elapsedMs": 846.665791, "wallTime": "2026-09-18T13:00:12.304Z", "type": "run.failed", "detail": {"reason": "Error: CDP disconnected"}}
+{"sequence": 58, "elapsedMs": 850.127375, "wallTime": "2026-09-18T13:00:12.308Z", "type": "cleanup.started", "detail": {}}
+{"sequence": 59, "elapsedMs": 2855.036458, "wallTime": "2026-09-18T13:00:14.313Z", "type": "session.terminated", "detail": {"sessionId": "a07f5f0d-7cd0-4f0e-a539-be8862b47575"}}
+{"sequence": 60, "elapsedMs": 2856.726708, "wallTime": "2026-09-18T13:00:14.314Z", "type": "session.terminated", "detail": {"sessionId": "07bf1772-4755-4fed-8c1b-a6478da7b13c"}}
+{"sequence": 61, "elapsedMs": 2876.261208, "wallTime": "2026-09-18T13:00:14.334Z", "type": "browser.cleanup-verified", "detail": {"host": "vscode", "remainingOwnedTabs": 0}}
+{"sequence": 62, "elapsedMs": 2892.327791, "wallTime": "2026-09-18T13:00:14.350Z", "type": "cleanup.completed", "detail": {}}
+{"sequence": 63, "elapsedMs": 2898.913458, "wallTime": "2026-09-18T13:00:14.357Z", "type": "session.terminated", "detail": {"sessionId": "07bf1772-4755-4fed-8c1b-a6478da7b13c"}}
+{"sequence": 64, "elapsedMs": 2899.218875, "wallTime": "2026-09-18T13:00:14.357Z", "type": "focus.changed", "detail": {}}
+{"sequence": 65, "elapsedMs": 3015.671833, "wallTime": "2026-09-18T13:00:14.473Z", "type": "focus.changed", "detail": {"sessionId": "1e4d7018-965c-422b-837a-406832d8d321"}}
+{"sequence": 66, "elapsedMs": 3063.5705, "wallTime": "2026-09-18T13:00:14.521Z", "type": "focus.changed", "detail": {"sessionId": "567f7428-ea3c-4ce2-9208-aefe880cd853"}}
+{"sequence": 67, "elapsedMs": 3721.920208, "wallTime": "2026-09-18T13:00:15.180Z", "type": "focus.changed", "detail": {"sessionId": "1e4d7018-965c-422b-837a-406832d8d321"}}
+{"sequence": 68, "elapsedMs": 3723.851125, "wallTime": "2026-09-18T13:00:15.182Z", "type": "focus.changed", "detail": {}}
+{"sequence": 69, "elapsedMs": 3858.756791, "wallTime": "2026-09-18T13:00:15.317Z", "type": "focus.changed", "detail": {"sessionId": "ecd462b8-7045-4b25-be1f-6d3a8c2c85ae"}}
+{"sequence": 70, "elapsedMs": 3906.935083, "wallTime": "2026-09-18T13:00:15.365Z", "type": "focus.changed", "detail": {"sessionId": "2585b0a5-0f74-4e84-918e-c9f45a3e1b96"}}
+{"sequence": 71, "elapsedMs": 6176.033541, "wallTime": "2026-09-18T13:00:17.634Z", "type": "focus.changed", "detail": {}}
+{"sequence": 72, "elapsedMs": 6340.396708, "wallTime": "2026-09-18T13:00:17.798Z", "type": "focus.changed", "detail": {"sessionId": "f37ef12e-47fa-4bfa-b6bf-42fe0fa80800"}}
+{"sequence": 73, "elapsedMs": 6389.813583, "wallTime": "2026-09-18T13:00:17.848Z", "type": "focus.changed", "detail": {"sessionId": "5be91e50-83dd-44ce-86e0-1a7efa62c71a"}}
+{"sequence": 74, "elapsedMs": 8536.672208, "wallTime": "2026-09-18T13:00:19.994Z", "type": "focus.changed", "detail": {}}
+{"sequence": 75, "elapsedMs": 8683.981125, "wallTime": "2026-09-18T13:00:20.142Z", "type": "focus.changed", "detail": {"sessionId": "ce31b130-694f-42d5-8afa-c890f6a441d8"}}
+{"sequence": 76, "elapsedMs": 9189.234333, "wallTime": "2026-09-18T13:00:20.647Z", "type": "focus.changed", "detail": {}}

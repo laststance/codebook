@@ -11,7 +11,8 @@ import { sha256 } from './utils/sha256';
 import { waitUntil } from './utils/waitUntil';
 import { selectHost } from './utils/selectHost';
 import { awaitResponse } from './utils/awaitResponse';
-import type { HostConfiguration } from './hostBrowser';
+import { isEndpointClosed } from './utils/isEndpointClosed';
+import { readHostInstallation } from './utils/readHostInstallation';
 
 type RunView = ReturnType<ExperimentRun['view']>;
 type Descriptor = { origin: string; token: string; runTokens?: Map<string, string> };
@@ -295,25 +296,23 @@ async function awaitMain(): Promise<void> {
     await new Promise<void>(resolveListening => server.listen(0, '127.0.0.1', resolveListening));
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('No fixture address');
-    const applicationRoot = hostId === 'cursor' ? '/Applications/Cursor.app/Contents' : '/Applications/Visual Studio Code.app/Contents';
-    const codePath = process.env.CODEBOOK_VSCODE_CLI ?? (hostId === 'cursor' ? join(applicationRoot, 'Resources/app/bin/cursor') : '/opt/homebrew/bin/code');
-    const vscodeVersion = execFileSync(codePath, ['--version'], { encoding: 'utf8' }).trim().split('\n');
-    const product = JSON.parse(await readFile(join(applicationRoot, 'Resources/app/product.json'), 'utf8'));
-    const host: HostConfiguration = { id: hostId, productVersion: product.version, apiVersion: product.vscodeVersion ?? product.version, commit: product.commit, endpointPath: hostId === 'cursor' ? join(suiteDirectory, 'debug-endpoint.json') : undefined };
+    const installation = await readHostInstallation(hostId, process.env.CODEBOOK_VSCODE_BINARY, process.env.CODEBOOK_VSCODE_CLI);
+    const vscodeVersion = installation.cliVersion;
+    const host = { ...installation.host, endpointPath: hostId === 'cursor' ? join(suiteDirectory, 'debug-endpoint.json') : undefined };
     const compiledFiles = (await readdir(join(packageRoot, 'dist'), { recursive: true })).filter(file => file.endsWith('.js')).sort();
     const compiledHashes = await Promise.all(compiledFiles.map(async file => `${file}:${sha256(await readFile(join(packageRoot, 'dist', file)))}`));
     const sourceFiles = [...(await readdir(join(packageRoot, 'src'), { recursive: true })).filter(file => file.endsWith('.ts')).map(file => `src/${file}`), 'fixture/cart.ts', 'fixture/index.html', 'fixture/tsconfig.json', 'tsconfig.json', 'package.json', 'pnpm-lock.yaml'].sort();
     const sourceHashes = await Promise.all(sourceFiles.map(async file => `${file}:${sha256(await readFile(join(packageRoot, file)))}`));
     const config: HarnessConfig = { artifactRoot, templateRoot: packageRoot, descriptorPath, fixtureOrigin: `http://127.0.0.1:${address.port}`, revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim(), workingTreeDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim()), sourceHash: sha256(sourceHashes.join('\n')), extensionHash: sha256(compiledHashes.join('\n')), host };
     await writeFile(join(workspace, 'harness.json'), JSON.stringify(config, null, 2));
-    await writeFile(join(suiteDirectory, 'environment.json'), JSON.stringify({ host, vscodeVersion, node: process.version, revision: config.revision, workingTreeDirty: config.workingTreeDirty, sourceHash: config.sourceHash, sourceHashes, extensionHash: config.extensionHash, compiledHashes, scenarios }, null, 2));
+    await writeFile(join(suiteDirectory, 'environment.json'), JSON.stringify({ host, executable: installation.binaryPath, cli: installation.cliPath, vscodeVersion, node: process.version, revision: config.revision, workingTreeDirty: config.workingTreeDirty, sourceHash: config.sourceHash, sourceHashes, extensionHash: config.extensionHash, compiledHashes, scenarios }, null, 2));
     const log = await import('node:fs');
     const outputPath = join(suiteDirectory, 'editor.log');
     const output = log.openSync(outputPath, 'w');
     // macOS Unix sockets reject long user-data paths; the evidence directory stays durable.
     const runtimeDirectory = await mkdtemp('/tmp/codebook-');
     await writeFile(join(suiteDirectory, 'runtime.json'), JSON.stringify({ runtimeDirectory }));
-    child = spawn(process.env.CODEBOOK_VSCODE_BINARY ?? join(applicationRoot, 'MacOS', hostId === 'cursor' ? 'Cursor' : 'Code'), ['--new-window', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', ...(hostId === 'cursor' ? ['--remote-debugging-port=0', '--skip-onboarding'] : []), '--user-data-dir', join(runtimeDirectory, 'profile'), '--extensions-dir', join(runtimeDirectory, 'extensions'), '--extensionDevelopmentPath', packageRoot, workspace], { env: { ...process.env, VSCODE_CLI: '1' }, stdio: ['ignore', output, output] });
+    child = spawn(installation.binaryPath, ['--new-window', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', ...(hostId === 'cursor' ? ['--remote-debugging-port=0', '--skip-onboarding'] : []), '--user-data-dir', join(runtimeDirectory, 'profile'), '--extensions-dir', join(runtimeDirectory, 'extensions'), '--extensionDevelopmentPath', packageRoot, workspace], { env: { ...process.env, VSCODE_CLI: '1' }, stdio: ['ignore', output, output] });
     log.closeSync(output);
     const launchAbort = new AbortController();
     child.once('error', error => launchAbort.abort(error));
@@ -341,10 +340,10 @@ async function awaitMain(): Promise<void> {
     child?.kill();
     try {
       if (processExited) await awaitResponse(processExited, 'owned editor process exit');
-      if (debugOrigin) await waitUntil(async () => {
-        try { const response = await fetch(`${debugOrigin}/json/version`, { signal: AbortSignal.timeout(CONTROL_RESPONSE_LIMIT_MS) }); await response.body?.cancel(); return false; }
-        catch { return true; }
-      }, 'owned debugging endpoint closed', CONTROL_RESPONSE_LIMIT_MS);
+      if (debugOrigin) {
+        const ownedOrigin = debugOrigin;
+        await waitUntil(() => isEndpointClosed(ownedOrigin), 'owned debugging endpoint closed', CONTROL_RESPONSE_LIMIT_MS);
+      }
       await writeFile(join(suiteDirectory, 'teardown.json'), JSON.stringify({ ownedProcessExited: Boolean(child?.pid), debuggingEndpointClosed: debugOrigin ? true : null }));
     } catch (error) {
       process.exitCode = 1;

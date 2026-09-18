@@ -1,0 +1,28 @@
+{
+  "unit": {
+    "command": "pnpm test",
+    "passed": 26,
+    "total": 26,
+    "kind": "compiled boundary + actual loopback unit regressions"
+  },
+  "native": {
+    "vscode": {
+      "passed": 17,
+      "total": 17,
+      "sourceHash": "4a1a75c035d657f0ad2589f885f53a4af59134921f95bf669d8cbf77972f87e6",
+      "suite": "suite-2026-09-18T12-58-51.928Z-f8fe4fd0"
+    },
+    "cursor": {
+      "passed": 20,
+      "total": 20,
+      "sourceHash": "4a1a75c035d657f0ad2589f885f53a4af59134921f95bf669d8cbf77972f87e6",
+      "suite": "suite-2026-09-18T13-00-59.055Z-25017ae0"
+    }
+  },
+  "visual": {
+    "finalPagePngs": "Inspected paused and after PNGs for both final baselines; before/paused byte equality checked. Cart 0 to 1 and expected product/price visible; narrow fixture panes do not establish final layout UX.",
+    "nativeScreens": "Earlier VSCode three phases and earlier Cursor pause inspected; current-source Cursor native before/after missing. Native observations predate final cleanup/metadata patches."
+  },
+  "cleanup": "Owned tabs/session/breakpoint absent, decoy usable, owned process exited; Cursor TCP endpoint refused. Pending acquisition regression is injected, not naturally delayed native API proof.",
+  "sharing": "Allowlist export, no authorization/token/WebSocket URLs, per-source and original/sanitized PNG hashes verified."
+}

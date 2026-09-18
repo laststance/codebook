@@ -1,0 +1,37 @@
+{
+  "status": "DONE_WITH_CONCERNS: all five known P2 findings fixed; review non-converged after three fix cycles; outside coverage unavailable",
+  "firstPass": {
+    "revision": "19fd2da",
+    "nativeAdversarialFindings": 2,
+    "coreFinding": 1,
+    "fixed": [
+      "Late acquisitions tracked and drained; late handles released.",
+      "TCP refusal replaces HTTP timeout as closure proof.",
+      "Browser-domain mutation rejected even on page sessions."
+    ]
+  },
+  "outside": {
+    "provider": "claude-code",
+    "adversarial": "unavailable: 540000ms timeout",
+    "structured": "unavailable: 540000ms timeout",
+    "completed": false
+  },
+  "finalProductReviewStreak": 0,
+  "secondPass": {
+    "nativeAdversarialFindings": 1,
+    "fixed": "Release already owned resources despite acquisition timeout; preserve partial manifest; share concurrent DELETE and retry failure later."
+  },
+  "thirdPass": {
+    "nativeAdversarialFindings": 1,
+    "fixed": "Resolve version/commit and matching CLI from the actual selected executable bundle; reject mismatched CLI before launch."
+  },
+  "completed": false,
+  "converged": false,
+  "fixCycles": 3,
+  "limits": [
+    "Fresh in-host agents reviewed source, with tests/fixtures in summary mode; parent reviewed test implementations and native assertions.",
+    "No independent post-fix full-tree convergence pass after the third fix cycle.",
+    "External Claude Code adversarial and structured passes returned no completed review.",
+    "This development review does not count toward the ten final-product reviews."
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "runId": "62ca2308-f885-4992-8ea4-3fba616dfe4a",
+  "scenario": "source-drift",
+  "status": "failed",
+  "cleaned": true,
+  "resources": {
+    "activeSessionIds": [],
+    "breakpointPresent": false,
+    "cdpOpen": false
+  },
+  "operation": {
+    "id": "21d8875e-c027-4db8-8950-6eab1cb158ae",
+    "key": "one-cart-add",
+    "inputAcknowledged": false,
+    "completed": false
+  },
+  "conflict": false,
+  "sessionId": "66621897-4f44-4328-b429-01f5628d8dc1",
+  "captures": {
+    "before": {
+      "phase": "before",
+      "requestSequence": 32,
+      "status": "captured",
+      "responseSequence": 35,
+      "file": "before.png"
+    },
+    "paused-1": {
+      "phase": "paused",
+      "generation": 1,
+      "requestSequence": 46,
+      "status": "captured",
+      "responseSequence": 50,
+      "file": "paused-1.png"
+    }
+  },
+  "failures": [
+    "Error: Local TypeScript changed after the build was sealed"
+  ],
+  "artifactDirectory": "<repo>/artifacts/cycle-0002/cursor/62ca2308-f885-4992-8ea4-3fba616dfe4a",
+  "environment": {
+    "host": "cursor",
+    "productVersion": "3.21.12",
+    "apiVersion": "1.128.0",
+    "hostCommit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20",
+    "node": "24.18.1",
+    "electron": "42.10.0",
+    "jsDebug": "1.93.0"
+  },
+  "revision": "19fd2da98a62a4422d020e6803f7b8f1d2c72f7e",
+  "workingTreeDirty": true,
+  "sourceHash": "4a1a75c035d657f0ad2589f885f53a4af59134921f95bf669d8cbf77972f87e6",
+  "extensionHash": "d89babc07cb64932dacbf35830e81b05ca71d3e83c3cb3c7fc41ec65d467741e",
+  "expected": {
+    "productId": "tote-01",
+    "price": 24,
+    "cartCount": 0,
+    "finalCartCount": 1,
+    "completedClicks": 1
+  },
+  "hashes": {
+    "typescript": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+    "javascript": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+    "sourceMap": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+  },
+  "limits": [
+    "Fixture only; not a production MCP service.",
+    "Receipt ordering is not a causal or simultaneous-paint guarantee.",
+    "DAP cannot atomically compare an expected suspension generation."
+  ]
+}

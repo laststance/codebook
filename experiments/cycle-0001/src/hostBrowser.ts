@@ -7,6 +7,7 @@ import { waitUntil } from './utils/waitUntil';
 import { selectPageTarget } from './utils/selectPageTarget';
 import type { selectHost } from './utils/selectHost';
 import { CursorCdpBridge } from './cursorCdpBridge';
+import { settleCleanup } from './utils/settleCleanup';
 
 export interface HostConfiguration {
   id: ReturnType<typeof selectHost>;
@@ -25,6 +26,8 @@ export class HostBrowser {
   private readonly cursorIds = new Set<string>();
   private readonly ownerOptions: { ownerAgentId: string };
   private bridge?: CursorCdpBridge;
+  private readonly acquisitions = new Set<Promise<unknown>>();
+  private closing = false;
 
   constructor(private readonly host: HostConfiguration, private readonly runId: string, private readonly url: string, private readonly record: RecordEvent, private readonly scenario: Scenario) {
     this.ownerOptions = { ownerAgentId: `codebook-${runId}` };
@@ -43,20 +46,15 @@ export class HostBrowser {
       const endpoint: unknown = JSON.parse(await readFile(this.host.endpointPath, 'utf8'));
       if (!endpoint || typeof endpoint !== 'object' || !('port' in endpoint) || typeof endpoint.port !== 'number' || !Number.isInteger(endpoint.port) || endpoint.port <= 0) throw new Error('Invalid Cursor debugging endpoint descriptor');
       const origin = `http://127.0.0.1:${endpoint.port}`;
-      // Register returned ownership before checking cancellation, so cleanup can release a late acquisition.
-      const created = await awaitResponse(vscode.commands.executeCommand<CursorCommandResult>('cursor.browserView.newTab', this.url, { agentId: this.ownerOptions.ownerAgentId }), 'Cursor browser creation');
-      if (!created?.success || !created.browserId) throw new Error(`Cursor browser creation failed: ${created?.error}`);
-      this.cursorIds.add(created.browserId);
-      this.record('browser.created', { host: this.host.id, browserId: created.browserId });
+      signal.throwIfAborted();
+      await awaitResponse(this.createCursorTab(), 'Cursor browser creation');
       signal.throwIfAborted();
       if (this.scenario === 'cancel-browser') {
         this.record('fault.browser-acquisition-held');
         await delay(INTERFERENCE_DELAY_MS, undefined, { signal });
       }
       if (this.scenario === 'ambiguous-target') {
-        const duplicate = await awaitResponse(vscode.commands.executeCommand<CursorCommandResult>('cursor.browserView.newTab', this.url, { agentId: this.ownerOptions.ownerAgentId }), 'duplicate owned browser creation');
-        if (!duplicate?.success || !duplicate.browserId) throw new Error('Could not create ambiguous-target precondition');
-        this.cursorIds.add(duplicate.browserId);
+        const duplicate = await awaitResponse(this.createCursorTab(), 'duplicate owned browser creation');
         // The native tab command returns before Chromium finishes navigation; observe the actual duplicate targets.
         await waitUntil(async () => {
           const response = await fetch(`${origin}/json/list`, { signal: AbortSignal.any([signal, AbortSignal.timeout(CAPTURE_TIMEOUT_MS)]) });
@@ -64,7 +62,7 @@ export class HostBrowser {
           try { selectPageTarget(targets, this.url); return false; }
           catch (error) { if (String(error).includes('Ambiguous fixture browser targets')) { this.record('fault.duplicate-targets-observed', targets); return true; } throw error; }
         }, 'duplicate page navigation', ACTIVE_TIMEOUT_MS, signal);
-        this.record('fault.duplicate-target-created', { browserId: duplicate.browserId });
+        this.record('fault.duplicate-target-created', { browserId: duplicate });
       }
       let previousTargets = '';
       const target = await waitUntil(async () => {
@@ -84,7 +82,7 @@ export class HostBrowser {
       debugConfiguration = { ...configuration, type: 'pwa-chrome', request: 'attach', address: '127.0.0.1', port: bridgePort, urlFilter: this.url, targetSelection: 'automatic' };
     }
     signal.throwIfAborted();
-    const launching = vscode.debug.startDebugging(undefined, debugConfiguration);
+    const launching = this.trackAcquisition(vscode.debug.startDebugging(undefined, debugConfiguration));
     if (this.scenario === 'cancel-attach') {
       this.record('fault.attach-acquisition-held');
       // Even a cancelled hold must drain the already-issued launch before releasing its sessions.
@@ -99,6 +97,32 @@ export class HostBrowser {
       this.record('fault.browser-acquisition-held');
       await delay(INTERFERENCE_DELAY_MS, undefined, { signal });
     }
+  }
+
+  /** Retains raw acquisitions beyond request deadlines so {@link drainAcquisitions} cannot certify an unknown resource state. @example this.trackAcquisition(startDebugging()) */
+  private trackAcquisition<Value>(acquisition: PromiseLike<Value>): Promise<Value> {
+    const pending = Promise.resolve(acquisition);
+    this.acquisitions.add(pending);
+    void pending.then(() => this.acquisitions.delete(pending), () => this.acquisitions.delete(pending));
+    return pending;
+  }
+
+  /** Adopts native tab handles even after a timeout; {@link launch} owns the request while late teardown owns release. @example await this.createCursorTab() */
+  private createCursorTab(): Promise<string> {
+    return this.trackAcquisition(Promise.resolve(vscode.commands.executeCommand<CursorCommandResult>('cursor.browserView.newTab', this.url, { agentId: this.ownerOptions.ownerAgentId })).then(async created => {
+      if (!created?.success || !created.browserId) throw new Error(`Cursor browser creation failed: ${created?.error}`);
+      this.cursorIds.add(created.browserId);
+      this.record('browser.created', { host: this.host.id, browserId: created.browserId, duringCleanup: this.closing });
+      // The original request may have timed out and its cleanup may already have failed closed.
+      if (this.closing) await awaitResponse(vscode.commands.executeCommand('cursor.browserView.closeTab', created.browserId, this.ownerOptions), 'late owned Cursor browser close');
+      return created.browserId;
+    }));
+  }
+
+  /** Prevents cleanup success while non-cancellable creation can still produce resources, called before stopping owned sessions. @example await browser.drainAcquisitions() */
+  async drainAcquisitions(): Promise<void> {
+    this.closing = true;
+    await awaitResponse(Promise.allSettled(this.acquisitions), 'owned browser and debugger acquisitions');
   }
 
   /** Reveals the exact owned app after preparation or continuation, without adopting focused tabs. @example await browser.reveal(signal) */
@@ -129,22 +153,36 @@ export class HostBrowser {
     this.record('browser.revealed', { title: browser.tab.label, index });
   }
 
-  /** Releases recorded handles and observes absence during run teardown; unrelated editors remain open. @example await browser.close() */
+  /** Releases known handles even if acquisition is unresolved; {@link ExperimentRun} can retry incomplete teardown. @example await browser.close() */
   async close(): Promise<void> {
-    await this.bridge?.close();
+    this.closing = true;
+    const failures = await settleCleanup([
+      { description: 'owned CDP bridge close', release: async () => { if (this.bridge) await awaitResponse(this.bridge.close(), 'owned CDP bridge close'); this.bridge = undefined; } },
+      { description: 'known owned browser tabs', release: () => this.closeTabs() },
+      { description: 'pending browser acquisitions', release: () => this.drainAcquisitions() },
+      // A launch may reveal its editor after the first sweep; check again after acquisition settles.
+      { description: 'late owned browser tabs', release: () => this.closeTabs() },
+    ]);
+    if (failures.length) throw new Error(`Browser cleanup incomplete: ${failures.join('; ')}`);
+    this.record('browser.cleanup-verified', { host: this.host.id, remainingOwnedTabs: 0 });
+  }
+
+  /** Closes and observes only recorded/uniquely named tabs before and after acquisition draining in {@link close}. @example await this.closeTabs() */
+  private async closeTabs(): Promise<void> {
     if (this.host.id === 'cursor') {
-      for (const browserId of this.cursorIds) await awaitResponse(vscode.commands.executeCommand('cursor.browserView.closeTab', browserId, this.ownerOptions), 'owned Cursor browser close');
+      const failures = await settleCleanup([...this.cursorIds].map(browserId => ({ description: 'owned Cursor browser close', release: () => awaitResponse(vscode.commands.executeCommand('cursor.browserView.closeTab', browserId, this.ownerOptions), 'owned Cursor browser close') })));
       const tabs = await awaitResponse(vscode.commands.executeCommand<CursorTabs>('cursor.browserView.listTabs', this.ownerOptions), 'Cursor browser cleanup inspection');
       if (!tabs || !Array.isArray(tabs.tabs)) throw new Error('Cursor browser cleanup could not be observed');
-      if ([...this.cursorIds].some(browserId => tabs.tabs.includes(browserId))) throw new Error('Owned Cursor browser remains after cleanup');
-      this.cursorIds.clear();
+      for (const browserId of this.cursorIds) if (!tabs.tabs.includes(browserId)) this.cursorIds.delete(browserId);
+      if (this.cursorIds.size) failures.push('Owned Cursor browser remains after cleanup');
+      if (failures.length) throw new Error(failures.join('; '));
     } else {
       // A cancelled launch may have created a tab before the normal reveal adopted its handle.
       const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab === this.tab || tab.label === `codebook ${this.runId.slice(0, 8)}`);
-      for (const tab of tabs) await vscode.window.tabGroups.close(tab);
-      if (vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tabs.includes(tab)))) throw new Error('Owned VS Code browser remains after cleanup');
+      const failures = await settleCleanup(tabs.map(tab => ({ description: 'owned VS Code browser close', release: () => awaitResponse(vscode.window.tabGroups.close(tab), 'owned VS Code browser close') })));
+      if (vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tabs.includes(tab)))) failures.push('Owned VS Code browser remains after cleanup');
+      if (failures.length) throw new Error(failures.join('; '));
       this.tab = undefined;
     }
-    this.record('browser.cleanup-verified', { host: this.host.id, remainingOwnedTabs: 0 });
   }
 }

@@ -98,5 +98,5 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (!address || typeof address === 'string') return;
     await writeFile(config.descriptorPath, JSON.stringify({ origin: `http://127.0.0.1:${address.port}`, token }), { mode: 0o600 });
   });
-  context.subscriptions.push({ dispose: () => { server.close(); for (const run of runs.values()) void run.cleanup(); } });
+  context.subscriptions.push({ dispose: () => { server.close(); for (const run of runs.values()) void run.cleanup().catch(error => console.error('codebook cleanup incomplete', error)); } });
 }

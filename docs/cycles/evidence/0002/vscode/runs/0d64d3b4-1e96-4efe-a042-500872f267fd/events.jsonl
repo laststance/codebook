@@ -1,0 +1,10 @@
+{"sequence": 1, "elapsedMs": 0.116541, "wallTime": "2026-09-18T13:00:20.043Z", "type": "run.created", "detail": {"runId": "0d64d3b4-1e96-4efe-a042-500872f267fd", "scenario": "cancel-attach"}}
+{"sequence": 2, "elapsedMs": 33.782833, "wallTime": "2026-09-18T13:00:20.077Z", "type": "breakpoint.requested", "detail": {"id": "29951563-04d3-4b00-b976-7190e32808bd", "sourcePath": "<repo>/artifacts/cycle-0002/vscode/0d64d3b4-1e96-4efe-a042-500872f267fd/fixture/cart.ts", "line": 9}}
+{"sequence": 3, "elapsedMs": 33.837875, "wallTime": "2026-09-18T13:00:20.077Z", "type": "fault.attach-acquisition-held", "detail": {}}
+{"sequence": 4, "elapsedMs": 53.888416, "wallTime": "2026-09-18T13:00:20.097Z", "type": "cleanup.started", "detail": {}}
+{"sequence": 5, "elapsedMs": 94.53125, "wallTime": "2026-09-18T13:00:20.137Z", "type": "session.started", "detail": {"sessionId": "ce31b130-694f-42d5-8afa-c890f6a441d8", "type": "pwa-editor-browser", "name": "codebook 0d64d3b4-1e96-4efe-a042-500872f267fd"}}
+{"sequence": 6, "elapsedMs": 98.925083, "wallTime": "2026-09-18T13:00:20.142Z", "type": "focus.changed", "detail": {"sessionId": "ce31b130-694f-42d5-8afa-c890f6a441d8"}}
+{"sequence": 7, "elapsedMs": 101.994666, "wallTime": "2026-09-18T13:00:20.145Z", "type": "browser.cleanup-verified", "detail": {"host": "vscode", "remainingOwnedTabs": 0}}
+{"sequence": 8, "elapsedMs": 603.576125, "wallTime": "2026-09-18T13:00:20.646Z", "type": "session.terminated", "detail": {"sessionId": "ce31b130-694f-42d5-8afa-c890f6a441d8"}}
+{"sequence": 9, "elapsedMs": 604.18275, "wallTime": "2026-09-18T13:00:20.647Z", "type": "focus.changed", "detail": {}}
+{"sequence": 10, "elapsedMs": 605.655958, "wallTime": "2026-09-18T13:00:20.648Z", "type": "cleanup.completed", "detail": {}}

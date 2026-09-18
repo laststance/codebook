@@ -1,72 +1,57 @@
 # Current project state
 
 Updated: 2026-09-18\
-Product stage: design approved; one synchronous runtime fixture demonstrated\
-Active cycle: [0002 — Cursor runtime compatibility](docs/cycles/0002-cursor-runtime-compatibility.md) — implementing\
-Last cycle: [0001 — Click, pause, inspect, continue](docs/cycles/0001-click-pause-resume.md) — closed, demonstrated\
+Product stage: design approved; synchronous runtime fixture demonstrated in both required editors\
+Active cycle: none; Cycle 0003 scoped-browser transport selected for opening next\
+Last cycle: [0002 — Cursor runtime compatibility](docs/cycles/0002-cursor-runtime-compatibility.md) — closed, demonstrated; integration/issue sync pending\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: [#3](https://github.com/laststance/codebook/issues/3) — open\
-Last cycle issue: [#2](https://github.com/laststance/codebook/issues/2) — closed; result and three fixture images attached\
+Last cycle issue: [#3](https://github.com/laststance/codebook/issues/3) — result sync pending\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
-Current authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
+Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
-## Facts at handoff
+## Verified facts
 
-- Architecture B and Study workspace as default remain approved. Living book and Guided walkthrough remain required later modes. Approved references remain in DESIGN.md and docs/designs/.
-- Goal version 2 requires the complete product in both VS Code and Cursor. Cursor installation, API compatibility, runtime behavior, recording, and layouts are unverified. Cycle 0001 retains its original goal-version-1, VS Code-only evidence.
-- [The isolated development extension, fixture, and runner](experiments/cycle-0001/README.md) demonstrate one real click → TS breakpoint → source/value snapshot → continue → visible cart update. No existing sibling tool was modified.
-- Final validation: 12 unit tests and 15 real Extension Host scenarios passed. Baseline stopped at TS line 9 with `tote-01 / 24 / 0`; continuation produced cart count 1 and one completed handler. The 40-second hold kept state/continue responses below 6 ms on this machine.
-- [Durable evidence](docs/cycles/evidence/0001/README.md) contains environment/source hashes, sanitized manifests, events, snapshots, executable sources/maps, explanations, and PNGs. Earlier failed attempts and version-specific browser-layout fixes remain documented.
-- Negative cases verify rejection, stale-response handling, or cleanup. They do not count as successful walkthroughs. The deliberately timed-out pause image remains unavailable, even though that action completed.
-- Native GStack review findings were fixed and targeted rechecked. External-model review, CI, formal GitHub approval, packaging, publication, and installed-VSIX verification have not occurred.
+- Architecture B and Study workspace default remain approved; Living book and Guided walkthrough remain required. All three share learning items, runtime evidence, recordings and personal progress.
+- [Shared fixture extension/runner](experiments/cycle-0001/README.md) uses one coordinator with host-specific browser acquisition. VS Code uses editor-browser; Cursor required target-restricted webview metadata adaptation for its older bundled debugger. No sibling repository was changed.
+- Final Cycle 0002 validation: **26 unit tests**, **17/17 VS Code native cases**, **20/20 Cursor native cases**. Bound TS line 9, actual tote-01 / 24 / 0, executed JS/map/TS alignment, then cart 1 / one completed handler. Correct negative rejections are not successful walkthroughs.
+- Tested hosts: VS Code 1.138.0 / js-debug 1.117.0; Cursor 3.21.12 / API 1.128.0 / js-debug 1.93.0; Node 24.18.1, Electron 42.10.0, macOS arm64. Current-source fingerprint and dirty capture revision are preserved in [durable evidence](docs/cycles/evidence/0002/README.md).
+- Forty-second pauses remained controllable: state/continue observations were 4.76/8.34 ms in VS Code and 1.80/4.04 ms in Cursor. Per-run owned resources, independent decoy survival, process exit and Cursor endpoint closure were observed.
+- Five development-review P2 findings fixed: late acquisitions; false endpoint-closure proof; browser-wide CDP mutation; cleanup short-circuit/retry; alternate-binary metadata. Review is **non-converged** after three fix cycles; outside adversarial/structured reviews timed out. No current complete/fresh independent review or GitHub approval claim.
+- Native editor observations are versioned separately: earlier VS Code before/pause/after; earlier Cursor pause. Final-source page frames exist in both hosts. Correct-process native before/after observation in Cursor remains a QA limitation; no unrelated screen was retained.
+- [Cycle 0001](docs/cycles/0001-click-pause-resume.md) and its immutable original VS Code evidence remain separate. Its issue #2 is closed.
 
 ## Capability evidence
 
-Fixture proof remains partial for goals requiring integrated real-product behavior.
+A fixture proves mechanisms, not the integrated final product.
 
-| Goal | State | Evidence and limits |
+| Goal | State | Evidence and remaining gap |
 | --- | --- | --- |
-| G01 | partial | One fixed cart click and continuation; no natural-language request or full checkout. |
-| G02 | unverified | Shared learning-item design only. |
-| G03 | partial | Actual bound TS location, executed JS/map/TS verification, values, pause identity, conflict rejection; synchronous fixture only. |
-| G04 | partial | Three timestamped frame captures tied to a pause; no video, durable replay UI, or export. |
-| G05 | unverified | Progress behavior specified; no implementation. |
-| G06 | partial | External Node controls an extension-owned temporary HTTP bridge; no product MCP or stable public contract. |
-| G07 | unverified | Approved Study workspace concept only. |
-| G08 | unverified | Approved Living book concept; later implementation required. |
-| G09 | unverified | Approved Guided walkthrough concept; later implementation required. |
-| G10 | unverified | No package or real-repository validation. |
-| G11 | partial | Cycle 0002 has one actual Cursor native fixture success with target-restricted CDP compatibility. Complete product, negative matrix, UI, and packaged-extension acceptance remain unverified. Existing VS Code evidence is kept separate. |
+| G01 | partial | One cart click in both hosts; no natural-language orchestration/full checkout. |
+| G02 | unverified | Shared learning-item design; no wiki/codemap cross-navigation. |
+| G03 | partial | Bound executed-source/value/pause identity and conflicts verified on synchronous fixture; backend/async causality unproven. |
+| G04 | partial | Timestamped page frames; no video, offline synchronized replay UI, or export. |
+| G05 | unverified | No durable learner progress implementation. |
+| G06 | partial | External Node controls temporary authenticated HTTP; no product MCP or ordinary-workspace transport. |
+| G07 | unverified | Approved Study workspace reference; experiment panes do not establish product UX. |
+| G08 | unverified | Living book required; no implementation. |
+| G09 | unverified | Guided walkthrough required; no implementation. |
+| G10 | unverified | No VSIX, installation, or three real-repository use cases/learning feedback. |
+| G11 | partial | Both real hosts pass the synchronous runtime matrix; full packaged experience, three modes, recording and final native UX remain unverified. |
 
-## Current uncertainty
+## Current bottleneck and next cycle
 
-| Question | Why it matters | Next evidence |
-| --- | --- | --- |
-| Can one UI operation be distinguished from unrelated requests across browser/server debug sessions? | Synchronous fixture success does not establish checkout causality. | Selected next bounded candidate: one async browser-to-backend boundary with a competing request. |
-| How should recorded frames, values, and source versions replay together? | Three captured images do not satisfy recording/replay. | Preserve current identities; choose a replay experiment when observed dependencies justify it. |
-| Can native layout/control recover on other versions and real repositories? | Current workbench commands were tested only on VS Code 1.138.0/macOS arm64. | Revalidate actual versions and browser visibility before extending support claims. |
-| Which browser, debugger, MCP, and layout integrations work in Cursor? | Both host editors must deliver the full final experience; shared extension APIs do not prove runtime compatibility. | Inspect and test the actual Cursor host before committing to lasting host-dependent APIs or packaging. |
+**Selected next question:** can a target-scoped browser/debugger transport preserve the in-editor app/source experience in both hosts without enabling editor-wide remote debugging? First inspect/probe Cursor's installed native command surface; if it cannot deliver the required event stream, record the limitation and test one owned-browser alternative. Keep the established coordinator/evidence contract.
 
-## Now, next, later
+This resolves a deployment risk before committing to a lasting MCP contract. The next functional uncertainty remains one browser-to-backend asynchronous boundary with a competing request. Do not claim timing alone establishes request causality.
 
-**Now:** Complete Cycle 0002, selected by Raphtalia to resolve Cursor runtime compatibility before lasting integration choices. The active thread goal authorizes continued cycles through the full product. Goal #1 remains open.
-
-**Follow-up candidate:** return to one correlated browser-to-backend asynchronous boundary after the dual-host runtime result; re-evaluate from evidence.
-
-**Later required capabilities:** full checkout; product MCP; recording/replay; wiki/codemap/progress; usable Study workspace, Living book, and Guided walkthrough; packaged and real-repository validation. The complete experience must work in both VS Code and Cursor. Their order remains evidence-driven. The final goal has not been reduced.
+**Later required:** full chat-driven checkout; product MCP; recording/replay; wiki/codemap/progress; Study workspace, Living book and Guided walkthrough; packaged installation and real-repository usefulness in both hosts. Their order stays adaptive; the destination is unchanged.
 
 ## Exact resume action
 
-Read PRODUCT_GOAL.md, this file, and Cycle 0002. Verify checkout, issue state, installed hosts, and any live experiment process. Finish its engineering plan review, then implement the shared core's host adapter and obtain native evidence separately in Cursor and VS Code. Continue the adaptive loop after recording the cycle result; the full product and ten-review completion gate remain active.
+Verify checkout/remote/issue state. Integrate Cycle 0002 evidence, synchronize/close issue #3, then create the single Cycle 0003 document/issue for scoped transport and investigate that question. The user has authorized continuous cycles through the final product. Preserve native/fixture/review/package distinctions.
 
-## Session handoff
-
-Last completed work: Cycle 0001 and Cursor requirement; current work is Cycle 0002 and the full-product acceptance gate.\
-Next executable action: implement and validate the reviewed Cycle 0002 native host adapter.\
-Runtime: owned sessions/connections/breakpoints cleaned up; private diagnostic profiles/logs retained locally.\
-Delivery: [implementation and evidence](https://github.com/laststance/codebook/commit/64c80767411caa518acfe86a7ff6242c0f6cc14e) pushed to main; issue #2 closed after result/image attachment. No PR/CI/release claim.\
-Goal changes pending: none.
+Runtime: final owned experiment processes exited; local private profiles/logs remain under ignored artifacts. Delivery: local final-source evidence ready; commit/push and issue sync pending. No CI, PR approval, release, package, or installed-product claim.
 
 ## Full-product completion gate
 
-[Ten consecutive sequential independent reviews](docs/acceptance/FINAL_REVIEW.md) are required after all final product requirements and evidence are complete. Current final-review streak: 0/10, not started. A failing review resets the sequence after fixes. The active goal remains incomplete.
+[Ten consecutive sequential independent reviews](docs/acceptance/FINAL_REVIEW.md) begin only after the complete candidate and G01–G11 evidence exist. **0/10, not started.** A failure requires a fix and restart at reviewer 1. Raphtalia's intended-use acceptance also remains outstanding. Goal #1 stays open.

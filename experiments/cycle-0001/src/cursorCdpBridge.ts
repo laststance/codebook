@@ -69,8 +69,10 @@ export class CursorCdpBridge {
       const inBrowser = !message.sessionId || browserSessions.has(message.sessionId);
       const foreignTarget = message.params?.targetId && message.params.targetId !== this.targetId;
       const foreignSession = message.params?.sessionId && !pageSessions.has(message.params.sessionId) && !browserSessions.has(message.params.sessionId);
+      const browserMutation = message.method?.startsWith('Browser.') && message.method !== 'Browser.getVersion';
+      const targetMutation = message.method?.startsWith('Target.') && !BROWSER_METHODS.has(message.method) && !(inPage && message.method === 'Target.setAutoAttach');
       // Browser-wide mutation and unrelated runtime sessions never reach the real editor browser.
-      if (foreignTarget || foreignSession || (!inPage && (!inBrowser || !BROWSER_METHODS.has(message.method ?? ''))) || message.method === 'Browser.close' || message.method === 'Target.createTarget') {
+      if (foreignTarget || foreignSession || browserMutation || targetMutation || (!inPage && (!inBrowser || !BROWSER_METHODS.has(message.method ?? '')))) {
         this.log('bridge.rejected', { method: message.method, sessionId: message.sessionId, targetId: message.params?.targetId });
         sendClient({ id: message.id, sessionId: message.sessionId, error: { code: -32601, message: 'Outside owned fixture target' } });
         return;

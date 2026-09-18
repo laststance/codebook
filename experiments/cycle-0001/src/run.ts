@@ -14,6 +14,7 @@ import { sha256 } from './utils/sha256';
 import { waitUntil } from './utils/waitUntil';
 import { awaitResponse } from './utils/awaitResponse';
 import { HostBrowser, type HostConfiguration } from './hostBrowser';
+import { settleCleanup } from './utils/settleCleanup';
 
 export interface HarnessConfig {
   artifactRoot: string;
@@ -104,6 +105,8 @@ export class ExperimentRun {
     this.sessions.set(session.id, session);
     this.activeSessionIds.add(session.id);
     this.evidence.record('session.started', { sessionId: session.id, parentId: session.parentSession?.id, type: session.type, name: session.name });
+    // A non-cancellable launch may report a session after its request or cleanup deadline.
+    if (this.cleaning) this.track(Promise.resolve(vscode.debug.stopDebugging(session)));
   }
 
   /** Seals fixture bytes, launches the real integrated browser, then resolves its child by ancestry and URL. @example await run.prepare() */
@@ -326,11 +329,16 @@ export class ExperimentRun {
 
   /** Cleans up only owned sessions, breakpoints and connections after evidence is flushed. @example await run.cleanup() */
   async cleanup(): Promise<void> {
-    this.cleanupPromise ??= this.cleanupOwned();
-    await this.cleanupPromise;
+    const attempt = this.cleanupPromise ??= this.cleanupOwned();
+    try { await attempt; }
+    catch (error) {
+      // Share concurrent DELETEs, but let a later request retry an incomplete release.
+      if (this.cleanupPromise === attempt) this.cleanupPromise = undefined;
+      throw error;
+    }
   }
 
-  /** Drains acquisition and active work before final evidence, called once by {@link cleanup}. @example await this.cleanupOwned() */
+  /** Attempts every owned release and saves partial failures for each shared {@link cleanup} attempt. @example await this.cleanupOwned() */
   private async cleanupOwned(): Promise<void> {
     this.cleaning = true;
     if (!['completed', 'failed'].includes(this.status)) this.status = 'cancelled';
@@ -338,24 +346,28 @@ export class ExperimentRun {
     this.gate.invalidate();
     clearInterval(this.watchdog);
     this.evidence.record('cleanup.started');
-    // Drain setup before releasing resources it may still be creating.
-    await this.preparePromise?.catch(() => undefined);
-    this.cdp?.close();
-    if (this.breakpoint) vscode.debug.removeBreakpoints([this.breakpoint]);
-    for (const session of this.sessions.values()) {
-      if (!session.parentSession && this.activeSessionIds.has(session.id)) await vscode.debug.stopDebugging(session);
-    }
-    // js-debug can close its tab when terminating; a stale tab handle must not abort cleanup.
-    await this.browser.close();
-    // The debugger can reveal a second editor for this unique sealed source; close every owned copy.
+    const failures = await settleCleanup([
+      { description: 'run preparation settlement', release: () => awaitResponse(this.preparePromise?.catch(() => undefined) ?? Promise.resolve(), 'run preparation settlement') },
+      { description: 'selected CDP close', release: () => this.cdp?.close() },
+      { description: 'owned breakpoint removal', release: () => { if (this.breakpoint) vscode.debug.removeBreakpoints([this.breakpoint]); } },
+    ]);
+    failures.push(...await settleCleanup([...this.sessions.values()].filter(session => !session.parentSession && this.activeSessionIds.has(session.id)).map(session => ({ description: `owned debug session ${session.id}`, release: () => awaitResponse(vscode.debug.stopDebugging(session), 'owned debug session stop') }))));
+    // Browser cleanup releases its bridge and known tabs even while a native launch is unresolved.
+    failures.push(...await settleCleanup([{ description: 'owned browser cleanup', release: () => this.browser.close() }]));
     const sourceTabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.fsPath === this.source?.sourcePath);
-    for (const tab of sourceTabs) await vscode.window.tabGroups.close(tab);
-    // Resolve in-flight capture/inspection state before serializing the final manifest.
-    await Promise.all(this.activities);
-    await waitUntil(() => this.activeSessionIds.size === 0, 'owned debug sessions terminated', CAPTURE_TIMEOUT_MS);
-    this.cleanupComplete = true;
-    this.evidence.record('cleanup.completed');
-    await this.persist();
+    failures.push(...await settleCleanup(sourceTabs.map(tab => ({ description: 'owned source editor close', release: () => awaitResponse(vscode.window.tabGroups.close(tab), 'owned source editor close') }))));
+    failures.push(...await settleCleanup([
+      { description: 'active inspections settled', release: () => awaitResponse(Promise.all(this.activities), 'active inspections settled') },
+      { description: 'owned debug sessions terminated', release: () => waitUntil(() => this.activeSessionIds.size === 0, 'owned debug sessions terminated', CAPTURE_TIMEOUT_MS) },
+    ]));
+    this.cleanupComplete = failures.length === 0;
+    if (failures.length) {
+      this.failures.push(...failures.map(failure => `Cleanup incomplete: ${failure}`));
+      this.evidence.record('cleanup.failed', { failures });
+    } else this.evidence.record('cleanup.completed');
+    try { await this.persist(); }
+    catch (error) { this.cleanupComplete = false; throw error; }
+    if (failures.length) throw new Error(`Run cleanup incomplete: ${failures.join('; ')}`);
   }
 
   /** Rejects control work without the explicitly adopted proxy, used by input/capture/inspection. @example this.requireCdp().closed */

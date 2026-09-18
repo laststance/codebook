@@ -1,0 +1,8 @@
+{"sequence": 1, "elapsedMs": 0.104542, "wallTime": "2026-09-18T13:01:59.643Z", "type": "run.created", "detail": {"runId": "22e30db0-fafe-401f-8f6d-280b971c0491", "scenario": "cancel-prepare"}}
+{"sequence": 2, "elapsedMs": 37.489667, "wallTime": "2026-09-18T13:01:59.681Z", "type": "breakpoint.requested", "detail": {"id": "e65e6aa1-2bcb-475f-9667-74ecd2b65ad2", "sourcePath": "<repo>/artifacts/cycle-0002/cursor/22e30db0-fafe-401f-8f6d-280b971c0491/fixture/cart.ts", "line": 9}}
+{"sequence": 3, "elapsedMs": 37.497959, "wallTime": "2026-09-18T13:01:59.681Z", "type": "fault.preparation-held", "detail": {}}
+{"sequence": 4, "elapsedMs": 54.077875, "wallTime": "2026-09-18T13:01:59.697Z", "type": "cleanup.started", "detail": {}}
+{"sequence": 5, "elapsedMs": 54.922834, "wallTime": "2026-09-18T13:01:59.698Z", "type": "browser.cleanup-verified", "detail": {"host": "cursor", "remainingOwnedTabs": 0}}
+{"sequence": 6, "elapsedMs": 58.901084, "wallTime": "2026-09-18T13:01:59.702Z", "type": "cleanup.completed", "detail": {}}
+{"sequence": 7, "elapsedMs": 435.280709, "wallTime": "2026-09-18T13:02:00.079Z", "type": "focus.changed", "detail": {"sessionId": "b2466e8c-cc40-42c5-b4a0-8bdcb0ffda41"}}
+{"sequence": 8, "elapsedMs": 942.776334, "wallTime": "2026-09-18T13:02:00.586Z", "type": "focus.changed", "detail": {}}
