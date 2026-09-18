@@ -8,6 +8,34 @@ import { StudyError } from '../errors';
 import { readResource } from '../resources';
 import { ControlledRuntime, createHarness } from './helpers';
 
+for (const shutdown of ['run stop', 'server shutdown'] as const) {
+  test(`${shutdown} drains an accepted source display before releasing ownership and rejects later displays`, async () => {
+    // Arrange
+    const harness = await createHarness(), service = harness.service;
+    const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'source-owner' });
+    let release!: () => void, entered = false, editorOpen = false, settled = false;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    try {
+      await service.record(receipt).preparation; service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
+      const snapshotUri = service.state(service.record(receipt)).participants.server.snapshotUri!, runtime = harness.runtimes[0]!;
+      const stop = runtime.stop.bind(runtime);
+      runtime.reveal = async () => { entered = true; await barrier; editorOpen = true; runtime.evidence.record('agent.source-revealed'); };
+      runtime.stop = async () => { editorOpen = false; await stop(); };
+      const revealing = service.reveal({ ...receipt, snapshotUri }); await waitUntil(() => entered, 'source acquisition', 1_000);
+      // Act
+      const stopping = (shutdown === 'run stop' ? service.stop(receipt) : service.shutdown()).then(() => { settled = true; });
+      await Promise.resolve(); await Promise.resolve(); assert.equal(settled, false); assert.equal(runtime.releases, 0);
+      release(); await revealing; await stopping;
+      // Assert
+      assert.equal(editorOpen, false); assert.equal(service.resourcesReleased, true); assert.equal(runtime.releases, 1);
+      const before = runtime.evidence.events.length;
+      await assert.rejects(service.reveal({ ...receipt, snapshotUri }), error => error instanceof StudyError && error.code === (shutdown === 'run stop' ? 'BUSY' : 'SERVER_STOPPING'));
+      assert.equal(runtime.evidence.events.length, before);
+      const source = await readResource(service, `${snapshotUri}/source/typescript`); assert.ok('text' in source); assert.equal(source.text, 'const price = 24;');
+    } finally { release(); await harness.close(); }
+  });
+}
+
 test('repeated start intent creates one runtime and a conflicting key never silently changes its profile', async () => {
   // Arrange
   const harness = await createHarness(); const service = harness.service;

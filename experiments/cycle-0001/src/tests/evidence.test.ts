@@ -5,6 +5,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Evidence } from '../evidence';
 
+test('later input acknowledgements cannot rewrite the recorded observation or diverge from disk history', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-')), evidence = new Evidence(directory);
+  const operation = { inputAcknowledged: false, nested: { cartCount: 0 }, requests: ['selected'] };
+  try {
+    // Act
+    evidence.record('action.accepted', operation);
+    operation.inputAcknowledged = true; operation.nested.cartCount = 1; operation.requests.push('later');
+    await evidence.flush();
+    // Assert
+    assert.deepEqual(evidence.events[0]?.detail, { inputAcknowledged: false, nested: { cartCount: 0 }, requests: ['selected'] });
+    assert.deepEqual(JSON.parse(await readFile(join(directory, 'events.jsonl'), 'utf8')), evidence.events[0]);
+  } finally { await rm(directory, { recursive: true }); }
+});
+
 test('overlapping manifest writes leave the latest complete state after flushing', async () => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-'));

@@ -77,16 +77,18 @@ export async function createEnvironment(context: Pick<vscode.ExtensionContext, '
       runs.set(run.id, run);
       return { id: run.id, evidence: run.evidence, prepare: () => run.prepare(), view: () => run.view(), action: key => run.acceptAction(key),
         continue: (name, identity) => run.continue(name, identity), stop: () => run.cleanup(), fail: reason => run.fail(reason), source: name => run.participants[name].source,
-        async reveal(snapshot) {
+        reveal: snapshot => run.ownSourceReveal(async check => {
           const source = run.participants[snapshot.participant].source;
           if (!source || sha256(await readBoundedFile(source.sourcePath, SOURCE_LIMIT_BYTES)) !== snapshot.source.typescriptHash) throw new StudyError('SOURCE_CHANGED', 'The current source file differs from the captured TypeScript.');
-          const document = await vscode.workspace.openTextDocument(vscode.Uri.file(source.sourcePath));
+          check(); const document = await vscode.workspace.openTextDocument(vscode.Uri.file(source.sourcePath)); check();
           if (sha256(document.getText()) !== snapshot.source.typescriptHash) throw new StudyError('SOURCE_CHANGED', 'The current editor document differs from the capture.');
           const location = new vscode.Position(snapshot.frame.line - 1, 0);
           const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true, selection: new vscode.Range(location, location) });
+          check();
           if (sha256(editor.document.getText()) !== snapshot.source.typescriptHash || sha256(await readBoundedFile(source.sourcePath, SOURCE_LIMIT_BYTES)) !== snapshot.source.typescriptHash) throw new StudyError('SOURCE_CHANGED', 'Source changed while revealing the capture.');
+          check();
           run.evidence.record('agent.source-revealed', { snapshotId: snapshot.id, line: snapshot.frame.line, sourceHash: snapshot.source.typescriptHash });
-        },
+        }),
       };
     },
     dispose() { tracker.dispose(); termination.dispose(); focus.dispose(); },

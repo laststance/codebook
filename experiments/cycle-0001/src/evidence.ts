@@ -35,10 +35,12 @@ export class Evidence {
       this.failure ??= 'Evidence buffering limit exceeded';
       return event;
     }
-    this.events.push(event);
+    // Retain the serialized observation, never a live object that later input acknowledgements can mutate.
+    const captured: RecordedEvent = JSON.parse(serialized);
+    this.events.push(captured);
     this.retainedBytes += bytes; this.queuedBytes += bytes;
     this.pending = this.pending.then(() => appendFile(join(this.directory, 'events.jsonl'), serialized)).catch(error => { this.failure = String(error); }).finally(() => { this.queuedBytes -= bytes; });
-    return event;
+    return captured;
   }
 
   /** Confirms queued directory initialization before setup proceeds, called by the run. @example await evidence.initialize() */

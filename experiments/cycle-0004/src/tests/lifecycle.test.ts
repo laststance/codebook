@@ -16,13 +16,40 @@ async function harness() {
   const filename = join(__dirname, '../run.js'), nativeRequire = createRequire(filename);
   const exports: Partial<typeof RunModule> = {};
   const nativeDebug = { stopDebugging: async () => true, removeBreakpoints: () => undefined };
+  class SourceInput { constructor(readonly uri: { fsPath: string }) {} }
+  const sourceTabs: { input: SourceInput }[] = [];
+  const tabGroups = { all: [{ tabs: sourceTabs }], close: async (tabs: typeof sourceTabs) => { for (const tab of tabs) sourceTabs.splice(sourceTabs.indexOf(tab), 1); return true; } };
   runInNewContext(await readFile(filename, 'utf8'), { exports, AbortController, performance, process, setInterval, clearInterval,
-    require: (name: string) => name === 'vscode' ? { version: 'test', extensions: { getExtension: () => undefined }, debug: nativeDebug, window: { tabGroups: { all: [] } } }
+    require: (name: string) => name === 'vscode' ? { version: 'test', extensions: { getExtension: () => undefined }, debug: nativeDebug, TabInputText: SourceInput, window: { tabGroups } }
       : name === 'codebook-cycle-0001/dist/hostBrowser' ? {} : nativeRequire(name),
   }, { filename });
   assert.ok(exports.PairedRun);
   const run = new exports.PairedRun({ artifactRoot: directory, templateRoot: directory, descriptorPath: '', revision: 'test', dirty: true, sourceHash: 'test', nodeExecutable: '/node', host: { id: 'vscode', productVersion: 'test', apiVersion: 'test', commit: 'test' } }, 'normal');
-  return { run, directory, nativeDebug };
+  return { run, directory, nativeDebug, sourceTabs, SourceInput };
+}
+
+for (const fault of [false, true]) {
+  test(`${fault ? 'automatic failure cleanup' : 'explicit cleanup'} drains a late source tab and prevents post-release evidence`, async () => {
+    // Arrange
+    const { run, directory, sourceTabs, SourceInput } = await harness();
+    const sourcePath = join(directory, 'source.mts'); run.participants.server.source = { sourcePath, source: '', javascript: '', sourceMap: '', breakpointLine: 1 };
+    let entered = false, release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const revealing = run.ownSourceReveal(async check => { entered = true; await barrier; sourceTabs.push({ input: new SourceInput({ fsPath: sourcePath }) }); check(); run.evidence.record('agent.source-revealed'); });
+    const cancellation = fault ? /Injected debugger failure/ : /Run cleanup/;
+    const rejected = assert.rejects(revealing, cancellation);
+    try {
+      await waitUntil(() => entered, 'source tab acquisition', 1_000);
+      // Act
+      if (fault) run.fail('Injected debugger failure');
+      const cleanup = run.cleanup(); await Promise.resolve(); assert.equal(run.view().resourcesReleased, false);
+      release(); await rejected; await cleanup;
+      // Assert
+      assert.equal(sourceTabs.length, 0); assert.equal(run.view().resourcesReleased, true); assert.equal(run.view().cleaned, true);
+      assert.equal(run.evidence.events.some(event => event.type === 'agent.source-revealed'), false);
+      assert.throws(() => run.ownSourceReveal(async () => {}), cancellation);
+    } finally { release(); await run.cleanup(); await rm(directory, { recursive: true }); }
+  });
 }
 
 /** Supplies a historical snapshot reference at the inspector boundary, without pretending to validate a real debugger. @example snapshot({ sessionId: 'server', threadId: 0, generation: 1 }) */

@@ -13,8 +13,9 @@ import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { StudyClient, connectionSchema } from './client';
 import { createNativeProfile } from './utils/createNativeProfile';
+import { omittedDetail } from './utils/omittedDetail';
 import { bootstrapSchema, eventsSchema, receiptSchema, snapshotSchema, stateSchema, statusSchema } from './nativeSchemas';
-import { CAPTURE_PHASES, CONTROL_RESPONSE_LIMIT_MS, HOLD_DURATION_MS, NATIVE_AGENT_WINDOW_MS, NATIVE_EDITOR_START_TIMEOUT_MS, NATIVE_EXPIRY_MARGIN_MS, NATIVE_OBSERVATION_TIMEOUT_MS, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, PROFILE_ID } from './constants';
+import { CAPTURE_PHASES, CONTROL_RESPONSE_LIMIT_MS, EVENT_DETAIL_LIMIT_BYTES, HOLD_DURATION_MS, NATIVE_AGENT_WINDOW_MS, NATIVE_EDITOR_START_TIMEOUT_MS, NATIVE_EXPIRY_MARGIN_MS, NATIVE_OBSERVATION_TIMEOUT_MS, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, PROFILE_ID } from './constants';
 
 const packageRoot = resolve(__dirname, '..'), repositoryRoot = resolve(packageRoot, '..');
 const hostId = selectHost(process.env.CODEBOOK_HOST);
@@ -166,7 +167,8 @@ async function exercise(descriptorPath: string, scenario: Scenario): Promise<{ r
     if (receipt) {
       try {
         result.final = await agent.tool('codebook_stop', { instanceId: receipt.instanceId, runId: receipt.runId }, stateSchema); assert.equal(result.final.cleaned, true);
-        result.checks.closedEventCount = (await events(agent, result.final.eventsUri)).length;
+        const history = await events(agent, result.final.eventsUri);
+        result.checks.closedEventCount = history.length; result.checks.closedEventHash = sha256(JSON.stringify(history));
       }
       catch (error) { result.passed = false; result.error = `${result.error ?? ''}\nCleanup: ${String(error)}`; }
     }
@@ -216,9 +218,13 @@ async function main(): Promise<void> {
       const final = result.final;
       if (!final?.runtimeRunId || result.checks.closedEventCount === undefined) continue;
       const path = join(suiteDirectory, 'instances', final.instanceId, final.runId, final.runtimeRunId, 'events.jsonl');
-      const persistedCount = (await readFile(path, 'utf8')).trim().split('\n').length;
+      const persisted = eventsSchema.parse({ events: (await readFile(path, 'utf8')).trim().split('\n').map(line => JSON.parse(line)) }).events;
+      const persistedCount = persisted.length;
       if (persistedCount !== result.checks.closedEventCount) { result.passed = false; result.error = 'Closed history changed after teardown'; process.exitCode = 1; }
       result.checks.closedHistoryStable = persistedCount === result.checks.closedEventCount;
+      const projected = persisted.map(event => ({ ...event, detail: Buffer.byteLength(JSON.stringify(event.detail)) > EVENT_DETAIL_LIMIT_BYTES ? omittedDetail(event.detail) : event.detail }));
+      result.checks.closedHistoryMatchesDisk = sha256(JSON.stringify(projected)) === result.checks.closedEventHash;
+      if (!result.checks.closedHistoryMatchesDisk) { result.passed = false; result.error = 'MCP history differs from recorded disk observations'; process.exitCode = 1; }
     }
     await writeFile(join(suiteDirectory, 'results.json'), JSON.stringify(results, null, 2));
     await writeFile(join(suiteDirectory, 'teardown.json'), JSON.stringify({ editorExited: Boolean(child?.pid), descriptorPath, noIndependentNativeUiInspection: true }, null, 2));

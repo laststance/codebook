@@ -18,6 +18,7 @@ export interface StudyRecord {
   action?: { signature: string; receipt: { operationId: string; runUri: string; key: string } };
   explanations: Map<string, Explanation>;
   explanationKeys: Map<string, { signature: string; result: Promise<{ explanationUri: string }> }>;
+  sourceReveals: Set<Promise<void>>;
 }
 
 /** Owns MCP intent/history independently of transport sessions; commands construct it once per editor instance. @example service.start({instanceId, profile:'paired-cart-demo', key:'study-1'}) */
@@ -63,7 +64,7 @@ export class StudyService {
     if (this.records.size >= MAX_RUNS) throw new StudyError('LIMIT_EXCEEDED', `This instance retains at most ${MAX_RUNS} runs; no history was evicted.`);
     const createdAt = this.now();
     const record: StudyRecord = { id: randomUUID(), key: input.key, profile: input.profile, createdAt, deadlineAt: createdAt + RUN_TIMEOUT_MS,
-      prepared: false, preparation: Promise.resolve(), stopping: false, stopped: false, explanations: new Map(), explanationKeys: new Map() };
+      prepared: false, preparation: Promise.resolve(), stopping: false, stopped: false, explanations: new Map(), explanationKeys: new Map(), sourceReveals: new Set() };
     this.records.set(record.id, record); this.startKeys.set(input.key, record);
     record.preparation = this.prepare(record);
     return this.receipt(record);
@@ -129,8 +130,11 @@ export class StudyService {
   /** Reveals only the source bound to a committed snapshot; the editor adapter checks file/document hashes. @example await service.reveal({...run, snapshotUri}) */
   async reveal(input: RevealInput) {
     this.assertMutable(input.instanceId); const record = this.record(input); const snapshot = this.snapshot(record, input.snapshotUri);
-    if (record.stopping) throw new StudyError('BUSY', 'Source reveal waits until owned source cleanup finishes.');
-    await record.runtime!.reveal(snapshot);
+    if (record.stopping || record.stopped || record.error || record.runtime!.evidence.failure || ['failed', 'cancelled', 'completed'].includes(record.runtime!.view().status)) throw new StudyError('BUSY', 'Source reveal requires an active run. Read the captured source resource after cleanup.');
+    // Reserve before editor I/O; stop must not finish while a source tab can still be acquired.
+    const pending = Promise.resolve().then(() => record.runtime!.reveal(snapshot));
+    record.sourceReveals.add(pending);
+    try { await pending; } finally { record.sourceReveals.delete(pending); }
     return { revealed: true, snapshotUri: input.snapshotUri, sourceUri: `${input.snapshotUri}/source/typescript`, line: snapshot.frame.line };
   }
 
@@ -228,6 +232,7 @@ export class StudyService {
     const attempt = record.stopPromise ??= (async () => {
       await record.preparation;
       await Promise.allSettled([...record.explanationKeys.values()].map(value => value.result));
+      await Promise.allSettled([...record.sourceReveals]);
       if (record.runtime) await record.runtime.stop();
       record.stopped = true; record.cleanupError = undefined;
     })();

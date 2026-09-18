@@ -59,6 +59,7 @@ export class PairedRun {
   private browser?: HostBrowser;
   private readonly abort = new AbortController();
   private readonly activities = new Set<Promise<void>>();
+  private readonly sourceReveals = new Set<Promise<void>>();
   private preparePromise?: Promise<void>;
   private nodeLaunch?: Promise<boolean>;
   private cleanupPromise?: Promise<void>;
@@ -96,6 +97,15 @@ export class PairedRun {
 
   /** Serializes setup once while the external create request returns immediately. @example await run.prepare() */
   async prepare(): Promise<void> { this.preparePromise ??= this.prepareOwned(); await this.preparePromise; }
+
+  /** Registers editor acquisitions before they start so independent runtime cleanup can drain them before closing source tabs. @example await run.ownSourceReveal(async check => { await openSource(); check(); }) */
+  ownSourceReveal(reveal: (check: () => void) => Promise<void>): Promise<void> {
+    this.assertAlive();
+    const pending = Promise.resolve().then(async () => { this.assertAlive(); await reveal(() => this.assertAlive()); this.assertAlive(); });
+    this.sourceReveals.add(pending);
+    void pending.then(() => this.sourceReveals.delete(pending), () => this.sourceReveals.delete(pending));
+    return pending;
+  }
 
   /** Acquires sealed sources, Node, selected proxies and managed browser in dependency order. @example await this.prepareOwned() */
   private async prepareOwned(): Promise<void> {
@@ -433,6 +443,8 @@ export class PairedRun {
       { description: `${name} breakpoint removal`, release: () => { const breakpoint = this.participants[name].breakpoint; if (breakpoint) vscode.debug.removeBreakpoints([breakpoint]); } },
     ])));
     failures.push(...await settleCleanup([...this.sessions.values()].filter(({ session }) => !session.parentSession && this.activeSessions.has(session.id)).map(({ session }) => ({ description: 'owned debug root stop', release: () => awaitResponse(vscode.debug.stopDebugging(session), 'owned root stop') }))));
+    // Source display may still be acquiring a native tab; close tabs only after those accepted operations settle.
+    failures.push(...await settleCleanup([{ description: 'owned source acquisitions', release: () => awaitResponse(Promise.allSettled([...this.sourceReveals]), 'owned source acquisitions') }]));
     const sourcePaths = PARTICIPANTS.map(name => this.participants[name].source?.sourcePath);
     failures.push(...await settleCleanup([{ description: 'owned source editors close', release: async () => {
       const sourceTabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputText && sourcePaths.includes(tab.input.uri.fsPath));
