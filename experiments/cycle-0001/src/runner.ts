@@ -119,7 +119,14 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
         return current.status === 'failed' || (current.snapshot && current.captures['paused-1']?.status !== 'pending') ? current : undefined;
       }, 'snapshot or failure', RUN_TIMEOUT_MS);
 
-      if (scenario === 'stale-script' || scenario === 'source-drift') {
+      if (scenario === 'viewport-close') {
+        // Closing can precede snapshot commitment; the failure must not require successful inspection.
+        assert.equal(stopped.status, 'failed');
+        assert.match(stopped.failures.join('\n'), /Owned viewport closed/);
+        assert.equal(stopped.events.filter(event => event.type === 'input.dispatched').length, 1);
+        assert.equal(stopped.events.filter(event => event.type === 'continue.accepted').length, 0);
+        assert.equal(stopped.events.filter(event => event.type === 'run.completed').length, 0);
+      } else if (scenario === 'stale-script' || scenario === 'source-drift') {
         assert.equal(stopped.status, 'failed');
         assert.match(stopped.failures.join('\n'), scenario === 'stale-script' ? /Executed JavaScript does not match/ : /Local TypeScript changed/);
         assert.equal(stopped.snapshot, undefined);
@@ -149,7 +156,7 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
           assert.equal(sameKey.body.operation.id, action.body.operation.id);
           assert.equal(differentKey.status, 409);
         }
-        if (['manual-race', 'cdp-resume', 'disconnect', 'terminate', 'viewport-close'].includes(scenario)) {
+        if (['manual-race', 'cdp-resume', 'disconnect', 'terminate'].includes(scenario)) {
           const failed = await waitUntil(async () => {
             const current = await state(descriptor, runId);
             const restopped = scenario !== 'manual-race' || current.events.filter(event => event.type === 'dap.stopped').length === 2;
@@ -158,7 +165,7 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
           assert.equal(failed.events.filter(event => event.type === 'continue.accepted').length, 0);
           assert.equal(failed.events.filter(event => event.type === 'input.dispatched').length, 1);
           assert.equal(failed.events.filter(event => event.type === 'run.completed').length, 0);
-          assert.match(failed.failures.join('\n'), scenario === 'viewport-close' ? /Owned viewport closed/ : scenario === 'manual-race' ? /Manual or competing DAP resume/ : scenario === 'cdp-resume' ? /Continued without an owned continuation/ : scenario === 'disconnect' ? /CDP connection closed/ : /terminated|connection closed/);
+          assert.match(failed.failures.join('\n'), scenario === 'manual-race' ? /Manual or competing DAP resume/ : scenario === 'cdp-resume' ? /Continued without an owned continuation/ : scenario === 'disconnect' ? /CDP connection closed/ : /terminated|connection closed/);
           if (scenario === 'manual-race') {
             assert.equal(failed.conflict, true);
             assert.equal(failed.snapshot?.pause.generation, 1);

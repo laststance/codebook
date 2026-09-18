@@ -29,6 +29,12 @@ export class FrameDelivery {
     this.epoch = epoch;
   }
 
+  /** Retires a hidden renderer before {@link BrowserViewport} waits for a fresh ready handshake. @example delivery.suspend() */
+  suspend(): void {
+    this.epoch = undefined;
+    this.invalidate('Webview renderer suspended');
+  }
+
   /** Pins phase evidence before transmission, dropping queued live work until {@link resume}. @example delivery.freeze() */
   freeze(): void {
     this.frozen = true;

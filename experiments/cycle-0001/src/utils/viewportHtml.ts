@@ -17,6 +17,7 @@ const phase = document.getElementById('phase');
 let renderRevision = 0;
 window.addEventListener('message', async event => {
   const message = event.data;
+  if (message?.type === 'requestReady') { api.postMessage({type:'ready',epoch,requestId:message.requestId}); return; }
   if (!message || message.epoch !== epoch) return;
   if (message.type === 'reset') { renderRevision++; phase.textContent = 'Waiting for live frame'; return; }
   if (message.type !== 'frame') return;

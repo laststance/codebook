@@ -269,6 +269,7 @@ export class ExperimentRun {
     if (message.event === 'stopped') {
       const body: DebugProtocol.StoppedEvent['body'] = message.body;
       if (typeof body.threadId !== 'number') { this.fail('Stopped event has no unambiguous thread ID'); return; }
+      this.browser.resumeViewport();
       const pause = this.gate.stop(session.id, body.threadId);
       this.pausedAtMs = performance.now();
       if (this.status !== 'failed') this.status = 'paused';
@@ -312,6 +313,7 @@ export class ExperimentRun {
   /** Marks uncertain runs without retrying input or resuming the debugger. @example run.fail('source mismatch') */
   fail(reason: string): void {
     if (this.cleaning) return;
+    this.browser.resumeViewport();
     if (!this.failures.includes(reason)) { this.failures.push(reason); this.evidence.record('run.failed', { reason }); }
     this.status = 'failed';
     void this.persist().catch(error => { this.evidence.failure = String(error); });
@@ -348,6 +350,7 @@ export class ExperimentRun {
     if (!['completed', 'failed'].includes(this.status)) this.status = 'cancelled';
     this.abort.abort(new Error('Run cleanup requested'));
     this.gate.invalidate();
+    this.browser.resumeViewport();
     clearInterval(this.watchdog);
     this.evidence.record('cleanup.started');
     const failures = await settleCleanup([

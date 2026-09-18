@@ -6,6 +6,27 @@ import { FrameDelivery, type FrameMessage, type ViewFrame } from '../frameDelive
 const live: ViewFrame = { data: 'pixels', hash: 'original-hash', phase: 'live', required: false, delayAck: false };
 const pause: ViewFrame = { data: 'pause-pixels', hash: 'pause-hash', phase: 'paused-1', required: true, delayAck: false };
 
+test('hidden renderers cannot acknowledge or receive evidence until readiness is re-established', async () => {
+  // Arrange
+  const delivery = new FrameDelivery(() => Promise.resolve(true), () => undefined);
+  delivery.begin('hidden-view');
+  const capture = delivery.offer(pause);
+  const rejected = assert.rejects(capture, /renderer suspended/);
+  await delay(0);
+  // Act
+  delivery.suspend();
+  // Assert
+  await rejected;
+  assert.equal(delivery.acknowledge('hidden-view', 1), false);
+  await assert.rejects(delivery.offer(pause), /not ready/);
+  delivery.begin('restored-view');
+  const restored = delivery.offer(pause);
+  await delay(0);
+  assert.equal(delivery.acknowledge('restored-view', 2), true);
+  assert.deepEqual(await restored, { epoch: 'restored-view', id: 2, hash: 'pause-hash' });
+  delivery.dispose();
+});
+
 test('a previous renderer epoch or wrong frame cannot confirm the current source image', async () => {
   // Arrange
   const sent: FrameMessage[] = [];

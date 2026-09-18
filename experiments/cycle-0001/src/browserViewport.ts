@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { randomUUID } from 'node:crypto';
 import type { Cdp } from './cdp';
 import { FrameDelivery, type ViewFrame } from './frameDelivery';
 import { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, VIEWPORT_HEIGHT_PX, VIEWPORT_WIDTH_PX, type Scenario } from './constants';
@@ -11,6 +12,8 @@ export class BrowserViewport {
   private readonly panel: vscode.WebviewPanel;
   private readonly delivery: FrameDelivery;
   private epoch?: string;
+  private readinessRequest = randomUUID();
+  private presentationRevision = 0;
   private latestLive?: ViewFrame;
   private pinnedPause?: ViewFrame;
   private closed = false;
@@ -25,9 +28,16 @@ export class BrowserViewport {
       this.record('viewport.disposed', { expected: this.closing });
       if (!this.closing) this.fail('Owned viewport closed before cleanup');
     });
+    this.panel.onDidChangeViewState(() => {
+      if (!this.panel.visible) this.suspendRenderer();
+      else this.requestReadiness();
+    });
     this.panel.webview.onDidReceiveMessage((message: unknown) => {
       if (!message || typeof message !== 'object' || !('epoch' in message) || typeof message.epoch !== 'string' || !/^[\da-f-]{36}$/.test(message.epoch) || !('type' in message)) return;
       if (message.type === 'ready') {
+        // Startup announces a renderer; only the current request can prove reveal readiness.
+        if (!('requestId' in message)) { this.requestReadiness(); return; }
+        if (!this.panel.visible || message.requestId !== this.readinessRequest || message.epoch === this.epoch) return;
         this.epoch = message.epoch;
         this.delivery.begin(message.epoch);
         this.record('viewport.ready', { epoch: this.epoch });
@@ -57,20 +67,25 @@ export class BrowserViewport {
   /** Brings the owned viewport into view and awaits its renderer, called by preparation/completion. @example await viewport.reveal(signal) */
   async reveal(signal: AbortSignal): Promise<void> {
     if (this.closed) throw new Error('Owned viewport is closed');
+    this.suspendRenderer();
     this.panel.reveal(vscode.ViewColumn.One, false);
+    this.requestReadiness();
     await waitUntil(() => this.panel.visible && this.epoch, 'owned viewport ready', ACTIVE_TIMEOUT_MS, signal);
   }
 
   /** Pins and confirms the exact evidence PNG; required images bypass live coalescing. @example await viewport.present(png, 'paused-1') */
   async present(data: string, phase: string): Promise<{ epoch: string; id: number; hash: string }> {
+    const revision = this.presentationRevision;
     if (phase.startsWith('paused') && this.scenario === 'viewport-close') { this.panel.dispose(); throw new Error('Owned viewport closed by injected fault'); }
     if (phase.startsWith('paused') && this.scenario === 'viewport-reload') {
       const oldEpoch = this.epoch;
-      this.epoch = undefined;
+      this.suspendRenderer();
       this.record('fault.viewport-reload', { oldEpoch });
       this.panel.webview.html = viewportHtml();
       await waitUntil(() => this.epoch && this.epoch !== oldEpoch, 'reloaded viewport epoch', CAPTURE_TIMEOUT_MS);
     }
+    // Resume, termination or a newer stop can retire this presentation during renderer recreation.
+    if (this.closed || revision !== this.presentationRevision) throw new Error('Viewport presentation invalidated');
     const frame: ViewFrame = { data, hash: sha256(Buffer.from(data, 'base64')), phase, required: true, delayAck: phase.startsWith('paused') && this.scenario === 'viewport-timeout' };
     if (phase.startsWith('paused')) {
       this.pinnedPause = frame;
@@ -83,6 +98,7 @@ export class BrowserViewport {
 
   /** Retires pause presentation before DAP continuation and invalidates delayed renderer work. @example viewport.resume() */
   resume(): void {
+    this.presentationRevision++;
     if (!this.pinnedPause || this.closed) return;
     this.pinnedPause = undefined;
     this.delivery.resume();
@@ -95,6 +111,19 @@ export class BrowserViewport {
     this.closing = true;
     this.panel.dispose();
     if (!this.closed) throw new Error('Owned viewport disposal was not observed');
+  }
+
+  /** Invalidates readiness across hide, reveal and reload so old renderer messages cannot qualify. @example this.suspendRenderer() */
+  private suspendRenderer(): void {
+    this.epoch = undefined;
+    this.readinessRequest = randomUUID();
+    this.delivery.suspend();
+  }
+
+  /** Requests a correlated renderer response after visibility changes or startup. @example this.requestReadiness() */
+  private requestReadiness(): void {
+    if (this.closed || !this.panel.visible) return;
+    void Promise.resolve(this.panel.webview.postMessage({ type: 'requestReady', requestId: this.readinessRequest })).catch(error => this.record('viewport.ready-request-failed', { error: String(error) }));
   }
 
   /** Absorbs expected live coalescing while retaining delivery failure evidence. @example this.offerLiveOrRestored(frame) */
