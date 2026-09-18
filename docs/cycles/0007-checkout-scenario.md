@@ -1,7 +1,7 @@
 # Cycle 0007 — Drive a connected cart-to-confirmation scenario
 
 Type: product-increment
-Status: planning
+Status: implementing
 Result: pending
 Delivery: local-only
 Goal version: 3
@@ -164,3 +164,239 @@ Overall plan specificity: **8/10** (lowest pass), not a score of implemented DX.
 - [ ] **DX4 (P2, human ~2 h / agent ~20 min)** — Update runnable docs/help and measure real-agent discovery. Files: extension README, protocol/resources, native evidence. Verify transcript and timing with no per-stop private instructions.
 
 Checklist: first value/target/complete example/errors/discovery/typed API/upgrade each has a task; one-command installed onboarding, CI-native execution, publication and real-repository use are explicitly outside this development slice and remain final goals. No payment or credit card exists. Repository text search and current cycle issue provide local documentation/support; community operation is not claimed.
+
+
+### DX independent challenge and decisions
+
+The reused native reviewer completed on `26186d1` with two concrete gaps. Agent decisions under D008 accept both: (P1, 10/10) source and image references are immutable **per observation**, not merely per participant; read stop A after stop B and verify all original hashes/bytes, with A's missing image never filled by B. (P2, 8/10) first v2 write acquires the existing shared writer lock, then rechecks v2 and merges the validated latest decisions; two windows must not independently copy v1 and overwrite the other's first v2 choice. Explicit Retry after contention preserves both IDs exactly once. These strengthen DX1/DX3 without changing scope.
+
+Reviewer recommendation agrees with the minimal route: fixed profile data, append-only operations/observations and an independent current-pause pointer; no generic workflow engine or bulk rewriting of old archives. Full response: ignored `artifacts/cycle-0007/dx-native-challenge.md`, to preserve with cycle evidence. This is a reused same-harness context, not fresh or cross-provider coverage. Preflight reported `under_codex`; no nested outside CLI started. Installed caller repair is `setup --host codex`; no tool installation or unchanged provider retry is attempted. No cross-model agreement is claimed.
+
+## Design review — 2026-09-19
+
+Scope is the same agent-selected Cycle 0007 under D008. Initial completeness **5/10**: the API preserves identity, but the learner-facing labels, cross-profile selection and four-step terminal states were unspecified. A 10 requires implemented, independently observed native behavior in both editors; a plan or mockup cannot supply it. DESIGN.md and the approved Study workspace remain authoritative. The routine choices below are agent decisions under continuous delegation, not user feedback or a new visual approval.
+
+The designer binary is available in this environment; three state mockups were requested under `~/.gstack/projects/codebook/designs/cycle-0007-checkout-20260919/`. They explore the existing layout only. Generation/check status is recorded below before this review closes. The prior desktop-lock constraint still prevents native visual acceptance.
+
+### Design7.1 — Information hierarchy
+
+Finding D1: participant labels cannot distinguish cart mutation from a later order stop. Decision: use four stable learning items, with business titles first and participant/source identity as secondary context. Order: **Cart mutation → Cart update → Order creation → Purchase confirmation**. The profile picker names the scenario before a run, never changes an active run, and defaults to checkout for a new empty workspace. Saved paired-demo selections retain their profile. Saved-study options show profile name, time and concise outcome before the auxiliary ID, so the learner can distinguish paired and checkout history before opening it. Inbound MCP runs expose their frozen profile without silently changing a history reader's selection/follow preference.
+
+Finding D2: history from the paired profile and a live checkout run can coexist. Decision: selected profile/study/item/observation control reading; the live strip names the independent active profile and current item. Continue is enabled only for the exact displayed and acknowledged current observation; **Return to current pause** changes the reading selection explicitly. Stop targets the active run and labels it. Opening an old study never starts, restarts or switches the active runtime. A new profile can be selected for the next explicit Run only when no live run owns control.
+
+```text
+Learning outline       Application / selected captured image       Explanation
+Selected study         [history label when reading old evidence]    Selected item title
+4 checkout items       ----------------------------------------    Overview / Live
+or 2 paired items      Exact captured source + highlighted line     Actual values
+Understanding count                                                 Learner check
+                       Observed moments (observation identities)
+
+Persistent live controls: active profile + current item + Return / Continue / Stop
+```
+
+If only three pieces fit, retain current-versus-selected orientation, the matching source/value explanation, and one safe next action. The source-linked flow and history list remain reachable by scrolling. Score **5 → 9**; actual native hierarchy remains unverified.
+
+### Design7.2 — Interaction states
+
+Finding D3: action completion and scenario completion must differ visibly. Decision: show the cart-ready boundary as **Cart updated — checkout available**, final verified confirmation as **Purchase confirmed — evidence complete**, and final persistence/capture gaps as **Purchase observed — partial evidence**. Execution never checks understanding. Only the returned next action is enabled; no automatic purchase or hidden queued click from the learner UI.
+
+| Surface | Loading | Empty | Error | Success | Partial |
+| --- | --- | --- | --- | --- | --- |
+| Scenario entry | Preparing selected demo; controls disabled | Choose local demo, Run, Connect agent; brief purpose | Prerequisite/cause and explicit Retry; retained history remains readable | Active profile named, next safe action enabled | Ended run names last observed item and missing confirmation |
+| Selected item | Hide old source/values as one unit until new observation matches | Source-derived overview; no observed values | Source/image unavailable with exact reason, no borrowed evidence | Business title, actual values and source revision | Available values/source remain readable; missing image stays labeled |
+| Live controls | Request pending with action title; no duplicate dispatch | No runtime; Run available | Conflict/stale pause directs Return/refresh, no automatic retry | Cart ready or current inspected pause named | Stop/ended cause retained; Continue disabled after retirement |
+| Moments/flow | Preserve prior complete moments while newer snapshot commits | No observed moments yet; source path explicitly unobserved | One failed capture never substitutes a later frame | One entry per observation, item title and time | Missing required links and interrupted action named |
+| Understanding/history | Saving disables only the pending explicit choice | 0 of 4 or 0 of 2; checked only by learner | Retain failed decision; explicit Retry, no false success | Saved decision timestamp; profile-scoped count | Old source decisions retained with Review needed |
+
+The order fields are labeled actual captured values, including the order ID and total at the appropriate stop. The confirmation screen can appear before complete evidence persistence; the success label waits for that barrier. Score **5 → 9**. Verification requires cancellation at both actions, image failure, final-save failure, old-study selection and source drift.
+
+### Design7.3 — Learner journey
+
+The emotional column is a design hypothesis, not invented learner research.
+
+| Step | Learner does | Intended feeling | Visible support |
+| --- | --- | --- | --- |
+| 1 | Opens Study, chooses checkout, connects agent | Oriented | Local demo scope and four titled items before execution |
+| 2 | Asks the checkout question | Confident about what will happen | One active scenario, declared steps and current operation |
+| 3 | Reads cart mutation/update | Understands the screen/code relationship | Correct highlighted source, product/count values and observed links |
+| 4 | Reads cart history while order pauses | In control | Selected-history label and independent Order creation live strip |
+| 5 | Returns and continues to confirmation | Sees a coherent result | Exact order fields, final screen and evidence outcome |
+| 6 | Marks an item and returns later | Retains understanding | Explicit saved check, same immutable observation and source revision |
+
+At five seconds, the learner can identify selected item and whether execution is paused. Within five minutes after a built host is connected, the target is the first actual pause; measure it. Long-term, immutable evidence and source-versioned decisions support revisiting without pretending an old check proves new code. No new onboarding tour or reward mechanism is needed. Score **6 → 9**; observed learning feedback remains a final acceptance requirement.
+
+### Design7.4 — Specificity and generic-pattern audit
+
+Mode: **OPERATE**, with a reading region for explanations. Native editor expectations govern typography and chrome. Existing source above/below application pairing is the visual anchor; no marketing hero, decorative card grid or new brand palette. Hard rejections 1–7: no planned hits (no SaaS grid, decorative imagery, actionless headline, busy text background, repeated mood sections, carousel or stacked-card app layout).
+
+Litmus: product identifiable **YES** (codebook + named scenario); one anchor **YES** (application/source correspondence); headline scan **YES** (business item names); one job per section **YES**; cards necessary **NO** (none introduced); motion improves hierarchy **NO** for this task (no new motion); useful without shadows **YES**. These are primary-agent plan judgments, not pixel observations or cross-model consensus.
+
+Blacklist audit: no gradients, three-column feature grid, decorative circular icons, centered composition, bubbly radii, blobs, emoji UI decoration, accent-card borders, marketing filler, landing-page rhythm or new generic display font. Retain host font integration from the approved native editor rather than introduce a display typeface. Tokens cover selection/focus/scrollbars; no hover zoom or pulsing status. Score **8 → 9**; mockups and implemented pixels receive separate scrutiny.
+
+### Design7.5 — System alignment
+
+No new design system. Reuse `StudyWorkspace`, `studyHtml`, `STUDY_STYLES`, outline, observed moments, captured application panel and source-document registration. Keep VS Code/Cursor theme variables; body 16 px / 1.5, item title 20 px, spacing 4/8/12/16/24 px, radius 4 px, inherited editor font, tabular values. Preserve visited-link distinction, visible focus, themed selection/caret/scrollbars and semantic controls. Profile choice is a visibly labeled native select next to explicit Run, not a settings page. Existing live/history/persistence states supply the vocabulary.
+
+No new issue beyond D1–D3; applying these tokens copies the approved behavior rather than making a new visual choice. Score **8 → 9**. Do not add decorative animation. Any future motion requires video/frame verification under AGENTS.md.
+
+### Design7.6 — Responsive and accessible behavior
+
+Finding D4: four longer item titles and new order fields must fit the existing narrow reader. Decision: retain the Cycle 0006 reflow behavior, wrap titles and action labels, allow only the value/source table to scroll horizontally, and keep the sticky live strip in normal flow when it consumes over the existing viewport fraction. Check 320/640/960 px reader widths, 200% text, dark/light/high-contrast themes. Native editor arrangement must preserve unrelated dirty tabs and follow existing source-group anchors; the user can restore the arrangement explicitly.
+
+Keyboard: labeled profile select; tablist arrow/Home/End; outline and moments as distinct focusable buttons; focus retained by stable item/observation identity across updates; 44 px controls; no color-only current/observed/understood state. Polite status announces current item changes, not every timer tick. A history read retains focus and scroll; Continue requires a current renderer acknowledgement after atomic source/value selection. Long order IDs wrap or scroll inside the table without obscuring controls. Screen reader labels distinguish active item from selected historical moment. Score **6 → 9**. Verify in actual webview and native host separately; neither a browser-only harness nor renderer acknowledgement proves native pixels.
+
+### Design7.7 — Decision register and tasks
+
+Agent decisions under D008: D1 business-item identity/profile-scoped outline; D2 independent live versus selected state; D3 intermediate/final/partial labels; D4 preserve accessible reflow/focus with stable observation IDs. Alternatives rejected: participant-only titles lose meaning at repeated stops; auto-jumping from history removes learner control; treating cart completion as full success hides missing checkout; a new layout duplicates already approved navigation. All four are routine routes within the approved outcomes. No unresolved design decision or new deferred TODO.
+
+What already exists: complete Cycle 0006 reader, theme tokens, storage Retry, source-version understanding, foreign-tab protection and owned viewport lease. Not in scope: other two layouts (later required), playback/video (later required), arbitrary-repo onboarding (later required), new typography/animation (unnecessary here). Native visual coverage remains a verification gap, never an optional removed requirement.
+
+- [ ] **D1 (P1, human ~3 h / agent ~25 min)** — Stable profile/item/observation selection in outline, context and moments. Files: study model, workspace, UI. Verify old and new profile histories plus two server observations.
+- [ ] **D2 (P1, human ~2 h / agent ~20 min)** — Independent live strip and safe next action, intermediate/final/partial copy. Files: workspace, UI, captured application. Verify reading old paired history while checkout is paused; Return and Stop target the active checkout.
+- [ ] **D3 (P2, human ~2 h / agent ~20 min)** — Four-item keyboard/reflow/state coverage. Files: UI constants/client and webview/native harnesses. Verify width/theme/text matrix, focus, zero automatic understanding, partial captures and exact source acknowledgement.
+
+Plan scores: architecture 9, states 9, journey 9, specificity 9, system 9, accessibility 9; overall **9/10 plan completeness**, with implementation/native proof explicitly outstanding. These scores do not satisfy G07 or final-product reviews.
+
+### Mockup audit and retained reference
+
+The designer generated three PNGs and served a comparison board at `http://127.0.0.1:59809/boards/b-20260918-212014-q0srnt/`. Automated checks reported A/C pass and B fail (missing tote/price/confirmation fields). Primary visual inspection rejects **all three as implementation references**: they do not preserve application above exact source, and some panels imply values or confirmation not yet observed. This is a recorded quality-check limitation, not an implementation defect or new user selection. No unchanged regeneration is needed because the previously approved default already fixes the composition. The textual state contract above resolves the new sequence behavior. Generated assets/logs remain in the private design directory; no generated image is claimed as native evidence.
+
+Approved mockups: **0 new approvals**. Retain `/Users/ryotamurakami/laststance/vscode-extension/codebook/docs/designs/assets/01-study-workspace.png` as the user-approved composition. Neither board feedback nor an `approved.json` is fabricated. Routine state choices proceed under D008; the user did not choose these generated variants.
+
+Native reused reviewer findings D7-N1–N3 match D1–D3; the final amendment labels saved-study options by profile/time/outcome. Full response is retained in `artifacts/cycle-0007/design-native-challenge.md`. This is a reused same-harness context, not a fresh independent or final-product review.
+
+Design completion: all seven passes evaluated; minimum score 5 → 9; four agent decisions, zero deferred decisions, three implementation tasks, zero new TODOs. Native visual acceptance remains unverified. External design voice unavailable under the installed own-Codex guard; do not relabel the designer quality check as an independent architecture review.
+
+## Engineering review — 2026-09-19
+
+Scope: this cycle, chosen by the agent under D008; Default mode, not a user-named target. The user authorized ongoing reversible implementation while unavailable. Scope and individual technical remedies below are agent decisions with alternatives recorded; no silent user answers or fabricated approvals. Review mode **FULL_REVIEW**, retaining the bounded full local checkout outcome.
+
+### Step 0 — Scope challenge and reuse
+
+The change necessarily touches more than eight files because participant identity crosses runtime, MCP, storage and native UI. That is a complexity warning. Decision E0: modify the existing coordinator in sequential stages, with two fixed profile definitions and action/observation records; introduce no new workflow service, generic DSL, queue, database or runtime process. A second independent coordinator would duplicate source/control/cleanup safety and reset the very application state this cycle must demonstrate. Chaining two existing runs would not prove checkout from the cart. Reducing to API-only would omit the required learner correspondence. Keep the complete bounded sequence and old-profile regression coverage.
+
+Reuse inventory: `PairedRun` owns target acquisition/events/cleanup; `PauseGate` already tracks generations; `Cdp` multiplexes independent requests; `verifySource` checks actual JS/map/TS; `NetworkEvidence` closes a complete request set; `Evidence` bounds and serializes writes; `StudyService` owns authenticated intents/resources; `LearningLibrary` owns atomic locked persistence; `StudyWorkspace` owns selection/render acknowledgements and viewport leases. Extend these boundaries. Source/learning/control identities remain separate.
+
+Search: Aside unavailable; primary docs and Context7 were used. [DAP object-reference lifetime](https://github.com/microsoft/debug-adapter-protocol/blob/main/overview.md) requires copying values while suspended, not retaining variable handles. [CDP getScriptSource](https://chromedevtools.github.io/devtools-protocol/1-3/Debugger/#method-getScriptSource) remains the executed-source check. [js-debug extension interface](https://github.com/microsoft/vscode-js-debug/blob/main/EXTENSION_AUTHORS.md), checked with Context7, exposes one CDP session per debug target with explicit event subscriptions. [Node file-system API](https://nodejs.org/api/fs.html) warns about concurrent writes and supplies exclusive creation; retain the existing lock and atomic replacement. These are **Layer 1 reuse** of built-ins/current modules, not new protocol guarantees. No built-in scenario/learning-history model was found; fixed profile data is the small application-specific part.
+
+Retrospective: `c813053` fixed draining source reveals; `c873b43` established connected history. Preserve those lifecycle barriers. Prior learning applied: final-persistence-publication-gate (10/10, 2026-09-18); webview intent versus render ACK (9/10); native realpath/short-profile identity (9/10). No TODOS.md exists and no unrelated deferred task blocks this cycle. Packaging/CI-native/distribution remain explicit final-goal gaps; no new distributable type is introduced here.
+
+### E1 — Architecture and frozen expectation v1
+
+**[P1, confidence 10/10]** `experiments/cycle-0004/src/run.ts:279`: `participant.gate.generation > 0` rejects the second stop; `extension/src/service.ts:18`: `action?: ...` retains one action. Motivating scope: repeated server/browser pauses in this cycle's hypothesis. Decision: one coordinator keeps an ordered action cursor, append-only accepted operations/observations and a separate current pause per participant. Accept an action synchronously before dispatch. Advance only after its required continuations, closed network set and screen observation are verified and persisted. Reject an unexpected stop or wrong action rather than infer a step from focus or arrival time. Old profile remains exactly one action/two stops.
+
+Before input, freeze this table and its manifest hash. The runtime run ID is `R`; checkout operation identity is `R-checkout`. Background requests have `-background` suffixes and distinct cart/product/price. The service run ID and runtime R remain explicitly distinguished.
+
+| Action / item ID suffix | Participant / stop | Expected selected values | Required result |
+| --- | --- | --- | --- |
+| add-to-cart / cart-mutation | server, before cart mutation | operationId R; selected; tote-01; price 24; cartCount 0; admittedCount 2 | One cart mutation, shared session retained |
+| add-to-cart / cart-update | browser, before count display | same identity; cartCount 1; admittedCount 2 | DOM cartCount 1, completedClicks 1 |
+| checkout / order-creation | server, before storing order | operationId R-checkout; cartOperationId R; selected; tote-01; price 24; cartCount 1; admittedCount 2; orderId order-R; total 24; orderCount 0 | One order created from the actual selected cart |
+| checkout / purchase-confirmation | browser, before confirmation display | same order identity/total; orderCount 1 | DOM orderId order-R, total 24, confirmed status, completedCheckouts 1, completedClicks 1 |
+
+Checkout values are actually evaluated; no absent field is filled by the expectation table. The fixture binds `cartOperationId` to the prior observed cart response and server cart state. Both operations retain a distinct two-request selected/background set. Admissions/barriers are action-scoped, so each action observes exactly 2 admissions. Background checkout carries operation `R-checkout-background`, cartOperationId `R-background`, cartId `background`, productId `background-02`, price/total `99`, orderId `order-R-background`, cartCount `1`, admittedCount `2`, orderCount `0` before storage and `1` in the response. Checkout uses a separate fixed endpoint and the same source/process/browser, never a fresh cart run. Required links are the five existing action→request→server→response→browser→screen links for each action plus cart-result→checkout-input. That bridge requires matching carried cart operation identity and actual server cart state; time proximity alone never passes it. Capture phases: before; four item-specific pauses; after-cart; after-confirmation. Paired profile retains its original four phase names.
+
+```text
+status/start -> freeze profile + manifest -> acquire one browser/server pair
+ready(add) -> accept key -> physical click -> server cart stop -> inspect/continue
+             -> browser cart stop -> inspect/continue -> close cart set + screen
+ready(checkout) -> accept key -> physical click -> server order stop -> inspect/continue
+                -> browser confirmation stop -> inspect/continue -> close order set + screen
+candidate complete -> drain accepted work + owned teardown + final persistence -> final outcome
+       any contradiction/cancel -> preserve evidence -> owned teardown -> not demonstrated
+
+selected historical observation --------> read/explain/source/image only
+current session/thread/generation ------> one atomic continuation reservation
+```
+
+**[P1, confidence 10/10]** `extension/src/resources.ts:47`: `source(snapshot.participant)` is participant-scoped; `run.ts` writes participant snapshot/executed/image names. Decision E2: source seal, executed bytes, capture phase and facts bind to immutable observation/item/action identity. Later stops cannot replace earlier assets. Preserve old-profile filenames/opaque resource compatibility. A delayed capture validates its exact generation before publishing; a failed old capture never adopts a newer image. Keep fixed safe identifiers; callers cannot supply filesystem paths or arbitrary evaluation.
+
+**[P1, confidence 9/10]** `NetworkEvidence` closes one fixed URL/request set. Decision E3: retain a separate observer for each declared action through teardown, including already closed cart observations. Route events by exact declared URL/request ID, keep background isolation and reject late old-action traffic, redirects, cache/worker responses, duplicates and wrong parent operation IDs. Do not discard an old observer when checkout begins. The current action alone can finalize; asynchronous old work cannot move the new cursor or publish its screen as an earlier stop. Existing bearer/loopback/trusted-workspace restrictions remain unchanged.
+
+### E2 — Code quality, compatibility and storage
+
+**[P1, confidence 10/10]** `studyModel.ts` uses two participant decisions and `learningLibrary.ts:38` reads one `progress.json`. Decision E4: retain an exact v1 decoder; normalize it to the paired profile in memory. New v2 schema uses stable profile/item IDs and observation selection. Use `progress.v2.json` and distinct v2 archive suffixes, keep original bytes untouched, prefer v2 only after validation and never hide malformed v2 by silently reading v1. The existing shared `writer.lock` surrounds rereading latest v2/importing v1 and every mutation, preventing concurrent first migration from dropping another explicit choice. Repeated decision ID is idempotent, conflict is visible, failed writes retain Retry intent. A source hash check is item-scoped, not participant-scoped.
+
+Keep profile declarations in one typed source of truth, reused by API discovery, fixture stop selection, reader items and tests' inputs. Tests hard-code expectations independently. Prefer extending the current classes over inheriting/forking coordinators. Extract only small domain helpers when shared; no new utility without a repository search. Use discriminated captured cart/order values; explanation fact lookup rejects a path absent from that observation. Do not widen to arbitrary `Record<string, any>`, arbitrary evaluate strings supplied by MCP, or optional invented values. Branch/loop comments and concise JSDoc follow AGENTS.md.
+
+Errors: unknown profile/action → validation/domain error with catalog; wrong order → current expected action and run URI, no dispatch; replay key with same signature → original receipt even after completion; same key/different signature → conflict; new key/repeated action → already accepted; stale continuation → current state reference; storage/source mismatch → retained evidence and no complete success. Cancellation drains owned acquisitions and already accepted explanation writes as before. No new ASCII diagram exists to repair; add the compact action-cursor/current-pause diagram beside the coordinator's sequence transition and update docs/help diagrams.
+
+### E3 — Test review and failure coverage
+
+Detected framework: package scripts use TypeScript and `node --test`; existing real-host runner and actual HTML/webview harness supply integration coverage. Prior counts 63 product / 44 shared / 28 paired are historical baseline evidence, not tests of the new behavior. New branches below are **planned gaps**, not observed regressions or claimed measured coverage. Preserve existing three suites and old normal/hold/source-drift native checks.
+
+```text
+ENTRY / BRANCH                                      REQUIRED PROOF
+profile/status/start
+  valid old/new, unknown, duplicate/conflict        unit + MCP boundary
+action cursor
+  ready/current -> reserve -> dispatch             unit + both-host checkout E2E
+  early/wrong order, same/different retry key       unit + boundary; physical clicks exactly 2 total
+  old completion arriving after cursor advance     coordinator race test; no new-step mutation
+stop/inspect/source/capture
+  first and second stop on each participant        both-host E2E; generations monotonic
+  stale/manual/foreign/wrong source/unbound         regression + negative native cases
+  A -> B -> read A; A capture fails                byte/hash assertions + native history
+network / completion
+  selected + background for both actions           real CDP bodies and DAP values
+  wrong cart parent; late cart after checkout       network/coordinator tests + native faults
+  absent response, early cancel, disconnect        no false success; partial durable evidence
+  final write pending/rejected                    critical existing regression, GET and stop agree
+library v1 -> v2
+  missing, valid, corrupt, foreign, oversize        exact decoder/error tests
+  two first writers, lock, write/rename failure    filesystem tests, explicit Retry exactly once
+  original paired decisions versus checkout       no false progress; hashes of originals unchanged
+reader
+  live checkout + selected old paired history      actual webview + both-host learner checks
+  repeated participant, moments, source ACK        exact observation selection/control regression
+  narrow/text/themes/focus/loading/error           actual generated HTML matrix, native limit disclosed
+agent entry [EVAL/E2E]
+  one natural-language request + discovery         actual agent transcript, no hidden per-stop script
+```
+
+Observable failure matrix: unknown/wrong action fails visibly before input; duplicate/late traffic invalidates success; changing source invalidates snapshot; capture timeout preserves a failed phase and permits safe continuation; pause expiry/manual resume rejects control; disconnect/cancel drains only owned resources; locked/corrupt migration preserves old files and reports Retry; archive size/final write failure reports evidence unavailable. Every path has an explicit test above and an error route; no known silent critical gap is intentionally deferred.
+
+Critical regression requirements: old paired discovery/actions/resources still function; cart observation remains byte-identical after the order stop and reload; two concurrent Continue calls accept exactly one; old-generation Continue is rejected at a later same-participant stop; v1 checks never migrate into checkout items; foreign dirty editor tabs and viewport leases survive. Extend `service.test.ts`, `protocol.test.ts`, `learning.test.ts`, `studyWorkspace.test.ts`, paired network/lifecycle tests and native scenario harnesses. Tests use AAA and explicit expected primitives; do not mirror profile metadata to derive expected values.
+
+Actual-agent evaluation is distinct from deterministic integration. Record prompt, catalog, tool/resource transcript and source-backed interpretations; compare required stops/links to the pre-run table. No model prompt/server provider is introduced, and no unmeasured quality percentage is claimed. New UI has no motion; later recording work still requires video/frame evidence. The native locked-desktop gap remains explicit.
+
+### E4 — Performance and timing
+
+**[P1, confidence 9/10]** `service.ts:66` uses a 120-second whole-run deadline and `PauseBudget` counts all non-paused time from creation. Decision E5: old paired limits remain unchanged; checkout advertises a **300-second wall limit**, a **20-second setup limit**, and **20 seconds of active application time per action**, excluding confirmed debugger pauses and the between-action ready wait. Wall time always bounds the whole run. No request retry or automatic continuation at expiry. State/control remain independent of click completion; test 40-second stops on both actions and local control response under two seconds. The exact limits are constants and part of the frozen manifest.
+
+**[P2, confidence 9/10]** four observations/seven captures exceed the old fixed counts. Decision E6: raise count bounds only to declared profile maxima; retain existing per-image/source and **64 MiB aggregate archive** limits. Oversize evidence fails visibly with partial/not-demonstrated combined study outcome rather than increasing limits without measurement. Avoid loading every archive image for catalog rendering; preserve metadata listing, serialized writes, content/signature checks and bounded event/resource responses. Small v2 catalog metadata is written after its archive under the same writer lock and verified against its archive identity; missing/stale metadata is visible/retryable and never certifies success. Legacy entries are labeled paired history, with outcome unverified until the archive is read and validated. No database/N+1 work is introduced. Hold tests measure control latency; log archive sizes and actual first-pause time. Cache immutable source bytes by seal where the current structure permits; do not add speculative worker threads or storage infrastructure.
+
+### Engineering native challenge amendments
+
+The reused same-harness reviewer identified two plan gaps: (P1) runtime success can precede a failed learning-library write, and (P2) checkout's background/admission expectations were not frozen. Agent decisions accept both under D008. Background tuple/order values and per-action barriers are now explicit above.
+
+Outcome contract: retain legacy `finalOutcome` as **runtime evidence outcome** for compatibility and name that limit in help. Add separate `historyOutcome` and combined `studyOutcome`. `StudyWorkspace` remains the history owner and publishes pending/saved/failed checkpoint receipts to `StudyService`, qualified by the exact material-state signature/revision. Only a latest terminal saved checkpoint plus demonstrated runtime evidence can make `studyOutcome` demonstrated. An older save cannot clear a newer failure or certify a newer observation/explanation. History unavailable/pending/failed is explicit; neither GET, Stop nor UI can label the combined study complete from runtime success alone. Stop may return with history pending, provided it exposes that state; readers can inspect the same state until saved or failed. This adds no new service or workflow owner.
+
+Required tests: successful runtime with pending/rejected/oversized library write; late old-save resolution after newer failed checkpoint; post-stop explanation invalidates the prior history receipt; GET/Stop/UI agree on runtime versus history; explicit Retry can certify only the latest state. Metadata-write failure preserves the already written archive, reports incomplete catalog/history and can be retried without changing immutable observations. Native proof must distinguish runtime completion, durable learner history and combined completion.
+
+### Engineering tasks and execution order
+
+Sequential implementation, no parallelization opportunity: runtime identities feed service, persistence and reader contracts, and they share the same modules. Native review can challenge the frozen plan independently; code ownership remains in this task.
+
+- [ ] **E1 (P1, human ~5 h / agent ~45 min)** — Add fixed profile/action/item definitions and adapt current runtime as a behavior-preserving first stage. Files: paired constants/profile, run, inspect/seal/network. Verify old tests before checkout behavior.
+- [ ] **E2 (P1, human ~5 h / agent ~45 min)** — Implement checkout fixture and retained action/observation/source/capture identities with both request sets. Verify exact four-stop table and late/incorrect cross-action evidence.
+- [ ] **E3 (P1, human ~3 h / agent ~30 min)** — Add discovery/next action/idempotent receipts and immutable resources. Files: extension service/runtime/environment/schemas/resources. Verify real MCP order/replay/stale paths.
+- [ ] **E4 (P1, human ~4 h / agent ~40 min)** — Add v1 decoder/v2 normalization and reader selection/progress. Files: library/model/workspace/UI. Verify concurrency, original bytes, history and repeated participants.
+- [ ] **E5 (P1, human ~4 h / agent ~40 min)** — Native checkout/fault/hold/history and actual-agent validation; retain old regressions, webview matrix and current-diff review. Evidence separated by host; failures retain changed hypotheses.
+
+Not in scope: generic workflow engine (unnecessary for two fixed profiles), arbitrary-repo adapter (later required), recordings/other modes/wiki (later required), VSIX publication/installed acceptance/CI-native runner (later required), dependency upgrades (unnecessary). No new TODO beyond the active tasks. Suppressed findings: none promoted without source/plan evidence. Plan remedies cover E1–E6; no implementation success is claimed. The reused engineering challenge completed with the two amendments above; its full response is `artifacts/cycle-0007/eng-native-challenge.md`. No remaining blocker was identified in that bounded review. Four review sections, six primary issues plus two challenge amendments, five build tasks and the QA test-plan artifact are recorded. Lake score: 8/8 remedies retain complete scoped failure handling; implementation/native execution still required. No additional durable learning beyond these contracts is claimed.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+| --- | --- | --- | --- | --- | --- |
+| CEO | Existing approved goal | Destination unchanged | 0 this cycle | Context retained | No goal change |
+| DX | `/plan-devex-review` | Multi-action MCP and compatibility | 1 | Plan specified, 8/10 | Eight passes; four tasks; two native challenge amendments |
+| Outside | Native challenges | Missing contracts | DX + Design + Eng, reused / 0 external | Limited native; outside unavailable | Immutable assets, migration, selected/live states, history outcome and checkout counters |
+| Design | `/plan-design-review` | Four-item learner flow | 1 | Plan specified, 9/10 | Seven passes; four agent decisions; three tasks; generated variants rejected |
+| Eng | `/plan-eng-review` | Sequence/runtime/storage | 1 | CLEAR (PLAN) | Four sections; six primary issues; two challenge amendments; five tasks |
+
+**OUTSIDE COVERAGE:** unavailable; own-harness guard and known fresh-thread limit. Reused native response is limited coverage and no final-product pass. **VERDICT:** DX + Design + Eng plans specified; ready for sequential implementation, with missing external/native visual coverage. No current-diff or product PASS is implied. No additional durable learning beyond the recorded observation-identity and lock requirements was identified. The repeated approval loop is superseded by the user's explicit continuous delegation for routine reversible choices; decisions remain agent-authored, not user answers.
+
+NO UNRESOLVED DECISIONS

@@ -2,7 +2,7 @@
 
 Updated: 2026-09-19\
 Product stage: connected study and durable learning mechanisms demonstrated; full native usability unverified\
-Active cycle: [0007 — Cart-to-confirmation scenario](docs/cycles/0007-checkout-scenario.md) — planning\
+Active cycle: [0007 — Cart-to-confirmation scenario](docs/cycles/0007-checkout-scenario.md) — implementing\
 Last cycle: [0006 — Study workspace](docs/cycles/0006-study-workspace.md) — closed, mechanisms demonstrated; native usability inconclusive\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [8](https://github.com/laststance/codebook/issues/8) — open\
@@ -43,7 +43,7 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Review the active Cycle 0007 plan for a reusable cart-to-confirmation scenario. Cycle 0006 is integrated at `5abd16a` and issue #7 is closed. Review its agent contract, selection/step behavior and engineering failure handling before implementation. Reuse the proven target/pause/source evidence and learner library; expand the connected product instead of refining private transport again. D008 authorizes continuous execution. Keep the full checkout, synchronized recording/replay, repository wiki/codemap, two remaining layouts and real-repository support in the final goal.
+Implement the reviewed Cycle 0007 plan sequentially: first fixed profiles and behavior-preserving runtime identities, then checkout, MCP, history/reader and native evidence. DX, Design and Eng reviews are complete with reused native challenges and unavailable outside coverage. Cycle 0006 is integrated at `5abd16a` and issue #7 is closed. Reuse the proven target/pause/source evidence and learner library; expand the connected product instead of refining private transport again. D008 authorizes continuous execution. Keep the full checkout, synchronized recording/replay, repository wiki/codemap, two remaining layouts and real-repository support in the final goal.
 
 Cycle 0006 source and final host evidence are frozen at `c873b43`. No CI, PR approval, VSIX, installed-product or publication claim exists. Desktop-lock-dependent native visual checks remain unverified; do not bypass or repeatedly retry the unchanged lock.
 
