@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { DebugProtocol } from '@vscode/debugprotocol';
 import type { Protocol } from 'devtools-protocol';
 import { Cdp } from 'codebook-cycle-0001/dist/cdp';
-import { Evidence } from 'codebook-cycle-0001/dist/evidence';
+import { Evidence, type EvidenceLimits } from 'codebook-cycle-0001/dist/evidence';
 import { HostBrowser, type HostConfiguration } from 'codebook-cycle-0001/dist/hostBrowser';
 import { PauseGate, type PauseIdentity } from 'codebook-cycle-0001/dist/pauseGate';
 import type { SealedSource } from 'codebook-cycle-0001/dist/inspect';
@@ -26,6 +26,7 @@ export interface HarnessConfig {
   artifactRoot: string; templateRoot: string; descriptorPath: string;
   revision: string; dirty: boolean; sourceHash: string; nodeExecutable: string;
   host: HostConfiguration;
+  evidenceLimits?: EvidenceLimits;
 }
 interface Participant {
   gate: PauseGate; selected?: vscode.DebugSession; cdp?: Cdp; source?: SealedSource;
@@ -67,7 +68,7 @@ export class PairedRun {
   private readonly watchdog: ReturnType<typeof setInterval>;
 
   constructor(readonly config: HarnessConfig, readonly scenario: Scenario) {
-    this.evidence = new Evidence(join(config.artifactRoot, this.id));
+    this.evidence = new Evidence(join(config.artifactRoot, this.id), config.evidenceLimits);
     this.watchdog = setInterval(() => {
       if (this.cleaning || ['failed', 'completed'].includes(this.status)) return;
       const now = performance.now();

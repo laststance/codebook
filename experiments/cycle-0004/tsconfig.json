@@ -4,7 +4,7 @@
     "lib": ["ES2023", "DOM"], "types": ["node", "vscode"],
     "strict": true, "noUncheckedIndexedAccess": true, "noUnusedLocals": true,
     "noUnusedParameters": true, "esModuleInterop": true, "sourceMap": true,
-    "rootDir": "src", "outDir": "dist"
+    "rootDir": "src", "outDir": "dist", "declaration": true
   },
   "include": ["src/**/*.ts"]
 }

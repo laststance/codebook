@@ -38,3 +38,37 @@ test('immediate cleanup can record evidence before initialization finishes', asy
     assert.deepEqual(JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')), { cleaned: true });
   } finally { await rm(parent, { recursive: true }); }
 });
+
+test('a bounded recorder stops retaining events at capacity and reports missing evidence instead of growing history', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-'));
+  const evidence = new Evidence(directory, { maxEvents: 2, retainedBytes: 10_000, queuedBytes: 10_000 });
+  try {
+    // Act
+    evidence.record('first'); evidence.record('second'); evidence.record('overflow');
+    for (let index = 0; index < 100; index += 1) evidence.record('ignored');
+    // Assert
+    assert.equal(evidence.events.length, 2); await assert.rejects(evidence.flush(), /buffering limit/);
+    await assert.rejects(evidence.save('false-success.json', { success: true }), /buffering limit/);
+    assert.equal((await readFile(join(directory, 'events.jsonl'), 'utf8')).trim().split('\n').length, 2);
+  } finally { await rm(directory, { recursive: true }); }
+});
+
+test('retained bytes and queued bytes have separate limits even before the writer can drain', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-'));
+  const retained = new Evidence(join(directory, 'retained'), { maxEvents: 100, retainedBytes: 10, queuedBytes: 10_000 });
+  const queued = new Evidence(join(directory, 'queued'), { maxEvents: 100, retainedBytes: 10_000, queuedBytes: 100 });
+  try {
+    // Act
+    retained.record('too-large');
+    const firstWrite = queued.save('first.txt', 'x'.repeat(80));
+    const overCapacity = queued.save('second.txt', 'x'.repeat(80));
+    // Observe both immediate rejections before yielding to the separate retained-byte writer.
+    const rejectedWrites = Promise.all([assert.rejects(overCapacity, /queued write limit/), assert.rejects(firstWrite, /queued write limit/)]);
+    // Assert
+    assert.equal(retained.events.length, 0); await assert.rejects(retained.flush(), /buffering limit/);
+    await rejectedWrites;
+    await assert.rejects(queued.flush(), /queued write limit/);
+  } finally { await rm(directory, { recursive: true }); }
+});

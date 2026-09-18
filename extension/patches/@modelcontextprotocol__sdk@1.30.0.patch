@@ -1,0 +1,10 @@
+diff --git a/dist/cjs/validation/types.d.ts b/dist/cjs/validation/types.d.ts
+index 9fa92226c8781ea09b09bfdf1cce055f0ce1a7df..eea0f1037d816e91b29faa28dff49e91c79470a3 100644
+--- a/dist/cjs/validation/types.d.ts
++++ b/dist/cjs/validation/types.d.ts
+@@ -1,4 +1,4 @@
+-import type { JSONSchema } from 'json-schema-typed';
++import type { JSONSchema } from 'json-schema-typed' with { 'resolution-mode': 'import' };
+ /**
+  * JSON Schema type definition (JSON Schema Draft 2020-12)
+  *

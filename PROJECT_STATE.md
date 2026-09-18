@@ -1,7 +1,7 @@
 # Current project state
 
 Updated: 2026-09-19\
-Product stage: synchronous and browser/server runtime mechanisms demonstrated; product MCP and learner UI not yet implemented\
+Product stage: synchronous and browser/server runtime mechanisms demonstrated; first product MCP implementation under validation, learner UI not yet implemented\
 Active cycle: [0005 — Live study through MCP](docs/cycles/0005-live-study-mcp.md) — implementing\
 Last cycle: [0004 — Correlate one browser-to-server request](docs/cycles/0004-async-request-boundary.md) — closed, demonstrated on the instrumented fixture\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
@@ -31,7 +31,7 @@ A fixture proves mechanisms, not the integrated final product.
 | G03 | partial | Exact executed source, values, target/pause identities and an instrumented async boundary verified; arbitrary repository causal links remain unverified. |
 | G04 | partial | Ordered page frames and evidence; no video or offline synchronized replay/export. |
 | G05 | unverified | No durable learner progress implementation. |
-| G06 | partial | External Node controls temporary HTTP; no extension-owned product MCP or ordinary-workspace package. |
+| G06 | partial | First extension-owned MCP and external SDK client implemented; pilot flows pass in both hosts. Final Cycle 0005 validation/review is pending; no ordinary-workspace package proof. |
 | G07 | unverified | Approved Study workspace reference; experiment panes do not establish product UX. |
 | G08 | unverified | Living book required; not implemented. |
 | G09 | unverified | Guided walkthrough required; not implemented. |
@@ -40,9 +40,9 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Implement Cycle 0005 after completed DX and engineering plan reviews. Its question is whether a real external MCP client can discover supported operations, control the proven runtime, retrieve bound source/evidence, attach a grounded explanation, and reconnect without repeating input. The selected contract includes runtime reuse, bounded authenticated MCP, explicit recovery and saved explanation references; implement E1 then connect and validate the external client. User delegated continuous execution under D008; do not stop after this experiment or re-plan the whole product.
+Complete Cycle 0005 validation and implementation review. The real external MCP client already drives pilot TS pauses in both hosts. Finish the six-case host matrices, changed-shared-source regressions and separate agent-use smoke; preserve current fingerprints, update evidence, then choose the next learner-facing increment. User delegated continuous execution under D008; do not stop after this experiment or re-plan the whole product.
 
-No owned final-matrix process remains. Private profiles/logs stay under ignored artifacts. No CI, PR approval, VSIX, installed-product or publication claim. Full checkout, recording/replay, wiki/codemap/progress, all three layouts and real-repository support are the remaining product work; do not spend repeated cycles polishing the proven transport layer.
+Native validation may be active; inspect the runner and its exact owned profile before cleanup. Private profiles/logs stay outside Git; required instance evidence is copied under ignored artifacts without connection descriptors. No CI, PR approval, VSIX, installed-product or publication claim. Full checkout, recording/replay, wiki/codemap/progress, all three layouts and real-repository support are the remaining product work; do not spend repeated cycles polishing the proven transport layer.
 
 ## Full-product completion gate
 

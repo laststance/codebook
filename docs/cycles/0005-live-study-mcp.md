@@ -168,7 +168,17 @@ The engineering review below completes the bounded plan. No unanswered user ques
 
 ## Attempts and evidence
 
-Plan complete; implementation starting. MCP delivery is not yet implemented. Research sources are below; competitor setup speed is not measured.
+The initial implementation now lives in `extension/`: one service, pinned SDK Streamable HTTP, seven tools/six resource templates, actual editor commands, the reused paired runtime, referenced explanations, and an external SDK client. Build/dependency type checking remains strict. Product tests currently cover 24 service/protocol/lifecycle boundaries; full shared regressions and the final native matrix are still being completed. No installed-product claim.
+
+Pilot attempts (dirty implementation; not final acceptance):
+
+- VS Code `suite-2026-09-18T17-12-42.249Z-a94db277`: launch failed because the long profile path exceeded macOS Unix IPC path limits. Short isolated profiles fix this; a real socket-bind regression test passes.
+- VS Code `suite-2026-09-18T17-14-44.023Z-dd709e9c`: runtime launched but TypeScript binding failed. `/tmp` seals/allowlists differed from js-debug's `/private/tmp` executed paths. Canonicalize private storage before creating the runtime.
+- VS Code `suite-2026-09-18T17-15-58.142Z-e79a509a`: normal MCP flow passed: two actual TS pauses, source/value/PNG retrieval, two persisted interpretations, one click/cart 1, automatic cleanup after client loss. Independent native UI inspection remains unavailable.
+- Cursor `suite-2026-09-18T17-16-38.206Z-d81edf27`: normal/hold/reconnect/source-drift passed, then unused transport sessions exhausted the declared eight-session cap. The sample client now distinguishes abrupt disconnect from graceful session termination; twelve consecutive client lifetimes preserve one paused run in a regression test. Restart/expiry were not run in this failed pilot.
+- SDK 1.30.0 declaration issue: its CJS declaration imports an ESM-only JSON Schema type without `resolution-mode`. A one-line pinned pnpm declaration patch restores strict Node16 compilation, with no runtime JavaScript change or skipped dependency checks.
+
+Local investigation records: `artifacts/cycle-0005/native-start-investigation.json` and `artifacts/cycle-0005/sdk-research/investigation.json`. Research sources are below; competitor setup speed is not measured. Final source fingerprints, host-separated matrices, separate agent-use smoke, review and durable evidence export remain required before closure.
 
 ## Research references
 
@@ -183,7 +193,7 @@ Pending. Keep the proven runtime and make agent integration observable. No G01â€
 
 ## Handoff
 
-DX and engineering plan reviews completed. Implement this connected MCP increment, then validate separately in both editors. Current branch `feat/cycle-0005-live-study-mcp`; no native process running. Final-product reviewers remain 0/10, not started.
+DX and engineering plan reviews completed; implementation and pilot native flows exist. Complete host-separated final matrices, source regressions and actual agent-use smoke, then review/export this increment. Current branch `feat/cycle-0005-live-study-mcp`; check running processes before native work. Final-product reviewers remain 0/10, not started.
 
 
 

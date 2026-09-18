@@ -10,6 +10,7 @@ artifacts/
 node_modules/
 experiments/*/dist/
 experiments/*/build/
+extension/dist/
 
 # Share this project's agent entry points despite user-global ignore rules
 !/AGENTS.md

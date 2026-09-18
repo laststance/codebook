@@ -1,0 +1,42 @@
+{
+  "name": "codebook",
+  "displayName": "codebook",
+  "description": "Connect an external agent to source-grounded codebase studies.",
+  "publisher": "laststance",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "vscode": "^1.120.0", "node": ">=24" },
+  "main": "./dist/extension.js",
+  "extensionKind": ["workspace"],
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": "limited", "description": "Agent execution requires a trusted local workspace." },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      { "command": "codebook.startAgentServer", "title": "Codebook: Start Agent Server" },
+      { "command": "codebook.stopAgentServer", "title": "Codebook: Stop Agent Server" },
+      { "command": "codebook.copyAgentConnection", "title": "Codebook: Copy Agent Connection" }
+    ],
+    "configuration": {
+      "title": "codebook",
+      "properties": {
+        "codebook.nodeExecutable": { "type": "string", "default": "node", "scope": "machine", "description": "External Node.js executable (24 or later); never the editor's Electron binary." },
+        "codebook.chromeExecutable": { "type": "string", "default": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "scope": "machine", "description": "Chrome executable for the explicitly selected local demo profile." }
+      }
+    }
+  },
+  "scripts": {
+    "build": "pnpm --dir ../experiments/cycle-0004 build && tsc -p tsconfig.json && node scripts/build-metadata.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm build && node --test dist/tests/*.test.js",
+    "native": "pnpm build && node dist/nativeRunner.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.6.5",
+    "codebook-cycle-0001": "link:../experiments/cycle-0001",
+    "codebook-cycle-0004": "link:../experiments/cycle-0004"
+  },
+  "devDependencies": { "@types/node": "24.13.5", "@types/vscode": "1.120.0", "typescript": "5.9.3" }
+}
