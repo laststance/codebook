@@ -79,3 +79,10 @@ Source: [Cycle 0004](docs/cycles/0004-async-request-boundary.md), 18/18 native c
 Decision: retain explicit request identity, complete expected traffic, participant pause generations, executed-source validation and qualified persisted outcomes. Next select one extension-owned MCP integration increment; do not keep polishing the solved private HTTP fixture.
 Reason: the browser/server boundary is now demonstrated on the instrumented fixture. The next core gap is allowing an external agent to discover and use it through the product's required control interface.
 Limits: public MCP contract still needs DX/engineering review; no arbitrary-repository, full checkout, native product UX, recording, layouts or package claim. Implementation review remains non-converged and outside coverage unavailable. Final requirements are unchanged. Status: active route, not a final API decision.
+
+## D012 — Connect the proven agent interface to a learner workspace, 2026-09-19
+
+Source: [Cycle 0005](docs/cycles/0005-live-study-mcp.md), clean implementation `c813053`, six native MCP cases and three shared native regressions per required host, plus an actual driving-agent smoke. Agent-selected route within D008.
+Decision: retain the extension-owned MCP service with explicit demo capability, immutable source/value/image references and separately labeled agent interpretations. Move next to one learner-facing Study workspace increment that links a selected learning item to the application, exact source, explanation and a durable learner-owned check.
+Reason: the required external-agent boundary now works on the proven instrumented fixture. A visible learning experience is the next missing connection; repeated transport refinement would not establish usefulness.
+Limits: no arbitrary-repository or natural-language checkout proof; native product UX remains unverified while the desktop is locked. Implementation review reached three fixing passes without convergence; outside coverage is unavailable. Recording, all layouts, packaging, real-repository use and the final ten-review gate remain required. Status: active route; no final outcome changed.

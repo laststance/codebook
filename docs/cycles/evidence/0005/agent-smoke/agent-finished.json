@@ -1,0 +1,130 @@
+{
+  "outcome": "demonstrated-demo-agent-use",
+  "revision": "c813053d732cad4c5b0a6a1581e199de412eccfe",
+  "sourceHash": "4be3d512c89df69f9ffea3fb26eab59645241e9a3f7a50acd84a1e8e489b5cde",
+  "agent": "Driving Codex agent choosing commands through the actual external SDK console",
+  "final": {
+    "instanceId": "9fea5958-9124-4cad-9bb5-218c427e91c9",
+    "runId": "cbf5dce3-394e-496d-8f2a-ff82974d26fc",
+    "runtimeRunId": "c7127e68-6f68-4759-998d-feaca1b3f3cd",
+    "profile": "paired-cart-demo",
+    "state": "stopped",
+    "runtimeState": "completed",
+    "createdAt": "2026-09-18T18:27:50.879Z",
+    "deadlineAt": "2026-09-18T18:29:50.879Z",
+    "activeTimeoutMs": 20000,
+    "nextActions": [
+      "read-history"
+    ],
+    "participants": {
+      "server": {
+        "snapshotUri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/snapshots/b0131ac9-c394-4251-b5a5-ba184fc35d1d%3A1",
+        "sourceUri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/snapshots/b0131ac9-c394-4251-b5a5-ba184fc35d1d%3A1/source/typescript",
+        "phase": "running",
+        "resumable": false
+      },
+      "browser": {
+        "snapshotUri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/snapshots/20b88500-54e3-4aac-ac84-837e8592d65b%3A1",
+        "sourceUri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/snapshots/20b88500-54e3-4aac-ac84-837e8592d65b%3A1/source/typescript",
+        "phase": "running",
+        "resumable": false
+      }
+    },
+    "operation": {
+      "operationId": "89b6dc7e-c790-4e81-bd6b-f7bf6a842ac3",
+      "key": "single-click",
+      "runUri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc"
+    },
+    "observed": {
+      "cartCount": 1,
+      "completedClicks": 1
+    },
+    "links": [
+      {
+        "id": "intent-request",
+        "status": "observed",
+        "evidence": [
+          "89b6dc7e-c790-4e81-bd6b-f7bf6a842ac3",
+          "30135.6"
+        ]
+      },
+      {
+        "id": "request-server",
+        "status": "observed",
+        "evidence": [
+          "30135.6",
+          "b0131ac9-c394-4251-b5a5-ba184fc35d1d:1"
+        ]
+      },
+      {
+        "id": "server-response",
+        "status": "observed",
+        "evidence": [
+          "b0131ac9-c394-4251-b5a5-ba184fc35d1d:1",
+          "0389e3570b21d64a45bb7fa14e9982b6d5a2fd5d2a53d363820399261e12900e"
+        ]
+      },
+      {
+        "id": "response-browser",
+        "status": "observed",
+        "evidence": [
+          "0389e3570b21d64a45bb7fa14e9982b6d5a2fd5d2a53d363820399261e12900e",
+          "20b88500-54e3-4aac-ac84-837e8592d65b:1"
+        ]
+      },
+      {
+        "id": "browser-screen",
+        "status": "observed",
+        "evidence": [
+          "20b88500-54e3-4aac-ac84-837e8592d65b:1",
+          "event:164"
+        ]
+      }
+    ],
+    "runtimeOutcome": "demonstrated",
+    "captureOutcome": "demonstrated",
+    "finalOutcome": "demonstrated",
+    "cleaned": true,
+    "resourcesReleased": true,
+    "activeSessionIds": [],
+    "captures": [
+      {
+        "phase": "before",
+        "status": "captured",
+        "uri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/images/before"
+      },
+      {
+        "phase": "paused-server",
+        "status": "captured",
+        "uri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/images/paused-server"
+      },
+      {
+        "phase": "paused-browser",
+        "status": "captured",
+        "uri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/images/paused-browser"
+      },
+      {
+        "phase": "after",
+        "status": "captured",
+        "uri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/images/after"
+      }
+    ],
+    "explanations": [
+      "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/explanations/f14f28e2-7fb7-4c95-8582-36c57d4cda8c",
+      "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/explanations/7d34fe9b-7120-4a4f-9edc-d57c91a0d79c"
+    ],
+    "eventsUri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/events/0",
+    "runUri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc"
+  },
+  "checks": {
+    "stalePauseRejectedThenRecovered": true,
+    "historicalSourceAndExplanationsReadable": true,
+    "historicalRevealRejected": true,
+    "afterImageReadThroughMcp": true
+  },
+  "limits": [
+    "Fixed paired cart demo only; no complete checkout or arbitrary repository support.",
+    "Page screenshots and renderer acknowledgements do not establish independent editor UI validation."
+  ],
+  "harnessExitCode": 0
+}

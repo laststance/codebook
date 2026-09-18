@@ -1,0 +1,14 @@
+{
+  "sequence": 0,
+  "descriptorPath": "<redacted-local-endpoint>",
+  "observations": {
+    "trusted": true,
+    "apiVersion": "1.128.0",
+    "appName": "Cursor",
+    "node": "24.18.1",
+    "electron": "42.10.0",
+    "debugger": "1.93.0",
+    "activeSessions": [],
+    "breakpointsRestored": true
+  }
+}

@@ -1,0 +1,223 @@
+{
+  "earlierAttempts": [
+    {
+      "host": "vscode",
+      "suite": "suite-2026-09-18T17-12-42.249Z-a94db277",
+      "observation": "Failed before bootstrap: macOS IPC socket path exceeded the pathname budget. Replaced nested profile with a short private profile.",
+      "completedCases": [],
+      "resultsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "rawPath": "artifacts/cycle-0005/vscode/suite-2026-09-18T17-12-42.249Z-a94db277",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "vscode",
+      "suite": "suite-2026-09-18T17-14-44.023Z-dd709e9c",
+      "observation": "Failed source binding: /tmp and /private/tmp identity mismatch. Canonicalized extension storage before sealing sources.",
+      "completedCases": [
+        {
+          "scenario": "normal",
+          "passed": false
+        }
+      ],
+      "resultsSha256": "366efd810beb3d860b187641a4bc4428aeccfb58fb9e61cf9b0bfe5c778b1c2b",
+      "rawPath": "artifacts/cycle-0005/vscode/suite-2026-09-18T17-14-44.023Z-dd709e9c",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "vscode",
+      "suite": "suite-2026-09-18T17-15-58.142Z-e79a509a",
+      "observation": "Dirty-tree VS Code normal pilot passed; not final evidence.",
+      "completedCases": [
+        {
+          "scenario": "normal",
+          "passed": true
+        }
+      ],
+      "resultsSha256": "b4a72fbe224790a296adf9ae1d39875fd8ff7de1b92506b9bee043f145e2e3a8",
+      "rawPath": "artifacts/cycle-0005/vscode/suite-2026-09-18T17-15-58.142Z-e79a509a",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "vscode",
+      "suite": "suite-2026-09-18T17-26-54.261Z-0ac654d6",
+      "observation": "Actual agent discovered/read/explained both stops and recovered a stale server reference, but passed the 120-second deadline before browser continuation. Partial, not demonstrated. Independent 300-second harness window also expired. Owned cleanup verified.",
+      "completedCases": [],
+      "resultsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "rawPath": "artifacts/cycle-0005/vscode/suite-2026-09-18T17-26-54.261Z-0ac654d6",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "vscode",
+      "suite": "suite-2026-09-18T17-42-29.191Z-79ce8ce6",
+      "observation": "Actual driving-agent smoke passed at c78635e before later server shutdown recovery fix. Separate from scripted SDK validation; preserved as earlier successful evidence.",
+      "completedCases": [],
+      "resultsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "rawPath": "artifacts/cycle-0005/vscode/suite-2026-09-18T17-42-29.191Z-79ce8ce6",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "vscode",
+      "suite": "suite-2026-09-18T17-47-11.285Z-8f72ebb0",
+      "observation": "Default runner arguments execute only normal; one-case success is not a six-case matrix.",
+      "completedCases": [
+        {
+          "scenario": "normal",
+          "passed": true
+        }
+      ],
+      "resultsSha256": "85d6188088bf62e815af27b18551515a17ba3f2ffb151bb996a923c04cee0d6e",
+      "rawPath": "artifacts/cycle-0005/vscode/suite-2026-09-18T17-47-11.285Z-8f72ebb0",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "vscode",
+      "suite": "suite-2026-09-18T17-48-18.836Z-eb96a8fd",
+      "observation": "VS Code six-case matrix passed at c78635e, before server shutdown recovery fix.",
+      "completedCases": [
+        {
+          "scenario": "normal",
+          "passed": true
+        },
+        {
+          "scenario": "hold",
+          "passed": true
+        },
+        {
+          "scenario": "reconnect",
+          "passed": true
+        },
+        {
+          "scenario": "source-drift",
+          "passed": true
+        },
+        {
+          "scenario": "restart",
+          "passed": true
+        },
+        {
+          "scenario": "expiry",
+          "passed": true
+        }
+      ],
+      "resultsSha256": "058e494f35274ddb5b0f99def8f4d5f22c209eaf0e706838425945f6e01fb31e",
+      "rawPath": "artifacts/cycle-0005/vscode/suite-2026-09-18T17-48-18.836Z-eb96a8fd",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "cursor",
+      "suite": "suite-2026-09-18T17-16-38.206Z-d81edf27",
+      "observation": "Four Cursor cases passed, then leaked graceful client sessions exhausted eight slots. Added explicit SDK terminateSession before client close; restart/expiry were not reached.",
+      "completedCases": [
+        {
+          "scenario": "normal",
+          "passed": true
+        },
+        {
+          "scenario": "hold",
+          "passed": true
+        },
+        {
+          "scenario": "reconnect",
+          "passed": true
+        },
+        {
+          "scenario": "source-drift",
+          "passed": true
+        }
+      ],
+      "resultsSha256": "07ec386f12157880807304a57312c0a75cefd5c8f39c0d207c371679c1d5b4cb",
+      "rawPath": "artifacts/cycle-0005/cursor/suite-2026-09-18T17-16-38.206Z-d81edf27",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "cursor",
+      "suite": "suite-2026-09-18T17-21-32.120Z-bed3bf2c",
+      "observation": "Dirty-tree Cursor six-case pilot passed before implementation review fixes.",
+      "completedCases": [
+        {
+          "scenario": "normal",
+          "passed": true
+        },
+        {
+          "scenario": "hold",
+          "passed": true
+        },
+        {
+          "scenario": "reconnect",
+          "passed": true
+        },
+        {
+          "scenario": "source-drift",
+          "passed": true
+        },
+        {
+          "scenario": "restart",
+          "passed": true
+        },
+        {
+          "scenario": "expiry",
+          "passed": true
+        }
+      ],
+      "resultsSha256": "5277811ee656e5fcd15c383850eeded753f449b7b8f76bff88715528705ff268",
+      "rawPath": "artifacts/cycle-0005/cursor/suite-2026-09-18T17-21-32.120Z-bed3bf2c",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "cursor",
+      "suite": "suite-2026-09-18T17-51-47.911Z-a67fcc11",
+      "observation": "Cursor six-case matrix passed at c78635e, before server shutdown recovery fix.",
+      "completedCases": [
+        {
+          "scenario": "normal",
+          "passed": true
+        },
+        {
+          "scenario": "hold",
+          "passed": true
+        },
+        {
+          "scenario": "reconnect",
+          "passed": true
+        },
+        {
+          "scenario": "source-drift",
+          "passed": true
+        },
+        {
+          "scenario": "restart",
+          "passed": true
+        },
+        {
+          "scenario": "expiry",
+          "passed": true
+        }
+      ],
+      "resultsSha256": "ac7e0d348b521cf0812031529704c4c67933e410cb7f87fc31af46e8ec74bb02",
+      "rawPath": "artifacts/cycle-0005/cursor/suite-2026-09-18T17-51-47.911Z-a67fcc11",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "vscode",
+      "suite": "suite-2026-09-18T18-02-14.809Z-b867e0fb",
+      "sourceRevision": "d5cc0e5",
+      "observation": "Six native scenarios passed their previous assertions. Independent review then found mutable in-memory event history disagreed with disk; these are superseded by final suites with exact history comparison and source-reveal barriers.",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "cursor",
+      "suite": "suite-2026-09-18T18-05-24.408Z-5ae42188",
+      "sourceRevision": "d5cc0e5",
+      "observation": "Six native scenarios passed their previous assertions. Independent review then found mutable in-memory event history disagreed with disk; these are superseded by final suites with exact history comparison and source-reveal barriers.",
+      "countsAsFinalMatrix": false
+    },
+    {
+      "host": "vscode",
+      "suite": "suite-2026-09-18T18-20-14.459Z-df4a1045",
+      "sourceRevision": "c813053",
+      "observation": "Actual driving agent completed the two-stop flow and owned run cleanup within 120 seconds, read historical source/explanations and the final image. The final harness marker was written after its independent 300-second deadline during context compaction, so the harness exited 1. Not counted as the final agent-use smoke. Repeated with prompt completion signalling; no product timeout or runtime contract changed.",
+      "countsAsFinalMatrix": false
+    }
+  ],
+  "rule": "Only suites selected by export-config and verified against the final source fingerprint count as final native matrices."
+}

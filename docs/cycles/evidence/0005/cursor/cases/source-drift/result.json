@@ -1,0 +1,49 @@
+{
+  "scenario": "source-drift",
+  "passed": true,
+  "checks": {
+    "sourceDriftRejected": true,
+    "closedEventCount": 130,
+    "closedEventHash": "66a2ad507e9e296d96b7a5746d7df359074a959ffc92123920af546a3d0ac629"
+  },
+  "runId": "475d00d8-d6f4-43b8-a7dd-52b38a3c78d9",
+  "firstSnapshotMs": 1882.5063329999975,
+  "final": {
+    "instanceId": "842f52f5-360d-4a79-92ed-42285942ac6b",
+    "runId": "475d00d8-d6f4-43b8-a7dd-52b38a3c78d9",
+    "runtimeRunId": "4f821c64-cbf1-41d5-a482-323c1aa8c753",
+    "state": "stopped",
+    "runtimeState": "cancelled",
+    "cleaned": true,
+    "nextActions": [
+      "read-history"
+    ],
+    "participants": {
+      "server": {
+        "snapshotUri": "codebook://842f52f5-360d-4a79-92ed-42285942ac6b/runs/475d00d8-d6f4-43b8-a7dd-52b38a3c78d9/snapshots/a7fbef4d-05f5-49f6-ab30-eb746dbfaeb9%3A1",
+        "sourceUri": "codebook://842f52f5-360d-4a79-92ed-42285942ac6b/runs/475d00d8-d6f4-43b8-a7dd-52b38a3c78d9/snapshots/a7fbef4d-05f5-49f6-ab30-eb746dbfaeb9%3A1/source/typescript",
+        "resumable": false
+      },
+      "browser": {
+        "resumable": false
+      }
+    },
+    "finalOutcome": "not-demonstrated",
+    "captures": [
+      {
+        "phase": "before",
+        "status": "captured",
+        "uri": "codebook://842f52f5-360d-4a79-92ed-42285942ac6b/runs/475d00d8-d6f4-43b8-a7dd-52b38a3c78d9/images/before"
+      },
+      {
+        "phase": "paused-server",
+        "status": "captured",
+        "uri": "codebook://842f52f5-360d-4a79-92ed-42285942ac6b/runs/475d00d8-d6f4-43b8-a7dd-52b38a3c78d9/images/paused-server"
+      }
+    ],
+    "explanations": [],
+    "activeSessionIds": [],
+    "eventsUri": "codebook://842f52f5-360d-4a79-92ed-42285942ac6b/runs/475d00d8-d6f4-43b8-a7dd-52b38a3c78d9/events/0",
+    "runUri": "codebook://842f52f5-360d-4a79-92ed-42285942ac6b/runs/475d00d8-d6f4-43b8-a7dd-52b38a3c78d9"
+  }
+}

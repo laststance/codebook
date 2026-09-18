@@ -1,0 +1,4135 @@
+[
+  {
+    "scenario": "normal",
+    "runId": "fd45e5c3-7bec-4b30-a684-977ad5e1d4eb",
+    "passed": true,
+    "checks": {
+      "runTokenRequired": true,
+      "actionStatus": 202,
+      "actionDurationMs": 1.1835000000000946,
+      "continueStatus": 202,
+      "continueDurationMs": 7.217999999999847,
+      "ownedResourcesReleased": true
+    },
+    "final": {
+      "runId": "fd45e5c3-7bec-4b30-a684-977ad5e1d4eb",
+      "scenario": "normal",
+      "status": "completed",
+      "cleaned": false,
+      "resources": {
+        "activeSessionIds": [
+          "d946b1d2-804d-46cc-9452-6a9593482af8",
+          "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582"
+        ],
+        "breakpointPresent": true,
+        "cdpOpen": true
+      },
+      "operation": {
+        "id": "615c81fc-c397-4dee-a6e9-874291963704",
+        "key": "one-cart-add",
+        "inputAcknowledged": true,
+        "completed": true
+      },
+      "conflict": false,
+      "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+      "snapshot": {
+        "id": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582:1",
+        "pause": {
+          "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+          "threadId": 0,
+          "generation": 1
+        },
+        "frame": {
+          "id": 0,
+          "name": "button#add.addToCart",
+          "line": 9,
+          "column": 3,
+          "source": {
+            "name": "fixture/cart.ts",
+            "path": "<repo>/artifacts/cycle-0003/managed/cursor/fd45e5c3-7bec-4b30-a684-977ad5e1d4eb/fixture/cart.ts",
+            "sourceReference": 0
+          },
+          "presentationHint": "normal",
+          "canRestart": true
+        },
+        "values": {
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 0
+        },
+        "evaluations": [
+          {
+            "type": "string",
+            "result": "'tote-01'",
+            "variablesReference": 0
+          },
+          {
+            "type": "number",
+            "result": "24",
+            "variablesReference": 0
+          },
+          {
+            "type": "number",
+            "result": "0",
+            "variablesReference": 0
+          }
+        ],
+        "source": {
+          "scriptId": "3",
+          "scriptLocation": {
+            "scriptId": "3",
+            "lineNumber": 7,
+            "columnNumber": 4
+          },
+          "mapping": {
+            "generatedLine": 7,
+            "generatedColumn": 4,
+            "originalSource": "../fixture/cart.ts",
+            "originalLine": 8,
+            "originalColumn": 2
+          },
+          "typescriptHash": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+          "javascriptHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+          "sourceMapHash": "c3710977937ded023f228b19fb13ac31ac6abb8997f418df2046dae32a220301"
+        }
+      },
+      "captures": {
+        "before": {
+          "phase": "before",
+          "requestSequence": 50,
+          "status": "captured",
+          "responseSequence": 58,
+          "file": "before.png",
+          "renderer": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 4,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+          }
+        },
+        "paused-1": {
+          "phase": "paused",
+          "generation": 1,
+          "requestSequence": 70,
+          "status": "captured",
+          "responseSequence": 79,
+          "file": "paused-1.png",
+          "renderer": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 6,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+          }
+        },
+        "after": {
+          "phase": "after",
+          "requestSequence": 113,
+          "status": "captured",
+          "responseSequence": 121,
+          "file": "after.png",
+          "renderer": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 10,
+            "hash": "0dbf7e1e0670a5f837909b9d5b534c681a8682eb19688e658c87c5efa70cd908"
+          }
+        }
+      },
+      "observed": {
+        "cartCount": 1,
+        "completedClicks": 1
+      },
+      "failures": [],
+      "events": [
+        {
+          "sequence": 1,
+          "elapsedMs": 1.653459,
+          "wallTime": "2026-09-18T18:19:33.905Z",
+          "type": "run.created",
+          "detail": {
+            "runId": "fd45e5c3-7bec-4b30-a684-977ad5e1d4eb",
+            "scenario": "normal"
+          }
+        },
+        {
+          "sequence": 2,
+          "elapsedMs": 80.111834,
+          "wallTime": "2026-09-18T18:19:33.983Z",
+          "type": "breakpoint.requested",
+          "detail": {
+            "id": "fda6673a-b120-446c-9269-4547d6ffa32f",
+            "sourcePath": "<repo>/artifacts/cycle-0003/managed/cursor/fd45e5c3-7bec-4b30-a684-977ad5e1d4eb/fixture/cart.ts",
+            "line": 9
+          }
+        },
+        {
+          "sequence": 3,
+          "elapsedMs": 82.672667,
+          "wallTime": "2026-09-18T18:19:33.986Z",
+          "type": "browser.managed-profile",
+          "detail": {
+            "profile": "<owned-runtime:85257109b8ad>",
+            "chrome": {
+              "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+              "version": "Google Chrome 153.0.8010.50"
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "elapsedMs": 334.456709,
+          "wallTime": "2026-09-18T18:19:34.238Z",
+          "type": "viewport.ready",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078"
+          }
+        },
+        {
+          "sequence": 5,
+          "elapsedMs": 353.615667,
+          "wallTime": "2026-09-18T18:19:34.257Z",
+          "type": "session.started",
+          "detail": {
+            "sessionId": "d946b1d2-804d-46cc-9452-6a9593482af8",
+            "type": "pwa-chrome",
+            "name": "codebook fd45e5c3-7bec-4b30-a684-977ad5e1d4eb"
+          }
+        },
+        {
+          "sequence": 6,
+          "elapsedMs": 703.731667,
+          "wallTime": "2026-09-18T18:19:34.607Z",
+          "type": "session.started",
+          "detail": {
+            "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+            "parentId": "d946b1d2-804d-46cc-9452-6a9593482af8",
+            "type": "pwa-chrome",
+            "name": "about:blank"
+          }
+        },
+        {
+          "sequence": 7,
+          "elapsedMs": 707.682417,
+          "wallTime": "2026-09-18T18:19:34.611Z",
+          "type": "focus.changed",
+          "detail": {
+            "sessionId": "d946b1d2-804d-46cc-9452-6a9593482af8"
+          }
+        },
+        {
+          "sequence": 8,
+          "elapsedMs": 787.428917,
+          "wallTime": "2026-09-18T18:19:34.691Z",
+          "type": "host.debugger-started",
+          "detail": {
+            "host": "cursor",
+            "type": "pwa-chrome"
+          }
+        },
+        {
+          "sequence": 9,
+          "elapsedMs": 801.858792,
+          "wallTime": "2026-09-18T18:19:34.705Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 1,
+            "method": "Runtime.evaluate"
+          }
+        },
+        {
+          "sequence": 10,
+          "elapsedMs": 802.195,
+          "wallTime": "2026-09-18T18:19:34.705Z",
+          "type": "focus.changed",
+          "detail": {
+            "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582"
+          }
+        },
+        {
+          "sequence": 11,
+          "elapsedMs": 814.671334,
+          "wallTime": "2026-09-18T18:19:34.718Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 1,
+            "method": "Runtime.evaluate",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 12,
+          "elapsedMs": 814.714542,
+          "wallTime": "2026-09-18T18:19:34.718Z",
+          "type": "target.selected",
+          "detail": {
+            "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+            "parentId": "d946b1d2-804d-46cc-9452-6a9593482af8",
+            "url": "http://127.0.0.1:64588/runs/fd45e5c3-7bec-4b30-a684-977ad5e1d4eb/index.html"
+          }
+        },
+        {
+          "sequence": 13,
+          "elapsedMs": 814.744084,
+          "wallTime": "2026-09-18T18:19:34.718Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 2,
+            "method": "JsDebug.subscribe"
+          }
+        },
+        {
+          "sequence": 14,
+          "elapsedMs": 817.667709,
+          "wallTime": "2026-09-18T18:19:34.721Z",
+          "type": "dap.continued",
+          "detail": {
+            "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+            "body": {
+              "threadId": 0,
+              "allThreadsContinued": false
+            }
+          }
+        },
+        {
+          "sequence": 15,
+          "elapsedMs": 818.4005,
+          "wallTime": "2026-09-18T18:19:34.722Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 2,
+            "method": "JsDebug.subscribe",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 16,
+          "elapsedMs": 820.0345,
+          "wallTime": "2026-09-18T18:19:34.723Z",
+          "type": "cdp.resumed",
+          "detail": {}
+        },
+        {
+          "sequence": 17,
+          "elapsedMs": 852.487084,
+          "wallTime": "2026-09-18T18:19:34.756Z",
+          "type": "browser.managed-processes",
+          "detail": {
+            "processes": [
+              {
+                "pid": 16631,
+                "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-breakpad --disable-client-side-phishing-detection --disable-default-apps --disable-dev-shm-usage --disable-renderer-backgrounding --disable-sync --metrics-recording-only --no-first-run --no-default-browser-check --user-data-dir=<owned-runtime:85257109b8ad> --headless=new --remote-debugging-pipe about:blank"
+              },
+              {
+                "pid": 16650,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=gpu-process --disable-breakpad --headless=new --noerrdialogs --user-data-dir=<owned-runtime:85257109b8ad> --gpu-preferences=WAAAAAAAAAAgAQAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAADAAAAAEAAAAAAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --shared-files --field-trial-handle=1718379636,r,10448401204992376131,17649797276433320851,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,7653945704770465261,5370142283189112742,4 --trace-process-track-uuid=3190708988185955192 --seatbelt-client=19"
+              },
+              {
+                "pid": 16651,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=network --noerrdialogs --user-data-dir=<owned-runtime:85257109b8ad> --shared-files --field-trial-handle=1718379636,r,10448401204992376131,17649797276433320851,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,7653945704770465261,5370142283189112742,4 --trace-process-track-uuid=3190708989122997041 --seatbelt-client=19"
+              },
+              {
+                "pid": 16652,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=service --noerrdialogs --user-data-dir=<owned-runtime:85257109b8ad> --shared-files --field-trial-handle=1718379636,r,10448401204992376131,17649797276433320851,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,7653945704770465261,5370142283189112742,4 --trace-process-track-uuid=3190708990060038890 --seatbelt-client=46"
+              },
+              {
+                "pid": 16654,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --top-chrome-webui --noerrdialogs --user-data-dir=<owned-runtime:85257109b8ad> --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=6 --launch-time-ticks=75728187414 --shared-files --field-trial-handle=1718379636,r,10448401204992376131,17649797276433320851,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,7653945704770465261,5370142283189112742,4 --trace-process-track-uuid=3190708991934122588 --seatbelt-client=74"
+              },
+              {
+                "pid": 16656,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:85257109b8ad> --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=7 --launch-time-ticks=75728208722 --shared-files --field-trial-handle=1718379636,r,10448401204992376131,17649797276433320851,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,7653945704770465261,5370142283189112742,4 --trace-process-track-uuid=3190708992871164437 --seatbelt-client=74"
+              },
+              {
+                "pid": 16657,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:85257109b8ad> --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=9 --launch-time-ticks=75728259689 --shared-files --field-trial-handle=1718379636,r,10448401204992376131,17649797276433320851,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,7653945704770465261,5370142283189112742,4 --trace-process-track-uuid=3190708994745248135 --seatbelt-client=78"
+              },
+              {
+                "pid": 16658,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:85257109b8ad> --extension-process --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=10 --launch-time-ticks=75728260500 --shared-files --field-trial-handle=1718379636,r,10448401204992376131,17649797276433320851,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,7653945704770465261,5370142283189112742,4 --trace-process-track-uuid=3190708995682289984 --seatbelt-client=78"
+              },
+              {
+                "pid": 16659,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:85257109b8ad> --extension-process --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=11 --launch-time-ticks=75728318213 --shared-files --field-trial-handle=1718379636,r,10448401204992376131,17649797276433320851,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,7653945704770465261,5370142283189112742,4 --trace-process-track-uuid=3190708996619331833 --seatbelt-client=102"
+              }
+            ],
+            "pipe": true,
+            "devToolsPortFileAbsent": true
+          }
+        },
+        {
+          "sequence": 18,
+          "elapsedMs": 852.522334,
+          "wallTime": "2026-09-18T18:19:34.756Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 3,
+            "method": "Browser.getVersion"
+          }
+        },
+        {
+          "sequence": 19,
+          "elapsedMs": 853.107834,
+          "wallTime": "2026-09-18T18:19:34.756Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 3,
+            "method": "Browser.getVersion",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 20,
+          "elapsedMs": 853.117584,
+          "wallTime": "2026-09-18T18:19:34.756Z",
+          "type": "browser.runtime-version",
+          "detail": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/153.0.8010.50",
+            "revision": "@583c5b4655acea7450a3b5224ea5121ae8caca9b",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+            "jsVersion": "15.3.76.12"
+          }
+        },
+        {
+          "sequence": 21,
+          "elapsedMs": 853.163042,
+          "wallTime": "2026-09-18T18:19:34.756Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 4,
+            "method": "JsDebug.subscribe"
+          }
+        },
+        {
+          "sequence": 22,
+          "elapsedMs": 853.510792,
+          "wallTime": "2026-09-18T18:19:34.757Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 4,
+            "method": "JsDebug.subscribe",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 23,
+          "elapsedMs": 853.529417,
+          "wallTime": "2026-09-18T18:19:34.757Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 5,
+            "method": "Emulation.setDeviceMetricsOverride"
+          }
+        },
+        {
+          "sequence": 24,
+          "elapsedMs": 855.098917,
+          "wallTime": "2026-09-18T18:19:34.758Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 5,
+            "method": "Emulation.setDeviceMetricsOverride",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 25,
+          "elapsedMs": 855.129959,
+          "wallTime": "2026-09-18T18:19:34.758Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 6,
+            "method": "Page.enable"
+          }
+        },
+        {
+          "sequence": 26,
+          "elapsedMs": 855.783959,
+          "wallTime": "2026-09-18T18:19:34.759Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 6,
+            "method": "Page.enable",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 27,
+          "elapsedMs": 855.81275,
+          "wallTime": "2026-09-18T18:19:34.759Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 7,
+            "method": "Page.startScreencast"
+          }
+        },
+        {
+          "sequence": 28,
+          "elapsedMs": 856.278875,
+          "wallTime": "2026-09-18T18:19:34.760Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 7,
+            "method": "Page.startScreencast",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 29,
+          "elapsedMs": 857.917959,
+          "wallTime": "2026-09-18T18:19:34.761Z",
+          "type": "viewport.ready",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078"
+          }
+        },
+        {
+          "sequence": 30,
+          "elapsedMs": 865.723125,
+          "wallTime": "2026-09-18T18:19:34.769Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 8,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 31,
+          "elapsedMs": 865.812875,
+          "wallTime": "2026-09-18T18:19:34.769Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755574.765851
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 32,
+          "elapsedMs": 865.915542,
+          "wallTime": "2026-09-18T18:19:34.769Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 1,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 33,
+          "elapsedMs": 866.494709,
+          "wallTime": "2026-09-18T18:19:34.770Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 8,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 34,
+          "elapsedMs": 881.882292,
+          "wallTime": "2026-09-18T18:19:34.785Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 1,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 35,
+          "elapsedMs": 907.232125,
+          "wallTime": "2026-09-18T18:19:34.811Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 9,
+            "method": "Runtime.evaluate"
+          }
+        },
+        {
+          "sequence": 36,
+          "elapsedMs": 908.208167,
+          "wallTime": "2026-09-18T18:19:34.811Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 9,
+            "method": "Runtime.evaluate",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 37,
+          "elapsedMs": 908.623209,
+          "wallTime": "2026-09-18T18:19:34.812Z",
+          "type": "breakpoint.bound",
+          "detail": {
+            "id": 0,
+            "verified": true,
+            "source": {
+              "name": "fixture/cart.ts",
+              "path": "<repo>/artifacts/cycle-0003/managed/cursor/fd45e5c3-7bec-4b30-a684-977ad5e1d4eb/fixture/cart.ts",
+              "sourceReference": 0
+            },
+            "line": 9
+          }
+        },
+        {
+          "sequence": 38,
+          "elapsedMs": 908.675167,
+          "wallTime": "2026-09-18T18:19:34.812Z",
+          "type": "browser.tabs-before-reveal",
+          "detail": [
+            {
+              "column": 1,
+              "tabs": [
+                {
+                  "label": "codebook fd45e5c3",
+                  "isActive": true,
+                  "input": {
+                    "viewType": "mainThreadWebview-codebook.scopedBrowser"
+                  }
+                }
+              ]
+            },
+            {
+              "column": 2,
+              "tabs": [
+                {
+                  "label": "cart.ts",
+                  "isActive": true,
+                  "input": {
+                    "uri": {
+                      "$mid": 1,
+                      "fsPath": "<repo>/artifacts/cycle-0003/managed/cursor/fd45e5c3-7bec-4b30-a684-977ad5e1d4eb/fixture/cart.ts",
+                      "external": "file://<repo>/artifacts/cycle-0003/managed/cursor/fd45e5c3-7bec-4b30-a684-977ad5e1d4eb/fixture/cart.ts",
+                      "path": "<repo>/artifacts/cycle-0003/managed/cursor/fd45e5c3-7bec-4b30-a684-977ad5e1d4eb/fixture/cart.ts",
+                      "scheme": "file"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "sequence": 39,
+          "elapsedMs": 909.806459,
+          "wallTime": "2026-09-18T18:19:34.813Z",
+          "type": "viewport.ready",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078"
+          }
+        },
+        {
+          "sequence": 40,
+          "elapsedMs": 909.878292,
+          "wallTime": "2026-09-18T18:19:34.813Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 2,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 41,
+          "elapsedMs": 923.590042,
+          "wallTime": "2026-09-18T18:19:34.827Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 2,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 42,
+          "elapsedMs": 961.737875,
+          "wallTime": "2026-09-18T18:19:34.865Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 10,
+            "method": "Page.bringToFront"
+          }
+        },
+        {
+          "sequence": 43,
+          "elapsedMs": 964.2,
+          "wallTime": "2026-09-18T18:19:34.867Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 10,
+            "method": "Page.bringToFront",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 44,
+          "elapsedMs": 964.239584,
+          "wallTime": "2026-09-18T18:19:34.868Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 11,
+            "method": "Page.getLayoutMetrics"
+          }
+        },
+        {
+          "sequence": 45,
+          "elapsedMs": 964.737167,
+          "wallTime": "2026-09-18T18:19:34.868Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 11,
+            "method": "Page.getLayoutMetrics",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 46,
+          "elapsedMs": 964.757292,
+          "wallTime": "2026-09-18T18:19:34.868Z",
+          "type": "page.initial-layout",
+          "detail": {
+            "layoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "visualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "contentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            },
+            "cssLayoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "cssVisualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "cssContentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            }
+          }
+        },
+        {
+          "sequence": 47,
+          "elapsedMs": 964.801917,
+          "wallTime": "2026-09-18T18:19:34.868Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 12,
+            "method": "Page.getLayoutMetrics"
+          }
+        },
+        {
+          "sequence": 48,
+          "elapsedMs": 965.336792,
+          "wallTime": "2026-09-18T18:19:34.869Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 12,
+            "method": "Page.getLayoutMetrics",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 49,
+          "elapsedMs": 965.357375,
+          "wallTime": "2026-09-18T18:19:34.869Z",
+          "type": "page.visible-layout",
+          "detail": {
+            "layoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "visualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "contentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            },
+            "cssLayoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "cssVisualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "cssContentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            }
+          }
+        },
+        {
+          "sequence": 50,
+          "elapsedMs": 972.408625,
+          "wallTime": "2026-09-18T18:19:34.876Z",
+          "type": "capture.requested",
+          "detail": {
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 51,
+          "elapsedMs": 972.455917,
+          "wallTime": "2026-09-18T18:19:34.876Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 13,
+            "method": "Page.captureScreenshot"
+          }
+        },
+        {
+          "sequence": 52,
+          "elapsedMs": 981.020959,
+          "wallTime": "2026-09-18T18:19:34.884Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 14,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 53,
+          "elapsedMs": 981.099917,
+          "wallTime": "2026-09-18T18:19:34.884Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755574.881288
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 54,
+          "elapsedMs": 981.144792,
+          "wallTime": "2026-09-18T18:19:34.884Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 3,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 55,
+          "elapsedMs": 981.715084,
+          "wallTime": "2026-09-18T18:19:34.885Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 14,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 56,
+          "elapsedMs": 998.453959,
+          "wallTime": "2026-09-18T18:19:34.902Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 3,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 57,
+          "elapsedMs": 999.120625,
+          "wallTime": "2026-09-18T18:19:34.902Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 13,
+            "method": "Page.captureScreenshot",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 58,
+          "elapsedMs": 999.149417,
+          "wallTime": "2026-09-18T18:19:34.902Z",
+          "type": "capture.received",
+          "detail": {
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 59,
+          "elapsedMs": 999.837875,
+          "wallTime": "2026-09-18T18:19:34.903Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 4,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 60,
+          "elapsedMs": 1015.1465,
+          "wallTime": "2026-09-18T18:19:34.918Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 4,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 61,
+          "elapsedMs": 1048.623042,
+          "wallTime": "2026-09-18T18:19:34.952Z",
+          "type": "action.accepted",
+          "detail": {
+            "operationId": "615c81fc-c397-4dee-a6e9-874291963704",
+            "key": "one-cart-add"
+          }
+        },
+        {
+          "sequence": 62,
+          "elapsedMs": 1048.6805,
+          "wallTime": "2026-09-18T18:19:34.952Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 15,
+            "method": "Runtime.evaluate"
+          }
+        },
+        {
+          "sequence": 63,
+          "elapsedMs": 1049.833834,
+          "wallTime": "2026-09-18T18:19:34.953Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 15,
+            "method": "Runtime.evaluate",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 64,
+          "elapsedMs": 1049.858792,
+          "wallTime": "2026-09-18T18:19:34.953Z",
+          "type": "input.coordinates",
+          "detail": {
+            "x": 137.5390625,
+            "y": 406.796875
+          }
+        },
+        {
+          "sequence": 65,
+          "elapsedMs": 1049.868,
+          "wallTime": "2026-09-18T18:19:34.953Z",
+          "type": "input.dispatched",
+          "detail": {
+            "operationId": "615c81fc-c397-4dee-a6e9-874291963704"
+          }
+        },
+        {
+          "sequence": 66,
+          "elapsedMs": 1049.884167,
+          "wallTime": "2026-09-18T18:19:34.953Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 16,
+            "method": "Input.dispatchMouseEvent"
+          }
+        },
+        {
+          "sequence": 67,
+          "elapsedMs": 1050.758667,
+          "wallTime": "2026-09-18T18:19:34.954Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 16,
+            "method": "Input.dispatchMouseEvent",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 68,
+          "elapsedMs": 1050.777459,
+          "wallTime": "2026-09-18T18:19:34.954Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 17,
+            "method": "Input.dispatchMouseEvent"
+          }
+        },
+        {
+          "sequence": 69,
+          "elapsedMs": 1051.887209,
+          "wallTime": "2026-09-18T18:19:34.955Z",
+          "type": "dap.stopped",
+          "detail": {
+            "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+            "threadId": 0,
+            "generation": 1,
+            "reason": "breakpoint",
+            "hitBreakpointIds": [
+              0
+            ]
+          }
+        },
+        {
+          "sequence": 70,
+          "elapsedMs": 1051.897709,
+          "wallTime": "2026-09-18T18:19:34.955Z",
+          "type": "capture.requested",
+          "detail": {
+            "phase": "paused",
+            "generation": 1,
+            "inputAcknowledged": false
+          }
+        },
+        {
+          "sequence": 71,
+          "elapsedMs": 1051.914417,
+          "wallTime": "2026-09-18T18:19:34.955Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 18,
+            "method": "Page.captureScreenshot"
+          }
+        },
+        {
+          "sequence": 72,
+          "elapsedMs": 1052.298625,
+          "wallTime": "2026-09-18T18:19:34.956Z",
+          "type": "cdp.paused",
+          "detail": {
+            "scriptLocation": {
+              "scriptId": "3",
+              "lineNumber": 7,
+              "columnNumber": 4
+            },
+            "reason": "other"
+          }
+        },
+        {
+          "sequence": 73,
+          "elapsedMs": 1052.413667,
+          "wallTime": "2026-09-18T18:19:34.956Z",
+          "type": "cdp.paused",
+          "detail": {
+            "scriptLocation": {
+              "scriptId": "3",
+              "lineNumber": 7,
+              "columnNumber": 4
+            },
+            "reason": "other"
+          }
+        },
+        {
+          "sequence": 74,
+          "elapsedMs": 1062.6275,
+          "wallTime": "2026-09-18T18:19:34.966Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 19,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 75,
+          "elapsedMs": 1062.711875,
+          "wallTime": "2026-09-18T18:19:34.966Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755574.96272
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 76,
+          "elapsedMs": 1062.749834,
+          "wallTime": "2026-09-18T18:19:34.966Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 5,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 77,
+          "elapsedMs": 1063.153834,
+          "wallTime": "2026-09-18T18:19:34.966Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 19,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 78,
+          "elapsedMs": 1080.953125,
+          "wallTime": "2026-09-18T18:19:34.984Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 18,
+            "method": "Page.captureScreenshot",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 79,
+          "elapsedMs": 1080.997834,
+          "wallTime": "2026-09-18T18:19:34.984Z",
+          "type": "capture.received",
+          "detail": {
+            "phase": "paused",
+            "generation": 1
+          }
+        },
+        {
+          "sequence": 80,
+          "elapsedMs": 1081.597625,
+          "wallTime": "2026-09-18T18:19:34.985Z",
+          "type": "viewport.delivery-rejected",
+          "detail": {
+            "id": 5,
+            "phase": "live",
+            "reason": "Live delivery superseded by pause image"
+          }
+        },
+        {
+          "sequence": 81,
+          "elapsedMs": 1081.761459,
+          "wallTime": "2026-09-18T18:19:34.985Z",
+          "type": "viewport.live-frame-unconfirmed",
+          "detail": {
+            "phase": "live",
+            "error": "Error: Live delivery superseded by pause image"
+          }
+        },
+        {
+          "sequence": 82,
+          "elapsedMs": 1081.782084,
+          "wallTime": "2026-09-18T18:19:34.985Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 6,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "paused-1"
+          }
+        },
+        {
+          "sequence": 83,
+          "elapsedMs": 1101.020584,
+          "wallTime": "2026-09-18T18:19:35.004Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 6,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "paused-1"
+          }
+        },
+        {
+          "sequence": 84,
+          "elapsedMs": 1107.06725,
+          "wallTime": "2026-09-18T18:19:35.010Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 20,
+            "method": "Debugger.getScriptSource"
+          }
+        },
+        {
+          "sequence": 85,
+          "elapsedMs": 1107.653459,
+          "wallTime": "2026-09-18T18:19:35.011Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 20,
+            "method": "Debugger.getScriptSource",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 86,
+          "elapsedMs": 1108.0875,
+          "wallTime": "2026-09-18T18:19:35.011Z",
+          "type": "source.executed",
+          "detail": {
+            "actualHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+            "expectedHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+            "scriptId": "3"
+          }
+        },
+        {
+          "sequence": 87,
+          "elapsedMs": 1108.232417,
+          "wallTime": "2026-09-18T18:19:35.012Z",
+          "type": "source.local",
+          "detail": {
+            "actualHash": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+            "expectedHash": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d"
+          }
+        },
+        {
+          "sequence": 88,
+          "elapsedMs": 1108.928875,
+          "wallTime": "2026-09-18T18:19:35.012Z",
+          "type": "snapshot.committed",
+          "detail": {
+            "snapshotId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582:1",
+            "pause": {
+              "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+              "threadId": 0,
+              "generation": 1
+            }
+          }
+        },
+        {
+          "sequence": 89,
+          "elapsedMs": 1154.463709,
+          "wallTime": "2026-09-18T18:19:35.058Z",
+          "type": "continue.accepted",
+          "detail": {
+            "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+            "threadId": 0,
+            "generation": 1
+          }
+        },
+        {
+          "sequence": 90,
+          "elapsedMs": 1154.898792,
+          "wallTime": "2026-09-18T18:19:35.058Z",
+          "type": "dap.resume-request",
+          "detail": {
+            "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+            "command": "continue",
+            "expected": true
+          }
+        },
+        {
+          "sequence": 91,
+          "elapsedMs": 1154.9555,
+          "wallTime": "2026-09-18T18:19:35.058Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 7,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 92,
+          "elapsedMs": 1155.553209,
+          "wallTime": "2026-09-18T18:19:35.059Z",
+          "type": "dap.continued",
+          "detail": {
+            "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+            "body": {
+              "threadId": 0,
+              "allThreadsContinued": false
+            }
+          }
+        },
+        {
+          "sequence": 93,
+          "elapsedMs": 1155.632625,
+          "wallTime": "2026-09-18T18:19:35.059Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 21,
+            "method": "Runtime.evaluate"
+          }
+        },
+        {
+          "sequence": 94,
+          "elapsedMs": 1156.213334,
+          "wallTime": "2026-09-18T18:19:35.059Z",
+          "type": "cdp.resumed",
+          "detail": {}
+        },
+        {
+          "sequence": 95,
+          "elapsedMs": 1156.521542,
+          "wallTime": "2026-09-18T18:19:35.060Z",
+          "type": "cdp.resumed",
+          "detail": {}
+        },
+        {
+          "sequence": 96,
+          "elapsedMs": 1156.67075,
+          "wallTime": "2026-09-18T18:19:35.060Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 17,
+            "method": "Input.dispatchMouseEvent",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 97,
+          "elapsedMs": 1156.688834,
+          "wallTime": "2026-09-18T18:19:35.060Z",
+          "type": "input.acknowledged",
+          "detail": {
+            "operationId": "615c81fc-c397-4dee-a6e9-874291963704"
+          }
+        },
+        {
+          "sequence": 98,
+          "elapsedMs": 1156.821542,
+          "wallTime": "2026-09-18T18:19:35.060Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 21,
+            "method": "Runtime.evaluate",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 99,
+          "elapsedMs": 1156.839917,
+          "wallTime": "2026-09-18T18:19:35.060Z",
+          "type": "application.updated",
+          "detail": {
+            "cartCount": 1,
+            "completedClicks": 1
+          }
+        },
+        {
+          "sequence": 100,
+          "elapsedMs": 1156.857125,
+          "wallTime": "2026-09-18T18:19:35.060Z",
+          "type": "viewport.delivery-rejected",
+          "detail": {
+            "id": 7,
+            "phase": "live",
+            "reason": "Webview renderer suspended"
+          }
+        },
+        {
+          "sequence": 101,
+          "elapsedMs": 1156.956167,
+          "wallTime": "2026-09-18T18:19:35.060Z",
+          "type": "viewport.live-frame-unconfirmed",
+          "detail": {
+            "phase": "live",
+            "error": "Error: Webview renderer suspended"
+          }
+        },
+        {
+          "sequence": 102,
+          "elapsedMs": 1160.688917,
+          "wallTime": "2026-09-18T18:19:35.064Z",
+          "type": "continue.response",
+          "detail": {
+            "sessionId": "912d1ce9-5d13-4ad2-b42d-6c0d5bf83582",
+            "threadId": 0,
+            "generation": 1
+          }
+        },
+        {
+          "sequence": 103,
+          "elapsedMs": 1163.472834,
+          "wallTime": "2026-09-18T18:19:35.067Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 22,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 104,
+          "elapsedMs": 1163.553625,
+          "wallTime": "2026-09-18T18:19:35.067Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "c71e4fa1ca0a7d3a1e7207dc5e53ee8ab83db4d785f098c1ce03747332698a82",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755575.063356
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 105,
+          "elapsedMs": 1163.897834,
+          "wallTime": "2026-09-18T18:19:35.067Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 22,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 106,
+          "elapsedMs": 1172.424667,
+          "wallTime": "2026-09-18T18:19:35.076Z",
+          "type": "viewport.stale-ack-ignored",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 7
+          }
+        },
+        {
+          "sequence": 107,
+          "elapsedMs": 1172.560084,
+          "wallTime": "2026-09-18T18:19:35.076Z",
+          "type": "viewport.ready",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078"
+          }
+        },
+        {
+          "sequence": 108,
+          "elapsedMs": 1172.612,
+          "wallTime": "2026-09-18T18:19:35.076Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 8,
+            "hash": "c71e4fa1ca0a7d3a1e7207dc5e53ee8ab83db4d785f098c1ce03747332698a82",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 109,
+          "elapsedMs": 1191.344542,
+          "wallTime": "2026-09-18T18:19:35.095Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 8,
+            "hash": "c71e4fa1ca0a7d3a1e7207dc5e53ee8ab83db4d785f098c1ce03747332698a82",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 110,
+          "elapsedMs": 1208.827084,
+          "wallTime": "2026-09-18T18:19:35.112Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 23,
+            "method": "Page.bringToFront"
+          }
+        },
+        {
+          "sequence": 111,
+          "elapsedMs": 1214.148834,
+          "wallTime": "2026-09-18T18:19:35.117Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 23,
+            "method": "Page.bringToFront",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 112,
+          "elapsedMs": 1214.182792,
+          "wallTime": "2026-09-18T18:19:35.117Z",
+          "type": "browser.revealed-for-completion",
+          "detail": {}
+        },
+        {
+          "sequence": 113,
+          "elapsedMs": 1214.190709,
+          "wallTime": "2026-09-18T18:19:35.117Z",
+          "type": "capture.requested",
+          "detail": {
+            "phase": "after",
+            "inputAcknowledged": true
+          }
+        },
+        {
+          "sequence": 114,
+          "elapsedMs": 1214.21125,
+          "wallTime": "2026-09-18T18:19:35.117Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 24,
+            "method": "Page.captureScreenshot"
+          }
+        },
+        {
+          "sequence": 115,
+          "elapsedMs": 1221.268084,
+          "wallTime": "2026-09-18T18:19:35.125Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 25,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 116,
+          "elapsedMs": 1221.354709,
+          "wallTime": "2026-09-18T18:19:35.125Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "c71e4fa1ca0a7d3a1e7207dc5e53ee8ab83db4d785f098c1ce03747332698a82",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755575.121171
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 117,
+          "elapsedMs": 1221.398459,
+          "wallTime": "2026-09-18T18:19:35.125Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 9,
+            "hash": "c71e4fa1ca0a7d3a1e7207dc5e53ee8ab83db4d785f098c1ce03747332698a82",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 118,
+          "elapsedMs": 1221.87475,
+          "wallTime": "2026-09-18T18:19:35.125Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 25,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 119,
+          "elapsedMs": 1231.93625,
+          "wallTime": "2026-09-18T18:19:35.135Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 9,
+            "hash": "c71e4fa1ca0a7d3a1e7207dc5e53ee8ab83db4d785f098c1ce03747332698a82",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 120,
+          "elapsedMs": 1232.345792,
+          "wallTime": "2026-09-18T18:19:35.136Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 24,
+            "method": "Page.captureScreenshot",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 121,
+          "elapsedMs": 1232.367792,
+          "wallTime": "2026-09-18T18:19:35.136Z",
+          "type": "capture.received",
+          "detail": {
+            "phase": "after"
+          }
+        },
+        {
+          "sequence": 122,
+          "elapsedMs": 1232.946542,
+          "wallTime": "2026-09-18T18:19:35.136Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 10,
+            "hash": "0dbf7e1e0670a5f837909b9d5b534c681a8682eb19688e658c87c5efa70cd908",
+            "phase": "after"
+          }
+        },
+        {
+          "sequence": 123,
+          "elapsedMs": 1248.349334,
+          "wallTime": "2026-09-18T18:19:35.152Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "d54f21ad-f85e-4bdc-aeee-f0e461114078",
+            "id": 10,
+            "hash": "0dbf7e1e0670a5f837909b9d5b534c681a8682eb19688e658c87c5efa70cd908",
+            "phase": "after"
+          }
+        },
+        {
+          "sequence": 124,
+          "elapsedMs": 1248.472042,
+          "wallTime": "2026-09-18T18:19:35.152Z",
+          "type": "run.completed",
+          "detail": {
+            "captureComplete": true
+          }
+        }
+      ],
+      "artifactDirectory": "<repo>/artifacts/cycle-0003/managed/cursor/fd45e5c3-7bec-4b30-a684-977ad5e1d4eb"
+    }
+  },
+  {
+    "scenario": "stale-script",
+    "runId": "07aa3005-c8ea-4293-a754-bfae0835961d",
+    "passed": true,
+    "checks": {
+      "runTokenRequired": true,
+      "actionStatus": 202,
+      "actionDurationMs": 0.8612089999996897,
+      "ownedResourcesReleased": true
+    },
+    "final": {
+      "runId": "07aa3005-c8ea-4293-a754-bfae0835961d",
+      "scenario": "stale-script",
+      "status": "failed",
+      "cleaned": false,
+      "resources": {
+        "activeSessionIds": [
+          "5706a0e8-9eaa-4276-88ff-f53ee16bfd96",
+          "af165460-94b6-4880-af4d-296c1ff2c817"
+        ],
+        "breakpointPresent": true,
+        "cdpOpen": true
+      },
+      "operation": {
+        "id": "c1e23a19-b0da-4d19-bfa2-78c42861dcce",
+        "key": "one-cart-add",
+        "inputAcknowledged": false,
+        "completed": false
+      },
+      "pause": {
+        "sessionId": "af165460-94b6-4880-af4d-296c1ff2c817",
+        "threadId": 1,
+        "generation": 1
+      },
+      "conflict": false,
+      "sessionId": "af165460-94b6-4880-af4d-296c1ff2c817",
+      "captures": {
+        "before": {
+          "phase": "before",
+          "requestSequence": 52,
+          "status": "captured",
+          "responseSequence": 60,
+          "file": "before.png",
+          "renderer": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 4,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+          }
+        },
+        "paused-1": {
+          "phase": "paused",
+          "generation": 1,
+          "requestSequence": 72,
+          "status": "failed",
+          "responseSequence": 90,
+          "error": "Error: Pause display invalidated"
+        }
+      },
+      "failures": [
+        "Error: Executed JavaScript does not match the sealed build"
+      ],
+      "events": [
+        {
+          "sequence": 1,
+          "elapsedMs": 0.130166,
+          "wallTime": "2026-09-18T18:19:35.396Z",
+          "type": "run.created",
+          "detail": {
+            "runId": "07aa3005-c8ea-4293-a754-bfae0835961d",
+            "scenario": "stale-script"
+          }
+        },
+        {
+          "sequence": 2,
+          "elapsedMs": 44.216333,
+          "wallTime": "2026-09-18T18:19:35.440Z",
+          "type": "breakpoint.requested",
+          "detail": {
+            "id": "848f722b-bcb0-438e-b0ad-6f5ec5199f18",
+            "sourcePath": "<repo>/artifacts/cycle-0003/managed/cursor/07aa3005-c8ea-4293-a754-bfae0835961d/fixture/cart.ts",
+            "line": 9
+          }
+        },
+        {
+          "sequence": 3,
+          "elapsedMs": 44.568583,
+          "wallTime": "2026-09-18T18:19:35.440Z",
+          "type": "browser.managed-profile",
+          "detail": {
+            "profile": "<owned-runtime:731cdbe8c282>",
+            "chrome": {
+              "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+              "version": "Google Chrome 153.0.8010.50"
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "elapsedMs": 125.506333,
+          "wallTime": "2026-09-18T18:19:35.521Z",
+          "type": "session.started",
+          "detail": {
+            "sessionId": "5706a0e8-9eaa-4276-88ff-f53ee16bfd96",
+            "type": "pwa-chrome",
+            "name": "codebook 07aa3005-c8ea-4293-a754-bfae0835961d"
+          }
+        },
+        {
+          "sequence": 5,
+          "elapsedMs": 418.9165,
+          "wallTime": "2026-09-18T18:19:35.814Z",
+          "type": "session.started",
+          "detail": {
+            "sessionId": "af165460-94b6-4880-af4d-296c1ff2c817",
+            "parentId": "5706a0e8-9eaa-4276-88ff-f53ee16bfd96",
+            "type": "pwa-chrome",
+            "name": "about:blank"
+          }
+        },
+        {
+          "sequence": 6,
+          "elapsedMs": 441.242,
+          "wallTime": "2026-09-18T18:19:35.837Z",
+          "type": "focus.changed",
+          "detail": {
+            "sessionId": "5706a0e8-9eaa-4276-88ff-f53ee16bfd96"
+          }
+        },
+        {
+          "sequence": 7,
+          "elapsedMs": 441.72625,
+          "wallTime": "2026-09-18T18:19:35.837Z",
+          "type": "host.debugger-started",
+          "detail": {
+            "host": "cursor",
+            "type": "pwa-chrome"
+          }
+        },
+        {
+          "sequence": 8,
+          "elapsedMs": 446.332708,
+          "wallTime": "2026-09-18T18:19:35.842Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 1,
+            "method": "Runtime.evaluate"
+          }
+        },
+        {
+          "sequence": 9,
+          "elapsedMs": 451.304041,
+          "wallTime": "2026-09-18T18:19:35.847Z",
+          "type": "focus.changed",
+          "detail": {
+            "sessionId": "af165460-94b6-4880-af4d-296c1ff2c817"
+          }
+        },
+        {
+          "sequence": 10,
+          "elapsedMs": 458.755833,
+          "wallTime": "2026-09-18T18:19:35.854Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 1,
+            "method": "Runtime.evaluate",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 11,
+          "elapsedMs": 458.798041,
+          "wallTime": "2026-09-18T18:19:35.854Z",
+          "type": "target.selected",
+          "detail": {
+            "sessionId": "af165460-94b6-4880-af4d-296c1ff2c817",
+            "parentId": "5706a0e8-9eaa-4276-88ff-f53ee16bfd96",
+            "url": "http://127.0.0.1:64588/runs/07aa3005-c8ea-4293-a754-bfae0835961d/index.html"
+          }
+        },
+        {
+          "sequence": 12,
+          "elapsedMs": 458.815,
+          "wallTime": "2026-09-18T18:19:35.854Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 2,
+            "method": "JsDebug.subscribe"
+          }
+        },
+        {
+          "sequence": 13,
+          "elapsedMs": 459.908666,
+          "wallTime": "2026-09-18T18:19:35.855Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 2,
+            "method": "JsDebug.subscribe",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 14,
+          "elapsedMs": 461.58125,
+          "wallTime": "2026-09-18T18:19:35.857Z",
+          "type": "dap.continued",
+          "detail": {
+            "sessionId": "af165460-94b6-4880-af4d-296c1ff2c817",
+            "body": {
+              "threadId": 1,
+              "allThreadsContinued": false
+            }
+          }
+        },
+        {
+          "sequence": 15,
+          "elapsedMs": 461.899125,
+          "wallTime": "2026-09-18T18:19:35.857Z",
+          "type": "cdp.resumed",
+          "detail": {}
+        },
+        {
+          "sequence": 16,
+          "elapsedMs": 496.338916,
+          "wallTime": "2026-09-18T18:19:35.892Z",
+          "type": "browser.managed-processes",
+          "detail": {
+            "processes": [
+              {
+                "pid": 16796,
+                "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-breakpad --disable-client-side-phishing-detection --disable-default-apps --disable-dev-shm-usage --disable-renderer-backgrounding --disable-sync --metrics-recording-only --no-first-run --no-default-browser-check --user-data-dir=<owned-runtime:731cdbe8c282> --headless=new --remote-debugging-pipe about:blank"
+              },
+              {
+                "pid": 16818,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=gpu-process --disable-breakpad --headless=new --noerrdialogs --user-data-dir=<owned-runtime:731cdbe8c282> --gpu-preferences=WAAAAAAAAAAgAQAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAADAAAAAEAAAAAAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --shared-files --field-trial-handle=1718379636,r,3588941582323306058,16709090514431457399,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,11162472327246323347,9079581021692847887,4 --trace-process-track-uuid=3190708988185955192 --seatbelt-client=26"
+              },
+              {
+                "pid": 16819,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=network --noerrdialogs --user-data-dir=<owned-runtime:731cdbe8c282> --shared-files --field-trial-handle=1718379636,r,3588941582323306058,16709090514431457399,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,11162472327246323347,9079581021692847887,4 --trace-process-track-uuid=3190708989122997041 --seatbelt-client=25"
+              },
+              {
+                "pid": 16820,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=service --noerrdialogs --user-data-dir=<owned-runtime:731cdbe8c282> --shared-files --field-trial-handle=1718379636,r,3588941582323306058,16709090514431457399,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,11162472327246323347,9079581021692847887,4 --trace-process-track-uuid=3190708990060038890 --seatbelt-client=37"
+              },
+              {
+                "pid": 16822,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --top-chrome-webui --noerrdialogs --user-data-dir=<owned-runtime:731cdbe8c282> --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=6 --launch-time-ticks=75729456898 --shared-files --field-trial-handle=1718379636,r,3588941582323306058,16709090514431457399,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,11162472327246323347,9079581021692847887,4 --trace-process-track-uuid=3190708991934122588 --seatbelt-client=77"
+              },
+              {
+                "pid": 16824,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:731cdbe8c282> --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=7 --launch-time-ticks=75729478949 --shared-files --field-trial-handle=1718379636,r,3588941582323306058,16709090514431457399,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,11162472327246323347,9079581021692847887,4 --trace-process-track-uuid=3190708992871164437 --seatbelt-client=77"
+              },
+              {
+                "pid": 16825,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:731cdbe8c282> --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=9 --launch-time-ticks=75729513695 --shared-files --field-trial-handle=1718379636,r,3588941582323306058,16709090514431457399,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,11162472327246323347,9079581021692847887,4 --trace-process-track-uuid=3190708994745248135 --seatbelt-client=88"
+              },
+              {
+                "pid": 16826,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:731cdbe8c282> --extension-process --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=10 --launch-time-ticks=75729514491 --shared-files --field-trial-handle=1718379636,r,3588941582323306058,16709090514431457399,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,11162472327246323347,9079581021692847887,4 --trace-process-track-uuid=3190708995682289984 --seatbelt-client=88"
+              },
+              {
+                "pid": 16827,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:731cdbe8c282> --extension-process --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=11 --launch-time-ticks=75729574678 --shared-files --field-trial-handle=1718379636,r,3588941582323306058,16709090514431457399,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,11162472327246323347,9079581021692847887,4 --trace-process-track-uuid=3190708996619331833 --seatbelt-client=100"
+              }
+            ],
+            "pipe": true,
+            "devToolsPortFileAbsent": true
+          }
+        },
+        {
+          "sequence": 17,
+          "elapsedMs": 496.372458,
+          "wallTime": "2026-09-18T18:19:35.892Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 3,
+            "method": "Browser.getVersion"
+          }
+        },
+        {
+          "sequence": 18,
+          "elapsedMs": 496.812,
+          "wallTime": "2026-09-18T18:19:35.892Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 3,
+            "method": "Browser.getVersion",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 19,
+          "elapsedMs": 496.819916,
+          "wallTime": "2026-09-18T18:19:35.892Z",
+          "type": "browser.runtime-version",
+          "detail": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/153.0.8010.50",
+            "revision": "@583c5b4655acea7450a3b5224ea5121ae8caca9b",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+            "jsVersion": "15.3.76.12"
+          }
+        },
+        {
+          "sequence": 20,
+          "elapsedMs": 496.83225,
+          "wallTime": "2026-09-18T18:19:35.892Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 4,
+            "method": "JsDebug.subscribe"
+          }
+        },
+        {
+          "sequence": 21,
+          "elapsedMs": 497.070708,
+          "wallTime": "2026-09-18T18:19:35.892Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 4,
+            "method": "JsDebug.subscribe",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 22,
+          "elapsedMs": 497.087416,
+          "wallTime": "2026-09-18T18:19:35.893Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 5,
+            "method": "Emulation.setDeviceMetricsOverride"
+          }
+        },
+        {
+          "sequence": 23,
+          "elapsedMs": 497.668416,
+          "wallTime": "2026-09-18T18:19:35.893Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 5,
+            "method": "Emulation.setDeviceMetricsOverride",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 24,
+          "elapsedMs": 497.682666,
+          "wallTime": "2026-09-18T18:19:35.893Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 6,
+            "method": "Page.enable"
+          }
+        },
+        {
+          "sequence": 25,
+          "elapsedMs": 498.253791,
+          "wallTime": "2026-09-18T18:19:35.894Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 6,
+            "method": "Page.enable",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 26,
+          "elapsedMs": 498.288958,
+          "wallTime": "2026-09-18T18:19:35.894Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 7,
+            "method": "Page.startScreencast"
+          }
+        },
+        {
+          "sequence": 27,
+          "elapsedMs": 498.771625,
+          "wallTime": "2026-09-18T18:19:35.894Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 7,
+            "method": "Page.startScreencast",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 28,
+          "elapsedMs": 509.291375,
+          "wallTime": "2026-09-18T18:19:35.905Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 8,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 29,
+          "elapsedMs": 509.365625,
+          "wallTime": "2026-09-18T18:19:35.905Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "f6638990bf11028668779070f221d00ad681f195ef87a680575c6c3ba0d86575",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755575.902119
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 30,
+          "elapsedMs": 509.635875,
+          "wallTime": "2026-09-18T18:19:35.905Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 8,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 31,
+          "elapsedMs": 523.768083,
+          "wallTime": "2026-09-18T18:19:35.919Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 9,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 32,
+          "elapsedMs": 523.844166,
+          "wallTime": "2026-09-18T18:19:35.919Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755575.916071
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 33,
+          "elapsedMs": 524.216958,
+          "wallTime": "2026-09-18T18:19:35.920Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 9,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 34,
+          "elapsedMs": 2332.445333,
+          "wallTime": "2026-09-18T18:19:37.728Z",
+          "type": "viewport.ready",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c"
+          }
+        },
+        {
+          "sequence": 35,
+          "elapsedMs": 2332.502291,
+          "wallTime": "2026-09-18T18:19:37.728Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 1,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 36,
+          "elapsedMs": 3432.401958,
+          "wallTime": "2026-09-18T18:19:38.828Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 10,
+            "method": "Runtime.evaluate"
+          }
+        },
+        {
+          "sequence": 37,
+          "elapsedMs": 3436.951875,
+          "wallTime": "2026-09-18T18:19:38.832Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 1,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 38,
+          "elapsedMs": 3449.670166,
+          "wallTime": "2026-09-18T18:19:38.845Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 10,
+            "method": "Runtime.evaluate",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 39,
+          "elapsedMs": 3450.279583,
+          "wallTime": "2026-09-18T18:19:38.846Z",
+          "type": "breakpoint.bound",
+          "detail": {
+            "id": 0,
+            "verified": true,
+            "source": {
+              "name": "fixture/cart.ts",
+              "path": "<repo>/artifacts/cycle-0003/managed/cursor/07aa3005-c8ea-4293-a754-bfae0835961d/fixture/cart.ts",
+              "sourceReference": 0
+            },
+            "line": 9
+          }
+        },
+        {
+          "sequence": 40,
+          "elapsedMs": 3450.30125,
+          "wallTime": "2026-09-18T18:19:38.846Z",
+          "type": "browser.tabs-before-reveal",
+          "detail": [
+            {
+              "column": 1,
+              "tabs": [
+                {
+                  "label": "codebook 07aa3005",
+                  "isActive": true,
+                  "input": {
+                    "viewType": "mainThreadWebview-codebook.scopedBrowser"
+                  }
+                }
+              ]
+            },
+            {
+              "column": 2,
+              "tabs": [
+                {
+                  "label": "cart.ts",
+                  "isActive": true,
+                  "input": {
+                    "uri": {
+                      "$mid": 1,
+                      "fsPath": "<repo>/artifacts/cycle-0003/managed/cursor/07aa3005-c8ea-4293-a754-bfae0835961d/fixture/cart.ts",
+                      "external": "file://<repo>/artifacts/cycle-0003/managed/cursor/07aa3005-c8ea-4293-a754-bfae0835961d/fixture/cart.ts",
+                      "path": "<repo>/artifacts/cycle-0003/managed/cursor/07aa3005-c8ea-4293-a754-bfae0835961d/fixture/cart.ts",
+                      "scheme": "file"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "sequence": 41,
+          "elapsedMs": 3451.29325,
+          "wallTime": "2026-09-18T18:19:38.847Z",
+          "type": "viewport.ready",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c"
+          }
+        },
+        {
+          "sequence": 42,
+          "elapsedMs": 3451.347916,
+          "wallTime": "2026-09-18T18:19:38.847Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 2,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 43,
+          "elapsedMs": 3464.598458,
+          "wallTime": "2026-09-18T18:19:38.860Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 2,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 44,
+          "elapsedMs": 3500.303166,
+          "wallTime": "2026-09-18T18:19:38.896Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 11,
+            "method": "Page.bringToFront"
+          }
+        },
+        {
+          "sequence": 45,
+          "elapsedMs": 3505.670833,
+          "wallTime": "2026-09-18T18:19:38.901Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 11,
+            "method": "Page.bringToFront",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 46,
+          "elapsedMs": 3505.709,
+          "wallTime": "2026-09-18T18:19:38.901Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 12,
+            "method": "Page.getLayoutMetrics"
+          }
+        },
+        {
+          "sequence": 47,
+          "elapsedMs": 3506.626,
+          "wallTime": "2026-09-18T18:19:38.902Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 12,
+            "method": "Page.getLayoutMetrics",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 48,
+          "elapsedMs": 3506.651375,
+          "wallTime": "2026-09-18T18:19:38.902Z",
+          "type": "page.initial-layout",
+          "detail": {
+            "layoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "visualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "contentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            },
+            "cssLayoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "cssVisualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "cssContentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            }
+          }
+        },
+        {
+          "sequence": 49,
+          "elapsedMs": 3506.667458,
+          "wallTime": "2026-09-18T18:19:38.902Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 13,
+            "method": "Page.getLayoutMetrics"
+          }
+        },
+        {
+          "sequence": 50,
+          "elapsedMs": 3507.044625,
+          "wallTime": "2026-09-18T18:19:38.902Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 13,
+            "method": "Page.getLayoutMetrics",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 51,
+          "elapsedMs": 3507.059708,
+          "wallTime": "2026-09-18T18:19:38.902Z",
+          "type": "page.visible-layout",
+          "detail": {
+            "layoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "visualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "contentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            },
+            "cssLayoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "cssVisualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "cssContentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            }
+          }
+        },
+        {
+          "sequence": 52,
+          "elapsedMs": 3507.417583,
+          "wallTime": "2026-09-18T18:19:38.903Z",
+          "type": "capture.requested",
+          "detail": {
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 53,
+          "elapsedMs": 3507.447916,
+          "wallTime": "2026-09-18T18:19:38.903Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 14,
+            "method": "Page.captureScreenshot"
+          }
+        },
+        {
+          "sequence": 54,
+          "elapsedMs": 3524.297291,
+          "wallTime": "2026-09-18T18:19:38.920Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 15,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 55,
+          "elapsedMs": 3524.379541,
+          "wallTime": "2026-09-18T18:19:38.920Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755578.916408
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 56,
+          "elapsedMs": 3524.412041,
+          "wallTime": "2026-09-18T18:19:38.920Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 3,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 57,
+          "elapsedMs": 3525.090833,
+          "wallTime": "2026-09-18T18:19:38.921Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 15,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 58,
+          "elapsedMs": 3531.3595,
+          "wallTime": "2026-09-18T18:19:38.927Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 3,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 59,
+          "elapsedMs": 3542.153625,
+          "wallTime": "2026-09-18T18:19:38.938Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 14,
+            "method": "Page.captureScreenshot",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 60,
+          "elapsedMs": 3542.194333,
+          "wallTime": "2026-09-18T18:19:38.938Z",
+          "type": "capture.received",
+          "detail": {
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 61,
+          "elapsedMs": 3543.031,
+          "wallTime": "2026-09-18T18:19:38.938Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 4,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 62,
+          "elapsedMs": 3555.795166,
+          "wallTime": "2026-09-18T18:19:38.951Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 4,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 63,
+          "elapsedMs": 3598.917541,
+          "wallTime": "2026-09-18T18:19:38.994Z",
+          "type": "action.accepted",
+          "detail": {
+            "operationId": "c1e23a19-b0da-4d19-bfa2-78c42861dcce",
+            "key": "one-cart-add"
+          }
+        },
+        {
+          "sequence": 64,
+          "elapsedMs": 3598.936958,
+          "wallTime": "2026-09-18T18:19:38.994Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 16,
+            "method": "Runtime.evaluate"
+          }
+        },
+        {
+          "sequence": 65,
+          "elapsedMs": 3599.931666,
+          "wallTime": "2026-09-18T18:19:38.995Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 16,
+            "method": "Runtime.evaluate",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 66,
+          "elapsedMs": 3599.954083,
+          "wallTime": "2026-09-18T18:19:38.995Z",
+          "type": "input.coordinates",
+          "detail": {
+            "x": 137.5390625,
+            "y": 406.796875
+          }
+        },
+        {
+          "sequence": 67,
+          "elapsedMs": 3599.95975,
+          "wallTime": "2026-09-18T18:19:38.995Z",
+          "type": "input.dispatched",
+          "detail": {
+            "operationId": "c1e23a19-b0da-4d19-bfa2-78c42861dcce"
+          }
+        },
+        {
+          "sequence": 68,
+          "elapsedMs": 3599.977708,
+          "wallTime": "2026-09-18T18:19:38.995Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 17,
+            "method": "Input.dispatchMouseEvent"
+          }
+        },
+        {
+          "sequence": 69,
+          "elapsedMs": 3601.014458,
+          "wallTime": "2026-09-18T18:19:38.996Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 17,
+            "method": "Input.dispatchMouseEvent",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 70,
+          "elapsedMs": 3601.036625,
+          "wallTime": "2026-09-18T18:19:38.996Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 18,
+            "method": "Input.dispatchMouseEvent"
+          }
+        },
+        {
+          "sequence": 71,
+          "elapsedMs": 3601.743916,
+          "wallTime": "2026-09-18T18:19:38.997Z",
+          "type": "dap.stopped",
+          "detail": {
+            "sessionId": "af165460-94b6-4880-af4d-296c1ff2c817",
+            "threadId": 1,
+            "generation": 1,
+            "reason": "breakpoint",
+            "hitBreakpointIds": [
+              0
+            ]
+          }
+        },
+        {
+          "sequence": 72,
+          "elapsedMs": 3601.754208,
+          "wallTime": "2026-09-18T18:19:38.997Z",
+          "type": "capture.requested",
+          "detail": {
+            "phase": "paused",
+            "generation": 1,
+            "inputAcknowledged": false
+          }
+        },
+        {
+          "sequence": 73,
+          "elapsedMs": 3601.76375,
+          "wallTime": "2026-09-18T18:19:38.997Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 19,
+            "method": "Page.captureScreenshot"
+          }
+        },
+        {
+          "sequence": 74,
+          "elapsedMs": 3602.050416,
+          "wallTime": "2026-09-18T18:19:38.997Z",
+          "type": "cdp.paused",
+          "detail": {
+            "scriptLocation": {
+              "scriptId": "3",
+              "lineNumber": 7,
+              "columnNumber": 4
+            },
+            "reason": "other"
+          }
+        },
+        {
+          "sequence": 75,
+          "elapsedMs": 3602.180708,
+          "wallTime": "2026-09-18T18:19:38.998Z",
+          "type": "cdp.paused",
+          "detail": {
+            "scriptLocation": {
+              "scriptId": "3",
+              "lineNumber": 7,
+              "columnNumber": 4
+            },
+            "reason": "other"
+          }
+        },
+        {
+          "sequence": 76,
+          "elapsedMs": 3625.505291,
+          "wallTime": "2026-09-18T18:19:39.021Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 20,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 77,
+          "elapsedMs": 3625.576083,
+          "wallTime": "2026-09-18T18:19:39.021Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755579.017086
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 78,
+          "elapsedMs": 3625.611791,
+          "wallTime": "2026-09-18T18:19:39.021Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 5,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 79,
+          "elapsedMs": 3628.451,
+          "wallTime": "2026-09-18T18:19:39.024Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 20,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 80,
+          "elapsedMs": 3652.615416,
+          "wallTime": "2026-09-18T18:19:39.048Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 5,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 81,
+          "elapsedMs": 3717.341625,
+          "wallTime": "2026-09-18T18:19:39.113Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 19,
+            "method": "Page.captureScreenshot",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 82,
+          "elapsedMs": 3717.3775,
+          "wallTime": "2026-09-18T18:19:39.113Z",
+          "type": "capture.received",
+          "detail": {
+            "phase": "paused",
+            "generation": 1
+          }
+        },
+        {
+          "sequence": 83,
+          "elapsedMs": 3718.71775,
+          "wallTime": "2026-09-18T18:19:39.114Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 6,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "paused-1"
+          }
+        },
+        {
+          "sequence": 84,
+          "elapsedMs": 3720.158041,
+          "wallTime": "2026-09-18T18:19:39.116Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 21,
+            "method": "Debugger.getScriptSource"
+          }
+        },
+        {
+          "sequence": 85,
+          "elapsedMs": 3720.81775,
+          "wallTime": "2026-09-18T18:19:39.116Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 21,
+            "method": "Debugger.getScriptSource",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 86,
+          "elapsedMs": 3721.215666,
+          "wallTime": "2026-09-18T18:19:39.117Z",
+          "type": "source.executed",
+          "detail": {
+            "actualHash": "be753f2afc0e49344c177a798817e532e250ee41b14f75ff8e195ade22370fee",
+            "expectedHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+            "scriptId": "3"
+          }
+        },
+        {
+          "sequence": 87,
+          "elapsedMs": 3721.273875,
+          "wallTime": "2026-09-18T18:19:39.117Z",
+          "type": "viewport.delivery-rejected",
+          "detail": {
+            "id": 6,
+            "phase": "paused-1",
+            "reason": "Pause display invalidated"
+          }
+        },
+        {
+          "sequence": 88,
+          "elapsedMs": 3721.324916,
+          "wallTime": "2026-09-18T18:19:39.117Z",
+          "type": "run.failed",
+          "detail": {
+            "reason": "Error: Executed JavaScript does not match the sealed build"
+          }
+        },
+        {
+          "sequence": 89,
+          "elapsedMs": 3721.370333,
+          "wallTime": "2026-09-18T18:19:39.117Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 7,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 90,
+          "elapsedMs": 3721.470958,
+          "wallTime": "2026-09-18T18:19:39.117Z",
+          "type": "capture.failed",
+          "detail": {
+            "phase": "paused",
+            "error": "Error: Pause display invalidated",
+            "generation": 1
+          }
+        },
+        {
+          "sequence": 91,
+          "elapsedMs": 3730.340041,
+          "wallTime": "2026-09-18T18:19:39.126Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "253d101a-6732-4bd5-a11c-d1567fcd4e0c",
+            "id": 7,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        }
+      ],
+      "artifactDirectory": "<repo>/artifacts/cycle-0003/managed/cursor/07aa3005-c8ea-4293-a754-bfae0835961d"
+    }
+  },
+  {
+    "scenario": "source-drift",
+    "runId": "5879f43e-32ae-4618-8087-f097876adc08",
+    "passed": true,
+    "checks": {
+      "runTokenRequired": true,
+      "actionStatus": 202,
+      "actionDurationMs": 1.9820419999996375,
+      "ownedResourcesReleased": true
+    },
+    "final": {
+      "runId": "5879f43e-32ae-4618-8087-f097876adc08",
+      "scenario": "source-drift",
+      "status": "failed",
+      "cleaned": false,
+      "resources": {
+        "activeSessionIds": [
+          "359f184e-209e-41f8-9ff7-85cd8be9fabc",
+          "82b920e6-7dc7-4aae-9ad5-0744002c6b94"
+        ],
+        "breakpointPresent": true,
+        "cdpOpen": true
+      },
+      "operation": {
+        "id": "34a31370-d853-4d0b-aa88-a312e33bb00b",
+        "key": "one-cart-add",
+        "inputAcknowledged": false,
+        "completed": false
+      },
+      "pause": {
+        "sessionId": "82b920e6-7dc7-4aae-9ad5-0744002c6b94",
+        "threadId": 2,
+        "generation": 1
+      },
+      "conflict": false,
+      "sessionId": "82b920e6-7dc7-4aae-9ad5-0744002c6b94",
+      "captures": {
+        "before": {
+          "phase": "before",
+          "requestSequence": 51,
+          "status": "captured",
+          "responseSequence": 59,
+          "file": "before.png",
+          "renderer": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 4,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+          }
+        },
+        "paused-1": {
+          "phase": "paused",
+          "generation": 1,
+          "requestSequence": 71,
+          "status": "captured",
+          "responseSequence": 80,
+          "file": "paused-1.png",
+          "renderer": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 6,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096"
+          }
+        }
+      },
+      "failures": [
+        "Error: Local TypeScript changed after the build was sealed"
+      ],
+      "events": [
+        {
+          "sequence": 1,
+          "elapsedMs": 0.247208,
+          "wallTime": "2026-09-18T18:19:39.482Z",
+          "type": "run.created",
+          "detail": {
+            "runId": "5879f43e-32ae-4618-8087-f097876adc08",
+            "scenario": "source-drift"
+          }
+        },
+        {
+          "sequence": 2,
+          "elapsedMs": 36.646167,
+          "wallTime": "2026-09-18T18:19:39.519Z",
+          "type": "breakpoint.requested",
+          "detail": {
+            "id": "1714dc59-77e4-4bb4-9f0e-0bb5bf08c63e",
+            "sourcePath": "<repo>/artifacts/cycle-0003/managed/cursor/5879f43e-32ae-4618-8087-f097876adc08/fixture/cart.ts",
+            "line": 9
+          }
+        },
+        {
+          "sequence": 3,
+          "elapsedMs": 42.616542,
+          "wallTime": "2026-09-18T18:19:39.525Z",
+          "type": "browser.managed-profile",
+          "detail": {
+            "profile": "<owned-runtime:e479be1ef81a>",
+            "chrome": {
+              "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+              "version": "Google Chrome 153.0.8010.50"
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "elapsedMs": 198.174542,
+          "wallTime": "2026-09-18T18:19:39.680Z",
+          "type": "session.started",
+          "detail": {
+            "sessionId": "359f184e-209e-41f8-9ff7-85cd8be9fabc",
+            "type": "pwa-chrome",
+            "name": "codebook 5879f43e-32ae-4618-8087-f097876adc08"
+          }
+        },
+        {
+          "sequence": 5,
+          "elapsedMs": 493.264625,
+          "wallTime": "2026-09-18T18:19:39.975Z",
+          "type": "session.started",
+          "detail": {
+            "sessionId": "82b920e6-7dc7-4aae-9ad5-0744002c6b94",
+            "parentId": "359f184e-209e-41f8-9ff7-85cd8be9fabc",
+            "type": "pwa-chrome",
+            "name": "about:blank"
+          }
+        },
+        {
+          "sequence": 6,
+          "elapsedMs": 502.573792,
+          "wallTime": "2026-09-18T18:19:39.985Z",
+          "type": "focus.changed",
+          "detail": {
+            "sessionId": "359f184e-209e-41f8-9ff7-85cd8be9fabc"
+          }
+        },
+        {
+          "sequence": 7,
+          "elapsedMs": 503.436708,
+          "wallTime": "2026-09-18T18:19:39.985Z",
+          "type": "host.debugger-started",
+          "detail": {
+            "host": "cursor",
+            "type": "pwa-chrome"
+          }
+        },
+        {
+          "sequence": 8,
+          "elapsedMs": 515.378333,
+          "wallTime": "2026-09-18T18:19:39.997Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 1,
+            "method": "Runtime.evaluate"
+          }
+        },
+        {
+          "sequence": 9,
+          "elapsedMs": 516.76075,
+          "wallTime": "2026-09-18T18:19:39.999Z",
+          "type": "focus.changed",
+          "detail": {
+            "sessionId": "82b920e6-7dc7-4aae-9ad5-0744002c6b94"
+          }
+        },
+        {
+          "sequence": 10,
+          "elapsedMs": 522.364917,
+          "wallTime": "2026-09-18T18:19:40.004Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 1,
+            "method": "Runtime.evaluate",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 11,
+          "elapsedMs": 522.442083,
+          "wallTime": "2026-09-18T18:19:40.004Z",
+          "type": "target.selected",
+          "detail": {
+            "sessionId": "82b920e6-7dc7-4aae-9ad5-0744002c6b94",
+            "parentId": "359f184e-209e-41f8-9ff7-85cd8be9fabc",
+            "url": "http://127.0.0.1:64588/runs/5879f43e-32ae-4618-8087-f097876adc08/index.html"
+          }
+        },
+        {
+          "sequence": 12,
+          "elapsedMs": 522.459375,
+          "wallTime": "2026-09-18T18:19:40.004Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 2,
+            "method": "JsDebug.subscribe"
+          }
+        },
+        {
+          "sequence": 13,
+          "elapsedMs": 523.660458,
+          "wallTime": "2026-09-18T18:19:40.006Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 2,
+            "method": "JsDebug.subscribe",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 14,
+          "elapsedMs": 534.138958,
+          "wallTime": "2026-09-18T18:19:40.016Z",
+          "type": "cdp.paused",
+          "detail": {
+            "scriptLocation": {
+              "scriptId": "3",
+              "lineNumber": 0,
+              "columnNumber": 16
+            },
+            "reason": "instrumentation"
+          }
+        },
+        {
+          "sequence": 15,
+          "elapsedMs": 542.653542,
+          "wallTime": "2026-09-18T18:19:40.025Z",
+          "type": "dap.continued",
+          "detail": {
+            "sessionId": "82b920e6-7dc7-4aae-9ad5-0744002c6b94",
+            "body": {
+              "threadId": 2,
+              "allThreadsContinued": false
+            }
+          }
+        },
+        {
+          "sequence": 16,
+          "elapsedMs": 547.066333,
+          "wallTime": "2026-09-18T18:19:40.029Z",
+          "type": "cdp.resumed",
+          "detail": {}
+        },
+        {
+          "sequence": 17,
+          "elapsedMs": 565.413417,
+          "wallTime": "2026-09-18T18:19:40.047Z",
+          "type": "browser.managed-processes",
+          "detail": {
+            "processes": [
+              {
+                "pid": 17117,
+                "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-breakpad --disable-client-side-phishing-detection --disable-default-apps --disable-dev-shm-usage --disable-renderer-backgrounding --disable-sync --metrics-recording-only --no-first-run --no-default-browser-check --user-data-dir=<owned-runtime:e479be1ef81a> --headless=new --remote-debugging-pipe about:blank"
+              },
+              {
+                "pid": 17123,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=gpu-process --disable-breakpad --headless=new --noerrdialogs --user-data-dir=<owned-runtime:e479be1ef81a> --gpu-preferences=WAAAAAAAAAAgAQAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAADAAAAAEAAAAAAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --shared-files --field-trial-handle=1718379636,r,16229286457144907955,14504797471377916806,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,15643338953936370701,14196693912371226662,4 --trace-process-track-uuid=3190708988185955192 --seatbelt-client=28"
+              },
+              {
+                "pid": 17124,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=network --noerrdialogs --user-data-dir=<owned-runtime:e479be1ef81a> --shared-files --field-trial-handle=1718379636,r,16229286457144907955,14504797471377916806,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,15643338953936370701,14196693912371226662,4 --trace-process-track-uuid=3190708989122997041 --seatbelt-client=26"
+              },
+              {
+                "pid": 17125,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=service --noerrdialogs --user-data-dir=<owned-runtime:e479be1ef81a> --shared-files --field-trial-handle=1718379636,r,16229286457144907955,14504797471377916806,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,15643338953936370701,14196693912371226662,4 --trace-process-track-uuid=3190708990060038890 --seatbelt-client=37"
+              },
+              {
+                "pid": 17129,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --top-chrome-webui --noerrdialogs --user-data-dir=<owned-runtime:e479be1ef81a> --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=6 --launch-time-ticks=75733612205 --shared-files --field-trial-handle=1718379636,r,16229286457144907955,14504797471377916806,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,15643338953936370701,14196693912371226662,4 --trace-process-track-uuid=3190708991934122588 --seatbelt-client=77"
+              },
+              {
+                "pid": 17134,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:e479be1ef81a> --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=7 --launch-time-ticks=75733633425 --shared-files --field-trial-handle=1718379636,r,16229286457144907955,14504797471377916806,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,15643338953936370701,14196693912371226662,4 --trace-process-track-uuid=3190708992871164437 --seatbelt-client=77"
+              },
+              {
+                "pid": 17137,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:e479be1ef81a> --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=9 --launch-time-ticks=75733671997 --shared-files --field-trial-handle=1718379636,r,16229286457144907955,14504797471377916806,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,15643338953936370701,14196693912371226662,4 --trace-process-track-uuid=3190708994745248135 --seatbelt-client=88"
+              },
+              {
+                "pid": 17138,
+                "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/153.0.8010.50/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --noerrdialogs --user-data-dir=<owned-runtime:e479be1ef81a> --extension-process --disable-background-timer-throttling --disable-breakpad --remote-debugging-pipe --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=10 --launch-time-ticks=75733673743 --shared-files --field-trial-handle=1718379636,r,16229286457144907955,14504797471377916806,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1935764596,r,15643338953936370701,14196693912371226662,4 --trace-process-track-uuid=3190708995682289984 --seatbelt-client=89"
+              }
+            ],
+            "pipe": true,
+            "devToolsPortFileAbsent": true
+          }
+        },
+        {
+          "sequence": 18,
+          "elapsedMs": 565.446542,
+          "wallTime": "2026-09-18T18:19:40.047Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 3,
+            "method": "Browser.getVersion"
+          }
+        },
+        {
+          "sequence": 19,
+          "elapsedMs": 567.197417,
+          "wallTime": "2026-09-18T18:19:40.049Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 3,
+            "method": "Browser.getVersion",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 20,
+          "elapsedMs": 567.227542,
+          "wallTime": "2026-09-18T18:19:40.049Z",
+          "type": "browser.runtime-version",
+          "detail": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/153.0.8010.50",
+            "revision": "@583c5b4655acea7450a3b5224ea5121ae8caca9b",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+            "jsVersion": "15.3.76.12"
+          }
+        },
+        {
+          "sequence": 21,
+          "elapsedMs": 567.245208,
+          "wallTime": "2026-09-18T18:19:40.049Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 4,
+            "method": "JsDebug.subscribe"
+          }
+        },
+        {
+          "sequence": 22,
+          "elapsedMs": 567.571375,
+          "wallTime": "2026-09-18T18:19:40.050Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 4,
+            "method": "JsDebug.subscribe",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 23,
+          "elapsedMs": 567.590625,
+          "wallTime": "2026-09-18T18:19:40.050Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 5,
+            "method": "Emulation.setDeviceMetricsOverride"
+          }
+        },
+        {
+          "sequence": 24,
+          "elapsedMs": 573.609333,
+          "wallTime": "2026-09-18T18:19:40.056Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 5,
+            "method": "Emulation.setDeviceMetricsOverride",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 25,
+          "elapsedMs": 573.641917,
+          "wallTime": "2026-09-18T18:19:40.056Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 6,
+            "method": "Page.enable"
+          }
+        },
+        {
+          "sequence": 26,
+          "elapsedMs": 574.035917,
+          "wallTime": "2026-09-18T18:19:40.056Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 6,
+            "method": "Page.enable",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 27,
+          "elapsedMs": 574.057917,
+          "wallTime": "2026-09-18T18:19:40.056Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 7,
+            "method": "Page.startScreencast"
+          }
+        },
+        {
+          "sequence": 28,
+          "elapsedMs": 575.723792,
+          "wallTime": "2026-09-18T18:19:40.058Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 7,
+            "method": "Page.startScreencast",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 29,
+          "elapsedMs": 598.731875,
+          "wallTime": "2026-09-18T18:19:40.081Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 8,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 30,
+          "elapsedMs": 598.809708,
+          "wallTime": "2026-09-18T18:19:40.081Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755580.077139
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 31,
+          "elapsedMs": 599.9435,
+          "wallTime": "2026-09-18T18:19:40.082Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 8,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 32,
+          "elapsedMs": 1092.030167,
+          "wallTime": "2026-09-18T18:19:40.574Z",
+          "type": "viewport.ready",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca"
+          }
+        },
+        {
+          "sequence": 33,
+          "elapsedMs": 1092.134708,
+          "wallTime": "2026-09-18T18:19:40.574Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 1,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 34,
+          "elapsedMs": 1103.243042,
+          "wallTime": "2026-09-18T18:19:40.585Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 1,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 35,
+          "elapsedMs": 1144.551792,
+          "wallTime": "2026-09-18T18:19:40.627Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 9,
+            "method": "Runtime.evaluate"
+          }
+        },
+        {
+          "sequence": 36,
+          "elapsedMs": 1149.966083,
+          "wallTime": "2026-09-18T18:19:40.632Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 9,
+            "method": "Runtime.evaluate",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 37,
+          "elapsedMs": 1151.708708,
+          "wallTime": "2026-09-18T18:19:40.634Z",
+          "type": "breakpoint.bound",
+          "detail": {
+            "id": 0,
+            "verified": true,
+            "source": {
+              "name": "fixture/cart.ts",
+              "path": "<repo>/artifacts/cycle-0003/managed/cursor/5879f43e-32ae-4618-8087-f097876adc08/fixture/cart.ts",
+              "sourceReference": 0
+            },
+            "line": 9
+          }
+        },
+        {
+          "sequence": 38,
+          "elapsedMs": 1151.737375,
+          "wallTime": "2026-09-18T18:19:40.634Z",
+          "type": "browser.tabs-before-reveal",
+          "detail": [
+            {
+              "column": 1,
+              "tabs": [
+                {
+                  "label": "codebook 5879f43e",
+                  "isActive": true,
+                  "input": {
+                    "viewType": "mainThreadWebview-codebook.scopedBrowser"
+                  }
+                }
+              ]
+            },
+            {
+              "column": 2,
+              "tabs": [
+                {
+                  "label": "cart.ts",
+                  "isActive": true,
+                  "input": {
+                    "uri": {
+                      "$mid": 1,
+                      "fsPath": "<repo>/artifacts/cycle-0003/managed/cursor/5879f43e-32ae-4618-8087-f097876adc08/fixture/cart.ts",
+                      "external": "file://<repo>/artifacts/cycle-0003/managed/cursor/5879f43e-32ae-4618-8087-f097876adc08/fixture/cart.ts",
+                      "path": "<repo>/artifacts/cycle-0003/managed/cursor/5879f43e-32ae-4618-8087-f097876adc08/fixture/cart.ts",
+                      "scheme": "file"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "sequence": 39,
+          "elapsedMs": 1152.724042,
+          "wallTime": "2026-09-18T18:19:40.635Z",
+          "type": "fault.source-drift",
+          "detail": {}
+        },
+        {
+          "sequence": 40,
+          "elapsedMs": 1155.647583,
+          "wallTime": "2026-09-18T18:19:40.638Z",
+          "type": "viewport.ready",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca"
+          }
+        },
+        {
+          "sequence": 41,
+          "elapsedMs": 1155.692583,
+          "wallTime": "2026-09-18T18:19:40.638Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 2,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 42,
+          "elapsedMs": 1169.814792,
+          "wallTime": "2026-09-18T18:19:40.652Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 2,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 43,
+          "elapsedMs": 1311.693167,
+          "wallTime": "2026-09-18T18:19:40.794Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 10,
+            "method": "Page.bringToFront"
+          }
+        },
+        {
+          "sequence": 44,
+          "elapsedMs": 1364.582917,
+          "wallTime": "2026-09-18T18:19:40.847Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 10,
+            "method": "Page.bringToFront",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 45,
+          "elapsedMs": 1364.630125,
+          "wallTime": "2026-09-18T18:19:40.847Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 11,
+            "method": "Page.getLayoutMetrics"
+          }
+        },
+        {
+          "sequence": 46,
+          "elapsedMs": 1365.875792,
+          "wallTime": "2026-09-18T18:19:40.848Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 11,
+            "method": "Page.getLayoutMetrics",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 47,
+          "elapsedMs": 1365.893,
+          "wallTime": "2026-09-18T18:19:40.848Z",
+          "type": "page.initial-layout",
+          "detail": {
+            "layoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "visualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "contentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            },
+            "cssLayoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "cssVisualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "cssContentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            }
+          }
+        },
+        {
+          "sequence": 48,
+          "elapsedMs": 1365.906667,
+          "wallTime": "2026-09-18T18:19:40.848Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 12,
+            "method": "Page.getLayoutMetrics"
+          }
+        },
+        {
+          "sequence": 49,
+          "elapsedMs": 1366.988458,
+          "wallTime": "2026-09-18T18:19:40.849Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 12,
+            "method": "Page.getLayoutMetrics",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 50,
+          "elapsedMs": 1366.999625,
+          "wallTime": "2026-09-18T18:19:40.849Z",
+          "type": "page.visible-layout",
+          "detail": {
+            "layoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "visualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "contentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            },
+            "cssLayoutViewport": {
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640
+            },
+            "cssVisualViewport": {
+              "offsetX": 0,
+              "offsetY": 0,
+              "pageX": 0,
+              "pageY": 0,
+              "clientWidth": 720,
+              "clientHeight": 640,
+              "scale": 1,
+              "zoom": 1
+            },
+            "cssContentSize": {
+              "x": 0,
+              "y": 0,
+              "width": 720,
+              "height": 667
+            }
+          }
+        },
+        {
+          "sequence": 51,
+          "elapsedMs": 1367.390542,
+          "wallTime": "2026-09-18T18:19:40.849Z",
+          "type": "capture.requested",
+          "detail": {
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 52,
+          "elapsedMs": 1367.405542,
+          "wallTime": "2026-09-18T18:19:40.849Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 13,
+            "method": "Page.captureScreenshot"
+          }
+        },
+        {
+          "sequence": 53,
+          "elapsedMs": 1375.406875,
+          "wallTime": "2026-09-18T18:19:40.857Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 14,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 54,
+          "elapsedMs": 1375.474208,
+          "wallTime": "2026-09-18T18:19:40.858Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755580.85329
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 55,
+          "elapsedMs": 1375.508875,
+          "wallTime": "2026-09-18T18:19:40.858Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 3,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 56,
+          "elapsedMs": 1375.94875,
+          "wallTime": "2026-09-18T18:19:40.858Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 14,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 57,
+          "elapsedMs": 1377.548833,
+          "wallTime": "2026-09-18T18:19:40.860Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 3,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 58,
+          "elapsedMs": 1382.890667,
+          "wallTime": "2026-09-18T18:19:40.865Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 13,
+            "method": "Page.captureScreenshot",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 59,
+          "elapsedMs": 1382.925292,
+          "wallTime": "2026-09-18T18:19:40.865Z",
+          "type": "capture.received",
+          "detail": {
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 60,
+          "elapsedMs": 1383.736,
+          "wallTime": "2026-09-18T18:19:40.866Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 4,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 61,
+          "elapsedMs": 1394.162917,
+          "wallTime": "2026-09-18T18:19:40.876Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 4,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "before"
+          }
+        },
+        {
+          "sequence": 62,
+          "elapsedMs": 1398.832042,
+          "wallTime": "2026-09-18T18:19:40.881Z",
+          "type": "action.accepted",
+          "detail": {
+            "operationId": "34a31370-d853-4d0b-aa88-a312e33bb00b",
+            "key": "one-cart-add"
+          }
+        },
+        {
+          "sequence": 63,
+          "elapsedMs": 1398.846042,
+          "wallTime": "2026-09-18T18:19:40.881Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 15,
+            "method": "Runtime.evaluate"
+          }
+        },
+        {
+          "sequence": 64,
+          "elapsedMs": 1410.020667,
+          "wallTime": "2026-09-18T18:19:40.892Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 15,
+            "method": "Runtime.evaluate",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 65,
+          "elapsedMs": 1410.049708,
+          "wallTime": "2026-09-18T18:19:40.892Z",
+          "type": "input.coordinates",
+          "detail": {
+            "x": 137.5390625,
+            "y": 406.796875
+          }
+        },
+        {
+          "sequence": 66,
+          "elapsedMs": 1410.055458,
+          "wallTime": "2026-09-18T18:19:40.892Z",
+          "type": "input.dispatched",
+          "detail": {
+            "operationId": "34a31370-d853-4d0b-aa88-a312e33bb00b"
+          }
+        },
+        {
+          "sequence": 67,
+          "elapsedMs": 1410.067208,
+          "wallTime": "2026-09-18T18:19:40.892Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 16,
+            "method": "Input.dispatchMouseEvent"
+          }
+        },
+        {
+          "sequence": 68,
+          "elapsedMs": 1411.148,
+          "wallTime": "2026-09-18T18:19:40.893Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 16,
+            "method": "Input.dispatchMouseEvent",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 69,
+          "elapsedMs": 1411.167958,
+          "wallTime": "2026-09-18T18:19:40.893Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 17,
+            "method": "Input.dispatchMouseEvent"
+          }
+        },
+        {
+          "sequence": 70,
+          "elapsedMs": 1413.126333,
+          "wallTime": "2026-09-18T18:19:40.895Z",
+          "type": "dap.stopped",
+          "detail": {
+            "sessionId": "82b920e6-7dc7-4aae-9ad5-0744002c6b94",
+            "threadId": 2,
+            "generation": 1,
+            "reason": "breakpoint",
+            "hitBreakpointIds": [
+              0
+            ]
+          }
+        },
+        {
+          "sequence": 71,
+          "elapsedMs": 1413.135292,
+          "wallTime": "2026-09-18T18:19:40.895Z",
+          "type": "capture.requested",
+          "detail": {
+            "phase": "paused",
+            "generation": 1,
+            "inputAcknowledged": false
+          }
+        },
+        {
+          "sequence": 72,
+          "elapsedMs": 1413.145583,
+          "wallTime": "2026-09-18T18:19:40.895Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 18,
+            "method": "Page.captureScreenshot"
+          }
+        },
+        {
+          "sequence": 73,
+          "elapsedMs": 1413.422208,
+          "wallTime": "2026-09-18T18:19:40.895Z",
+          "type": "cdp.paused",
+          "detail": {
+            "scriptLocation": {
+              "scriptId": "3",
+              "lineNumber": 7,
+              "columnNumber": 4
+            },
+            "reason": "other"
+          }
+        },
+        {
+          "sequence": 74,
+          "elapsedMs": 1413.697292,
+          "wallTime": "2026-09-18T18:19:40.896Z",
+          "type": "cdp.paused",
+          "detail": {
+            "scriptLocation": {
+              "scriptId": "3",
+              "lineNumber": 7,
+              "columnNumber": 4
+            },
+            "reason": "other"
+          }
+        },
+        {
+          "sequence": 75,
+          "elapsedMs": 1441.878917,
+          "wallTime": "2026-09-18T18:19:40.924Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 19,
+            "method": "Page.screencastFrameAck"
+          }
+        },
+        {
+          "sequence": 76,
+          "elapsedMs": 1441.952,
+          "wallTime": "2026-09-18T18:19:40.924Z",
+          "type": "viewport.stream-received",
+          "detail": {
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "metadata": {
+              "offsetTop": 0,
+              "pageScaleFactor": 1,
+              "deviceWidth": 720,
+              "deviceHeight": 640,
+              "scrollOffsetX": 0,
+              "scrollOffsetY": 0,
+              "timestamp": 1789755580.908016
+            },
+            "sessionId": 1,
+            "withheld": false
+          }
+        },
+        {
+          "sequence": 77,
+          "elapsedMs": 1441.987625,
+          "wallTime": "2026-09-18T18:19:40.924Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 5,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 78,
+          "elapsedMs": 1443.403667,
+          "wallTime": "2026-09-18T18:19:40.925Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 19,
+            "method": "Page.screencastFrameAck",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 79,
+          "elapsedMs": 1448.006,
+          "wallTime": "2026-09-18T18:19:40.930Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 18,
+            "method": "Page.captureScreenshot",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 80,
+          "elapsedMs": 1448.042458,
+          "wallTime": "2026-09-18T18:19:40.930Z",
+          "type": "capture.received",
+          "detail": {
+            "phase": "paused",
+            "generation": 1
+          }
+        },
+        {
+          "sequence": 81,
+          "elapsedMs": 1448.652917,
+          "wallTime": "2026-09-18T18:19:40.931Z",
+          "type": "viewport.delivery-rejected",
+          "detail": {
+            "id": 5,
+            "phase": "live",
+            "reason": "Live delivery superseded by pause image"
+          }
+        },
+        {
+          "sequence": 82,
+          "elapsedMs": 1448.734208,
+          "wallTime": "2026-09-18T18:19:40.931Z",
+          "type": "viewport.live-frame-unconfirmed",
+          "detail": {
+            "phase": "live",
+            "error": "Error: Live delivery superseded by pause image"
+          }
+        },
+        {
+          "sequence": 83,
+          "elapsedMs": 1448.740125,
+          "wallTime": "2026-09-18T18:19:40.931Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 6,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "paused-1"
+          }
+        },
+        {
+          "sequence": 84,
+          "elapsedMs": 1468.9415,
+          "wallTime": "2026-09-18T18:19:40.951Z",
+          "type": "cdp.sent",
+          "detail": {
+            "id": 20,
+            "method": "Debugger.getScriptSource"
+          }
+        },
+        {
+          "sequence": 85,
+          "elapsedMs": 1470.970875,
+          "wallTime": "2026-09-18T18:19:40.953Z",
+          "type": "cdp.response",
+          "detail": {
+            "id": 20,
+            "method": "Debugger.getScriptSource",
+            "failed": false
+          }
+        },
+        {
+          "sequence": 86,
+          "elapsedMs": 1471.06175,
+          "wallTime": "2026-09-18T18:19:40.953Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 6,
+            "hash": "55289a5348e3329ad5c18079df075c99b399957223977adcd67521d2ee648096",
+            "phase": "paused-1"
+          }
+        },
+        {
+          "sequence": 87,
+          "elapsedMs": 1471.73575,
+          "wallTime": "2026-09-18T18:19:40.954Z",
+          "type": "source.executed",
+          "detail": {
+            "actualHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+            "expectedHash": "5edaae665184ce2af09f8b6432e518ae7fe3be70364c05c1c6b2006a5ae47d10",
+            "scriptId": "3"
+          }
+        },
+        {
+          "sequence": 88,
+          "elapsedMs": 1471.871417,
+          "wallTime": "2026-09-18T18:19:40.954Z",
+          "type": "source.local",
+          "detail": {
+            "actualHash": "ee7c997aed81ffa6f1aa359a6f25db62fc1f1c45e89ccffd35773a3ebf023459",
+            "expectedHash": "3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d"
+          }
+        },
+        {
+          "sequence": 89,
+          "elapsedMs": 1471.949917,
+          "wallTime": "2026-09-18T18:19:40.954Z",
+          "type": "run.failed",
+          "detail": {
+            "reason": "Error: Local TypeScript changed after the build was sealed"
+          }
+        },
+        {
+          "sequence": 90,
+          "elapsedMs": 1471.998583,
+          "wallTime": "2026-09-18T18:19:40.954Z",
+          "type": "viewport.sent",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 7,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        },
+        {
+          "sequence": 91,
+          "elapsedMs": 1485.823708,
+          "wallTime": "2026-09-18T18:19:40.968Z",
+          "type": "viewport.acknowledged",
+          "detail": {
+            "epoch": "348ff209-2a96-4579-9b1d-57fcbd2d5aca",
+            "id": 7,
+            "hash": "9ef0a78ba7c75cfb52e83db05fdd6457f18e5bfc25fbb320371c5f4b1d7b1012",
+            "phase": "live"
+          }
+        }
+      ],
+      "artifactDirectory": "<repo>/artifacts/cycle-0003/managed/cursor/5879f43e-32ae-4618-8087-f097876adc08"
+    }
+  }
+]

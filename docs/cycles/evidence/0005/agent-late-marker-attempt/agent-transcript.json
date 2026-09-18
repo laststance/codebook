@@ -1,0 +1,884 @@
+[
+  {
+    "operation": "discover",
+    "input": {},
+    "output": {
+      "tools": {
+        "tools": [
+          {
+            "name": "codebook_status",
+            "description": "Discover this exact workspace/instance, prerequisites, supported demo profile, limits and existing run resources.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": true,
+              "destructiveHint": false,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_start",
+            "description": "Prepare the declared demo asynchronously. Same key/arguments returns its original run. Poll nextActions before clicking; one active run maximum.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "instanceId",
+                "profile",
+                "key"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_action",
+            "description": "Accept the single add-to-cart click and immediately return its operation receipt. Reuse the same key on response loss; no blind retry with a new key.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "action": {
+                  "type": "string",
+                  "const": "add-to-cart"
+                }
+              },
+              "required": [
+                "instanceId",
+                "runId",
+                "key",
+                "action"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_continue",
+            "description": "Continue only the current inspected pause. Copy all continueArguments from the run resource. A stale/reserved/historical pause is rejected; read state before recovery.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "participant": {
+                  "type": "string",
+                  "enum": [
+                    "server",
+                    "browser"
+                  ]
+                },
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "threadId": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "generation": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "instanceId",
+                "runId",
+                "participant",
+                "sessionId",
+                "threadId",
+                "generation"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_stop",
+            "description": "Release only this run’s owned browser/debug resources. Waits for cleanup and final evidence persistence. Captured resources stay readable.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "required": [
+                "instanceId",
+                "runId"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_explain",
+            "description": "Save labeled agent interpretation for one committed snapshot. Supply its exact TypeScript hash and declared captured value paths; server renders observed facts. Never changes understanding.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "snapshotUri": {
+                  "type": "string",
+                  "maxLength": 1024
+                },
+                "sourceHash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "valuePaths": {
+                  "minItems": 1,
+                  "maxItems": 6,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "operationId",
+                      "cartId",
+                      "productId",
+                      "price",
+                      "cartCount",
+                      "admittedCount"
+                    ]
+                  }
+                },
+                "interpretation": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                }
+              },
+              "required": [
+                "instanceId",
+                "runId",
+                "key",
+                "snapshotUri",
+                "sourceHash",
+                "valuePaths",
+                "interpretation"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_reveal",
+            "description": "Reveal the exact source location bound to this snapshot while its run is active. Rejects changed source or cleanup; read its immutable source resource after stop or drift.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "snapshotUri": {
+                  "type": "string",
+                  "maxLength": 1024
+                }
+              },
+              "required": [
+                "instanceId",
+                "runId",
+                "snapshotUri"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          }
+        ]
+      },
+      "resources": {
+        "resourceTemplates": [
+          {
+            "name": "run",
+            "uriTemplate": "codebook://{instance}/runs/{run}",
+            "description": "Current readiness, nextActions, exact continuation arguments, deadline and historical references."
+          },
+          {
+            "name": "events",
+            "uriTemplate": "codebook://{instance}/runs/{run}/events/{afterSequence}",
+            "description": "Ordered events after a sequence, at most 50 per page; explicit nextUri and truncation."
+          },
+          {
+            "name": "snapshot",
+            "uriTemplate": "codebook://{instance}/runs/{run}/snapshots/{snapshot}",
+            "description": "Immutable captured values and source binding; reading does not make it a live pause."
+          },
+          {
+            "name": "source",
+            "uriTemplate": "codebook://{instance}/runs/{run}/snapshots/{snapshot}/source/{kind}",
+            "description": "Sealed typescript/javascript/map bytes. These remain historical after local source changes."
+          },
+          {
+            "name": "image",
+            "uriTemplate": "codebook://{instance}/runs/{run}/images/{phase}",
+            "description": "Confirmed PNG for before, paused-server, paused-browser or after; unavailable is explicit."
+          },
+          {
+            "name": "explanation",
+            "uriTemplate": "codebook://{instance}/runs/{run}/explanations/{explanation}",
+            "description": "Persisted captured facts and separately labeled agent interpretation."
+          }
+        ]
+      }
+    },
+    "durationMs": 9.78533299999981
+  },
+  {
+    "operation": "codebook_status",
+    "input": {},
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"instanceId\": \"ca52a2c5-930a-4df6-af06-d5038cb870b8\", \"apiVersion\": \"1.0\", \"workspace\": \"<repo>/artifacts/cycle-0005/vscode/suite-2026-09-18T18-20-14.459Z-df4a1045/workspace\", \"host\": {\"id\": \"vscode\", \"productVersion\": \"1.138.0\", \"apiVersion\": \"1.138.0\", \"commit\": \"7debcd0e2acdea1c52de81bf9ee1620444407dda\", \"browserBackend\": \"managed\"}, \"build\": {\"revision\": \"c813053d732cad4c5b0a6a1581e199de412eccfe\", \"dirty\": false, \"sourceHash\": \"4be3d512c89df69f9ffea3fb26eab59645241e9a3f7a50acd84a1e8e489b5cde\"}, \"prerequisites\": {\"ready\": true, \"missing\": []}, \"stopping\": false, \"profiles\": [{\"id\": \"paired-cart-demo\", \"description\": \"Instrumented TypeScript cart demo; one click, server and browser pauses. Not arbitrary repositories or checkout.\"}], \"capabilities\": [\"start\", \"add-to-cart\", \"pause-evidence\", \"continue\", \"explain\", \"reveal-source\", \"stop\", \"historical-resources\"], \"limits\": {\"activeRuns\": 1, \"retainedRuns\": 16, \"explanationsPerRun\": 32, \"activeTimeoutMs\": 20000, \"runTimeoutMs\": 120000}, \"runs\": [], \"recovery\": \"Same instance: initialize a new transport and read the existing run. Server restart: copy new credentials first. Never automatically repeat a click.\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+          "apiVersion": "1.0",
+          "workspace": "<repo>/artifacts/cycle-0005/vscode/suite-2026-09-18T18-20-14.459Z-df4a1045/workspace",
+          "host": {
+            "id": "vscode",
+            "productVersion": "1.138.0",
+            "apiVersion": "1.138.0",
+            "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+            "browserBackend": "managed"
+          },
+          "build": {
+            "revision": "c813053d732cad4c5b0a6a1581e199de412eccfe",
+            "dirty": false,
+            "sourceHash": "4be3d512c89df69f9ffea3fb26eab59645241e9a3f7a50acd84a1e8e489b5cde"
+          },
+          "prerequisites": {
+            "ready": true,
+            "missing": []
+          },
+          "stopping": false,
+          "profiles": [
+            {
+              "id": "paired-cart-demo",
+              "description": "Instrumented TypeScript cart demo; one click, server and browser pauses. Not arbitrary repositories or checkout."
+            }
+          ],
+          "capabilities": [
+            "start",
+            "add-to-cart",
+            "pause-evidence",
+            "continue",
+            "explain",
+            "reveal-source",
+            "stop",
+            "historical-resources"
+          ],
+          "limits": {
+            "activeRuns": 1,
+            "retainedRuns": 16,
+            "explanationsPerRun": 32,
+            "activeTimeoutMs": 20000,
+            "runTimeoutMs": 120000
+          },
+          "runs": [],
+          "recovery": "Same instance: initialize a new transport and read the existing run. Server restart: copy new credentials first. Never automatically repeat a click."
+        }
+      }
+    },
+    "durationMs": 68.78812500000004
+  },
+  {
+    "operation": "codebook_start",
+    "input": {
+      "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+      "profile": "paired-cart-demo",
+      "key": "agent-final-study"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"accepted\":true,\"deadlineAt\":\"2026-09-18T18:22:54.598Z\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+          "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+          "runUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c",
+          "accepted": true,
+          "deadlineAt": "2026-09-18T18:22:54.598Z"
+        }
+      }
+    },
+    "durationMs": 4.9459160000005795
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"runtimeRunId\":\"90e3a7fa-ef6a-498c-9d49-688a74d21c33\",\"profile\":\"paired-cart-demo\",\"state\":\"ready\",\"runtimeState\":\"ready\",\"createdAt\":\"2026-09-18T18:20:54.598Z\",\"deadlineAt\":\"2026-09-18T18:22:54.598Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"add-to-cart\",\"stop\",\"read-history\"],\"participants\":{\"server\":{\"phase\":\"running\",\"resumable\":false},\"browser\":{\"phase\":\"running\",\"resumable\":false}},\"links\":[{\"id\":\"intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"browser-screen\",\"status\":\"unknown\",\"evidence\":[]}],\"runtimeOutcome\":\"not-demonstrated\",\"captureOutcome\":\"incomplete\",\"finalOutcome\":\"pending-teardown\",\"cleaned\":false,\"resourcesReleased\":false,\"activeSessionIds\":[\"a765329a-7fb7-41be-a1e6-b6b023440d92\",\"150dfadf-6800-4e67-8e2c-a42dd9adf47b\",\"1e1aa6c8-3bd0-4f2b-b00d-dfdb897ac0b4\",\"0d7865fd-e617-4dc5-a2fd-38b7f68c5731\"],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/before\"}],\"explanations\":[],\"eventsUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/events/0\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"}"
+      }
+    ],
+    "durationMs": 2.883709000001545
+  },
+  {
+    "operation": "codebook_action",
+    "input": {
+      "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+      "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+      "key": "one-cart-click",
+      "action": "add-to-cart"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"operationId\":\"269af3be-8346-436c-840c-3b91a19791e6\",\"key\":\"one-cart-click\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "operationId": "269af3be-8346-436c-840c-3b91a19791e6",
+          "key": "one-cart-click",
+          "runUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c"
+        }
+      }
+    },
+    "durationMs": 4.267542000001413
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"runtimeRunId\":\"90e3a7fa-ef6a-498c-9d49-688a74d21c33\",\"profile\":\"paired-cart-demo\",\"state\":\"paused-server\",\"runtimeState\":\"paused-server\",\"createdAt\":\"2026-09-18T18:20:54.598Z\",\"deadlineAt\":\"2026-09-18T18:22:54.598Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"continue-server\",\"stop\",\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1\",\"sourceUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript\",\"phase\":\"paused\",\"resumable\":true,\"continueArguments\":{\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"participant\":\"server\",\"sessionId\":\"150dfadf-6800-4e67-8e2c-a42dd9adf47b\",\"threadId\":0,\"generation\":1}},\"browser\":{\"phase\":\"running\",\"resumable\":false}},\"operation\":{\"operationId\":\"269af3be-8346-436c-840c-3b91a19791e6\",\"key\":\"one-cart-click\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"},\"links\":[{\"id\":\"intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"browser-screen\",\"status\":\"unknown\",\"evidence\":[]}],\"runtimeOutcome\":\"not-demonstrated\",\"captureOutcome\":\"incomplete\",\"finalOutcome\":\"pending-teardown\",\"cleaned\":false,\"resourcesReleased\":false,\"activeSessionIds\":[\"a765329a-7fb7-41be-a1e6-b6b023440d92\",\"150dfadf-6800-4e67-8e2c-a42dd9adf47b\",\"1e1aa6c8-3bd0-4f2b-b00d-dfdb897ac0b4\",\"0d7865fd-e617-4dc5-a2fd-38b7f68c5731\"],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/before\"},{\"phase\":\"paused-server\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/paused-server\"}],\"explanations\":[],\"eventsUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/events/0\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"}"
+      }
+    ],
+    "durationMs": 3.1018330000006245
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1",
+        "mimeType": "application/json",
+        "text": "{\"id\": \"150dfadf-6800-4e67-8e2c-a42dd9adf47b:1\", \"participant\": \"server\", \"pause\": {\"sessionId\": \"150dfadf-6800-4e67-8e2c-a42dd9adf47b\", \"threadId\": 0, \"generation\": 1}, \"frame\": {\"id\": 0, \"name\": \"addProduct\", \"line\": 19, \"column\": 9, \"source\": {\"name\": \"<owned-runtime:37388e017d72>/User/globalStorage/laststance.codebook/agent/ca52a2c5-930a-4df6-af06-d5038cb870b8/7b67c171-ad88-42ce-a63b-7b2230fb615c/90e3a7fa-ef6a-498c-9d49-688a74d21c33/fixture/server.mts\", \"path\": \"<owned-runtime:37388e017d72>/User/globalStorage/laststance.codebook/agent/ca52a2c5-930a-4df6-af06-d5038cb870b8/7b67c171-ad88-42ce-a63b-7b2230fb615c/90e3a7fa-ef6a-498c-9d49-688a74d21c33/fixture/server.mts\", \"sourceReference\": 0}, \"presentationHint\": \"normal\", \"canRestart\": true}, \"values\": {\"operationId\": \"90e3a7fa-ef6a-498c-9d49-688a74d21c33\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 0, \"admittedCount\": 2}, \"evaluations\": [{\"expression\": \"tuple.operationId\", \"value\": {\"type\": \"string\", \"result\": \"'90e3a7fa-ef6a-498c-9d49-688a74d21c33'\", \"variablesReference\": 0}}, {\"expression\": \"tuple.cartId\", \"value\": {\"type\": \"string\", \"result\": \"'selected'\", \"variablesReference\": 0}}, {\"expression\": \"tuple.productId\", \"value\": {\"type\": \"string\", \"result\": \"'tote-01'\", \"variablesReference\": 0}}, {\"expression\": \"tuple.price\", \"value\": {\"type\": \"number\", \"result\": \"24\", \"variablesReference\": 0}}, {\"expression\": \"state.items.length\", \"value\": {\"type\": \"number\", \"result\": \"0\", \"variablesReference\": 0}}, {\"expression\": \"admittedCount\", \"value\": {\"type\": \"number\", \"result\": \"2\", \"variablesReference\": 0}}], \"source\": {\"scriptId\": \"178\", \"scriptLocation\": {\"scriptId\": \"178\", \"lineNumber\": 15, \"columnNumber\": 10}, \"mapping\": {\"generatedLine\": 15, \"generatedColumn\": 10, \"originalSource\": \"../fixture/server.mts\", \"originalLine\": 18, \"originalColumn\": 8}, \"typescriptHash\": \"d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2\", \"javascriptHash\": \"9e805dee5d6e67ae8e74aa82383f1e7d69f7a3b97c7ad775c6ea2e3494d7b04b\", \"sourceMapHash\": \"faafc0c2eb72a72df7cdcd5ebcc3a2058ff3f0358c539f4a6d13db90174ca834\"}, \"snapshotUri\": \"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1\", \"historical\": true, \"sourceUri\": \"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript\"}"
+      }
+    ],
+    "durationMs": 3.38645899999392
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript",
+        "mimeType": "text/typescript",
+        "text": "import { createServer } from 'node:http';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { BODY_LIMIT_BYTES, EXPECTED_ADMISSIONS } from './constants.mjs';\n\nconst directory = dirname(dirname(fileURLToPath(import.meta.url)));\nconst configuration: { runId: string; scenario: string } = JSON.parse(await readFile(join(directory, 'fixture-config.json'), 'utf8'));\ninterface Tuple { operationId: string; cartId: string; productId: string; price: number }\nconst arrivals: Tuple[] = [];\nconst carts = new Map<string, { items: { id: string; price: number }[] }>();\nlet releaseBarrier: () => void = () => undefined;\nconst barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });\n\n/** Mutates one admitted cart after both requests arrive; the HTTP fixture calls this at the server study stop. @example addProduct({ operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24 }) */\nfunction addProduct(tuple: Tuple) {\n  const state = carts.get(tuple.cartId) ?? { items: [] };\n  const admittedCount = arrivals.length;\n  state.items.push({ id: tuple.productId, price: tuple.price }); // CODEBOOK_SERVER_STOP\n  carts.set(tuple.cartId, state);\n  return { ...tuple, cartCount: state.items.length, admittedCount };\n}\n\nconst server = createServer((request, response) => {\n  void (async () => {\n    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;\n    const prefix = `/runs/${configuration.runId}/`;\n    response.setHeader('cache-control', 'no-store');\n    if (!pathname.startsWith(prefix)) { response.writeHead(404).end(); return; }\n    const route = pathname.slice(prefix.length);\n    if (request.method === 'GET' && ['index.html', 'client.mjs', 'client.mjs.map', 'constants.mjs', 'constants.mjs.map'].includes(route)) {\n      const bytes = await readFile(join(directory, route === 'index.html' ? route : `build/${route}`));\n      response.setHeader('content-type', route === 'index.html' ? 'text/html' : 'text/javascript');\n      response.end(bytes); return;\n    }\n    if (request.method !== 'POST' || !['api/cart', 'api/redirected'].includes(route)) { response.writeHead(404).end(); return; }\n    if (configuration.scenario === 'redirect' && route === 'api/cart') { response.writeHead(307, { location: `${prefix}api/redirected` }).end(); return; }\n    const chunks: Buffer[] = []; let bytes = 0;\n    for await (const chunk of request) {\n      bytes += chunk.length;\n      if (bytes > BODY_LIMIT_BYTES) { response.writeHead(413).end(); return; }\n      chunks.push(chunk);\n    }\n    const body: unknown = JSON.parse(Buffer.concat(chunks).toString());\n    if (!body || typeof body !== 'object' || !('cartId' in body) || typeof body.cartId !== 'string' || !('productId' in body) || typeof body.productId !== 'string' || !('price' in body) || typeof body.price !== 'number') { response.writeHead(400).end(); return; }\n    const tuple: Tuple = { operationId: String(request.headers['x-codebook-operation'] ?? ''), cartId: body.cartId, productId: body.productId, price: body.price };\n    arrivals.push(tuple);\n    if (arrivals.length === EXPECTED_ADMISSIONS) releaseBarrier();\n    await barrier;\n    const result = addProduct(tuple);\n    if (tuple.cartId === 'selected') {\n      if (configuration.scenario === 'backend-exit') process.exit(1);\n      if (configuration.scenario === 'absent-response') return;\n      if (configuration.scenario === 'wrong-response-id') result.operationId = 'wrong-operation';\n      if (configuration.scenario === 'wrong-response-value') result.cartCount = 2;\n    }\n    response.setHeader('content-type', 'application/json');\n    response.end(JSON.stringify(result));\n  })().catch(error => { response.writeHead(500).end(String(error)); });\n});\nserver.listen(0, '127.0.0.1', () => {\n  const address = server.address();\n  if (!address || typeof address === 'string') throw new Error('No owned fixture listener');\n  void writeFile(join(directory, 'backend-endpoint.json'), JSON.stringify({ runId: configuration.runId, pid: process.pid, origin: `http://127.0.0.1:${address.port}`, executable: process.execPath, version: process.version }));\n});\n"
+      }
+    ],
+    "durationMs": 1.9463749999995343
+  },
+  {
+    "operation": "codebook_explain",
+    "input": {
+      "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+      "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+      "key": "server-cart-explanation",
+      "snapshotUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1",
+      "sourceHash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+      "valuePaths": [
+        "productId",
+        "price",
+        "cartCount",
+        "cartId",
+        "admittedCount"
+      ],
+      "interpretation": "The captured server frame is addProduct at TypeScript line 19, before state.items.push. This selected cart has zero items and the requested tote-01 costs 24. Both requests have been admitted, but cartId selects this cart; the source will append the product next. The screen update is not yet established by this stop."
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"explanationUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/0c5f7264-ba5b-454b-9aac-de021d9c399b\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "explanationUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/0c5f7264-ba5b-454b-9aac-de021d9c399b"
+        }
+      }
+    },
+    "durationMs": 4.294917000006535
+  },
+  {
+    "operation": "codebook_reveal",
+    "input": {
+      "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+      "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+      "snapshotUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"revealed\":true,\"snapshotUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1\",\"sourceUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript\",\"line\":19}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "revealed": true,
+          "snapshotUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1",
+          "sourceUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript",
+          "line": 19
+        }
+      }
+    },
+    "durationMs": 5.21379199999501
+  },
+  {
+    "operation": "codebook_continue",
+    "input": {
+      "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+      "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+      "participant": "server",
+      "sessionId": "150dfadf-6800-4e67-8e2c-a42dd9adf47b",
+      "threadId": 0,
+      "generation": 999
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"code\":\"STALE_PAUSE\",\"message\":\"Continue was not confirmed.\",\"cause\":\"Error: conflict: stale, foreign, uninspected or already reserved pause\",\"recovery\":\"Read the run resource and use its current continue arguments only if resumable.\",\"docs\":\"codebook://help/errors\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": false,
+        "error": {
+          "code": "STALE_PAUSE",
+          "message": "Continue was not confirmed.",
+          "cause": "Error: conflict: stale, foreign, uninspected or already reserved pause",
+          "recovery": "Read the run resource and use its current continue arguments only if resumable.",
+          "docs": "codebook://help/errors"
+        }
+      },
+      "isError": true
+    },
+    "durationMs": 1.8736249999928987
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"runtimeRunId\":\"90e3a7fa-ef6a-498c-9d49-688a74d21c33\",\"profile\":\"paired-cart-demo\",\"state\":\"paused-server\",\"runtimeState\":\"paused-server\",\"createdAt\":\"2026-09-18T18:20:54.598Z\",\"deadlineAt\":\"2026-09-18T18:22:54.598Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"continue-server\",\"stop\",\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1\",\"sourceUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript\",\"phase\":\"paused\",\"resumable\":true,\"continueArguments\":{\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"participant\":\"server\",\"sessionId\":\"150dfadf-6800-4e67-8e2c-a42dd9adf47b\",\"threadId\":0,\"generation\":1}},\"browser\":{\"phase\":\"running\",\"resumable\":false}},\"operation\":{\"operationId\":\"269af3be-8346-436c-840c-3b91a19791e6\",\"key\":\"one-cart-click\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"},\"links\":[{\"id\":\"intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"browser-screen\",\"status\":\"unknown\",\"evidence\":[]}],\"runtimeOutcome\":\"not-demonstrated\",\"captureOutcome\":\"incomplete\",\"finalOutcome\":\"pending-teardown\",\"cleaned\":false,\"resourcesReleased\":false,\"activeSessionIds\":[\"a765329a-7fb7-41be-a1e6-b6b023440d92\",\"150dfadf-6800-4e67-8e2c-a42dd9adf47b\",\"1e1aa6c8-3bd0-4f2b-b00d-dfdb897ac0b4\",\"0d7865fd-e617-4dc5-a2fd-38b7f68c5731\"],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/before\"},{\"phase\":\"paused-server\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/paused-server\"}],\"explanations\":[\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/0c5f7264-ba5b-454b-9aac-de021d9c399b\"],\"eventsUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/events/0\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"}"
+      }
+    ],
+    "durationMs": 2.7207090000010794
+  },
+  {
+    "operation": "codebook_continue",
+    "input": {
+      "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+      "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+      "participant": "server",
+      "sessionId": "150dfadf-6800-4e67-8e2c-a42dd9adf47b",
+      "threadId": 0,
+      "generation": 1
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"accepted\":true,\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "accepted": true,
+          "runUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c"
+        }
+      }
+    },
+    "durationMs": 5.3203750000102445
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"runtimeRunId\":\"90e3a7fa-ef6a-498c-9d49-688a74d21c33\",\"profile\":\"paired-cart-demo\",\"state\":\"paused-browser\",\"runtimeState\":\"paused-browser\",\"createdAt\":\"2026-09-18T18:20:54.598Z\",\"deadlineAt\":\"2026-09-18T18:22:54.598Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"continue-browser\",\"stop\",\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1\",\"sourceUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript\",\"phase\":\"running\",\"resumable\":false},\"browser\":{\"snapshotUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1\",\"sourceUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1/source/typescript\",\"phase\":\"paused\",\"resumable\":true,\"continueArguments\":{\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"participant\":\"browser\",\"sessionId\":\"0d7865fd-e617-4dc5-a2fd-38b7f68c5731\",\"threadId\":1,\"generation\":1}}},\"operation\":{\"operationId\":\"269af3be-8346-436c-840c-3b91a19791e6\",\"key\":\"one-cart-click\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"},\"links\":[{\"id\":\"intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"browser-screen\",\"status\":\"unknown\",\"evidence\":[]}],\"runtimeOutcome\":\"not-demonstrated\",\"captureOutcome\":\"incomplete\",\"finalOutcome\":\"pending-teardown\",\"cleaned\":false,\"resourcesReleased\":false,\"activeSessionIds\":[\"a765329a-7fb7-41be-a1e6-b6b023440d92\",\"150dfadf-6800-4e67-8e2c-a42dd9adf47b\",\"1e1aa6c8-3bd0-4f2b-b00d-dfdb897ac0b4\",\"0d7865fd-e617-4dc5-a2fd-38b7f68c5731\"],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/before\"},{\"phase\":\"paused-server\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/paused-server\"},{\"phase\":\"paused-browser\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/paused-browser\"}],\"explanations\":[\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/0c5f7264-ba5b-454b-9aac-de021d9c399b\"],\"eventsUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/events/0\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"}"
+      }
+    ],
+    "durationMs": 2.4666250000009313
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1",
+        "mimeType": "application/json",
+        "text": "{\"id\": \"0d7865fd-e617-4dc5-a2fd-38b7f68c5731:1\", \"participant\": \"browser\", \"pause\": {\"sessionId\": \"0d7865fd-e617-4dc5-a2fd-38b7f68c5731\", \"threadId\": 1, \"generation\": 1}, \"frame\": {\"id\": 52, \"name\": \"<anonymous>\", \"line\": 23, \"column\": 5, \"source\": {\"name\": \"fixture/client.mts\", \"path\": \"<owned-runtime:37388e017d72>/User/globalStorage/laststance.codebook/agent/ca52a2c5-930a-4df6-af06-d5038cb870b8/7b67c171-ad88-42ce-a63b-7b2230fb615c/90e3a7fa-ef6a-498c-9d49-688a74d21c33/fixture/client.mts\", \"sourceReference\": 0}, \"presentationHint\": \"normal\", \"canRestart\": false}, \"values\": {\"operationId\": \"90e3a7fa-ef6a-498c-9d49-688a74d21c33\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 1, \"admittedCount\": 2}, \"evaluations\": [{\"expression\": \"result.operationId\", \"value\": {\"type\": \"string\", \"result\": \"'90e3a7fa-ef6a-498c-9d49-688a74d21c33'\", \"variablesReference\": 0}}, {\"expression\": \"result.cartId\", \"value\": {\"type\": \"string\", \"result\": \"'selected'\", \"variablesReference\": 0}}, {\"expression\": \"result.productId\", \"value\": {\"type\": \"string\", \"result\": \"'tote-01'\", \"variablesReference\": 0}}, {\"expression\": \"result.price\", \"value\": {\"type\": \"number\", \"result\": \"24\", \"variablesReference\": 0}}, {\"expression\": \"result.cartCount\", \"value\": {\"type\": \"number\", \"result\": \"1\", \"variablesReference\": 0}}, {\"expression\": \"result.admittedCount\", \"value\": {\"type\": \"number\", \"result\": \"2\", \"variablesReference\": 0}}], \"source\": {\"scriptId\": \"3\", \"scriptLocation\": {\"scriptId\": \"3\", \"lineNumber\": 19, \"columnNumber\": 8}, \"mapping\": {\"generatedLine\": 19, \"generatedColumn\": 8, \"originalSource\": \"../fixture/client.mts\", \"originalLine\": 22, \"originalColumn\": 4}, \"typescriptHash\": \"99aef6024807ac655e3d9a2b5790d9a720c70d57ea92467ffb2649873e8b4108\", \"javascriptHash\": \"1f068e0e1b797b26da67b865ab886d87d2f6f204d056a62c3e1d6415d68c8007\", \"sourceMapHash\": \"60e9cbee9cb556348de692690a9f796a2ae21c13533c0db182bebd7e075ec008\"}, \"snapshotUri\": \"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1\", \"historical\": true, \"sourceUri\": \"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1/source/typescript\"}"
+      }
+    ],
+    "durationMs": 3.3939160000008997
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1/source/typescript"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1/source/typescript",
+        "mimeType": "text/typescript",
+        "text": "import { PRODUCT, BACKGROUND_PRODUCT } from './constants.mjs';\n\nconst runId = document.documentElement.dataset.runId!;\nconst scenario = document.documentElement.dataset.scenario!;\nconst count = document.querySelector('#count')!;\nconst clicks = document.querySelector('#clicks')!;\nconst status = document.querySelector('#status')!;\ninterface CartResult { operationId: string; cartId: string; productId: string; price: number; cartCount: number; admittedCount: number }\n\n/** Sends each fixture request once from the click handler; its headers and body are debugger correlation evidence. @example requestCart('selected', 'run', PRODUCT) */\nasync function requestCart(cartId: string, operationId: string, product: typeof PRODUCT): Promise<CartResult> {\n  const response = await fetch('api/cart', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) }, body: JSON.stringify({ cartId, productId: product.id, price: product.price }) });\n  if (!response.ok) throw new Error(`Cart HTTP ${response.status}`);\n  return response.json();\n}\n\ndocument.querySelector('#add')!.addEventListener('click', () => {\n  void (async () => {\n    status.textContent = 'Two requests pending; waiting for the server.';\n    const selected = requestCart('selected', scenario === 'missing-id' ? '' : runId, PRODUCT);\n    const background = requestCart('background', scenario === 'duplicate-id' ? runId : `${runId}-background`, BACKGROUND_PRODUCT);\n    const [result, backgroundResult] = await Promise.all([selected, background]);\n    count.textContent = String(result.cartCount); // CODEBOOK_BROWSER_STOP\n    clicks.textContent = String(Number(clicks.textContent) + 1);\n    status.textContent = `Selected cart updated; background cart ${backgroundResult.cartCount}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\ndocument.documentElement.dataset.ready = 'true';\n"
+      }
+    ],
+    "durationMs": 1.8329159999993863
+  },
+  {
+    "operation": "codebook_explain",
+    "input": {
+      "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+      "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+      "key": "browser-cart-explanation",
+      "snapshotUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1",
+      "sourceHash": "99aef6024807ac655e3d9a2b5790d9a720c70d57ea92467ffb2649873e8b4108",
+      "valuePaths": [
+        "productId",
+        "price",
+        "cartCount",
+        "operationId"
+      ],
+      "interpretation": "The browser has received the selected cart result: tote-01, price 24, cartCount 1, with the same operation identity as the server capture. TypeScript line 23 is paused immediately before assigning result.cartCount to the page count. The source awaits both selected and background requests; their carts remain distinct. Continue, then inspect the screen outcome before claiming the UI changed."
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"explanationUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/d155b0cd-be27-472c-9349-02a7b993d57b\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "explanationUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/d155b0cd-be27-472c-9349-02a7b993d57b"
+        }
+      }
+    },
+    "durationMs": 3.8026669999962905
+  },
+  {
+    "operation": "codebook_reveal",
+    "input": {
+      "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+      "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+      "snapshotUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"revealed\":true,\"snapshotUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1\",\"sourceUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1/source/typescript\",\"line\":23}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "revealed": true,
+          "snapshotUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1",
+          "sourceUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1/source/typescript",
+          "line": 23
+        }
+      }
+    },
+    "durationMs": 4.747749999994994
+  },
+  {
+    "operation": "codebook_continue",
+    "input": {
+      "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+      "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+      "participant": "browser",
+      "sessionId": "0d7865fd-e617-4dc5-a2fd-38b7f68c5731",
+      "threadId": 1,
+      "generation": 1
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"accepted\":true,\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "accepted": true,
+          "runUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c"
+        }
+      }
+    },
+    "durationMs": 7.317875000007916
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"runtimeRunId\":\"90e3a7fa-ef6a-498c-9d49-688a74d21c33\",\"profile\":\"paired-cart-demo\",\"state\":\"stopped\",\"runtimeState\":\"completed\",\"createdAt\":\"2026-09-18T18:20:54.598Z\",\"deadlineAt\":\"2026-09-18T18:22:54.598Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1\",\"sourceUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript\",\"phase\":\"running\",\"resumable\":false},\"browser\":{\"snapshotUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1\",\"sourceUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1/source/typescript\",\"phase\":\"running\",\"resumable\":false}},\"operation\":{\"operationId\":\"269af3be-8346-436c-840c-3b91a19791e6\",\"key\":\"one-cart-click\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"},\"observed\":{\"cartCount\":1,\"completedClicks\":1},\"links\":[{\"id\":\"intent-request\",\"status\":\"observed\",\"evidence\":[\"269af3be-8346-436c-840c-3b91a19791e6\",\"19338.6\"]},{\"id\":\"request-server\",\"status\":\"observed\",\"evidence\":[\"19338.6\",\"150dfadf-6800-4e67-8e2c-a42dd9adf47b:1\"]},{\"id\":\"server-response\",\"status\":\"observed\",\"evidence\":[\"150dfadf-6800-4e67-8e2c-a42dd9adf47b:1\",\"c2987e7472f9a13388f9f6e91cb817d1960227333dad31f9276dadcfeb552828\"]},{\"id\":\"response-browser\",\"status\":\"observed\",\"evidence\":[\"c2987e7472f9a13388f9f6e91cb817d1960227333dad31f9276dadcfeb552828\",\"0d7865fd-e617-4dc5-a2fd-38b7f68c5731:1\"]},{\"id\":\"browser-screen\",\"status\":\"observed\",\"evidence\":[\"0d7865fd-e617-4dc5-a2fd-38b7f68c5731:1\",\"event:169\"]}],\"runtimeOutcome\":\"demonstrated\",\"captureOutcome\":\"demonstrated\",\"finalOutcome\":\"demonstrated\",\"cleaned\":true,\"resourcesReleased\":true,\"activeSessionIds\":[],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/before\"},{\"phase\":\"paused-server\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/paused-server\"},{\"phase\":\"paused-browser\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/paused-browser\"},{\"phase\":\"after\",\"status\":\"captured\",\"uri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/after\"}],\"explanations\":[\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/0c5f7264-ba5b-454b-9aac-de021d9c399b\",\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/d155b0cd-be27-472c-9349-02a7b993d57b\"],\"eventsUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/events/0\",\"runUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c\"}"
+      }
+    ],
+    "durationMs": 2.44450000001234
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/0c5f7264-ba5b-454b-9aac-de021d9c399b"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/0c5f7264-ba5b-454b-9aac-de021d9c399b",
+        "mimeType": "application/json",
+        "text": "{\"id\":\"0c5f7264-ba5b-454b-9aac-de021d9c399b\",\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"snapshotUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1\",\"sourceHash\":\"d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2\",\"capturedFacts\":[{\"path\":\"productId\",\"value\":\"tote-01\"},{\"path\":\"price\",\"value\":24},{\"path\":\"cartCount\",\"value\":0},{\"path\":\"cartId\",\"value\":\"selected\"},{\"path\":\"admittedCount\",\"value\":2}],\"agentInterpretation\":\"The captured server frame is addProduct at TypeScript line 19, before state.items.push. This selected cart has zero items and the requested tote-01 costs 24. Both requests have been admitted, but cartId selects this cart; the source will append the product next. The screen update is not yet established by this stop.\",\"createdAt\":\"2026-09-18T18:21:48.753Z\",\"learnerUnderstandingChanged\":false}"
+      }
+    ],
+    "durationMs": 1.6267919999954756
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/d155b0cd-be27-472c-9349-02a7b993d57b"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/d155b0cd-be27-472c-9349-02a7b993d57b",
+        "mimeType": "application/json",
+        "text": "{\"id\":\"d155b0cd-be27-472c-9349-02a7b993d57b\",\"instanceId\":\"ca52a2c5-930a-4df6-af06-d5038cb870b8\",\"runId\":\"7b67c171-ad88-42ce-a63b-7b2230fb615c\",\"snapshotUri\":\"codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1\",\"sourceHash\":\"99aef6024807ac655e3d9a2b5790d9a720c70d57ea92467ffb2649873e8b4108\",\"capturedFacts\":[{\"path\":\"productId\",\"value\":\"tote-01\"},{\"path\":\"price\",\"value\":24},{\"path\":\"cartCount\",\"value\":1},{\"path\":\"operationId\",\"value\":\"90e3a7fa-ef6a-498c-9d49-688a74d21c33\"}],\"agentInterpretation\":\"The browser has received the selected cart result: tote-01, price 24, cartCount 1, with the same operation identity as the server capture. TypeScript line 23 is paused immediately before assigning result.cartCount to the page count. The source awaits both selected and background requests; their carts remain distinct. Continue, then inspect the screen outcome before claiming the UI changed.\",\"createdAt\":\"2026-09-18T18:22:36.986Z\",\"learnerUnderstandingChanged\":false}"
+      }
+    ],
+    "durationMs": 0.8074579999956768
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript",
+        "mimeType": "text/typescript",
+        "text": "import { createServer } from 'node:http';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { BODY_LIMIT_BYTES, EXPECTED_ADMISSIONS } from './constants.mjs';\n\nconst directory = dirname(dirname(fileURLToPath(import.meta.url)));\nconst configuration: { runId: string; scenario: string } = JSON.parse(await readFile(join(directory, 'fixture-config.json'), 'utf8'));\ninterface Tuple { operationId: string; cartId: string; productId: string; price: number }\nconst arrivals: Tuple[] = [];\nconst carts = new Map<string, { items: { id: string; price: number }[] }>();\nlet releaseBarrier: () => void = () => undefined;\nconst barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });\n\n/** Mutates one admitted cart after both requests arrive; the HTTP fixture calls this at the server study stop. @example addProduct({ operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24 }) */\nfunction addProduct(tuple: Tuple) {\n  const state = carts.get(tuple.cartId) ?? { items: [] };\n  const admittedCount = arrivals.length;\n  state.items.push({ id: tuple.productId, price: tuple.price }); // CODEBOOK_SERVER_STOP\n  carts.set(tuple.cartId, state);\n  return { ...tuple, cartCount: state.items.length, admittedCount };\n}\n\nconst server = createServer((request, response) => {\n  void (async () => {\n    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;\n    const prefix = `/runs/${configuration.runId}/`;\n    response.setHeader('cache-control', 'no-store');\n    if (!pathname.startsWith(prefix)) { response.writeHead(404).end(); return; }\n    const route = pathname.slice(prefix.length);\n    if (request.method === 'GET' && ['index.html', 'client.mjs', 'client.mjs.map', 'constants.mjs', 'constants.mjs.map'].includes(route)) {\n      const bytes = await readFile(join(directory, route === 'index.html' ? route : `build/${route}`));\n      response.setHeader('content-type', route === 'index.html' ? 'text/html' : 'text/javascript');\n      response.end(bytes); return;\n    }\n    if (request.method !== 'POST' || !['api/cart', 'api/redirected'].includes(route)) { response.writeHead(404).end(); return; }\n    if (configuration.scenario === 'redirect' && route === 'api/cart') { response.writeHead(307, { location: `${prefix}api/redirected` }).end(); return; }\n    const chunks: Buffer[] = []; let bytes = 0;\n    for await (const chunk of request) {\n      bytes += chunk.length;\n      if (bytes > BODY_LIMIT_BYTES) { response.writeHead(413).end(); return; }\n      chunks.push(chunk);\n    }\n    const body: unknown = JSON.parse(Buffer.concat(chunks).toString());\n    if (!body || typeof body !== 'object' || !('cartId' in body) || typeof body.cartId !== 'string' || !('productId' in body) || typeof body.productId !== 'string' || !('price' in body) || typeof body.price !== 'number') { response.writeHead(400).end(); return; }\n    const tuple: Tuple = { operationId: String(request.headers['x-codebook-operation'] ?? ''), cartId: body.cartId, productId: body.productId, price: body.price };\n    arrivals.push(tuple);\n    if (arrivals.length === EXPECTED_ADMISSIONS) releaseBarrier();\n    await barrier;\n    const result = addProduct(tuple);\n    if (tuple.cartId === 'selected') {\n      if (configuration.scenario === 'backend-exit') process.exit(1);\n      if (configuration.scenario === 'absent-response') return;\n      if (configuration.scenario === 'wrong-response-id') result.operationId = 'wrong-operation';\n      if (configuration.scenario === 'wrong-response-value') result.cartCount = 2;\n    }\n    response.setHeader('content-type', 'application/json');\n    response.end(JSON.stringify(result));\n  })().catch(error => { response.writeHead(500).end(String(error)); });\n});\nserver.listen(0, '127.0.0.1', () => {\n  const address = server.address();\n  if (!address || typeof address === 'string') throw new Error('No owned fixture listener');\n  void writeFile(join(directory, 'backend-endpoint.json'), JSON.stringify({ runId: configuration.runId, pid: process.pid, origin: `http://127.0.0.1:${address.port}`, executable: process.execPath, version: process.version }));\n});\n"
+      }
+    ],
+    "durationMs": 0.6078750000160653
+  },
+  {
+    "operation": "codebook_reveal",
+    "input": {
+      "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+      "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+      "snapshotUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"code\":\"BUSY\",\"message\":\"Source reveal requires an active run. Read the captured source resource after cleanup.\",\"cause\":\"Source reveal requires an active run. Read the captured source resource after cleanup.\",\"recovery\":\"Read the run resource and its nextActions. Do not send another click with a new key.\",\"docs\":\"codebook://help/errors\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": false,
+        "error": {
+          "code": "BUSY",
+          "message": "Source reveal requires an active run. Read the captured source resource after cleanup.",
+          "cause": "Source reveal requires an active run. Read the captured source resource after cleanup.",
+          "recovery": "Read the run resource and its nextActions. Do not send another click with a new key.",
+          "docs": "codebook://help/errors"
+        }
+      },
+      "isError": true
+    },
+    "durationMs": 2.923500000004424
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/after"
+    },
+    "output": [
+      {
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/after",
+        "mimeType": "image/png",
+        "bytes": 28239,
+        "sha256": "5f284a6c0dd00b3343c96b2087bf41b7d8b82a4810b22982e0fac1f2f48e7da0"
+      }
+    ],
+    "durationMs": 4.5630419999943115
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "id": "4f678490-03dc-4f0a-a94c-b8ddc8a07058",
+  "instanceId": "0e677680-5718-4210-9189-c03516887bf7",
+  "runId": "d7d8fc59-ac22-46a3-a5f0-a798afb78db2",
+  "snapshotUri": "codebook://0e677680-5718-4210-9189-c03516887bf7/runs/d7d8fc59-ac22-46a3-a5f0-a798afb78db2/snapshots/3ab79a03-e198-47c9-a115-3180cb1b0bca%3A1",
+  "sourceHash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+  "capturedFacts": [
+    {
+      "path": "productId",
+      "value": "tote-01"
+    },
+    {
+      "path": "price",
+      "value": 24
+    },
+    {
+      "path": "cartCount",
+      "value": 0
+    }
+  ],
+  "agentInterpretation": "At this captured server statement the selected tote costs 24 and the cart still has zero items. The next statement adds the product.",
+  "createdAt": "2026-09-18T18:14:06.870Z",
+  "learnerUnderstandingChanged": false
+}

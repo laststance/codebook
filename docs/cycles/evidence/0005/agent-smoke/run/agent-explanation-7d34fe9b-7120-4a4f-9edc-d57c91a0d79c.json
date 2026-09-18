@@ -1,0 +1,36 @@
+{
+  "id": "7d34fe9b-7120-4a4f-9edc-d57c91a0d79c",
+  "instanceId": "9fea5958-9124-4cad-9bb5-218c427e91c9",
+  "runId": "cbf5dce3-394e-496d-8f2a-ff82974d26fc",
+  "snapshotUri": "codebook://9fea5958-9124-4cad-9bb5-218c427e91c9/runs/cbf5dce3-394e-496d-8f2a-ff82974d26fc/snapshots/20b88500-54e3-4aac-ac84-837e8592d65b%3A1",
+  "sourceHash": "99aef6024807ac655e3d9a2b5790d9a720c70d57ea92467ffb2649873e8b4108",
+  "capturedFacts": [
+    {
+      "path": "operationId",
+      "value": "c7127e68-6f68-4759-998d-feaca1b3f3cd"
+    },
+    {
+      "path": "cartId",
+      "value": "selected"
+    },
+    {
+      "path": "productId",
+      "value": "tote-01"
+    },
+    {
+      "path": "price",
+      "value": 24
+    },
+    {
+      "path": "cartCount",
+      "value": 1
+    },
+    {
+      "path": "admittedCount",
+      "value": 2
+    }
+  ],
+  "agentInterpretation": "The browser is paused at client line 23 before updating the displayed count. The returned selected-cart result now contains one tote-01 item at price 24 and the same operation ID captured on the server. Promise.all has completed for both requests. The next statement assigns the observed count to the page; the screen update still needs confirmation after continuation.",
+  "createdAt": "2026-09-18T18:29:11.251Z",
+  "learnerUnderstandingChanged": false
+}

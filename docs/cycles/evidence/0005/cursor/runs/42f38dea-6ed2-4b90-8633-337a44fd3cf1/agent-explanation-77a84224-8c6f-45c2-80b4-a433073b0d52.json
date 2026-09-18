@@ -1,0 +1,24 @@
+{
+  "id": "77a84224-8c6f-45c2-80b4-a433073b0d52",
+  "instanceId": "842f52f5-360d-4a79-92ed-42285942ac6b",
+  "runId": "42f38dea-6ed2-4b90-8633-337a44fd3cf1",
+  "snapshotUri": "codebook://842f52f5-360d-4a79-92ed-42285942ac6b/runs/42f38dea-6ed2-4b90-8633-337a44fd3cf1/snapshots/993c3def-7800-44f6-ab15-40a3639075bb%3A1",
+  "sourceHash": "99aef6024807ac655e3d9a2b5790d9a720c70d57ea92467ffb2649873e8b4108",
+  "capturedFacts": [
+    {
+      "path": "productId",
+      "value": "tote-01"
+    },
+    {
+      "path": "price",
+      "value": 24
+    },
+    {
+      "path": "cartCount",
+      "value": 1
+    }
+  ],
+  "agentInterpretation": "The response contains one item; this client statement is paused before rendering the returned cart count.",
+  "createdAt": "2026-09-18T18:17:08.707Z",
+  "learnerUnderstandingChanged": false
+}

@@ -1,9 +1,9 @@
 # Cycle 0005 — Let an external agent control a live study through MCP
 
 Type: product-increment
-Status: implementing
-Result: pending
-Delivery: not-applicable
+Status: closed
+Result: demonstrated (fixed demo integration only)
+Delivery: committed; GitHub synchronization follows the evidence commit
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/6
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -308,10 +308,10 @@ Build pinned packages and run from a dedicated development host. **NOT in scope:
 
 Sequential implementation, no parallelization opportunity: service contract -> SDK boundary + editor adapter -> external client/native validation share one module boundary and depend on each other. Independent review is read-only. Test plan and task JSONL are also preserved under `~/.gstack/projects/codebook`.
 
-- [ ] **E1 (P1, human ~4 h / agent ~35 min)** — Implement the single service and typed runtime port, reservation/cleanup/explanation invariants; verify deferred races and persistence failures.
-- [ ] **E2 (P1, human ~3 h / agent ~30 min)** — Connect SDK tools/resources and authenticated bounded HTTP; verify real-client schemas, resources, session capacity and auth recovery.
-- [ ] **E3 (P1, human ~3 h / agent ~30 min)** — Add actual extension commands/prerequisite checks/build metadata and existing-runtime adapter; verify both native hosts.
-- [ ] **E4 (P1, human ~3 h / agent ~30 min)** — Run external client normal/hold/reconnect/expiry/restart/negative scenarios, preserve sanitized evidence and documentation; then `/review` the implementation.
+- [x] **E1 (P1, human ~4 h / agent ~35 min)** — Implement the single service and typed runtime port, reservation/cleanup/explanation invariants; verify deferred races and persistence failures.
+- [x] **E2 (P1, human ~3 h / agent ~30 min)** — Connect SDK tools/resources and authenticated bounded HTTP; verify real-client schemas, resources, session capacity and auth recovery.
+- [x] **E3 (P1, human ~3 h / agent ~30 min)** — Add actual extension commands/prerequisite checks/build metadata and existing-runtime adapter; verify both native hosts.
+- [x] **E4 (P1, human ~3 h / agent ~30 min)** — Run external client normal/hold/reconnect/expiry/restart/negative scenarios, preserve sanitized evidence and documentation; then `/review` the implementation.
 
 
 ### Independent engineering challenge
@@ -333,3 +333,45 @@ Two P2 findings from a fresh same-harness reviewer were incorporated: internal E
 **VERDICT:** DX + ENG CLEARED for this bounded increment. Code, native integration and onboarding measurements remain unverified. Sequential E1 → E2/E3 → E4; distribution remains a later full-goal obligation.
 
 NO UNRESOLVED DECISIONS
+
+## Implementation and observed result — 2026-09-19
+
+**Demonstrated, keep the approach.** The extension-owned MCP service now drives the declared `paired-cart-demo` in both actual editors. Clean implementation `c813053d732cad4c5b0a6a1581e199de412eccfe`, source fingerprint `4be3d512c89df69f9ffea3fb26eab59645241e9a3f7a50acd84a1e8e489b5cde`. [Portable evidence](evidence/0005/README.md) contains sanitized host manifests, full case transcripts, immutable snapshots/source/maps, PNGs, explanations, unit results, checksums, failed attempts and review limitations.
+
+| Observation | VS Code | Cursor |
+| --- | --- | --- |
+| Real external SDK client: normal, hold, reconnect, drift, restart, expiry | 6/6 | 6/6 |
+| Shared native regression: normal, stale executed JS, changed TS | 3/3 | 3/3 |
+| Discovery to first captured debugger snapshot | 1681.95 ms | 1805.72 ms |
+| Confirmed server pause / state-read latency | 40004.70 / 3.08 ms | 40005.60 / 3.00 ms |
+| Server / browser source and values | TS 19, cart 0 / TS 23, cart 1 | TS 19, cart 0 / TS 23, cart 1 |
+| After continuation | Screen cart 1, one click | Screen cart 1, one click |
+
+These are individual local observations. **33 product, 43 shared and 28 paired unit tests passed.** All five instrumented causal links and four image receipts agree with the baseline source/values; exact executed JavaScript, generated source maps and TypeScript hashes were checked. Closed MCP event pages match persisted observations and remain unchanged through later focus/run activity. Native suite teardown verifies restored owned breakpoints and no active owned debug sessions; actual backend process/listener cleanup is also checked.
+
+A separate [driving-agent smoke](evidence/0005/agent-smoke/agent-finished.json) read the actual discovery, state and sources before choosing operations through an external SDK console. It rejected a stale pause, recovered from current state, persisted two grounded interpretations, revealed both exact sources, continued to cart 1, and read historical source/explanations and the confirmed image after cleanup. The complete harness exited 0. This is one integration observation, not a statistical evaluation or full natural-language checkout proof. Earlier deadline expiry and delayed harness completion remain in the attempt ledger; they were not counted as final successes.
+
+### Review and repairs
+
+Seven concrete implementation findings were repaired across three fixing passes: leaked pending SDK HTTP responses on cancellation/session deletion; incomplete-header timeout timing; repeating persistence failures; changed image bytes; dead endpoint recovery after failed finalization; late source-tab acquisition during cleanup; mutable in-memory event details diverging from disk. Focused tests cover the failure paths and the final native matrices cover the current source.
+
+**The implementation review is not certified converged.** Pass three required fixes and the skill's three-fix limit was reached. Four outside Claude Code invocations timed out at 540000 ms; a prior DX outside attempt also timed out. Same-harness independent reviews are recorded accurately, without external agreement or final-product credit. [Review record](evidence/0005/review.json) retains reviewed/fixed revisions and coverage. Known concrete findings: 0 unresolved. Final-product reviewers: **0/10, not started**.
+
+### Reproduce
+
+See [extension instructions](../../extension/README.md) for installation of pinned dependencies, build and connection descriptor handling. Run product, shared and paired unit suites, then from the extension directory:
+
+```sh
+CODEBOOK_HOST=vscode node dist/nativeRunner.js normal hold reconnect source-drift restart expiry
+CODEBOOK_HOST=cursor node dist/nativeRunner.js normal hold reconnect source-drift restart expiry
+```
+
+From `experiments/cycle-0001`, run `CODEBOOK_HOST=vscode CODEBOOK_BROWSER=managed pnpm experiment normal stale-script source-drift`, then repeat for Cursor. `node dist/nativeRunner.js --agent` opens a separate controlled agent-use observation; it does not execute the scripted walkthrough. Credentials/private editor profiles remain excluded from shared evidence.
+
+### Decision, limits and handoff
+
+Keep explicit MCP instance/run/pause identities, referenced interpretations, immutable resources, bounded control and shared owned-runtime cleanup. The fixed demo remains explicit in discovery and documentation. An SDK 1.30.0 patch is pinned and tested for JSON-response cancellation cleanup; revisit against upstream before changing that dependency.
+
+This advances G01/G03/G06/G11 partially. Independent native editor presentation remains unverified while the Mac is locked; page PNGs and renderer acknowledgements do not replace that check. No CI, PR approval, packaged installation, publication, arbitrary repository support or full-product result is claimed.
+
+Goal-gap check: transport is sufficiently demonstrated for the next connected increment. The learner still has no Study workspace, linked learning items or durable understanding checks. Select **one learner-facing Study workspace cycle** next, using the same observed run and sources; do not spend another cycle polishing the transport. Recording/replay, full checkout, linked wiki/codemap, both later layouts, real-repository use and Raphtalia's intended-use acceptance remain required. D012 records this route; PROJECT_STATE.md retains the full gap table. Close issue #6 only after this evidence commit is available remotely; goal #1 stays open.

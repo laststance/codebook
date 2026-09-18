@@ -1,0 +1,131 @@
+{
+  "outcome": "demonstrated-flow-harness-timeout",
+  "revision": "c813053d732cad4c5b0a6a1581e199de412eccfe",
+  "sourceHash": "4be3d512c89df69f9ffea3fb26eab59645241e9a3f7a50acd84a1e8e489b5cde",
+  "agent": "Driving Codex agent choosing commands through the actual external SDK console",
+  "final": {
+    "instanceId": "ca52a2c5-930a-4df6-af06-d5038cb870b8",
+    "runId": "7b67c171-ad88-42ce-a63b-7b2230fb615c",
+    "runtimeRunId": "90e3a7fa-ef6a-498c-9d49-688a74d21c33",
+    "profile": "paired-cart-demo",
+    "state": "stopped",
+    "runtimeState": "completed",
+    "createdAt": "2026-09-18T18:20:54.598Z",
+    "deadlineAt": "2026-09-18T18:22:54.598Z",
+    "activeTimeoutMs": 20000,
+    "nextActions": [
+      "read-history"
+    ],
+    "participants": {
+      "server": {
+        "snapshotUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1",
+        "sourceUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/150dfadf-6800-4e67-8e2c-a42dd9adf47b%3A1/source/typescript",
+        "phase": "running",
+        "resumable": false
+      },
+      "browser": {
+        "snapshotUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1",
+        "sourceUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/snapshots/0d7865fd-e617-4dc5-a2fd-38b7f68c5731%3A1/source/typescript",
+        "phase": "running",
+        "resumable": false
+      }
+    },
+    "operation": {
+      "operationId": "269af3be-8346-436c-840c-3b91a19791e6",
+      "key": "one-cart-click",
+      "runUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c"
+    },
+    "observed": {
+      "cartCount": 1,
+      "completedClicks": 1
+    },
+    "links": [
+      {
+        "id": "intent-request",
+        "status": "observed",
+        "evidence": [
+          "269af3be-8346-436c-840c-3b91a19791e6",
+          "19338.6"
+        ]
+      },
+      {
+        "id": "request-server",
+        "status": "observed",
+        "evidence": [
+          "19338.6",
+          "150dfadf-6800-4e67-8e2c-a42dd9adf47b:1"
+        ]
+      },
+      {
+        "id": "server-response",
+        "status": "observed",
+        "evidence": [
+          "150dfadf-6800-4e67-8e2c-a42dd9adf47b:1",
+          "c2987e7472f9a13388f9f6e91cb817d1960227333dad31f9276dadcfeb552828"
+        ]
+      },
+      {
+        "id": "response-browser",
+        "status": "observed",
+        "evidence": [
+          "c2987e7472f9a13388f9f6e91cb817d1960227333dad31f9276dadcfeb552828",
+          "0d7865fd-e617-4dc5-a2fd-38b7f68c5731:1"
+        ]
+      },
+      {
+        "id": "browser-screen",
+        "status": "observed",
+        "evidence": [
+          "0d7865fd-e617-4dc5-a2fd-38b7f68c5731:1",
+          "event:169"
+        ]
+      }
+    ],
+    "runtimeOutcome": "demonstrated",
+    "captureOutcome": "demonstrated",
+    "finalOutcome": "demonstrated",
+    "cleaned": true,
+    "resourcesReleased": true,
+    "activeSessionIds": [],
+    "captures": [
+      {
+        "phase": "before",
+        "status": "captured",
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/before"
+      },
+      {
+        "phase": "paused-server",
+        "status": "captured",
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/paused-server"
+      },
+      {
+        "phase": "paused-browser",
+        "status": "captured",
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/paused-browser"
+      },
+      {
+        "phase": "after",
+        "status": "captured",
+        "uri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/images/after"
+      }
+    ],
+    "explanations": [
+      "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/0c5f7264-ba5b-454b-9aac-de021d9c399b",
+      "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/explanations/d155b0cd-be27-472c-9349-02a7b993d57b"
+    ],
+    "eventsUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c/events/0",
+    "runUri": "codebook://ca52a2c5-930a-4df6-af06-d5038cb870b8/runs/7b67c171-ad88-42ce-a63b-7b2230fb615c"
+  },
+  "checks": {
+    "stalePauseRejectedThenRecovered": true,
+    "historicalSourceAndExplanationsReadable": true,
+    "historicalRevealRejected": true,
+    "afterImageReadThroughMcp": true
+  },
+  "limits": [
+    "Fixed paired cart demo only; no complete checkout or arbitrary repository support.",
+    "Page screenshots and renderer acknowledgements do not establish independent editor UI validation."
+  ],
+  "harnessExitCode": 1,
+  "completionMarkerWrittenAfterHarnessTimeout": true
+}

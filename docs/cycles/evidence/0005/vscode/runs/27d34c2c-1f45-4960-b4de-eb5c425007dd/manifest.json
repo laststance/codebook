@@ -1,0 +1,238 @@
+{
+  "runId": "9d2a8f3e-ca36-49e1-b69b-83e10cc52328",
+  "scenario": "normal",
+  "status": "cancelled",
+  "cleaned": true,
+  "resourcesReleased": true,
+  "runtimeOutcome": "not-demonstrated",
+  "captureOutcome": "incomplete",
+  "finalOutcome": "not-demonstrated",
+  "participants": {
+    "server": {
+      "sessionId": "9150f75f-7b9a-402d-b44e-fba1d986751a",
+      "phase": "running",
+      "snapshot": {
+        "id": "9150f75f-7b9a-402d-b44e-fba1d986751a:1",
+        "participant": "server",
+        "pause": {
+          "sessionId": "9150f75f-7b9a-402d-b44e-fba1d986751a",
+          "threadId": 8,
+          "generation": 1
+        },
+        "frame": {
+          "id": 217,
+          "name": "addProduct",
+          "line": 19,
+          "column": 9,
+          "source": {
+            "name": "<owned-runtime:04fec9d1743f>/User/globalStorage/laststance.codebook/agent/0e677680-5718-4210-9189-c03516887bf7/27d34c2c-1f45-4960-b4de-eb5c425007dd/9d2a8f3e-ca36-49e1-b69b-83e10cc52328/fixture/server.mts",
+            "path": "<owned-runtime:04fec9d1743f>/User/globalStorage/laststance.codebook/agent/0e677680-5718-4210-9189-c03516887bf7/27d34c2c-1f45-4960-b4de-eb5c425007dd/9d2a8f3e-ca36-49e1-b69b-83e10cc52328/fixture/server.mts",
+            "sourceReference": 0
+          },
+          "presentationHint": "normal",
+          "canRestart": true
+        },
+        "values": {
+          "operationId": "9d2a8f3e-ca36-49e1-b69b-83e10cc52328",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24,
+          "cartCount": 0,
+          "admittedCount": 2
+        },
+        "evaluations": [
+          {
+            "expression": "tuple.operationId",
+            "value": {
+              "type": "string",
+              "result": "'9d2a8f3e-ca36-49e1-b69b-83e10cc52328'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.cartId",
+            "value": {
+              "type": "string",
+              "result": "'selected'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.productId",
+            "value": {
+              "type": "string",
+              "result": "'tote-01'",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "tuple.price",
+            "value": {
+              "type": "number",
+              "result": "24",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "state.items.length",
+            "value": {
+              "type": "number",
+              "result": "0",
+              "variablesReference": 0
+            }
+          },
+          {
+            "expression": "admittedCount",
+            "value": {
+              "type": "number",
+              "result": "2",
+              "variablesReference": 0
+            }
+          }
+        ],
+        "source": {
+          "scriptId": "166",
+          "scriptLocation": {
+            "scriptId": "166",
+            "lineNumber": 15,
+            "columnNumber": 10
+          },
+          "mapping": {
+            "generatedLine": 15,
+            "generatedColumn": 10,
+            "originalSource": "../fixture/server.mts",
+            "originalLine": 18,
+            "originalColumn": 8
+          },
+          "typescriptHash": "d31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2",
+          "javascriptHash": "9e805dee5d6e67ae8e74aa82383f1e7d69f7a3b97c7ad775c6ea2e3494d7b04b",
+          "sourceMapHash": "faafc0c2eb72a72df7cdcd5ebcc3a2058ff3f0358c539f4a6d13db90174ca834"
+        }
+      },
+      "conflict": false
+    },
+    "browser": {
+      "sessionId": "43c3f082-e0be-4de2-8f6c-901b652dd70f",
+      "phase": "running",
+      "conflict": false
+    }
+  },
+  "operation": {
+    "id": "97762a20-dbad-440a-afda-73c11650269e",
+    "key": "one-click",
+    "inputAcknowledged": true
+  },
+  "network": {
+    "requests": [
+      {
+        "requestId": "2395.6",
+        "sequence": 90,
+        "tuple": {
+          "operationId": "9d2a8f3e-ca36-49e1-b69b-83e10cc52328",
+          "cartId": "selected",
+          "productId": "tote-01",
+          "price": 24
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:61911/runs/9d2a8f3e-ca36-49e1-b69b-83e10cc52328/client.mjs",
+          "http://127.0.0.1:61911/runs/9d2a8f3e-ca36-49e1-b69b-83e10cc52328/client.mjs",
+          "http://127.0.0.1:61911/runs/9d2a8f3e-ca36-49e1-b69b-83e10cc52328/client.mjs"
+        ]
+      },
+      {
+        "requestId": "2395.7",
+        "sequence": 91,
+        "tuple": {
+          "operationId": "9d2a8f3e-ca36-49e1-b69b-83e10cc52328-background",
+          "cartId": "background",
+          "productId": "background-02",
+          "price": 99
+        },
+        "initiatorUrls": [
+          "http://127.0.0.1:61911/runs/9d2a8f3e-ca36-49e1-b69b-83e10cc52328/client.mjs",
+          "http://127.0.0.1:61911/runs/9d2a8f3e-ca36-49e1-b69b-83e10cc52328/client.mjs",
+          "http://127.0.0.1:61911/runs/9d2a8f3e-ca36-49e1-b69b-83e10cc52328/client.mjs"
+        ]
+      }
+    ],
+    "closed": false,
+    "errors": []
+  },
+  "links": [
+    {
+      "id": "intent-request",
+      "status": "unknown",
+      "evidence": []
+    },
+    {
+      "id": "request-server",
+      "status": "unknown",
+      "evidence": []
+    },
+    {
+      "id": "server-response",
+      "status": "unknown",
+      "evidence": []
+    },
+    {
+      "id": "response-browser",
+      "status": "unknown",
+      "evidence": []
+    },
+    {
+      "id": "browser-screen",
+      "status": "unknown",
+      "evidence": []
+    }
+  ],
+  "captures": {
+    "before": {
+      "status": "captured",
+      "file": "before.png",
+      "renderer": {
+        "epoch": "fa55d6c1-a2ec-470d-93e1-af4a7f51e45b",
+        "id": 5,
+        "hash": "93090fc9decd8daaed0b4d724d1aeb1f43f9ff4788f50c3644a8c9f6297f390c"
+      }
+    },
+    "paused-server": {
+      "status": "captured",
+      "file": "paused-server.png",
+      "renderer": {
+        "epoch": "fa55d6c1-a2ec-470d-93e1-af4a7f51e45b",
+        "id": 9,
+        "hash": "728b573855689c6545bc789d616822282c3061cb9f25430f1e7894f0e5200c50"
+      }
+    }
+  },
+  "failures": [],
+  "artifactDirectory": "<owned-runtime:04fec9d1743f>/User/globalStorage/laststance.codebook/agent/0e677680-5718-4210-9189-c03516887bf7/27d34c2c-1f45-4960-b4de-eb5c425007dd/9d2a8f3e-ca36-49e1-b69b-83e10cc52328",
+  "activeSessionIds": [],
+  "backend": {
+    "runId": "9d2a8f3e-ca36-49e1-b69b-83e10cc52328",
+    "pid": 2365,
+    "origin": "http://127.0.0.1:61911",
+    "executable": "<home>/.vite-plus/js_runtime/node/24.21.0/bin/node",
+    "version": "v24.21.0"
+  },
+  "environment": {
+    "host": {
+      "id": "vscode",
+      "productVersion": "1.138.0",
+      "apiVersion": "1.138.0",
+      "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+      "browserBackend": "managed",
+      "chrome": {
+        "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "version": "Google Chrome 153.0.8010.50"
+      }
+    },
+    "api": "1.138.0",
+    "node": "24.18.1",
+    "jsDebug": "1.117.0"
+  },
+  "revision": "c813053d732cad4c5b0a6a1581e199de412eccfe",
+  "dirty": false,
+  "sourceHash": "4be3d512c89df69f9ffea3fb26eab59645241e9a3f7a50acd84a1e8e489b5cde",
+  "nativePresentationVerified": false
+}

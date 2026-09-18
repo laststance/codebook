@@ -1,0 +1,49 @@
+{
+  "scenario": "source-drift",
+  "passed": true,
+  "checks": {
+    "sourceDriftRejected": true,
+    "closedEventCount": 131,
+    "closedEventHash": "3f887a7702ee71f0c38e005f1057d578c8ce925c73ff2dcdb08c969969fb8234"
+  },
+  "runId": "1aeaed70-b893-40c5-ac83-6a26abc7f1c7",
+  "firstSnapshotMs": 1188.0750409999964,
+  "final": {
+    "instanceId": "0e677680-5718-4210-9189-c03516887bf7",
+    "runId": "1aeaed70-b893-40c5-ac83-6a26abc7f1c7",
+    "runtimeRunId": "93eae98e-837b-4408-a59c-910cc55aa0eb",
+    "state": "stopped",
+    "runtimeState": "cancelled",
+    "cleaned": true,
+    "nextActions": [
+      "read-history"
+    ],
+    "participants": {
+      "server": {
+        "snapshotUri": "codebook://0e677680-5718-4210-9189-c03516887bf7/runs/1aeaed70-b893-40c5-ac83-6a26abc7f1c7/snapshots/70f2f45a-28ff-46a8-9f4f-8deccce923ac%3A1",
+        "sourceUri": "codebook://0e677680-5718-4210-9189-c03516887bf7/runs/1aeaed70-b893-40c5-ac83-6a26abc7f1c7/snapshots/70f2f45a-28ff-46a8-9f4f-8deccce923ac%3A1/source/typescript",
+        "resumable": false
+      },
+      "browser": {
+        "resumable": false
+      }
+    },
+    "finalOutcome": "not-demonstrated",
+    "captures": [
+      {
+        "phase": "before",
+        "status": "captured",
+        "uri": "codebook://0e677680-5718-4210-9189-c03516887bf7/runs/1aeaed70-b893-40c5-ac83-6a26abc7f1c7/images/before"
+      },
+      {
+        "phase": "paused-server",
+        "status": "captured",
+        "uri": "codebook://0e677680-5718-4210-9189-c03516887bf7/runs/1aeaed70-b893-40c5-ac83-6a26abc7f1c7/images/paused-server"
+      }
+    ],
+    "explanations": [],
+    "activeSessionIds": [],
+    "eventsUri": "codebook://0e677680-5718-4210-9189-c03516887bf7/runs/1aeaed70-b893-40c5-ac83-6a26abc7f1c7/events/0",
+    "runUri": "codebook://0e677680-5718-4210-9189-c03516887bf7/runs/1aeaed70-b893-40c5-ac83-6a26abc7f1c7"
+  }
+}
