@@ -2,10 +2,11 @@
 
 Updated: 2026-09-19\
 Product stage: synchronous and browser/server runtime mechanisms demonstrated; product MCP and learner UI not yet implemented\
-Active cycle: none; selecting the next bounded increment\
+Active cycle: [0005 — Live study through MCP](docs/cycles/0005-live-study-mcp.md) — planning\
 Last cycle: [0004 — Correlate one browser-to-server request](docs/cycles/0004-async-request-boundary.md) — closed, demonstrated on the instrumented fixture\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Last cycle issue: [#5](https://github.com/laststance/codebook/issues/5) — closure synchronization follows this commit\
+Active cycle issue: [6](https://github.com/laststance/codebook/issues/6) — open\
+Last cycle issue: [#5](https://github.com/laststance/codebook/issues/5) — closed with remote evidence `d675185`\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
@@ -39,7 +40,7 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Synchronize Cycle 0004 evidence/closure to remote main and issue #5, then open one MCP integration cycle. The next question is whether a real external MCP client can discover supported operations, control the proven runtime, retrieve bound source/evidence, attach a grounded explanation, and reconnect without repeating input. Review the lasting interface using `/plan-devex-review` and `/plan-eng-review`. Select its implementation only after that bounded contract is written. User delegated continuous execution under D008; do not stop after this experiment or re-plan the whole product.
+Complete `/plan-devex-review` then `/plan-eng-review` of Cycle 0005. Its question is whether a real external MCP client can discover supported operations, control the proven runtime, retrieve bound source/evidence, attach a grounded explanation, and reconnect without repeating input. Review the lasting interface using `/plan-devex-review` and `/plan-eng-review`. Select its implementation only after that bounded contract is written. User delegated continuous execution under D008; do not stop after this experiment or re-plan the whole product.
 
 No owned final-matrix process remains. Private profiles/logs stay under ignored artifacts. No CI, PR approval, VSIX, installed-product or publication claim. Full checkout, recording/replay, wiki/codemap/progress, all three layouts and real-repository support are the remaining product work; do not spend repeated cycles polishing the proven transport layer.
 
