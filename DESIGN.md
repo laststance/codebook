@@ -4,7 +4,7 @@ This is the stable entry point for GStack design-document discovery. Follow the 
 
 ## Product and current scope
 
-- [PRODUCT_GOAL.md](PRODUCT_GOAL.md) defines the final experience and G01–G10 acceptance.
+- [PRODUCT_GOAL.md](PRODUCT_GOAL.md) defines the final experience and G01–G11 acceptance in VS Code and Cursor.
 - [PROJECT_STATE.md](PROJECT_STATE.md) identifies current evidence and the active cycle.
 - [DECISIONS.md](DECISIONS.md) records later decisions and supersession.
 - [Approved product design](docs/designs/codebook.md) supplies architectural and behavioral context.

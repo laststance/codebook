@@ -1,6 +1,6 @@
 # Product goal
 
-Goal version: 2\
+Goal version: 3\
 Product design approved: 2026-09-18  
 Development structure requested: 2026-09-18  
 Owner: Raphtalia
@@ -60,6 +60,7 @@ Individual capability checks are necessary but not sufficient. Before declaring 
 5. Switch among all three layouts during a live session and during replay without losing state. Verify each layout's intended use.
 6. Exercise interruption/recovery and unrelated-target cases; validate real-repository use and the declared support matrix.
 7. Link current, reproducible evidence for G01–G11, identified by host and version, in PROJECT_STATE.md and obtain Raphtalia's acceptance that the tool supports the intended understanding experience in both VS Code and Cursor.
+8. Complete [ten consecutive independent sequential subagent reviews](docs/acceptance/FINAL_REVIEW.md) of the frozen complete product and its evidence. Any failed review requires fixes and a restart at reviewer 1. Development reviews do not count toward this final gate.
 
 There is no automatic percentage-complete claim based on task counts. Evidence that has been invalidated by a source, adapter, or environment change must be revalidated before final acceptance.
 

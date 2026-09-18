@@ -13,6 +13,7 @@ import { PauseGate, type PauseIdentity } from './pauseGate';
 import { sha256 } from './utils/sha256';
 import { waitUntil } from './utils/waitUntil';
 import { awaitResponse } from './utils/awaitResponse';
+import { HostBrowser, type HostConfiguration } from './hostBrowser';
 
 export interface HarnessConfig {
   artifactRoot: string;
@@ -23,7 +24,7 @@ export interface HarnessConfig {
   workingTreeDirty: boolean;
   sourceHash: string;
   extensionHash: string;
-  vscodeCommit: string;
+  host: HostConfiguration;
 }
 interface Capture {
   phase: string;
@@ -71,8 +72,7 @@ export class ExperimentRun {
   private cleanupPromise?: Promise<void>;
   private preparePromise?: Promise<void>;
   private readonly abort = new AbortController();
-  private browserTab?: vscode.Tab;
-  private sourceTab?: vscode.Tab;
+  private readonly browser: HostBrowser;
   private readonly activities = new Set<Promise<void>>();
   private readonly activeSessionIds = new Set<string>();
   private readonly watchdog: ReturnType<typeof setInterval>;
@@ -80,6 +80,7 @@ export class ExperimentRun {
   constructor(readonly config: HarnessConfig, readonly scenario: Scenario) {
     this.evidence = new Evidence(join(config.artifactRoot, this.id));
     this.url = `${config.fixtureOrigin}/runs/${this.id}/index.html`;
+    this.browser = new HostBrowser(config.host, this.id, this.url, (type, detail) => this.evidence.record(type, detail), scenario);
     this.watchdog = setInterval(() => {
       if (this.cleaning || ['completed', 'failed'].includes(this.status)) return;
       const elapsedMs = performance.now() - this.startedMs;
@@ -134,7 +135,6 @@ export class ExperimentRun {
     this.abort.signal.throwIfAborted();
     // Keep the browser mounted when the debugger reveals this exact source on a stop.
     await vscode.window.showTextDocument(vscode.Uri.file(sourcePath), { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true });
-    this.sourceTab = vscode.window.tabGroups.all.flatMap(group => group.tabs).find(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.fsPath === sourcePath);
     await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
     this.abort.signal.throwIfAborted();
     this.breakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(breakpointSource), new vscode.Position(breakpointLine - 1, 0)));
@@ -145,16 +145,16 @@ export class ExperimentRun {
       await delay(INTERFERENCE_DELAY_MS, undefined, { signal: this.abort.signal });
     }
     this.abort.signal.throwIfAborted();
-    const launched = await vscode.debug.startDebugging(undefined, {
+    await this.browser.launch({
       type: 'editor-browser', request: 'launch', name: `codebook ${this.id}`, url: this.url,
       webRoot: this.evidence.directory, outFiles: [join(this.evidence.directory, 'build/*.js')],
       sourceMaps: true, sourceMapPathOverrides: { '../fixture/*': join(this.evidence.directory, 'fixture/*') },
       timeout: ACTIVE_TIMEOUT_MS,
-    });
+    }, this.abort.signal);
     this.abort.signal.throwIfAborted();
-    if (!launched) throw new Error('VS Code rejected the editor-browser launch');
     this.selected = await waitUntil(async () => {
       // The launcher is not the page; probe only descendants belonging to this run.
+      const matching: { session: vscode.DebugSession; cdp: Cdp }[] = [];
       for (const session of this.sessions.values()) {
         if (!session.parentSession) continue;
         let candidate: Cdp | undefined;
@@ -165,10 +165,13 @@ export class ExperimentRun {
           this.abort.signal.throwIfAborted();
           const location = await awaitResponse(candidate.request('Runtime.evaluate', { expression: 'location.href', returnByValue: true }), 'candidate URL', this.abort.signal);
           this.abort.signal.throwIfAborted();
-          if (location.result.value === this.url) { this.cdp = candidate; return session; }
+          if (location.result.value === this.url) matching.push({ session, cdp: candidate });
         } catch (error) { this.evidence.record('target.probe-failed', { sessionId: session.id, error: String(error) }); }
-        finally { if (candidate && candidate !== this.cdp) candidate.close(); }
+        finally { if (candidate && !matching.some(match => match.cdp === candidate)) candidate.close(); }
       }
+      if (matching.length > 1) { for (const match of matching) match.cdp.close(); throw new Error('Ambiguous owned DAP page targets'); }
+      const match = matching[0];
+      if (match) { this.cdp = match.cdp; return match.session; }
       return undefined;
     }, 'owned page child', ACTIVE_TIMEOUT_MS, this.abort.signal);
     this.evidence.record('target.selected', { sessionId: this.selected.id, parentId: this.selected.parentSession?.id, url: this.url });
@@ -192,21 +195,10 @@ export class ExperimentRun {
       this.evidence.record('fault.source-drift');
     }
     // Integrated-browser navigation can finish before it has a visible viewport.
-    const browser = await waitUntil(() => {
-      for (const group of vscode.window.tabGroups.all) {
-        const index = group.tabs.findIndex(tab => tab.label === `codebook ${this.id.slice(0, 8)}`);
-        if (index !== -1) return { group, index, tab: group.tabs[index]! };
-      }
-      return undefined;
-    }, 'owned browser tab', ACTIVE_TIMEOUT_MS, this.abort.signal);
-    this.browserTab = browser.tab;
-    if (browser.group.viewColumn !== vscode.ViewColumn.One) throw new Error('Fixture harness expects its owned browser in the first editor group');
-    await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
-    await vscode.commands.executeCommand('workbench.action.openEditorAtIndex', browser.index);
+    await this.browser.reveal(this.abort.signal);
     // VS Code hides native browser views while notification toasts overlap them.
     await vscode.commands.executeCommand('notifications.hideToasts');
     this.abort.signal.throwIfAborted();
-    this.evidence.record('browser.revealed', { title: browser.tab.label, index: browser.index });
     await cdp.request('Page.bringToFront', undefined);
     const initialLayout = await cdp.request('Page.getLayoutMetrics', undefined);
     this.evidence.record('page.initial-layout', initialLayout);
@@ -322,7 +314,7 @@ export class ExperimentRun {
   async persist(): Promise<void> {
     await this.evidence.save('manifest.json', {
       ...this.view(), events: undefined,
-      environment: { vscode: vscode.version, vscodeCommit: this.config.vscodeCommit, node: process.versions.node, electron: process.versions.electron, jsDebug: vscode.extensions.getExtension('ms-vscode.js-debug')?.packageJSON.version },
+      environment: { host: this.config.host.id, productVersion: this.config.host.productVersion, apiVersion: vscode.version, hostCommit: this.config.host.commit, node: process.versions.node, electron: process.versions.electron, jsDebug: vscode.extensions.getExtension('ms-vscode.js-debug')?.packageJSON.version },
       revision: this.config.revision, workingTreeDirty: this.config.workingTreeDirty, sourceHash: this.config.sourceHash, extensionHash: this.config.extensionHash,
       expected: { ...EXPECTED_VALUES, finalCartCount: 1, completedClicks: 1 },
       hashes: this.source && { typescript: sha256(this.source.source), javascript: sha256(this.source.javascript), sourceMap: sha256(this.source.sourceMap) },
@@ -354,8 +346,10 @@ export class ExperimentRun {
       if (!session.parentSession && this.activeSessionIds.has(session.id)) await vscode.debug.stopDebugging(session);
     }
     // js-debug can close its tab when terminating; a stale tab handle must not abort cleanup.
-    if (this.browserTab && vscode.window.tabGroups.all.some(group => group.tabs.includes(this.browserTab!))) await vscode.window.tabGroups.close(this.browserTab);
-    if (this.sourceTab && vscode.window.tabGroups.all.some(group => group.tabs.includes(this.sourceTab!))) await vscode.window.tabGroups.close(this.sourceTab);
+    await this.browser.close();
+    // The debugger can reveal a second editor for this unique sealed source; close every owned copy.
+    const sourceTabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.fsPath === this.source?.sourcePath);
+    for (const tab of sourceTabs) await vscode.window.tabGroups.close(tab);
     // Resolve in-flight capture/inspection state before serializing the final manifest.
     await Promise.all(this.activities);
     await waitUntil(() => this.activeSessionIds.size === 0, 'owned debug sessions terminated', CAPTURE_TIMEOUT_MS);
@@ -471,16 +465,10 @@ export class ExperimentRun {
     this.operation!.completed = true;
     this.evidence.record('application.updated', observed);
     // Return the owned app to view before its final frame; debugger focus remains explicit.
-    if (this.browserTab) {
-      await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
-      if (this.cleaning || this.gate.conflict || this.status === 'failed') return;
-      const browserIndex = vscode.window.tabGroups.all.find(group => group.viewColumn === vscode.ViewColumn.One)?.tabs.indexOf(this.browserTab);
-      if (browserIndex === undefined || browserIndex < 0) throw new Error('Owned browser tab disappeared before final capture');
-      await vscode.commands.executeCommand('workbench.action.openEditorAtIndex', browserIndex);
-      if (this.cleaning || this.gate.conflict || this.status === 'failed') return;
-      await this.requireCdp().request('Page.bringToFront', undefined);
-      this.evidence.record('browser.revealed-for-completion');
-    }
+    await this.browser.reveal(this.abort.signal);
+    if (this.cleaning || this.gate.conflict || this.status === 'failed') return;
+    await this.requireCdp().request('Page.bringToFront', undefined);
+    this.evidence.record('browser.revealed-for-completion');
     if (this.cleaning || this.gate.conflict || this.status === 'failed') return;
     await this.capture('after');
     if (this.cleaning || this.gate.conflict || this.status === 'failed') return;

@@ -1,6 +1,6 @@
-# Cycle 0001: real click, pause, inspect, continue
+# Runtime experiments: real click, pause, inspect, continue
 
-A disposable VS Code development extension, one TypeScript cart page, and an external Node runner. See [the cycle record](../../docs/cycles/0001-click-pause-resume.md) for measured results and limits. This is not the product MCP API or a packaged extension.
+A disposable VS Code / Cursor development extension, one TypeScript cart page, and an external Node runner. See [the cycle record](../../docs/cycles/0001-click-pause-resume.md) for measured results and limits. Cycle 0002 reuses this module for [native host compatibility](../../docs/cycles/0002-cursor-runtime-compatibility.md). This is not the product MCP API or a packaged extension.
 
 ## Reproduce
 
@@ -11,6 +11,7 @@ cd experiments/cycle-0001
 pnpm install --frozen-lockfile
 pnpm test
 pnpm experiment normal
+CODEBOOK_HOST=cursor pnpm experiment normal
 pnpm experiment normal hold duplicate continue-race manual-race cdp-resume decoy stale-script source-drift unbound capture-timeout disconnect terminate disconnect-after cancel-prepare
 ```
 
@@ -42,7 +43,7 @@ The active budget is 20 seconds excluding observed debugger pauses; the whole-ru
 
 Each run seals its own TS, generated JS, and source map, served at a unique no-cache URL. The debugger binds to `fixture/cart.ts:9`, immediately before `state.items.push(selectedProduct)`. The stopped frame must report `tote-01`, `24`, and cart count `0`. CDP fetches the actual executing `scriptId`; its JS bytes must equal the sealed build, whose source map and embedded TS must match the unchanged local source. The runner then observes cart count `1` and exactly one completed handler.
 
-Files under ignored `artifacts/cycle-0001/<runId>/`:
+Current files under ignored `artifacts/cycle-0002/<host>/<runId>/` (historical Cycle 0001 evidence is unchanged):
 
 - `manifest.json`: state, explicit target/pause identity, environment, revision and dirty flag, implementation/build hashes, expected/observed values, failures, capture references, resource cleanup.
 - `events.jsonl`: local monotonic receipt time, wall time, and increasing sequence number. Acceptance, input dispatch/response, pause, snapshot commit, continuation, and application update remain separate.
@@ -54,3 +55,13 @@ Suite `environment.json` fingerprints all experiment source/configuration and co
 Fault scenarios run against the real Extension Host/browser. Response delays are injected locally after real CDP responses arrive; they are not claims about natural network latency. `manual-race` uses VS Code Step Over, `cdp-resume` bypasses that DAP request lane, and `disconnect-after` closes the proxy while the final screenshot is pending. `cancel-prepare` interrupts setup after its owned breakpoint is installed. Unit tests cover additional transport, deadline, persistence, and runner-startup failures; they are not native proof.
 
 Limits: one synchronous fixture handler, deterministic snapshot-based explanation, macOS/version-specific integrated-browser APIs and commands. No inference about backend causality, arbitrary repositories, recording/replay, product MCP, natural-language orchestration, three product layouts, or VSIX installation follows from this experiment.
+
+## Cursor compatibility experiment
+
+Cursor 3.21.12 exposes API 1.128.0 and bundles js-debug 1.93.0. Shared code typechecks against published `@types/vscode` 1.120.0; the registry has no 1.128.0 package. Both actual extension hosts reported Node 24.18.1 / Electron 42.10.0. See the cycle for separate measured host results.
+
+Cursor native browser commands return explicit owned tab IDs. The isolated Cursor process starts with a dynamic loopback Chromium endpoint and skips onboarding UI; no user profile or credentials are reused. The runner extracts the assigned endpoint from that process's freshly opened log. Because native targets have type `webview` and bundled js-debug filters to `page`, a small `ws` compatibility bridge exposes only the exact selected target, normalizes that metadata, and leaves runtime commands/responses/source bytes untouched. It rejects foreign target attachment and browser-wide shutdown. This endpoint arrangement is an experiment, not an approved product deployment mechanism.
+
+Additional cases: `cancel-browser` and `cancel-attach` in both hosts; `missing-capability`, `missing-endpoint`, and `ambiguous-target` in Cursor. The last creates two real tabs and waits for both actual Chromium targets before expecting rejection. The decoy must still complete after the primary run is deleted. Cleanup observes owned native tabs disappearing and waits for the owned editor process and debug endpoint to exit.
+
+`CODEBOOK_NATIVE_CAPTURE=1` adds bounded runner checkpoints before input, at the captured stop, and after completion for native UI screenshots. `native-stage.json` identifies the run/phase and release file. This optional observer does not alter extension pause ownership or timeout semantics; use only a `normal` scenario with an active observer. Page PNGs remain separate from native editor screenshots.

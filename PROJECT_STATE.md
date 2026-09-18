@@ -2,12 +2,13 @@
 
 Updated: 2026-09-18\
 Product stage: design approved; one synchronous runtime fixture demonstrated\
-Active cycle: none\
+Active cycle: [0002 — Cursor runtime compatibility](docs/cycles/0002-cursor-runtime-compatibility.md) — implementing\
 Last cycle: [0001 — Click, pause, inspect, continue](docs/cycles/0001-click-pause-resume.md) — closed, demonstrated\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
+Active cycle issue: [#3](https://github.com/laststance/codebook/issues/3) — open\
 Last cycle issue: [#2](https://github.com/laststance/codebook/issues/2) — closed; result and three fixture images attached\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
-Current authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 2
+Current authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
 ## Facts at handoff
 
@@ -35,7 +36,7 @@ Fixture proof remains partial for goals requiring integrated real-product behavi
 | G08 | unverified | Approved Living book concept; later implementation required. |
 | G09 | unverified | Approved Guided walkthrough concept; later implementation required. |
 | G10 | unverified | No package or real-repository validation. |
-| G11 | unverified | Cursor support is a final requirement; no Cursor native or packaged-extension validation has run. Existing VS Code fixture evidence does not transfer to Cursor. |
+| G11 | partial | Cycle 0002 has one actual Cursor native fixture success with target-restricted CDP compatibility. Complete product, negative matrix, UI, and packaged-extension acceptance remain unverified. Existing VS Code evidence is kept separate. |
 
 ## Current uncertainty
 
@@ -48,22 +49,24 @@ Fixture proof remains partial for goals requiring integrated real-product behavi
 
 ## Now, next, later
 
-**Now:** Cycle 0001 is complete. Read its result and portable evidence before selecting implementation work. Goal #1 remains open.
+**Now:** Complete Cycle 0002, selected by Raphtalia to resolve Cursor runtime compatibility before lasting integration choices. The active thread goal authorizes continued cycles through the full product. Goal #1 remains open.
 
-**One next candidate:** correlate one browser action with one backend request and the correct server pause while an unrelated request exists. This advances the hardest remaining correctness gap toward checkout. No implementation or future issue backlog has been created.
+**Follow-up candidate:** return to one correlated browser-to-backend asynchronous boundary after the dual-host runtime result; re-evaluate from evidence.
 
 **Later required capabilities:** full checkout; product MCP; recording/replay; wiki/codemap/progress; usable Study workspace, Living book, and Guided walkthrough; packaged and real-repository validation. The complete experience must work in both VS Code and Cursor. Their order remains evidence-driven. The final goal has not been reduced.
 
 ## Exact resume action
 
-Read PRODUCT_GOAL.md, this file, Cycle 0001, and its evidence index. Verify checkout, issue state, and runtime versions. Draft the smallest executable async-boundary experiment, then use `/plan-eng-review` on that named cycle. Add `/plan-devex-review` only for a lasting API contract and `/plan-design-review` only for a concrete user flow. Open one cycle issue after selecting its question; do not start a complete checkout implementation.
-
-Apply the dual-host requirement during that planning: identify Cursor-dependent assumptions before choosing a lasting browser/debugger/layout integration. Adjust the next experiment if this exposes a more fundamental blocker; do not infer Cursor support from Cycle 0001.
+Read PRODUCT_GOAL.md, this file, and Cycle 0002. Verify checkout, issue state, installed hosts, and any live experiment process. Finish its engineering plan review, then implement the shared core's host adapter and obtain native evidence separately in Cursor and VS Code. Continue the adaptive loop after recording the cycle result; the full product and ten-review completion gate remain active.
 
 ## Session handoff
 
-Last completed work: implemented and demonstrated Cycle 0001; added required Cursor support in goal version 2 under D007.\
-Next executable action: bounded async-boundary planning, as described above.\
+Last completed work: Cycle 0001 and Cursor requirement; current work is Cycle 0002 and the full-product acceptance gate.\
+Next executable action: implement and validate the reviewed Cycle 0002 native host adapter.\
 Runtime: owned sessions/connections/breakpoints cleaned up; private diagnostic profiles/logs retained locally.\
 Delivery: [implementation and evidence](https://github.com/laststance/codebook/commit/64c80767411caa518acfe86a7ff6242c0f6cc14e) pushed to main; issue #2 closed after result/image attachment. No PR/CI/release claim.\
 Goal changes pending: none.
+
+## Full-product completion gate
+
+[Ten consecutive sequential independent reviews](docs/acceptance/FINAL_REVIEW.md) are required after all final product requirements and evidence are complete. Current final-review streak: 0/10, not started. A failing review resets the sequence after fixes. The active goal remains incomplete.

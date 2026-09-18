@@ -9,12 +9,16 @@ import { CONTROL_RESPONSE_LIMIT_MS, EXPECTED_VALUES, HOLD_DURATION_MS, RUN_TIMEO
 import type { ExperimentRun, HarnessConfig } from './run';
 import { sha256 } from './utils/sha256';
 import { waitUntil } from './utils/waitUntil';
+import { selectHost } from './utils/selectHost';
+import { awaitResponse } from './utils/awaitResponse';
+import type { HostConfiguration } from './hostBrowser';
 
 type RunView = ReturnType<ExperimentRun['view']>;
 type Descriptor = { origin: string; token: string; runTokens?: Map<string, string> };
 const packageRoot = resolve(__dirname, '..');
 const repoRoot = resolve(packageRoot, '../..');
-const artifactRoot = join(repoRoot, 'artifacts/cycle-0001');
+const hostId = selectHost(process.env.CODEBOOK_HOST);
+const artifactRoot = join(repoRoot, 'artifacts/cycle-0002', hostId);
 const suiteId = `suite-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}`;
 const suiteDirectory = join(artifactRoot, suiteId);
 const workspace = join(suiteDirectory, 'workspace');
@@ -53,6 +57,15 @@ async function state(descriptor: Descriptor, runId: string): Promise<RunView> {
   return (await control(descriptor, `/runs/${runId}`)).body;
 }
 
+/** Holds optional native-UI evidence checkpoints for the observer without changing extension control semantics. @example await nativeCheckpoint(run, 'paused') */
+async function nativeCheckpoint(run: RunView, phase: 'before' | 'paused' | 'after'): Promise<void> {
+  if (process.env.CODEBOOK_NATIVE_CAPTURE !== '1') return;
+  const releasePath = join(suiteDirectory, `native-${phase}.release`);
+  await writeFile(join(suiteDirectory, 'native-stage.json'), JSON.stringify({ runId: run.runId, phase, artifactDirectory: run.artifactDirectory, pause: run.pause, recordedAt: new Date().toISOString(), releasePath }));
+  console.log(`NATIVE_CAPTURE: ${phase} ${run.runId}`);
+  await waitUntil(async () => { try { await readFile(releasePath); return true; } catch { return false; } }, `native ${phase} screenshot`);
+}
+
 /** Checks observable live behavior; expected safety rejections pass without becoming successful walkthroughs. @example await exercise(descriptor, 'continue-race', ownedRunIds) */
 async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds: string[]): Promise<ScenarioResult> {
   const created = await control(descriptor, '/runs', 'POST', { scenario });
@@ -68,24 +81,30 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
     assert.equal(wrongToken.status, 401);
     await wrongToken.body?.cancel();
     result.checks.runTokenRequired = true;
-    if (scenario === 'cancel-prepare') {
-      await waitUntil(async () => (await state(descriptor, runId)).events.some(event => event.type === 'fault.preparation-held'), 'preparation barrier');
+    if (scenario === 'cancel-prepare' || scenario === 'cancel-browser' || scenario === 'cancel-attach') {
+      const barrier = scenario === 'cancel-prepare' ? 'fault.preparation-held' : scenario === 'cancel-browser' ? 'fault.browser-acquisition-held' : 'fault.attach-acquisition-held';
+      await waitUntil(async () => (await state(descriptor, runId)).events.some(event => event.type === barrier), 'preparation barrier');
       const removed = await control(descriptor, path, 'DELETE');
       assert.equal(removed.status, 200);
       assert.equal(removed.body.status, 'cancelled');
       assert.deepEqual(removed.body.resources, { activeSessionIds: [], breakpointPresent: false, cdpOpen: false });
-      assert.equal(removed.body.events.filter((event: RunView['events'][number]) => event.type === 'session.started').length, 0);
+      if (scenario === 'cancel-prepare') assert.equal(removed.body.events.filter((event: RunView['events'][number]) => event.type === 'session.started').length, 0);
       result.checks.cleanupDurationMs = removed.durationMs;
       result.passed = true;
       return result;
     }
     const prepared = await waitUntil(async () => { const current = await state(descriptor, runId); return ['ready', 'failed'].includes(current.status) ? current : undefined; }, 'prepared run', RUN_TIMEOUT_MS);
-    if (scenario === 'unbound') {
+    if (['missing-capability', 'missing-endpoint', 'ambiguous-target'].includes(scenario)) {
+      assert.equal(prepared.status, 'failed');
+      assert.match(prepared.failures.join('\n'), scenario === 'missing-capability' ? /Missing Cursor browser capability/ : scenario === 'missing-endpoint' ? /endpoint descriptor is missing/ : /Ambiguous fixture browser targets/);
+      assert.equal(prepared.events.filter(event => event.type === 'input.dispatched').length, 0);
+    } else if (scenario === 'unbound') {
       assert.equal(prepared.status, 'failed');
       assert.match(prepared.failures.join('\n'), /verified breakpoint/);
       assert.equal(prepared.events.filter(event => event.type === 'input.dispatched').length, 0);
     } else {
       assert.equal(prepared.status, 'ready', prepared.failures.join('\n'));
+      await nativeCheckpoint(prepared, 'before');
       const action = await control(descriptor, `${path}/actions`, 'POST', { key: 'one-cart-add' });
       result.checks.actionStatus = action.status;
       result.checks.actionDurationMs = action.durationMs;
@@ -105,6 +124,7 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
         assert.deepEqual(stopped.snapshot?.values, EXPECTED_VALUES);
         assert.ok(stopped.pause);
         assert.equal(stopped.operation?.completed, false);
+        await nativeCheckpoint(stopped, 'paused');
         if (scenario === 'hold') {
           const holdStartedMs = performance.now();
           await setTimeout(HOLD_DURATION_MS);
@@ -187,6 +207,7 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
             return result;
           }
           assert.equal(completed.status, 'completed', completed.failures.join('\n'));
+          await nativeCheckpoint(completed, 'after');
           assert.deepEqual(completed.observed, { cartCount: 1, completedClicks: 1 });
           assert.equal(completed.events.filter(event => event.type === 'input.dispatched').length, 1);
           assert.equal(completed.events.filter(event => event.type === 'continue.accepted').length, 1);
@@ -210,6 +231,10 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
             assert.equal(other.status, 'paused');
             await control(descriptor, path, 'DELETE');
             assert.equal((await state(descriptor, decoyId)).status, 'paused');
+            const decoyResume = await control(descriptor, `/runs/${decoyId}/continue`, 'POST', decoyPause);
+            assert.equal(decoyResume.status, 202);
+            const decoyCompleted = await waitUntil(async () => { const current = await state(descriptor, decoyId); return current.status === 'completed' ? current : undefined; }, 'decoy remains usable after primary cleanup');
+            assert.deepEqual(decoyCompleted.observed, { cartCount: 1, completedClicks: 1 });
             result.checks.decoyUnaffectedByContinueAndCleanup = true;
             await control(descriptor, `/runs/${decoyId}`, 'DELETE');
           }
@@ -231,6 +256,7 @@ async function exercise(descriptor: Descriptor, scenario: Scenario, ownedRunIds:
         const manifest = JSON.parse(await readFile(join(cleaned.body.artifactDirectory, 'manifest.json'), 'utf8'));
         assert.deepEqual(manifest.captures, cleaned.body.captures);
         assert.equal(manifest.cleaned, true);
+        assert.ok(cleaned.body.events.some((event: RunView['events'][number]) => event.type === 'browser.cleanup-verified'));
       } catch (error) {
         result.passed = false;
         result.checks.ownedResourcesReleased = false;
@@ -262,30 +288,46 @@ async function awaitMain(): Promise<void> {
   const results: ScenarioResult[] = [];
   let descriptor: Descriptor | undefined;
   let child: ChildProcess | undefined;
+  let debugOrigin: string | undefined;
+  let processExited: Promise<void> | undefined;
   const ownedRunIds: string[] = [];
   try {
     await new Promise<void>(resolveListening => server.listen(0, '127.0.0.1', resolveListening));
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('No fixture address');
-    const codePath = process.env.CODEBOOK_VSCODE_CLI ?? '/opt/homebrew/bin/code';
+    const applicationRoot = hostId === 'cursor' ? '/Applications/Cursor.app/Contents' : '/Applications/Visual Studio Code.app/Contents';
+    const codePath = process.env.CODEBOOK_VSCODE_CLI ?? (hostId === 'cursor' ? join(applicationRoot, 'Resources/app/bin/cursor') : '/opt/homebrew/bin/code');
     const vscodeVersion = execFileSync(codePath, ['--version'], { encoding: 'utf8' }).trim().split('\n');
+    const product = JSON.parse(await readFile(join(applicationRoot, 'Resources/app/product.json'), 'utf8'));
+    const host: HostConfiguration = { id: hostId, productVersion: product.version, apiVersion: product.vscodeVersion ?? product.version, commit: product.commit, endpointPath: hostId === 'cursor' ? join(suiteDirectory, 'debug-endpoint.json') : undefined };
     const compiledFiles = (await readdir(join(packageRoot, 'dist'), { recursive: true })).filter(file => file.endsWith('.js')).sort();
     const compiledHashes = await Promise.all(compiledFiles.map(async file => `${file}:${sha256(await readFile(join(packageRoot, 'dist', file)))}`));
     const sourceFiles = [...(await readdir(join(packageRoot, 'src'), { recursive: true })).filter(file => file.endsWith('.ts')).map(file => `src/${file}`), 'fixture/cart.ts', 'fixture/index.html', 'fixture/tsconfig.json', 'tsconfig.json', 'package.json', 'pnpm-lock.yaml'].sort();
     const sourceHashes = await Promise.all(sourceFiles.map(async file => `${file}:${sha256(await readFile(join(packageRoot, file)))}`));
-    const config: HarnessConfig = { artifactRoot, templateRoot: packageRoot, descriptorPath, fixtureOrigin: `http://127.0.0.1:${address.port}`, revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim(), workingTreeDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim()), sourceHash: sha256(sourceHashes.join('\n')), extensionHash: sha256(compiledHashes.join('\n')), vscodeCommit: vscodeVersion[1]! };
+    const config: HarnessConfig = { artifactRoot, templateRoot: packageRoot, descriptorPath, fixtureOrigin: `http://127.0.0.1:${address.port}`, revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim(), workingTreeDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim()), sourceHash: sha256(sourceHashes.join('\n')), extensionHash: sha256(compiledHashes.join('\n')), host };
     await writeFile(join(workspace, 'harness.json'), JSON.stringify(config, null, 2));
-    await writeFile(join(suiteDirectory, 'environment.json'), JSON.stringify({ vscodeVersion, node: process.version, revision: config.revision, workingTreeDirty: config.workingTreeDirty, sourceHash: config.sourceHash, sourceHashes, extensionHash: config.extensionHash, compiledHashes, scenarios }, null, 2));
+    await writeFile(join(suiteDirectory, 'environment.json'), JSON.stringify({ host, vscodeVersion, node: process.version, revision: config.revision, workingTreeDirty: config.workingTreeDirty, sourceHash: config.sourceHash, sourceHashes, extensionHash: config.extensionHash, compiledHashes, scenarios }, null, 2));
     const log = await import('node:fs');
-    const output = log.openSync(join(suiteDirectory, 'vscode.log'), 'w');
+    const outputPath = join(suiteDirectory, 'editor.log');
+    const output = log.openSync(outputPath, 'w');
     // macOS Unix sockets reject long user-data paths; the evidence directory stays durable.
     const runtimeDirectory = await mkdtemp('/tmp/codebook-');
     await writeFile(join(suiteDirectory, 'runtime.json'), JSON.stringify({ runtimeDirectory }));
-    child = spawn(process.env.CODEBOOK_VSCODE_BINARY ?? '/Applications/Visual Studio Code.app/Contents/MacOS/Code', ['--new-window', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--user-data-dir', join(runtimeDirectory, 'profile'), '--extensions-dir', join(runtimeDirectory, 'extensions'), '--extensionDevelopmentPath', packageRoot, workspace], { env: { ...process.env, VSCODE_CLI: '1' }, stdio: ['ignore', output, output] });
+    child = spawn(process.env.CODEBOOK_VSCODE_BINARY ?? join(applicationRoot, 'MacOS', hostId === 'cursor' ? 'Cursor' : 'Code'), ['--new-window', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', ...(hostId === 'cursor' ? ['--remote-debugging-port=0', '--skip-onboarding'] : []), '--user-data-dir', join(runtimeDirectory, 'profile'), '--extensions-dir', join(runtimeDirectory, 'extensions'), '--extensionDevelopmentPath', packageRoot, workspace], { env: { ...process.env, VSCODE_CLI: '1' }, stdio: ['ignore', output, output] });
     log.closeSync(output);
     const launchAbort = new AbortController();
     child.once('error', error => launchAbort.abort(error));
     child.once('exit', (code, signal) => launchAbort.abort(new Error(`VS Code exited before the harness finished: ${code ?? signal}`)));
+    processExited = new Promise(resolveExit => { child!.once('exit', () => resolveExit()); child!.once('error', () => resolveExit()); });
+    if (host.endpointPath) {
+      // This freshly opened file receives only the owned process's stderr; never adopt a pre-existing endpoint.
+      const endpoint = await waitUntil(async () => {
+        const match = /DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[^\s]+)/.exec(await readFile(outputPath, 'utf8'));
+        return match?.[1] ? new URL(match[1]) : undefined;
+      }, 'owned Cursor Chromium endpoint', RUN_TIMEOUT_MS, launchAbort.signal);
+      debugOrigin = `http://127.0.0.1:${endpoint.port}`;
+      await writeFile(host.endpointPath, JSON.stringify({ port: Number(endpoint.port) }), { mode: 0o600 });
+    }
     descriptor = await waitUntil(async () => {
       try { return JSON.parse(await readFile(descriptorPath, 'utf8')) as Descriptor; } catch { return undefined; }
     }, 'extension HTTP descriptor', RUN_TIMEOUT_MS, launchAbort.signal);
@@ -297,7 +339,19 @@ async function awaitMain(): Promise<void> {
     server.closeAllConnections();
     server.close();
     child?.kill();
-    await writeFile(join(suiteDirectory, 'results.json'), JSON.stringify(results, null, 2));
-    console.log(`Evidence: ${join(suiteDirectory, 'results.json')}`);
+    try {
+      if (processExited) await awaitResponse(processExited, 'owned editor process exit');
+      if (debugOrigin) await waitUntil(async () => {
+        try { const response = await fetch(`${debugOrigin}/json/version`, { signal: AbortSignal.timeout(CONTROL_RESPONSE_LIMIT_MS) }); await response.body?.cancel(); return false; }
+        catch { return true; }
+      }, 'owned debugging endpoint closed', CONTROL_RESPONSE_LIMIT_MS);
+      await writeFile(join(suiteDirectory, 'teardown.json'), JSON.stringify({ ownedProcessExited: Boolean(child?.pid), debuggingEndpointClosed: debugOrigin ? true : null }));
+    } catch (error) {
+      process.exitCode = 1;
+      await writeFile(join(suiteDirectory, 'teardown.json'), JSON.stringify({ error: String(error) }));
+    } finally {
+      await writeFile(join(suiteDirectory, 'results.json'), JSON.stringify(results, null, 2));
+      console.log(`Evidence: ${join(suiteDirectory, 'results.json')}`);
+    }
   }
 }
