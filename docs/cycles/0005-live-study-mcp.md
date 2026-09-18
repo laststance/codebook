@@ -3,7 +3,7 @@
 Type: product-increment
 Status: closed
 Result: demonstrated (fixed demo integration only)
-Delivery: committed; GitHub synchronization follows the evidence commit
+Delivery: merged (fast-forward on main at `9ce3ddc`; issue #6 closed with evidence)
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/6
 Goal issue: https://github.com/laststance/codebook/issues/1

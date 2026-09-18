@@ -2,11 +2,11 @@
 
 Updated: 2026-09-19\
 Product stage: runtime mechanisms and extension-owned MCP demonstrated on fixed fixtures; learner UI not yet implemented\
-Active cycle: none during closure synchronization; next selected candidate is the learner-facing Study workspace\
+Active cycle: [0006 — Study workspace](docs/cycles/0006-study-workspace.md) — planning\
 Last cycle: [0005 — Live study through MCP](docs/cycles/0005-live-study-mcp.md) — closed, demonstrated on the declared demo\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: none\
-Last cycle issue: [#6](https://github.com/laststance/codebook/issues/6) — closure sync pending this evidence commit\
+Active cycle issue: [#7](https://github.com/laststance/codebook/issues/7) — open\
+Last cycle issue: [#6](https://github.com/laststance/codebook/issues/6) — closed with remote evidence `9ce3ddc`\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
@@ -42,7 +42,7 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Commit/push Cycle 0005 evidence and close issue #6 with immutable links, then open one learner-facing Study workspace cycle. Use the approved default layout to connect the same selected learning item with the app, exact source, explanation and durable personal understanding. Apply the bounded design/engineering reviews before implementation. User delegated continuous execution under D008; continue after synchronization without re-planning the whole product.
+Review and implement Cycle 0006. Use the approved default Study workspace to connect the same selected learning item with the app, exact source, explanation and durable personal understanding. Apply the bounded design/engineering reviews before implementation. Cycle 0005 evidence is verified on remote main and issue #6 is closed. User delegated continuous execution under D008; continue without re-planning the whole product.
 
 Final Cycle 0005 runners and owned editor processes have exited. Private profiles/logs stay outside Git; required sanitized evidence is copied under docs/cycles/evidence/0005 with raw/shared hashes. No CI, PR approval, VSIX, installed-product or publication claim. Full checkout, recording/replay, wiki/codemap/progress, all three layouts and real-repository support are the remaining product work; do not spend repeated cycles polishing the proven transport layer. Desktop-lock-dependent native visual checks remain unverified; do not bypass the lock or repeatedly retry it unchanged.
 
