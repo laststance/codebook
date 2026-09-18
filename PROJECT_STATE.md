@@ -2,7 +2,7 @@
 
 Updated: 2026-09-19\
 Product stage: synchronous and browser/server runtime mechanisms demonstrated; product MCP and learner UI not yet implemented\
-Active cycle: [0005 — Live study through MCP](docs/cycles/0005-live-study-mcp.md) — planning\
+Active cycle: [0005 — Live study through MCP](docs/cycles/0005-live-study-mcp.md) — implementing\
 Last cycle: [0004 — Correlate one browser-to-server request](docs/cycles/0004-async-request-boundary.md) — closed, demonstrated on the instrumented fixture\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [6](https://github.com/laststance/codebook/issues/6) — open\
@@ -40,7 +40,7 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Complete `/plan-devex-review` then `/plan-eng-review` of Cycle 0005. Its question is whether a real external MCP client can discover supported operations, control the proven runtime, retrieve bound source/evidence, attach a grounded explanation, and reconnect without repeating input. Review the lasting interface using `/plan-devex-review` and `/plan-eng-review`. Select its implementation only after that bounded contract is written. User delegated continuous execution under D008; do not stop after this experiment or re-plan the whole product.
+Implement Cycle 0005 after completed DX and engineering plan reviews. Its question is whether a real external MCP client can discover supported operations, control the proven runtime, retrieve bound source/evidence, attach a grounded explanation, and reconnect without repeating input. The selected contract includes runtime reuse, bounded authenticated MCP, explicit recovery and saved explanation references; implement E1 then connect and validate the external client. User delegated continuous execution under D008; do not stop after this experiment or re-plan the whole product.
 
 No owned final-matrix process remains. Private profiles/logs stay under ignored artifacts. No CI, PR approval, VSIX, installed-product or publication claim. Full checkout, recording/replay, wiki/codemap/progress, all three layouts and real-repository support are the remaining product work; do not spend repeated cycles polishing the proven transport layer.
 
