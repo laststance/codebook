@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { HTTP_BODY_LIMIT_BYTES, KEY_LENGTH_LIMIT, SCENARIOS, PARTICIPANTS } from './constants';
+import { HTTP_BODY_LIMIT_BYTES, KEY_LENGTH_LIMIT, SCENARIOS, PARTICIPANTS, ACTION_IDS } from './constants';
 import { PairedRun, type HarnessConfig } from './run';
 
 /** Reads only bounded JSON objects for fixed experiment operations; arbitrary expressions are never accepted. @example await readBody(request) */
@@ -58,7 +58,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       else if (request.method === 'POST' && match?.[2] === 'actions') {
         const body = await readBody(request);
         if (typeof body.key !== 'string' || !body.key || body.key.length > KEY_LENGTH_LIMIT) throw new Error('Expected bounded action key');
-        respond(response, 202, { operation: run.acceptAction(body.key) });
+        const actionId = body.action === undefined ? 'add-to-cart' : ACTION_IDS.find(action => action === body.action);
+        if (!actionId) throw new Error('Expected a declared fixture action');
+        respond(response, 202, { operation: run.acceptAction(body.key, actionId) });
       } else if (request.method === 'POST' && match?.[2] === 'continue') {
         const body = await readBody(request); const participant = PARTICIPANTS.find(name => name === body.participant);
         if (!participant || typeof body.sessionId !== 'string' || typeof body.threadId !== 'number' || !Number.isInteger(body.threadId) || typeof body.generation !== 'number' || !Number.isInteger(body.generation)) throw new Error('Expected exact participant/session/thread/generation');

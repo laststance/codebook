@@ -10,7 +10,7 @@ import type { PauseIdentity } from 'codebook-cycle-0001/dist/pauseGate';
 import { verifySource } from 'codebook-cycle-0001/dist/verifySource';
 import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { STACK_FRAME_LIMIT, type ParticipantName } from './constants';
-import type { CartResponse } from './networkEvidence';
+import type { CartResponse, OrderResponse } from './networkEvidence';
 import type { StudyItem } from './profiles';
 
 export interface ParticipantSnapshot {
@@ -21,7 +21,7 @@ export interface ParticipantSnapshot {
   capturePhase: StudyItem['capturePhase'];
   pause: PauseIdentity;
   frame: DebugProtocol.StackFrame;
-  values: CartResponse;
+  values: CartResponse | OrderResponse;
   evaluations: { expression: string; value: DebugProtocol.EvaluateResponse['body'] }[];
   source: ReturnType<typeof verifySource>;
 }
@@ -56,6 +56,16 @@ export async function inspectParticipant(name: ParticipantName, session: vscode.
   const cartCount = await evaluate(name === 'server' ? 'state.items.length' : 'result.cartCount', 'number');
   const admittedCount = await evaluate(name === 'server' ? 'admittedCount' : 'result.admittedCount', 'number');
   if (typeof operationId !== 'string' || typeof cartId !== 'string' || typeof productId !== 'string' || typeof price !== 'number' || typeof cartCount !== 'number' || typeof admittedCount !== 'number') throw new Error('Unexpected primitive value type');
+  let values: ParticipantSnapshot['values'] = { operationId, cartId, productId, price, cartCount, admittedCount };
+  // Order facts come from this stop's actual cart and order locals, never a prior cart snapshot.
+  if (item.action === 'checkout') {
+    const cartOperationId = await evaluate(name === 'server' ? 'state.lastOperationId' : 'result.cartOperationId', 'string');
+    const orderId = await evaluate(name === 'server' ? 'orderId' : 'result.orderId', 'string');
+    const total = await evaluate(name === 'server' ? 'total' : 'result.total', 'number');
+    const orderCount = await evaluate(name === 'server' ? 'state.orders.length' : 'result.orderCount', 'number');
+    if (typeof cartOperationId !== 'string' || typeof orderId !== 'string' || typeof total !== 'number' || typeof orderCount !== 'number') throw new Error('Unexpected captured order value type');
+    values = { ...values, cartOperationId, orderId, total, orderCount };
+  }
   const location = paused.callFrames[0]?.location;
   if (!location) throw new Error('Missing participant CDP call frame');
   const executed = await cdp.request('Debugger.getScriptSource', { scriptId: location.scriptId });
@@ -65,5 +75,5 @@ export async function inspectParticipant(name: ParticipantName, session: vscode.
   const local = await readFile(seal.sourcePath, 'utf8');
   assertCurrent();
   const source = verifySource(seal, executed.scriptSource, local, location, frame.line, `../fixture/${name === 'server' ? 'server' : 'client'}.mts`);
-  return { id: `${pause.sessionId}:${pause.generation}`, participant: name, itemId: item.id, actionId: item.action, capturePhase: item.capturePhase, pause: { ...pause }, frame, values: { operationId, cartId, productId, price, cartCount, admittedCount }, evaluations, source };
+  return { id: `${pause.sessionId}:${pause.generation}`, participant: name, itemId: item.id, actionId: item.action, capturePhase: item.capturePhase, pause: { ...pause }, frame, values, evaluations, source };
 }

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { DebugProtocol } from '@vscode/debugprotocol';
 import type { Protocol } from 'devtools-protocol';
@@ -13,7 +14,7 @@ import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { settleCleanup } from 'codebook-cycle-0001/dist/utils/settleCleanup';
 import { isEndpointClosed } from 'codebook-cycle-0001/dist/utils/isEndpointClosed';
-import { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, RUN_TIMEOUT_MS, WATCHDOG_INTERVAL_MS, MAX_BODY_BYTES, MAX_NETWORK_BUFFER_BYTES, FAULT_DELAY_MS, RESUME_COMMANDS, PARTICIPANTS, REQUIRED_CAPTURE_PHASES, type ParticipantName, type Scenario } from './constants';
+import { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, WATCHDOG_INTERVAL_MS, MAX_BODY_BYTES, MAX_NETWORK_BUFFER_BYTES, FAULT_DELAY_MS, RESUME_COMMANDS, PARTICIPANTS, CART_LINK_IDS, COMPLETED_CART_COUNT, COMPLETED_ORDER_COUNT, type ActionId, type ProfileId, type StudyItemId, type ParticipantName, type Scenario } from './constants';
 import { VIEWPORT_WIDTH_PX, VIEWPORT_HEIGHT_PX, FOCUS_ATTEMPT_LIMIT, INJECTED_DELAY_MS } from 'codebook-cycle-0001/dist/constants';
 import { PauseBudget } from './pauseBudget';
 import { NetworkEvidence } from './networkEvidence';
@@ -22,7 +23,10 @@ import { sealFixture } from './utils/sealFixture';
 import { readBackendEndpoint, type BackendEndpoint } from './utils/readBackendEndpoint';
 import { backendProcesses } from './utils/backendProcesses';
 import type { BrowserViewportFactory } from 'codebook-cycle-0001/dist/browserViewport';
-import { STUDY_PROFILES } from './profiles';
+import { STUDY_PROFILES, type StudyItem, type StudyProfile } from './profiles';
+import { actionExpectations } from './utils/actionExpectations';
+import { stopExpectations } from './utils/stopExpectations';
+import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 
 export interface HarnessConfig {
   artifactRoot: string; templateRoot: string; descriptorPath: string;
@@ -31,6 +35,7 @@ export interface HarnessConfig {
   evidenceLimits?: EvidenceLimits;
   createViewport?: BrowserViewportFactory;
   prepareSource?: (path: string) => Promise<void>;
+  profile?: ProfileId;
 }
 interface Participant {
   gate: PauseGate; selected?: vscode.DebugSession; cdp?: Cdp; source?: SealedSource;
@@ -40,14 +45,19 @@ interface Participant {
 }
 interface Capture { status: 'pending' | 'captured' | 'failed'; file?: string; error?: string; renderer?: { epoch: string; id: number; hash: string } }
 interface CausalLink { id: string; status: 'unknown' | 'observed' | 'ambiguous' | 'mismatched'; evidence: string[] }
+interface Operation { id: string; key: string; actionId: ActionId; inputAcknowledged: boolean; completed: boolean }
 
 /** Owns two explicitly identified debug participants and one complete request set; the HTTP harness delegates bounded operations. @example const run = new PairedRun(config, 'normal'); await run.prepare() */
 export class PairedRun {
   readonly id = randomUUID();
   readonly evidence: Evidence;
-  readonly profile = STUDY_PROFILES['paired-cart-demo'];
+  readonly profile: StudyProfile;
   readonly sources = new Map<ParticipantSnapshot['itemId'], SealedSource>();
+  readonly breakpoints = new Map<StudyItemId, { breakpoint: vscode.SourceBreakpoint; binding?: vscode.DebugProtocolBreakpoint }>();
   readonly snapshots: ParticipantSnapshot[] = [];
+  readonly resumedSnapshots = new Set<string>();
+  readonly operations: Operation[] = [];
+  readonly networks = new Map<ActionId, NetworkEvidence>();
   readonly participants: Record<ParticipantName, Participant> = {
     server: { gate: new PauseGate(), expectedRequests: 0 }, browser: { gate: new PauseGate(), expectedRequests: 0 },
   };
@@ -56,13 +66,14 @@ export class PairedRun {
   readonly failures: string[] = [];
   readonly captures: Record<string, Capture> = {};
   readonly startedMs = performance.now();
-  readonly budget = new PauseBudget(this.startedMs);
-  readonly links: CausalLink[] = ['intent-request', 'request-server', 'server-response', 'response-browser', 'browser-screen'].map(id => ({ id, status: 'unknown', evidence: [] }));
+  budget = new PauseBudget(this.startedMs);
+  readonly links: CausalLink[];
+  manifest?: { hash: string; profile: StudyProfile; expectations: ReturnType<typeof actionExpectations>[]; sources: { itemId: StudyItemId; typescriptHash: string; javascriptHash: string; sourceMapHash: string; line: number }[] };
   status = 'preparing';
-  operation?: { id: string; key: string; inputAcknowledged: boolean };
+  operation?: Operation;
   endpoint?: BackendEndpoint;
   network?: NetworkEvidence;
-  observed?: { cartCount: number; completedClicks: number };
+  observed?: { cartCount: number; completedClicks: number; orderId?: string; total?: number; status?: string; completedCheckouts?: number };
   private browser?: HostBrowser;
   private readonly abort = new AbortController();
   private readonly activities = new Set<Promise<void>>();
@@ -77,11 +88,16 @@ export class PairedRun {
   private readonly watchdog: ReturnType<typeof setInterval>;
 
   constructor(readonly config: HarnessConfig, readonly scenario: Scenario) {
+    this.profile = STUDY_PROFILES[config.profile ?? 'paired-cart-demo'];
+    this.links = this.profile.requiredLinks.map(id => ({ id, status: 'unknown', evidence: [] }));
     this.evidence = new Evidence(join(config.artifactRoot, this.id), config.evidenceLimits);
     this.watchdog = setInterval(() => {
       if (this.cleaning || ['failed', 'completed'].includes(this.status)) return;
       const now = performance.now();
-      if (now - this.startedMs > RUN_TIMEOUT_MS || this.budget.activeMs(now) > ACTIVE_TIMEOUT_MS) this.fail('Application progress deadline exceeded; no request retry or automatic continuation');
+      // A checkout learner may read between actions; only real pauses exclude time during an action.
+      const checkingActiveTime = this.profile.limits.activeBudget === 'whole-run' || this.status !== 'ready';
+      const activeLimit = this.status === 'preparing' ? this.profile.limits.setupTimeoutMs : this.profile.limits.activeTimeoutMs;
+      if (now - this.startedMs > this.profile.limits.runTimeoutMs || checkingActiveTime && this.budget.activeMs(now) > activeLimit) this.fail('Application progress deadline exceeded; no request retry or automatic continuation');
     }, WATCHDOG_INTERVAL_MS);
   }
 
@@ -117,20 +133,28 @@ export class PairedRun {
   /** Acquires sealed sources, Node, selected proxies and managed browser in dependency order. @example await this.prepareOwned() */
   private async prepareOwned(): Promise<void> {
     await this.evidence.initialize();
-    this.evidence.record('run.created', { runId: this.id, scenario: this.scenario, expectedRequests: 2, expectedLinks: this.links.map(link => link.id) });
+    this.evidence.record('run.created', { runId: this.id, profile: this.profile.id, scenario: this.scenario, expectedRequestsPerAction: 2, expectedLinks: this.links.map(link => link.id) });
     const sources = await sealFixture(this.config.templateRoot, this.evidence.directory, this.id, this.scenario, this.profile.id);
     for (const [itemId, source] of sources) this.sources.set(itemId, source);
-    for (const name of PARTICIPANTS) {
-      const item = this.profile.items.find(item => item.participant === name)!;
+    const revealedSources = new Set<string>();
+    for (const item of this.profile.items) {
+      const name = item.participant;
       const source = this.sources.get(item.id)!;
-      const participant = this.participants[name]; participant.source = source;
-      participant.breakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source.sourcePath), new vscode.Position(source.breakpointLine - 1, 0)), true, name === 'server' ? "tuple.cartId === 'selected'" : undefined);
-      vscode.debug.addBreakpoints([participant.breakpoint]);
+      const participant = this.participants[name]; participant.source ??= source;
+      const breakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source.sourcePath), new vscode.Position(source.breakpointLine - 1, 0)), true, name === 'server' ? "tuple.cartId === 'selected'" : undefined);
+      this.breakpoints.set(item.id, { breakpoint }); participant.breakpoint ??= breakpoint;
+      vscode.debug.addBreakpoints([breakpoint]);
       this.evidence.record('breakpoint.requested', { participant: name, itemId: item.id, source: source.sourcePath, line: source.breakpointLine });
+      if (revealedSources.has(source.sourcePath)) continue;
+      revealedSources.add(source.sourcePath);
       // Keep both debugger source reveals outside the owned browser group, as in the synchronous coordinator.
       if (this.config.prepareSource) await this.config.prepareSource(source.sourcePath);
       else await vscode.window.showTextDocument(vscode.Uri.file(source.sourcePath), { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true });
     }
+    const frozen = { profile: this.profile, expectations: this.profile.actions.map(action => actionExpectations(this.id, action.id)), sources: [...this.sources].map(([itemId, source]) => ({ itemId, typescriptHash: sha256(source.source), javascriptHash: sha256(source.javascript), sourceMapHash: sha256(source.sourceMap), line: source.breakpointLine })) };
+    this.manifest = { ...frozen, hash: sha256(JSON.stringify(frozen)) };
+    await this.evidence.save('scenario-manifest.json', this.manifest);
+    this.evidence.record('scenario.frozen', { hash: this.manifest.hash, profile: this.profile.id });
     await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
     this.assertAlive();
     this.nodeLaunch = Promise.resolve(vscode.debug.startDebugging(undefined, {
@@ -160,8 +184,12 @@ export class PairedRun {
     for (const name of PARTICIPANTS) {
       const participant = this.participants[name];
       this.evidence.record('target.loaded-sources', { participant: name, sources: await awaitResponse(participant.selected!.customRequest('loadedSources'), 'participant loaded sources', this.abort.signal) });
-      participant.binding = await waitUntil(async () => { const binding = await awaitResponse(participant.selected!.getDebugProtocolBreakpoint(participant.breakpoint!), 'participant breakpoint binding', this.abort.signal); return binding && 'verified' in binding && binding.verified ? binding : undefined; }, `${name} source breakpoint binding`, ACTIVE_TIMEOUT_MS, this.abort.signal);
-      this.evidence.record('breakpoint.bound', { participant: name, binding: participant.binding });
+      for (const item of this.profile.items.filter(item => item.participant === name)) {
+        const owned = this.breakpoints.get(item.id)!;
+        owned.binding = await waitUntil(async () => { const binding = await awaitResponse(participant.selected!.getDebugProtocolBreakpoint(owned.breakpoint), 'participant breakpoint binding', this.abort.signal); return binding && 'verified' in binding && binding.verified ? binding : undefined; }, `${item.id} source breakpoint binding`, ACTIVE_TIMEOUT_MS, this.abort.signal);
+        participant.binding ??= owned.binding;
+        this.evidence.record('breakpoint.bound', { participant: name, itemId: item.id, binding: owned.binding });
+      }
     }
     await this.observeNetwork();
     await this.browser.reveal(this.abort.signal);
@@ -210,13 +238,23 @@ export class PairedRun {
   private async observeNetwork(): Promise<void> {
     const cdp = this.requireCdp('browser');
     const prefix = `${this.endpoint!.origin}/runs/${this.id}/`;
-    const network = this.network = new NetworkEvidence(this.id, `${prefix}api/cart`, `${prefix}client.mjs`);
-    cdp.on('Network.requestWillBeSent', event => { const sequence = this.evidence.record('network.request', event).sequence; network.request(event, sequence); this.networkChanged(); });
-    cdp.on('Network.responseReceived', event => { this.evidence.record('network.response', event); network.response(event); this.networkChanged(); });
-    cdp.on('Network.loadingFailed', event => { if (network.requests.has(event.requestId)) { network.errors.push(`Network loadingFailed: ${event.errorText}`); this.networkChanged(); } });
+    for (const action of this.profile.actions) this.networks.set(action.id, new NetworkEvidence(this.id, `${prefix}${action.route}`, `${prefix}client.mjs`, action.id));
+    this.network = this.networks.get('add-to-cart');
+    cdp.on('Network.requestWillBeSent', event => {
+      const sequence = this.evidence.record('network.request', event).sequence;
+      // Keep completed observers attached so an earlier action's late duplicate still invalidates the run.
+      for (const [actionId, network] of this.networks) {
+        network.request(event, sequence);
+        if (network.requests.has(event.requestId) && !this.operations.some(operation => operation.actionId === actionId)) network.errors.push('Request preceded its accepted action');
+      }
+      this.networkChanged();
+    });
+    cdp.on('Network.responseReceived', event => { this.evidence.record('network.response', event); for (const network of this.networks.values()) network.response(event); this.networkChanged(); });
+    cdp.on('Network.loadingFailed', event => { for (const network of this.networks.values()) if (network.requests.has(event.requestId)) network.errors.push(`Network loadingFailed: ${event.errorText}`); this.networkChanged(); });
     cdp.on('Network.loadingFinished', event => {
       const sequence = this.evidence.record('network.finished', event).sequence;
-      if (!network.finished(event.requestId, sequence)) return;
+      const network = [...this.networks.values()].find(network => network.finished(event.requestId, sequence));
+      if (!network) return;
       this.track((async () => {
         const result = await cdp.request('Network.getResponseBody', { requestId: event.requestId });
         if (this.cleaning) return;
@@ -231,33 +269,46 @@ export class PairedRun {
 
   /** Re-evaluates all retained observations without starting a wall-clock application waiter. @example this.networkChanged() */
   private networkChanged(): void {
-    this.network?.settled();
-    if (this.network?.errors.length) {
+    const observers = this.networks.size ? [...this.networks.values()] : this.network ? [this.network] : [];
+    for (const network of observers) network.settled();
+    const errors = observers.flatMap(network => network.errors);
+    if (errors.length) {
       // Teardown can still receive queued observations before CDP closes; retain contradictions to a candidate outcome.
-      if (this.cleaning) { this.status = 'failed'; this.failures.push(...this.network.errors.filter(error => !this.failures.includes(error))); }
-      else this.fail(this.network.errors.join('; '));
+      if (this.cleaning) { this.status = 'failed'; this.failures.push(...errors.filter(error => !this.failures.includes(error))); }
+      else this.fail(errors.join('; '));
       return;
     }
     this.track(this.tryComplete());
   }
 
-  /** Accepts one idempotent input immediately; actual dispatch proceeds in an independent lane. @example run.acceptAction('one-click') */
-  acceptAction(key: string) {
-    if (this.operation?.key === key && !this.cleaning) return this.operation;
-    if (this.status !== 'ready' || this.operation) throw new Error('conflict: one action already active or run not ready');
-    this.operation = { id: randomUUID(), key, inputAcknowledged: false }; this.status = 'running';
-    this.evidence.record('action.accepted', this.operation); this.track(this.click()); return this.operation;
+  /** Replays an original receipt or accepts the next declared action before any await; dispatch never retries. @example run.acceptAction('order-once', 'checkout') */
+  acceptAction(key: string, actionId: ActionId = 'add-to-cart') {
+    const previous = this.operations.find(operation => operation.key === key);
+    if (previous) {
+      if (previous.actionId !== actionId) throw new Error('conflict: idempotency key belongs to another action');
+      return previous;
+    }
+    const nextAction = this.profile.actions[this.operations.filter(operation => operation.completed).length];
+    if (this.cleaning || this.status !== 'ready' || this.finalizing || this.operations.some(operation => operation.actionId === actionId) || nextAction?.id !== actionId) throw new Error(`conflict: expected ${nextAction?.id ?? 'no further action'} while ${this.status}`);
+    const operation: Operation = { id: randomUUID(), key, actionId, inputAcknowledged: false, completed: false };
+    this.operations.push(operation); this.operation = operation; this.network = this.networks.get(actionId); this.status = 'running';
+    if (this.profile.limits.activeBudget === 'per-action') this.budget = new PauseBudget(performance.now());
+    this.evidence.record('action.accepted', operation); this.track(this.click(operation)); return operation;
   }
 
   /** Dispatches one physical click through the owned page, never retries after a deadline. @example await this.click() */
-  private async click(): Promise<void> {
+  private async click(operation: Operation): Promise<void> {
     const cdp = this.requireCdp('browser');
-    const result = await cdp.request('Runtime.evaluate', { expression: 'JSON.stringify((()=>{const rect=document.querySelector("#add").getBoundingClientRect();return{x:rect.x+rect.width/2,y:rect.y+rect.height/2}})())', returnByValue: true });
+    const action = this.profile.actions.find(action => action.id === operation.actionId)!;
+    const result = await cdp.request('Runtime.evaluate', { expression: `JSON.stringify((()=>{const button=document.querySelector(${JSON.stringify(action.selector)});if(!button||button.disabled||button.hidden)throw new Error("Action unavailable");const rect=button.getBoundingClientRect();return{x:rect.x+rect.width/2,y:rect.y+rect.height/2}})())`, returnByValue: true });
+    if (result.exceptionDetails) throw new Error('Declared action is not available in the owned page');
     const coordinates: { x: number; y: number } = JSON.parse(result.result.value);
-    this.assertAlive(); this.evidence.record('input.dispatched', { operationId: this.operation!.id });
-    await cdp.request('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...coordinates }, RUN_TIMEOUT_MS);
-    await cdp.request('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...coordinates }, RUN_TIMEOUT_MS);
-    this.assertAlive(); this.operation!.inputAcknowledged = true; this.evidence.record('input.acknowledged');
+    this.assertAlive(); this.evidence.record('input.dispatched', { operationId: operation.id, actionId: operation.actionId });
+    await cdp.request('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...coordinates }, this.profile.limits.runTimeoutMs);
+    this.assertAlive();
+    await cdp.request('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...coordinates }, this.profile.limits.runTimeoutMs);
+    this.assertAlive(); operation.inputAcknowledged = true; this.evidence.record('input.acknowledged', { operationId: operation.id, actionId: operation.actionId });
+    this.track(this.tryComplete());
   }
 
   /** Detects competing DAP requests instead of attributing manual control to the agent. @example run.onRequest(session, request) */
@@ -282,15 +333,19 @@ export class PairedRun {
     const participant = this.participants[name];
     if (message.event === 'stopped') {
       const body: DebugProtocol.StoppedEvent['body'] = message.body;
-      if (!Number.isInteger(body.threadId) || participant.gate.generation > 0) { this.fail('Missing thread ID or unexpected additional stop'); return; }
+      const item = this.profile.items[this.snapshots.length];
+      const preceding = this.snapshots.at(-1);
+      if (!Number.isInteger(body.threadId) || !item || item.participant !== name || item.action !== this.operation?.actionId || this.operation.completed || PARTICIPANTS.some(name => this.participants[name].gate.phase !== 'running') || preceding && !this.resumedSnapshots.has(preceding.id)) { this.fail('Missing thread ID or unexpected additional stop'); return; }
+      participant.source = this.sources.get(item.id); participant.snapshot = undefined; participant.continued = undefined;
+      participant.breakpoint = this.breakpoints.get(item.id)?.breakpoint; participant.binding = this.breakpoints.get(item.id)?.binding;
       const pause = participant.gate.stop(session.id, body.threadId!);
       this.budget.stop(name, performance.now()); this.browser?.resumeViewport();
-      this.evidence.record('dap.stopped', { participant: name, ...pause, reason: body.reason });
+      this.evidence.record('dap.stopped', { participant: name, itemId: item.id, actionId: item.action, ...pause, reason: body.reason });
       if (this.status !== 'failed') this.status = `paused-${name}`;
-      this.track(this.inspect(name, pause)); this.track(this.capture(`paused-${name}`, name, pause));
+      this.track(this.inspect(name, pause, item)); this.track(this.capture(item.capturePhase, name, pause));
     } else if (message.event === 'continued') {
       if (participant.gate.generation && (!participant.continuation || participant.continuation.threadId !== message.body?.threadId || participant.continuation.generation !== participant.gate.generation)) { participant.gate.invalidate(true); this.fail('Continued event has no matching owned reservation'); }
-      else if (participant.continuation) participant.continued = participant.continuation;
+      else if (participant.continuation) { participant.continued = participant.continuation; if (participant.snapshot) this.resumedSnapshots.add(participant.snapshot.id); }
       participant.continuation = undefined; participant.gate.invalidate(); this.budget.resume(name, performance.now()); this.browser?.resumeViewport();
       this.evidence.record('dap.continued', { participant: name, identity: participant.continued });
       if (this.status !== 'failed' && this.operation) this.status = 'running';
@@ -305,19 +360,17 @@ export class PairedRun {
   }
 
   /** Captures fixed values/source around generation guards and commits only an unchanged pause. @example await this.inspect('server', pause) */
-  private async inspect(name: ParticipantName, pause: PauseIdentity): Promise<void> {
+  private async inspect(name: ParticipantName, pause: PauseIdentity, item: StudyItem): Promise<void> {
     const participant = this.participants[name];
     const assertCurrent = () => { this.assertAlive(); if (!participant.gate.matches(pause)) throw new Error('Pause invalidated during participant inspection'); };
     const stopped = await waitUntil(() => participant.stopped, 'paired CDP stop', CAPTURE_TIMEOUT_MS, this.abort.signal);
     assertCurrent();
-    const item = this.profile.items.find(item => item.participant === name)!;
     const snapshot = await inspectParticipant(name, participant.selected!, this.requireCdp(name), pause, stopped, participant.source!, assertCurrent, this.abort.signal, this.evidence, item);
     assertCurrent();
-    const expected = { operationId: this.id, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: name === 'server' ? 0 : 1, admittedCount: 2 };
-    if (JSON.stringify(snapshot.values) !== JSON.stringify(expected)) throw new Error('Paused identity or values differ from the frozen expectation');
-    await this.evidence.save(`${name}-snapshot.json`, snapshot); assertCurrent();
+    if (!isDeepStrictEqual(snapshot.values, stopExpectations(this.id, item))) throw new Error('Paused identity or values differ from the frozen expectation');
+    await this.evidence.save(`${item.artifactPrefix}-snapshot.json`, snapshot); assertCurrent();
     participant.snapshot = snapshot; this.snapshots.push(snapshot); this.evidence.record('snapshot.committed', { participant: name, itemId: item.id, snapshotId: snapshot.id });
-    await this.evidence.save(`${name}-explanation.md`, `# ${name} captured stop\n\nSnapshot ${snapshot.id}; source ${participant.source!.breakpointLine}.\n\nOperation ${snapshot.values.operationId} selected cart ${snapshot.values.cartId}, product ${snapshot.values.productId}, price ${snapshot.values.price}. Captured cart count ${snapshot.values.cartCount}; admitted requests ${snapshot.values.admittedCount}. ${name === 'server' ? 'The next statement mutates the selected server cart.' : 'The response has arrived; the next statement updates the displayed count.'}\n\nOnly this verified frame is described. Request correspondence remains pending until the complete network observation set is closed.\n`);
+    await this.evidence.save(`${item.artifactPrefix}-explanation.md`, `# ${item.title}: captured stop\n\nSnapshot ${snapshot.id}; source line ${participant.source!.breakpointLine}.\n\nCaptured facts:\n\n${JSON.stringify(snapshot.values, null, 2)}\n\n${item.overview}\n\nOnly this verified frame is described. Request correspondence remains pending until this action's complete network observation set is closed.\n`);
     await this.persist();
     if (name === 'server' && this.scenario === 'decoy') {
       // Force the native focus precondition; participant identity never comes from this focus.
@@ -348,25 +401,47 @@ export class PairedRun {
     catch (error) { this.fail(`Participant continuation failed: ${String(error)}`); throw error; }
   }
 
-  /** Attempts completion only after both actual continuations and the closed two-request set exist. @example await this.tryComplete() */
+  /** Closes one declared action only after its own stops, continuations, response set and visible result agree. @example await this.tryComplete() */
   private async tryComplete(): Promise<void> {
     if (this.cleaning || this.status === 'failed' || this.status === 'completed' || this.finalizing) return;
-    const server = this.participants.server, browser = this.participants.browser;
-    const network = this.network?.settled();
-    if (!network || !server.snapshot || !browser.snapshot || !server.continued || !browser.continued) return;
+    const operation = this.operation;
+    if (!operation || operation.completed || !operation.inputAcknowledged) return;
+    const observer = this.networks.get(operation.actionId), network = observer?.settled();
+    const server = this.snapshots.find(snapshot => snapshot.actionId === operation.actionId && snapshot.participant === 'server');
+    const browser = this.snapshots.find(snapshot => snapshot.actionId === operation.actionId && snapshot.participant === 'browser');
+    if (!network || !server || !browser || !this.resumedSnapshots.has(server.id) || !this.resumedSnapshots.has(browser.id)) return;
     this.finalizing = true;
     try {
-      if (JSON.stringify(browser.snapshot.values) !== JSON.stringify(network.selected.body)) throw new Error('Actual browser pause disagrees with the exact network response');
-      const result = await this.requireCdp('browser').request('Runtime.evaluate', { expression: 'JSON.stringify({cartCount:Number(document.querySelector("#count").textContent),completedClicks:Number(document.querySelector("#clicks").textContent)})', returnByValue: true });
-      this.assertAlive(); const observed: { cartCount: number; completedClicks: number } = JSON.parse(result.result.value);
-      if (observed.cartCount !== 1 || observed.completedClicks !== 1) throw new Error('Visible result differs from one completed cart click');
-      this.network!.closeSet(); this.observed = observed;
-      const screen = this.evidence.record('screen.observed', { sessionId: browser.selected!.id, snapshotId: browser.snapshot.id, observed });
-      const references = [[this.operation!.id, network.selected.requestId], [network.selected.requestId, server.snapshot.id], [server.snapshot.id, network.selected.bodyHash!], [network.selected.bodyHash!, browser.snapshot.id], [browser.snapshot.id, `event:${screen.sequence}`]];
-      this.links.forEach((link, index) => { link.status = 'observed'; link.evidence = references[index]!; });
+      if (!isDeepStrictEqual(browser.values, network.selected.body)) throw new Error('Actual browser pause disagrees with the exact network response');
+      const checkout = operation.actionId === 'checkout';
+      const expression = checkout
+        ? 'JSON.stringify({cartCount:Number(document.querySelector("#count").textContent),completedClicks:Number(document.querySelector("#clicks").textContent),orderId:document.querySelector("#order-id").textContent,total:Number(document.querySelector("#order-total").textContent),status:document.documentElement.dataset.orderStatus,completedCheckouts:Number(document.querySelector("#checkouts").textContent)})'
+        : 'JSON.stringify({cartCount:Number(document.querySelector("#count").textContent),completedClicks:Number(document.querySelector("#clicks").textContent)})';
+      const result = await this.requireCdp('browser').request('Runtime.evaluate', { expression, returnByValue: true });
+      this.assertAlive(); const observed: NonNullable<PairedRun['observed']> = JSON.parse(result.result.value);
+      if (observed.cartCount !== COMPLETED_CART_COUNT || observed.completedClicks !== COMPLETED_CART_COUNT) throw new Error('Visible result differs from one completed cart click');
+      if (checkout) {
+        const expectedOrder = observer!.expectation.selectedResponse;
+        if (!('orderId' in expectedOrder) || observed.orderId !== expectedOrder.orderId || observed.total !== expectedOrder.total || observed.status !== 'confirmed' || observed.completedCheckouts !== COMPLETED_ORDER_COUNT) throw new Error('Visible result differs from one completed purchase');
+        const cart = this.networks.get('add-to-cart');
+        const cartResult = cart?.settled()?.selected;
+        const cartSnapshot = this.snapshots.find(snapshot => snapshot.actionId === 'add-to-cart' && snapshot.participant === 'browser');
+        if (!cart?.closed || !cartResult || !cartSnapshot || !('cartOperationId' in network.selected.tuple) || network.selected.tuple.cartOperationId !== cartResult.tuple.operationId || !isDeepStrictEqual(cartResult.body, cartSnapshot.values)) throw new Error('Checkout has no verified preceding cart result');
+        const bridge = this.links.find(link => link.id === 'cart-result-checkout-input')!;
+        bridge.status = 'observed'; bridge.evidence = [cartSnapshot.id, cartResult.bodyHash!, network.selected.requestId];
+      }
+      observer!.closeSet(); this.observed = observed;
+      const screen = this.evidence.record('screen.observed', { actionId: operation.actionId, sessionId: browser.pause.sessionId, snapshotId: browser.id, observed });
+      const references = [[operation.id, network.selected.requestId], [network.selected.requestId, server.id], [server.id, network.selected.bodyHash!], [network.selected.bodyHash!, browser.id], [browser.id, `event:${screen.sequence}`]];
+      CART_LINK_IDS.forEach((id, index) => { const link = this.links.find(link => link.id === `${checkout ? 'checkout-' : ''}${id}`)!; link.status = 'observed'; link.evidence = references[index]!; });
       await this.browser?.reveal(this.abort.signal); this.assertAlive();
-      await this.capture('after'); this.assertAlive();
-      this.status = 'completed'; this.evidence.record('run.candidate-completed', { expectedSetClosed: true, observed }); await this.persist();
+      await this.capture(this.profile.actions.find(action => action.id === operation.actionId)!.afterCapture); this.assertAlive();
+      operation.completed = true;
+      const allCompleted = this.operations.length === this.profile.actions.length && this.operations.every(operation => operation.completed);
+      this.status = allCompleted ? 'completed' : 'ready';
+      this.evidence.record(allCompleted ? 'run.candidate-completed' : 'action.completed', { actionId: operation.actionId, expectedSetClosed: true, observed });
+      // Admission remains reserved by finalizing until this action's evidence reaches disk.
+      await this.persist();
     } finally { this.finalizing = false; }
   }
 
@@ -376,7 +451,7 @@ export class PairedRun {
     const assertCurrent = () => { this.assertAlive(); if (name && pause && !this.participants[name].gate.matches(pause)) throw new Error('Captured frame no longer belongs to its pause'); };
     this.evidence.record('capture.requested', { phase, pause });
     try {
-      const result = await this.requireCdp('browser').request('Page.captureScreenshot', { format: 'png' }, CAPTURE_TIMEOUT_MS, this.scenario === 'capture-timeout' && phase === 'paused-server' ? INJECTED_DELAY_MS : 0);
+      const result = await this.requireCdp('browser').request('Page.captureScreenshot', { format: 'png' }, CAPTURE_TIMEOUT_MS, this.scenario === 'capture-timeout' && phase === this.profile.items[0]!.capturePhase ? INJECTED_DELAY_MS : 0);
       assertCurrent(); await this.evidence.save(`${phase}.png`, Buffer.from(result.data, 'base64')); assertCurrent();
       capture.file = `${phase}.png`; this.evidence.record('capture.pixels-saved', { phase, pause, file: capture.file });
       await this.browser?.reveal(this.abort.signal); assertCurrent();
@@ -392,9 +467,10 @@ export class PairedRun {
   private describe(cleaned: boolean) {
     const participantView = (name: ParticipantName) => { const participant = this.participants[name]; return { sessionId: participant.selected?.id, pause: participant.gate.current, phase: participant.gate.phase, snapshot: participant.snapshot, continued: participant.continued, conflict: participant.gate.conflict }; };
     const runtimeOutcome = this.status === 'completed' && !this.failures.length ? 'demonstrated' : 'not-demonstrated';
-    const captureOutcome = REQUIRED_CAPTURE_PHASES.every(phase => this.captures[phase]?.status === 'captured' && this.captures[phase]?.file && this.captures[phase]?.renderer) ? 'demonstrated' : 'incomplete';
+    const captureOutcome = this.profile.capturePhases.every(phase => this.captures[phase]?.status === 'captured' && this.captures[phase]?.file && this.captures[phase]?.renderer) ? 'demonstrated' : 'incomplete';
     const finalOutcome = !cleaned ? 'pending-teardown' : runtimeOutcome !== 'demonstrated' ? 'not-demonstrated' : captureOutcome === 'demonstrated' ? 'demonstrated' : 'partial';
-    return { runId: this.id, scenario: this.scenario, status: this.status, cleaned, resourcesReleased: this.resourcesReleased, runtimeOutcome, captureOutcome, finalOutcome, participants: { server: participantView('server'), browser: participantView('browser') }, operation: this.operation, observed: this.observed, network: this.network && { requests: [...this.network.requests.values()], closed: this.network.closed, errors: this.network.errors }, links: this.links, captures: this.captures, failures: this.failures, events: this.evidence.events, artifactDirectory: this.evidence.directory, activeSessionIds: [...this.activeSessions], backend: this.endpoint };
+    const networkView = (network: NetworkEvidence) => ({ requests: [...network.requests.values()], closed: network.closed, errors: network.errors });
+    return { runId: this.id, profile: this.profile.id, manifest: this.manifest, scenario: this.scenario, status: this.status, cleaned, resourcesReleased: this.resourcesReleased, runtimeOutcome, captureOutcome, finalOutcome, participants: { server: participantView('server'), browser: participantView('browser') }, snapshots: this.snapshots, operations: this.operations, nextAction: this.status === 'ready' && !this.finalizing ? this.profile.actions[this.operations.filter(operation => operation.completed).length]?.id : undefined, operation: this.operation, observed: this.observed, network: this.network && networkView(this.network), networks: Object.fromEntries([...this.networks].map(([actionId, network]) => [actionId, networkView(network)])), links: this.links, captures: this.captures, failures: this.failures, events: this.evidence.events, artifactDirectory: this.evidence.directory, activeSessionIds: [...this.activeSessions], backend: this.endpoint };
   }
 
   /** Prevents incomplete or contradictory observations becoming a final success, including late extras after candidate completion. @example run.fail('ambiguous request') */
@@ -447,17 +523,22 @@ export class PairedRun {
       failures.push(...await settleCleanup([{ description: 'late-request fault observation', release: async () => {
         this.evidence.record('fault.late-request');
         await this.requireCdp('browser').request('Runtime.evaluate', { expression: 'void fetch("api/cart", {method:"POST", headers:{"content-type":"application/json","x-codebook-operation":document.documentElement.dataset.runId},body:JSON.stringify({cartId:"selected",productId:"tote-01",price:24})})' });
-        await waitUntil(() => this.network?.errors.some(error => error.includes('after the expected observation set closed')), 'late request invalidation', CAPTURE_TIMEOUT_MS);
+        await waitUntil(() => this.networks.get('add-to-cart')?.errors.some(error => error.includes('after the expected observation set closed')), 'late request invalidation', CAPTURE_TIMEOUT_MS);
       } }]));
     }
     failures.push(...await settleCleanup(PARTICIPANTS.flatMap(name => [
       { description: `${name} CDP close`, release: () => this.participants[name].cdp?.close() },
-      { description: `${name} breakpoint removal`, release: () => { const breakpoint = this.participants[name].breakpoint; if (breakpoint) vscode.debug.removeBreakpoints([breakpoint]); } },
+      { description: `${name} breakpoint removal`, release: () => {
+        const owned = this.profile.items.filter(item => item.participant === name).flatMap(item => { const entry = this.breakpoints.get(item.id); return entry ? [entry.breakpoint] : []; });
+        const latest = this.participants[name].breakpoint;
+        if (latest && !owned.includes(latest)) owned.push(latest);
+        if (owned.length) vscode.debug.removeBreakpoints(owned);
+      } },
     ])));
     failures.push(...await settleCleanup([...this.sessions.values()].filter(({ session }) => !session.parentSession && this.activeSessions.has(session.id)).map(({ session }) => ({ description: 'owned debug root stop', release: () => awaitResponse(vscode.debug.stopDebugging(session), 'owned root stop') }))));
     // Source display may still be acquiring a native tab; close tabs only after those accepted operations settle.
     failures.push(...await settleCleanup([{ description: 'owned source acquisitions', release: () => awaitResponse(Promise.allSettled([...this.sourceReveals]), 'owned source acquisitions') }]));
-    const sourcePaths = PARTICIPANTS.map(name => this.participants[name].source?.sourcePath);
+    const sourcePaths = [...this.sources.values()].map(source => source.sourcePath).concat(PARTICIPANTS.flatMap(name => this.participants[name].source ? [this.participants[name].source!.sourcePath] : []));
     failures.push(...await settleCleanup([{ description: 'owned source editors close', release: async () => {
       const sourceTabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputText && sourcePaths.includes(tab.input.uri.fsPath));
       // Resolve all tab handles in one host call; closing one tab can replace the remaining API objects.

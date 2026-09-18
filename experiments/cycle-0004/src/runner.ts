@@ -10,20 +10,24 @@ import { selectHost } from 'codebook-cycle-0001/dist/utils/selectHost';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { SCENARIOS, RUN_TIMEOUT_MS, HOLD_DURATION_MS, CONTROL_RESPONSE_LIMIT_MS, REQUIRED_CAPTURE_PHASES, type Scenario, type ParticipantName } from './constants';
+import { SCENARIOS, PROFILE_IDS, RUN_TIMEOUT_MS, CHECKOUT_RUN_TIMEOUT_MS, HOLD_DURATION_MS, CONTROL_RESPONSE_LIMIT_MS, REQUIRED_CAPTURE_PHASES, type Scenario, type ParticipantName } from './constants';
 import type { PairedRun, HarnessConfig } from './run';
 import { assertFinalScenario } from './utils/assertFinalScenario';
+import { STUDY_PROFILES } from './profiles';
 
 type RunView = ReturnType<PairedRun['view']>;
 interface Descriptor { origin: string; token: string }
 interface CaseResult { scenario: Scenario; runId?: string; passed: boolean; checks: Record<string, unknown>; final?: RunView; error?: string }
 const packageRoot = resolve(__dirname, '..'), repoRoot = resolve(packageRoot, '../..');
 const hostId = selectHost(process.env.CODEBOOK_HOST);
-const artifactRoot = join(repoRoot, 'artifacts/cycle-0004', hostId);
+const profileId = PROFILE_IDS.find(profile => profile === (process.env.CODEBOOK_PROFILE ?? 'paired-cart-demo'));
+if (!profileId) throw new Error('Unknown CODEBOOK_PROFILE');
+const artifactRoot = join(repoRoot, profileId === 'checkout-demo' ? 'artifacts/cycle-0007/runtime' : 'artifacts/cycle-0004', hostId);
 const suiteDirectory = join(artifactRoot, `suite-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}`);
 const tokens = new Map<string, string>();
 const requested = process.argv.slice(2);
 const scenarios = requested.length ? requested.map(argument => { const scenario = SCENARIOS.find(value => value === argument); if (!scenario) throw new Error(`Unknown scenario ${argument}`); return scenario; }) : ['normal'] satisfies Scenario[];
+if (profileId === 'checkout-demo' && scenarios.some(scenario => !['normal', 'hold', 'continue-race', 'capture-timeout', 'late-request'].includes(scenario))) throw new Error('Checkout runtime harness currently supports normal, hold, continue-race, capture-timeout and late-request');
 
 /** Measures an authenticated control call outside the extension without saving credentials in evidence. @example await control(descriptor, '/runs/id') */
 async function control(descriptor: Descriptor, path: string, method = 'GET', body?: unknown) {
@@ -39,6 +43,7 @@ async function state(descriptor: Descriptor, id: string): Promise<RunView> { ret
 
 /** Runs real-host assertions with safety-negative cases reported separately from demonstrated chains. @example await exercise(descriptor, 'normal') */
 async function exercise(descriptor: Descriptor, scenario: Scenario): Promise<CaseResult> {
+  if (profileId === 'checkout-demo') return exerciseCheckout(descriptor, scenario);
   const result: CaseResult = { scenario, passed: false, checks: {} };
   let id: string | undefined;
   let decoyId: string | undefined;
@@ -155,6 +160,86 @@ async function exercise(descriptor: Descriptor, scenario: Scenario): Promise<Cas
   return result;
 }
 
+/** Verifies four real stops across two actions without borrowing expected facts from runtime code. @example await exerciseCheckout(descriptor, 'normal') */
+async function exerciseCheckout(descriptor: Descriptor, scenario: Scenario): Promise<CaseResult> {
+  const result: CaseResult = { scenario, passed: false, checks: {} };
+  let runId: string | undefined;
+  try {
+    const created = await control(descriptor, '/runs', 'POST', { scenario }); assert.equal(created.status, 202);
+    const id: string = created.body.runId; runId = id; result.runId = id; console.log(`checkout/${scenario}: ${id}`);
+    const ready = await waitUntil(async () => { const current = await state(descriptor, id); return ['ready', 'failed'].includes(current.status) ? current : undefined; }, 'checkout ready', CHECKOUT_RUN_TIMEOUT_MS);
+    assert.equal(ready.status, 'ready', ready.failures.join('\n')); assert.equal(ready.profile, 'checkout-demo');
+    assert.equal(ready.events.filter(event => event.type === 'breakpoint.bound').length, 4); assert.ok(ready.manifest?.hash);
+    assert.equal((await control(descriptor, `/runs/${id}/actions`, 'POST', { key: 'too-soon', action: 'checkout' })).status, 409);
+    const profile = STUDY_PROFILES['checkout-demo'];
+    const oldPauses: Partial<Record<ParticipantName, NonNullable<RunView['participants']['server']['pause']>>> = {};
+    const retained = new Map<string, string>();
+    const receipts = new Map<string, string>();
+    const startedMs = performance.now();
+    for (const [index, item] of profile.items.entries()) {
+      if (item.participant === 'server') {
+        const available = await waitUntil(async () => { const current = await state(descriptor, id); return current.status === 'failed' || current.nextAction === item.action ? current : undefined; }, 'next declared action', CHECKOUT_RUN_TIMEOUT_MS);
+        assert.notEqual(available.status, 'failed', available.failures.join('\n'));
+        const action = await control(descriptor, `/runs/${id}/actions`, 'POST', { key: item.action, action: item.action });
+        assert.equal(action.status, 202, JSON.stringify(action.body)); assert.ok(action.durationMs < CONTROL_RESPONSE_LIMIT_MS);
+        receipts.set(item.action, action.body.operation.id);
+        const replay = await control(descriptor, `/runs/${id}/actions`, 'POST', { key: item.action, action: item.action }); assert.equal(replay.body.operation.id, action.body.operation.id);
+        assert.equal((await control(descriptor, `/runs/${id}/actions`, 'POST', { key: `${item.action}-other`, action: item.action })).status, 409);
+        assert.equal((await control(descriptor, `/runs/${id}/actions`, 'POST', { key: item.action, action: item.action === 'checkout' ? 'add-to-cart' : 'checkout' })).status, 409);
+      }
+      const stop = await waitUntil(async () => { const current = await state(descriptor, id); return current.status === 'failed' || current.snapshots.some(snapshot => snapshot.itemId === item.id) && current.captures[item.capturePhase]?.status !== 'pending' ? current : undefined; }, item.title, CHECKOUT_RUN_TIMEOUT_MS);
+      assert.notEqual(stop.status, 'failed', stop.failures.join('\n'));
+      const snapshot = stop.snapshots.find(snapshot => snapshot.itemId === item.id)!;
+      const pause = stop.participants[item.participant].pause; assert.ok(pause);
+      assert.deepEqual(snapshot.values, item.action === 'add-to-cart'
+        ? { operationId: id, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: item.participant === 'server' ? 0 : 1, admittedCount: 2 }
+        : { operationId: `${id}-checkout`, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 1, admittedCount: 2, cartOperationId: id, orderId: `order-${id}`, total: 24, orderCount: item.participant === 'server' ? 0 : 1 });
+      assert.equal(snapshot.pause.generation, index < 2 ? 1 : 2); assert.equal(snapshot.pause.sessionId, pause.sessionId);
+      assert.equal(snapshot.source.typescriptHash, stop.manifest?.sources.find(source => source.itemId === item.id)?.typescriptHash);
+      assert.equal(snapshot.source.javascriptHash, stop.manifest?.sources.find(source => source.itemId === item.id)?.javascriptHash);
+      if (index === 0) result.checks.firstSnapshotMs = performance.now() - startedMs;
+      const files = [`${item.artifactPrefix}-snapshot.json`, `${item.artifactPrefix}-executed.mjs`, ...(stop.captures[item.capturePhase]?.file ? [stop.captures[item.capturePhase]!.file!] : [])];
+      for (const file of files) retained.set(file, sha256(await readFile(join(stop.artifactDirectory, file))));
+      for (const [file, hash] of retained) assert.equal(sha256(await readFile(join(stop.artifactDirectory, file))), hash, `Prior observation changed: ${file}`);
+      if (index < 2) oldPauses[item.participant] = pause;
+      else assert.equal((await control(descriptor, `/runs/${id}/continue`, 'POST', { participant: item.participant, ...oldPauses[item.participant] })).status, 409);
+      if (scenario === 'hold' && item.id === 'checkout-demo/order-creation') {
+        const started = performance.now(); await delay(HOLD_DURATION_MS); const probe = await control(descriptor, `/runs/${id}`);
+        assert.deepEqual(probe.body.participants.server.pause, pause); assert.ok(probe.durationMs < CONTROL_RESPONSE_LIMIT_MS);
+        result.checks.orderHoldMs = performance.now() - started; result.checks.heldControlMs = probe.durationMs;
+      }
+      if (scenario === 'continue-race') {
+        const continued = await Promise.all([control(descriptor, `/runs/${id}/continue`, 'POST', { participant: item.participant, ...pause }), control(descriptor, `/runs/${id}/continue`, 'POST', { participant: item.participant, ...pause })]);
+        assert.deepEqual(continued.map(response => response.status).sort(), [202, 409]);
+      } else assert.equal((await control(descriptor, `/runs/${id}/continue`, 'POST', { participant: item.participant, ...pause })).status, 202);
+    }
+    const completed = await waitUntil(async () => { const current = await state(descriptor, id); return ['completed', 'failed'].includes(current.status) ? current : undefined; }, 'purchase confirmation', CHECKOUT_RUN_TIMEOUT_MS);
+    assert.equal(completed.status, 'completed', completed.failures.join('\n'));
+    assert.deepEqual(completed.observed, { cartCount: 1, completedClicks: 1, orderId: `order-${id}`, total: 24, status: 'confirmed', completedCheckouts: 1 });
+    assert.equal(completed.snapshots.length, 4); assert.equal(new Set(completed.snapshots.map(snapshot => snapshot.pause.sessionId)).size, 2);
+    assert.equal(completed.links.length, 11); assert.equal(completed.links.every(link => link.status === 'observed'), true);
+    assert.equal(completed.operations.length, 2); assert.equal(completed.events.filter(event => event.type === 'input.dispatched').length, 2);
+    for (const action of ['add-to-cart', 'checkout']) {
+      assert.equal(completed.networks[action]?.closed, true); assert.equal(completed.networks[action]?.requests.length, 2);
+      const replay = await control(descriptor, `/runs/${id}/actions`, 'POST', { key: action, action }); assert.equal(replay.status, 202); assert.equal(replay.body.operation.id, receipts.get(action));
+    }
+    for (const phase of profile.capturePhases) assert.equal(completed.captures[phase]?.status, scenario === 'capture-timeout' && phase === 'paused-cart-mutation' ? 'failed' : 'captured', phase);
+    result.checks = { ...result.checks, snapshotCount: 4, inputCount: 2, linkCount: 11, retainedFiles: Object.fromEntries(retained), totalMs: performance.now() - startedMs, nativePresentationVerified: false };
+    result.passed = true;
+  } catch (error) { result.error = String(error); console.error(`checkout/${scenario}: ${result.error}`); }
+  finally {
+    if (runId) {
+      try {
+        const removed = await control(descriptor, `/runs/${runId}`, 'DELETE'); result.final = removed.body;
+        assert.equal(removed.status, 200); assert.equal(removed.body.cleaned, true); assert.equal(removed.body.resourcesReleased, true); assert.deepEqual(removed.body.activeSessionIds, []);
+        assert.equal(removed.body.finalOutcome, scenario === 'late-request' ? 'not-demonstrated' : scenario === 'capture-timeout' ? 'partial' : 'demonstrated', removed.body.failures.join('\n'));
+        if (scenario === 'late-request') assert.match(removed.body.failures.join('\n'), /after the expected observation set closed/);
+      } catch (error) { result.passed = false; result.error = `${result.error ?? ''}\nCleanup: ${String(error)}`; }
+    }
+  }
+  return result;
+}
+
 /** Starts one isolated development editor per matrix and always records process teardown. @example node dist/runner.js normal hold */
 async function main(): Promise<void> {
   const workspace = join(suiteDirectory, 'workspace'); await mkdir(join(workspace, '.vscode'), { recursive: true });
@@ -170,7 +255,7 @@ async function main(): Promise<void> {
       const files = ['package.json', 'pnpm-lock.yaml', 'tsconfig.json', ...(await readdir(join(root, 'src'), { recursive: true })).filter(file => file.endsWith('.ts')).map(file => `src/${file}`), ...(await readdir(join(root, 'fixture'), { recursive: true })).map(file => `fixture/${file}`)].sort();
       for (const file of files) sourceHashes.push(`${name}/${file}:${sha256(await readFile(join(root, file)))}`);
     }
-    const configuration: HarnessConfig = { artifactRoot, templateRoot: packageRoot, descriptorPath: join(suiteDirectory, 'connection.json'), nodeExecutable: process.execPath,
+    const configuration: HarnessConfig = { artifactRoot, templateRoot: packageRoot, descriptorPath: join(suiteDirectory, 'connection.json'), nodeExecutable: process.execPath, profile: profileId,
       revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), dirty: Boolean(execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim()), sourceHash: sha256(sourceHashes.join('\n')),
       host: { ...installation.host, browserBackend: 'managed', chrome: { binary: chromeBinary, version: execFileSync(chromeBinary, ['--version'], { encoding: 'utf8' }).trim() } } };
     await writeFile(join(workspace, 'paired-harness.json'), JSON.stringify(configuration));

@@ -8,10 +8,13 @@ import { runInNewContext } from 'node:vm';
 import type * as RunModule from '../run';
 import type { PauseIdentity } from 'codebook-cycle-0001/dist/pauseGate';
 import type { ParticipantSnapshot } from '../inspectParticipant';
+import type { inspectParticipant } from '../inspectParticipant';
+import type { ProfileId } from '../constants';
+import { NetworkEvidence } from '../networkEvidence';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 
 /** Loads the actual paired coordinator with only native VS Code replaced for lifecycle tests. @example const { run, directory } = await harness() */
-async function harness() {
+async function harness(profile?: ProfileId, inspector?: typeof inspectParticipant) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-paired-lifecycle-'));
   const filename = join(__dirname, '../run.js'), nativeRequire = createRequire(filename);
   const exports: Partial<typeof RunModule> = {};
@@ -19,12 +22,12 @@ async function harness() {
   class SourceInput { constructor(readonly uri: { fsPath: string }) {} }
   const sourceTabs: { input: SourceInput }[] = [];
   const tabGroups = { all: [{ tabs: sourceTabs }], close: async (tabs: typeof sourceTabs) => { for (const tab of tabs) sourceTabs.splice(sourceTabs.indexOf(tab), 1); return true; } };
-  runInNewContext(await readFile(filename, 'utf8'), { exports, AbortController, performance, process, setInterval, clearInterval,
+  runInNewContext(await readFile(filename, 'utf8'), { exports, AbortController, Buffer, performance, process, setInterval, clearInterval,
     require: (name: string) => name === 'vscode' ? { version: 'test', extensions: { getExtension: () => undefined }, debug: nativeDebug, TabInputText: SourceInput, window: { tabGroups } }
-      : name === 'codebook-cycle-0001/dist/hostBrowser' ? {} : nativeRequire(name),
+      : name === 'codebook-cycle-0001/dist/hostBrowser' ? {} : name === './inspectParticipant' && inspector ? { inspectParticipant: inspector } : nativeRequire(name),
   }, { filename });
   assert.ok(exports.PairedRun);
-  const run = new exports.PairedRun({ artifactRoot: directory, templateRoot: directory, descriptorPath: '', revision: 'test', dirty: true, sourceHash: 'test', nodeExecutable: '/node', host: { id: 'vscode', productVersion: 'test', apiVersion: 'test', commit: 'test' } }, 'normal');
+  const run = new exports.PairedRun({ artifactRoot: directory, templateRoot: directory, descriptorPath: '', profile, revision: 'test', dirty: true, sourceHash: 'test', nodeExecutable: '/node', host: { id: 'vscode', productVersion: 'test', apiVersion: 'test', commit: 'test' } }, 'normal');
   return { run, directory, nativeDebug, sourceTabs, SourceInput };
 }
 
@@ -190,4 +193,89 @@ test('an earlier evidence write failure blocks the final manifest before success
     assert.equal(writes, 0); assert.equal(run.view().cleaned, false); assert.equal(run.view().resourcesReleased, true); assert.equal(run.view().status, 'failed');
     assert.match(run.view().failures.join('\n'), /Final evidence persistence failed/);
   } finally { run.evidence.failure = undefined; await run.cleanup(); await rm(directory, { recursive: true }); }
+});
+
+/** Feeds independent hard-coded response facts to the real network reducer during coordinator tests. @example feedNetwork(network, 'selected', facts) */
+function feedNetwork(network: NetworkEvidence, requestId: string, facts: ParticipantSnapshot['values']): void {
+  network.request({ requestId, loaderId: 'page', documentURL: network.url, timestamp: 1, wallTime: 1, redirectHasExtraInfo: false,
+    initiator: { type: 'script', stack: { callFrames: [{ functionName: 'request', scriptId: 'client', url: network.clientUrl, lineNumber: 1, columnNumber: 1 }] } },
+    request: { url: network.url, method: 'POST', headers: { 'x-codebook-operation': facts.operationId }, postData: JSON.stringify(facts), initialPriority: 'High', referrerPolicy: 'no-referrer' } }, 1);
+  network.response({ requestId, loaderId: 'page', timestamp: 2, type: 'Fetch', hasExtraInfo: false, response: { url: network.url, status: 200, statusText: 'OK', headers: {}, mimeType: 'application/json', charset: 'utf-8', connectionReused: false, connectionId: 1, encodedDataLength: 100, securityState: 'neutral' } });
+  network.finished(requestId, 3); network.body(requestId, { body: JSON.stringify(facts), base64Encoded: false });
+}
+
+test('checkout keeps four observations in one session pair and never redispatches a retained action key', async () => {
+  // Arrange: real coordinator/reducer/writer; only editor, CDP and inspector effects are synthetic.
+  let runtimeId = '';
+  const { run, directory } = await harness('checkout-demo', async (name, _session, _cdp, pause, _paused, _seal, check, _signal, _evidence, item) => {
+    check();
+    const values: ParticipantSnapshot['values'] = item.action === 'add-to-cart'
+      ? { operationId: runtimeId, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: name === 'server' ? 0 : 1, admittedCount: 2 }
+      : { operationId: `${runtimeId}-checkout`, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 1, admittedCount: 2, cartOperationId: runtimeId, orderId: `order-${runtimeId}`, total: 24, orderCount: name === 'server' ? 0 : 1 };
+    return { ...snapshot(pause), id: `${pause.sessionId}:${pause.generation}`, participant: name, itemId: item.id, actionId: item.action, capturePhase: item.capturePhase, values };
+  });
+  runtimeId = run.id;
+  const inputs: string[] = [];
+  const cdp = { close() {}, async request(method: string, parameters?: { expression?: string; type?: string }) {
+    if (method === 'Input.dispatchMouseEvent') { inputs.push(parameters?.type ?? ''); return {}; }
+    if (method === 'Page.captureScreenshot') return { data: Buffer.from('synthetic png bytes').toString('base64') };
+    if (parameters?.expression?.includes('getBoundingClientRect')) return { result: { value: '{"x":10,"y":10}' } };
+    return { result: { value: JSON.stringify(run.operation?.actionId === 'checkout' ? { cartCount: 1, completedClicks: 1, orderId: `order-${run.id}`, total: 24, status: 'confirmed', completedCheckouts: 1 } : { cartCount: 1, completedClicks: 1 }) } };
+  } };
+  Reflect.set(run, 'browser', { resumeViewport() {}, async reveal() {}, async drainAcquisitions() {}, async close() {}, async presentCapture() { return { epoch: 'test', id: 1, hash: 'test' }; } });
+  for (const name of ['server', 'browser'] as const) {
+    const session = { id: `${name}-session`, name, type: 'test', configuration: { name, type: 'test', request: 'launch' }, workspaceFolder: undefined,
+      async customRequest(command: string, arguments_: { threadId: number }) { run.onRequest(session, { seq: 1, type: 'request', command }); run.onEvent(session, { seq: 2, type: 'event', event: 'continued', body: arguments_ }); }, getDebugProtocolBreakpoint: async () => undefined };
+    run.participants[name].selected = session; Reflect.set(run.participants[name], 'cdp', cdp);
+  }
+  for (const item of run.profile.items) run.sources.set(item.id, { sourcePath: join(directory, item.file), source: '', javascript: '', sourceMap: '', breakpointLine: 1 });
+  for (const action of run.profile.actions) run.networks.set(action.id, new NetworkEvidence(run.id, `http://localhost/${action.route}`, 'http://localhost/client.mjs', action.id));
+  run.status = 'ready';
+  const cartResponse = { operationId: run.id, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 1, admittedCount: 2 };
+  const backgroundCart = { operationId: `${run.id}-background`, cartId: 'background', productId: 'background-02', price: 99, cartCount: 1, admittedCount: 2 };
+  try {
+    // Act / Assert: out-of-order input and key conflicts never reach CDP.
+    assert.throws(() => run.acceptAction('early', 'checkout'), /expected add-to-cart/); assert.equal(inputs.length, 0);
+    const first = run.acceptAction('cart-key'); assert.equal(run.acceptAction('cart-key').id, first.id);
+    assert.throws(() => run.acceptAction('cart-key', 'checkout'), /idempotency key/);
+    assert.throws(() => run.acceptAction('another-cart-key'), /conflict/);
+    await waitUntil(() => first.inputAcknowledged, 'first input acknowledged', 1_000);
+    feedNetwork(run.networks.get('add-to-cart')!, 'cart-selected', cartResponse); feedNetwork(run.networks.get('add-to-cart')!, 'cart-background', backgroundCart);
+    const oldPauses: Partial<Record<'server' | 'browser', PauseIdentity>> = {};
+    let firstSnapshotBytes = '';
+    for (const [index, item] of run.profile.items.entries()) {
+      if (index === 2) {
+        await waitUntil(() => run.view().nextAction === 'checkout', 'second action admission', 1_000);
+        firstSnapshotBytes = await readFile(join(run.evidence.directory, 'cart-mutation-snapshot.json'), 'utf8');
+        assert.equal(run.acceptAction('cart-key').id, first.id);
+        assert.throws(() => run.acceptAction('different-cart-key'), /conflict/);
+        const second = run.acceptAction('order-key', 'checkout'); assert.equal(run.acceptAction('order-key', 'checkout').id, second.id);
+        await waitUntil(() => second.inputAcknowledged, 'second input acknowledged', 1_000);
+        feedNetwork(run.networks.get('checkout')!, 'order-background', { ...backgroundCart, operationId: `${run.id}-checkout-background`, cartOperationId: `${run.id}-background`, orderId: `order-${run.id}-background`, total: 99, orderCount: 1 });
+        feedNetwork(run.networks.get('checkout')!, 'order-selected', { ...cartResponse, operationId: `${run.id}-checkout`, cartOperationId: run.id, orderId: `order-${run.id}`, total: 24, orderCount: 1 });
+      }
+      const participant = run.participants[item.participant];
+      participant.stopped = { callFrames: [], reason: 'other' };
+      run.onEvent(participant.selected!, { seq: index + 1, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
+      await waitUntil(() => {
+        assert.notEqual(run.status, 'failed', run.failures.join('\n'));
+        assert.notEqual(run.captures[item.capturePhase]?.status, 'failed', run.captures[item.capturePhase]?.error);
+        return run.snapshots.length === index + 1 && run.captures[item.capturePhase]?.status === 'captured';
+      }, 'synthetic committed stop', 1_000);
+      const pause = participant.gate.current!;
+      if (index < 2) oldPauses[item.participant] = pause;
+      else await assert.rejects(run.continue(item.participant, oldPauses[item.participant]!), /conflict/);
+      assert.equal(pause.generation, index < 2 ? 1 : 2);
+      await run.continue(item.participant, pause);
+    }
+    await waitUntil(() => run.status === 'completed', 'checkout candidate', 1_000);
+    assert.equal(run.snapshots.length, 4); assert.equal(run.operations.length, 2);
+    assert.deepEqual(inputs, ['mousePressed', 'mouseReleased', 'mousePressed', 'mouseReleased']);
+    assert.equal(run.links.filter(link => link.status === 'observed').length, 11);
+    assert.equal(run.networks.get('add-to-cart')!.closed, true); assert.equal(run.networks.get('checkout')!.closed, true);
+    assert.equal(await readFile(join(run.evidence.directory, 'cart-mutation-snapshot.json'), 'utf8'), firstSnapshotBytes);
+    assert.deepEqual(JSON.parse(JSON.stringify(run.observed)), { cartCount: 1, completedClicks: 1, orderId: `order-${run.id}`, total: 24, status: 'confirmed', completedCheckouts: 1 });
+    await run.cleanup(); assert.equal(run.acceptAction('cart-key').id, first.id);
+    assert.equal(run.view().captureOutcome, 'incomplete', 'No synthetic before image is promoted to native proof');
+  } finally { await run.cleanup(); await rm(directory, { recursive: true }); }
 });

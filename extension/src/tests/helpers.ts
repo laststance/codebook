@@ -30,7 +30,7 @@ export class ControlledRuntime implements StudyRuntime {
   async prepare(): Promise<void> { await this.evidence.initialize(); await this.preparationWait; this.status = 'ready'; }
   /** Counts admitted input and captures a synthetic pause, never native runtime proof. @example runtime.action('cart').key */
   action(key: string) {
-    this.dispatches += 1; this.operation = { id: randomUUID(), key, inputAcknowledged: true }; this.status = 'paused-server';
+    this.dispatches += 1; this.operation = { id: randomUUID(), key, actionId: 'add-to-cart', completed: false, inputAcknowledged: true }; this.status = 'paused-server';
     const pause = this.gate.stop('server-session', 1);
     this.snapshot = { id: 'server-session:1', participant: 'server', itemId: 'paired-cart-demo/server', actionId: 'add-to-cart', capturePhase: 'paused-server', pause, frame: { id: 1, name: 'update', source: { path: this.seal.sourcePath }, line: 1, column: 1 },
       values: { operationId: this.id, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 0, admittedCount: 2 }, evaluations: [],
@@ -43,10 +43,10 @@ export class ControlledRuntime implements StudyRuntime {
   }
   /** Exposes the existing runtime projection shape for typed adapter tests. @example runtime.view().cleaned */
   view(): RuntimeView {
-    return { runId: this.id, scenario: 'normal', status: this.status, cleaned: this.stopped, resourcesReleased: this.resourcesReleased, runtimeOutcome: 'not-demonstrated', captureOutcome: 'incomplete', finalOutcome: this.stopped ? 'not-demonstrated' : 'pending-teardown',
+    return { runId: this.id, profile: 'paired-cart-demo', manifest: undefined, scenario: 'normal', status: this.status, cleaned: this.stopped, resourcesReleased: this.resourcesReleased, runtimeOutcome: 'not-demonstrated', captureOutcome: 'incomplete', finalOutcome: this.stopped ? 'not-demonstrated' : 'pending-teardown',
       participants: { server: { sessionId: 'server-session', pause: this.gate.current, phase: this.gate.phase, snapshot: this.snapshot, continued: undefined, conflict: this.gate.conflict },
         browser: { sessionId: undefined, pause: undefined, phase: 'running', snapshot: undefined, continued: undefined, conflict: false } },
-      operation: this.operation, observed: undefined, network: undefined, links: [], captures: {}, failures: [], events: this.evidence.events,
+      operation: this.operation, operations: this.operation ? [this.operation] : [], snapshots: this.snapshot ? [this.snapshot] : [], nextAction: this.status === 'ready' ? 'add-to-cart' : undefined, observed: undefined, network: undefined, networks: {}, links: [], captures: {}, failures: [], events: this.evidence.events,
       artifactDirectory: this.evidence.directory, activeSessionIds: this.stopped ? [] : ['server-session'], backend: undefined };
   }
   /** Persists cleanup using the real writer so storage failures are observable. @example await runtime.stop() */

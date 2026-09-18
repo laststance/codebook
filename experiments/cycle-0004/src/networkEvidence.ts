@@ -1,17 +1,21 @@
 import type { Protocol } from 'devtools-protocol';
+import { isDeepStrictEqual } from 'node:util';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { MAX_BODY_BYTES, MAX_REQUESTS, EXPECTED_REQUEST_COUNT } from './constants';
+import { MAX_BODY_BYTES, MAX_REQUESTS, EXPECTED_REQUEST_COUNT, type ActionId } from './constants';
 import { readTuple, type CartTuple } from './utils/readTuple';
+import { readCheckoutTuple, type CheckoutTuple } from './utils/readCheckoutTuple';
+import { actionExpectations, type ActionExpectations } from './utils/actionExpectations';
 
 export interface CartResponse extends CartTuple { cartCount: number; admittedCount: number }
+export interface OrderResponse extends CartResponse, CheckoutTuple { orderId: string; total: number; orderCount: number }
 export interface RequestObservation {
   requestId: string;
   sequence: number;
-  tuple: CartTuple;
+  tuple: CartTuple | CheckoutTuple;
   initiatorUrls: string[];
   response?: { status: number; url: string };
   finishedSequence?: number;
-  body?: CartResponse;
+  body?: CartResponse | OrderResponse;
   bodyHash?: string;
 }
 
@@ -20,7 +24,8 @@ export class NetworkEvidence {
   readonly requests = new Map<string, RequestObservation>();
   readonly errors: string[] = [];
   closed = false;
-  constructor(readonly operationId: string, readonly url: string, readonly clientUrl: string) {}
+  readonly expectation: ActionExpectations;
+  constructor(readonly runId: string, readonly url: string, readonly clientUrl: string, readonly action: ActionId = 'add-to-cart') { this.expectation = actionExpectations(runId, action); }
 
   /** Records one HTTP hop, rejecting redirects, malformed payloads and later extras before final run sealing. @example network.request(requestWillBeSent, 12) */
   request(event: Protocol.Network.RequestWillBeSentEvent, sequence: number): void {
@@ -33,7 +38,7 @@ export class NetworkEvidence {
       const raw = event.request.postData;
       if (!raw || Buffer.byteLength(raw) > MAX_BODY_BYTES) throw new Error('Missing or oversized request body');
       const operationHeader = Object.entries(event.request.headers).find(([name]) => name.toLowerCase() === 'x-codebook-operation')?.[1];
-      const tuple = readTuple(JSON.parse(raw), typeof operationHeader === 'string' ? operationHeader : '');
+      const tuple = (this.action === 'checkout' ? readCheckoutTuple : readTuple)(JSON.parse(raw), typeof operationHeader === 'string' ? operationHeader : '');
       const initiatorUrls: string[] = [];
       let stack = event.initiator.stack;
       while (stack) { for (const frame of stack.callFrames) initiatorUrls.push(frame.url); stack = stack.parent; }
@@ -74,7 +79,10 @@ export class NetworkEvidence {
       if (bytes.length > MAX_BODY_BYTES) throw new Error('Decoded response body exceeds evidence limit');
       const decoded: unknown = JSON.parse(bytes.toString('utf8'));
       if (!decoded || typeof decoded !== 'object' || !('operationId' in decoded) || typeof decoded.operationId !== 'string' || !('cartCount' in decoded) || typeof decoded.cartCount !== 'number' || !('admittedCount' in decoded) || typeof decoded.admittedCount !== 'number') throw new Error('Malformed response body');
-      observation.body = { ...readTuple(decoded, decoded.operationId), cartCount: decoded.cartCount, admittedCount: decoded.admittedCount };
+      if (this.action === 'checkout') {
+        if (!('orderId' in decoded) || typeof decoded.orderId !== 'string' || !('total' in decoded) || typeof decoded.total !== 'number' || !Number.isFinite(decoded.total) || !('orderCount' in decoded) || typeof decoded.orderCount !== 'number') throw new Error('Malformed order response');
+        observation.body = { ...readCheckoutTuple(decoded, decoded.operationId), cartCount: decoded.cartCount, admittedCount: decoded.admittedCount, orderId: decoded.orderId, total: decoded.total, orderCount: decoded.orderCount };
+      } else observation.body = { ...readTuple(decoded, decoded.operationId), cartCount: decoded.cartCount, admittedCount: decoded.admittedCount };
       observation.bodyHash = sha256(bytes);
     } catch (error) { this.errors.push(String(error)); }
   }
@@ -83,13 +91,11 @@ export class NetworkEvidence {
   settled(): { selected: RequestObservation; background: RequestObservation } | undefined {
     if (this.errors.length || this.requests.size !== EXPECTED_REQUEST_COUNT) return undefined;
     const requests = [...this.requests.values()];
-    const selected = requests.find(request => request.tuple.operationId === this.operationId);
-    const background = requests.find(request => request.tuple.operationId === `${this.operationId}-background`);
+    const selected = requests.find(request => request.tuple.operationId === this.expectation.selectedRequest.operationId);
+    const background = requests.find(request => request.tuple.operationId === this.expectation.backgroundRequest.operationId);
     if (!selected || !background || !selected.body || !background.body || !selected.response || !background.response || !selected.finishedSequence || !background.finishedSequence) return undefined;
-    const expectedSelected = { operationId: this.operationId, cartId: 'selected', productId: 'tote-01', price: 24 };
-    const expectedBackground = { operationId: `${this.operationId}-background`, cartId: 'background', productId: 'background-02', price: 99 };
-    if (JSON.stringify(selected.tuple) !== JSON.stringify(expectedSelected) || JSON.stringify(background.tuple) !== JSON.stringify(expectedBackground)) { this.errors.push('Request tuple differs from the frozen expectation'); return undefined; }
-    if (JSON.stringify(selected.body) !== JSON.stringify({ ...expectedSelected, cartCount: 1, admittedCount: 2 }) || JSON.stringify(background.body) !== JSON.stringify({ ...expectedBackground, cartCount: 1, admittedCount: 2 })) { this.errors.push('Response identity or values differ from the frozen expectation'); return undefined; }
+    if (!isDeepStrictEqual(selected.tuple, this.expectation.selectedRequest) || !isDeepStrictEqual(background.tuple, this.expectation.backgroundRequest)) { this.errors.push('Request tuple differs from the frozen expectation'); return undefined; }
+    if (!isDeepStrictEqual(selected.body, this.expectation.selectedResponse) || !isDeepStrictEqual(background.body, this.expectation.backgroundResponse)) { this.errors.push('Response identity or values differ from the frozen expectation'); return undefined; }
     return { selected, background };
   }
 
