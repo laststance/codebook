@@ -149,3 +149,10 @@ Review status: parent architecture/code-quality/test/performance review complete
 | Product UX / final product review | not triggered for this transport plan | not performed | Full G01–G11 final acceptance and 0/10 streak unchanged |
 
 Completion: scope retained with js-debug reuse, six parent findings plus one native finding incorporated; zero unresolved decisions or known unhandled silent gaps; no new TODOs; sequential implementation; Lake score 3/3. Existing Cycle 0002 diff review remains non-converged and is not cleared by this plan review. No implementation/packaging approval is inferred.
+
+
+### Implementation investigation — canonical Chrome profile
+
+First managed Cursor attempt `6355f786-ab3f-4600-b736-489287bd85ac` selected the correct DAP child but timed out waiting for profile-process discovery. A second diagnostic attempt `105e4c4f-0592-4427-b23e-f844fc10bd8d` inspected actual owned command lines: Chrome uses `/private/tmp/codebook-browser-…`, while the expected path was `/tmp/codebook-browser-…`. The process lookup's exact string comparison therefore missed the running process. Its cleanup absence claim was not reliable on those two pre-fix attempts; they are unsuccessful evidence, not transport success.
+
+Root fix: canonicalize profile paths at creation and observation. The regression uses an explicit symlink, observes the corresponding real child process, excludes a prefix-sharing unrelated profile, then observes absence after exit. **33/33 unit tests passed.** Real Cursor normal rerun `c4b6d21c-0b17-4625-a9d2-2ba8407dace5` passed at source `4c3eeba` plus the canonical-path patch: actual source/values, cart 1, all three exact-PNG renderer ACKs, owned Chrome process discovery/exit and session/panel teardown. Full matrices and native editor observation remain pending. Investigation status DONE for this defect; this does not close Cycle 0003.
