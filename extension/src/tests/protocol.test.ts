@@ -4,6 +4,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { z } from 'zod';
 import { request } from 'node:http';
+import { connect as connectSocket } from 'node:net';
+import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { httpStatus } from './utils/httpStatus';
 import { startServer, type ConnectionDescriptor } from '../server';
 import { PROFILE_ID, SESSION_IDLE_TIMEOUT_MS } from '../constants';
@@ -105,4 +107,67 @@ test('a stalled authenticated body reaches its read deadline without dispatching
     // Assert
     assert.equal(status, 408); assert.equal(harness.runtimes.length, 0);
   } finally { await endpoint.close(); await harness.close(); }
+});
+
+test('an incomplete HTTP header is rejected near the five-second read deadline before authentication', async () => {
+  // Arrange
+  const harness = await createHarness(), endpoint = await startServer(harness.service), address = new URL(endpoint.descriptor.url);
+  const socket = connectSocket(Number(address.port), address.hostname); let response = '', closed = false;
+  socket.on('data', bytes => { response += bytes.toString(); }); socket.on('close', () => { closed = true; }); socket.on('error', () => {});
+  try {
+    // Act
+    socket.write('POST /mcp HTTP/1.1\r\n');
+    await waitUntil(() => closed, 'incomplete header expires', 6_000);
+    // Assert
+    assert.match(response, /^HTTP\/1\.1 408 Request Timeout/); assert.equal(harness.runtimes.length, 0);
+  } finally { socket.destroy(); await endpoint.close(); await harness.close(); }
+});
+
+test('deleting an in-flight MCP session settles its HTTP response and preserves capacity and the paused study', async () => {
+  // Arrange
+  const harness = await createHarness(), endpoint = await startServer(harness.service);
+  const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, key: 'study' });
+  await harness.service.record(receipt).preparation; harness.service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
+  try {
+    // Act: exceed the global thirty-two-request capacity through normal session deletion.
+    for (let index = 0; index < 36; index += 1) {
+      let entered = false, settled = false, release!: () => void;
+      const barrier = new Promise<void>(resolve => { release = resolve; });
+      harness.service.environment.prerequisites = async () => { entered = true; await barrier; return { ready: true, missing: [] }; };
+      const connection = await connect(endpoint.descriptor);
+      const pending = connection.client.callTool({ name: 'codebook_status', arguments: {} }).then(() => 'unexpected success', () => 'closed').finally(() => { settled = true; });
+      try {
+        await waitUntil(() => entered, 'held status', 1_000);
+        await connection.transport.terminateSession();
+        await waitUntil(() => settled, 'deleted response settles before handler completes', 1_000);
+        assert.equal(await pending, 'closed');
+      } finally { release(); await connection.client.close(); }
+    }
+    // Assert
+    const recovered = await connect(endpoint.descriptor);
+    try { assert.equal((await recovered.client.listTools()).tools.length, 7); }
+    finally { await recovered.close(); }
+    assert.equal(harness.runtimes[0]?.dispatches, 1); assert.equal(harness.runtimes[0]?.stopped, false);
+  } finally { await endpoint.close(); await harness.close(); }
+});
+
+test('cancelled MCP calls release HTTP capacity without closing their shared session', async () => {
+  // Arrange
+  const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
+  try {
+    // Act: cancellation suppresses handler responses, so transport cleanup must settle each POST.
+    for (let index = 0; index < 36; index += 1) {
+      let entered = false, release!: () => void;
+      const barrier = new Promise<void>(resolve => { release = resolve; });
+      harness.service.environment.prerequisites = async () => { entered = true; await barrier; return { ready: true, missing: [] }; };
+      const abort = new AbortController();
+      const pending = assert.rejects(connection.client.callTool({ name: 'codebook_status', arguments: {} }, undefined, { signal: abort.signal }));
+      try { await waitUntil(() => entered, 'held cancellable status', 1_000); abort.abort(); await pending; }
+      finally { release(); }
+      assert.equal((await connection.client.listTools()).tools.length, 7);
+    }
+    // Assert
+    assert.equal((await connection.client.listResourceTemplates()).resourceTemplates.length, 6);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await connection.close(); await endpoint.close(); await harness.close(); }
 });

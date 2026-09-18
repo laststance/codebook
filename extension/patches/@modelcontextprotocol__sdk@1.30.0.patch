@@ -8,3 +8,101 @@ index 9fa92226c8781ea09b09bfdf1cce055f0ce1a7df..eea0f1037d816e91b29faa28dff49e91
  /**
   * JSON Schema type definition (JSON Schema Draft 2020-12)
   *
+diff --git a/dist/cjs/server/webStandardStreamableHttp.js b/dist/cjs/server/webStandardStreamableHttp.js
+--- a/dist/cjs/server/webStandardStreamableHttp.js
++++ b/dist/cjs/server/webStandardStreamableHttp.js
+@@ -565,6 +565,10 @@
+                 // if it only contains notifications or responses, return 202
+                 for (const message of messages) {
+                     this.onmessage?.(message, { authInfo: options?.authInfo, requestInfo });
++                    if (message.method === 'notifications/cancelled' && message.params) {
++                        const cancelledStream = this._requestToStreamMapping.get(message.params.requestId);
++                        if (cancelledStream) this._streamMapping.get(cancelledStream)?.cleanup();
++                    }
+                 }
+                 return new Response(null, { status: 202 });
+             }
+@@ -581,12 +585,21 @@
+             if (this._enableJsonResponse) {
+                 // For JSON response mode, return a Promise that resolves when all responses are ready
+                 return new Promise(resolve => {
+-                    this._streamMapping.set(streamId, {
+-                        resolveJson: resolve,
+-                        cleanup: () => {
+-                            this._streamMapping.delete(streamId);
++                    // Complete JSON requests on success, cancellation, abort and session close.
++                    const cleanup = () => {
++                        req.signal.removeEventListener('abort', cleanup);
++                        this._streamMapping.delete(streamId);
++                        for (const [id, mappedStream] of this._requestToStreamMapping) {
++                            if (mappedStream === streamId) {
++                                this._requestToStreamMapping.delete(id);
++                                this._requestResponseMap.delete(id);
++                            }
+                         }
+-                    });
++                        resolve(this.createJsonErrorResponse(410, -32000, 'Request stream closed'));
++                    };
++                    this._streamMapping.set(streamId, { resolveJson: resolve, cleanup });
++                    req.signal.addEventListener('abort', cleanup, { once: true });
++                    if (req.signal.aborted) { cleanup(); return; }
+                     for (const message of messages) {
+                         if ((0, types_js_1.isJSONRPCRequest)(message)) {
+                             this._requestToStreamMapping.set(message.id, streamId);
+@@ -934,6 +947,7 @@
+                     else {
+                         stream.resolveJson(new Response(JSON.stringify(responses), { status: 200, headers }));
+                     }
++                    stream.cleanup();
+                 }
+                 else {
+                     // End the SSE stream
+diff --git a/dist/esm/server/webStandardStreamableHttp.js b/dist/esm/server/webStandardStreamableHttp.js
+--- a/dist/esm/server/webStandardStreamableHttp.js
++++ b/dist/esm/server/webStandardStreamableHttp.js
+@@ -562,6 +562,10 @@
+                 // if it only contains notifications or responses, return 202
+                 for (const message of messages) {
+                     this.onmessage?.(message, { authInfo: options?.authInfo, requestInfo });
++                    if (message.method === 'notifications/cancelled' && message.params) {
++                        const cancelledStream = this._requestToStreamMapping.get(message.params.requestId);
++                        if (cancelledStream) this._streamMapping.get(cancelledStream)?.cleanup();
++                    }
+                 }
+                 return new Response(null, { status: 202 });
+             }
+@@ -578,12 +582,21 @@
+             if (this._enableJsonResponse) {
+                 // For JSON response mode, return a Promise that resolves when all responses are ready
+                 return new Promise(resolve => {
+-                    this._streamMapping.set(streamId, {
+-                        resolveJson: resolve,
+-                        cleanup: () => {
+-                            this._streamMapping.delete(streamId);
++                    // Complete JSON requests on success, cancellation, abort and session close.
++                    const cleanup = () => {
++                        req.signal.removeEventListener('abort', cleanup);
++                        this._streamMapping.delete(streamId);
++                        for (const [id, mappedStream] of this._requestToStreamMapping) {
++                            if (mappedStream === streamId) {
++                                this._requestToStreamMapping.delete(id);
++                                this._requestResponseMap.delete(id);
++                            }
+                         }
+-                    });
++                        resolve(this.createJsonErrorResponse(410, -32000, 'Request stream closed'));
++                    };
++                    this._streamMapping.set(streamId, { resolveJson: resolve, cleanup });
++                    req.signal.addEventListener('abort', cleanup, { once: true });
++                    if (req.signal.aborted) { cleanup(); return; }
+                     for (const message of messages) {
+                         if (isJSONRPCRequest(message)) {
+                             this._requestToStreamMapping.set(message.id, streamId);
+@@ -931,6 +944,7 @@
+                     else {
+                         stream.resolveJson(new Response(JSON.stringify(responses), { status: 200, headers }));
+                     }
++                    stream.cleanup();
+                 }
+                 else {
+                     // End the SSE stream

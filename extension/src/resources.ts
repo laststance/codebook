@@ -34,8 +34,10 @@ export async function readResource(service: StudyService, uri: string): Promise<
   }
   if (suffix.startsWith('images/')) {
     const phase = CAPTURE_PHASES.find(value => `images/${value}` === suffix);
-    if (!phase || !record.runtime || record.runtime.view().captures[phase]?.status !== 'captured') throw new StudyError('EVIDENCE_UNAVAILABLE', 'The requested phase has no confirmed image.');
+    const capture = phase && record.runtime?.view().captures[phase];
+    if (!phase || !record.runtime || capture?.status !== 'captured' || !capture.renderer) throw new StudyError('EVIDENCE_UNAVAILABLE', 'The requested phase has no confirmed image.');
     const bytes = await readBoundedFile(join(record.runtime.evidence.directory, `${phase}.png`), IMAGE_LIMIT_BYTES);
+    if (sha256(bytes) !== capture.renderer.hash) throw new StudyError('EVIDENCE_UNAVAILABLE', 'Captured image no longer matches its sealed hash.');
     return { uri, mimeType: 'image/png', blob: bytes.toString('base64') };
   }
   const sourceMatch = /^(snapshots\/[^/]+)(?:\/source\/(typescript|javascript|map))?$/.exec(suffix);

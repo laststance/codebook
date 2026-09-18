@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@modelcontextprotocol/sdk@1.30.0': 25339c9c271a12b9959d2f6be482210411d1c34480f4afc5cc64cdb3e182b104
+  '@modelcontextprotocol/sdk@1.30.0': d189ea81b9fc663a9209ef13abaccda8ce69b604b61dc008db18880db223f206
 
 importers:
 
@@ -13,7 +13,7 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: 1.30.0
-        version: 1.30.0(patch_hash=25339c9c271a12b9959d2f6be482210411d1c34480f4afc5cc64cdb3e182b104)(zod@4.6.5)
+        version: 1.30.0(patch_hash=d189ea81b9fc663a9209ef13abaccda8ce69b604b61dc008db18880db223f206)(zod@4.6.5)
       codebook-cycle-0001:
         specifier: link:../experiments/cycle-0001
         version: link:../experiments/cycle-0001
@@ -426,7 +426,7 @@ snapshots:
     dependencies:
       hono: 4.13.8
 
-  '@modelcontextprotocol/sdk@1.30.0(patch_hash=25339c9c271a12b9959d2f6be482210411d1c34480f4afc5cc64cdb3e182b104)(zod@4.6.5)':
+  '@modelcontextprotocol/sdk@1.30.0(patch_hash=d189ea81b9fc663a9209ef13abaccda8ce69b604b61dc008db18880db223f206)(zod@4.6.5)':
     dependencies:
       '@hono/node-server': 2.1.1(hono@4.13.8)
       ajv: 8.20.0

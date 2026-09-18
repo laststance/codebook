@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { PROFILE_ID } from '../constants';
 import { StudyError } from '../errors';
 import { readResource } from '../resources';
@@ -77,5 +79,44 @@ test('bounded evidence reads reject oversized and missing bytes with an actionab
     // Act / Assert
     await assert.rejects(readBoundedFile(path, 10), error => error instanceof StudyError && error.code === 'EVIDENCE_UNAVAILABLE');
     await assert.rejects(readBoundedFile(join(harness.directory, 'absent'), 10), error => error instanceof StudyError && error.code === 'EVIDENCE_UNAVAILABLE');
+  } finally { await harness.close(); }
+});
+
+test('a persistent cleanup failure stops automatic retries and remains explicitly retryable', async () => {
+  // Arrange
+  const harness = await createHarness(), service = harness.service;
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'failed-storage' }), record = service.record(receipt);
+  await record.preparation;
+  const runtime = harness.runtimes[0]!, originalStop = runtime.stop.bind(runtime); let attempts = 0;
+  runtime.status = 'failed'; runtime.stop = async () => { attempts += 1; throw new Error('Persistent disk failure'); };
+  try {
+    // Act
+    service.maintain(); await waitUntil(() => Boolean(record.cleanupError), 'failed automatic cleanup', 1_000);
+    for (let tick = 0; tick < 10; tick += 1) { service.maintain(); await Promise.resolve(); }
+    // Assert
+    assert.equal(attempts, 1); assert.equal(service.state(record).cleaned, false);
+    assert.match(service.state(record).cleanupError!.cause, /Persistent disk failure/);
+    await assert.rejects(service.stop(receipt), /Persistent disk failure/); assert.equal(attempts, 2);
+    runtime.stop = originalStop; await service.stop(receipt);
+    assert.equal(service.state(record).cleaned, true); assert.equal(service.state(record).cleanupError, undefined);
+  } finally { runtime.stop = originalStop; await harness.close(); }
+});
+
+test('a captured image URI rejects substituted or truncated bytes after the runtime stops', async () => {
+  // Arrange
+  const harness = await createHarness(), service = harness.service;
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'image-integrity' });
+  try {
+    await service.record(receipt).preparation;
+    const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime), original = Buffer.from('captured-png-bytes');
+    runtime.view = () => ({ ...view(), captures: { after: { status: 'captured', renderer: { epoch: 'test', id: 1, hash: sha256(original) } } } });
+    const path = join(runtime.evidence.directory, 'after.png'), uri = `${receipt.runUri}/images/after`;
+    await writeFile(path, original); await service.stop(receipt);
+    // Act / Assert
+    assert.deepEqual(await readResource(service, uri), { uri, mimeType: 'image/png', blob: original.toString('base64') });
+    for (const changed of [Buffer.from('substitute-bytes!'), original.subarray(0, 5)]) {
+      await writeFile(path, changed);
+      await assert.rejects(readResource(service, uri), error => error instanceof StudyError && error.code === 'EVIDENCE_UNAVAILABLE');
+    }
   } finally { await harness.close(); }
 });

@@ -14,7 +14,7 @@ export interface Explanation {
 export interface StudyRecord {
   id: string; key: string; profile: string; createdAt: number; deadlineAt: number;
   runtime?: StudyRuntime; prepared: boolean; preparation: Promise<void>;
-  stopping: boolean; stopped: boolean; stopPromise?: Promise<void>; error?: StudyError;
+  stopping: boolean; stopped: boolean; stopPromise?: Promise<void>; cleanupError?: StudyError; error?: StudyError;
   action?: { signature: string; receipt: { operationId: string; runUri: string; key: string } };
   explanations: Map<string, Explanation>;
   explanationKeys: Map<string, { signature: string; result: Promise<{ explanationUri: string }> }>;
@@ -174,7 +174,7 @@ export class StudyService {
       nextActions, participants, operation: record.action?.receipt, observed: runtime?.observed, links: runtime?.links,
       runtimeOutcome: runtime?.runtimeOutcome, captureOutcome: runtime?.captureOutcome,
       finalOutcome: terminalReason ? 'not-demonstrated' : runtime?.finalOutcome ?? 'pending-teardown',
-      terminalReason, error: record.error?.describe(), cleaned: record.stopped, activeSessionIds: runtime?.activeSessionIds ?? [],
+      terminalReason, error: record.error?.describe(), cleanupError: record.cleanupError?.describe(), cleaned: record.stopped, activeSessionIds: runtime?.activeSessionIds ?? [],
       captures: Object.entries(runtime?.captures ?? {}).map(([phase, capture]) => ({ phase, status: capture.status, error: capture.error, uri: capture.status === 'captured' ? this.uri(record.id, `images/${phase}`) : undefined })),
       explanations: [...record.explanations.values()].map(value => this.uri(record.id, `explanations/${value.id}`)),
       eventsUri: this.uri(record.id, 'events/0'), runUri: this.uri(record.id) };
@@ -194,7 +194,8 @@ export class StudyService {
   /** Fails overload/expiry and cleans completed runtimes even when all MCP clients vanished. @example service.maintain() */
   maintain(): void {
     for (const record of this.records.values()) {
-      if (record.stopped || record.stopping) continue;
+      // A failed release needs an explicit retry; unchanged storage/process failures must not loop.
+      if (record.stopped || record.stopping || record.cleanupError) continue;
       const evidenceFailure = record.runtime?.evidence.failure;
       if (evidenceFailure) { record.error = new StudyError('EVIDENCE_UNAVAILABLE', 'Evidence buffering or persistence failed.', evidenceFailure); record.runtime?.fail(record.error.message); }
       if (this.now() >= record.deadlineAt) { record.error ??= new StudyError('RUNTIME_FAILED', 'Study wall deadline expired; history only.'); record.runtime?.fail(record.error.message); }
@@ -225,9 +226,9 @@ export class StudyService {
       await record.preparation;
       await Promise.allSettled([...record.explanationKeys.values()].map(value => value.result));
       if (record.runtime) await record.runtime.stop();
-      record.stopped = true;
+      record.stopped = true; record.cleanupError = undefined;
     })();
-    try { await attempt; } catch (error) { record.stopPromise = undefined; throw error; }
+    try { await attempt; } catch (error) { record.cleanupError = domainError(error); record.stopPromise = undefined; throw error; }
     finally { record.stopping = false; }
   }
 

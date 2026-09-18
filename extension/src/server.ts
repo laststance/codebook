@@ -49,7 +49,8 @@ export async function startServer(service: StudyService, now = Date.now) {
   const sessions = new Map<string, Session>(); const pendingSessions = new Set<Session>();
   let origin = '', stopping = false, inFlight = 0;
   // HTTP session close -> release transport. Only service.shutdown() releases application runs.
-  const server = createServer({ maxHeaderSize: HTTP_HEADER_LIMIT_BYTES, headersTimeout: HTTP_READ_TIMEOUT_MS, requestTimeout: HTTP_READ_TIMEOUT_MS }, (request, response) => {
+  const server = createServer({ maxHeaderSize: HTTP_HEADER_LIMIT_BYTES, headersTimeout: HTTP_READ_TIMEOUT_MS, requestTimeout: HTTP_READ_TIMEOUT_MS,
+    connectionsCheckingInterval: MAINTENANCE_INTERVAL_MS }, (request, response) => {
     void (async () => {
       const supplied = Buffer.from(request.headers.authorization ?? '');
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) { rejectHttp(response, 401, 'Unauthorized. Copy the current connection from the editor after restart.'); return; }
