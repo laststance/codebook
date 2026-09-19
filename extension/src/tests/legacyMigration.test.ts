@@ -89,7 +89,7 @@ test('reading legacy files leaves their bytes untouched and labels unread catalo
   assert.deepEqual(await readFile(join(directory, `${study.id}.study.json`)), bytes); assert.deepEqual(await readFile(join(directory, 'progress.json')), progress);
 });
 
-test('two first-migration writers preserve both explicit decisions exactly once after lock contention and Retry', async context => {
+test('two first-migration writers in one host preserve both explicit decisions exactly once without user retry', async context => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-migration-')); context.after(() => rm(directory, { recursive: true, force: true }));
   const legacy = await readFile(resolve(fixtureDirectory, 'progress.v1.json')); await writeFile(join(directory, 'progress.json'), legacy);
@@ -103,8 +103,8 @@ test('two first-migration writers preserve both explicit decisions exactly once 
   first.readProgress = async () => { const value = await read(); entered(); await held; return value; };
   // Act
   const writing = first.decide(firstDecision); await started;
-  try { await assert.rejects(second.decide(secondDecision), /locked/); } finally { release(); }
-  await writing; await second.decide(secondDecision); await second.decide(secondDecision);
+  const queued = second.decide(secondDecision); release();
+  await Promise.all([writing, queued]); await second.decide(secondDecision);
   const progress = await new LearningLibrary(directory, workspaceKey).readProgress();
   // Assert
   assert.equal(progress.decisions.length, 3);

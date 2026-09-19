@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { RecordingStore, recordingDiskIo, type RecordingIo, type RecordingLimits } from '../recordingStore';
 import type { RecordingBinding } from '../recordingSchemas';
+import { LearningLibrary } from '../learningLibrary';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=', 'base64');
 const workspaceKey = sha256('recording-workspace');
@@ -19,6 +21,27 @@ async function recordingHarness(context: TestContext, limits: Partial<RecordingL
   const binding: RecordingBinding = { workspaceKey, studyId: `${instanceId}_${runId}`, instanceId, runId, runtimeId: randomUUID(), profile: 'checkout-demo', sourceBuild: { revision: 'fixture-test', dirty: false, sourceHash: sha256('fixed-source') } };
   return { directory, binding, store: new RecordingStore(directory, workspaceKey, limits, io) };
 }
+
+test('recording starts after concurrent learner storage finishes instead of losing the entire film to its own writer lock', async context => {
+  // Arrange
+  const { directory, store, binding } = await recordingHarness(context), library = new LearningLibrary(directory, workspaceKey);
+  let release = () => {}, entered = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  const read = library.readProgress.bind(library);
+  library.readProgress = async () => { const progress = await read(); entered(); await held; return progress; };
+  const saving = library.select({ profile: 'checkout-demo', itemId: 'checkout-demo/cart-mutation', tab: 'live', follow: false });
+  await started;
+  // Act: hold the real library lock while the independent recording owner attempts admission.
+  const admission = store.start(binding, 0).then(writer => ({ writer }), error => ({ error }));
+  await delay(25); release(); await saving;
+  const result = await admission;
+  // Assert
+  assert.ok('writer' in result, `Recording was lost: ${'error' in result ? result.error : ''}`);
+  assert.equal(result.writer.frame({ bytes: png, elapsedMs: 50, kind: 'stream' }), true);
+  await result.writer.finish(100);
+  assert.equal((await store.read(binding.studyId)).status, 'finalized');
+  assert.equal((await library.readProgress()).selection?.itemId, 'checkout-demo/cart-mutation');
+});
 
 test('recording is discoverable before its first frame and survives restart without a study archive', async context => {
   // Arrange
