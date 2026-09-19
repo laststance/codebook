@@ -11,7 +11,7 @@ export { capturedImageSchema, observationSchema, studyArchiveSchema, selectionSc
 export type StudyArchive = z.infer<typeof studyArchiveSchema>;
 export type StudySelection = z.infer<typeof selectionSchema>;
 export type { LearnerProgress, LearnerDecision } from './learnerSchemas';
-export { progressV3Schema as progressSchema, learnerDecisionV3Schema as learnerDecisionSchema } from './learnerSchemas';
+export { progressV4Schema as progressSchema, learnerDecisionV3Schema as learnerDecisionSchema } from './learnerSchemas';
 export type StudyParticipant = z.infer<typeof participantSchema>;
 export type SourceBaseline = z.infer<typeof sourceSchema> & { path: string };
 export type SourceBaselines = Record<StudyParticipant, SourceBaseline>;

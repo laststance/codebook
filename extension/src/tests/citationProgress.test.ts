@@ -66,7 +66,7 @@ test('unchecking and identical intent retries affect only the original complete 
   await assert.rejects(library.decide({ ...uncheck, context: citationContext([primary]) }), /different decision/);
 });
 
-test('v3 migration preserves v2 bytes and exact legacy intent fields without merging later writes from older builds', async context => {
+test('progress migration preserves v2 bytes and exact legacy intent fields without merging later writes from older builds', async context => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-context-')); context.after(() => rm(directory, { recursive: true, force: true }));
   const oldDecision = { id: '11111111-1111-4111-8111-111111111111', item: 'checkout-demo/cart-mutation', sourceHash, understood: true, at };
@@ -81,7 +81,7 @@ test('v3 migration preserves v2 bytes and exact legacy intent fields without mer
   await writeFile(join(directory, 'progress.v2.json'), '{older build now corrupt}');
   const restarted = await new LearningLibrary(directory, workspaceKey).readProgress();
   // Assert
-  assert.equal(read.version, 3); assert.deepEqual(read.decisions, [{ ...oldDecision, context: { kind: 'source' } }]);
+  assert.equal(read.version, 4); assert.deepEqual(read.decisions, [{ ...oldDecision, context: { kind: 'source' } }]);
   assert.deepEqual(restarted.decisions, read.decisions); assert.deepEqual(restarted.selection, read.selection);
   assert.equal(restarted.repositorySelection?.location?.fraction, 0.5);
 });
@@ -102,17 +102,17 @@ test('corrupt, unknown or untyped v3 progress never falls back to readable v2 ch
   assert.equal(await readFile(join(directory, 'progress.v2.json'), 'utf8'), JSON.stringify(legacy));
 });
 
-test('failed first v3 publication leaves legacy choices intact and explicit retry appends the same intent once', async context => {
+test('failed first v4 publication leaves legacy choices intact and explicit retry appends the same intent once', async context => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-context-')); context.after(() => rm(directory, { recursive: true, force: true }));
   const legacy = JSON.stringify({ version: 2, workspaceKey, decisions: [] }); await writeFile(join(directory, 'progress.v2.json'), legacy);
   let fail = true;
   const module = await loadModule<typeof import('../learningLibrary')>(resolve(__dirname, '../learningLibrary.js'), {
-    './utils/atomicPrivateWrite': { atomicPrivateWrite: async (...arguments_: Parameters<typeof atomicPrivateWrite>) => { if (fail) throw new Error('Injected v3 write failure'); return atomicPrivateWrite(...arguments_); } },
+    './utils/atomicPrivateWrite': { atomicPrivateWrite: async (...arguments_: Parameters<typeof atomicPrivateWrite>) => { if (fail) throw new Error('Injected v4 write failure'); return atomicPrivateWrite(...arguments_); } },
   });
   const library = new module.LearningLibrary(directory, workspaceKey), intent = { id: randomUUID(), item: 'repository/book/node', sourceHash, at, understood: true, context: citationContext([primary]) };
   // Act / Assert
-  await assert.rejects(library.decide(intent), /v3 write failure/);
+  await assert.rejects(library.decide(intent), /v4 write failure/);
   assert.deepEqual(await readdir(directory), ['progress.v2.json']); assert.equal(await readFile(join(directory, 'progress.v2.json'), 'utf8'), legacy);
   fail = false; await library.decide(intent); const retried = await library.decide(intent);
   assert.equal(retried.decisions.length, 1); assert.equal(retried.decisions[0]?.id, intent.id);

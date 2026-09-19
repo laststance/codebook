@@ -1,10 +1,10 @@
 import { chmod, lstat, mkdir, readdir } from 'node:fs/promises';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { join } from 'node:path';
-import { LEARNING_SCHEMA_VERSION_V2, LEARNING_SCHEMA_VERSION_V3, MAX_LEARNER_DECISIONS, MAX_LIBRARY_FILES, MAX_STUDY_ARCHIVE_BYTES, PRIVATE_DIRECTORY_MODE, PROGRESS_LIMIT_BYTES, PROGRESS_V2_FILE, PROGRESS_V3_FILE, STUDY_STORAGE_FORMATS, STUDY_METADATA_LIMIT_BYTES } from './constants';
-import { selectionSchema, studyMetadataSchema, type StudyCatalogEntry, type StudySelection } from './studySchemas';
+import { LEARNING_SCHEMA_VERSION_V2, LEARNING_SCHEMA_VERSION_V3, LEARNING_SCHEMA_VERSION_V4, MAX_LEARNER_DECISIONS, MAX_LIBRARY_FILES, MAX_STUDY_ARCHIVE_BYTES, PRIVATE_DIRECTORY_MODE, PROGRESS_LIMIT_BYTES, PROGRESS_V2_FILE, PROGRESS_V3_FILE, PROGRESS_V4_FILE, STUDY_STORAGE_FORMATS, STUDY_METADATA_LIMIT_BYTES } from './constants';
+import { studyMetadataSchema, type StudyCatalogEntry } from './studySchemas';
 import { configuredStudyMetadataSchema } from './configuredStudySchemas';
-import { retainedStudyMetadataSchema, type RetainedStudy } from './retainedStudySchemas';
+import { retainedStudyMetadataSchema, retainedStudySelectionSchema, type RetainedStudy, type RetainedStudySelection } from './retainedStudySchemas';
 import { learnerIntentSchema, repositorySelectionSchema, type LearnerDecision, type LearnerProgress, type RepositorySelection } from './learnerSchemas';
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite';
 import { readBoundedFile } from './utils/readBoundedFile';
@@ -73,11 +73,11 @@ export class LearningLibrary {
     }
   }
 
-  /** Prefers v3 by existence, normalizing validated v2/v1 without altering their files or hiding corruption. @example await library.readProgress() */
+  /** Prefers v4 by existence, normalizing validated v1-v3 without altering their files or hiding corruption. @example await library.readProgress() */
   async readProgress(): Promise<LearnerProgress> {
     await this.initialize();
     // Presence selects the format. An unreadable/newer preferred file cannot resurrect older choices.
-    for (const [filename, version] of [[PROGRESS_V3_FILE, LEARNING_SCHEMA_VERSION_V3], [PROGRESS_V2_FILE, LEARNING_SCHEMA_VERSION_V2], ['progress.json', 1]] as const) {
+    for (const [filename, version] of [[PROGRESS_V4_FILE, LEARNING_SCHEMA_VERSION_V4], [PROGRESS_V3_FILE, LEARNING_SCHEMA_VERSION_V3], [PROGRESS_V2_FILE, LEARNING_SCHEMA_VERSION_V2], ['progress.json', 1]] as const) {
       const path = join(this.directory, filename), stat = await this.optionalStat(path);
       if (!stat) continue;
       if (!stat.isFile()) throw new Error('Progress is not a regular file.');
@@ -85,7 +85,7 @@ export class LearningLibrary {
       if (!value || typeof value !== 'object' || !('version' in value) || value.version !== version) throw new Error(`Version ${version} progress has an incompatible schema.`);
       return decodeLearnerProgress(value, this.workspaceKey);
     }
-    return { version: LEARNING_SCHEMA_VERSION_V3, workspaceKey: this.workspaceKey, decisions: [] };
+    return { version: LEARNING_SCHEMA_VERSION_V4, workspaceKey: this.workspaceKey, decisions: [] };
   }
 
   /** Appends an explicit learner intent after re-reading under the cross-window lock. @example await library.decide({id,item:'paired-cart-demo/server',sourceHash,understood:true,at}) */
@@ -99,16 +99,21 @@ export class LearningLibrary {
       }
       if (progress.decisions.length >= MAX_LEARNER_DECISIONS) throw new Error('Understanding history is full; no previous decision was removed.');
       const next = { ...progress, decisions: [...progress.decisions, decision] };
-      await atomicPrivateWrite(join(this.directory, PROGRESS_V3_FILE), next, PROGRESS_LIMIT_BYTES); return next;
+      await atomicPrivateWrite(join(this.directory, PROGRESS_V4_FILE), next, PROGRESS_LIMIT_BYTES); return next;
     });
   }
 
   /** Saves reader navigation without touching learner decisions or reviving live control on reload. @example await library.select(selection) */
-  select(input: StudySelection): Promise<void> {
-    const selection = selectionSchema.parse(input);
+  select(input: RetainedStudySelection): Promise<void> {
+    const selection = retainedStudySelectionSchema.parse(input);
     return this.locked(async () => {
       const progress = await this.readProgress();
-      await atomicPrivateWrite(join(this.directory, PROGRESS_V3_FILE), { ...progress, selection }, PROGRESS_LIMIT_BYTES);
+      // A configured selection names its captured item; no unrelated article gains that evidence or control.
+      if (selection.profile === 'repository-browser') {
+        const study = await this.readStudy(selection.studyId);
+        if (study.profile !== selection.profile || selection.itemId !== `repository/${study.configuration.book.bookId}/${study.configuration.book.nodeId}`) throw new Error('Configured selection belongs to another retained learning item.');
+      }
+      await atomicPrivateWrite(join(this.directory, PROGRESS_V4_FILE), { ...progress, selection }, PROGRESS_LIMIT_BYTES);
     });
   }
 
@@ -117,7 +122,7 @@ export class LearningLibrary {
     const repositorySelection = repositorySelectionSchema.parse(input);
     return this.locked(async () => {
       const progress = await this.readProgress();
-      await atomicPrivateWrite(join(this.directory, PROGRESS_V3_FILE), { ...progress, repositorySelection }, PROGRESS_LIMIT_BYTES);
+      await atomicPrivateWrite(join(this.directory, PROGRESS_V4_FILE), { ...progress, repositorySelection }, PROGRESS_LIMIT_BYTES);
     });
   }
 

@@ -41,7 +41,7 @@ test('legacy understanding stays in the paired profile and preserves the exact d
   const progress = decodeLearnerProgress(original, workspaceKey);
   // Assert
   assert.equal(sha256(bytes), '4cd64d619cb165a2e6d4b68a4f5be32c21ea50cb06df4d89f9633dde3a81038b');
-  assert.equal(progress.version, 3);
+  assert.equal(progress.version, 4);
   assert.deepEqual(progress.decisions, [{ id: '2873e41e-7878-422e-af27-da5f40334558', sourceHash: 'd31e34bc5c3745317afabd5721819d959de090497e58cfd49df759134d59d8f2', understood: true, at: '2026-09-18T20:56:35.947Z', item: 'paired-cart-demo/server', context: { kind: 'source' } }]);
   assert.equal(progress.selection?.profile, 'paired-cart-demo'); assert.equal(progress.selection?.itemId, 'paired-cart-demo/server'); assert.equal(progress.selection?.follow, false);
   assert.equal(progress.decisions.some(decision => decision.item.startsWith('checkout-demo/')), false);
@@ -111,7 +111,7 @@ test('two first-migration writers in one host preserve both explicit decisions e
   assert.deepEqual(progress.decisions.map(decision => decision.id), ['2873e41e-7878-422e-af27-da5f40334558', firstDecision.id, secondDecision.id]);
   assert.equal(progress.decisions[0]?.item, 'paired-cart-demo/server'); assert.equal(progress.decisions[2]?.item, 'checkout-demo/order-creation');
   assert.deepEqual(await readFile(join(directory, 'progress.json')), legacy);
-  assert.equal(JSON.parse(await readFile(join(directory, 'progress.v3.json'), 'utf8')).version, 3);
+  assert.equal(JSON.parse(await readFile(join(directory, 'progress.v4.json'), 'utf8')).version, 4);
 });
 
 test('a corrupt preferred v2 file never falls back to a valid legacy archive or progress', async context => {

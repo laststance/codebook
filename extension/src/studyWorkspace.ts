@@ -459,7 +459,11 @@ export class StudyWorkspace {
       });
       // Current files may disappear while immutable saved observations remain independently readable.
       await this.readBaselines().catch(() => undefined);
-      try { this.progress = await this.library.readProgress(); if (this.progress.selection) this.selection = { ...this.progress.selection, follow: false }; }
+      try {
+        this.progress = await this.library.readProgress();
+        if (this.progress.selection?.profile === 'repository-browser') throw new Error('Configured Study presentation is not available in this build yet.');
+        if (this.progress.selection) this.selection = { ...this.progress.selection, follow: false };
+      }
       catch (error) { this.report('progress', error); }
       try { this.catalog = await this.library.list(); const id = this.selection.studyId ?? this.catalog[0]?.id;
         if (id) { this.selectedArchive = await this.readSavedArchive(id); this.selectArchive(this.selectedArchive); }

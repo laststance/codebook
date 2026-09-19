@@ -794,7 +794,7 @@ test('a closed source file change marks prior understanding for review without c
   const harness = await workspaceHarness();
   try {
     await harness.reader.understand(true);
-    const directory = harness.reader.inspect().libraryDirectory!, before = await readFile(join(directory, 'progress.v3.json'), 'utf8');
+    const directory = harness.reader.inspect().libraryDirectory!, before = await readFile(join(directory, 'progress.v4.json'), 'utf8');
     const updatesBefore = harness.counts().outlineUpdates;
     assert.equal(harness.reader.inspect().view!.model.understoodCount, 1);
     // Act: the editor has no open source document; the filesystem watcher owns this update.
@@ -802,7 +802,7 @@ test('a closed source file change marks prior understanding for review without c
     await waitUntil(() => harness.reader.inspect().view!.model.reviewCount === 1, 'closed source review signal', 1_000);
     // Assert
     assert.equal(harness.reader.inspect().view!.model.understoodCount, 0);
-    assert.equal(await readFile(join(directory, 'progress.v3.json'), 'utf8'), before);
+    assert.equal(await readFile(join(directory, 'progress.v4.json'), 'utf8'), before);
     assert.equal(harness.reader.inspect().view!.model.source.hash, sha256('const price = 25;'));
     assert.ok(harness.counts().outlineUpdates > updatesBefore, 'The closed reader still updates its installed outline');
   } finally { await harness.close(); }

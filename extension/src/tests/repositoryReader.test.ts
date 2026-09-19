@@ -242,12 +242,12 @@ test('Retry saves an unsaved choice for its original article exactly once after 
 
 test('corrupt shared progress leaves articles readable but understanding disabled without replacing the corrupt file', async context => {
   // Arrange
-  const harness = await readerHarness(context); await writeFile(join(harness.library.directory, 'progress.v3.json'), '{corrupt');
+  const harness = await readerHarness(context); await writeFile(join(harness.library.directory, 'progress.v4.json'), '{corrupt');
   // Act
   await harness.reader.open();
   // Assert
   assert.equal(harness.reader.inspect().view.book?.bookId, 'architecture'); assert.equal(harness.reader.inspect().view.understanding?.known, false);
-  await assert.rejects(harness.reader.understand(true), /learning storage/); assert.equal(await readFile(join(harness.library.directory, 'progress.v3.json'), 'utf8'), '{corrupt');
+  await assert.rejects(harness.reader.understand(true), /learning storage/); assert.equal(await readFile(join(harness.library.directory, 'progress.v4.json'), 'utf8'), '{corrupt');
 });
 
 test('captured source URIs reject forged hashes and a reader rejects actions after workspace ownership changes', async context => {

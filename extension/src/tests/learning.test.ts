@@ -146,7 +146,7 @@ test('another writer or corrupt progress fails visibly without replacing persist
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-')); context.after(() => rm(directory, { recursive: true, force: true }));
   const library = new LearningLibrary(directory, workspaceKey); await library.decide(decision(true));
-  const path = join(directory, 'progress.v3.json'), prior = await readFile(path, 'utf8'); await writeFile(join(directory, 'writer.lock'), 'another writer');
+  const path = join(directory, 'progress.v4.json'), prior = await readFile(path, 'utf8'); await writeFile(join(directory, 'writer.lock'), 'another writer');
   // Act / Assert
   await assert.rejects(library.decide(decision(false)), /locked/); assert.equal(await readFile(path, 'utf8'), prior);
   await rm(join(directory, 'writer.lock')); await writeFile(path, '{broken');
