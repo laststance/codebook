@@ -125,3 +125,29 @@ Scores above assess this bounded plan, not shipped DX: Getting started 9, API 9,
 - [ ] **DX3 (P2, human ~2 h / agent ~20 min)** — Runnable playback help and measurements. Files: extension README/help/native evidence. Verify guide, first replay/seek/control timing in both hosts.
 
 No unresolved product decision. Exact technical bounds and UI behavior are next review work. No recording is implemented yet.
+
+### Independent DX challenge and reconciliation
+
+Claude Code returned no review after its 300,000 ms timeout (`outside_status: unavailable`). A fresh same-host subagent, `cycle0008_dx_challenge`, completed one bounded read-only review: 8/10, two findings. Its result is not external-provider coverage or a final-acceptance review. The agent driving this cycle selected both remedies under D008; they implement the already required truthful timing and partial recovery rather than change the product destination.
+
+- **P1 — Later explanations and checkpoint identity.** Finalized screen recording is immutable. Retain explanation additions separately with exact observation identity and actual saved time. An addition after recording end is a visible **Added after recording** annotation, excluded from the historical playback projection unless the learner explicitly opens later annotations. Bind the recording context/index to the exact study checkpoint hash/revision read. Test finalization → later explanation → different run → restart: no lost explanation, no pre-availability display, no recording reclassification merely because an annotation arrived.
+- **P2 — Interrupted recording discovery.** Persist a bounded discoverable checkpoint from recording start. On restart, unfinished capture becomes **interrupted**, exposing only verified saved ranges, without resuming capture/execution or changing understanding. Count unfinished/unreferenced blobs against the storage budget; engineering review fixes the deterministic quota policy. Test saved frame before final manifest → host exit → rediscovery and partial playback.
+
+Three task groups above include these regressions. No cross-model agreement or measured DX improvement is claimed. Task artifact: `~/.gstack/projects/codebook/tasks-devex-review-20260919-015307.jsonl`. No new operational learning beyond the recorded cycle findings. Supplemental review logging uses the complete shared GStack installation because the Codex copy lacks `lib/review-evidence.ts`; project decisions remain here.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+| --- | --- | --- | --- | --- | --- |
+| CEO | Existing approved destination | Scope unchanged | 0 this cycle | Not rerun | D008/D014 select this bounded increment |
+| Outside | Claude Code, DX plan | Independent provider challenge | 1 | Unavailable | 300,000 ms timeout; no completed output |
+| Native challenge | DX fallback | Independent same-host plan check | 1 | Completed with findings | P1 later annotations; P2 interrupted discovery; remedies recorded |
+| Engineering | `/plan-eng-review` | Architecture and verification | 0 | Required | Next after design review |
+| Design | `/plan-design-review` | Recording interaction | 0 | Planned | Next review |
+| DX | `/plan-devex-review` | API, persistence, recovery | 1 | Plan coverage clear | Eight passes, three task groups; implementation unverified |
+
+**OUTSIDE COVERAGE:** Claude Code DX plan review unavailable; native fallback supplies no external coverage. Earlier-cycle reviews are not evidence for this recording plan.
+
+**VERDICT:** DX bounded-plan review complete; design and engineering reviews remain before implementation. No product or final-acceptance claim.
+
+NO UNRESOLVED DECISIONS
