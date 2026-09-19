@@ -3,11 +3,10 @@ import { BOOK_MAX_ANCHORS, BOOK_MAX_SECTIONS, REPOSITORY_FIXED_READING_SECTIONS,
 import { learnerDecisionSchema as legacyDecisionSchema, selectionSchema } from './studySchemas';
 import { bookIdSchema, learningItemSchema } from './identitySchemas';
 export { repositoryItemSchema, learningItemSchema } from './identitySchemas';
-import { bookAnchorSchema, repositoryHashSchema } from './sourceSchemas';
-import { citationContext } from './utils/citationContext';
+import { repositoryHashSchema } from './sourceSchemas';
+import { citationContextSchema } from './citationSchemas';
+export { citationContextSchema } from './citationSchemas';
 
-export const citationContextSchema = z.strictObject({ kind: z.literal('citations'), hash: repositoryHashSchema, anchors: z.array(bookAnchorSchema).min(1).max(BOOK_MAX_ANCHORS) })
-  .refine(context => JSON.stringify(context) === JSON.stringify(citationContext(context.anchors)), 'Citation context must have a verified canonical hash and deduplicated ordering.');
 const singleSourceDecisionSchema = legacyDecisionSchema.extend({ context: z.strictObject({ kind: z.literal('source') }) });
 const citationDecisionSchema = legacyDecisionSchema.extend({ item: learningItemSchema, context: citationContextSchema })
   .refine(decision => decision.context.anchors.some(anchor => anchor.hash === decision.sourceHash), 'Primary source must belong to the complete citation context.');

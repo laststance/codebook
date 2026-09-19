@@ -474,6 +474,8 @@ Selection baseline: Cycle 0010's final experiment passed 38 tests and seven nati
 
 Implementation checkpoint 1: shared `identitySchemas` preserves existing authoring/learner schema semantics; strict internal `repositoryConfigSchemas` defines the reviewed bounded configuration. Public start/discovery is deliberately not wired until the runtime/storage contract is ready. `tsc` passes; new 11 configuration tests plus legacy migration, citation progress and book publication tests pass **41/41**, zero failed/skipped/cancelled. This verifies grammar/canonical ordering/byte limits and unchanged existing identities, not repository execution or new-format persistence. Original handoff backups still match 7/7.
 
+Implementation checkpoint 2: closed configured Study v3 schemas and an offline decoder retain canonical configuration, all cited source bytes, one browser observation, declared actual primitive facts, explicit unavailable inspections, exact pause/continuation and three image phases. Decoder rejects invented server/causal data, rebound identities, changed source/citations/facts and completion without required evidence. Citation context extraction preserves the v3 learner schema. `tsc` and **50/50** focused tests pass, including nine new decoder cases, zero failed/skipped/cancelled. Test image bytes are synthetic fixtures, not native captures. Persistence dispatch and product consumers are the next connection; the public runtime remains unchanged.
+
 ## Result and decision
 
 Result: pending. No new implementation or product capability is verified by selecting this cycle. One active cycle only. The full destination and all final acceptance requirements remain unchanged.

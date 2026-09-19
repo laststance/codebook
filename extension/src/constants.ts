@@ -127,6 +127,11 @@ export const BOOK_SOURCE_CONCURRENCY = 4;
 export const REPOSITORY_BROWSER_PROFILE = 'repository-browser';
 export const REPOSITORY_BROWSER_ACTION = 'repository-click';
 export const REPOSITORY_CONFIG_VERSION = 1;
+export const CONFIGURED_STUDY_VERSION = 3;
+export const CONFIGURED_STUDY_SUFFIX = '.study.v3.json';
+export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json';
+export const CONFIGURED_OBSERVATION_LIMIT = 1;
+export const CONFIGURED_CAPTURE_PHASES = ['before', 'paused-browser', 'after'] as const;
 export const REPOSITORY_CONFIG_LIMIT_BYTES = 65_536;
 export const REPOSITORY_SELECTOR_LIMIT_CHARS = 512;
 export const REPOSITORY_CONDITION_LIMIT = 8;
@@ -149,4 +154,5 @@ export const REPOSITORY_RESERVED_INSPECTION_ROOTS = [
   'true', 'try', 'typeof', 'undefined', 'var', 'void', 'while', 'with', 'yield', 'NaN', 'Infinity',
 ] as const;
 export const REPOSITORY_FORBIDDEN_INSPECTION_SEGMENTS = ['__proto__', 'prototype', 'constructor'] as const;
+export const REPOSITORY_CAPTURED_TYPES = ['undefined', 'object', 'boolean', 'number', 'bigint', 'string', 'symbol', 'function'] as const;
 export { ACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, HOLD_DURATION_MS, CONTROL_RESPONSE_LIMIT_MS } from 'codebook-cycle-0001/dist/constants';
