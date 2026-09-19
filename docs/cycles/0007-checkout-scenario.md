@@ -3,7 +3,7 @@
 Type: product-increment
 Status: closed
 Result: demonstrated (connected checkout); native presentation reliability inconclusive
-Delivery: committed (remote evidence synchronization pending)
+Delivery: merged (direct fast-forward integration, `6840178`; issue #8 closed)
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/8
 Goal issue: https://github.com/laststance/codebook/issues/1

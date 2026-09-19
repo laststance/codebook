@@ -2,11 +2,11 @@
 
 Updated: 2026-09-19\
 Product stage: connected study and durable learning mechanisms demonstrated; full native usability unverified\
-Active cycle: [0007 — Cart-to-confirmation scenario](docs/cycles/0007-checkout-scenario.md) — closed; next cycle selected\
+Active cycle: [0008 — Recording and offline replay](docs/cycles/0008-recording-replay.md) — planning\
 Last cycle: [0007 — Cart-to-confirmation scenario](docs/cycles/0007-checkout-scenario.md) — mechanisms demonstrated; native reliability inconclusive\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: [8](https://github.com/laststance/codebook/issues/8) — open\
-Last cycle issue: [#7](https://github.com/laststance/codebook/issues/7) — closed with remote evidence `5abd16a`\
+Active cycle issue: [#9](https://github.com/laststance/codebook/issues/9) — open\
+Last cycle issue: [#8](https://github.com/laststance/codebook/issues/8) — closed with remote evidence `6840178`\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
@@ -44,7 +44,7 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Synchronize Cycle 0007 closure and issue #8 from the clean `8be0913` evidence, then open the single selected Cycle 0008: synchronized recording/offline replay of the fixed checkout (D014). Plan only moving frames, shared event/observation timing, playback after runtime exit and explicit partial/gap handling. Preserve historical phase receipts and source versions. Carry the intermittent render-ACK risk without inventing a cause or repeating an unchanged diagnostic. Current code passes 96/46/43 tests, 16 clean native cases and bounded webview checks; current actual-agent outcomes are complete Cursor and partial-image VS Code. D008 authorizes continuation; no final goal is removed.
+Review and implement the active Cycle 0008: synchronized recording/offline replay of the fixed checkout (D014). Cycle 0007 closure and issue #8 are synchronized; evidence is on origin/main at `6840178`. Plan only moving frames, shared event/observation timing, playback after runtime exit and explicit partial/gap handling. Preserve historical phase receipts and source versions. Carry the intermittent render-ACK risk without inventing a cause or repeating an unchanged diagnostic. Current code passes 96/46/43 tests, 16 clean native cases and bounded webview checks; current actual-agent outcomes are complete Cursor and partial-image VS Code. D008 authorizes continuation; no final goal is removed.
 
 Cycle 0007 source and final host evidence are frozen at `8be0913`. No CI, PR approval, VSIX, installed-product or publication claim exists. Desktop-lock-dependent native visual checks remain unverified; do not bypass or repeatedly retry the unchanged lock.
 
