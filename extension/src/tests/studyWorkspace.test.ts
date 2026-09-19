@@ -38,7 +38,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const commands: string[] = [];
   const panels = new Set<ReturnType<typeof panel>>();
   const receivers = new Map<string, (message: unknown) => void>();
-  let automaticContextReceipt = false, displayedImage: string | undefined;
+  let automaticContextReceipt = false, contextCoversSource = false, displayedImage: string | undefined;
   let nextImage: { wait: Promise<void>; entered(): void } | undefined;
   function panel(kind: string) {
     const value = { webview: { html: '', postMessage: async (message: StudyViewMessage) => {
@@ -46,7 +46,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
       }
       return true;
-    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, title: '', reveal() {}, onDidDispose: disposable, onDidChangeViewState: disposable, dispose() { panels.delete(value); } };
+    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, title: '', reveal() { if (contextCoversSource && kind === 'codebook.studyContext') groups[0]!.activeTab = undefined; }, onDidDispose: disposable, onDidChangeViewState: disposable, dispose() { panels.delete(value); } };
     panels.add(value); return value;
   }
   const initialSelection: string[] = [];
@@ -75,6 +75,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
   return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
     clock(value: number) { clock = value; }, acknowledgeContext() { automaticContextReceipt = true; }, displayedImage: () => displayedImage,
+    coverSourceWhenContextFocused() { contextCoversSource = true; },
     holdNextImage() {
       let release = () => {}, entered = () => {};
       const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
@@ -125,6 +126,19 @@ test('Recording opens paused with no future source and seeking binds captured va
     assert.equal(harness.displayedImage(), harness.png.toString('base64')); assert.equal(harness.runtimes[0]!.dispatches, 1); assert.equal(harness.runtimes[0]!.releases, 1);
     const library = new LearningLibrary(harness.store.learningDirectory, harness.store.workspaceKey);
     assert.equal((await library.readProgress()).decisions.length, 0); assert.equal((await harness.store.readPreference())?.positionMs, 100);
+  } finally { await harness.close(); }
+});
+
+test('opening a recording restores its captured source after context focus covers the manually moved source group', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(); harness.coverSourceWhenContextFocused();
+  try {
+    // Act
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    // Assert
+    const state = harness.reader.inspect();
+    assert.equal(state.view?.recording?.readiness, 'ready', state.view?.recording?.reason);
+    assert.equal(harness.groups[0]?.activeTab?.input.uri.toString(), state.sourceUri);
   } finally { await harness.close(); }
 });
 

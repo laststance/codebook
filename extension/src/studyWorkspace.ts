@@ -556,7 +556,8 @@ export class StudyWorkspace {
     this.playbackPending = bundle; this.playbackPresentingReady = false;
     this.selection = { ...this.selection, studyId: bundle.studyId, itemId: bundle.projection.observation?.itemId ?? STUDY_PROFILES[this.selection.profile].items[0]!.id, follow: false };
     const viewport = await this.ensureReplayViewport(signal); signal.throwIfAborted();
-    await this.renderSelection(); signal.throwIfAborted();
+    // Opening the workspace may focus context over a manually moved source group; restore only when its native tab is inactive.
+    await this.renderSelection(true, !this.sourceReady()); signal.throwIfAborted();
     if (!this.sourceReady()) throw new Error('Recorded source has not reached the matching native reader.');
     if (bundle.image) await viewport.present(bundle.image.toString('base64'), `Recorded · ${(bundle.projection.positionMs / PLAYBACK_SECOND_MS).toFixed(2)} s`);
     else await viewport.presentMissing(bundle.projection.missing ?? 'No recorded application image.', signal);
