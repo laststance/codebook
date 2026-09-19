@@ -2,7 +2,7 @@
 
 Updated: 2026-09-19\
 Product stage: connected study and durable learning mechanisms demonstrated; full native usability unverified\
-Active cycle: [0008 — Recording and offline replay](docs/cycles/0008-recording-replay.md) — implementation\
+Active cycle: [0008 — Recording and offline replay](docs/cycles/0008-recording-replay.md) — validation\
 Last cycle: [0007 — Cart-to-confirmation scenario](docs/cycles/0007-checkout-scenario.md) — mechanisms demonstrated; native reliability inconclusive\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#9](https://github.com/laststance/codebook/issues/9) — open\
@@ -11,6 +11,8 @@ Repository: [laststance/codebook](https://github.com/laststance/codebook) — pr
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
 ## Verified facts
+
+- [Cycle 0008 implementation checkpoint](docs/cycles/evidence/0008/README.md): clean `f9806fa`, fingerprint `117d0bbd7fd8c988eb1f4d9a581aae06f4aa912e9ebe56f7cdc037ea1462b73e`; **231/231 tests**, actual recording/replay/restart pass separately in VS Code 1.138.0 and Cursor 3.21.13. Four exact source/value seeks, actual moving PNGs, known-end playback, pane recreation, new-instance discovery and paused restore with zero live runs are demonstrated. Native seeks 162–217 ms; first replay 215/266 ms, restart 268/308 ms (VS Code/Cursor). Twenty-eight browser interaction checks pass using real product modules and a simulated native boundary. Inspected initial video crops the lower confirmation transition, so final motion-video proof is pending. Implementation review, constrained UX, root-agent replay, independent native pixels and installed acceptance remain open. Failed attempts are retained; recording admission now queues same-process history/recorder writes while preserving foreign-lock errors.
 
 - [Cycle 0007 evidence](docs/cycles/evidence/0007/README.md): clean `8be0913`, fingerprint `20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea`; **96 product / 46 shared / 43 paired tests**, **6/6 product-native and 10/10 runtime cases** across both hosts. Four item-specific observations, eleven links, seven phase images, interpretations and reload without execution are demonstrated. Actual root-agent checkout uses 36 operations/four explanations per host: Cursor complete; VS Code runtime demonstrated but study partial after three render-ACK timeouts. A bounded diagnostic is inconclusive and excluded from clean acceptance. Review repaired 14 findings in three fixing passes, not converged; a post-review CDP subscription/pause-binding fix has red-before/focused/native evidence. Independent native pixels, installed extension, real repositories, synchronized replay and both later modes remain unverified.
 - [Cycle 0006 evidence](docs/cycles/evidence/0006/README.md): clean implementation `c873b43`, fingerprint `f9836a7d23a8b9cdacb0b6babfcd0927aa443b2808969640e53e8d13b9345d46`; **63 product / 44 shared / 28 paired tests, 27 webview checks, learner normal/history and MCP normal/hold/source-drift in each host**. Two linked observations, exact captured source, values, interpretations, durable personal checks and restart without execution are demonstrated. All runtime cleanup completes; unrelated dirty drafts survive. History cases deliberately remain partial when an invisible page cannot supply a pause receipt. Independent native visual/installed acceptance remains unverified.
@@ -31,9 +33,9 @@ A fixture proves mechanisms, not the integrated final product.
 | Goal | State | Evidence and remaining gap |
 | --- | --- | --- |
 | G01 | partial | Actual driving-agent cart-to-confirmation fixture in both hosts; general repository orchestration and intended-use acceptance remain open. |
-| G02 | partial | Four checkout items and original paired items share outline, source-derived overview/flow, observations and values; no generated repository wiki or recording navigation. |
+| G02 | partial | Four checkout items and original paired items share outline, source-derived overview/flow, observations and values; recording now seeks the same items; generated repository wiki remains absent. |
 | G03 | partial | Exact executed source, values, target/pause identities and an instrumented async boundary verified; arbitrary repository causal links remain unverified. |
-| G04 | partial | Ordered page frames and evidence; no video or offline synchronized replay/export. |
+| G04 | partial | Bounded moving frames and synchronized source/value/explanation replay survive runtime and editor exit in both hosts. Final replay-motion, partial-state UX, review and integrated/installed acceptance remain pending. |
 | G05 | partial | Durable source-versioned decisions, restart, drift and storage-failure tests pass for both fixed profiles; broader repository/installed acceptance pending. |
 | G06 | partial | Extension-owned MCP and actual external SDK/agent clients demonstrated; six native scenarios per host. Explicit fixed demo profiles only; no ordinary-workspace or packaged support proof. |
 | G07 | partial | Native Study workspace implemented; source/selection/ownership API checks and real webview behavior pass. Independent editor pixels and constrained native UX remain unverified. |
@@ -44,7 +46,7 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Implement ENG1→ENG4 of active Cycle 0008: synchronized recording/offline replay of the fixed checkout (D014). DX, design and engineering plans are complete, including three fresh same-host challenges (2/5/3 findings adopted). External coverage is unavailable after one Claude Code timeout; no repeated unchanged invocation. Start with the optional shared clock/frame seam and bounded recording store, then context/outcome, playback/API/UI and separate native host evidence. The cycle contains exact limits and T1–T9 tests. Cycle 0007 evidence remains on origin/main at `6840178`; 96/46/43 tests and prior native outcomes are baseline only, not recording proof. Preserve source versions, legacy archives and the unresolved render-ACK distinction. D008 authorizes continuation; no final goal is removed.
+Finish ENG4 of Cycle 0008 on `feat/cycle-0008-recording-replay`: bounded storage, context, controller and API 1.2 Recording UI are implemented. Clean `f9806fa` has 231 passing tests and both native recording/restart cases. Next finish browser QA (narrow widths, enlarged text, error/gap/empty states, an uncropped playback animation), update README/help and perform `/review` on the actual implementation. Preserve the native/API/simulated-browser evidence distinction. Eight attempts and sanitized final native artifacts are committed under docs/cycles/evidence/0008; runtime originals remain under artifacts/cycle-0008. After review and root-agent replay, close this cycle with its actual result and choose one next unmet capability under D008. No final goal is removed.
 
 Cycle 0007 source and final host evidence are frozen at `8be0913`. No CI, PR approval, VSIX, installed-product or publication claim exists. Desktop-lock-dependent native visual checks remain unverified; do not bypass or repeatedly retry the unchanged lock.
 

@@ -1,9 +1,9 @@
 # Cycle 0008 — Replay a recorded checkout after runtime exit
 
 Type: product-increment
-Status: implementing
+Status: validating
 Result: pending
-Delivery: local-only
+Delivery: committed; validation/review pending
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/9
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -40,11 +40,18 @@ Review fixes exact bounds/schema/timing before implementation. Required observat
 
 ## Attempts and evidence
 
-No recording implementation or validation yet. Prior phase snapshots and QA videos are not product recording evidence. Carry Cycle 0007's unresolved intermittent viewport ACK: never fabricate missing receipt or assert desktop-lock causation; a bounded diagnostic was inconclusive.
+Implementation checkpoint: clean `f9806fa93df978f8eedf8cf8321f72e534085b3a`, source fingerprint `117d0bbd7fd8c988eb1f4d9a581aae06f4aa912e9ebe56f7cdc037ea1462b73e`. [Sanitized checkpoint evidence](evidence/0008/README.md), [all attempts](evidence/0008/attempts.json), [verification](evidence/0008/verification.json). Earlier failed/partial attempts are diagnostic, not acceptance.
+
+- Implemented ENG1–ENG3: bounded immutable frame journal/blobs, exact separately saved context, requested/presented playback controller, API 1.2 discovery/resources/control, shared Recording tab/transport, legacy history and independent learner progress.
+- Tests: 231/231, zero failed/skipped/cancelled. Real filesystem/SDK/controller/renderer boundaries remain separately identified; mocked presentation never substitutes for native evidence.
+- Both native hosts at the same clean candidate: actual four-stop checkout, 40-second hold, distinct animated confirmation frames, source/value seeks, playback after cleanup, pane recreation, editor replacement, stale instance rejection and paused saved-position restore with zero live runs. VS Code 1.138.0: 34 frames, 28 unique, 19 post-stop stream frames; Cursor 3.21.13: 31/26/16. First replay 215/266 ms, restart 268/308 ms, seeks 162–217 ms, held state reads 4.26/2.23 ms. These are local observations, not latency guarantees.
+- `/investigate` resolved three independent product/test boundaries: wait for the finite actual confirmation transition before terminal screen validation; restore a manually covered captured-source tab before recorded presentation; serialize same-process history/recorder metadata writers before the cross-process lock. Separate native harness fixes retire stale finish commands on reload and assert MCP resource codes from error data. Red regressions and fresh reproductions are retained.
+- Browser QA: 28 behavior checks with actual StudyWorkspace/PlaybackController/BrowserViewport/webview modules and native-recorded PNGs; only native editor APIs simulated. Exact-time interpretation availability, reverse seeking, keyboard controls, shared transport, hide/reveal and no execution/understanding changes pass. Initial inspected replay video crops the lower transition and is insufficient motion proof; an uncropped capture and constrained/error UX checks are pending.
+- Native editor pixels remain independently unverified while the desktop is locked. No bypass, relaxed ACK timeout, Cursor-by-inference, package or final-product claim.
 
 ## Result and handoff
 
-Pending. DX, design and engineering plans are complete below. Exact next action: implement ENG1→ENG4 with the specified T1–T9 checks. Branch `feat/cycle-0008-recording-replay`; no cycle-owned process. Final reviews remain 0/10.
+Pending. ENG1–ENG3 implemented; ENG4 validation underway. Next complete browser motion/constrained/failure-state QA, update usage documentation, run meaningful implementation `/review` and actual driving-agent replay. The local Playwright QA surface uses cloned fixture history; its simulated native API is not independent editor proof. Branch `feat/cycle-0008-recording-replay`; Issue #9 remains open. Final reviews remain 0/10. Select the next unmet product capability only after these results/review are recorded.
 
 
 ## Developer experience review — 2026-09-19
@@ -361,6 +368,6 @@ Completion: Step 0 retained connected scope with two minimal stateful roles; arc
 
 **OUTSIDE COVERAGE:** Claude Code DX plan review unavailable (one timeout); design and engineering outside coverage unavailable, unchanged provider failure not retried. Native voices supply no external coverage. Earlier-cycle reviews are not evidence for this recording plan.
 
-**VERDICT:** DX, design and engineering bounded-plan reviews complete; proceed with ENG1→ENG4 and UI/DX verification. Implementation, native recording, owner acceptance and final reviews are still pending.
+**VERDICT:** Plan reviews complete; ENG1–ENG3 implemented. Clean `f9806fa` has 231 passing tests and recording/restart proof in both hosts. ENG4 browser motion/constrained/error QA, documentation, root-agent replay and implementation review remain pending. Owner acceptance and final reviews remain pending.
 
 NO UNRESOLVED DECISIONS
