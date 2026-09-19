@@ -1,5 +1,7 @@
 # Cycle 0008 evidence — implementation checkpoint
 
+Historical checkpoint. See [the closure evidence at `1740e34`](candidate-1740e34/README.md) for later fixes, 238 tests, actual-agent replay, uncropped motion QA and the retained Cursor presentation failure.
+
 Clean candidate: `f9806fa93df978f8eedf8cf8321f72e534085b3a`; source fingerprint `117d0bbd7fd8c988eb1f4d9a581aae06f4aa912e9ebe56f7cdc037ea1462b73e`. Validation/review is ongoing; this is not cycle closure or final product acceptance.
 
 - [Verification](verification.json), [eight attempts](attempts.json), [provenance](provenance.json), [checksums](SHA256SUMS).

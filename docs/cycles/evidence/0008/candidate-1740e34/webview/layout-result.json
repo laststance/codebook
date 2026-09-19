@@ -1,0 +1,48 @@
+{
+  "passed": true,
+  "checks": [
+    "320px context has no document overflow and visible buttons are at least 44px",
+    "320px keyboard seek preserves focused range",
+    "390px context has no document overflow and visible buttons are at least 44px",
+    "390px keyboard seek preserves focused range",
+    "600px context has no document overflow and visible buttons are at least 44px",
+    "600px keyboard seek preserves focused range",
+    "200% CSS zoom in 600x500 context has no document overflow",
+    "Forced colors and reduced-motion preferences render the paused controls",
+    "Recorded application fits its full image inside the available pane"
+  ],
+  "layouts": [
+    {
+      "width": 318,
+      "scrollWidth": 318,
+      "height": 498,
+      "smallButtons": [],
+      "transportTop": 154,
+      "valuesTop": 964
+    },
+    {
+      "width": 388,
+      "scrollWidth": 388,
+      "height": 498,
+      "smallButtons": [],
+      "transportTop": 134,
+      "valuesTop": 960
+    },
+    {
+      "width": 598,
+      "scrollWidth": 598,
+      "height": 498,
+      "smallButtons": [],
+      "transportTop": 110,
+      "valuesTop": 820
+    }
+  ],
+  "clipping": {
+    "visible": true,
+    "imageBottom": 438,
+    "viewportHeight": 438,
+    "scrollHeight": 438
+  },
+  "consoleErrors": [],
+  "limitations": "Browser webviews/native API simulation; 200% is CSS zoom, not native editor scaling; screen-reader announcement frequency untested"
+}

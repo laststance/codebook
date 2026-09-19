@@ -1,0 +1,17 @@
+{
+  "hypothesis": "Following a 40-second idle pause, frame messages decode but the renderer paint callbacks stop progressing. Measure receive/decode/DOM/rAF separately without altering ACKs or timeouts.",
+  "baseRevision": "1740e346464510e668446e82156478134b5c4144",
+  "acceptance": false,
+  "generatedInstrumentation": [
+    {
+      "path": "experiments/cycle-0001/dist/utils/viewportHtml.js",
+      "originalSha256": "9d03b0db010514c8137ab4005b2c4e66a5c89d8aa5d49567d322b401049bf972",
+      "instrumentedSha256": "f9194d49a1f590b4059391e2c4501718646f95b8d6c5cea3db43472a3263f928"
+    },
+    {
+      "path": "experiments/cycle-0001/dist/browserViewport.js",
+      "originalSha256": "c1b3edb8ffa442ebe593614898492a3b46191e4fd550aaa60a6baf528681ddca",
+      "instrumentedSha256": "89b3bdd59ae97b17925629d64d694438f0ba6fed18b36626b8d07cf220fd0c0e"
+    }
+  ]
+}
