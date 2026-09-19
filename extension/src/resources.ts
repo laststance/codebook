@@ -4,6 +4,7 @@ import { EVENT_DETAIL_LIMIT_BYTES, EVENT_PAGE_SIZE, IMAGE_LIMIT_BYTES, SOURCE_LI
 import { CAPTURE_PHASES } from 'codebook-cycle-0004/dist/constants';
 import { ERROR_RECOVERY, StudyError } from './errors';
 import type { StudyService } from './service';
+import { snapshotSourceHashes } from './utils/snapshotSourceHashes';
 import { omittedDetail } from './utils/omittedDetail';
 import { readBoundedFile } from './utils/readBoundedFile';
 import { readRecordingResource } from './utils/readRecordingResource';
@@ -75,9 +76,10 @@ export async function readResource(service: StudyService, uri: string): Promise<
     if (!sourceMatch[2]) return json({ ...snapshot, snapshotUri, historical: true, sourceUri: `${snapshotUri}/source/typescript` });
     const source = record.runtime?.source(snapshot.itemId);
     if (!source) throw new StudyError('EVIDENCE_UNAVAILABLE', 'The sealed source is unavailable.');
-    const selection = sourceMatch[2] === 'typescript' ? { text: source.source, hash: snapshot.source.typescriptHash, mimeType: 'text/typescript' }
-      : sourceMatch[2] === 'javascript' ? { text: source.javascript, hash: snapshot.source.javascriptHash, mimeType: 'text/javascript' }
-      : { text: source.sourceMap, hash: snapshot.source.sourceMapHash, mimeType: 'application/json' };
+    const hashes = snapshotSourceHashes(snapshot);
+    const selection = sourceMatch[2] === 'typescript' ? { text: source.source, hash: hashes.typescript, mimeType: 'text/typescript' }
+      : sourceMatch[2] === 'javascript' ? { text: source.javascript, hash: hashes.javascript, mimeType: 'text/javascript' }
+      : { text: source.sourceMap, hash: hashes.sourceMap, mimeType: 'application/json' };
     if (Buffer.byteLength(selection.text) > SOURCE_LIMIT_BYTES || sha256(selection.text) !== selection.hash) throw new StudyError('EVIDENCE_UNAVAILABLE', 'Captured source exceeds limits or its sealed hash changed.');
     return { uri, mimeType: selection.mimeType, text: selection.text };
   }

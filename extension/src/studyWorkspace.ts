@@ -1,3 +1,4 @@
+import { REPOSITORY_BROWSER_PROFILE } from './constants';
 import * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
@@ -283,6 +284,7 @@ export class StudyWorkspace {
           if (!service || !record) throw new Error('No current runtime. Reading saved history never starts one.');
           const identity = { instanceId: service.instanceId, runId: record.id };
           if (action === 'click') {
+            if (record.profile === REPOSITORY_BROWSER_PROFILE) throw new Error('Configured Study presentation is not available in this build yet.');
             const nextAction = STUDY_PROFILES[record.profile].actions.find(action => service.state(record).nextActions.includes(action.id));
             if (!nextAction) throw new Error('No application action is currently available.');
             service.action({ ...identity, key: randomUUID(), action: nextAction.id });
@@ -513,10 +515,10 @@ export class StudyWorkspace {
       if (this.service) for (const retained of this.service.records.values()) { await this.checkpoint(this.service, retained); signal?.throwIfAborted(); }
       if (this.selection.follow && this.activeArchive) {
         const state = record && this.service?.state(record);
-        const current = Object.values(state?.participants ?? {}).find(participant => participant.resumable)?.itemId;
+        const current = Object.values(state?.participants ?? {}).find(participant => participant?.resumable)?.itemId;
         const profile = this.activeArchive.profile;
         const retained = this.selection.profile === profile ? this.selection.itemId : STUDY_PROFILES[profile].items[0]!.id;
-        this.selection = { ...this.selection, profile, studyId: this.activeArchive.id, itemId: current ?? retained };
+        this.selection = { ...this.selection, profile, studyId: this.activeArchive.id, itemId: STUDY_PROFILES[profile].items.find(item => item.id === current)?.id ?? retained };
       }
       // Playback owns recorded source presentation; background checkpoints cannot reveal it over the returned Wiki.
       if (this.opened && !this.closing && !this.recordingActive && this.repositoryNavigation === undefined) await this.renderSelection(true, false, signal);
@@ -716,9 +718,9 @@ export class StudyWorkspace {
       study: study && { id: study.id, state: study.state, terminal: study.terminal, profile: study.profile, createdAt: study.createdAt, reason: study.reason, finalOutcome: study.finalOutcome, links: this.recordingActive ? [] : study.links,
         historyOutcome, studyOutcome },
       liveState: live?.state, deadlineAt: live?.deadlineAt, busy: this.busy, saving: this.saving, loading: this.loading || Boolean(playbackState?.cleared && !this.playbackPresentingReady), errors: [...this.errors.values(), ...this.catalog.flatMap(entry => entry.reason ? [entry.reason] : [])],
-      nextAction: live && STUDY_PROFILES[live.profile].actions.find(action => live.nextActions.includes(action.id)), liveProfile: live?.profile,
+      nextAction: live && live.profile !== REPOSITORY_BROWSER_PROFILE ? STUDY_PROFILES[live.profile].actions.find(action => live.nextActions.includes(action.id)) : undefined, liveProfile: live?.profile === REPOSITORY_BROWSER_PROFILE ? undefined : live?.profile,
       profiles: Object.values(STUDY_PROFILES).map(profile => ({ id: profile.id, title: profile.title, description: profile.description })),
-      canClick: !this.recordingActive && live ? STUDY_PROFILES[live.profile].actions.some(action => live.nextActions.includes(action.id)) : false, canRun: !record || record.stopped,
+      canClick: !this.recordingActive && live && live.profile !== REPOSITORY_BROWSER_PROFILE ? STUDY_PROFILES[live.profile].actions.some(action => live.nextActions.includes(action.id)) : false, canRun: !record || record.stopped,
       moments: (study?.observations ?? []).map(observation => ({ id: observation.id, itemId: observation.itemId, title: LEARNING_ITEMS.find(item => item.id === observation.itemId)!.title, at: observation.capturedAt, elapsedMs: observation.elapsedMs })), studies: this.catalog };
   }
 

@@ -35,7 +35,7 @@ export function projectStudy(input: { selection: StudySelection; study?: StudyAr
   const profile = STUDY_PROFILES[selection.profile], selectedItem = profile.items.find(item => item.id === selection.itemId);
   if (!selectedItem) throw new Error('Selected item belongs to another profile.');
   const observation = study && study.id === selection.studyId && study.profile === selection.profile ? study.observations.find(value => value.itemId === selection.itemId) : undefined;
-  const currentParticipant = Object.values(participantSchema.enum).find(participant => live?.participants[participant].resumable);
+  const currentParticipant = Object.values(participantSchema.enum).find(participant => live?.participants[participant]?.resumable);
   const current = currentParticipant && live?.participants[currentParticipant];
   const currentItemId = current?.itemId, currentItem = LEARNING_ITEMS.find(item => item.id === currentItemId);
   const matching = Boolean(observation && live && study?.runId === live.runId && study.instanceId === live.instanceId && current && observation.snapshotUri === current.snapshotUri && observation.itemId === currentItemId);

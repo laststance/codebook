@@ -1,0 +1,159 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { z } from 'zod';
+import { startServer } from '../server';
+import { readResource } from '../resources';
+import { configuredServiceHarness } from './utils/configuredServiceHarness';
+
+const receiptSchema = z.object({ instanceId: z.string(), runId: z.string(), runUri: z.string() });
+
+test('duplicate configured starts reserve one immutable intent before article I/O and reject any changed configuration', async context => {
+  // Arrange
+  const { service, books, configuration, runtimes } = await configuredServiceHarness(context), read = books.readDefinition.bind(books);
+  let release = () => {}, entered = () => {}, reads = 0;
+  const barrier = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  books.readDefinition = async (...arguments_) => { reads++; entered(); await barrier; return read(...arguments_); };
+  const input = { instanceId: service.instanceId, profile: 'repository-browser', key: 'same', configuration }, original = structuredClone(input);
+  // Act
+  const first = service.start(input); await started;
+  const repeated = service.start({ ...original, configuration: { action: original.configuration.action, source: original.configuration.source, version: 1, adapter: 'next-dev-webpack', inspections: original.configuration.inspections, book: original.configuration.book } });
+  configuration.action.title = 'Caller changed this after acceptance';
+  // Assert
+  assert.deepEqual(repeated, first); assert.equal(reads, 1); assert.equal(runtimes.length, 0);
+  assert.throws(() => service.start(input), { code: 'IDEMPOTENCY_CONFLICT' });
+  assert.throws(() => service.start({ ...original, key: 'another' }), { code: 'BUSY' });
+  for (const changed of [
+    { ...original.configuration, book: { ...original.configuration.book, anchorIndex: 1 } },
+    { ...original.configuration, source: { ...original.configuration.source, column: 2 } },
+    { ...original.configuration, inspections: [...original.configuration.inspections].reverse() },
+    { ...original.configuration, initialStorage: [{ key: 'theme', value: 'dark' }] },
+  ]) assert.throws(() => service.start({ ...original, configuration: changed }), { code: 'IDEMPOTENCY_CONFLICT' });
+  release(); await service.record(first).preparation;
+  assert.equal(runtimes.length, 1); assert.equal(runtimes[0]?.definition.configuration.action.title, 'Change theme');
+  assert.equal(service.state(service.record(first)).deadlineAt, new Date(service.record(first).createdAt + 600000).toISOString());
+});
+
+test('a failed configured start keeps its original receipt after source drift without silently trying the application again', async context => {
+  // Arrange
+  const { service, books, configuration, directory, runtimes } = await configuredServiceHarness(context);
+  await writeFile(join(directory, 'src/mode.ts'), 'changed secondary citation');
+  const input = { instanceId: service.instanceId, profile: 'repository-browser', key: 'failed', configuration };
+  // Act
+  const receipt = service.start(input), record = service.record(receipt); await record.preparation; await service.stop(receipt);
+  books.readDefinition = async () => { throw new Error('Identical retry must not read mutable files.'); };
+  const repeated = service.start(structuredClone(input));
+  // Assert
+  assert.deepEqual(repeated, receipt); assert.equal(record.error?.code, 'SOURCE_CHANGED'); assert.equal(runtimes.length, 0);
+  assert.equal(service.state(record).state, 'stopped'); assert.equal(service.state(record).finalOutcome, 'not-demonstrated');
+});
+
+test('stopping a configured start during article I/O drains its read and starts neither prerequisites nor a runtime', async context => {
+  // Arrange
+  const { service, books, configuration, environment, runtimes } = await configuredServiceHarness(context), read = books.readDefinition.bind(books);
+  let release = () => {}, entered = () => {}, prerequisites = 0;
+  const barrier = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  books.readDefinition = async (...arguments_) => { const article = await read(...arguments_); entered(); await barrier; return article; };
+  environment.prerequisites = async () => { prerequisites++; return { ready: true, missing: [] }; };
+  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'cancel', configuration }); await started;
+  // Act
+  let settled = false; const stopping = service.stop(receipt).then(result => { settled = true; return result; });
+  await Promise.resolve(); assert.equal(settled, false); release(); const state = await stopping;
+  // Assert
+  assert.equal(state.cleaned, true); assert.equal(prerequisites, 0); assert.equal(runtimes.length, 0); assert.equal(service.record(receipt).cancellation.signal.aborted, true);
+});
+
+test('a configured runtime returned after cancellation is still owned and released exactly once', async context => {
+  // Arrange
+  const { service, configuration, environment, runtimes } = await configuredServiceHarness(context), create = environment.createRuntime;
+  let release = () => {}, entered = () => {};
+  const barrier = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  environment.createRuntime = async (...arguments_) => { const runtime = await create(...arguments_); entered(); await barrier; return runtime; };
+  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'late-acquisition', configuration }); await started;
+  // Act
+  const stopped = service.stop(receipt); release(); await stopped;
+  // Assert
+  assert.equal(runtimes.length, 1); assert.equal(runtimes[0]?.releases, 1); assert.equal(runtimes[0]?.dispatches, 0); assert.equal(service.record(receipt).prepared, false);
+});
+
+test('stopping a held runtime preparation delivers cancellation before waiting for its completion', async context => {
+  // Arrange
+  const { service, configuration, environment, runtimes } = await configuredServiceHarness(context), create = environment.createRuntime;
+  let entered = () => {};
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await create(...arguments_), stop = runtime.stop.bind(runtime), prepare = runtime.prepare.bind(runtime);
+    let release = () => {}; const barrier = new Promise<void>(resolve => { release = resolve; });
+    runtime.prepare = async () => { await prepare(); entered(); await barrier; throw new Error('Preparation cancelled'); };
+    runtime.stop = async () => { release(); await stop(); }; return runtime;
+  };
+  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'held-setup', configuration }); await started;
+  // Act
+  await service.stop(receipt);
+  // Assert
+  assert.equal(runtimes[0]?.releases, 1); assert.equal(runtimes[0]?.dispatches, 0); assert.equal(service.state(service.record(receipt)).cleaned, true);
+});
+
+test('profile variants reject missing configuration demo extras and foreign action or participant without input', async context => {
+  // Arrange
+  const { service, configuration, runtimes } = await configuredServiceHarness(context);
+  const input = { instanceId: service.instanceId, profile: 'repository-browser', key: 'valid', configuration };
+  // Act / Assert
+  assert.throws(() => service.start({ ...input, configuration: undefined }), { code: 'INVALID_CONFIGURATION' });
+  assert.throws(() => service.start({ ...input, profile: 'paired-cart-demo' }), { code: 'INVALID_CONFIGURATION' });
+  assert.throws(() => service.start({ ...input, profile: 'unknown' }), { code: 'UNSUPPORTED_PROFILE' });
+  assert.equal(service.records.size, 0);
+  const receipt = service.start(input), record = service.record(receipt); await record.preparation;
+  assert.throws(() => service.action({ ...receipt, key: 'wrong', action: 'add-to-cart' }), { code: 'BUSY' });
+  await assert.rejects(service.continue({ ...receipt, participant: 'server', sessionId: 'browser-session', threadId: 1, generation: 1 }), { code: 'STALE_PAUSE' });
+  assert.equal(runtimes[0]?.dispatches, 0); assert.deepEqual(Object.keys(service.state(record).participants), ['browser']);
+});
+
+test('configured explanations retain actual false and null facts while unavailable or foreign facts grant no interpretation or continuation', async context => {
+  // Arrange
+  const { service, configuration, runtimes } = await configuredServiceHarness(context);
+  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'facts', configuration }), record = service.record(receipt); await record.preparation;
+  const action = { ...receipt, key: 'click', action: 'repository-click' as const }, accepted = service.action(action), state = service.state(record), snapshotUri = state.participants.browser.snapshotUri!;
+  // Act
+  const explained = await service.explain({ ...receipt, key: 'explain', snapshotUri, sourceHash: configuration.source.hash, valuePaths: ['value:enabled', 'value:selection'], interpretation: 'The actual captured flag is false and selection is null.' });
+  const explanation = await readResource(service, explained.explanationUri);
+  const source = await readResource(service, `${snapshotUri}/source/typescript`);
+  // Assert
+  assert.equal('text' in explanation && JSON.parse(explanation.text).capturedFacts[0].value, false);
+  assert.equal('text' in explanation && JSON.parse(explanation.text).capturedFacts[1].value, null);
+  assert.equal('text' in source && source.text, 'const nextTheme = "dark";\n');
+  for (const path of ['value:renderLocal', 'value:missing', 'price']) assert.throws(() => service.explain({ ...receipt, key: path, snapshotUri, sourceHash: configuration.source.hash, valuePaths: [path], interpretation: 'Not captured.' }), { code: 'INVALID_REFERENCE' });
+  await service.continue(state.participants.browser.continueArguments!);
+  await assert.rejects(service.continue(state.participants.browser.continueArguments!), { code: 'STALE_PAUSE' });
+  await service.stop(receipt);
+  assert.deepEqual(service.action(action), accepted); assert.equal(runtimes[0]?.dispatches, 1);
+  assert.deepEqual(await readResource(service, `${snapshotUri}/source/typescript`), source); assert.equal(service.state(record).participants.browser.resumable, false);
+});
+
+test('real SDK accepts the bounded configured object and reconnects to the original input receipt without a second dispatch', async context => {
+  // Arrange: HTTP/SDK/storage are real, editor effects remain the explicitly synthetic harness.
+  const { service, configuration, runtimes } = await configuredServiceHarness(context), endpoint = await startServer(service);
+  const connect = async () => {
+    const client = new Client({ name: 'configured-contract-test', version: '1.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } } })); return client;
+  };
+  const first = await connect(); let second: Client | undefined;
+  try {
+    // Act
+    const tools = await first.listTools(), start = { instanceId: service.instanceId, profile: 'repository-browser', key: 'sdk', configuration };
+    const result = await first.callTool({ name: 'codebook_start', arguments: start }), receipt = z.object({ data: receiptSchema }).parse(result.structuredContent).data;
+    await service.record(receipt).preparation;
+    const input = { instanceId: receipt.instanceId, runId: receipt.runId, action: 'repository-click', key: 'one-click' };
+    const accepted = await first.callTool({ name: 'codebook_action', arguments: input }); await first.close(); second = await connect();
+    const repeated = await second.callTool({ name: 'codebook_action', arguments: input });
+    const invalid = await second.callTool({ name: 'codebook_start', arguments: { ...start, key: 'bad', configuration: { ...configuration, shell: 'unexpected' } } });
+    // Assert
+    assert.equal(tools.tools.find(tool => tool.name === 'codebook_start')?.inputSchema.type, 'object');
+    assert.equal(accepted.isError, undefined); assert.deepEqual(repeated.structuredContent, accepted.structuredContent); assert.equal(runtimes[0]?.dispatches, 1);
+    assert.equal(invalid.isError, true); assert.equal(service.records.size, 1);
+    assert.deepEqual((await second.callTool({ name: 'codebook_start', arguments: start })).structuredContent, result.structuredContent);
+  } finally { await first.close(); await second?.close(); await endpoint.close(); }
+});

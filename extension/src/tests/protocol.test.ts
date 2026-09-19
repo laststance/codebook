@@ -68,7 +68,7 @@ test('MCP checkout discovers its action order and preserves the first receipt an
     const firstInput = { ...identity, key: 'cart', action: 'add-to-cart' };
     const first = await connection.client.callTool({ name: 'codebook_action', arguments: firstInput });
     const original = harness.service.state(record).observations[0]!;
-    const originalPause = harness.service.state(record).participants.server.continueArguments!;
+    const originalPause = harness.service.state(record).participants.server!.continueArguments!;
     const originalBytes = await connection.client.readResource({ uri: original.snapshotUri });
     await connection.client.callTool({ name: 'codebook_continue', arguments: originalPause });
     runtime.status = 'ready'; // Synthetic completion boundary; the native matrix verifies actual cart completion.

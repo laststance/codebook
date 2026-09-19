@@ -1,3 +1,4 @@
+import { snapshotSourceHashes } from '../utils/snapshotSourceHashes';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -66,8 +67,8 @@ test('a cart observation cannot borrow order facts from a later stop on the same
   const receipt = service.start({ instanceId: service.instanceId, profile: 'checkout-demo', key: 'facts' }), record = service.record(receipt);
   try {
     await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
-    const cart = service.state(record).observations[0]!; const hash = service.snapshot(record, cart.snapshotUri).source.typescriptHash;
-    await service.continue(service.state(record).participants.server.continueArguments!); harness.runtimes[0]!.status = 'ready';
+    const cart = service.state(record).observations[0]!; const hash = snapshotSourceHashes(service.snapshot(record, cart.snapshotUri)).typescript;
+    await service.continue(service.state(record).participants.server!.continueArguments!); harness.runtimes[0]!.status = 'ready';
     service.action({ ...receipt, key: 'order', action: 'checkout' });
     const order = service.state(record).observations[1]!;
     // Act / Assert
@@ -87,7 +88,7 @@ test('historical source and missing cart image remain bound to their item after 
     await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
     const runtime = harness.runtimes[0]!, cart = service.state(record).observations[0]!;
     const original = await readResource(service, cart.sourceUri);
-    await service.continue(service.state(record).participants.server.continueArguments!); runtime.status = 'ready';
+    await service.continue(service.state(record).participants.server!.continueArguments!); runtime.status = 'ready';
     service.action({ ...receipt, key: 'order', action: 'checkout' });
     const order = service.state(record).observations[1]!;
     const orderSource = { ...runtime.seal, source: 'const total = 24;' };
@@ -113,7 +114,7 @@ for (const shutdown of ['run stop', 'server shutdown'] as const) {
     const barrier = new Promise<void>(resolve => { release = resolve; });
     try {
       await service.record(receipt).preparation; service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
-      const snapshotUri = service.state(service.record(receipt)).participants.server.snapshotUri!, runtime = harness.runtimes[0]!;
+      const snapshotUri = service.state(service.record(receipt)).participants.server!.snapshotUri!, runtime = harness.runtimes[0]!;
       const stop = runtime.stop.bind(runtime);
       runtime.reveal = async () => { entered = true; await barrier; editorOpen = true; runtime.evidence.record('agent.source-revealed'); };
       runtime.stop = async () => { editorOpen = false; await stop(); };
@@ -207,14 +208,14 @@ test('simultaneous continuation consumes only one exact pause and historical sna
   const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'pause' }); const record = service.record(receipt);
   try {
     await record.preparation; service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
-    const state = service.state(record), continuation = state.participants.server.continueArguments!;
+    const state = service.state(record), continuation = state.participants.server!.continueArguments!;
     // Act
     const results = await Promise.allSettled([service.continue(continuation), service.continue(continuation)]);
     now = RUN_TIMEOUT_MS + 1; service.maintain(); await service.stop(receipt);
-    const snapshot = await readResource(service, state.participants.server.snapshotUri!);
+    const snapshot = await readResource(service, state.participants.server!.snapshotUri!);
     // Assert
     assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
-    assert.equal(service.state(record).participants.server.resumable, false);
+    assert.equal(service.state(record).participants.server!.resumable, false);
     await assert.rejects(service.continue(continuation), error => error instanceof StudyError && error.code === 'STALE_PAUSE');
     assert.ok('text' in snapshot); assert.equal(JSON.parse(snapshot.text).values.price, 24); assert.equal(harness.runtimes[0]?.dispatches, 1);
   } finally { await harness.close(); }
@@ -227,11 +228,11 @@ test('explanations publish captured values only after persistence and same-key c
   let release: (() => void) | undefined;
   try {
     await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
-    const snapshotUri = service.state(record).participants.server.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
+    const snapshotUri = service.state(record).participants.server!.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
     const evidence = harness.runtimes[0]!.evidence, originalSave = evidence.save.bind(evidence);
     let entered = false; const barrier = new Promise<void>(resolve => { release = resolve; });
     evidence.save = async (name, contents) => { entered = true; await barrier; await originalSave(name, contents); };
-    const input = { ...receipt, key: 'explanation', snapshotUri, sourceHash: snapshot.source.typescriptHash, valuePaths: ['price', 'cartCount'] as ('price' | 'cartCount')[], interpretation: 'The cart is still empty at the captured statement.' };
+    const input = { ...receipt, key: 'explanation', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: ['price', 'cartCount'] as ('price' | 'cartCount')[], interpretation: 'The cart is still empty at the captured statement.' };
     // Act
     const first = service.explain(input), duplicate = service.explain(input);
     await waitUntil(() => entered, 'explanation write', 1_000);
@@ -251,10 +252,10 @@ test('a failed explanation write never appears as committed history or a success
   const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'storage' }), record = service.record(receipt);
   try {
     await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
-    const snapshotUri = service.state(record).participants.server.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
+    const snapshotUri = service.state(record).participants.server!.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
     harness.runtimes[0]!.evidence.save = async () => { throw new Error('ENOSPC'); };
     // Act / Assert
-    await assert.rejects(service.explain({ ...receipt, key: 'explain', snapshotUri, sourceHash: snapshot.source.typescriptHash, valuePaths: ['price'], interpretation: 'Price captured.' }), error => error instanceof StudyError && error.code === 'EVIDENCE_UNAVAILABLE');
+    await assert.rejects(service.explain({ ...receipt, key: 'explain', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: ['price'], interpretation: 'Price captured.' }), error => error instanceof StudyError && error.code === 'EVIDENCE_UNAVAILABLE');
     assert.equal(record.explanations.size, 0); assert.equal(service.state(record).finalOutcome, 'not-demonstrated');
   } finally { await harness.close(); }
 });
@@ -281,7 +282,7 @@ test('event pagination bounds response detail and a source resource retains the 
     for (let index = 0; index < 60; index += 1) harness.runtimes[0]!.evidence.record('test.detail', { text: 'x'.repeat(9_000) });
     // Act
     const page = await readResource(service, service.uri(record.id, 'events/0'));
-    const source = await readResource(service, service.state(record).participants.server.sourceUri!);
+    const source = await readResource(service, service.state(record).participants.server!.sourceUri!);
     // Assert
     assert.ok('text' in page && 'text' in source); const parsed = JSON.parse(page.text);
     assert.equal(parsed.events.length, 50); assert.equal(parsed.events[1].detail.truncated, true); assert.match(parsed.nextUri, /events\/50$/);

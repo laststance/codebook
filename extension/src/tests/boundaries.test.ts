@@ -1,3 +1,4 @@
+import { snapshotSourceHashes } from '../utils/snapshotSourceHashes';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
@@ -30,8 +31,8 @@ test('explanation capacity preserves thirty-two captured records and rejects a n
   const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'explanations' }), record = service.record(receipt);
   try {
     await record.preparation; service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
-    const snapshotUri = service.state(record).participants.server.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
-    const input = { ...receipt, key: 'first', snapshotUri, sourceHash: snapshot.source.typescriptHash, valuePaths: [], interpretation: 'An explicitly labeled interpretation.' };
+    const snapshotUri = service.state(record).participants.server!.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
+    const input = { ...receipt, key: 'first', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: [], interpretation: 'An explicitly labeled interpretation.' };
     const first = await service.explain(input);
     for (let index = 1; index < 32; index += 1) await service.explain({ ...input, key: `explain-${index}` });
     // Act / Assert
@@ -46,8 +47,8 @@ test('foreign snapshots, duplicate value paths and wrong source hashes cannot co
   const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'references' }), record = service.record(receipt);
   try {
     await record.preparation; service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
-    const snapshotUri = service.state(record).participants.server.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
-    const input = { ...receipt, key: 'invalid', snapshotUri, sourceHash: snapshot.source.typescriptHash, valuePaths: [], interpretation: 'Not yet committed.' };
+    const snapshotUri = service.state(record).participants.server!.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
+    const input = { ...receipt, key: 'invalid', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: [], interpretation: 'Not yet committed.' };
     // Act / Assert
     assert.throws(() => service.explain({ ...input, snapshotUri: `${snapshotUri}other` }), /Snapshot is absent/);
     assert.throws(() => service.explain({ ...input, valuePaths: ['price', 'price'] }), /distinct value paths/);

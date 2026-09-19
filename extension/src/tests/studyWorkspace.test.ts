@@ -546,7 +546,7 @@ test('retiring before the next polling tick preserves the last accepted interpre
     const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'last-tick' });
     const record = service.record(receipt); await record.preparation;
     service.action({ instanceId: service.instanceId, runId: receipt.runId, action: 'add-to-cart', key: 'one' });
-    const snapshotUri = service.state(record).participants.server.snapshotUri!;
+    const snapshotUri = service.state(record).participants.server!.snapshotUri!;
     await service.explain({ instanceId: service.instanceId, runId: receipt.runId, key: 'last-explanation', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The captured price is 24 before this final shutdown.' });
     // Act
     await service.shutdown(); await harness.reader.retire(service);
@@ -585,7 +585,7 @@ test('a reader keeps the cart moment while the same server reaches order creatio
     await harness.reader.action('click'); await harness.reader.open();
     await harness.reader.select('checkout-demo/cart-mutation');
     const original = harness.reader.inspect().sourceUri;
-    await service.continue(service.state(record).participants.server.continueArguments!);
+    await service.continue(service.state(record).participants.server!.continueArguments!);
     harness.runtimes[0]!.status = 'ready';
     // Act
     await harness.reader.action('click'); await harness.reader.open();
@@ -682,7 +682,7 @@ test('an interpretation added to an earlier stopped run persists while the later
   try {
     await harness.reader.action('run'); const first = [...service.records.values()][0]!; await first.preparation;
     await harness.reader.action('click'); await harness.reader.open();
-    const snapshotUri = service.state(first).participants.server.snapshotUri!;
+    const snapshotUri = service.state(first).participants.server!.snapshotUri!;
     await harness.reader.action('stop');
     await harness.reader.action('run'); const second = [...service.records.values()][1]!; await second.preparation;
     // Act
@@ -712,7 +712,7 @@ test('history selected during a retained run save shows the new explanation befo
     const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
     runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated' });
     await harness.reader.open(); await harness.reader.action('stop');
-    const snapshotUri = service.state(first).participants.server.snapshotUri!, studyId = `${service.instanceId}_${first.id}`;
+    const snapshotUri = service.state(first).participants.server!.snapshotUri!, studyId = `${service.instanceId}_${first.id}`;
     await harness.reader.action('run'); const second = [...service.records.values()][1]!; await second.preparation;
     await harness.reader.action('retry');
     context.mock.method(LearningLibrary.prototype, 'saveStudy', async function (this: LearningLibrary, study: Parameters<LearningLibrary['saveStudy']>[0]) {
@@ -753,7 +753,7 @@ test('a failed latest image checkpoint stays failed and partial while the older 
     const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
     imagePath = join(runtime.evidence.directory, 'paused-server.png'); await writeFile(imagePath, png);
     runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated', captures: { 'paused-server': { status: 'captured', file: 'paused-server.png', renderer: { epoch: 'test', id: 1, hash: sha256(png) } } } });
-    const snapshotUri = service.state(record).participants.server.snapshotUri!;
+    const snapshotUri = service.state(record).participants.server!.snapshotUri!;
     await service.explain({ instanceId: service.instanceId, runId: record.id, key: 'saved-before-image-failure', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The original saved observation has price 24.' });
     await harness.reader.open(); await harness.reader.action('stop');
     const studyId = `${service.instanceId}_${record.id}`, directory = harness.reader.inspect().libraryDirectory!;
@@ -982,11 +982,11 @@ test('a cold reader keeps the newer selected study and its observation when an o
     for (const label of ['A', 'B']) {
       await harness.reader.action('run'); const record = [...service.records.values()].at(-1)!; await record.preparation;
       await harness.reader.action('click');
-      await service.explain({ instanceId: service.instanceId, runId: record.id, key: label, snapshotUri: service.state(record).participants.server.snapshotUri!, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: `Study ${label} captured price 24.` });
+      await service.explain({ instanceId: service.instanceId, runId: record.id, key: label, snapshotUri: service.state(record).participants.server!.snapshotUri!, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: `Study ${label} captured price 24.` });
       await harness.reader.action('stop'); studyIds.push(`${service.instanceId}_${record.id}`);
     }
     const firstStudyId = studyIds[0]!, secondStudyId = studyIds[1]!;
-    const secondSnapshotUri = service.state([...service.records.values()][1]!).participants.server.snapshotUri!;
+    const secondSnapshotUri = service.state([...service.records.values()][1]!).participants.server!.snapshotUri!;
     await service.shutdown(); await harness.reader.retire(service); await harness.reader.dispose();
     cold = harness.createReader(); await cold.open();
     await cold['receive']({ type: 'history', revision: cold.inspect().view!.revision, studyId: firstStudyId }, 'context');
@@ -1304,7 +1304,7 @@ test('an MCP source reveal rejects a host rendering failure instead of recording
     const record = harness.service.record(receipt); await record.preparation;
     harness.service.action({ instanceId: harness.service.instanceId, runId: receipt.runId, action: 'add-to-cart', key: 'one' });
     await harness.reader.open();
-    const snapshot = harness.service.snapshot(record, harness.service.state(record).participants.server.snapshotUri!);
+    const snapshot = harness.service.snapshot(record, harness.service.state(record).participants.server!.snapshotUri!);
     const held = harness.holdNextSource(); release = held.release;
     // Act
     const revealing = harness.reader.presentation.revealSource(snapshot, 'server.mts'); await held.started;

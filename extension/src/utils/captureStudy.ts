@@ -1,5 +1,5 @@
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { LEARNING_SCHEMA_VERSION_V2 } from '../constants';
+import { LEARNING_SCHEMA_VERSION_V2, REPOSITORY_BROWSER_ACTION, REPOSITORY_BROWSER_PROFILE } from '../constants';
 import { STUDY_PROFILES } from 'codebook-cycle-0004/dist/profiles';
 import { readResource } from '../resources';
 import type { StudyRecord, StudyService } from '../service';
@@ -8,12 +8,14 @@ import { validateStudy } from './validateStudy';
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(service: StudyService, record: StudyRecord, workspaceKey: string): Promise<StudyArchive | undefined> {
+  if (record.profile === REPOSITORY_BROWSER_PROFILE) throw new Error('Configured Study presentation is not available in this build yet.');
   const state = service.state(record), signature = state.materialSignature, runtime = record.runtime?.view();
   const observations: StudyArchive['observations'] = [];
   const captures: StudyArchive['captures'] = [];
   for (const reference of state.observations) {
     const snapshotUri = reference.snapshotUri;
     const snapshot = service.snapshot(record, snapshotUri);
+    if (snapshot.actionId === REPOSITORY_BROWSER_ACTION) throw new Error('Repository evidence cannot belong to a demo archive.');
     const source = await readResource(service, `${snapshotUri}/source/typescript`);
     if (!('text' in source)) throw new Error('Captured TypeScript is unavailable.');
     const committed = runtime?.events.find(event => event.type === 'snapshot.committed' && event.detail && typeof event.detail === 'object' && 'snapshotId' in event.detail && event.detail.snapshotId === snapshot.id);

@@ -3,30 +3,37 @@ import type { RepositoryBookStore } from './repositoryBook';
 import type { SourceListInput, SourceReadInput, PublishBookInput, OpenBookInput } from './repositorySchemas';
 import { BOOK_INPUT_LIMIT_BYTES, BOOK_MAX_SOURCES, HTTP_BODY_LIMIT_BYTES, REPOSITORY_SOURCE_LIMIT_BYTES } from './constants';
 import { join } from 'node:path';
-import type { ParticipantSnapshot } from 'codebook-cycle-0004/dist/inspectParticipant';
 import { ACTIVE_TIMEOUT_MS, API_VERSION, MAINTENANCE_INTERVAL_MS, MAX_EXPLANATIONS, MAX_RUNS, MAX_UI_TEXT_CHARS, RUN_TIMEOUT_MS } from './constants';
-import { PROFILE_IDS, type ProfileId } from 'codebook-cycle-0004/dist/constants';
+import { PROFILE_IDS } from 'codebook-cycle-0004/dist/constants';
 import { STUDY_PROFILES } from 'codebook-cycle-0004/dist/profiles';
 import { actionExpectations } from 'codebook-cycle-0004/dist/utils/actionExpectations';
 import { stopExpectations } from 'codebook-cycle-0004/dist/utils/stopExpectations';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { StudyError, domainError } from './errors';
-import type { StudyEnvironment, StudyRuntime } from './runtime';
-import type { ActionInput, ContinueInput, ExplainInput, RevealInput, RunInput, StartInput } from './schemas';
+import type { RuntimeSnapshot, StudyEnvironment, StudyRuntime } from './runtime';
+import { startIntentSchema, type StartIntent, type ActionInput, type ContinueInput, type ExplainInput, type RevealInput, type RunInput, type StartInput } from './schemas';
 import type { RecordingStore, RecordingWriter } from './recordingStore';
 import type { RecordingSeal } from './recordingSchemas';
-import type { StudyArchive } from './studySchemas';
+import type { RetainedStudy } from './retainedStudySchemas';
 import { buildRecordingContext } from './utils/buildRecordingContext';
 import type { PlaybackController } from './playbackController';
 import type { PlaybackCommand } from './playbackSchemas';
+import { REPOSITORY_BROWSER_ACTION, REPOSITORY_BROWSER_PROFILE, REPOSITORY_RUN_TIMEOUT_MS, REPOSITORY_SETUP_TIMEOUT_MS } from './constants';
+import type { ConfiguredDefinition, ConfiguredFactValue } from './configuredStudySchemas';
+import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy';
+import { snapshotSourceHashes } from './utils/snapshotSourceHashes';
 
 export interface Explanation {
   id: string; instanceId: string; runId: string; snapshotUri: string; sourceHash: string;
-  capturedFacts: { path: string; value: string | number }[];
+  capturedFacts: { path: string; value: ConfiguredFactValue }[];
   agentInterpretation: string; createdAt: string; learnerUnderstandingChanged: false;
 }
-export interface StudyRecord {
-  id: string; key: string; profile: ProfileId; createdAt: number; deadlineAt: number;
+export type StudyRecord = StudyRecordState & (
+  | Exclude<StartIntent, { profile: typeof REPOSITORY_BROWSER_PROFILE }>
+  | (Extract<StartIntent, { profile: typeof REPOSITORY_BROWSER_PROFILE }> & { definition?: ConfiguredDefinition })
+);
+interface StudyRecordState {
+  id: string; signature: string; createdAt: number; deadlineAt: number; cancellation: AbortController;
   runtime?: StudyRuntime; prepared: boolean; preparation: Promise<void>;
   stopping: boolean; stopped: boolean; stopPromise?: Promise<void>; cleanupError?: StudyError; error?: StudyError;
   action?: { signature: string; receipt: { operationId: string; runUri: string; key: string } };
@@ -141,16 +148,20 @@ export class StudyService {
   start(input: StartInput) {
     this.assertMutable(input.instanceId);
     const previous = this.startKeys.get(input.key);
+    if (previous && previous.profile !== input.profile) throw new StudyError('IDEMPOTENCY_CONFLICT', 'Start key already names different arguments.');
+    if (input.profile !== REPOSITORY_BROWSER_PROFILE && !PROFILE_IDS.some(profile => profile === input.profile)) throw new StudyError('UNSUPPORTED_PROFILE', `Available profiles: ${[...PROFILE_IDS, REPOSITORY_BROWSER_PROFILE].join(', ')}`);
+    const parsed = startIntentSchema.safeParse(input);
+    if (!parsed.success) throw new StudyError(previous ? 'IDEMPOTENCY_CONFLICT' : 'INVALID_CONFIGURATION', 'Start arguments do not match the selected profile or accepted intent.', parsed.error.message);
+    const intent = parsed.data, signature = sha256(JSON.stringify(intent));
     if (previous) {
-      if (previous.profile !== input.profile) throw new StudyError('IDEMPOTENCY_CONFLICT', 'Start key already names different arguments.');
+      if (previous.signature !== signature) throw new StudyError('IDEMPOTENCY_CONFLICT', 'Start key already names different arguments.');
       return this.receipt(previous);
     }
-    const profile = PROFILE_IDS.find(profile => profile === input.profile);
-    if (!profile) throw new StudyError('UNSUPPORTED_PROFILE', `Available profiles: ${PROFILE_IDS.join(', ')}`);
     if ([...this.records.values()].some(record => !record.stopped)) throw new StudyError('BUSY', 'Another run still owns resources.');
     if (this.records.size >= MAX_RUNS) throw new StudyError('LIMIT_EXCEEDED', `This instance retains at most ${MAX_RUNS} runs; no history was evicted.`);
     const createdAt = this.now();
-    const record: StudyRecord = { id: randomUUID(), key: input.key, profile, createdAt, deadlineAt: createdAt + STUDY_PROFILES[profile].limits.runTimeoutMs,
+    const timeout = intent.profile === REPOSITORY_BROWSER_PROFILE ? REPOSITORY_RUN_TIMEOUT_MS : STUDY_PROFILES[intent.profile].limits.runTimeoutMs;
+    const record: StudyRecord = { ...intent, id: randomUUID(), signature, createdAt, deadlineAt: createdAt + timeout, cancellation: new AbortController(),
       prepared: false, preparation: Promise.resolve(), stopping: false, stopped: false, actions: new Map(), explanations: new Map(), explanationKeys: new Map(), sourceReveals: new Set() };
     this.records.set(record.id, record); this.startKeys.set(input.key, record);
     record.preparation = this.prepare(record);
@@ -199,12 +210,12 @@ export class StudyService {
     }
     if (record.stopping) throw new StudyError('BUSY', 'Wait for owned cleanup before adding historical explanations.');
     const snapshot = this.snapshot(record, input.snapshotUri);
-    if (snapshot.source.typescriptHash !== input.sourceHash || new Set(input.valuePaths).size !== input.valuePaths.length) throw new StudyError('INVALID_REFERENCE', 'Source hash or distinct value paths do not match the snapshot.');
+    if (snapshotSourceHashes(snapshot).typescript !== input.sourceHash || new Set(input.valuePaths).size !== input.valuePaths.length) throw new StudyError('INVALID_REFERENCE', 'Source hash or distinct value paths do not match the snapshot.');
     if (record.explanationKeys.size >= MAX_EXPLANATIONS) throw new StudyError('LIMIT_EXCEEDED', `This run allows ${MAX_EXPLANATIONS} explanation intents.`);
-    const captured = new Map(Object.entries(snapshot.values));
+    const captured = new Map<string, ConfiguredFactValue>(Object.entries(snapshot.values));
     const capturedFacts = input.valuePaths.map(path => {
       const value = captured.get(path);
-      if (typeof value !== 'string' && typeof value !== 'number') throw new StudyError('INVALID_REFERENCE', `The selected snapshot did not capture ${path}.`);
+      if (value === undefined) throw new StudyError('INVALID_REFERENCE', `The selected snapshot did not capture ${path}.`);
       return { path, value };
     });
     const explanation: Explanation = { id: randomUUID(), instanceId: this.instanceId, runId: record.id, snapshotUri: input.snapshotUri,
@@ -233,7 +244,7 @@ export class StudyService {
     const pending = Promise.resolve().then(() => record.runtime!.reveal(snapshot));
     record.sourceReveals.add(pending);
     try { await pending; } finally { record.sourceReveals.delete(pending); }
-    return { revealed: true, snapshotUri: input.snapshotUri, sourceUri: `${input.snapshotUri}/source/typescript`, line: snapshot.frame.line };
+    return { revealed: true, snapshotUri: input.snapshotUri, sourceUri: `${input.snapshotUri}/source/typescript`, line: snapshot.actionId === REPOSITORY_BROWSER_ACTION ? snapshot.source.line : snapshot.frame.line };
   }
 
   /** Validates explicit instance/run identity for both control and history reads. @example service.record({instanceId,runId}) */
@@ -247,7 +258,7 @@ export class StudyService {
   uri(runId: string, suffix?: string): string { return `codebook://${this.instanceId}/runs/${runId}${suffix ? `/${suffix}` : ''}`; }
 
   /** Resolves committed snapshot identity without treating an old capture as a current pause. @example service.snapshot(record, snapshotUri).values */
-  snapshot(record: StudyRecord, uri: string): ParticipantSnapshot {
+  snapshot(record: StudyRecord, uri: string): RuntimeSnapshot {
     const runtime = record.runtime?.view();
     for (const snapshot of runtime?.snapshots ?? []) {
       if (snapshot && uri === this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}`)) return snapshot;
@@ -269,7 +280,7 @@ export class StudyService {
   }
 
   /** Saves context only after the matching learner archive; recording failure cannot rewrite its execution/history outcome. @example await service.saveRecordingContext(record, archive, revision) */
-  async saveRecordingContext(record: StudyRecord, archive: StudyArchive, historyRevision: number): Promise<void> {
+  async saveRecordingContext(record: StudyRecord, archive: RetainedStudy, historyRevision: number): Promise<void> {
     if (!this.recordings || !record.recording || this.state(record).materialSignature !== archive.materialSignature || record.historyReceipt?.revision !== historyRevision || record.historyReceipt.status !== 'saved') return;
     const receipt: NonNullable<StudyRecord['recordingReceipt']> = { signature: archive.materialSignature, historyRevision, status: 'pending' };
     record.recordingReceipt = receipt;
@@ -291,21 +302,23 @@ export class StudyService {
     const terminalReason = record.error?.message ?? evidenceFailure ?? runtime?.failures[0];
     const canControl = !this.stopping && !record.stopping && !record.stopped && !terminalReason && this.now() < record.deadlineAt;
     const participantView = (name: 'server' | 'browser') => {
-      const participant = runtime?.participants[name], snapshot = participant?.snapshot;
+      const participant = name === 'browser' ? runtime?.participants.browser : runtime && runtime.profile !== REPOSITORY_BROWSER_PROFILE ? runtime.participants.server : undefined, snapshot = participant?.snapshot;
       const snapshotUri = snapshot ? this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}`) : undefined;
       const resumable = Boolean(canControl && snapshot && participant?.phase === 'paused' && participant.pause?.generation === snapshot.pause.generation && participant.pause.sessionId === snapshot.pause.sessionId && participant.pause.threadId === snapshot.pause.threadId);
       return { snapshotUri, sourceUri: snapshotUri && `${snapshotUri}/source/typescript`, itemId: snapshot?.itemId, actionId: snapshot?.actionId, phase: participant?.phase,
         resumable, continueArguments: resumable && snapshot ? { instanceId: this.instanceId, runId: record.id, participant: name, ...snapshot.pause } : undefined };
     };
-    const participants = { server: participantView('server'), browser: participantView('browser') };
+    const participants = { ...(record.profile === REPOSITORY_BROWSER_PROFILE ? {} : { server: participantView('server') }), browser: participantView('browser') };
     const nextActions = [canControl && record.prepared && runtime?.status === 'ready' ? runtime.nextAction : undefined,
-      participants.server.resumable ? 'continue-server' : undefined, participants.browser.resumable ? 'continue-browser' : undefined,
+      participants.server?.resumable ? 'continue-server' : undefined, participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined, 'read-history'].filter(value => value !== undefined);
     const material = { instanceId: this.instanceId, runId: record.id, runtimeRunId: runtime?.runId, profile: record.profile,
       state: record.stopped ? 'stopped' : record.stopping ? 'stopping' : terminalReason ? 'failed' : !record.prepared ? 'preparing' : runtime?.status ?? 'preparing',
       runtimeState: runtime?.status, createdAt: new Date(record.createdAt).toISOString(), deadlineAt: new Date(record.deadlineAt).toISOString(), activeTimeoutMs: ACTIVE_TIMEOUT_MS,
       nextActions, participants, operation: record.action?.receipt, operations: [...record.actions.values()].map(action => action.receipt), observed: runtime?.observed, links: runtime?.links,
       manifestUri: runtime?.manifest ? this.uri(record.id, 'manifest') : undefined, manifestHash: runtime?.manifest?.hash,
+      configurationHash: record.profile === REPOSITORY_BROWSER_PROFILE ? record.definition?.configurationHash : undefined,
+      itemId: record.profile === REPOSITORY_BROWSER_PROFILE ? record.definition?.descriptor.itemId : undefined,
       observations: runtime?.snapshots.map(snapshot => ({ id: snapshot.id, itemId: snapshot.itemId, actionId: snapshot.actionId, participant: snapshot.participant, capturePhase: snapshot.capturePhase, snapshotUri: this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}`), sourceUri: this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}/source/typescript`) })) ?? [],
       runtimeOutcome: runtime?.runtimeOutcome, captureOutcome: runtime?.captureOutcome,
       finalOutcome: terminalReason ? 'not-demonstrated' : runtime?.finalOutcome ?? 'pending-teardown',
@@ -367,10 +380,22 @@ export class StudyService {
   /** Acquires the adapter once; cancellation after an await drains rather than abandons it. @example await this.prepare(record) */
   private async prepare(record: StudyRecord): Promise<void> {
     try {
+      // Reserve intent -> immutable article/all citations -> owned adapter -> input; retries never repeat these reads.
+      if (record.profile === REPOSITORY_BROWSER_PROFILE) {
+        this.environment.assertWorkspace?.();
+        if (!this.repository) throw new StudyError('PREREQUISITE_MISSING', 'Repository source/book storage is unavailable in this editor.');
+        record.definition = await prepareRepositoryStudy(record.configuration, this.repository, { signal: record.cancellation.signal, deadlineAt: Math.min(record.deadlineAt, record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS) }, this.now);
+        this.environment.assertWorkspace?.();
+      }
       const prerequisites = await this.environment.prerequisites();
       if (!prerequisites.ready) throw new StudyError('PREREQUISITE_MISSING', prerequisites.missing.join('; '));
       if (this.stopping || record.stopping) return;
-      record.runtime = await this.environment.createRuntime(join(this.storageRoot, this.instanceId, record.id), record.profile);
+      const definition = record.profile === REPOSITORY_BROWSER_PROFILE ? record.definition : record.profile;
+      if (!definition) throw new StudyError('RUNTIME_FAILED', 'Configured source binding is absent.');
+      record.runtime = await this.environment.createRuntime(join(this.storageRoot, this.instanceId, record.id), definition);
+      const acquired = record.runtime.view();
+      if (acquired.profile !== record.profile) throw new StudyError('RUNTIME_FAILED', 'Acquired runtime belongs to another profile.');
+      if (acquired.profile === REPOSITORY_BROWSER_PROFILE && JSON.stringify(acquired.definition) !== JSON.stringify(definition)) throw new StudyError('RUNTIME_FAILED', 'Acquired runtime changed the accepted repository definition.');
       if (this.stopping || record.stopping) return;
       if (this.recordings) {
         // Reserve capture before preparation can receive frames or expose action readiness.
@@ -388,12 +413,18 @@ export class StudyService {
   private async stopRecord(record: StudyRecord): Promise<void> {
     if (record.stopped) return;
     record.stopping = true;
+    record.cancellation.abort();
     const attempt = record.stopPromise ??= (async () => {
+      // A held acquisition may need transport shutdown to settle; drain it only after cancellation is delivered.
+      const cancelledRuntime = record.prepared ? undefined : record.runtime;
+      const cancelling = cancelledRuntime?.stop();
+      if (cancelling) void cancelling.catch(() => undefined);
       await record.preparation;
+      await cancelling;
       await Promise.allSettled([...record.explanationKeys.values()].map(value => value.result));
       await Promise.allSettled([...record.sourceReveals]);
       if (record.runtime) {
-        try { await record.runtime.stop(); }
+        try { if (record.runtime !== cancelledRuntime) await record.runtime.stop(); }
         finally {
           if (record.recording) {
             const runtime = record.runtime.view();
