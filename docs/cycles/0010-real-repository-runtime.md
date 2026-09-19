@@ -1,7 +1,7 @@
 # Cycle 0010 — Real-repository browser runtime feasibility
 
 Type: experiment
-Status: planning
+Status: implementing
 Result: pending
 Delivery: local-only; reviewed plan and isolated production build
 Goal version: 3
@@ -38,7 +38,7 @@ No owner decision is pending. Build outputs, source-map format and capture feasi
 
 ## Validation contract
 
-Expectation version: draft 1, **freeze after isolated build/source inspection and before runtime input**. Framework/runtime versions below are preflight observations, not an executed matrix.
+Expectation version: **2, frozen before first input** in [expectations.json](evidence/0010/expectations.json). The original production hypothesis failed before input. This development-mode cut requires `otherTheme = dark` and `typeof setTheme = function`; surrounding render locals are optional because they may not survive closure optimization. No value has yet been captured in a real pause.
 
 | Check | Expected observable result | Real procedure | Evidence required |
 | --- | --- | --- | --- |
@@ -46,7 +46,7 @@ Expectation version: draft 1, **freeze after isolated build/source inspection an
 | Environment | Lockfile-consistent isolated Next 16.3.4 / React 19.2.8 / next-themes 0.4.6, external Node 24+ | Frozen install/build and actual process/version receipts | Commands, versions, build/map hashes; no credentials |
 | Required hosts | VS Code and Cursor tested separately with owned Chrome | Reuse declared js-debug/managed-browser lifecycle, serial hosts | Actual host/API/debugger/Chrome versions and target/session IDs |
 | One real action | Exactly one button click; one intended application handler stop | Seed fresh theme before load, click existing accessible button | Before/paused/after screen and input receipt |
-| Grounded pause | Executed JS/map resolve to frozen ThemeToggle TSX; actual light/dark values are inspectable | Observe script/map identities and capture paused closure values | JS/map/TSX hashes, source location, actual captured values; unresolved optimized values stay unknown |
+| Grounded pause | Executed JS/map resolve to frozen ThemeToggle TSX; required handler values are inspectable, with a separately observed initial light DOM | Observe script/map identities and capture paused closure values | JS/map/TSX hashes, source location, actual captured values; unresolved optimized values stay unknown |
 | Hold and continue | At least 40 seconds paused with responsive control; exactly one accepted continue | Timed hold, read-only state query, exact identity continue | Timings, generation, no duplicate input, final DOM dark/button light |
 | Interference | Wrong target/source drift/manual resume cannot present a valid current pause | Separate finite negative cases | Explicit failure/recovery, no stale resume or fabricated source |
 | Presentation | Recorded interaction shows real source/app changes | Playwright CLI recording plus extracted frame inspection | Host-separated video/frames and measured render availability |
@@ -219,6 +219,12 @@ Installed Sentry 10.73.0 client webpack configuration defaults `sourcemaps.delet
 Production attempt outcome: **falsified prerequisite**, before any browser input. Do not restore source mappings by editing the handler/config or substituting a server map. The root checkout remains clean; the isolated build generated a change to `src/lib/articles-manifest.ts`, recorded separately from the six frozen inputs, including unchanged ThemeToggle.
 
 Recommended next hypothesis, already allowed by plan step 3: use the same exact source and dependencies with owned `next dev --webpack --hostname 127.0.0.1` on an isolated port. Installed Next 16.3.4 debugging docs and Context7 document client source maps and the webpack CLI option. Sentry's production-only deletion branch is inactive in this mode. Acquire and seal the actual evaluated module and inline source map before the first click; retain its containing declared chunk and emitted script URL separately. Require original `sourcesContent` equality and current script/target identity just as planned. No minified-name assumption or dev success is pre-credited. Development build/HMR source changes must invalidate the sealed tuple. The production diagnostic scope lock was released after retaining its receipt.
+
+## Implementation checkpoint before native input
+
+The development preflight compiled the unchanged application, then hit the original 8 MiB ceiling on the 22,229,383-byte framework bootstrap. Changed discovery follows the root client manifest's Header entry to its 4,015,042-byte application layout chunk; no bound is increased and no framework source is treated as the target. The selected 12,609-byte evaluated module carries a 2,781-byte inline map whose original bytes exactly match ThemeToggle. Receipts: `artifacts/cycle-0010/dev-preflight-receipt.json` (failed broad scan, owned server exited), `dev-module-preflight.json` (narrowed successful acquisition). No application input occurred in either preflight.
+
+The experimental verifier/acquirer, owned runtime and private native bootstrap are implemented. Initial source/control tests pass **11/11**, zero failures/skips/cancellations. The compiled acquirer reads 4,046,765 bytes in 17.17 ms on the retained build; source/JS/map hashes match the preflight. This measures acquisition, not runtime correctness. Required actual closure values are fixed before input in expectation v2; optional `resolvedTheme`/`mounted` retain explicit unavailable responses. Existing fixed-profile/product source remains unchanged. Native normal/failure matrix, live motion and full implementation review are pending.
 
 ## GSTACK REVIEW REPORT
 

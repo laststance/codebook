@@ -1,0 +1,20 @@
+{
+  "name": "codebook-cycle-0010",
+  "displayName": "codebook Cycle 0010 Real Repository Experiment",
+  "publisher": "laststance",
+  "version": "0.0.1",
+  "private": true,
+  "engines": { "vscode": "^1.120.0", "node": ">=24" },
+  "main": "./dist/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "scripts": {
+    "build": "pnpm --dir ../cycle-0001 build && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm build && node --test dist/tests/*.test.js"
+  },
+  "dependencies": { "codebook-cycle-0001": "link:../cycle-0001", "zod": "4.6.5" },
+  "devDependencies": {
+    "@types/node": "24.13.5", "@types/vscode": "1.120.0",
+    "@vscode/debugprotocol": "1.68.0", "devtools-protocol": "0.0.1698617", "typescript": "5.9.3"
+  }
+}

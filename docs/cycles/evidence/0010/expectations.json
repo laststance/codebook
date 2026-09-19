@@ -1,0 +1,44 @@
+{
+  "version": 2,
+  "frozenBeforeFirstInput": true,
+  "targetRevision": "43d039938287ed494a66f4fad198da2464a9e7b0",
+  "mode": "next dev --webpack",
+  "source": "src/components/Header/ThemeToggle.tsx",
+  "sourceSha256": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+  "preflightJavascriptSha256": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+  "preflightMapSha256": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717",
+  "sourceLine": 19,
+  "sourceColumn": 5,
+  "scriptUrl": "webpack-internal:///(app-pages-browser)/./src/components/Header/ThemeToggle.tsx",
+  "before": {
+    "rootClass": "light",
+    "button": "Switch to dark theme"
+  },
+  "input": {
+    "button": "Switch to dark theme",
+    "count": 1,
+    "kind": "owned Chrome CDP mouse press/release"
+  },
+  "requiredValues": {
+    "otherTheme": "dark",
+    "typeof setTheme": "function"
+  },
+  "optionalValues": [
+    "resolvedTheme",
+    "mounted"
+  ],
+  "optionalPolicy": "Retain actual response or explicit unavailable; never substitute source/DOM inference",
+  "holdMs": 40000,
+  "controlLimitMs": 2000,
+  "continueCount": 1,
+  "after": {
+    "rootClass": "dark",
+    "button": "Switch to light theme"
+  },
+  "recording": "Playwright CLI records the same isolated editor renderer; command/run/Chrome receipts link the physical input to it",
+  "hosts": [
+    "vscode",
+    "cursor"
+  ],
+  "classification": "private runtime experiment; not public MCP or installed-product acceptance"
+}
