@@ -33,7 +33,10 @@ export class LearningLibrary {
   }
 
   /** Prefers v2 by existence, validates its full bytes and never hides corruption with legacy data. @example await library.readStudy(id) */
-  async readStudy(id: string): Promise<StudyArchive> {
+  async readStudy(id: string): Promise<StudyArchive> { return (await this.readArchive(id)).study; }
+
+  /** Retains the chosen file format across I/O so missing v2 metadata cannot be mistaken for legacy history. @example await this.readArchive(id) */
+  private async readArchive(id: string) {
     const identity = studyIdSchema.parse(id), modern = join(this.directory, `${identity}${STUDY_V2_SUFFIX}`);
     const modernStat = await this.optionalStat(modern), path = modernStat ? modern : join(this.directory, `${identity}.study.json`);
     await this.archiveStat(path);
@@ -41,7 +44,22 @@ export class LearningLibrary {
     if (modernStat && (!value || typeof value !== 'object' || !('version' in value) || value.version !== LEARNING_SCHEMA_VERSION_V2)) throw new Error('Version 2 archive has an incompatible schema.');
     const study = decodeStudyArchive(value, this.workspaceKey);
     if (study.id !== identity) throw new Error('Archive filename differs from its study identity.');
-    return study;
+    return { study, modernPath: modernStat ? modern : undefined };
+  }
+
+  /** Qualifies selected history against its exact sidecar while preserving readable partial archives for {@link StudyWorkspace}. @example (await library.readCheckpoint(id)).status // 'saved' */
+  async readCheckpoint(id: string): Promise<{ study: StudyArchive; status: 'saved' | 'failed'; reason?: string }> {
+    const { study, modernPath } = await this.readArchive(id);
+    if (!modernPath) return { study, status: 'saved' };
+    try {
+      const metadata = await this.readMetadata(study.id), stat = await this.archiveStat(modernPath);
+      const { archive, ...identity } = metadata;
+      const expectedIdentity = studyMetadataSchema.omit({ archive: true }).strip().parse(study);
+      if (JSON.stringify(identity) !== JSON.stringify(expectedIdentity) || archive.hash !== sha256(JSON.stringify(study)) || archive.byteLength !== stat.size || archive.modifiedMs !== stat.mtimeMs) throw new Error('Selected archive differs from its catalog checkpoint.');
+      return { study, status: 'saved' };
+    } catch (error) {
+      return { study, status: 'failed', reason: `History checkpoint incomplete; retry storage. ${String(error)}` };
+    }
   }
 
   /** Normalizes legacy progress in memory only when v2 is absent; corrupt v2 fails closed. @example await library.readProgress() */
@@ -105,9 +123,11 @@ export class LearningLibrary {
   /** Explicit Retry validates incomplete v2 archives before repairing sidecars; legacy bytes stay untouched. @example await library.reconcile() */
   reconcile(): Promise<void> {
     return this.locked(async () => {
-      for (const entry of await this.list()) {
-        if (entry.format !== 'v2' || entry.metadata === 'validated') continue;
-        await this.writeMetadata(await this.readStudy(entry.id));
+      for (const entry of await this.entries()) {
+        if (entry.format !== 'v2') continue;
+        // Explicit Retry verifies content too; a matching stat cannot repair or certify a wrong checkpoint hash.
+        const checkpoint = await this.readCheckpoint(entry.id);
+        if (checkpoint.status === 'failed') await this.writeMetadata(checkpoint.study);
       }
     });
   }

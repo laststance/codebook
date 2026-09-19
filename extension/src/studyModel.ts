@@ -41,7 +41,18 @@ export function projectStudy(input: { selection: StudySelection; study?: StudyAr
   const baseline = baselines[selectedItem.participant];
   const source = observation?.source ?? { ...baseline, line: Math.max(1, baseline.text.split('\n').findIndex(line => line.includes(selectedItem.marker)) + 1) };
   const progressByItem = profile.items.map(item => ({ ...item, ...learningState(progress, item.id, currentSourceAvailable ? baselines[item.participant].hash : undefined) }));
+  const lastObservedItem = profile.items.filter(item => study?.observations.some(observation => observation.itemId === item.id)).at(-1);
+  const confirmation = study?.observations.find(observation => observation.itemId === 'checkout-demo/purchase-confirmation');
+  const scenarioProgress = study && {
+    lastObservedTitle: lastObservedItem?.title,
+    // The pre-DOM confirmation pause alone does not prove the application displayed a purchase.
+    purchaseObserved: confirmation?.actionId === 'checkout' && confirmation.values.orderCount === 1 && study.links.some(link => link.id === 'checkout-browser-screen' && link.status === 'observed'),
+    missingImageTitles: profile.capturePhases.filter(phase => !study.captures.some(capture => capture.phase === phase && capture.status === 'captured'))
+      .map(phase => profile.items.find(item => item.capturePhase === phase)?.title ?? (phase === 'before' ? 'Before action' : `${profile.actions.find(action => action.afterCapture === phase)!.title} result`)),
+    unverifiedLinkCount: profile.requiredLinks.filter(id => !study.links.some(link => link.id === id && link.status === 'observed')).length,
+  };
   return { selection, selectedItem, observation, source, currentSourceAvailable, currentParticipant, currentItemId, currentItemTitle: currentItem?.title, currentSnapshotUri: current ? current.snapshotUri : undefined, matching,
+    scenarioProgress,
     continueArguments: matching && current ? current.continueArguments : undefined,
     image: observation ? study?.captures.find(capture => capture.phase === observation.capturePhase) : undefined,
     sourceChanged: currentSourceAvailable && source.hash !== baseline.hash,

@@ -145,10 +145,27 @@ test('a failed metadata write retains the archive and explicit reconciliation re
   await assert.rejects(library.saveStudy(study), /catalog write denied/);
   const bytes = await readFile(join(directory, `${study.id}.study.v2.json`));
   assert.equal((await library.list())[0]?.outcome, 'unverified');
+  assert.equal((await library.readCheckpoint(study.id)).status, 'failed');
   rejectMetadata = false; await library.reconcile(); rejectArchiveRead = true;
   const catalog = await library.list();
   // Assert
   assert.equal(catalog[0]?.metadata, 'validated'); assert.equal(catalog[0]?.outcome, 'partial');
   assert.equal(catalog[0]?.profile, 'paired-cart-demo');
   assert.deepEqual(await readFile(join(directory, `${study.id}.study.v2.json`)), bytes);
+});
+
+test('a mismatched checkpoint hash cannot certify readable history and explicit Retry repairs it without changing archive bytes', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-migration-')); context.after(() => rm(directory, { recursive: true, force: true }));
+  const library = new LearningLibrary(directory, workspaceKey), study = decodeStudyArchive(JSON.parse(await readFile(resolve(fixtureDirectory, 'study.v1.json'), 'utf8')), workspaceKey);
+  await library.saveStudy(study);
+  const archivePath = join(directory, `${study.id}.study.v2.json`), bytes = await readFile(archivePath), metadataPath = join(directory, `${study.id}.study.meta.v2.json`);
+  const metadata = JSON.parse(await readFile(metadataPath, 'utf8')); metadata.archive.hash = '0'.repeat(64);
+  await writeFile(metadataPath, JSON.stringify(metadata));
+  // Act
+  const rejected = await library.readCheckpoint(study.id);
+  await library.reconcile(); const recovered = await library.readCheckpoint(study.id);
+  // Assert
+  assert.equal(rejected.status, 'failed'); assert.match(rejected.reason!, /differs from its catalog checkpoint/);
+  assert.equal(recovered.status, 'saved'); assert.deepEqual(await readFile(archivePath), bytes);
 });

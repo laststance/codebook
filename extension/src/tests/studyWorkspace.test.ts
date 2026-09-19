@@ -161,6 +161,169 @@ test('a successful runtime with a rejected final history write stays partial in 
   } finally { rejectFinal = false; context.mock.restoreAll(); await harness.close(); }
 });
 
+for (const savedEarlier of [false, true]) test(`retiring a failed final checkpoint stays partial ${savedEarlier ? 'with an older saved projection' : 'without any saved catalog entry'}`, async context => {
+  // Arrange
+  const harness = await workspaceHarness(), service = harness.service, saveStudy = LearningLibrary.prototype.saveStudy;
+  let rejecting = !savedEarlier;
+  context.mock.method(LearningLibrary.prototype, 'saveStudy', async function (this: LearningLibrary, study: Parameters<LearningLibrary['saveStudy']>[0]) {
+    if (rejecting) throw new Error('Injected final checkpoint rejection');
+    return saveStudy.call(this, study);
+  });
+  try {
+    await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+    const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
+    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated' });
+    await harness.reader.open();
+    if (savedEarlier) await harness.reader.action('retry');
+    rejecting = true;
+    // Act
+    await service.shutdown();
+    await assert.rejects(harness.reader.retire(service), /final reader history was not saved/);
+    const retired = harness.reader.inspect().view!;
+    // Assert
+    assert.equal(retired.liveState, undefined); assert.equal(retired.studies.length, savedEarlier ? 1 : 0);
+    assert.equal(retired.study?.finalOutcome, 'demonstrated'); assert.equal(retired.study?.historyOutcome, 'failed'); assert.equal(retired.study?.studyOutcome, 'partial');
+    rejecting = false; await harness.reader.action('retry');
+    assert.equal(harness.reader.inspect().view!.study?.historyOutcome, 'saved'); assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'demonstrated');
+  } finally { rejecting = false; context.mock.restoreAll(); await harness.close(); }
+});
+
+test('opening paired history during checkout startup cannot change the accepted run profile', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  let release = () => {}, entered = () => {};
+  const waiting = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  try {
+    const directory = harness.reader.inspect().libraryDirectory!, workspaceKey = directory.split('/').at(-1)!;
+    const library = new LearningLibrary(directory, workspaceKey), instanceId = randomUUID(), runId = randomUUID(), studyId = `${instanceId}_${runId}`;
+    await library.saveStudy({ version: 2, workspaceKey, id: studyId, instanceId, runId, profile: 'paired-cart-demo', createdAt: '2026-09-18T10:00:00.000Z', savedAt: '2026-09-18T10:00:01.000Z', state: 'stopped', terminal: true, finalOutcome: 'partial', materialSignature: sha256('startup-history'), observations: [], captures: [], links: [] });
+    await harness.reader.selectProfile('checkout-demo'); await harness.reader.open();
+    harness.controls.start = async () => { entered(); await waiting; return harness.service; };
+    // Act
+    const starting = harness.reader.action('run'); await started;
+    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId });
+    await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === studyId && !harness.reader.inspect().view!.loading, 'paired history during pending startup', 1_000);
+    release(); await starting;
+    // Assert
+    const record = [...harness.service.records.values()][0]!;
+    assert.equal(record.profile, 'checkout-demo'); assert.equal(harness.reader.inspect().view!.model.selection.profile, 'checkout-demo');
+    await record.preparation;
+  } finally { release(); await harness.close(); }
+});
+
+test('an interpretation added to an earlier stopped run persists while the later run keeps execution ownership', async () => {
+  // Arrange
+  const harness = await workspaceHarness(), service = harness.service;
+  try {
+    await harness.reader.action('run'); const first = [...service.records.values()][0]!; await first.preparation;
+    await harness.reader.action('click'); await harness.reader.open();
+    const snapshotUri = service.state(first).participants.server.snapshotUri!;
+    await harness.reader.action('stop');
+    await harness.reader.action('run'); const second = [...service.records.values()][1]!; await second.preparation;
+    // Act
+    await service.explain({ instanceId: service.instanceId, runId: first.id, key: 'earlier-run-note', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The earlier run captured price 24.' });
+    await harness.reader.open(); await harness.reader.action('retry');
+    const studyId = `${service.instanceId}_${first.id}`;
+    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId });
+    await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === studyId && !harness.reader.inspect().view!.loading, 'updated earlier history', 1_000);
+    // Assert
+    const history = harness.reader.inspect().view!;
+    assert.equal(service.state(first).historyOutcome.status, 'saved');
+    assert.equal(history.study?.historyOutcome, 'saved'); assert.equal(history.model.observation?.interpretations[0]?.text, 'The earlier run captured price 24.');
+    assert.equal(history.liveState, 'ready'); assert.equal(second.stopped, false); assert.equal(history.model.continueArguments, undefined);
+    assert.equal(harness.runtimes[0]!.dispatches, 1); assert.equal(harness.runtimes[1]!.dispatches, 0);
+  } finally { await harness.close(); }
+});
+
+test('history selected during a retained run save shows the new explanation before claiming saved evidence', async context => {
+  // Arrange: freeze polling so the history selection falls between capture and its durable write.
+  context.mock.timers.enable({ apis: ['setInterval'] });
+  const harness = await workspaceHarness(), service = harness.service, saveStudy = LearningLibrary.prototype.saveStudy;
+  let release = () => {}, entered = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  try {
+    await harness.reader.action('run'); const first = [...service.records.values()][0]!; await first.preparation;
+    await harness.reader.action('click');
+    const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
+    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated' });
+    await harness.reader.open(); await harness.reader.action('stop');
+    const snapshotUri = service.state(first).participants.server.snapshotUri!, studyId = `${service.instanceId}_${first.id}`;
+    await harness.reader.action('run'); const second = [...service.records.values()][1]!; await second.preparation;
+    await harness.reader.action('retry');
+    context.mock.method(LearningLibrary.prototype, 'saveStudy', async function (this: LearningLibrary, study: Parameters<LearningLibrary['saveStudy']>[0]) {
+      if (study.id === studyId && study.observations[0]?.interpretations.length === 1) { entered(); await held; }
+      return saveStudy.call(this, study);
+    });
+    // Act
+    await service.explain({ instanceId: service.instanceId, runId: first.id, key: 'selected-during-save', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The retained cart pause captured price 24 before mutation.' });
+    await harness.reader.open(); await started;
+    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId });
+    await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === studyId && !harness.reader.inspect().view!.loading, 'older history selected during save', 1_000);
+    const pending = harness.reader.inspect().view!;
+    assert.equal(pending.model.observation?.interpretations.length, 0);
+    assert.equal(pending.study?.historyOutcome, 'pending'); assert.equal(pending.study?.studyOutcome, 'pending');
+    release();
+    await waitUntil(() => service.state(first).historyOutcome.status === 'saved', 'retained explanation checkpoint saved', 1_000);
+    await harness.reader.open();
+    // Assert
+    const selected = harness.reader.inspect().view!, directory = harness.reader.inspect().libraryDirectory!;
+    const archive = await new LearningLibrary(directory, directory.split('/').at(-1)!).readStudy(studyId);
+    assert.equal(selected.model.observation?.interpretations.length, 1);
+    assert.equal(selected.model.observation?.interpretations[0]?.text, 'The retained cart pause captured price 24 before mutation.');
+    assert.equal(archive.observations[0]?.interpretations[0]?.text, 'The retained cart pause captured price 24 before mutation.');
+    assert.equal(selected.study?.historyOutcome, 'saved'); assert.equal(selected.study?.studyOutcome, 'demonstrated');
+    assert.equal(selected.liveState, 'ready'); assert.equal(second.stopped, false); assert.equal(selected.model.continueArguments, undefined);
+  } finally { release(); context.mock.restoreAll(); await harness.close(); context.mock.timers.reset(); }
+});
+
+test('a failed latest image checkpoint stays failed and partial while the older captured facts remain readable until Retry', async context => {
+  // Arrange: the runtime is synthetic; canonical image reads and durable archive writes remain real.
+  context.mock.timers.enable({ apis: ['setInterval'] });
+  const harness = await workspaceHarness(), service = harness.service;
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+  let imagePath: string | undefined;
+  try {
+    await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+    await harness.reader.action('click');
+    const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
+    imagePath = join(runtime.evidence.directory, 'paused-server.png'); await writeFile(imagePath, png);
+    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated', captures: { 'paused-server': { status: 'captured', file: 'paused-server.png', renderer: { epoch: 'test', id: 1, hash: sha256(png) } } } });
+    const snapshotUri = service.state(record).participants.server.snapshotUri!;
+    await service.explain({ instanceId: service.instanceId, runId: record.id, key: 'saved-before-image-failure', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The original saved observation has price 24.' });
+    await harness.reader.open(); await harness.reader.action('stop');
+    const studyId = `${service.instanceId}_${record.id}`, directory = harness.reader.inspect().libraryDirectory!;
+    const library = new LearningLibrary(directory, directory.split('/').at(-1)!), original = await library.readStudy(studyId);
+    const originalImage = original.captures.find(capture => capture.phase === 'paused-server');
+    assert.equal(original.terminal, true); assert.ok(originalImage?.status === 'captured'); assert.equal(originalImage.base64, png.toString('base64'));
+    assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'demonstrated');
+    // Act: a permitted post-stop explanation needs a new projection, but its canonical PNG is now corrupt.
+    await service.explain({ instanceId: service.instanceId, runId: record.id, key: 'late-after-image-failure', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The later explanation also refers to the captured price 24.' });
+    await writeFile(imagePath, 'corrupted canonical PNG');
+    await assert.rejects(harness.reader.open(), /Captured image no longer matches its sealed hash/);
+    await harness.reader.open();
+    // Assert: the failure is settled; older readable facts cannot turn it into an indefinite pending state.
+    const failed = harness.reader.inspect().view!, retained = await library.readStudy(studyId);
+    assert.equal(service.state(record).historyOutcome.status, 'failed'); assert.equal(service.state(record).studyOutcome, 'partial');
+    assert.equal(failed.study?.historyOutcome, 'failed'); assert.equal(failed.study?.studyOutcome, 'partial');
+    assert.equal(failed.model.observation?.snapshotUri, snapshotUri); assert.equal(failed.model.observation?.values.price, 24);
+    assert.equal(failed.model.observation?.interpretations.length, 1);
+    assert.equal(failed.model.observation?.interpretations[0]?.text, 'The original saved observation has price 24.');
+    assert.equal(failed.model.image?.status, 'captured'); assert.equal(failed.model.image?.base64, png.toString('base64'));
+    assert.equal(retained.materialSignature, original.materialSignature); assert.equal(retained.observations[0]?.interpretations.length, 1);
+    assert.equal(harness.reader['archiveWrites'].size, 0);
+    // Act: recovery is explicit and must collect the new explanation before certifying the saved study.
+    await writeFile(imagePath, png); await harness.reader.action('retry');
+    // Assert
+    const recovered = harness.reader.inspect().view!, saved = await library.readStudy(studyId);
+    assert.equal(service.state(record).historyOutcome.status, 'saved'); assert.equal(service.state(record).studyOutcome, 'demonstrated');
+    assert.equal(recovered.study?.historyOutcome, 'saved'); assert.equal(recovered.study?.studyOutcome, 'demonstrated');
+    assert.equal(recovered.model.observation?.interpretations.length, 2);
+    assert.equal(recovered.model.observation?.interpretations[1]?.text, 'The later explanation also refers to the captured price 24.');
+    assert.equal(saved.observations[0]?.interpretations[1]?.text, 'The later explanation also refers to the captured price 24.');
+    assert.equal(recovered.model.observation?.values.price, 24); assert.equal(harness.runtimes.length, 1); assert.equal(runtime.dispatches, 1);
+  } finally { if (imagePath) await writeFile(imagePath, png); await harness.close(); context.mock.timers.reset(); }
+});
+
 test('a closed source file change marks prior understanding for review without changing the saved learner decision', async () => {
   // Arrange
   const harness = await workspaceHarness();
@@ -318,7 +481,7 @@ test('a slow archive writer does not delay inspection of the committed live paus
 
 test('the latest saved-study choice wins when the earlier archive read completes first', async context => {
   // Arrange
-  const harness = await workspaceHarness(), readStudy = LearningLibrary.prototype.readStudy;
+  const harness = await workspaceHarness(), readCheckpoint = LearningLibrary.prototype.readCheckpoint;
   let releaseFirst = () => {}, releaseLatest = () => {}, firstFinished = false, reads = 0;
   const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; }), latestHeld = new Promise<void>(resolve => { releaseLatest = resolve; });
   try {
@@ -328,9 +491,9 @@ test('the latest saved-study choice wins when the earlier archive read completes
     for (const runId of [firstRun, latestRun]) await library.saveStudy({ version: 2, workspaceKey, id: `${instanceId}_${runId}`, instanceId, runId, profile: 'paired-cart-demo', createdAt: '2026-09-18T10:00:00.000Z', savedAt: '2026-09-18T10:00:01.000Z', state: 'stopped', terminal: true, finalOutcome: 'partial', materialSignature: sha256('test-checkpoint'), observations: [], captures: [], links: [] });
     await harness.reader.action('retry'); await harness.reader.open();
     const revision = harness.reader.inspect().view!.revision;
-    context.mock.method(LearningLibrary.prototype, 'readStudy', async function (this: LearningLibrary, id: string) {
+    context.mock.method(LearningLibrary.prototype, 'readCheckpoint', async function (this: LearningLibrary, id: string) {
       reads++; await (id === firstId ? firstHeld : latestHeld);
-      const study = await readStudy.call(this, id); if (id === firstId) firstFinished = true; return study;
+      const checkpoint = await readCheckpoint.call(this, id); if (id === firstId) firstFinished = true; return checkpoint;
     });
     // Act
     harness.receive({ type: 'history', revision, studyId: firstId }); harness.receive({ type: 'history', revision, studyId: latestId });
@@ -340,6 +503,50 @@ test('the latest saved-study choice wins when the earlier archive read completes
     // Assert
     assert.equal(harness.reader.inspect().view!.study!.id, latestId);
   } finally { releaseFirst(); releaseLatest(); context.mock.restoreAll(); await harness.close(); }
+});
+
+test('a cold reader keeps the newer selected study and its observation when an older Retry read completes', async context => {
+  // Arrange: persist two real archives, then remove the live reader so no current run can repair selection.
+  context.mock.timers.enable({ apis: ['setInterval'] });
+  const harness = await workspaceHarness(), service = harness.service, readCheckpoint = LearningLibrary.prototype.readCheckpoint;
+  let cold: ReturnType<typeof harness.createReader> | undefined, retry: Promise<void> | undefined;
+  let release = () => {}, entered = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  try {
+    const studyIds: string[] = [];
+    for (const label of ['A', 'B']) {
+      await harness.reader.action('run'); const record = [...service.records.values()].at(-1)!; await record.preparation;
+      await harness.reader.action('click');
+      await service.explain({ instanceId: service.instanceId, runId: record.id, key: label, snapshotUri: service.state(record).participants.server.snapshotUri!, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: `Study ${label} captured price 24.` });
+      await harness.reader.action('stop'); studyIds.push(`${service.instanceId}_${record.id}`);
+    }
+    const firstStudyId = studyIds[0]!, secondStudyId = studyIds[1]!;
+    const secondSnapshotUri = service.state([...service.records.values()][1]!).participants.server.snapshotUri!;
+    await service.shutdown(); await harness.reader.retire(service); await harness.reader.dispose();
+    cold = harness.createReader(); await cold.open();
+    await cold['receive']({ type: 'history', revision: cold.inspect().view!.revision, studyId: firstStudyId }, 'context');
+    let firstStudyReads = 0;
+    context.mock.method(LearningLibrary.prototype, 'readCheckpoint', async function (this: LearningLibrary, id: string) {
+      const checkpoint = await readCheckpoint.call(this, id);
+      // Retry first reconciles A; hold only its later reload of the selected archive.
+      if (id === firstStudyId && ++firstStudyReads === 2) { entered(); await held; }
+      return checkpoint;
+    });
+    // Act
+    retry = cold.action('retry'); await started;
+    await cold['receive']({ type: 'history', revision: cold.inspect().view!.revision, studyId: secondStudyId }, 'context');
+    const selectedSourceUri = cold.inspect().sourceUri;
+    assert.equal(cold.inspect().view!.study?.id, secondStudyId);
+    assert.equal(cold.inspect().view!.model.observation?.interpretations[0]?.text, 'Study B captured price 24.');
+    release(); await retry;
+    // Assert
+    const selected = cold.inspect();
+    assert.equal(selected.view!.model.selection.studyId, secondStudyId); assert.equal(selected.view!.study?.id, secondStudyId);
+    assert.equal(selected.view!.model.observation?.snapshotUri, secondSnapshotUri);
+    assert.equal(selected.view!.model.observation?.interpretations[0]?.text, 'Study B captured price 24.');
+    assert.equal(selected.view!.model.observation?.values.price, 24); assert.equal(selected.sourceUri, selectedSourceUri);
+    assert.equal(selected.view!.loading, false); assert.equal(selected.view!.errors.length, 0); assert.equal(harness.runtimes.length, 2);
+  } finally { release(); await retry?.catch(() => undefined); context.mock.restoreAll(); await cold?.dispose(); await harness.close(); context.mock.timers.reset(); }
 });
 
 test('selecting a browser moment updates the native outline without requesting keyboard focus', async () => {
@@ -352,6 +559,88 @@ test('selecting a browser moment updates the native outline without requesting k
     await waitUntil(() => harness.outline.selection[0] === 'paired-cart-demo/browser', 'native outline selection', 1_000);
     // Assert
     assert.equal(harness.reader.inspect().view!.model.selection.itemId, 'paired-cart-demo/browser');
+  } finally { await harness.close(); }
+});
+
+test('opening history revalidates its checkpoint after another writer leaves the cached catalog incomplete', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    const directory = harness.reader.inspect().libraryDirectory!, workspaceKey = directory.split('/').at(-1)!;
+    const library = new LearningLibrary(directory, workspaceKey), instanceId = randomUUID(), runId = randomUUID(), studyId = `${instanceId}_${runId}`;
+    await library.saveStudy({ version: 2, workspaceKey, id: studyId, instanceId, runId, profile: 'paired-cart-demo', createdAt: '2026-09-18T10:00:00.000Z', savedAt: '2026-09-18T10:00:01.000Z', state: 'stopped', terminal: true, finalOutcome: 'demonstrated', materialSignature: sha256('persisted-projection'), observations: [], captures: [], links: [] });
+    await harness.reader.action('retry'); await harness.reader.open();
+    assert.equal(harness.reader.inspect().view!.studies[0]?.metadata, 'validated');
+    // Act: archive bytes remain readable, but the separately required metadata write is absent.
+    await unlink(join(directory, `${studyId}.study.meta.v2.json`));
+    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId });
+    await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === studyId && !harness.reader.inspect().view!.loading, 'incomplete selected checkpoint', 1_000);
+    // Assert
+    const selected = harness.reader.inspect().view!;
+    assert.equal(selected.study?.historyOutcome, 'failed'); assert.equal(selected.study?.studyOutcome, 'partial');
+    assert.equal(selected.studies[0]?.metadata, 'unavailable'); assert.ok(selected.errors.some(error => error.includes('checkpoint incomplete')));
+    await harness.reader.action('retry');
+    assert.equal(harness.reader.inspect().view!.study?.historyOutcome, 'saved'); assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'demonstrated');
+  } finally { await harness.close(); }
+});
+
+test('an obsolete failed history read cannot downgrade a newer verified reader or API checkpoint', async context => {
+  // Arrange: the first read observes a real missing sidecar before a later read repairs and verifies it.
+  context.mock.timers.enable({ apis: ['setInterval'] });
+  const harness = await workspaceHarness(), service = harness.service, readCheckpoint = LearningLibrary.prototype.readCheckpoint;
+  let release = () => {}, entered = () => {}, firstRead = true;
+  let olderSelection: Promise<void> | undefined;
+  const held = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  try {
+    await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+    const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
+    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated' });
+    await harness.reader.open(); await harness.reader.action('stop');
+    const studyId = `${service.instanceId}_${record.id}`, directory = harness.reader.inspect().libraryDirectory!;
+    const library = new LearningLibrary(directory, directory.split('/').at(-1)!);
+    await unlink(join(directory, `${studyId}.study.meta.v2.json`));
+    context.mock.method(LearningLibrary.prototype, 'readCheckpoint', async function (this: LearningLibrary, id: string) {
+      const checkpoint = await readCheckpoint.call(this, id);
+      if (firstRead) { firstRead = false; assert.equal(checkpoint.status, 'failed'); entered(); await held; }
+      return checkpoint;
+    });
+    const revision = harness.reader.inspect().view!.revision;
+    // Act: await the message boundary directly so the obsolete read finishes before the assertions.
+    olderSelection = harness.reader['receive']({ type: 'history', revision, studyId }, 'context');
+    await started; await library.reconcile();
+    await harness.reader['receive']({ type: 'history', revision, studyId }, 'context');
+    assert.equal(harness.reader.inspect().view!.study?.historyOutcome, 'saved');
+    release(); await olderSelection.catch(() => undefined);
+    // Assert
+    const selected = harness.reader.inspect().view!;
+    assert.equal((await readCheckpoint.call(library, studyId)).status, 'saved');
+    assert.equal(selected.study?.id, studyId); assert.equal(selected.study?.historyOutcome, 'saved');
+    assert.equal(selected.study?.studyOutcome, 'demonstrated'); assert.equal(selected.loading, false);
+    assert.equal(service.state(record).historyOutcome.status, 'saved'); assert.equal(service.state(record).studyOutcome, 'demonstrated');
+    assert.equal(selected.errors.length, 0);
+  } finally { release(); await olderSelection?.catch(() => undefined); context.mock.restoreAll(); await harness.close(); context.mock.timers.reset(); }
+});
+
+for (const retired of [false, true]) test(`failed disk verification downgrades a formerly saved ${retired ? 'retired' : 'attached'} study and Retry restores the exact checkpoint`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(), service = harness.service;
+  try {
+    await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+    const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
+    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated' });
+    await harness.reader.open(); await harness.reader.action('stop');
+    if (retired) { await service.shutdown(); await harness.reader.retire(service); }
+    const studyId = `${service.instanceId}_${record.id}`;
+    assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'demonstrated');
+    // Act
+    await unlink(join(harness.reader.inspect().libraryDirectory!, `${studyId}.study.meta.v2.json`));
+    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId });
+    await waitUntil(() => harness.reader.inspect().view!.study?.historyOutcome === 'failed' && !harness.reader.inspect().view!.loading, 'failed current checkpoint verification', 1_000);
+    // Assert
+    assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'partial');
+    if (!retired) assert.equal(service.state(record).studyOutcome, 'partial');
+    await harness.reader.action('retry');
+    assert.equal(harness.reader.inspect().view!.study?.historyOutcome, 'saved'); assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'demonstrated');
   } finally { await harness.close(); }
 });
 
@@ -401,6 +690,32 @@ test('an older successful save cannot erase the failed final archive from explic
   } finally { releaseFirst(); releaseFinal(); context.mock.restoreAll(); await harness.close(); }
 });
 
+
+test('a coalesced newer checkpoint reports failure when its predecessor fails instead of remaining pending forever', async context => {
+  // Arrange
+  const harness = await workspaceHarness(), saveStudy = LearningLibrary.prototype.saveStudy;
+  let rejectFirst = () => {}, writes = 0;
+  const held = new Promise<void>((_resolve, reject) => { rejectFirst = () => reject(new Error('First checkpoint denied')); });
+  context.mock.method(LearningLibrary.prototype, 'saveStudy', async function (this: LearningLibrary, study: Parameters<LearningLibrary['saveStudy']>[0]) {
+    if (++writes === 1) await held;
+    return saveStudy.call(this, study);
+  });
+  try {
+    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, key: 'coalesced-failure' });
+    const record = harness.service.record(receipt); await record.preparation;
+    await harness.reader.open(); await waitUntil(() => writes === 1, 'initial held checkpoint', 1_000);
+    // Act
+    await harness.reader.action('click');
+    rejectFirst();
+    await waitUntil(() => harness.service.state(record).historyOutcome.status === 'failed', 'latest rejected checkpoint receipt', 1_000);
+    // Assert
+    assert.equal(writes, 1); assert.match(harness.service.state(record).historyOutcome.reason!, /latest checkpoint was not saved/);
+    assert.equal(harness.reader.inspect().view!.study?.historyOutcome, 'failed');
+    await harness.reader.action('retry');
+    assert.equal(harness.service.state(record).historyOutcome.status, 'saved');
+    assert.equal(harness.reader.inspect().view!.model.observation?.values.cartCount, 0);
+  } finally { rejectFirst(); context.mock.restoreAll(); await harness.close(); }
+});
 
 test('Close drains an accepted arrangement without issuing another layout change afterward', async () => {
   // Arrange

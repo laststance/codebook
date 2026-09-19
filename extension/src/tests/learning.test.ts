@@ -97,6 +97,27 @@ test('an earlier cart observation keeps its own values and failed image while th
   assert.equal(current.image?.status, 'captured'); assert.equal(current.continueArguments?.generation, 2);
 });
 
+test('ended checkout distinguishes an unobserved purchase from captured confirmation with missing images', () => {
+  // Arrange
+  const study = capturedStudy(); study.profile = 'checkout-demo'; study.terminal = true; study.finalOutcome = 'partial';
+  const cart = { ...study.observations[0]!, itemId: 'checkout-demo/cart-mutation' as const, capturePhase: 'paused-cart-mutation' as const };
+  study.observations = [cart]; study.captures = [];
+  const selection = { profile: 'checkout-demo', itemId: 'checkout-demo/purchase-confirmation', studyId: study.id, follow: false, tab: 'live' } as const;
+  // Act
+  const interrupted = projectStudy({ selection, study, baselines });
+  study.observations.push({ ...cart, id: 'browser-session:2', itemId: 'checkout-demo/purchase-confirmation', participant: 'browser', actionId: 'checkout', capturePhase: 'paused-purchase-confirmation',
+    pause: { sessionId: 'browser-session', threadId: 1, generation: 2 }, values: { ...cart.values, cartCount: 1, cartOperationId: 'cart-action', orderId: 'order-checkout', total: 24, orderCount: 1 } });
+  const beforeScreen = projectStudy({ selection, study, baselines });
+  study.links = [{ id: 'checkout-browser-screen', status: 'observed' }];
+  const observed = projectStudy({ selection, study, baselines });
+  // Assert
+  assert.equal(interrupted.scenarioProgress?.purchaseObserved, false); assert.equal(interrupted.scenarioProgress?.lastObservedTitle, 'Cart mutation');
+  assert.equal(beforeScreen.scenarioProgress?.purchaseObserved, false);
+  assert.equal(observed.scenarioProgress?.purchaseObserved, true); assert.equal(observed.scenarioProgress?.lastObservedTitle, 'Purchase confirmation');
+  assert.deepEqual(observed.scenarioProgress?.missingImageTitles, ['Before action', 'Cart mutation', 'Cart update', 'Add to cart result', 'Order creation', 'Purchase confirmation', 'Checkout result']);
+  assert.equal(observed.scenarioProgress?.unverifiedLinkCount, 10); assert.equal(observed.understoodCount, 0);
+});
+
 test('understanding is scoped to the learning item even when another item uses identical source bytes', () => {
   // Arrange
   const progress = { version: 2 as const, workspaceKey, decisions: [{ ...decision(true), item: 'checkout-demo/cart-mutation' as const }] };

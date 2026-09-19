@@ -48,6 +48,9 @@ export class StudyWorkspace {
   private selectedArchive?: StudyArchive;
   private catalog: StudyCatalogEntry[] = [];
   private readonly archiveSignatures = new Map<string, string>();
+  private readonly historyReceipts = new Map<string, NonNullable<StudyRecord['historyReceipt']>>();
+  private readonly loadedHistory = new Map<string, { signature: string; status: 'saved' | 'failed' }>();
+  private readonly historyReads = new Map<string, number>();
   private readonly pendingArchives = new Map<string, { archive: StudyArchive; service: StudyService; record: StudyRecord; signature: string; checkpointRevision: number }>();
   private readonly archiveWrites = new Map<string, Promise<void>>();
   private readonly errors = new Map<string, string>();
@@ -163,11 +166,11 @@ export class StudyWorkspace {
     await this.initialize(); this.assertLifetime(lifetime);
     if (['run', 'click', 'continue', 'stop'].includes(action)) {
       if (this.busy) throw new Error('A study control request is already pending.');
-      const displayed = this.message().model; this.busy = true; this.publish();
+      const displayed = this.message().model, requestedProfile = this.selection.profile; this.busy = true; this.publish();
       try {
         if (action === 'run') {
           const service = await this.controls.start(); this.assertLifetime(lifetime);
-          this.pendingHistory = undefined; const profile = this.selection.profile;
+          this.pendingHistory = undefined; const profile = requestedProfile;
           this.selection = { profile, itemId: STUDY_PROFILES[profile].items[0]!.id, follow: true, tab: 'live' };
           service.start({ instanceId: service.instanceId, profile, key: randomUUID() });
         } else {
@@ -218,10 +221,16 @@ export class StudyWorkspace {
         } catch (error) { this.report('progress', error); }
         try {
           for (const id of this.pendingArchives.keys()) await this.persistArchive(id);
-          const record = this.currentRecord();
-          if (record && this.service) await this.checkpoint(this.service, record, true);
+          // Historical interpretations remain writable after a later run becomes current.
+          if (this.service) for (const record of this.service.records.values()) await this.checkpoint(this.service, record, true);
           await this.library!.reconcile();
           this.catalog = await this.library!.list(); this.errors.delete('archive');
+          if (this.selection.studyId) {
+            const studyId = this.selection.studyId, revision = this.revision;
+            const archive = await this.readSavedArchive(studyId);
+            // Retry may finish after navigation; only the unchanged selection can accept its archive.
+            if (this.selection.studyId === studyId && this.revision === revision && archive.id !== this.activeArchive?.id) this.selectedArchive = archive;
+          }
         } catch (error) { this.report('archive', error); }
       } finally { this.saving = false; this.publish(); }
       this.lastApplicationKey = undefined; this.lastOutlineSelection = undefined;
@@ -310,7 +319,7 @@ export class StudyWorkspace {
       try { this.progress = await this.library.readProgress(); if (this.progress.selection) this.selection = { ...this.progress.selection, follow: false }; }
       catch (error) { this.report('progress', error); }
       try { this.catalog = await this.library.list(); const id = this.selection.studyId ?? this.catalog[0]?.id;
-        if (id) { this.selectedArchive = await this.library.readStudy(id); this.selectArchive(this.selectedArchive); }
+        if (id) { this.selectedArchive = await this.readSavedArchive(id); this.selectArchive(this.selectedArchive); }
       } catch (error) { this.report('archive', error); }
     })();
     try { await this.initializing; }
@@ -352,7 +361,8 @@ export class StudyWorkspace {
     if (this.refreshing) return this.refreshing;
     const attempt = (async () => {
       const record = this.currentRecord();
-      if (record && this.service) await this.checkpoint(this.service, record);
+      // Refresh every retained projection without letting an older run replace current runtime ownership.
+      if (this.service) for (const retained of this.service.records.values()) await this.checkpoint(this.service, retained);
       if (this.selection.follow && this.activeArchive) {
         const state = record && this.service?.state(record);
         const current = Object.values(state?.participants ?? {}).find(participant => participant.resumable)?.itemId;
@@ -372,17 +382,21 @@ export class StudyWorkspace {
     if (!force && this.archiveSignatures.get(id) === signature) return;
     const checkpointRevision = service.beginHistory(record, signature);
     if (checkpointRevision === undefined) return;
+    this.historyReceipts.set(id, { revision: checkpointRevision, signature, status: 'pending' });
     try {
       const archive = await captureStudy(service, record, this.library!.workspaceKey);
       if (!archive) { if (force) throw new Error('Final study changed during checkpoint; history was not certified.'); return; }
-      this.activeArchive = archive; this.archiveSignatures.set(id, signature);
+      if (record === this.currentRecord()) this.activeArchive = archive;
+      if (this.selectedArchive?.id === id) this.selectedArchive = archive;
+      this.archiveSignatures.set(id, signature);
       this.pendingArchives.set(id, { archive, service, record, signature, checkpointRevision });
       const write = this.persistArchive(id);
       // Current evidence is inspectable before disk completes; terminal retirement still waits for durability.
       if (force) await write;
       else void write.catch(() => undefined);
     } catch (error) {
-      this.archiveSignatures.set(id, signature); service.reportHistory(record, signature, checkpointRevision, 'failed', String(error)); throw error;
+      if (service.state(record).materialSignature === signature) this.archiveSignatures.set(id, signature);
+      this.reportCheckpoint(service, record, signature, checkpointRevision, 'failed', String(error)); throw error;
     }
   }
 
@@ -394,22 +408,54 @@ export class StudyWorkspace {
       let checkpoint = this.pendingArchives.get(id);
       while (checkpoint) {
         const { archive, service, record, signature, checkpointRevision } = checkpoint;
-        service.reportHistory(record, signature, checkpointRevision, 'pending');
+        this.reportCheckpoint(service, record, signature, checkpointRevision, 'pending');
         try {
           await this.library!.saveStudy(archive);
+          this.historyReads.set(id, (this.historyReads.get(id) ?? 0) + 1);
+          this.loadedHistory.set(id, { signature, status: 'saved' });
           this.catalog = await this.library!.list();
-          const current = service.reportHistory(record, signature, checkpointRevision, 'saved');
+          const current = this.reportCheckpoint(service, record, signature, checkpointRevision, 'saved');
+          // A history read may have selected older bytes after capture but before this durable write.
+          if (current && this.selection.studyId === id && this.selectedArchive?.id === id) this.selectedArchive = archive;
           if (this.pendingArchives.get(id) === checkpoint) this.pendingArchives.delete(id);
           if (current) this.errors.delete('archive');
           this.publish();
         } catch (error) {
-          service.reportHistory(record, signature, checkpointRevision, 'failed', String(error));
+          this.reportCheckpoint(service, record, signature, checkpointRevision, 'failed', String(error));
+          // A coalesced newer checkpoint also failed to save when its predecessor aborts the writer.
+          const latest = this.pendingArchives.get(id);
+          if (latest && latest !== checkpoint) this.reportCheckpoint(latest.service, latest.record, latest.signature, latest.checkpointRevision, 'failed', `Previous history write failed; latest checkpoint was not saved. ${String(error)}`);
           this.report('archive', new Error(`History not saved: ${String(error)}`)); throw error;
         }
         checkpoint = this.pendingArchives.get(id);
       }
     }).finally(() => { if (this.archiveWrites.get(id) === pending) this.archiveWrites.delete(id); });
     this.archiveWrites.set(id, pending); return pending;
+  }
+
+  /** Retains only accepted checkpoint receipts after {@link retire} detaches execution ownership. @example this.reportCheckpoint(service, record, signature, 2, 'failed') */
+  private reportCheckpoint(service: StudyService, record: StudyRecord, signature: string, revision: number, status: NonNullable<StudyRecord['historyReceipt']>['status'], reason?: string): boolean {
+    const accepted = service.reportHistory(record, signature, revision, status, reason);
+    if (accepted) this.historyReceipts.set(`${service.instanceId}_${record.id}`, { ...record.historyReceipt! });
+    return accepted;
+  }
+
+  /** Certifies exact validated disk bytes for history selection; catalog presence alone cannot qualify a study. @example await this.readSavedArchive(id) */
+  private async readSavedArchive(id: string): Promise<StudyArchive> {
+    const generation = (this.historyReads.get(id) ?? 0) + 1;
+    this.historyReads.set(id, generation);
+    const checkpoint = await this.library!.readCheckpoint(id);
+    const catalog = await this.library!.list();
+    // A newer read or durable save owns verification; an old failure must not downgrade its receipt.
+    if (this.historyReads.get(id) !== generation) throw new Error('History changed while loading. Select the study again.');
+    this.loadedHistory.set(id, { signature: checkpoint.study.materialSignature, status: checkpoint.status });
+    this.catalog = catalog;
+    if (checkpoint.reason) {
+      const record = this.service?.instanceId === checkpoint.study.instanceId ? this.service.records.get(checkpoint.study.runId) : undefined;
+      if (record?.historyReceipt && this.service) this.reportCheckpoint(this.service, record, checkpoint.study.materialSignature, record.historyReceipt.revision, 'failed', checkpoint.reason);
+      this.report('archive', new Error(checkpoint.reason));
+    }
+    return checkpoint.study;
   }
 
   /** Resolves service ownership from explicit records, never the focused debug session. @example this.currentRecord()?.id */
@@ -420,10 +466,19 @@ export class StudyWorkspace {
     if (!this.baselines) throw new Error('Study reader is not initialized.');
     const record = this.currentRecord(), live = record && this.service?.state(record);
     const study = this.selection.studyId === this.activeArchive?.id ? this.activeArchive : this.selectedArchive;
+    const selectedRecord = study?.instanceId === this.service?.instanceId && study ? this.service?.records.get(study.runId) : undefined;
+    const selectedState = selectedRecord && this.service?.state(selectedRecord), receipt = study && this.historyReceipts.get(study.id), loaded = study && this.loadedHistory.get(study.id);
+    const staleArchive = Boolean(selectedState && selectedState.materialSignature !== study?.materialSignature);
+    // A newly failed disk verification outranks a formerly successful in-memory receipt for those bytes.
+    const rejectedDisk = loaded?.signature === study?.materialSignature && loaded?.status === 'failed';
+    // A newer failure stays explicit; stale displayed bytes must never inherit a newer successful receipt.
+    const historyOutcome = rejectedDisk ? 'failed' : staleArchive ? selectedState?.historyOutcome.status === 'failed' ? 'failed' : 'pending' : selectedState?.historyOutcome.status ?? (receipt ? receipt.signature === study?.materialSignature ? receipt.status : receipt.status === 'failed' ? 'failed' : 'pending'
+      : loaded?.signature === study?.materialSignature ? loaded?.status ?? 'unavailable' : 'unavailable');
+    const studyOutcome = rejectedDisk ? study?.finalOutcome === 'not-demonstrated' ? 'not-demonstrated' : 'partial' : (!staleArchive ? selectedState?.studyOutcome : undefined) ?? (study?.finalOutcome === 'not-demonstrated' ? 'not-demonstrated' : study?.finalOutcome === 'partial' ? 'partial'
+      : !study?.terminal || study.finalOutcome !== 'demonstrated' ? 'pending' : historyOutcome === 'saved' ? 'demonstrated' : historyOutcome === 'pending' ? 'pending' : 'partial');
     return { type: 'study', revision: this.revision, model: projectStudy({ selection: this.selection, study, live, progress: this.progress, baselines: this.baselines, currentSourceAvailable: this.currentSourceAvailable }),
       study: study && { id: study.id, state: study.state, terminal: study.terminal, profile: study.profile, createdAt: study.createdAt, reason: study.reason, finalOutcome: study.finalOutcome, links: study.links,
-        historyOutcome: live?.runId === study.runId && live.instanceId === study.instanceId ? live.historyOutcome.status : this.catalog.find(entry => entry.id === study.id)?.metadata === 'unavailable' ? 'failed' : 'saved',
-        studyOutcome: live?.runId === study.runId && live.instanceId === study.instanceId ? live.studyOutcome : this.catalog.find(entry => entry.id === study.id)?.metadata === 'unavailable' ? 'partial' : study.terminal && study.finalOutcome === 'demonstrated' ? 'demonstrated' : study.finalOutcome === 'not-demonstrated' ? 'not-demonstrated' : 'partial' },
+        historyOutcome, studyOutcome },
       liveState: live?.state, deadlineAt: live?.deadlineAt, busy: this.busy, saving: this.saving, loading: this.loading, errors: [...this.errors.values(), ...this.catalog.flatMap(entry => entry.reason ? [entry.reason] : [])],
       nextAction: live && STUDY_PROFILES[live.profile].actions.find(action => live.nextActions.includes(action.id)), liveProfile: live?.profile,
       profiles: Object.values(STUDY_PROFILES).map(profile => ({ id: profile.id, title: profile.title, description: profile.description })),
@@ -625,7 +680,7 @@ export class StudyWorkspace {
     if (message.type === 'history') {
       const request = ++this.historyRequest; this.pendingHistory = request; this.loading = true; this.lastRendered = undefined; this.publish();
       try {
-        const archive = await this.library!.readStudy(message.studyId);
+        const archive = await this.readSavedArchive(message.studyId);
         if (this.pendingHistory !== request || message.revision !== this.revision || this.closing) return;
         this.pendingHistory = undefined; this.selectedArchive = archive;
         this.selectArchive(archive);

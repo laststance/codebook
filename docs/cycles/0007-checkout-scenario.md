@@ -1,7 +1,7 @@
 # Cycle 0007 — Drive a connected cart-to-confirmation scenario
 
 Type: product-increment
-Status: implementing
+Status: validating
 Result: pending
 Delivery: local-only
 Goal version: 3
@@ -37,7 +37,7 @@ Authority: agent-selected cycle under D008/D013 and Raphtalia's continuous deleg
 
 ## Validation contract
 
-Pending the bounded reviews above. Required categories: one successful full sequence, repeated same-participant stops, wrong-order and duplicate actions, stale/manual continuation, unrelated request/session isolation, source drift, partial captures, cancellation/timeout, saved-history compatibility and actual-agent discovery without hidden per-stop instructions.
+The bounded reviews below fixed the validation categories and profile contracts. Required categories: one successful full sequence, repeated same-participant stops, wrong-order and duplicate actions, stale/manual continuation, unrelated request/session isolation, source drift, partial captures, cancellation/timeout, saved-history compatibility and actual-agent discovery without hidden per-stop instructions.
 
 ## Attempts and evidence
 
@@ -70,9 +70,24 @@ Stage 4B: the library now writes separate v2 archive/progress files under the ex
 
 Material-state signatures plus monotonic checkpoint revisions now qualify `historyOutcome` and `studyOutcome` independently of legacy runtime `finalOutcome`. Tests cover pending/failed writes, an old completion after a newer same-material failure, post-stop interpretation, explicit Retry and GET/reader agreement. Seven individually allowed 8 MiB images exceed the retained 64 MiB aggregate limit and leave earlier history unchanged. **82/82 product tests** pass, including all earlier reader ownership/lifetime/focus/storage regressions. This is storage, protocol and synthetic editor-boundary evidence; actual four-item product/native/agent and webview QA remain pending. Next: extend the native product harness to the checkout profile, collect host-separated results, then actual-agent discovery, webview QA and implementation review.
 
+Stage 5, clean implementation `2a91377`, fingerprint `49d9b340ed4b90981c00776c07b1131748ad9d6e40ee0999c36992b672e669cb`: **6/6 product-native cases** pass across VS Code and Cursor (checkout normal/history and paired normal per host). Normal checkout retains four exact source/value observations, seven images, eleven links, four interpretations and durable reload without execution. History deliberately hides a phase and stays partial; unrelated dirty drafts survive. Raw directories are under `artifacts/cycle-0007/product/<host>/<profile>/`.
+
+Two separate **driving-agent checkout runs** pass on that same clean implementation. The root agent selected every action from public discovery, manifest, state and snapshot/source resources through an external SDK console; the private bootstrap only starts/stops the editor/server. Each run performed two actions, four referenced explanations, four source reveals and four continuations, ending demonstrated/saved/demonstrated with no active session. Final PNGs were read through MCP and inspected. This agent already knew the implementation: these are actual agent-driven runs, **not fresh blind-agent or independent native-pixel acceptance**. Raw transcripts/results: `artifacts/cycle-0005/vscode/suite-2026-09-18T23-49-22.970Z-9c4729eb/` (39 operations) and `artifacts/cycle-0005/cursor/suite-2026-09-18T23-53-12.240Z-5b552ae8/` (34 operations). The older runner directory naming is preserved for provenance.
+
+`/qa-only` completed on the compiled webview HTML plus real archived observations through a deterministic host adapter: **53 interaction checks, five width/theme/scale variants**, no reproducible product defect in that surface. The interaction was recorded; eighteen frames were sampled and eight representative frames were inspected. The browser adapter proves renderer behavior; emitted host intents are not native effects. The 100/100 provisional bounded score excludes installation, native editor composition, persistence, screen readers and final readiness. Report: `artifacts/cycle-0007/webview-qa/report.md`. No recording-product capability is inferred from this QA video.
+
+Implementation `/review` pass 1 exposed and repaired history qualification after retirement, immutable Run intent during startup, persistence of later explanations on older runs, failed coalesced checkpoint reporting, exact archive/sidecar validation and its precedence over prior receipts, partial/ended outcome copy, and stale onboarding documentation. Explicit Retry also revalidates a checkpoint hash rather than trusting an unchanged archive stat. Regression tests include attached and retired owners, absent/older catalog projections and cross-run ownership. Reused same-harness specialists/adversarial review have limited independence; outside review is unavailable under the own-harness guard. These reviews count **0** toward final acceptance. **92/92 product tests** pass after these nine findings; additional review and clean native revalidation are still pending.
+
+After the reader fixes, **53 existing webview checks plus 14 outcome checks** pass. New partial copy identifies a missing nonselected image; ended runs name the last observed stop and distinguish a captured pre-DOM confirmation stop from an actually observed confirmation screen. Three 360 px screenshots were inspected. Raw regression evidence: `artifacts/cycle-0007/webview-review-regression/`. No animation behavior changed.
+
+Implementation review pass 2 found three additional timing defects: a delayed first-stop CDP resume could invalidate the later DAP stop; selecting history during a newer save could retain old explanations under the new saved outcome; and an obsolete failed read could downgrade a newer verified checkpoint. Repairs associate each ordered CDP pause/resume with its stop generation, qualify the displayed archive by its material signature, advance a selected archive on its latest accepted save, and reject obsolete reads before mutating shared state or selection. The three runtime regressions exercise actual protocol callbacks and inspection waiters with synthetic native boundaries; **41/41 paired tests** pass. Both reader regressions pass, and the complete product suite passes **94/94**. A third full-diff review followed. The current runtime change requires new clean host matrices; earlier native runs remain historical evidence, not validation of this repair. [CDP event definitions](https://github.com/ChromeDevTools/devtools-protocol/blob/master/pdl/js_protocol.pdl) provide no resumed pause identity, so the correspondence is explicitly maintained in the existing coordinator. No second coordinator or new service was added.
+
+
+Implementation review pass 3 found two reader edge cases: Retry could overwrite a newer different-study selection, and a failed latest capture could be masked as pending while an older archive remained displayed. The fixes check navigation identity before installing a Retry result and preserve latest failure precedence without borrowing newer success for stale bytes. The two production-reader regressions pass; the full reader file passes **33/33** and the product suite **96/96**. Shared **44/44** and paired **41/41** remain green on the same implementation. Runtime/security/performance reported no additional confirmed findings on the frozen pre-fix tree; storage and adversarial findings are separately retained. This is the third fixing cycle, so `/review` ended **not converged** (session `40088-1789775791-6d86d900`); no fourth pass or clean review claim is made. All 14 confirmed findings across the three passes are repaired; unavailable coverage is retained. Fresh specialist contexts and outside-provider coverage remain unavailable. Independent full-product reviews remain **0/10, not started**.
+
 ## Result and handoff
 
-Pending. Review only this connected sequence, retain the destination in PRODUCT_GOAL.md, and update this document plus PROJECT_STATE.md as evidence changes.
+Pending final clean native validation. Implementation review is complete with limitations; commit the tested source, then re-run six product-native cases and ten checkout runtime cases across the two hosts. Preserve the historical agent and renderer evidence with their exact revisions.
 
 
 ## DX investigation and contract — 2026-09-19
@@ -423,6 +438,8 @@ Not in scope: generic workflow engine (unnecessary for two fixed profiles), arbi
 | Outside | Native challenges | Missing contracts | DX + Design + Eng, reused / 0 external | Limited native; outside unavailable | Immutable assets, migration, selected/live states, history outcome and checkout counters |
 | Design | `/plan-design-review` | Four-item learner flow | 1 | Plan specified, 9/10 | Seven passes; four agent decisions; three tasks; generated variants rejected |
 | Eng | `/plan-eng-review` | Sequence/runtime/storage | 1 | CLEAR (PLAN) | Four sections; six primary issues; two challenge amendments; five tasks |
+| Implementation | `/review` | Full cycle branch diff | 3 fixing passes | Not converged; incomplete independent coverage | 14 confirmed findings repaired; 96 product / 41 paired / 44 shared tests |
+| Webview QA | `/qa-only` | Rendered study behavior | 1 + outcome regression | Bounded surface passed | 53 checks, 14 outcome checks, five layouts; native pixels excluded |
 
 **OUTSIDE COVERAGE:** unavailable; own-harness guard and known fresh-thread limit. Reused native response is limited coverage and no final-product pass. **VERDICT:** DX + Design + Eng plans specified; ready for sequential implementation, with missing external/native visual coverage. No current-diff or product PASS is implied. No additional durable learning beyond the recorded observation-identity and lock requirements was identified. The repeated approval loop is superseded by the user's explicit continuous delegation for routine reversible choices; decisions remain agent-authored, not user answers.
 

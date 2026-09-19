@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { runInNewContext } from 'node:vm';
+import { setImmediate } from 'node:timers/promises';
+import { Cdp } from 'codebook-cycle-0001/dist/cdp';
+import type { Protocol } from 'devtools-protocol';
 import type * as RunModule from '../run';
 import type { PauseIdentity } from 'codebook-cycle-0001/dist/pauseGate';
 import type { ParticipantSnapshot } from '../inspectParticipant';
@@ -13,8 +16,8 @@ import type { ProfileId } from '../constants';
 import { NetworkEvidence } from '../networkEvidence';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 
-/** Loads the actual paired coordinator with only native VS Code replaced for lifecycle tests. @example const { run, directory } = await harness() */
-async function harness(profile?: ProfileId, inspector?: typeof inspectParticipant) {
+/** Loads the actual coordinator with explicit native/proxy/inspector substitutes for lifecycle tests. @example const { run, directory } = await harness() */
+async function harness(profile?: ProfileId, inspector?: typeof inspectParticipant, connectCdp?: typeof Cdp.connect) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-paired-lifecycle-'));
   const filename = join(__dirname, '../run.js'), nativeRequire = createRequire(filename);
   const exports: Partial<typeof RunModule> = {};
@@ -24,7 +27,8 @@ async function harness(profile?: ProfileId, inspector?: typeof inspectParticipan
   const tabGroups = { all: [{ tabs: sourceTabs }], close: async (tabs: typeof sourceTabs) => { for (const tab of tabs) sourceTabs.splice(sourceTabs.indexOf(tab), 1); return true; } };
   runInNewContext(await readFile(filename, 'utf8'), { exports, AbortController, Buffer, performance, process, setInterval, clearInterval,
     require: (name: string) => name === 'vscode' ? { version: 'test', extensions: { getExtension: () => undefined }, debug: nativeDebug, TabInputText: SourceInput, window: { tabGroups } }
-      : name === 'codebook-cycle-0001/dist/hostBrowser' ? {} : name === './inspectParticipant' && inspector ? { inspectParticipant: inspector } : nativeRequire(name),
+      : name === 'codebook-cycle-0001/dist/hostBrowser' ? {} : name === 'codebook-cycle-0001/dist/cdp' && connectCdp ? { Cdp: { connect: connectCdp } }
+        : name === './inspectParticipant' && inspector ? { inspectParticipant: inspector } : nativeRequire(name),
   }, { filename });
   assert.ok(exports.PairedRun);
   const run = new exports.PairedRun({ artifactRoot: directory, templateRoot: directory, descriptorPath: '', profile, revision: 'test', dirty: true, sourceHash: 'test', nodeExecutable: '/node', host: { id: 'vscode', productVersion: 'test', apiVersion: 'test', commit: 'test' } }, 'normal');
@@ -59,6 +63,127 @@ for (const fault of [false, true]) {
 function snapshot(pause: PauseIdentity): ParticipantSnapshot {
   return { id: 'server:1', participant: 'server', itemId: 'paired-cart-demo/server', actionId: 'add-to-cart', capturePhase: 'paused-server', pause, frame: { id: 1, name: 'addProduct', line: 1, column: 1 }, values: { operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 0, admittedCount: 2 }, evaluations: [], source: { scriptId: 'script', scriptLocation: { scriptId: 'script', lineNumber: 0 }, mapping: { generatedLine: 0, generatedColumn: 0, originalSource: 'server.mts', originalLine: 0, originalColumn: 0 }, typescriptHash: 'typescript', javascriptHash: 'javascript', sourceMapHash: 'map' } };
 }
+
+/** Gives lifecycle regressions real CDP callbacks and inspection waiting after one owned cart continuation; only native effects are synthetic. @example const { run, paused, resumed } = await checkoutPauseHarness() */
+async function checkoutPauseHarness() {
+  let runtimeId = '';
+  const inspected: { generation: number; scriptId: string | undefined }[] = [];
+  const socket = new EventTarget();
+  const connection = new Cdp({ addEventListener: socket.addEventListener.bind(socket), close() { socket.dispatchEvent(new Event('close')); },
+    send(value) {
+      const request: { id: number; method: string } = JSON.parse(String(value));
+      // Real CDP request IDs/subscriptions remain intact; responses never contact a debugger or browser.
+      const result = request.method === 'Runtime.evaluate' ? { result: { value: JSON.stringify({ runId: runtimeId, pid: 42, executable: '/node' }) } }
+        : request.method === 'Page.captureScreenshot' ? { data: Buffer.from('synthetic png bytes').toString('base64') } : {};
+      socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id: request.id, result }) }));
+    } }, () => undefined);
+  const paused = (scriptId: string) => {
+    const event: Protocol.Debugger.PausedEvent = { reason: 'other', callFrames: [{ callFrameId: 'frame', functionName: 'fixture', url: 'server.mjs',
+      location: { scriptId, lineNumber: 0 }, scopeChain: [], this: { type: 'undefined' } }] };
+    socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ method: 'Debugger.paused', params: event }) }));
+  };
+  const resumed = () => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ method: 'Debugger.resumed', params: {} }) }));
+  const { run, directory } = await harness('checkout-demo', async (name, _session, _cdp, pause, stopped, _seal, check, _signal, _evidence, item) => {
+    check(); inspected.push({ generation: pause.generation, scriptId: stopped.callFrames[0]?.location.scriptId });
+    const values: ParticipantSnapshot['values'] = item.action === 'add-to-cart'
+      ? { operationId: runtimeId, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 0, admittedCount: 2 }
+      : { operationId: `${runtimeId}-checkout`, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 1, admittedCount: 2, cartOperationId: runtimeId, orderId: `order-${runtimeId}`, total: 24, orderCount: 0 };
+    return { ...snapshot(pause), id: `${pause.sessionId}:${pause.generation}`, participant: name, itemId: item.id, actionId: item.action, capturePhase: item.capturePhase, values };
+  }, async () => connection);
+  runtimeId = run.id;
+  const parent = { id: 'server-root', name: 'server-root', type: 'pwa-node', configuration: { type: 'pwa-node', request: 'launch', name: `codebook ${run.id} server` }, workspaceFolder: undefined,
+    customRequest: async () => undefined, getDebugProtocolBreakpoint: async () => undefined };
+  const session = { ...parent, id: 'server-session', parentSession: parent,
+    async customRequest(command: string) {
+      if (command === 'requestCDPProxy') return { host: '127.0.0.1', port: 1234 };
+      if (command === 'continue') {
+        run.onRequest(session, { seq: 1, type: 'request', command });
+        run.onEvent(session, { seq: 2, type: 'event', event: 'continued', body: { threadId: 1 } });
+      }
+      return undefined;
+    } };
+  try {
+    run.endpoint = { runId: run.id, pid: 42, origin: 'http://127.0.0.1:5000', executable: '/node', version: 'test' };
+    run.addSession(parent); run.addSession(session);
+    const select = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(run), 'selectProxy')?.value;
+    await select.call(run, 'server');
+    // No process exists behind these selected identities; cleanup must never probe a synthetic PID/port.
+    run.sessions.clear(); run.activeSessions.clear(); run.endpoint = undefined;
+    run.participants.browser.cdp = connection;
+    for (const item of run.profile.items) run.sources.set(item.id, { sourcePath: join(directory, item.file), source: '', javascript: '', sourceMap: '', breakpointLine: 1 });
+    run.operation = { id: 'cart-operation', key: 'cart-key', actionId: 'add-to-cart', inputAcknowledged: true, completed: false };
+    run.operations.push(run.operation); run.status = 'running';
+    paused('cart-script');
+    run.onEvent(session, { seq: 3, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
+    await waitUntil(() => run.snapshots.length === 1 && run.captures['paused-cart-mutation']?.status === 'captured', 'first cart observation', 1_000);
+    const firstPause = run.participants.server.gate.current; assert.ok(firstPause);
+    await run.continue('server', firstPause);
+    run.operation.completed = true;
+    // Seed only the completed browser/cart boundary; both server stops use real callbacks, gates and inspection waiting.
+    const browserSnapshot: ParticipantSnapshot = { ...snapshot({ sessionId: 'browser-session', threadId: 1, generation: 1 }), id: 'browser-session:1',
+      participant: 'browser', itemId: 'checkout-demo/cart-update', actionId: 'add-to-cart', capturePhase: 'paused-cart-update',
+      values: { operationId: run.id, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 1, admittedCount: 2 } };
+    run.snapshots.push(browserSnapshot); run.resumedSnapshots.add(browserSnapshot.id);
+    run.operation = { id: 'checkout-operation', key: 'checkout-key', actionId: 'checkout', inputAcknowledged: true, completed: false };
+    run.operations.push(run.operation);
+    return { run, directory, session, paused, resumed, inspected };
+  } catch (error) {
+    run.sessions.clear(); run.activeSessions.clear(); run.endpoint = undefined;
+    await run.cleanup(); await rm(directory, { recursive: true }); throw error;
+  }
+}
+
+test('a delayed cart CDP resume preserves the later order pause and its owned continuation', async () => {
+  // Arrange
+  const { run, directory, session, paused, resumed, inspected } = await checkoutPauseHarness();
+  try {
+    // Act: DAP reaches order creation before the prior cart CDP resumed event arrives.
+    run.onEvent(session, { seq: 4, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
+    resumed();
+    // Assert: the previous resume neither releases nor invalidates the new pause.
+    assert.equal(run.status, 'paused-server'); assert.equal(run.participants.server.gate.current?.generation, 2);
+    assert.equal(run.participants.server.gate.conflict, false); assert.deepEqual([...run.failures], []);
+    paused('order-script');
+    await waitUntil(() => run.snapshots.length === 3 && run.captures['paused-order-creation']?.status === 'captured', 'order observation', 1_000);
+    assert.deepEqual(inspected, [{ generation: 1, scriptId: 'cart-script' }, { generation: 2, scriptId: 'order-script' }]);
+    const orderPause = run.participants.server.gate.current; assert.ok(orderPause);
+    await run.continue('server', orderPause);
+    assert.equal(run.resumedSnapshots.has('server-session:2'), true); assert.equal(run.status, 'running');
+  } finally { await run.cleanup(); await rm(directory, { recursive: true }); }
+});
+
+test('an order inspection waits for its own CDP pause instead of reading the retained cart frame', async () => {
+  // Arrange
+  const { run, directory, session, paused, resumed, inspected } = await checkoutPauseHarness();
+  try {
+    // Act: leave the old CDP paused event cached while the second DAP stop starts inspection.
+    run.onEvent(session, { seq: 4, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
+    await setImmediate();
+    // Assert: allow pending microtasks to run, but no synthetic delay or inspector override can hide stale consumption.
+    assert.deepEqual(inspected, [{ generation: 1, scriptId: 'cart-script' }]);
+    assert.equal(run.snapshots.length, 2); assert.equal(run.participants.server.snapshot, undefined);
+    resumed(); paused('order-script');
+    await waitUntil(() => run.snapshots.length === 3, 'order inspection after its matching CDP event', 1_000);
+    assert.deepEqual(inspected, [{ generation: 1, scriptId: 'cart-script' }, { generation: 2, scriptId: 'order-script' }]);
+    assert.equal(run.snapshots[2]?.itemId, 'checkout-demo/order-creation'); assert.equal(run.snapshots[2]?.pause.generation, 2);
+  } finally { await run.cleanup(); await rm(directory, { recursive: true }); }
+});
+
+test('an unowned CDP resume of the current order pause still fails the checkout', async () => {
+  // Arrange
+  const { run, directory, session, paused, resumed } = await checkoutPauseHarness();
+  try {
+    resumed(); paused('order-script');
+    run.onEvent(session, { seq: 4, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
+    await waitUntil(() => run.snapshots.length === 3 && run.captures['paused-order-creation']?.status === 'captured', 'current order observation', 1_000);
+    // Act: the current generation resumes without any owned Continue reservation.
+    resumed();
+    // Assert
+    assert.equal(run.status, 'failed'); assert.equal(run.participants.server.gate.current, undefined);
+    assert.deepEqual([...run.failures], ['server resumed outside its owned continuation']);
+    assert.equal(run.resumedSnapshots.has('server-session:2'), false); assert.equal(run.snapshots[2]?.itemId, 'checkout-demo/order-creation');
+  } finally { await run.cleanup(); await rm(directory, { recursive: true }); }
+});
 
 test('two concurrent continuation calls dispatch once and a foreign participant cannot consume the pause', async () => {
   // Arrange
@@ -255,7 +380,7 @@ test('checkout keeps four observations in one session pair and never redispatche
         feedNetwork(run.networks.get('checkout')!, 'order-selected', { ...cartResponse, operationId: `${run.id}-checkout`, cartOperationId: run.id, orderId: `order-${run.id}`, total: 24, orderCount: 1 });
       }
       const participant = run.participants[item.participant];
-      participant.stopped = { callFrames: [], reason: 'other' };
+      participant.stopped = { generation: index < 2 ? 1 : 2, event: { callFrames: [], reason: 'other' } };
       run.onEvent(participant.selected!, { seq: index + 1, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
       await waitUntil(() => {
         assert.notEqual(run.status, 'failed', run.failures.join('\n'));

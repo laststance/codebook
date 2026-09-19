@@ -40,7 +40,7 @@ export interface HarnessConfig {
 interface Participant {
   gate: PauseGate; selected?: vscode.DebugSession; cdp?: Cdp; source?: SealedSource;
   breakpoint?: vscode.SourceBreakpoint; binding?: vscode.DebugProtocolBreakpoint;
-  stopped?: Protocol.Debugger.PausedEvent; snapshot?: ParticipantSnapshot;
+  cdpGeneration: number; stopped?: { generation: number; event: Protocol.Debugger.PausedEvent }; snapshot?: ParticipantSnapshot;
   expectedRequests: number; continuation?: PauseIdentity; continued?: PauseIdentity;
 }
 interface Capture { status: 'pending' | 'captured' | 'failed'; file?: string; error?: string; renderer?: { epoch: string; id: number; hash: string } }
@@ -59,7 +59,7 @@ export class PairedRun {
   readonly operations: Operation[] = [];
   readonly networks = new Map<ActionId, NetworkEvidence>();
   readonly participants: Record<ParticipantName, Participant> = {
-    server: { gate: new PauseGate(), expectedRequests: 0 }, browser: { gate: new PauseGate(), expectedRequests: 0 },
+    server: { gate: new PauseGate(), cdpGeneration: 0, expectedRequests: 0 }, browser: { gate: new PauseGate(), cdpGeneration: 0, expectedRequests: 0 },
   };
   readonly sessions = new Map<string, { session: vscode.DebugSession; name: ParticipantName }>();
   readonly activeSessions = new Set<string>();
@@ -226,10 +226,17 @@ export class PairedRun {
     participant.selected = match.session; participant.cdp = match.cdp;
     this.evidence.record('target.selected', { participant: name, sessionId: match.session.id, parentId: match.session.parentSession?.id });
     match.cdp.onClose = () => { if (!this.cleaning) this.fail(`${name} CDP disconnected`); };
-    match.cdp.on('Debugger.paused', event => { participant.stopped = event; this.evidence.record('cdp.paused', { participant: name, location: event.callFrames[0]?.location }); });
+    match.cdp.on('Debugger.paused', event => {
+      const generation = ++participant.cdpGeneration;
+      participant.stopped = { generation, event };
+      this.evidence.record('cdp.paused', { participant: name, generation, location: event.callFrames[0]?.location });
+    });
     match.cdp.on('Debugger.resumed', () => {
+      const generation = participant.stopped?.generation;
       participant.stopped = undefined;
-      if (participant.gate.phase === 'paused') { participant.gate.invalidate(true); this.fail(`${name} resumed outside its owned continuation`); }
+      this.evidence.record('cdp.resumed', { participant: name, generation });
+      // DAP may already report a later stop while this ordered CDP stream still resumes its previous one.
+      if (generation === participant.gate.current?.generation && participant.gate.phase === 'paused') { participant.gate.invalidate(true); this.fail(`${name} resumed outside its owned continuation`); }
     });
     await match.cdp.subscribe(['Debugger.paused', 'Debugger.resumed']);
   }
@@ -363,7 +370,7 @@ export class PairedRun {
   private async inspect(name: ParticipantName, pause: PauseIdentity, item: StudyItem): Promise<void> {
     const participant = this.participants[name];
     const assertCurrent = () => { this.assertAlive(); if (!participant.gate.matches(pause)) throw new Error('Pause invalidated during participant inspection'); };
-    const stopped = await waitUntil(() => participant.stopped, 'paired CDP stop', CAPTURE_TIMEOUT_MS, this.abort.signal);
+    const stopped = await waitUntil(() => participant.stopped?.generation === pause.generation ? participant.stopped.event : undefined, 'matching generation CDP stop', CAPTURE_TIMEOUT_MS, this.abort.signal);
     assertCurrent();
     const snapshot = await inspectParticipant(name, participant.selected!, this.requireCdp(name), pause, stopped, participant.source!, assertCurrent, this.abort.signal, this.evidence, item);
     assertCurrent();

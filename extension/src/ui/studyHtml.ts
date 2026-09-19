@@ -75,9 +75,14 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     text('runtime', model.currentItemId ? `${liveProfile?.title ?? 'Live study'} — paused at ${model.currentItemTitle}` : `${liveProfile?.title ?? 'Runtime'} — ${message.nextAction?.id === 'checkout' ? 'Cart updated — checkout available' : message.liveState ?? 'not running'}`);
     text('deadline', message.deadlineAt && !message.study?.terminal ? `Demo wall limit: ${new Date(message.deadlineAt).toLocaleTimeString()}. History remains readable after expiry.` : 'Reading history does not restart execution.');
     const outcome = message.study?.studyOutcome;
-    const outcomeLabel = outcome === 'demonstrated' ? message.study?.profile === 'checkout-demo' ? 'Purchase confirmed — evidence complete' : 'Evidence complete' : outcome === 'partial' ? 'Partial evidence' : outcome === 'not-demonstrated' ? 'Evidence not demonstrated' : 'Evidence checks pending';
+    const scenario = model.scenarioProgress;
+    const outcomeLabel = outcome === 'demonstrated' ? message.study?.profile === 'checkout-demo' ? 'Purchase confirmed — evidence complete' : 'Evidence complete'
+      : outcome === 'partial' ? scenario?.purchaseObserved ? 'Purchase observed — partial evidence' : 'Partial evidence'
+      : outcome === 'not-demonstrated' ? 'Evidence not demonstrated' : scenario?.purchaseObserved && message.study?.terminal ? 'Purchase observed — evidence checks pending' : 'Evidence checks pending';
+    const endedProgress = message.study?.terminal ? ` Last observed stop: ${scenario?.lastObservedTitle ?? 'none'}.${message.study.profile === 'checkout-demo' && !scenario?.purchaseObserved ? ' Purchase confirmation screen was not observed.' : ''}` : '';
+    const missingEvidence = message.study?.terminal && scenario ? [scenario.missingImageTitles.length ? `Missing images: ${scenario.missingImageTitles.join(', ')}.` : '', scenario.unverifiedLinkCount ? `${scenario.unverifiedLinkCount} runtime connections unverified.` : ''].filter(Boolean).join(' ') : '';
     element('study-state').hidden = !message.study;
-    text('study-state', message.study ? `${message.study.terminal ? 'Study ended' : 'Study in progress'} — ${outcomeLabel} · runtime: ${message.study.finalOutcome} · history: ${message.study.historyOutcome}${message.study.reason ? `. ${message.study.reason}` : ''}` : '');
+    text('study-state', message.study ? `${message.study.terminal ? 'Study ended' : 'Study in progress'} — ${outcomeLabel} · runtime: ${message.study.finalOutcome} · history: ${message.study.historyOutcome}.${endedProgress}${missingEvidence ? ` ${missingEvidence}` : ''}${message.study.reason ? ` ${message.study.reason}` : ''}` : '');
     text('errors', message.errors.join('\n')); button('retry')!.hidden = !message.errors.length;
     button('continue')!.disabled = message.busy || message.loading || !model.continueArguments;
     button('return-current')!.disabled = !model.currentParticipant || model.matching && model.selection.follow;
@@ -93,7 +98,7 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     }
     element('overview').hidden = model.selection.tab !== 'overview'; element('live-content').hidden = model.selection.tab !== 'live';
     text('overview-text', item?.overview ?? 'Source unavailable.');
-    text('observation', !model.observation && !model.currentSourceAvailable ? 'Current source unavailable — read a captured observation or retry.' : model.observation ? `${model.matching ? 'Observed in this run — current inspected pause' : 'Captured observation — history'} · ${new Date(model.observation.capturedAt).toLocaleString()}` : 'Not observed — source-derived material only');
+    text('observation', !model.observation && !model.currentSourceAvailable ? 'Current source unavailable — read a captured observation or retry.' : model.observation ? `${model.matching ? 'Observed in this run — current inspected pause' : 'Captured observation — history'} · ${new Date(model.observation.capturedAt).toLocaleString()}` : message.study?.terminal ? 'Not observed before this study ended — source-derived material only' : 'Not observed — source-derived material only');
     text('source-version', !model.observation && !model.currentSourceAvailable ? 'No current source version could be verified.' : `${model.observation ? 'Captured source' : 'Source-derived document'} · line ${model.source.line} · ${model.source.hash.slice(0, 12)}`);
     text('source-drift', !model.currentSourceAvailable ? 'Current source unavailable. Historical source and understanding are retained.' : model.sourceChanged ? 'Review needed — source changed. This is the captured older revision.' : '');
     const checkbox = element('understood');

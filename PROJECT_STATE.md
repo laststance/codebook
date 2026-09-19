@@ -2,7 +2,7 @@
 
 Updated: 2026-09-19\
 Product stage: connected study and durable learning mechanisms demonstrated; full native usability unverified\
-Active cycle: [0007 — Cart-to-confirmation scenario](docs/cycles/0007-checkout-scenario.md) — implementing\
+Active cycle: [0007 — Cart-to-confirmation scenario](docs/cycles/0007-checkout-scenario.md) — validating\
 Last cycle: [0006 — Study workspace](docs/cycles/0006-study-workspace.md) — closed, mechanisms demonstrated; native usability inconclusive\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [8](https://github.com/laststance/codebook/issues/8) — open\
@@ -12,7 +12,7 @@ Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
 ## Verified facts
 
-- Cycle 0007 is in progress: clean runtime implementation `4b56ad1` passes **5/5 checkout HTTP cases per native host** (normal, 40-second order hold, simultaneous continuation, partial image, late contradiction), plus original paired normal in both. Four exact source/value observations, eleven links, seven images and one retained cart-to-order state are demonstrated at the runtime layer. Product MCP 1.1 plus v2 history/reader integration passes **82 tests**, with **38 paired tests**. Migration preserves actual v1 files, item-scoped choices and qualified history/study outcomes. Actual four-item product/native checkout and real-agent orchestration remain pending; do not treat runtime fixture success as full Cycle 0007 completion.
+- Cycle 0007 is in progress. Clean `4b56ad1` passes **5/5 checkout runtime cases per host**; clean `2a91377` adds **6/6 product-native cases** (checkout normal/history and paired normal in each host) plus a separate actual driving-agent checkout in each host. Four item-specific observations, eleven links, seven images, persisted interpretations and reload without execution are demonstrated. Bounded webview QA passes 53 checks/five layouts; review fixes add 14 outcome checks. Implementation review repaired 14 findings across three fixing passes; 96 product, 41 paired and 44 shared tests pass. The workflow ended non-converged with reused reviewer contexts and missing outside coverage. Clean native revalidation of the final fixes remains pending. Native editor pixels, installed extension, real repositories, synchronized replay and the two later modes remain unverified.
 - [Cycle 0006 evidence](docs/cycles/evidence/0006/README.md): clean implementation `c873b43`, fingerprint `f9836a7d23a8b9cdacb0b6babfcd0927aa443b2808969640e53e8d13b9345d46`; **63 product / 44 shared / 28 paired tests, 27 webview checks, learner normal/history and MCP normal/hold/source-drift in each host**. Two linked observations, exact captured source, values, interpretations, durable personal checks and restart without execution are demonstrated. All runtime cleanup completes; unrelated dirty drafts survive. History cases deliberately remain partial when an invisible page cannot supply a pause receipt. Independent native visual/installed acceptance remains unverified.
 - Cycle 0006 repaired 23 distinct findings in three implementation fixing passes; no convergence is certified. Fresh reviewer creation hit the agent-thread limit, reused reviewers are explicitly limited, and no outside-provider result exists. These reviews do not count toward final acceptance.
 - [Cycle 0005 evidence](docs/cycles/evidence/0005/README.md): clean implementation `c813053`, fingerprint `4be3d512c89df69f9ffea3fb26eab59645241e9a3f7a50acd84a1e8e489b5cde`; **33 product / 43 shared / 28 paired unit tests, 6/6 native MCP cases and 3/3 shared native regressions per host**. The real external client discovers, clicks, reads exact pauses/source/images, saves referenced interpretations, continues, reconnects and cleans up. A separate driving-agent smoke completed both stops and recovered a stale reference; its harness exited 0. Earlier failed/partial attempts remain recorded.
@@ -30,12 +30,12 @@ A fixture proves mechanisms, not the integrated final product.
 
 | Goal | State | Evidence and remaining gap |
 | --- | --- | --- |
-| G01 | partial | Single synchronous/paired cart click in both hosts; no chat-driven full checkout. |
-| G02 | partial | Two demo items share outline, source-derived overview/flow, observations and values; no generated repository wiki or recording navigation. |
+| G01 | partial | Actual driving-agent cart-to-confirmation fixture in both hosts; general repository orchestration and intended-use acceptance remain open. |
+| G02 | partial | Four checkout items and original paired items share outline, source-derived overview/flow, observations and values; no generated repository wiki or recording navigation. |
 | G03 | partial | Exact executed source, values, target/pause identities and an instrumented async boundary verified; arbitrary repository causal links remain unverified. |
 | G04 | partial | Ordered page frames and evidence; no video or offline synchronized replay/export. |
-| G05 | partial | Durable source-versioned decisions, restart, drift and storage-failure tests pass for two demo items; broader repository/installed acceptance pending. |
-| G06 | partial | Extension-owned MCP and actual external SDK/agent clients demonstrated; six native scenarios per host. Explicit demo profile only; no ordinary-workspace or packaged support proof. |
+| G05 | partial | Durable source-versioned decisions, restart, drift and storage-failure tests pass for both fixed profiles; broader repository/installed acceptance pending. |
+| G06 | partial | Extension-owned MCP and actual external SDK/agent clients demonstrated; six native scenarios per host. Explicit fixed demo profiles only; no ordinary-workspace or packaged support proof. |
 | G07 | partial | Native Study workspace implemented; source/selection/ownership API checks and real webview behavior pass. Independent editor pixels and constrained native UX remain unverified. |
 | G08 | unverified | Living book required; not implemented. |
 | G09 | unverified | Guided walkthrough required; not implemented. |
@@ -44,7 +44,7 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Continue Cycle 0007 with the native product checkout/reader harness, then actual-agent discovery, webview QA and implementation review. Fixed profiles, sequential runtime, MCP 1.1, v2 storage and four-item reader are implemented: 5/5 runtime HTTP cases in each host and 82 product tests pass. Preserve distinct v2 paths, exact legacy normalization, the shared migration lock, item-specific observations and material-signature/checkpoint-revision-qualified outcomes. Product/native checkout has not yet been run on this reader revision. DX, Design and Eng plan reviews are complete with reused native challenges and unavailable outside coverage. Cycle 0006 is integrated at `5abd16a`; issue #7 is closed, #8 is active. D008 authorizes continuous execution. Recording/replay, repository wiki/codemap, both remaining layouts and real-repository support remain in the final goal.
+Commit the repaired Cycle 0007 implementation, build from a clean revision, and run product-native checkout normal/history plus paired normal and the five checkout runtime cases in both hosts. Current source passes 96 product / 41 paired / 44 shared tests and 53 existing / 14 outcome webview checks. Earlier clean `2a91377` retains six native product passes and actual driving-agent checkout in each host; source-changing review fixes require native revalidation. Three fixing passes repaired 14 findings; `/review` ended not converged, with missing fresh/outside coverage. Preserve selected-archive identity, explicit failed checkpoints and ordered CDP/DAP generation correspondence. Finish sanitized evidence and synchronize issue #8 before closing the cycle and choosing one next capability gap. D008 authorizes continuous execution; no final goal is removed.
 
 Cycle 0006 source and final host evidence are frozen at `c873b43`. No CI, PR approval, VSIX, installed-product or publication claim exists. Desktop-lock-dependent native visual checks remain unverified; do not bypass or repeatedly retry the unchanged lock.
 
