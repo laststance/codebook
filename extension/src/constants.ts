@@ -75,6 +75,12 @@ export const REPOSITORY_NARROW_WIDTH_PX = 800;
 export const REPOSITORY_FIXED_READING_SECTIONS = 4;
 export const RECORDING_VERSION = 1;
 export const RECORDING_DIRECTORY = 'recordings.v1';
+export const CONFIGURED_RECORDING_VERSION = 2;
+export const CONFIGURED_RECORDING_DIRECTORY = 'recordings.v2';
+export const RECORDING_STORAGE_FORMATS = [
+  { version: CONFIGURED_RECORDING_VERSION, directory: CONFIGURED_RECORDING_DIRECTORY },
+  { version: RECORDING_VERSION, directory: RECORDING_DIRECTORY },
+] as const;
 export const RECORDING_HEADER_FILE = 'header.json';
 export const RECORDING_JOURNAL_FILE = 'frames.jsonl';
 export const RECORDING_SEAL_FILE = 'sealed.json';

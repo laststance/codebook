@@ -4,9 +4,9 @@ import { hostname } from 'node:os';
 import { isDeepStrictEqual } from 'node:util';
 import { join } from 'node:path';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { IMAGE_LIMIT_BYTES, MAX_RECORDINGS, MAX_RECORDING_CONTEXT_BYTES, MAX_RECORDING_FRAMES, MAX_RECORDING_HEADER_BYTES, MAX_RECORDING_JOURNAL_BYTES, MAX_RECORDING_METADATA_FILES, MAX_RECORDING_PENDING_BYTES, MAX_RECORDING_PNG_BYTES, MAX_RECORDING_TOTAL_BYTES, MAX_UI_TEXT_CHARS, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, RECORDING_CONTEXT_FILE, RECORDING_DIRECTORY, RECORDING_HEADER_FILE, RECORDING_JOURNAL_FILE, RECORDING_REASON_LIMIT_CHARS, RECORDING_SAMPLE_INTERVAL_MS, RECORDING_SEAL_FILE, RECORDING_TERMINAL_RESERVE_BYTES, RECORDING_VERSION } from './constants';
+import { CONFIGURED_RECORDING_VERSION, IMAGE_LIMIT_BYTES, MAX_RECORDINGS, MAX_RECORDING_CONTEXT_BYTES, MAX_RECORDING_FRAMES, MAX_RECORDING_HEADER_BYTES, MAX_RECORDING_JOURNAL_BYTES, MAX_RECORDING_METADATA_FILES, MAX_RECORDING_PENDING_BYTES, MAX_RECORDING_PNG_BYTES, MAX_RECORDING_TOTAL_BYTES, MAX_UI_TEXT_CHARS, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, RECORDING_CONTEXT_FILE, RECORDING_DIRECTORY, RECORDING_HEADER_FILE, RECORDING_JOURNAL_FILE, RECORDING_REASON_LIMIT_CHARS, RECORDING_SAMPLE_INTERVAL_MS, RECORDING_SEAL_FILE, RECORDING_STORAGE_FORMATS, RECORDING_TERMINAL_RESERVE_BYTES, RECORDING_VERSION, REPOSITORY_BROWSER_PROFILE } from './constants';
 import { studyIdSchema } from './legacyStudySchemas';
-import { recordingBindingSchema, recordingEntrySchema, recordingFrameSchema, recordingHashSchema, recordingHeaderSchema, recordingSealSchema, type RecordingBinding, type RecordingCatalogEntry, type RecordingContext, type RecordingEntry, type RecordingFrame, type RecordingHeader, type RecordingIndex, type RecordingSeal } from './recordingSchemas';
+import { retainedRecordingBindingSchema, recordingEntrySchema, recordingFrameSchema, recordingHashSchema, retainedRecordingHeaderSchema, retainedRecordingSealSchema, type RecordingBinding, type RecordingCatalogEntry, type RecordingContext, type RecordingEntry, type RecordingFrame, type RecordingHeader, type RecordingIndex, type RecordingSeal } from './recordingSchemas';
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite';
 import { readBoundedFile } from './utils/readBoundedFile';
 import { readPngDimensions } from './utils/readPngDimensions';
@@ -15,6 +15,8 @@ import { validateRecordingContext } from './utils/validateRecordingContext';
 import { LearningLibrary } from './learningLibrary';
 import { PLAYBACK_PREFERENCE_FILE, PLAYBACK_PREFERENCE_LIMIT_BYTES } from './constants';
 import { playbackPreferenceSchema, type PlaybackPreference } from './playbackSchemas';
+import { recordingPhases } from './utils/recordingPhases';
+import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint';
 
 const defaultLimits = { slots: MAX_RECORDINGS, frames: MAX_RECORDING_FRAMES, pngBytes: MAX_RECORDING_PNG_BYTES, pendingBytes: MAX_RECORDING_PENDING_BYTES, journalBytes: MAX_RECORDING_JOURNAL_BYTES };
 export type RecordingLimits = typeof defaultLimits;
@@ -59,14 +61,16 @@ export class RecordingStore {
 
   /** Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted. @example await store.start(binding, runtime.evidence.elapsedMs()) */
   start(input: RecordingBinding, startedMs: number): Promise<RecordingWriter> {
-    const binding = recordingBindingSchema.parse(input);
+    const binding = retainedRecordingBindingSchema.parse(input), version = binding.profile === REPOSITORY_BROWSER_PROFILE ? CONFIGURED_RECORDING_VERSION : RECORDING_VERSION;
     if (binding.workspaceKey !== this.workspaceKey) return Promise.reject(new Error('Recording belongs to another workspace.'));
     const pending = this.writes.then(() => withStorageLock(this.learningDirectory, async () => {
-      await this.initialize();
-      if ((await this.identities()).length >= this.limits.slots) throw new Error('Recording library is full; no recording was removed.');
-      const directory = this.path(binding.studyId);
+      await this.initialize(version);
+      const identities = await this.identities();
+      if (identities.length >= this.limits.slots) throw new Error('Recording library is full; no recording was removed.');
+      if (identities.includes(binding.studyId)) throw new Error('Recording already exists for this study.');
+      const directory = this.path(binding.studyId, version);
       await mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE });
-      const header = recordingHeaderSchema.parse({ ...binding, version: RECORDING_VERSION, createdAt: new Date().toISOString(), startedMs, clock: 'runtime-receipt-ms', owner: { pid: process.pid, hostname: hostname(), sessionId: this.sessionId }, sampleIntervalMs: RECORDING_SAMPLE_INTERVAL_MS });
+      const header = retainedRecordingHeaderSchema.parse({ ...binding, version, createdAt: new Date().toISOString(), startedMs, clock: 'runtime-receipt-ms', owner: { pid: process.pid, hostname: hostname(), sessionId: this.sessionId }, sampleIntervalMs: RECORDING_SAMPLE_INTERVAL_MS });
       await this.io.json(join(directory, RECORDING_HEADER_FILE), header, MAX_RECORDING_HEADER_BYTES);
       await this.io.binary(join(directory, RECORDING_JOURNAL_FILE), Buffer.alloc(0));
       const writer = new RecordingWriter(directory, header, this.limits, this.io);
@@ -81,7 +85,7 @@ export class RecordingStore {
     const result: RecordingCatalogEntry[] = [];
     for (const studyId of await this.identities()) {
       try {
-        const header = await this.header(studyId), seal = await this.seal(studyId);
+        const header = await this.header(studyId), seal = await this.seal(studyId, header.version);
         const writer = this.active.get(studyId);
         result.push({ studyId, profile: header.profile, createdAt: header.createdAt, status: seal ? seal.status === 'complete' ? 'finalized' : 'partial' : this.ownerState(header, writer), endMs: seal?.endMs, lastVerifiedMs: writer?.state().lastWrittenMs ?? header.startedMs, reason: writer?.state().reason ?? seal?.reason ?? (seal ? undefined : 'Capture has no verified final checkpoint; end time is unknown.') });
       } catch (error) { result.push({ studyId, status: 'partial', lastVerifiedMs: 0, reason: String(error).slice(0, MAX_UI_TEXT_CHARS) }); }
@@ -91,8 +95,8 @@ export class RecordingStore {
 
   /** Verifies journal order, sealed bytes and every referenced PNG once when opening playback. @example const index = await store.read(studyId) */
   async read(studyId: string): Promise<RecordingIndex> {
-    const header = await this.header(studyId), disk = await this.inventory(studyId), seal = await this.seal(studyId);
-    const bytes = await this.file(studyId, RECORDING_JOURNAL_FILE, MAX_RECORDING_JOURNAL_BYTES);
+    const header = await this.header(studyId), disk = await this.inventory(studyId, header.version), seal = await this.seal(studyId, header.version);
+    const bytes = await this.file(studyId, RECORDING_JOURNAL_FILE, MAX_RECORDING_JOURNAL_BYTES, header.version);
     if (seal && (seal.journalHash !== sha256(bytes) || seal.journalBytes !== bytes.byteLength)) throw new Error('Sealed recording journal is corrupt.');
     const lines = bytes.toString('utf8').split('\n'), incomplete = lines.pop();
     const entries: RecordingEntry[] = [];
@@ -104,9 +108,10 @@ export class RecordingStore {
         if (entry.sequence !== entries.length + 1 || entry.elapsedMs < lastMs || entries.at(-1)?.type === 'end') throw new Error('Recording order or receipt time changed.');
         if (entry.type === 'frame') {
           if (hasGap) throw new Error('Recording frames continue after a declared missing tail.');
+          if (entry.phase && !recordingPhases(header.profile).some(phase => phase === entry.phase)) throw new Error('Recording contains a foreign image phase.');
           let verified = verifiedFrames.get(entry.hash);
           if (!verified) {
-            const png = await this.readFrame(studyId, entry.hash);
+            const png = await this.readFrame(studyId, entry.hash, header.version);
             verified = { byteLength: png.byteLength, ...readPngDimensions(png) }; verifiedFrames.set(entry.hash, verified);
           }
           if (verified.byteLength !== entry.byteLength || verified.width !== entry.width || verified.height !== entry.height) throw new Error('Recording frame metadata differs from its bytes.');
@@ -128,10 +133,10 @@ export class RecordingStore {
 
   /** Pins one sealed index for resource paging after current header/seal/journal validation; returned PNGs still require {@link readFrame}, and playback uses fresh {@link read}. @example await store.readResourceIndex(studyId) */
   async readResourceIndex(studyId: string): Promise<RecordingIndex> {
-    const header = await this.header(studyId), seal = await this.seal(studyId);
+    const header = await this.header(studyId), seal = await this.seal(studyId, header.version);
     // Growing/interrupted prefixes cannot borrow a previously sealed verification.
     if (!seal) return this.read(studyId);
-    const journal = await this.file(studyId, RECORDING_JOURNAL_FILE, MAX_RECORDING_JOURNAL_BYTES);
+    const journal = await this.file(studyId, RECORDING_JOURNAL_FILE, MAX_RECORDING_JOURNAL_BYTES, header.version);
     if (sha256(journal) !== seal.journalHash || journal.byteLength !== seal.journalBytes) throw new Error('Sealed recording journal is corrupt.');
     const key = sha256(JSON.stringify([header, seal]));
     if (this.resourceVerification?.key === key) return this.resourceVerification.pending;
@@ -145,9 +150,9 @@ export class RecordingStore {
   }
 
   /** Reads one canonical hash-named PNG with independent content validation; no arbitrary path reaches disk. @example await store.readFrame(studyId, hash) */
-  async readFrame(studyId: string, hash: string): Promise<Buffer> {
+  async readFrame(studyId: string, hash: string, expectedVersion?: RecordingHeader['version']): Promise<Buffer> {
     recordingHashSchema.parse(hash);
-    const bytes = await this.file(studyId, `${hash}.png`, IMAGE_LIMIT_BYTES);
+    const bytes = await this.file(studyId, `${hash}.png`, IMAGE_LIMIT_BYTES, expectedVersion);
     if (sha256(bytes) !== hash) throw new Error('Recorded frame hash mismatch.');
     readPngDimensions(bytes); return bytes;
   }
@@ -160,15 +165,16 @@ export class RecordingStore {
     const context = validateRecordingContext(JSON.parse(serialized), this.workspaceKey);
     const pending = this.writes.then(() => withStorageLock(this.learningDirectory, async () => {
       const header = await this.header(context.studyId);
-      if (header.profile !== context.study.profile) throw new Error('Recording context changed profile.');
+      if (header.version !== context.version || header.profile !== context.study.profile) throw new Error('Recording context changed profile or version.');
       const checkpoint = await new LearningLibrary(this.learningDirectory, this.workspaceKey).readCheckpoint(context.studyId);
       const { captures: _captures, ...compact } = checkpoint.study;
       if (checkpoint.status !== 'saved' || context.studyHash !== sha256(JSON.stringify(checkpoint.study)) || !isDeepStrictEqual(context.study, compact)) throw new Error('Recording context differs from the saved study checkpoint.');
-      const existing = await lstat(join(this.path(context.studyId), RECORDING_CONTEXT_FILE)).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+      const existing = await lstat(join(this.path(context.studyId, header.version), RECORDING_CONTEXT_FILE)).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
       if (existing) {
         const previous = (await this.readContextFile(context.studyId)).context;
         if (context.historyRevision < previous.historyRevision) throw new Error('Older recording context cannot replace a later revision.');
         if (context.historyRevision === previous.historyRevision && !isDeepStrictEqual(context, previous)) throw new Error('Recording context revision already names different bytes.');
+        if (previous.study.version === 3 && context.study.version === 3) assertStudyCheckpoint({ ...previous.study, captures: [] }, { ...context.study, captures: [] });
         // Recorded availability is immutable even when a later context adds interpretation/confirmation.
         for (const prior of previous.interpretationAvailability) if (!context.interpretationAvailability.some(value => isDeepStrictEqual(prior, value))) throw new Error('Recorded interpretation availability changed.');
         for (const prior of previous.phases) {
@@ -180,9 +186,9 @@ export class RecordingStore {
           if (!next || !isDeepStrictEqual({ ...prior, interpretations: [] }, { ...next, interpretations: [] }) || prior.interpretations.some(value => !next.interpretations.some(candidate => isDeepStrictEqual(value, candidate)))) throw new Error('Recording context rewrites captured facts.');
         }
       }
-      const bytes = Buffer.byteLength(JSON.stringify(context)), disk = await this.inventory(context.studyId);
+      const bytes = Buffer.byteLength(JSON.stringify(context)), disk = await this.inventory(context.studyId, header.version);
       if (bytes > MAX_RECORDING_CONTEXT_BYTES || disk.totalBytes + bytes > MAX_RECORDING_TOTAL_BYTES) throw new Error('Recording context exceeds its reserved replacement capacity.');
-      await this.io.json(join(this.path(context.studyId), RECORDING_CONTEXT_FILE), context, MAX_RECORDING_CONTEXT_BYTES);
+      await this.io.json(join(this.path(context.studyId, header.version), RECORDING_CONTEXT_FILE), context, MAX_RECORDING_CONTEXT_BYTES);
       return { hash: sha256(JSON.stringify(context)), context };
     }));
     this.writes = pending.catch(() => undefined); return pending;
@@ -200,10 +206,11 @@ export class RecordingStore {
   /** Reads context structure for public verification or append-only upgrades after the archive advances; callers qualify checkpoint equality separately. @example await this.readContextFile(studyId) */
   private async readContextFile(studyId: string, expectedHash?: string): Promise<{ hash: string; context: RecordingContext }> {
     if (expectedHash) recordingHashSchema.parse(expectedHash);
-    const bytes = await this.file(studyId, RECORDING_CONTEXT_FILE, MAX_RECORDING_CONTEXT_BYTES), hash = sha256(bytes);
+    const header = await this.header(studyId);
+    const bytes = await this.file(studyId, RECORDING_CONTEXT_FILE, MAX_RECORDING_CONTEXT_BYTES, header.version), hash = sha256(bytes);
     if (expectedHash && expectedHash !== hash) throw new Error('Recording context is stale; rediscover the current context resource.');
-    const context = validateRecordingContext(JSON.parse(bytes.toString()), this.workspaceKey), header = await this.header(studyId);
-    if (context.studyId !== studyId || context.study.profile !== header.profile) throw new Error('Recording context belongs to another study.');
+    const context = validateRecordingContext(JSON.parse(bytes.toString()), this.workspaceKey);
+    if (context.version !== header.version || context.studyId !== studyId || context.study.profile !== header.profile) throw new Error('Recording context belongs to another study or version.');
     return { hash, context };
   }
 
@@ -230,19 +237,17 @@ export class RecordingStore {
   }
 
   /** Reads bounded regular recording files for metadata/resources after canonical directory validation. @example await store.file(studyId, RECORDING_CONTEXT_FILE, limit) */
-  async file(studyId: string, name: string, limit: number): Promise<Buffer> {
+  async file(studyId: string, name: string, limit: number, expectedVersion?: RecordingHeader['version']): Promise<Buffer> {
     if (![RECORDING_HEADER_FILE, RECORDING_JOURNAL_FILE, RECORDING_SEAL_FILE, RECORDING_CONTEXT_FILE].includes(name) && !/^[a-f0-9]{64}\.png$/.test(name)) throw new Error('Invalid recording filename.');
-    const directory = this.path(studyId);
-    if (!(await lstat(this.directory)).isDirectory() || !(await lstat(directory)).isDirectory()) throw new Error('Recording location is not a regular directory.');
+    const { directory } = await this.location(studyId, expectedVersion);
     const path = join(directory, name);
     if (!(await lstat(path)).isFile()) throw new Error('Recording is not a regular file.');
     return readBoundedFile(path, limit);
   }
 
   /** Counts blobs, orphan files and atomic temporaries before validating the full recording budget. @example await store.inventory(studyId) */
-  async inventory(studyId: string): Promise<{ pngBytes: number; totalBytes: number }> {
-    const directory = this.path(studyId);
-    if (!(await lstat(directory)).isDirectory()) throw new Error('Recording directory is unavailable.');
+  async inventory(studyId: string, expectedVersion?: RecordingHeader['version']): Promise<{ pngBytes: number; totalBytes: number }> {
+    const { directory } = await this.location(studyId, expectedVersion);
     let fileCount = 0, pngBytes = 0, totalBytes = 0;
     for await (const entry of await opendir(directory)) {
       if (++fileCount > MAX_RECORDING_FRAMES + MAX_RECORDING_METADATA_FILES) throw new Error('Recording directory has excess files.');
@@ -256,24 +261,27 @@ export class RecordingStore {
     return { pngBytes, totalBytes };
   }
 
-  /** Gives metadata writers a canonical destination; callers still hold {@link withStorageLock}. @example store.path(studyId) */
-  path(studyId: string): string { return join(this.directory, studyIdSchema.parse(studyId)); }
+  /** Gives writers an explicit format destination; readers use {@link location} to honor newer-file presence. @example store.path(studyId, 2) */
+  path(studyId: string, version: RecordingHeader['version'] = RECORDING_VERSION): string {
+    const storage = RECORDING_STORAGE_FORMATS.find(format => format.version === version)!;
+    return join(this.learningDirectory, storage.directory, studyIdSchema.parse(studyId));
+  }
 
   /** Validates immutable recording provenance on discovery and replay. @example await store.header(studyId) */
   async header(studyId: string): Promise<RecordingHeader> {
-    const location = await lstat(this.path(studyId)).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
-    if (!location) throw new Error('No saved recording is available for this study. Open its available study history or select another recording.');
-    const header = recordingHeaderSchema.parse(JSON.parse((await this.file(studyId, RECORDING_HEADER_FILE, MAX_RECORDING_HEADER_BYTES)).toString()));
-    if (header.workspaceKey !== this.workspaceKey || header.studyId !== studyId) throw new Error('Recording belongs to another workspace or study.');
+    const location = await this.location(studyId);
+    const header = retainedRecordingHeaderSchema.parse(JSON.parse((await this.file(studyId, RECORDING_HEADER_FILE, MAX_RECORDING_HEADER_BYTES, location.version)).toString()));
+    if (header.version !== location.version || header.workspaceKey !== this.workspaceKey || header.studyId !== studyId) throw new Error('Recording belongs to another workspace, study or format.');
     return header;
   }
 
   /** Treats only absent seals as unfinished; unreadable/corrupt finalization cannot fall back silently. @example await this.seal(studyId) */
-  private async seal(studyId: string): Promise<RecordingSeal | undefined> {
-    const stat = await lstat(join(this.path(studyId), RECORDING_SEAL_FILE)).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+  private async seal(studyId: string, version: RecordingHeader['version']): Promise<RecordingSeal | undefined> {
+    const { directory } = await this.location(studyId, version);
+    const stat = await lstat(join(directory, RECORDING_SEAL_FILE)).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
     if (!stat) return undefined;
-    const seal = recordingSealSchema.parse(JSON.parse((await this.file(studyId, RECORDING_SEAL_FILE, MAX_RECORDING_HEADER_BYTES)).toString()));
-    if (seal.studyId !== studyId || seal.workspaceKey !== this.workspaceKey) throw new Error('Recording seal belongs to another study.');
+    const seal = retainedRecordingSealSchema.parse(JSON.parse((await this.file(studyId, RECORDING_SEAL_FILE, MAX_RECORDING_HEADER_BYTES, version)).toString()));
+    if (seal.version !== version || seal.studyId !== studyId || seal.workspaceKey !== this.workspaceKey) throw new Error('Recording seal belongs to another study or version.');
     return seal;
   }
 
@@ -285,21 +293,45 @@ export class RecordingStore {
     catch (error) { return error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH' ? 'interrupted' : 'unfinalized'; }
   }
 
-  /** Scans a bounded directory stream so interrupted reservations count against capacity. @example await this.identities() */
-  private async identities(): Promise<string[]> {
-    const identities: string[] = [];
-    for await (const entry of await opendir(this.directory)) {
-      if (identities.length >= MAX_RECORDINGS) throw new Error('Recording library exceeds its directory limit; no history was deleted.');
-      if (!entry.isDirectory()) throw new Error('Recording library contains a non-directory entry.');
-      identities.push(studyIdSchema.parse(entry.name));
+  /** Selects the highest existing recording directory and pins multi-file reads to that format. @example await this.location(studyId, 2) */
+  private async location(studyId: string, expectedVersion?: RecordingHeader['version']) {
+    studyIdSchema.parse(studyId);
+    for (const storage of RECORDING_STORAGE_FORMATS) {
+      const root = join(this.learningDirectory, storage.directory), rootStat = await lstat(root).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+      if (!rootStat) continue;
+      if (!rootStat.isDirectory()) throw new Error('Recording root is not a regular directory.');
+      const directory = this.path(studyId, storage.version), stat = await lstat(directory).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+      if (!stat) continue;
+      if (!stat.isDirectory()) throw new Error('Recording location is not a regular directory.');
+      if (expectedVersion !== undefined && storage.version !== expectedVersion) throw new Error('Recording format changed during reading.');
+      return { directory, version: storage.version };
     }
-    return identities;
+    throw new Error('No saved recording is available for this study. Open its available study history or select another recording.');
+  }
+
+  /** Coalesces bounded version directories so interrupted reservations share one total capacity. @example await this.identities() */
+  private async identities(): Promise<string[]> {
+    const identities = new Set<string>();
+    for (const storage of RECORDING_STORAGE_FORMATS) {
+      const directory = join(this.learningDirectory, storage.directory), stat = await lstat(directory).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+      if (!stat) continue;
+      if (!stat.isDirectory()) throw new Error('Recording root is not a regular directory.');
+      let count = 0;
+      for await (const entry of await opendir(directory)) {
+        if (++count > MAX_RECORDINGS) throw new Error('Recording library exceeds its directory limit; no history was deleted.');
+        if (!entry.isDirectory()) throw new Error('Recording library contains a non-directory entry.');
+        identities.add(studyIdSchema.parse(entry.name));
+        if (identities.size > MAX_RECORDINGS) throw new Error('Recording library exceeds its directory limit; no history was deleted.');
+      }
+    }
+    return [...identities];
   }
 
   /** Creates private storage without following a symlink in the recording root. @example await this.initialize() */
-  private async initialize(): Promise<void> {
-    await mkdir(this.directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-    if (!(await lstat(this.directory)).isDirectory()) throw new Error('Recording root is not a regular directory.');
+  private async initialize(version: RecordingHeader['version'] = RECORDING_VERSION): Promise<void> {
+    const storage = RECORDING_STORAGE_FORMATS.find(format => format.version === version)!, directory = join(this.learningDirectory, storage.directory);
+    await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+    if (!(await lstat(directory)).isDirectory()) throw new Error('Recording root is not a regular directory.');
   }
 }
 
@@ -335,6 +367,7 @@ export class RecordingWriter {
       if (input.kind === 'stream' && input.elapsedMs - this.lastStreamMs < RECORDING_SAMPLE_INTERVAL_MS) return false;
       const dimensions = readPngDimensions(input.bytes), hash = sha256(input.bytes), isNew = !this.hashes.has(hash);
       const entry = recordingFrameSchema.parse({ type: 'frame', sequence: this.sequence + 1, elapsedMs: input.elapsedMs, hash, byteLength: input.bytes.byteLength, ...dimensions, kind: input.kind, phase: input.phase, browserTimestamp: input.browserTimestamp });
+      if (entry.phase && !recordingPhases(this.header.profile).some(phase => phase === entry.phase)) throw new Error('Recording contains a foreign image phase.');
       const line = JSON.stringify(entry) + '\n', lineBytes = Buffer.byteLength(line), binaryBytes = isNew ? input.bytes.byteLength : 0;
       if (this.frameCount >= this.limits.frames || this.pngBytes + binaryBytes > this.limits.pngBytes || this.pendingBytes + binaryBytes + lineBytes > this.limits.pendingBytes || this.journalBytes + lineBytes > this.limits.journalBytes - RECORDING_TERMINAL_RESERVE_BYTES) throw new Error('Recording frame capacity reached; verified prefix retained.');
       this.sequence++; this.frameCount++; this.pngBytes += binaryBytes; this.journalBytes += lineBytes; this.hashes.add(hash); this.lastAdmittedMs = input.elapsedMs;
@@ -370,7 +403,7 @@ export class RecordingWriter {
       if (!Number.isFinite(endMs) || endMs < this.lastAdmittedMs) throw new Error('Recording end precedes a received frame.');
       const end: RecordingEntry = { type: 'end', sequence: ++this.sequence, elapsedMs: endMs, status: this.failure ? 'partial' : 'complete', reason: this.failure };
       await this.appendTerminal(end);
-      const seal = recordingSealSchema.parse({ version: RECORDING_VERSION, studyId: this.header.studyId, workspaceKey: this.header.workspaceKey, finalizedAt: new Date().toISOString(), endMs, status: end.status, reason: end.reason, frameCount: this.frameCount, pngBytes: this.pngBytes, journalBytes: Buffer.byteLength(this.journal), journalHash: sha256(this.journal) });
+      const seal = retainedRecordingSealSchema.parse({ version: this.header.version, studyId: this.header.studyId, workspaceKey: this.header.workspaceKey, finalizedAt: new Date().toISOString(), endMs, status: end.status, reason: end.reason, frameCount: this.frameCount, pngBytes: this.pngBytes, journalBytes: Buffer.byteLength(this.journal), journalHash: sha256(this.journal) });
       await this.io.json(join(this.directory, RECORDING_SEAL_FILE), seal, MAX_RECORDING_HEADER_BYTES);
       this.finalized = true;
       return seal;

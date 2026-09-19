@@ -631,6 +631,7 @@ export class StudyWorkspace {
     this.viewport?.showHistory(capturedAppHtml({ ...this.message(), loading: true }));
     const index = await this.recordings!.read(studyId); signal.throwIfAborted();
     const profile = index.header.profile;
+    if (profile === 'repository-browser') throw new Error('Configured Study presentation is not available in this build yet.');
     this.selection = { ...this.selection, profile, itemId: STUDY_PROFILES[profile].items[0]!.id };
     let context: PlaybackData['context'], contextHash: string | undefined, contextReason: string | undefined, preferredPositionMs: number | undefined;
     try { const saved = await this.recordings!.readContext(studyId); context = saved.context; contextHash = saved.hash; }
@@ -666,6 +667,7 @@ export class StudyWorkspace {
   /** Confirms the recorded PNG, captured native source and matching context together before the controller commits a playhead. @example await this.presentPlayback(bundle, signal) */
   private async presentPlayback(bundle: PlaybackBundle, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
+    if (bundle.projection.observation?.actionId === 'repository-click') throw new Error('Configured Study presentation is not available in this build yet.');
     this.playbackPending = bundle; this.playbackPresentingReady = false;
     this.selection = { ...this.selection, studyId: bundle.studyId, itemId: bundle.projection.observation?.itemId ?? STUDY_PROFILES[this.selection.profile].items[0]!.id, follow: false };
     const viewport = await this.ensureReplayViewport(signal); signal.throwIfAborted();
@@ -696,6 +698,7 @@ export class StudyWorkspace {
     const playbackState = this.recordingActive ? this.playback?.state() : undefined;
     const bundle = this.recordingActive ? ((forSource || this.playbackPresentingReady || playbackState?.cleared) ? this.playbackPending ?? this.playback?.bundle() : this.playback?.bundle()) : undefined;
     const study = this.recordingActive ? bundle?.context && { ...bundle.context.study, captures: [] } : this.selection.studyId === this.activeArchive?.id ? this.activeArchive : this.selectedArchive;
+    if (study?.version === 3) throw new Error('Configured Study presentation is not available in this build yet.');
     const selectedRecord = study?.instanceId === this.service?.instanceId && study ? this.service?.records.get(study.runId) : undefined;
     const selectedState = selectedRecord && this.service?.state(selectedRecord), receipt = study && this.historyReceipts.get(study.id), loaded = study && this.loadedHistory.get(study.id);
     const staleArchive = Boolean(selectedState && selectedState.materialSignature !== study?.materialSignature);

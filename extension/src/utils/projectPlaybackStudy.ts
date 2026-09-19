@@ -5,6 +5,7 @@ import type { PlaybackBundle } from '../playbackController';
 /** Projects the existing learner model at confirmed playback time; no future source, causal claim or live continuation is borrowed. @example projectPlaybackStudy(input, bundle).continueArguments // undefined */
 export function projectPlaybackStudy(input: Parameters<typeof projectStudy>[0], bundle?: PlaybackBundle): ReturnType<typeof projectStudy> {
   const observation = bundle?.projection.observation, context = bundle?.context?.study;
+  if (context?.version === 3 || observation?.actionId === 'repository-click') throw new Error('Configured Study presentation is not available in this build yet.');
   const study = context && { ...context, observations: observation ? [observation] : [], captures: [], links: [] };
   const model = projectStudy({ ...input, study, selection: { ...input.selection, follow: false, tab: 'live' } });
   const text = '// No source was observed by this recorded position.\n';
