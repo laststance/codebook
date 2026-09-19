@@ -1,11 +1,12 @@
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { BOOK_INPUT_LIMIT_BYTES, BOOK_REVISION_LIMIT_BYTES, REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants';
-import { repositoryBookSchema } from '../repositorySchemas';
+import { BOOK_INPUT_LIMIT_BYTES, BOOK_REVISION_LIMIT_BYTES, BOOK_SCHEMA_VERSION_V2, REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants';
+import { repositoryBookSchema, repositoryBookV2Schema, type RepositoryBook } from '../repositorySchemas';
 import { bookIntentDigest } from './bookIntentDigest';
 
 /** Verifies every retained revision before reads or replacement, preventing fallback and rebinding through edited JSON. @example validateRepositoryBook(value, workspaceKey, bookId) */
-export function validateRepositoryBook(value: unknown, workspaceKey: string, bookId: string) {
-  const book = repositoryBookSchema.parse(value), keys = new Set<string>(), identities = new Map<string, string>();
+export function validateRepositoryBook(value: unknown, workspaceKey: string, bookId: string): RepositoryBook {
+  const schema = value && typeof value === 'object' && 'version' in value && value.version === BOOK_SCHEMA_VERSION_V2 ? repositoryBookV2Schema : repositoryBookSchema;
+  const book = schema.parse(value), keys = new Set<string>(), identities = new Map<string, string>();
   if (book.workspaceKey !== workspaceKey || book.bookId !== bookId) throw new Error('Book belongs to another workspace or filename.');
   for (const [index, revision] of book.revisions.entries()) {
     const { hash, ...content } = revision;
@@ -34,11 +35,13 @@ export function validateRepositoryBook(value: unknown, workspaceKey: string, boo
       for (const [linkIndex, link] of node.observations.entries()) {
         const matches = revision.observations.filter(binding => binding.nodeId === node.id && binding.linkIndex === linkIndex && binding.studyId === link.studyId && binding.observationId === link.observationId && binding.sourceHash === link.sourceHash);
         if (matches.length !== 1) throw new Error(`Missing exact observation binding for ${node.id}.`);
+        if (matches[0]!.itemId.startsWith('repository/') && matches[0]!.itemId !== identity) throw new Error(`Configured observation belongs to another learning item for ${node.id}.`);
         observationCount++;
       }
       if (node.learningItemId && !revision.observations.some(binding => binding.nodeId === node.id && binding.itemId === node.learningItemId && binding.sourceHash === node.anchors[0]!.hash)) throw new Error(`Runtime alias lacks a matching primary observation for ${node.id}.`);
     }
     if (cited.size !== sources.size || observationCount !== revision.observations.length) throw new Error('Book contains uncited source or unlinked observations.');
   }
-  return book;
+  // Normalization is in memory only; publication later writes v2 without changing old revision content.
+  return repositoryBookV2Schema.parse({ ...book, version: BOOK_SCHEMA_VERSION_V2 });
 }

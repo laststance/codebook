@@ -130,6 +130,8 @@ export class StudyWorkspace {
     assertCurrent();
     await this.initialize(); assertCurrent();
     const checkpoint = await this.library!.readCheckpoint(binding.studyId); assertCurrent();
+    // Configured presentation is connected after the versioned storage seam; never coerce its data into demo panes.
+    if (checkpoint.study.version !== 2) throw new Error('Configured Study presentation is not available in this build yet.');
     const observation = checkpoint.study.observations.find(value => value.id === binding.observationId);
     if (request !== this.historyRequest || checkpoint.status !== 'saved' || !observation || observation.itemId !== binding.itemId || observation.source.hash !== binding.sourceHash || bookObservationHash(observation) !== binding.observationHash) throw new Error('The linked observation no longer matches its exact saved checkpoint.');
     this.progress = await this.library!.readProgress(); assertCurrent();
@@ -160,7 +162,7 @@ export class StudyWorkspace {
         return;
       }
       this.selectedArchive = checkpoint.study; this.loadedHistory.set(binding.studyId, { signature: checkpoint.study.materialSignature, status: 'saved' });
-      this.selection = { studyId: binding.studyId, profile: checkpoint.study.profile, itemId: binding.itemId, follow: false, tab: 'live' };
+      this.selection = { studyId: binding.studyId, profile: checkpoint.study.profile, itemId: observation.itemId, follow: false, tab: 'live' };
       if (this.message().model.observation?.id !== binding.observationId) throw new Error('Selected item does not identify the linked observation.');
       await this.open(signal, 'repository'); assertCurrent();
       if (request !== this.historyRequest || this.message().model.observation?.id !== binding.observationId) throw new Error('Evidence navigation was superseded.');
@@ -589,6 +591,7 @@ export class StudyWorkspace {
     const generation = (this.historyReads.get(id) ?? 0) + 1;
     this.historyReads.set(id, generation);
     const checkpoint = await this.library!.readCheckpoint(id);
+    if (checkpoint.study.version !== 2) throw new Error('Configured Study presentation is not available in this build yet.');
     const catalog = await this.library!.list();
     // A newer read or durable save owns verification; an old failure must not downgrade its receipt.
     if (this.historyReads.get(id) !== generation) throw new Error('History changed while loading. Select the study again.');

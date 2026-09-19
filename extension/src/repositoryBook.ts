@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { BOOK_FILE_LIMIT_BYTES, BOOK_INPUT_LIMIT_BYTES, BOOK_MAX_FILES, BOOK_MAX_REVISIONS, BOOK_PREPARE_TIMEOUT_MS, BOOK_REVISION_LIMIT_BYTES, BOOK_SCHEMA_VERSION, PRIVATE_DIRECTORY_MODE } from './constants';
+import { BOOK_FILE_LIMIT_BYTES, BOOK_INPUT_LIMIT_BYTES, BOOK_MAX_FILES, BOOK_MAX_REVISIONS, BOOK_PREPARE_TIMEOUT_MS, BOOK_REVISION_LIMIT_BYTES, BOOK_SCHEMA_VERSION_V2, BOOK_STORAGE_FORMATS, PRIVATE_DIRECTORY_MODE } from './constants';
 import { StudyError } from './errors';
 import { LearningLibrary } from './learningLibrary';
 import { RepositorySourceService } from './repositorySource';
@@ -97,7 +97,7 @@ export class RepositoryBookStore {
         document: intent.document, sources: prepared.sources, sourceChecks, observations };
       const revision = { ...content, hash: sha256(JSON.stringify(content)) };
       if (Buffer.byteLength(JSON.stringify(revision)) > BOOK_REVISION_LIMIT_BYTES) throw new StudyError('LIMIT_EXCEEDED', `Book revision exceeds ${BOOK_REVISION_LIMIT_BYTES} bytes; previous revisions remain intact.`);
-      const book = validateRepositoryBook({ version: BOOK_SCHEMA_VERSION, workspaceKey: this.library.workspaceKey, bookId: intent.bookId, revisions: [...(current?.revisions ?? []), revision] }, this.library.workspaceKey, intent.bookId);
+      const book = validateRepositoryBook({ version: BOOK_SCHEMA_VERSION_V2, workspaceKey: this.library.workspaceKey, bookId: intent.bookId, revisions: [...(current?.revisions ?? []), revision] }, this.library.workspaceKey, intent.bookId);
       await prepared.verifyIdentities();
       this.assertActive(deadlineAt, signal);
       // Once the atomic writer begins, await its actual outcome even if its requester disconnects.
@@ -135,25 +135,36 @@ export class RepositoryBookStore {
 
   /** Reads one bounded regular file and validates all immutable history before returning any revision. @example await this.readStored('architecture') */
   private async readStored(bookId: string): Promise<RepositoryBook | undefined> {
-    const path = this.path(bookId);
+    const identity = bookIdSchema.parse(bookId);
     try {
-      const stat = await lstat(path).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
-      if (!stat) return undefined;
-      if (!stat.isFile() || stat.size > BOOK_FILE_LIMIT_BYTES) throw new Error('Book is not a bounded regular file.');
-      return validateRepositoryBook(JSON.parse((await readBoundedFile(path, BOOK_FILE_LIMIT_BYTES)).toString()), this.library.workspaceKey, bookId);
+      // A preferred file's presence is authoritative; validation failures never try older data.
+      for (const storage of BOOK_STORAGE_FORMATS) {
+        const path = join(this.library.directory, `${identity}${storage.suffix}`);
+        const stat = await lstat(path).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+        if (!stat) continue;
+        if (!stat.isFile() || stat.size > BOOK_FILE_LIMIT_BYTES) throw new Error('Book is not a bounded regular file.');
+        const value: unknown = JSON.parse((await readBoundedFile(path, BOOK_FILE_LIMIT_BYTES)).toString());
+        if (!value || typeof value !== 'object' || !('version' in value) || value.version !== storage.version) throw new Error(`Version ${storage.version} book has an incompatible schema.`);
+        return validateRepositoryBook(value, this.library.workspaceKey, bookId);
+      }
+      return undefined;
     } catch (error) { throw new StudyError('BOOK_UNAVAILABLE', `Stored book ${bookId} is unavailable; no older revision was substituted.`, String(error)); }
   }
 
   /** Enumerates only bounded book identities beside the shared ledger, without loading all revision payloads. @example await this.entries() */
   private async entries(): Promise<string[]> {
     await mkdir(this.library.directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-    const entries = (await readdir(this.library.directory)).filter(name => name.endsWith('.book.v1.json')).map(name => bookIdSchema.parse(name.slice(0, -'.book.v1.json'.length))).sort();
-    if (entries.length > BOOK_MAX_FILES) throw new StudyError('LIMIT_EXCEEDED', 'Repository book count exceeds its limit; no history was removed.');
-    return entries;
+    const entries = new Set<string>();
+    for (const name of await readdir(this.library.directory)) {
+      const storage = BOOK_STORAGE_FORMATS.find(format => name.endsWith(format.suffix));
+      if (storage) entries.add(bookIdSchema.parse(name.slice(0, -storage.suffix.length)));
+    }
+    if (entries.size > BOOK_MAX_FILES) throw new StudyError('LIMIT_EXCEEDED', 'Repository book count exceeds its limit; no history was removed.');
+    return [...entries].sort();
   }
 
   /** Keeps file selection inside the shared private directory using validated stable IDs. @example this.path('architecture') */
-  private path(bookId: string): string { return join(this.library.directory, `${bookIdSchema.parse(bookId)}.book.v1.json`); }
+  private path(bookId: string): string { return join(this.library.directory, `${bookIdSchema.parse(bookId)}${BOOK_STORAGE_FORMATS[0].suffix}`); }
   /** Returns the original immutable publication identity, independent of current source or connection lifetime. @example this.receipt(bookId, revision) */
   private receipt(bookId: string, revision: BookRevision) { return { bookId, revision: revision.revision, hash: revision.hash, publishedAt: revision.publishedAt }; }
   /** Recovers exact intent without duplicating revisions; a reused key with changed content fails explicitly. @example this.recover(book, key, digest) */

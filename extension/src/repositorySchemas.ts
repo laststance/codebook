@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { BOOK_MAX_ANCHORS, BOOK_MAX_EDGES, BOOK_MAX_LINKS, BOOK_MAX_NODES, BOOK_MAX_REVISIONS, BOOK_MAX_SECTIONS, BOOK_MAX_SOURCES, BOOK_SCHEMA_VERSION, BOOK_SECTION_LIMIT_CHARS, BOOK_TITLE_LIMIT_CHARS, KEY_LENGTH_LIMIT, REPOSITORY_SOURCE_LIMIT_BYTES } from './constants';
+import { BOOK_MAX_ANCHORS, BOOK_MAX_EDGES, BOOK_MAX_LINKS, BOOK_MAX_NODES, BOOK_MAX_REVISIONS, BOOK_MAX_SECTIONS, BOOK_MAX_SOURCES, BOOK_SCHEMA_VERSION, BOOK_SCHEMA_VERSION_V2, BOOK_SECTION_LIMIT_CHARS, BOOK_TITLE_LIMIT_CHARS, KEY_LENGTH_LIMIT, REPOSITORY_SOURCE_LIMIT_BYTES } from './constants';
 import { itemSchema } from './studySchemas';
 import { studyIdSchema } from './legacyStudySchemas';
 import { bookAnchorSchema, repositoryHashSchema, repositoryPathSchema } from './sourceSchemas';
-import { bookIdSchema } from './identitySchemas';
+import { bookIdSchema, learningItemSchema } from './identitySchemas';
 export { bookIdSchema } from './identitySchemas';
 export { bookAnchorSchema, repositoryHashSchema, repositoryPathSchema } from './sourceSchemas';
 
@@ -37,6 +37,10 @@ export const bookRevisionSchema = z.strictObject({ revision: z.number().int().po
   observations: z.array(bookObservationBindingSchema).max(BOOK_MAX_NODES * BOOK_MAX_LINKS), hash: repositoryHashSchema });
 export const repositoryBookSchema = z.strictObject({ version: z.literal(BOOK_SCHEMA_VERSION), workspaceKey: repositoryHashSchema, bookId: bookIdSchema,
   revisions: z.array(bookRevisionSchema).min(1).max(BOOK_MAX_REVISIONS) });
+// Keep v1 closed and preserve field ordering so copied revisions retain their original hashes.
+export const bookObservationBindingV2Schema = bookObservationBindingSchema.extend({ itemId: learningItemSchema });
+export const bookRevisionV2Schema = bookRevisionSchema.extend({ observations: z.array(bookObservationBindingV2Schema).max(BOOK_MAX_NODES * BOOK_MAX_LINKS) });
+export const repositoryBookV2Schema = repositoryBookSchema.extend({ version: z.literal(BOOK_SCHEMA_VERSION_V2), revisions: z.array(bookRevisionV2Schema).min(1).max(BOOK_MAX_REVISIONS) });
 export type RepositorySource = z.infer<typeof repositorySourceSchema>;
 export type SourceListInput = z.infer<typeof sourceListSchema>;
 export type SourceReadInput = z.infer<typeof sourceReadSchema>;
@@ -47,6 +51,6 @@ export type BookObservationLink = z.infer<typeof bookObservationLinkSchema>;
 export type PublishBookInput = z.infer<typeof publishBookSchema>;
 export type OpenBookInput = z.infer<typeof openBookSchema>;
 export type BookPublishIntent = z.infer<typeof bookPublishIntentSchema>;
-export type BookRevision = z.infer<typeof bookRevisionSchema>;
-export type RepositoryBook = z.infer<typeof repositoryBookSchema>;
-export type BookObservationBinding = z.infer<typeof bookObservationBindingSchema>;
+export type BookRevision = z.infer<typeof bookRevisionV2Schema>;
+export type RepositoryBook = z.infer<typeof repositoryBookV2Schema>;
+export type BookObservationBinding = z.infer<typeof bookObservationBindingV2Schema>;

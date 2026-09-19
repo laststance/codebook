@@ -109,6 +109,11 @@ export const REPOSITORY_SOURCE_LIMIT_BYTES = 262_144;
 export const REPOSITORY_SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.md', '.mdx', '.css', '.html', '.json', '.jsonc'] as const;
 export const REPOSITORY_EXCLUDED_DIRECTORIES = ['node_modules', 'dist', 'build', 'coverage', 'artifacts', 'vendor'] as const;
 export const BOOK_SCHEMA_VERSION = 1;
+export const BOOK_SCHEMA_VERSION_V2 = 2;
+export const BOOK_STORAGE_FORMATS = [
+  { version: BOOK_SCHEMA_VERSION_V2, suffix: '.book.v2.json' },
+  { version: BOOK_SCHEMA_VERSION, suffix: '.book.v1.json' },
+] as const;
 export const BOOK_ID_LIMIT_CHARS = 64;
 export const BOOK_MAX_NODES = 64;
 export const BOOK_MAX_EDGES = 128;
@@ -130,6 +135,12 @@ export const REPOSITORY_CONFIG_VERSION = 1;
 export const CONFIGURED_STUDY_VERSION = 3;
 export const CONFIGURED_STUDY_SUFFIX = '.study.v3.json';
 export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json';
+// Highest existing version owns a logical study, including when its bytes are corrupt.
+export const STUDY_STORAGE_FORMATS = [
+  { version: CONFIGURED_STUDY_VERSION, format: 'v3', archiveSuffix: CONFIGURED_STUDY_SUFFIX, metadataSuffix: CONFIGURED_STUDY_METADATA_SUFFIX },
+  { version: LEARNING_SCHEMA_VERSION_V2, format: 'v2', archiveSuffix: STUDY_V2_SUFFIX, metadataSuffix: STUDY_METADATA_V2_SUFFIX },
+  { version: LEARNING_SCHEMA_VERSION, format: 'legacy-v1', archiveSuffix: '.study.json', metadataSuffix: undefined },
+] as const;
 export const CONFIGURED_OBSERVATION_LIMIT = 1;
 export const CONFIGURED_CAPTURE_PHASES = ['before', 'paused-browser', 'after'] as const;
 export const REPOSITORY_CONFIG_LIMIT_BYTES = 65_536;

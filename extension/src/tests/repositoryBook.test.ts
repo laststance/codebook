@@ -3,14 +3,16 @@ import assert from 'node:assert/strict';
 import filesystem, { readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { repositoryHarness } from './utils/repositoryHarness';
 import { LearningLibrary } from '../learningLibrary';
 import { RepositoryBookStore } from '../repositoryBook';
 import { RepositorySourceService } from '../repositorySource';
-import { type BookDocument, type BookPublishIntent } from '../repositorySchemas';
+import { repositoryBookSchema, type BookDocument, type BookPublishIntent } from '../repositorySchemas';
 import { decodeStudyArchive } from '../utils/decodeStudyArchive';
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite';
 import { loadModule } from './utils/loadModule';
+import { createConfiguredStudy } from './utils/createConfiguredStudy';
 
 const workspaceKey = '1'.repeat(64), sourceHash = '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b';
 
@@ -21,7 +23,7 @@ async function bookHarness(context: TestContext) {
   context.after(() => books.dispose());
   const document: BookDocument = { title: 'Cart architecture', summary: 'Source-derived cart state.', nodes: [{ id: 'cart', title: 'Cart', sections: [{ title: 'Price', text: 'The module exports price 24.' }], anchors: [{ path: 'src/cart.ts', hash: sourceHash, startLine: 1, endLine: 2 }], observations: [] }], edges: [] };
   const intent: BookPublishIntent = { bookId: 'architecture', key: 'first', expectedRevision: 0, document };
-  return { ...source, library, books, intent, path: join(library.directory, 'architecture.book.v1.json') };
+  return { ...source, library, books, intent, path: join(library.directory, 'architecture.book.v2.json') };
 }
 
 /** Reuses captured legacy facts to test exact checkpoint links, without claiming a new native run. @example const study = await linkCheckpoint(harness) */
@@ -149,7 +151,7 @@ test('a failed atomic rename preserves prior book bytes and removes only its inc
   context.mock.method(filesystem, 'rename', async () => { throw new Error('Injected book rename failure'); });
   // Act / Assert
   await assert.rejects(books.publish({ ...intent, key: 'next', expectedRevision: 1 }), /rename failure/);
-  assert.deepEqual(await readFile(path), before); assert.deepEqual(await readdir(library.directory), ['architecture.book.v1.json']);
+  assert.deepEqual(await readFile(path), before); assert.deepEqual(await readdir(library.directory), ['architecture.book.v2.json']);
 });
 
 test('retirement and transport cancellation drain an in-flight successful atomic writer before releasing its lock', async context => {
@@ -177,7 +179,7 @@ test('corrupt or future book formats never fall back to older revisions and othe
   await books.publish({ ...intent, bookId: 'another' });
   const stored = JSON.parse(await readFile(path, 'utf8'));
   // Act / Assert
-  for (const invalid of ['{corrupt', JSON.stringify({ ...stored, version: 2 }), JSON.stringify({ ...stored, revisions: stored.revisions.map((revision: object) => ({ ...revision, hash: '0'.repeat(64) })) })]) {
+  for (const invalid of ['{corrupt', JSON.stringify({ ...stored, version: 3 }), JSON.stringify({ ...stored, revisions: stored.revisions.map((revision: object) => ({ ...revision, hash: '0'.repeat(64) })) })]) {
     await writeFile(path, invalid);
     await assert.rejects(books.read('architecture', 1), /no older revision was substituted/);
     await assert.rejects(books.publish({ ...intent, key: 'next', expectedRevision: 1 }));
@@ -211,7 +213,9 @@ test('a changed captured fact cannot become a valid book destination even after 
 
 test('the seventeenth book and twenty-first revision are rejected without evicting retained history', async context => {
   // Arrange
-  const { books, intent, path } = await bookHarness(context); await books.publish(intent);
+  const { books, intent, path, library } = await bookHarness(context); await books.publish(intent);
+  const original = JSON.parse(await readFile(path, 'utf8'));
+  await writeFile(join(library.directory, 'architecture.book.v1.json'), JSON.stringify({ ...original, version: 1 }));
   for (let index = 1; index < 16; index++) await books.publish({ ...intent, bookId: `book-${index}` });
   // Act / Assert
   await assert.rejects(books.publish({ ...intent, bookId: 'overflow' }), /16 books/); assert.equal((await books.list()).length, 16);
@@ -236,4 +240,85 @@ test('aggregate source and retained-file byte limits preserve earlier revisions 
   assert.deepEqual(await readFile(path), before);
   await assert.rejects(books.publish({ ...large, key: 'revision-overflow', expectedRevision: 2, document: { ...large.document, nodes: [...twoNodes, { ...node, id: 'third', anchors: anchors.slice(12) }] } }), /revision exceeds/);
   assert.deepEqual(await readFile(path), before);
+});
+
+test('reading a version 1 book preserves its exact revision hash and retry receipt before copying it on the next publication', async context => {
+  // Arrange
+  const { books, intent, path, library, directory, track } = await bookHarness(context); await library.readProgress();
+  const bytes = await readFile(resolve(__dirname, '../../src/tests/fixtures/cycle-0009-legacy/architecture.book.v1.json'));
+  const legacyPath = join(library.directory, 'architecture.book.v1.json'); await writeFile(legacyPath, bytes);
+  // Act
+  const historical = await books.read('architecture', 1);
+  await rm(join(directory, 'src/cart.ts')); const retry = await books.publish(intent);
+  // Assert
+  assert.equal(sha256(bytes), '5bee2841bd0a6934685a0f3b1dc8aa1ac689516d61264f5207bd40cb81e485b9');
+  assert.equal(historical.revision.hash, '31886758b5000328fb26c2431817b589d008c61ba2c3a048ded20625d8fcba80');
+  assert.equal(historical.revision.inputDigest, '46c306d3050b3e64b99b3eea0435478693a040345c9c3a3f13581f0e4c34bc1b');
+  assert.deepEqual(retry, { bookId: 'architecture', revision: 1, hash: '31886758b5000328fb26c2431817b589d008c61ba2c3a048ded20625d8fcba80', publishedAt: '2026-09-19T00:00:02.000Z' });
+  assert.deepEqual(await readdir(library.directory), ['architecture.book.v1.json']);
+  await track('src/cart.ts');
+  const next = await books.publish({ ...intent, key: 'second', expectedRevision: 1, document: { ...intent.document, title: 'Clearer title' } });
+  const current = JSON.parse(await readFile(path, 'utf8')), legacy = repositoryBookSchema.parse(JSON.parse(bytes.toString()));
+  assert.equal(next.revision, 2); assert.equal(current.version, 2); assert.deepEqual(current.revisions[0], legacy.revisions[0]);
+  assert.equal((await books.list()).length, 1); assert.deepEqual(await books.publish(intent), retry);
+  assert.deepEqual(await readFile(legacyPath), bytes);
+});
+
+test('a corrupt preferred version 2 book cannot revive valid version 1 articles or publication receipts', async context => {
+  // Arrange
+  const { books, intent, path, library } = await bookHarness(context); await library.readProgress();
+  const bytes = await readFile(resolve(__dirname, '../../src/tests/fixtures/cycle-0009-legacy/architecture.book.v1.json'));
+  const legacyPath = join(library.directory, 'architecture.book.v1.json'); await writeFile(legacyPath, bytes);
+  await writeFile(path, '{corrupt');
+  // Act / Assert
+  await assert.rejects(books.read('architecture', 1), /no older revision was substituted/);
+  await assert.rejects(books.publish(intent), /no older revision was substituted/);
+  const catalog = await books.list(); assert.equal(catalog.length, 1); assert.equal(catalog[0]?.status, 'unavailable');
+  assert.deepEqual(await readFile(legacyPath), bytes); assert.equal(await readFile(path, 'utf8'), '{corrupt');
+});
+
+test('an interrupted first version 2 publication preserves the legacy book and its recoverable original receipt', async context => {
+  // Arrange
+  const { books, intent, path, library } = await bookHarness(context); await library.readProgress();
+  const bytes = await readFile(resolve(__dirname, '../../src/tests/fixtures/cycle-0009-legacy/architecture.book.v1.json'));
+  const legacyPath = join(library.directory, 'architecture.book.v1.json'); await writeFile(legacyPath, bytes);
+  context.mock.method(filesystem, 'rename', async () => { throw new Error('Injected migration rename failure'); });
+  // Act / Assert
+  await assert.rejects(books.publish({ ...intent, key: 'second', expectedRevision: 1 }), /migration rename failure/);
+  assert.deepEqual(await readFile(legacyPath), bytes); await assert.rejects(readFile(path), { code: 'ENOENT' });
+  assert.equal((await books.publish(intent)).hash, '31886758b5000328fb26c2431817b589d008c61ba2c3a048ded20625d8fcba80');
+  assert.deepEqual(await readdir(library.directory), ['architecture.book.v1.json']);
+});
+
+test('a configured observation links back to its source-only article without rebinding its complete-citation learning identity', async context => {
+  // Arrange
+  const { books, library, track } = await bookHarness(context), study = createConfiguredStudy(); study.workspaceKey = workspaceKey;
+  for (const source of study.descriptor!.sources) await track(source.path, source.text);
+  const document: BookDocument = { title: 'Interface', summary: 'Theme behavior.', nodes: [{ id: 'theme', title: 'Theme', sections: [{ title: 'Selection', text: 'A source-grounded article.' }], anchors: study.descriptor!.anchors, observations: [] }], edges: [] };
+  const first: BookPublishIntent = { bookId: 'interface', key: 'source-only', expectedRevision: 0, document };
+  await books.publish(first);
+  await library.decide({ id: '77777777-7777-4777-8777-777777777777', item: 'repository/interface/theme', sourceHash: study.configuration.source.hash, context: study.descriptor!.citationContext, understood: true, at: '2026-09-20T00:00:00.000Z' });
+  await library.saveStudy(study); const progress = await library.readProgress(), observation = study.observations[0]!;
+  // Act
+  const receipt = await books.publish({ ...first, key: 'observed', expectedRevision: 1, document: { ...document, nodes: [{ ...document.nodes[0]!, observations: [{ studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash }] }] } });
+  const linked = await books.read('interface', 2);
+  // Assert
+  assert.equal(receipt.revision, 2); assert.equal(linked.links[0]?.itemId, 'repository/interface/theme');
+  assert.equal(linked.links[0]?.status, 'available'); assert.equal(linked.links[0]?.outcome, 'demonstrated');
+  assert.equal(linked.links[0]?.recording.status, 'unavailable'); assert.equal(linked.revision.document.nodes[0]?.learningItemId, undefined);
+  assert.deepEqual((await library.readProgress()).decisions, progress.decisions);
+  const stored = JSON.parse(await readFile(join(library.directory, 'interface.book.v2.json'), 'utf8'));
+  assert.equal(repositoryBookSchema.safeParse({ ...stored, version: 1 }).success, false);
+});
+
+test('a configured observation cannot be attached as another repository learning item', async context => {
+  // Arrange
+  const { books, library, track } = await bookHarness(context), study = createConfiguredStudy(); study.workspaceKey = workspaceKey;
+  for (const source of study.descriptor!.sources) await track(source.path, source.text);
+  await library.saveStudy(study); const observation = study.observations[0]!;
+  const document: BookDocument = { title: 'Other article', summary: 'Different identity.', nodes: [{ id: 'different', title: 'Different', sections: [{ title: 'Theme', text: 'Cannot inherit another item.' }], anchors: study.descriptor!.anchors,
+    observations: [{ studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash }] }], edges: [] };
+  // Act / Assert
+  await assert.rejects(books.publish({ bookId: 'interface', key: 'wrong-item', expectedRevision: 0, document }), /another learning item/);
+  assert.equal((await books.list()).length, 0); assert.equal((await library.readCheckpoint(study.id)).status, 'saved');
 });

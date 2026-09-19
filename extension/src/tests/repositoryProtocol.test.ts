@@ -70,12 +70,12 @@ test('the exact one-MiB document plus JSON-RPC envelope reaches publication whil
     // Act
     const published = await harness.client.callTool({ name: 'codebook_publish_book', arguments: arguments_ });
     assert.equal(published.isError, undefined, JSON.stringify(published));
-    const before = await readFile(join(harness.library.directory, 'real-source.book.v1.json'));
+    const before = await readFile(join(harness.library.directory, 'real-source.book.v2.json'));
     const rejected = await harness.client.callTool({ name: 'codebook_publish_book', arguments: { ...arguments_, key: 'overflow', expectedRevision: 1, document: sizedDocument(1_048_577) } });
     const response = await fetch(harness.endpoint.descriptor.url, { method: 'POST', headers: { Authorization: `Bearer ${harness.endpoint.descriptor.token}`, 'mcp-session-id': harness.transport.sessionId!, 'content-type': 'application/json', Accept: 'application/json, text/event-stream' }, body: 'x'.repeat(1_114_113) });
     // Assert
     assert.equal(rejected.isError, true); assert.match(JSON.stringify(rejected), /LIMIT_EXCEEDED/); assert.equal(response.status, 413);
-    assert.deepEqual(await readFile(join(harness.library.directory, 'real-source.book.v1.json')), before);
+    assert.deepEqual(await readFile(join(harness.library.directory, 'real-source.book.v2.json')), before);
     assert.equal(harness.runtimes.length, 0);
   } finally { await harness.close(); }
 });
@@ -87,7 +87,7 @@ test('explicit MCP cancellation during preparation prevents a new publication wh
   const held = new Promise<void>(resolve => { release = resolve; }), entered = new Promise<void>(resolve => { enter = resolve; });
   try {
     const input = { instanceId: harness.service.instanceId, bookId: 'source', key: 'first', expectedRevision: 0, document: sizedDocument(72_000) };
-    await harness.client.callTool({ name: 'codebook_publish_book', arguments: input }); const before = await readFile(join(harness.library.directory, 'source.book.v1.json'));
+    await harness.client.callTool({ name: 'codebook_publish_book', arguments: input }); const before = await readFile(join(harness.library.directory, 'source.book.v2.json'));
     const prepare = store.sources.prepare.bind(store.sources);
     store.sources.prepare = async (...arguments_: Parameters<typeof prepare>) => { const result = await prepare(...arguments_); signal = arguments_[1]?.signal; enter(); await held; return result; };
     const cancellation = new AbortController();
@@ -96,7 +96,7 @@ test('explicit MCP cancellation during preparation prevents a new publication wh
     const rejected = assert.rejects(pending, /Abort|cancel/i); await entered; cancellation.abort(); await rejected;
     await waitUntil(() => signal?.aborted, 'request cancellation reached preparation', 2_000); release(); await store.flush();
     // Assert
-    assert.deepEqual(await readFile(join(harness.library.directory, 'source.book.v1.json')), before);
+    assert.deepEqual(await readFile(join(harness.library.directory, 'source.book.v2.json')), before);
     assert.equal((await harness.client.listTools()).tools.length, 12); assert.equal(harness.runtimes.length, 0);
   } finally { release(); await harness.close(); }
 });
