@@ -20,5 +20,6 @@ export const EVIDENCE_LIMIT_BYTES = 67_108_864;
 export const PRIVATE_FILE_MODE = 0o600;
 export const APPLICATION_LOG_LIMIT_BYTES = 262_144;
 export const APPLICATION_EXIT_TIMEOUT_MS = 10_000;
+export const SCRIPT_DIAGNOSTIC_LIMIT = 200;
 export const EXPECTED_VALUES = { otherTheme: 'dark', 'typeof setTheme': 'function' };
 export const OPTIONAL_EXPRESSIONS = ['resolvedTheme', 'mounted'];

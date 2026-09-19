@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { JAVASCRIPT_LIMIT_BYTES } from '../constants';
 import { createBundleVerifier } from '../utils/createBundleVerifier';
 import { extractDevelopmentModule } from '../utils/extractDevelopmentModule';
+import { sameScriptUrl } from '../utils/sameScriptUrl';
 import type { BundleSource } from '../bundleSource';
 
 const source = 'setTheme(otherTheme);\n';
@@ -11,6 +12,16 @@ const sourcePath = '/repo/src/theme.tsx';
 const payload = { version: 3, sources: ['/repo/src/other.tsx', sourcePath], sourcesContent: ['other();', source], names: [], mappings: 'ACAA' };
 const bundle: BundleSource = { sourcePath, source, javascript, sourceMap: JSON.stringify(payload), mapSource: sourcePath, scriptUrl: 'webpack-internal:///theme.tsx', chunkPath: '/repo/layout.js', chunkHash: '0'.repeat(64) };
 const location = { scriptId: 'selected-script', lineNumber: 0, columnNumber: 0 };
+
+test('Chrome dot-segment normalization retains the exact emitted module identity without accepting another path', () => {
+  // Arrange
+  const emitted = 'webpack-internal:///(app-pages-browser)/./src/components/Header/ThemeToggle.tsx';
+  // Act / Assert
+  assert.equal(sameScriptUrl(emitted, 'webpack-internal:///(app-pages-browser)/src/components/Header/ThemeToggle.tsx'), true);
+  assert.equal(sameScriptUrl(emitted, 'webpack-internal:///(app-pages-browser)/src/other/ThemeToggle.tsx'), false);
+  assert.equal(sameScriptUrl(emitted, 'https://foreign.example/src/components/Header/ThemeToggle.tsx'), false);
+  assert.equal(sameScriptUrl(emitted, '[module]'), false);
+});
 
 test('a multi-source bundle pause identifies the exact original and native source position', () => {
   // Arrange

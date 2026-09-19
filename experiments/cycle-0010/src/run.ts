@@ -13,10 +13,11 @@ import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { settleCleanup } from 'codebook-cycle-0001/dist/utils/settleCleanup';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { EVIDENCE_EVENT_LIMIT, EVIDENCE_LIMIT_BYTES, EXPECTED_VALUES, OPTIONAL_EXPRESSIONS, RUN_TIMEOUT_MS, SETUP_TIMEOUT_MS, STACK_FRAME_LIMIT, TARGET_SOURCE_COLUMN, TARGET_SOURCE_LINE } from './constants';
+import { EVIDENCE_EVENT_LIMIT, EVIDENCE_LIMIT_BYTES, EXPECTED_VALUES, OPTIONAL_EXPRESSIONS, RUN_TIMEOUT_MS, SCRIPT_DIAGNOSTIC_LIMIT, SETUP_TIMEOUT_MS, STACK_FRAME_LIMIT, TARGET_SOURCE_COLUMN, TARGET_SOURCE_LINE } from './constants';
 import { createBundleVerifier } from './utils/createBundleVerifier';
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle';
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer';
+import { sameScriptUrl } from './utils/sameScriptUrl';
 
 export interface RepositoryConfig { directory: string; target: string; node: string; host: HostConfiguration; revision: string; sourceFingerprint: string }
 type Source = Awaited<ReturnType<typeof readDevelopmentBundle>>['bundle'];
@@ -100,8 +101,11 @@ export class RepositoryRun {
     await this.selectPage(); this.alive();
     const cdp = this.requireCdp();
     cdp.onClose = () => { if (!this.cleaning) this.fail('Selected CDP closed'); };
+    let observedScripts = 0;
     cdp.on('Debugger.scriptParsed', event => {
-      if (event.url !== this.source?.scriptUrl) return;
+      // Bound diagnostic metadata identifies the actual emitted URL without retaining unrelated source bodies.
+      if (observedScripts++ < SCRIPT_DIAGNOSTIC_LIMIT) this.evidence.record('script.observed', { scriptId: event.scriptId, url: event.url, executionContextId: event.executionContextId });
+      if (!event.url || !sameScriptUrl(this.source!.scriptUrl, event.url)) return;
       if (this.script && this.script.scriptId !== event.scriptId) { this.fail('Selected module changed after sealing'); return; }
       this.script = event; this.evidence.record('script.selected', { scriptId: event.scriptId, url: event.url, executionContextId: event.executionContextId });
     });
