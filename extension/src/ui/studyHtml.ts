@@ -1,18 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import type { ProfileId } from 'codebook-cycle-0004/dist/constants';
-import type { StudyAction } from 'codebook-cycle-0004/dist/profiles';
 import type { StudyCatalogEntry } from '../studySchemas';
-import type { projectStudy, StudyArchive } from '../studyModel';
+import type { projectStudy } from '../studyModel';
+import type { RetainedStudy } from '../retainedStudySchemas';
+import type { StudyDescriptor } from '../utils/describeStudy';
 import type { PlaybackState, PlaybackBundle } from '../playbackController';
 import { STUDY_STYLES, STUDY_UI_OPTIONS } from './constants';
 
 export interface StudyViewMessage {
-  type: 'study'; revision: number; model: ReturnType<typeof projectStudy>; study?: Pick<StudyArchive, 'id' | 'state' | 'terminal' | 'createdAt' | 'reason' | 'profile' | 'finalOutcome' | 'links'> & { historyOutcome: string; studyOutcome: string };
+  type: 'study'; revision: number; model: ReturnType<typeof projectStudy>; study?: Pick<RetainedStudy, 'id' | 'state' | 'terminal' | 'createdAt' | 'reason' | 'profile' | 'finalOutcome' | 'links'> & { historyOutcome: string; studyOutcome: string };
   liveState?: string; deadlineAt?: string; busy: boolean; saving: boolean; loading: boolean; errors: string[]; canClick: boolean; canRun: boolean;
-  nextAction?: StudyAction; liveProfile?: ProfileId; profiles: { id: ProfileId; title: string; description: string }[];
+  nextAction?: StudyDescriptor['actions'][number]; liveProfile?: RetainedStudy['profile']; profiles: Pick<StudyDescriptor, 'id' | 'title' | 'description'>[];
   moments: { id: string; itemId: string; title: string; at: string; elapsedMs?: number }[]; studies: StudyCatalogEntry[];
   contentTab?: 'overview' | 'live' | 'recording';
   repositoryReturnAvailable?: boolean;
+  repositoryArticleAvailable?: boolean;
   recording?: PlaybackState & Pick<PlaybackBundle['projection'], 'pauseConfirmed' | 'rendererConfirmed' | 'laterInterpretations'>;
 }
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getState(): { visited?: string[] } | undefined; setState(state: unknown): void };
@@ -21,7 +22,7 @@ declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getS
 export function studyHtml(kind: 'context' | 'moments'): string {
   const nonce = randomUUID();
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${kind === 'moments' ? 'moments-only' : ''}">
-<button data-action="return-wiki" hidden>← Return to Wiki</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite">No running study</div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
+<button data-action="return-wiki" hidden>← Return to Wiki</button><button data-action="open-article" hidden>Open article</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite">No running study</div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
 <p id="study-state" class="status" hidden></p>
 <p id="errors" class="error" role="status" aria-live="polite"></p><button data-action="retry" hidden>Retry storage / refresh</button>
 <section id="recording-transport" aria-label="Recorded playback" hidden><h2>Recorded walkthrough</h2><p id="recording-status" role="status" aria-live="polite"></p><div class="row"><button class="primary" id="playback-toggle" data-playback="play">Play recording</button><button data-playback="start">Replay from start</button><button data-action="reload-recording">Reload saved recording</button></div><label for="playhead">Recorded position</label><input id="playhead" type="range" min="0" max="0" step="1" value="0"><p id="playback-position"></p><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p><p class="muted">Playback changes this reader only. It does not run application code or mark understanding.</p></section>
@@ -29,7 +30,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <div role="tablist" aria-label="Study content"><button id="overview-tab" role="tab" data-tab="overview" aria-controls="overview" aria-selected="true">Overview</button><button id="live-tab" role="tab" data-tab="live" aria-controls="live-content" aria-selected="false" tabindex="-1">Live</button><button id="recording-tab" role="tab" data-tab="recording" aria-controls="live-content" aria-selected="false" tabindex="-1">Recording</button></div>
 <div id="loading" class="status" hidden>Loading the selected observation…</div><div id="selected"><div class="status" id="observation"></div><div id="overview" role="tabpanel" aria-labelledby="overview-tab"><h2>Source-derived overview</h2><p id="overview-text"></p><button class="link" data-action="source">Read the linked source</button></div><div id="live-content" role="tabpanel" aria-labelledby="live-tab"><section><h2>Agent interpretation</h2><div id="interpretations"></div></section><section><h2>Captured values</h2><p class="muted" id="value-caption"></p><div class="table-scroll"><table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody id="values"></tbody></table></div></section></div>
 <details id="later-annotations" hidden><summary>Later annotations — not available at this recorded time</summary><p class="muted">These explanations were added later. They do not change what was observed in the recording.</p><div id="later-interpretations"></div></details>
-<section><div class="row"><button class="link" data-action="source">Captured / source-derived document</button><button class="link" data-action="current-file">Open current file</button></div><p id="source-version" class="muted"></p><p id="source-drift" class="error"></p><label><input id="understood" type="checkbox"><span>I understand this source revision<span id="save-state" class="muted"></span></span></label><p id="progress" class="muted"></p></section></div>
+<section><div class="row"><button class="link" data-action="source">Captured / source-derived document</button><button class="link" data-action="current-file">Open current file</button></div><p id="source-version" class="muted"></p><p id="source-drift" class="error"></p><label><input id="understood" type="checkbox"><span><span id="understanding-label">I understand this source revision</span><span id="save-state" class="muted"></span></span></label><p id="progress" class="muted"></p></section></div>
 <section><h2>Source-linked flow</h2><div id="flow"></div><p id="correspondence" class="muted"></p></section>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <section><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div><label for="studies">Saved studies</label><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select></section>
@@ -92,6 +93,7 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     if (message?.type !== 'study') return;
     current = message; const { model, recording } = message, contentTab = message.contentTab ?? model.selection.tab;
     button('return-wiki')!.hidden = !message.repositoryReturnAvailable;
+    button('open-article')!.hidden = !message.repositoryArticleAvailable || Boolean(message.repositoryReturnAvailable);
     // Offline replay prioritizes its own controls; an independently active runtime keeps its explicit stop/return strip.
     if (strip) strip.hidden = Boolean(recording && (!message.liveState || message.liveState === 'stopped'));
     element('next-scenario').hidden = Boolean(recording);
@@ -116,10 +118,10 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     text('title', item?.title ?? 'Study the checkout flow');
     const selectedProfile = message.profiles.find(profile => profile.id === model.selection.profile), liveProfile = message.profiles.find(profile => profile.id === message.liveProfile);
     const profiles = element('profiles');
-    if (profiles instanceof HTMLSelectElement) { profiles.value = model.selection.profile; profiles.disabled = message.busy || !message.canRun; }
+    if (profiles instanceof HTMLSelectElement) { replace('profiles', message.profiles, () => message.profiles.map(profile => { const option = document.createElement('option'); option.value = profile.id; option.textContent = profile.title; return option; })); profiles.value = model.selection.profile; profiles.disabled = message.busy || !message.canRun; }
     text('profile-description', selectedProfile?.description ?? 'Scenario unavailable.');
     text('runtime', model.currentItemId ? `${liveProfile?.title ?? 'Live study'} — paused at ${model.currentItemTitle}` : `${liveProfile?.title ?? 'Runtime'} — ${message.nextAction?.id === 'checkout' ? 'Cart updated — checkout available' : message.liveState ?? 'not running'}`);
-    text('deadline', message.deadlineAt && !message.study?.terminal ? `Demo wall limit: ${new Date(message.deadlineAt).toLocaleTimeString()}. History remains readable after expiry.` : 'Reading history does not restart execution.');
+    text('deadline', message.deadlineAt && !message.study?.terminal ? `Study wall limit: ${new Date(message.deadlineAt).toLocaleTimeString()}. History remains readable after expiry.` : 'Reading history does not restart execution.');
     const outcome = message.study?.studyOutcome;
     const scenario = model.scenarioProgress;
     const outcomeLabel = outcome === 'demonstrated' ? message.study?.profile === 'checkout-demo' ? 'Purchase confirmed — evidence complete' : 'Evidence complete'
@@ -148,13 +150,15 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     text('overview-text', item?.overview ?? 'Source unavailable.');
     text('observation', recording ? model.observation ? `Recorded observation · ${seconds(model.observation.elapsedMs)}${recording.pauseConfirmed ? ' · pause verified' : ''}${recording.rendererConfirmed ? ' · original renderer receipt available' : ''}` : 'No source or values were observed by this recorded position.' : !model.observation && !model.currentSourceAvailable ? 'Current source unavailable — read a captured observation or retry.' : model.observation ? `${model.matching ? 'Observed in this run — current inspected pause' : 'Captured observation — history'} · ${new Date(model.observation.capturedAt).toLocaleString()}` : message.study?.terminal ? 'Not observed before this study ended — source-derived material only' : 'Not observed — source-derived material only');
     text('source-version', recording && !model.observation ? 'No captured source at this time. The source pane shows an explicit placeholder.' : !model.observation && !model.currentSourceAvailable ? 'No current source version could be verified.' : `${model.observation ? 'Captured source' : 'Source-derived document'} · line ${model.source.line} · ${model.source.hash.slice(0, 12)}`);
-    text('source-drift', !model.currentSourceAvailable ? 'Current source unavailable. Historical source and understanding are retained.' : model.sourceChanged ? 'Review needed — source changed. This is the captured older revision.' : '');
+    text('understanding-label', model.selection.profile === 'repository-browser' ? 'I understand this article and all cited source revisions' : 'I understand this source revision');
+    text('source-drift', !model.currentSourceAvailable ? 'Current source unavailable. Historical source and understanding are retained.' : model.sourceChanged ? model.selection.profile === 'repository-browser' ? 'Review needed — a cited source changed. Historical understanding still refers to the complete captured citation set.' : 'Review needed — source changed. This is the captured older revision.' : '');
     const checkbox = element('understood');
     if (checkbox instanceof HTMLInputElement) { checkbox.checked = model.selectedUnderstanding.understood; checkbox.disabled = message.saving || message.loading || !model.selectedUnderstanding.known; }
     text('save-state', message.saving ? 'Saving…' : !model.selectedUnderstanding.known ? 'Understanding storage unavailable' : model.selectedUnderstanding.understood ? `Learner marked understood · ${model.selectedUnderstanding.at ?? ''}` : 'Checked only by you; execution never changes this.');
     text('progress', !model.currentSourceAvailable ? 'Current source unavailable — historical understanding retained.' : `${model.understoodCount} of ${model.progressByItem.length} understood for current source · ${model.reviewCount} needs review`);
     text('value-caption', model.observation ? 'Actual primitive values captured at this stop.' : 'No values captured for this item.');
-    replace('values', model.observation?.values, () => Object.entries(model.observation?.values ?? {}).map(([name, value]) => { const row = document.createElement('tr'); for (const content of [name, String(value)]) { const cell = document.createElement('td'); cell.textContent = content; row.append(cell); } return row; }));
+    const unavailable = model.observation?.actionId === 'repository-click' ? model.observation.unavailableValues : [];
+    replace('values', [model.observation?.values, unavailable], () => [...Object.entries(model.observation?.values ?? {}).map(([name, value]) => [name, String(value)]), ...unavailable.map(value => [value.path, `Unavailable: ${value.reason}`])].map(contents => { const row = document.createElement('tr'); for (const content of contents) { const cell = document.createElement('td'); cell.textContent = content; row.append(cell); } return row; }));
     const interpretations = model.observation?.interpretations ?? [];
     replace('interpretations', [Boolean(recording), interpretations], () => interpretations.length ? interpretations.map(value => { const paragraph = document.createElement('p'); paragraph.className = 'interpretation'; paragraph.textContent = value.text; return paragraph; }) : [document.createTextNode(recording ? 'No explanation was available by this recorded time.' : 'No agent explanation attached. Captured facts remain available below.')]);
     const later = recording?.laterInterpretations ?? []; element('later-annotations').hidden = !later.length;
@@ -162,14 +166,14 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     const focusedItem = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.item : undefined;
     const focusedRegion = document.activeElement?.parentElement?.id;
     replace('flow', model.progressByItem.map(value => [value.id, value.title]), () => model.progressByItem.map(value => { const link = document.createElement('button'); link.className = 'link'; link.dataset.item = value.id; link.textContent = value.title; return link; }));
-    text('correspondence', recording ? 'Select an observed moment to seek. Source relationships are not inferred from video frames.' : message.study?.links.length ? `Runtime correspondence: ${message.study.links.map(link => `${link.id}: ${link.status}`).join(' · ')}` : 'Source-derived link; execution correspondence has not been observed.');
+    text('correspondence', recording ? 'Select an observed moment to seek. Source relationships are not inferred from video frames.' : message.study?.profile === 'repository-browser' ? 'One browser action is declared. Article relationships remain source-derived interpretations.' : message.study?.links.length ? `Runtime correspondence: ${message.study.links.map(link => `${link.id}: ${link.status}`).join(' · ')}` : 'Source-derived link; execution correspondence has not been observed.');
     replace('moments', [message.moments, model.observation?.id, Boolean(recording)], () => message.moments.map(moment => { const control = document.createElement('button'); control.dataset.item = moment.itemId; control.dataset.observation = moment.id; control.textContent = `${moment.title} · ${recording && moment.elapsedMs !== undefined ? seconds(moment.elapsedMs) : new Date(moment.at).toLocaleTimeString()}`; control.setAttribute('aria-current', String(moment.id === model.observation?.id)); return control; }));
     if (!message.moments.length) text('moments', 'No observed moments yet.');
     if (focusedItem && (focusedRegion === 'flow' || focusedRegion === 'moments')) element(focusedRegion).querySelector<HTMLButtonElement>(`[data-item="${focusedItem}"]`)?.focus({ preventScroll: true });
     const studies = element('studies');
     if (studies instanceof HTMLSelectElement) {
       const previous = studies.value;
-      replace('studies', message.studies, () => message.studies.map(study => { const option = document.createElement('option'); option.value = study.id; option.textContent = `${message.profiles.find(profile => profile.id === study.profile)?.title ?? 'Unknown scenario'}${study.format === 'legacy-v1' ? ' (legacy)' : ''} · ${new Date(study.savedAt).toLocaleString()} · ${study.outcome} · ${study.id.slice(-8)}`; return option; }));
+      replace('studies', message.studies, () => message.studies.map(study => { const option = document.createElement('option'); option.value = study.id; option.textContent = `${message.profiles.find(profile => profile.id === study.profile)?.title ?? (study.profile === 'repository-browser' ? 'Repository browser action' : 'Unknown scenario')}${study.format === 'legacy-v1' ? ' (legacy)' : ''} · ${new Date(study.savedAt).toLocaleString()} · ${study.outcome} · ${study.id.slice(-8)}`; return option; }));
       studies.value = model.selection.studyId ?? previous;
     }
     for (const link of Array.from(document.querySelectorAll<HTMLButtonElement>('.link[data-action]'))) link.classList.toggle('visited', visited.has(link.dataset.action ?? ''));

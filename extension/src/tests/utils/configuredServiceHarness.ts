@@ -31,8 +31,8 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
     this.dispatches++; this.operation = { id: randomUUID(), key, inputDispatched: true, inputAcknowledged: true, afterVerified: false }; this.status = 'paused-browser';
     const pause = this.gate.stop('browser-session', 1), reference = createConfiguredStudy().observations[0]!;
     const { snapshotUri: _uri, interpretations: _interpretations, ...snapshot } = reference;
-    this.snapshots.push({ ...snapshot, id: `${pause.sessionId}:${pause.generation}`, pause });
-    this.evidence.record('snapshot.committed', { snapshotId: this.snapshots[0]!.id }); return this.operation;
+    const receipt = this.evidence.record('snapshot.committed', { snapshotId: `${pause.sessionId}:${pause.generation}` });
+    this.snapshots.push({ ...snapshot, id: `${pause.sessionId}:${pause.generation}`, pause, capturedAt: receipt.wallTime, elapsedMs: receipt.elapsedMs }); return this.operation;
   }
   /** Consumes only the synthetic browser tuple; native continuation belongs to the separate runtime matrix. @example await runtime.continue('browser', pause) */
   async continue(participant: Parameters<StudyRuntime['continue']>[0], pause: Parameters<StudyRuntime['continue']>[1]): Promise<void> {

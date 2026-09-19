@@ -6,7 +6,8 @@ import { StudyService } from './service';
 import { startServer } from './server';
 import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './constants';
 import { StudyWorkspace } from './studyWorkspace';
-import { itemSchema, profileSchema } from './studySchemas';
+import { profileSchema } from './studySchemas';
+import { learningItemSchema } from './identitySchemas';
 import { RepositoryReader } from './repositoryReader';
 import { repositorySelectionSchema } from './learnerSchemas';
 import { repositoryActionSchema } from './repositoryView';
@@ -19,8 +20,8 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
   let starting: Promise<Running> | undefined, running: Running | undefined, stopping: Promise<void> | undefined;
   let reader: StudyWorkspace | undefined;
   let repositoryReader: RepositoryReader | undefined;
-  const workspace = (): StudyWorkspace => reader ??= new StudyWorkspace(context, { start: async () => { await start(); if (!running) throw new Error('Study server did not start.'); return running.service; }, connect, returnToRepository: () => repository().open() });
-  const repository = (): RepositoryReader => repositoryReader ??= new RepositoryReader({ storage: () => workspace().learningStorage(), connect, arrange: signal => workspace().arrangeRepository(signal), evidence: (binding, recording, signal) => workspace().openRepositoryEvidence(binding, recording, signal) });
+  const workspace = (): StudyWorkspace => reader ??= new StudyWorkspace(context, { start: async () => { await start(); if (!running) throw new Error('Study server did not start.'); return running.service; }, connect, returnToRepository: selection => repository().open(selection), openArticle: selection => repository().open(selection) });
+  const repository = (): RepositoryReader => repositoryReader ??= new RepositoryReader({ storage: () => workspace().learningStorage(), connect, arrange: signal => workspace().arrangeRepository(signal), evidence: (binding, recording, signal, origin) => workspace().openRepositoryEvidence(binding, recording, signal, origin) });
   const start = async () => {
     requireWorkspace();
     if (stopping) throw new Error('Codebook server is stopping; wait for cleanup before starting.');
@@ -87,7 +88,7 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     vscode.commands.registerCommand('codebook.closeRepositoryWiki', () => repositoryReader?.close()),
     vscode.commands.registerCommand('codebook.repository.action', (action: unknown) => repository().action(repositoryActionSchema.parse(action))),
     vscode.commands.registerCommand('codebook.repository.understand', (understood: unknown) => { if (typeof understood !== 'boolean') throw new Error('Understanding requires a boolean learner choice.'); return repository().understand(understood); }),
-    vscode.commands.registerCommand('codebook.selectLearningItem', itemId => workspace().select(itemSchema.parse(itemId))),
+    vscode.commands.registerCommand('codebook.selectLearningItem', itemId => workspace().select(learningItemSchema.parse(itemId))),
     vscode.commands.registerCommand('codebook.selectStudyProfile', profile => workspace().selectProfile(profileSchema.parse(profile))),
     vscode.commands.registerCommand('codebook.markUnderstanding', understood => { if (understood !== undefined && typeof understood !== 'boolean') throw new Error('Understanding requires a boolean learner choice.'); return workspace().understand(understood); }),
     ...(['run', 'click', 'continue', 'stop', 'return-current', 'return-wiki', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry'] as const).map(action => vscode.commands.registerCommand(`codebook.study.${action}`, () => workspace().action(action))),

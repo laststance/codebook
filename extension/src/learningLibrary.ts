@@ -5,7 +5,7 @@ import { LEARNING_SCHEMA_VERSION_V2, LEARNING_SCHEMA_VERSION_V3, LEARNING_SCHEMA
 import { studyMetadataSchema, type StudyCatalogEntry } from './studySchemas';
 import { configuredStudyMetadataSchema } from './configuredStudySchemas';
 import { retainedStudyMetadataSchema, retainedStudySelectionSchema, type RetainedStudy, type RetainedStudySelection } from './retainedStudySchemas';
-import { learnerIntentSchema, repositorySelectionSchema, type LearnerDecision, type LearnerProgress, type RepositorySelection } from './learnerSchemas';
+import { learnerIntentSchema, repositorySelectionSchema, repositoryReturnSchema, type LearnerDecision, type LearnerProgress, type RepositorySelection } from './learnerSchemas';
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite';
 import { readBoundedFile } from './utils/readBoundedFile';
 import { studyIdSchema } from './legacyStudySchemas';
@@ -123,6 +123,16 @@ export class LearningLibrary {
     return this.locked(async () => {
       const progress = await this.readProgress();
       await atomicPrivateWrite(join(this.directory, PROGRESS_V4_FILE), { ...progress, repositorySelection }, PROGRESS_LIMIT_BYTES);
+    });
+  }
+
+  /** Retains an actual article-to-evidence origin for restart-safe Return without inferring one from unrelated reading history. @example await library.rememberRepositoryReturn({studyId, selection}) */
+  rememberRepositoryReturn(input: NonNullable<LearnerProgress['repositoryReturn']>): Promise<void> {
+    const repositoryReturn = repositoryReturnSchema.parse(input);
+    return this.locked(async () => {
+      await this.readStudy(repositoryReturn.studyId);
+      const progress = await this.readProgress();
+      await atomicPrivateWrite(join(this.directory, PROGRESS_V4_FILE), { ...progress, repositoryReturn }, PROGRESS_LIMIT_BYTES);
     });
   }
 

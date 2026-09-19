@@ -6,6 +6,7 @@ export { repositoryItemSchema, learningItemSchema } from './identitySchemas';
 import { repositoryHashSchema } from './sourceSchemas';
 import { citationContextSchema } from './citationSchemas';
 import { retainedStudySelectionSchema } from './retainedStudySchemas';
+import { studyIdSchema } from './legacyStudySchemas';
 export { citationContextSchema } from './citationSchemas';
 
 const singleSourceDecisionSchema = legacyDecisionSchema.extend({ context: z.strictObject({ kind: z.literal('source') }) });
@@ -18,7 +19,8 @@ export const repositorySelectionSchema = z.strictObject({ bookId: bookIdSchema, 
   location: z.strictObject({ sectionIndex: z.number().int().nonnegative().max(BOOK_MAX_SECTIONS + REPOSITORY_FIXED_READING_SECTIONS - 1), fraction: z.number().min(0).max(1), focusId: z.string().max(KEY_LENGTH_LIMIT).regex(/^[a-z0-9-]*$/) }).optional() });
 export const progressV3Schema = z.strictObject({ version: z.literal(LEARNING_SCHEMA_VERSION_V3), workspaceKey: repositoryHashSchema,
   decisions: z.array(learnerDecisionV3Schema).max(MAX_LEARNER_DECISIONS), selection: selectionSchema.optional(), repositorySelection: repositorySelectionSchema.optional() });
-export const progressV4Schema = progressV3Schema.extend({ version: z.literal(LEARNING_SCHEMA_VERSION_V4), selection: retainedStudySelectionSchema.optional() });
+export const repositoryReturnSchema = z.strictObject({ studyId: studyIdSchema, selection: repositorySelectionSchema });
+export const progressV4Schema = progressV3Schema.extend({ version: z.literal(LEARNING_SCHEMA_VERSION_V4), selection: retainedStudySelectionSchema.optional(), repositoryReturn: repositoryReturnSchema.optional() });
 export type LearnerProgress = z.output<typeof progressV4Schema>;
 export type LearnerDecision = z.input<typeof learnerIntentSchema>;
 export type SavedLearnerDecision = LearnerProgress['decisions'][number];

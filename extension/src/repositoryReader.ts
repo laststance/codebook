@@ -19,7 +19,7 @@ interface RepositoryControls {
   storage(): Promise<LearningLibrary>;
   connect(): Promise<void>;
   arrange(signal: AbortSignal): Promise<void>;
-  evidence(binding: BookObservationBinding, recording: boolean, signal: AbortSignal): Promise<void>;
+  evidence(binding: BookObservationBinding, recording: boolean, signal: AbortSignal, origin: RepositorySelection): Promise<void>;
 }
 
 /** Owns repository reading/navigation while {@link RepositoryBookStore} seals content and {@link LearningLibrary} owns shared choices. @example await reader.open() */
@@ -147,7 +147,7 @@ export class RepositoryReader {
     const binding = book.links.find(value => value.nodeId === input.nodeId && value.linkIndex === linkIndex);
     if (!binding || binding.status !== 'available') throw new Error(binding?.reason ?? 'Selected observation is unavailable.');
     if (recording && binding.recording.status !== 'available') throw new Error(binding.recording.reason);
-    await this.controls.evidence(binding, recording, this.navigation.signal); this.assertCurrent(generation);
+    await this.controls.evidence(binding, recording, this.navigation.signal, input); this.assertCurrent(generation);
   }
 
   /** Cancels pending navigation before panel disposal so old successes/errors cannot reopen the reader. @example reader.close() */

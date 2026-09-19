@@ -1,3 +1,4 @@
+import { itemSchema } from './studySchemas';
 import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -139,7 +140,7 @@ export async function run(): Promise<void> {
       assert.equal(api.inspectStudy()?.leaseId, undefined);
       await vscode.commands.executeCommand('codebook.openStudyWorkspace');
       const state = inspect(), selected = state.view!.model.selection.itemId;
-      const { view } = await rendered(selected, false);
+      const { view } = await rendered(itemSchema.parse(selected), false);
       assert.equal(view.model.understoodCount, process.env.CODEBOOK_STUDY_CASE === 'history' ? 1 : 0);
       assert.equal(view.study?.terminal, true); assert.equal(view.model.currentParticipant, undefined); assert.equal(view.model.continueArguments, undefined);
       assert.equal(inspect().leaseId, undefined); preserveForeign(); record(); checks.reloadedWithoutExecution = true;
