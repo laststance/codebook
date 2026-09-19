@@ -55,3 +55,40 @@ test('disconnect rejects every outstanding request without sending another input
   await assert.rejects(capture, /disconnected/);
   assert.equal(socket.messages.length, 2);
 });
+
+test('overlapping event subscribers wait for one wire subscription per event without duplicating pause notifications', async () => {
+  // Arrange: js-debug adds one forwarder for every supplied name, including duplicate names.
+  const socket = new TestSocket(), cdp = new Cdp(socket, () => undefined);
+  const first = cdp.subscribe(['Debugger.paused', 'Debugger.resumed']);
+  let overlappingReady = false;
+  const overlapping = cdp.subscribe(['Debugger.paused', 'Page.screencastFrame', 'Page.screencastFrame']).then(() => { overlappingReady = true; });
+  const settled = Promise.allSettled([first, overlapping]);
+  try {
+    // Act: the new event can subscribe first, but the shared pause subscription is still pending.
+    socket.reply(2, {}); await Promise.resolve(); await Promise.resolve();
+    // Assert
+    assert.equal(overlappingReady, false);
+    assert.deepEqual(socket.messages, [
+      { id: 1, method: 'JsDebug.subscribe', params: { events: ['Debugger.paused', 'Debugger.resumed'] } },
+      { id: 2, method: 'JsDebug.subscribe', params: { events: ['Page.screencastFrame'] } },
+    ]);
+    socket.reply(1, {}); await first; await overlapping;
+    await cdp.subscribe(['Debugger.paused']);
+    assert.equal(socket.messages.length, 2); assert.equal(overlappingReady, true);
+  } finally { cdp.close(); await settled; }
+});
+
+test('an uncertain event subscription closes the proxy and rejects shared consumers without resubscribing', async () => {
+  // Arrange
+  const socket = new TestSocket(), cdp = new Cdp(socket, () => undefined);
+  const first = cdp.subscribe(['Debugger.paused']), second = cdp.subscribe(['Debugger.paused']);
+  const outcomes = Promise.allSettled([first, second]);
+  // Act
+  socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id: 1, error: { message: 'subscription response failed' } }) }));
+  // Assert
+  const results = await outcomes;
+  assert.equal(results[0]?.status, 'rejected'); assert.equal(results[1]?.status, 'rejected');
+  assert.equal(cdp.closed, true); assert.equal(socket.messages.length, 1);
+  await assert.rejects(cdp.subscribe(['Debugger.paused']), /CDP disconnected/);
+  assert.equal(socket.messages.length, 1);
+});

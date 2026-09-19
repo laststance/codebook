@@ -17,6 +17,7 @@ export class Cdp {
   private nextId = 0;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly listeners = new Map<string, Set<(params: unknown) => void>>();
+  private readonly subscriptions = new Map<string, Promise<void>>();
   private readonly delayedTimers = new Set<ReturnType<typeof setTimeout>>();
   onClose?: () => void;
   closed = false;
@@ -62,7 +63,17 @@ export class Cdp {
 
   /** Enables event forwarding on js-debug's existing debugger owner. @example await cdp.subscribe(['Debugger.paused']) */
   async subscribe(events: string[]): Promise<void> {
-    await this.send('JsDebug.subscribe', { events });
+    if (this.closed) throw new Error('CDP disconnected');
+    const added = [...new Set(events)].filter(event => !this.subscriptions.has(event));
+    // The proxy adds a forwarder per name; reserve shared in-flight subscriptions before yielding.
+    if (added.length) {
+      const subscribed = this.send('JsDebug.subscribe', { events: added }).then(() => undefined).catch(error => {
+        // An uncertain response cannot safely be retried on the same proxy without duplicate listeners.
+        this.close(); throw error;
+      });
+      for (const event of added) this.subscriptions.set(event, subscribed);
+    }
+    await Promise.all(events.map(event => this.subscriptions.get(event)));
   }
 
   /** Attaches schema-typed observers before input dispatch. @example cdp.on('Debugger.paused', event => inspect(event.callFrames)) */

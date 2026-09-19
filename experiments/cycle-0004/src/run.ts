@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
+import { SourceMap } from 'node:module';
 import type { DebugProtocol } from '@vscode/debugprotocol';
 import type { Protocol } from 'devtools-protocol';
 import { Cdp } from 'codebook-cycle-0001/dist/cdp';
@@ -40,7 +41,7 @@ export interface HarnessConfig {
 interface Participant {
   gate: PauseGate; selected?: vscode.DebugSession; cdp?: Cdp; source?: SealedSource;
   breakpoint?: vscode.SourceBreakpoint; binding?: vscode.DebugProtocolBreakpoint;
-  cdpGeneration: number; stopped?: { generation: number; event: Protocol.Debugger.PausedEvent }; snapshot?: ParticipantSnapshot;
+  cdpSequence: number; stopped?: { sequence: number; generation?: number; event: Protocol.Debugger.PausedEvent }; snapshot?: ParticipantSnapshot;
   expectedRequests: number; continuation?: PauseIdentity; continued?: PauseIdentity;
 }
 interface Capture { status: 'pending' | 'captured' | 'failed'; file?: string; error?: string; renderer?: { epoch: string; id: number; hash: string } }
@@ -59,7 +60,7 @@ export class PairedRun {
   readonly operations: Operation[] = [];
   readonly networks = new Map<ActionId, NetworkEvidence>();
   readonly participants: Record<ParticipantName, Participant> = {
-    server: { gate: new PauseGate(), cdpGeneration: 0, expectedRequests: 0 }, browser: { gate: new PauseGate(), cdpGeneration: 0, expectedRequests: 0 },
+    server: { gate: new PauseGate(), cdpSequence: 0, expectedRequests: 0 }, browser: { gate: new PauseGate(), cdpSequence: 0, expectedRequests: 0 },
   };
   readonly sessions = new Map<string, { session: vscode.DebugSession; name: ParticipantName }>();
   readonly activeSessions = new Set<string>();
@@ -227,9 +228,11 @@ export class PairedRun {
     this.evidence.record('target.selected', { participant: name, sessionId: match.session.id, parentId: match.session.parentSession?.id });
     match.cdp.onClose = () => { if (!this.cleaning) this.fail(`${name} CDP disconnected`); };
     match.cdp.on('Debugger.paused', event => {
-      const generation = ++participant.cdpGeneration;
-      participant.stopped = { generation, event };
-      this.evidence.record('cdp.paused', { participant: name, generation, location: event.callFrames[0]?.location });
+      // A replay of the same still-paused event must retain its existing DAP binding.
+      if (participant.stopped && isDeepStrictEqual(participant.stopped.event, event)) { this.evidence.record('cdp.duplicate-pause-ignored', { participant: name, sequence: participant.stopped.sequence }); return; }
+      const sequence = ++participant.cdpSequence;
+      participant.stopped = { sequence, event };
+      this.evidence.record('cdp.paused', { participant: name, sequence, reason: event.reason, location: event.callFrames[0]?.location });
     });
     match.cdp.on('Debugger.resumed', () => {
       const generation = participant.stopped?.generation;
@@ -369,10 +372,19 @@ export class PairedRun {
   /** Captures fixed values/source around generation guards and commits only an unchanged pause. @example await this.inspect('server', pause) */
   private async inspect(name: ParticipantName, pause: PauseIdentity, item: StudyItem): Promise<void> {
     const participant = this.participants[name];
-    const assertCurrent = () => { this.assertAlive(); if (!participant.gate.matches(pause)) throw new Error('Pause invalidated during participant inspection'); };
-    const stopped = await waitUntil(() => participant.stopped?.generation === pause.generation ? participant.stopped.event : undefined, 'matching generation CDP stop', CAPTURE_TIMEOUT_MS, this.abort.signal);
+    const sourceMap = new SourceMap(JSON.parse(participant.source!.sourceMap));
+    const stopped = await waitUntil(() => {
+      const candidate = participant.stopped, location = candidate?.event.callFrames[0]?.location;
+      // Raw CDP includes hidden instrumentation stops; only an unclaimed matching source position can pair.
+      if (!candidate || candidate.generation !== undefined || !location || candidate.event.reason === 'instrumentation') return undefined;
+      const mapping = sourceMap.findEntry(location.lineNumber, location.columnNumber ?? 0);
+      return 'originalLine' in mapping && mapping.originalLine + 1 === participant.source!.breakpointLine ? candidate : undefined;
+    }, 'matching source CDP stop', CAPTURE_TIMEOUT_MS, this.abort.signal);
+    const assertCurrent = () => { this.assertAlive(); if (!participant.gate.matches(pause) || participant.stopped !== stopped) throw new Error('Pause invalidated during participant inspection'); };
     assertCurrent();
-    const snapshot = await inspectParticipant(name, participant.selected!, this.requireCdp(name), pause, stopped, participant.source!, assertCurrent, this.abort.signal, this.evidence, item);
+    stopped.generation = pause.generation;
+    this.evidence.record('debug.pause-paired', { participant: name, cdpSequence: stopped.sequence, ...pause });
+    const snapshot = await inspectParticipant(name, participant.selected!, this.requireCdp(name), pause, stopped.event, participant.source!, assertCurrent, this.abort.signal, this.evidence, item);
     assertCurrent();
     if (!isDeepStrictEqual(snapshot.values, stopExpectations(this.id, item))) throw new Error('Paused identity or values differ from the frozen expectation');
     await this.evidence.save(`${item.artifactPrefix}-snapshot.json`, snapshot); assertCurrent();

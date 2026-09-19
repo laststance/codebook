@@ -65,7 +65,7 @@ function snapshot(pause: PauseIdentity): ParticipantSnapshot {
 }
 
 /** Gives lifecycle regressions real CDP callbacks and inspection waiting after one owned cart continuation; only native effects are synthetic. @example const { run, paused, resumed } = await checkoutPauseHarness() */
-async function checkoutPauseHarness() {
+async function checkoutPauseHarness(hiddenStartupStops = false) {
   let runtimeId = '';
   const inspected: { generation: number; scriptId: string | undefined }[] = [];
   const socket = new EventTarget();
@@ -77,8 +77,8 @@ async function checkoutPauseHarness() {
         : request.method === 'Page.captureScreenshot' ? { data: Buffer.from('synthetic png bytes').toString('base64') } : {};
       socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id: request.id, result }) }));
     } }, () => undefined);
-  const paused = (scriptId: string) => {
-    const event: Protocol.Debugger.PausedEvent = { reason: 'other', callFrames: [{ callFrameId: 'frame', functionName: 'fixture', url: 'server.mjs',
+  const paused = (scriptId: string, reason: Protocol.Debugger.PausedEvent['reason'] = 'other') => {
+    const event: Protocol.Debugger.PausedEvent = { reason, callFrames: [{ callFrameId: 'frame', functionName: 'fixture', url: 'server.mjs',
       location: { scriptId, lineNumber: 0 }, scopeChain: [], this: { type: 'undefined' } }] };
     socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ method: 'Debugger.paused', params: event }) }));
   };
@@ -110,7 +110,9 @@ async function checkoutPauseHarness() {
     // No process exists behind these selected identities; cleanup must never probe a synthetic PID/port.
     run.sessions.clear(); run.activeSessions.clear(); run.endpoint = undefined;
     run.participants.browser.cdp = connection;
-    for (const item of run.profile.items) run.sources.set(item.id, { sourcePath: join(directory, item.file), source: '', javascript: '', sourceMap: '', breakpointLine: 1 });
+    for (const item of run.profile.items) run.sources.set(item.id, { sourcePath: join(directory, item.file), source: '', javascript: '', sourceMap: '{"version":3,"sources":["server.mts"],"names":[],"mappings":"AAAA"}', breakpointLine: 1 });
+    // Real js-debug forwards internal CDP stops that never become learner-visible DAP stops.
+    if (hiddenStartupStops) { paused('startup-one'); resumed(); paused('startup-two'); resumed(); }
     run.operation = { id: 'cart-operation', key: 'cart-key', actionId: 'add-to-cart', inputAcknowledged: true, completed: false };
     run.operations.push(run.operation); run.status = 'running';
     paused('cart-script');
@@ -132,6 +134,19 @@ async function checkoutPauseHarness() {
     await run.cleanup(); await rm(directory, { recursive: true }); throw error;
   }
 }
+
+test('hidden debugger startup stops do not consume the first learner pause identity', async () => {
+  // Arrange / Act: the actual CDP callbacks receive two completed internal pauses before input.
+  const { run, directory, session, paused, resumed, inspected } = await checkoutPauseHarness(true);
+  try {
+    resumed(); paused('order-script');
+    run.onEvent(session, { seq: 4, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
+    await waitUntil(() => run.snapshots.length === 3, 'order observation after hidden startup stops', 1_000);
+    // Assert
+    assert.deepEqual(inspected, [{ generation: 1, scriptId: 'cart-script' }, { generation: 2, scriptId: 'order-script' }]);
+    assert.deepEqual([...run.failures], []); assert.equal(run.participants.server.gate.current?.generation, 2);
+  } finally { await run.cleanup(); await rm(directory, { recursive: true }); }
+});
 
 test('a delayed cart CDP resume preserves the later order pause and its owned continuation', async () => {
   // Arrange
@@ -176,12 +191,30 @@ test('an unowned CDP resume of the current order pause still fails the checkout'
     resumed(); paused('order-script');
     run.onEvent(session, { seq: 4, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
     await waitUntil(() => run.snapshots.length === 3 && run.captures['paused-order-creation']?.status === 'captured', 'current order observation', 1_000);
-    // Act: the current generation resumes without any owned Continue reservation.
+    // Act: a replay of the same paused event must not clear its binding before an unowned resume.
+    paused('order-script');
     resumed();
     // Assert
     assert.equal(run.status, 'failed'); assert.equal(run.participants.server.gate.current, undefined);
     assert.deepEqual([...run.failures], ['server resumed outside its owned continuation']);
     assert.equal(run.resumedSnapshots.has('server-session:2'), false); assert.equal(run.snapshots[2]?.itemId, 'checkout-demo/order-creation');
+  } finally { await run.cleanup(); await rm(directory, { recursive: true }); }
+});
+
+test('a learner inspection waits through a pending internal instrumentation pause', async () => {
+  // Arrange
+  const { run, directory, session, paused, resumed, inspected } = await checkoutPauseHarness();
+  try {
+    resumed(); paused('internal-script', 'instrumentation');
+    // Act: the DAP stop arrives before the internal CDP resume and the real user stop.
+    run.onEvent(session, { seq: 4, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
+    await setImmediate();
+    // Assert
+    assert.deepEqual(inspected, [{ generation: 1, scriptId: 'cart-script' }]);
+    resumed(); paused('order-script');
+    await waitUntil(() => run.snapshots.length === 3, 'order observation after instrumentation', 1_000);
+    assert.deepEqual(inspected, [{ generation: 1, scriptId: 'cart-script' }, { generation: 2, scriptId: 'order-script' }]);
+    assert.deepEqual([...run.failures], []);
   } finally { await run.cleanup(); await rm(directory, { recursive: true }); }
 });
 
@@ -353,7 +386,7 @@ test('checkout keeps four observations in one session pair and never redispatche
       async customRequest(command: string, arguments_: { threadId: number }) { run.onRequest(session, { seq: 1, type: 'request', command }); run.onEvent(session, { seq: 2, type: 'event', event: 'continued', body: arguments_ }); }, getDebugProtocolBreakpoint: async () => undefined };
     run.participants[name].selected = session; Reflect.set(run.participants[name], 'cdp', cdp);
   }
-  for (const item of run.profile.items) run.sources.set(item.id, { sourcePath: join(directory, item.file), source: '', javascript: '', sourceMap: '', breakpointLine: 1 });
+  for (const item of run.profile.items) run.sources.set(item.id, { sourcePath: join(directory, item.file), source: '', javascript: '', sourceMap: '{"version":3,"sources":["server.mts"],"names":[],"mappings":"AAAA"}', breakpointLine: 1 });
   for (const action of run.profile.actions) run.networks.set(action.id, new NetworkEvidence(run.id, `http://localhost/${action.route}`, 'http://localhost/client.mjs', action.id));
   run.status = 'ready';
   const cartResponse = { operationId: run.id, cartId: 'selected', productId: 'tote-01', price: 24, cartCount: 1, admittedCount: 2 };
@@ -380,7 +413,7 @@ test('checkout keeps four observations in one session pair and never redispatche
         feedNetwork(run.networks.get('checkout')!, 'order-selected', { ...cartResponse, operationId: `${run.id}-checkout`, cartOperationId: run.id, orderId: `order-${run.id}`, total: 24, orderCount: 1 });
       }
       const participant = run.participants[item.participant];
-      participant.stopped = { generation: index < 2 ? 1 : 2, event: { callFrames: [], reason: 'other' } };
+      participant.stopped = { sequence: index + 1, event: { callFrames: [{ callFrameId: 'frame', functionName: 'fixture', url: 'fixture.mjs', location: { scriptId: 'fixture', lineNumber: 0 }, scopeChain: [], this: { type: 'undefined' } }], reason: 'other' } };
       run.onEvent(participant.selected!, { seq: index + 1, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
       await waitUntil(() => {
         assert.notEqual(run.status, 'failed', run.failures.join('\n'));
