@@ -175,3 +175,12 @@ export const REPOSITORY_RESERVED_INSPECTION_ROOTS = [
 export const REPOSITORY_FORBIDDEN_INSPECTION_SEGMENTS = ['__proto__', 'prototype', 'constructor'] as const;
 export const REPOSITORY_CAPTURED_TYPES = ['undefined', 'object', 'boolean', 'number', 'bigint', 'string', 'symbol', 'function'] as const;
 export { ACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, HOLD_DURATION_MS, CONTROL_RESPONSE_LIMIT_MS } from 'codebook-cycle-0001/dist/constants';
+export const REPOSITORY_JAVASCRIPT_LIMIT_BYTES = 8_388_608;
+export const REPOSITORY_MAP_LIMIT_BYTES = 16_777_216;
+export const REPOSITORY_DISCOVERY_LIMIT_BYTES = 134_217_728;
+export const REPOSITORY_DISCOVERY_CANDIDATE_LIMIT = 2_048;
+export const REPOSITORY_DISCOVERY_TIMEOUT_MS = 30_000;
+export const REPOSITORY_APPLICATION_LOG_LIMIT_BYTES = 262_144;
+export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000;
+export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200;
+export const REPOSITORY_STACK_FRAME_LIMIT = 10;

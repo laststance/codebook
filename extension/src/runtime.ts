@@ -12,6 +12,7 @@ export type ConfiguredRuntimeSnapshot = Omit<ConfiguredObservation, 'snapshotUri
 export type RuntimeSnapshot = ParticipantSnapshot | ConfiguredRuntimeSnapshot;
 export type RuntimeAction = ActionId | typeof REPOSITORY_BROWSER_ACTION;
 export type RuntimeDefinition = ProfileId | ConfiguredDefinition;
+export type RuntimeControl = Readonly<{ signal: AbortSignal; deadlineAt: number; preparationDeadlineAt: number }>;
 export type RuntimeSource = Pick<SealedSource, 'source' | 'javascript' | 'sourceMap'>;
 export type ConfiguredRuntimeView = Pick<DemoRuntimeView, 'runId' | 'status' | 'cleaned' | 'resourcesReleased' | 'runtimeOutcome' | 'captureOutcome' | 'finalOutcome' | 'captures' | 'failures' | 'events' | 'artifactDirectory' | 'activeSessionIds'> & {
   profile: typeof REPOSITORY_BROWSER_PROFILE;
@@ -45,5 +46,5 @@ export interface StudyEnvironment {
   readonly build: { revision: string; dirty: boolean; sourceHash: string };
   assertWorkspace?(): void;
   prerequisites(): Promise<{ ready: boolean; missing: string[] }>;
-  createRuntime(directory: string, definition?: RuntimeDefinition): Promise<StudyRuntime>;
+  createRuntime(directory: string, definition?: RuntimeDefinition, control?: RuntimeControl): Promise<StudyRuntime>;
 }

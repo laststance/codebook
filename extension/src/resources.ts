@@ -10,6 +10,7 @@ import { readBoundedFile } from './utils/readBoundedFile';
 import { readRecordingResource } from './utils/readRecordingResource';
 import { readRepositoryResource } from './utils/readRepositoryResource';
 import { BOOK_INPUT_LIMIT_BYTES, HTTP_BODY_LIMIT_BYTES, REPOSITORY_SOURCE_LIMIT_BYTES, REPOSITORY_SOURCE_EXTENSIONS, REPOSITORY_EXCLUDED_DIRECTORIES } from './constants';
+import { REPOSITORY_BROWSER_ACTION, REPOSITORY_JAVASCRIPT_LIMIT_BYTES, REPOSITORY_MAP_LIMIT_BYTES } from './constants';
 
 export type ResourceContent = { uri: string; mimeType: string; text: string } | { uri: string; mimeType: string; blob: string };
 
@@ -80,7 +81,8 @@ export async function readResource(service: StudyService, uri: string): Promise<
     const selection = sourceMatch[2] === 'typescript' ? { text: source.source, hash: hashes.typescript, mimeType: 'text/typescript' }
       : sourceMatch[2] === 'javascript' ? { text: source.javascript, hash: hashes.javascript, mimeType: 'text/javascript' }
       : { text: source.sourceMap, hash: hashes.sourceMap, mimeType: 'application/json' };
-    if (Buffer.byteLength(selection.text) > SOURCE_LIMIT_BYTES || sha256(selection.text) !== selection.hash) throw new StudyError('EVIDENCE_UNAVAILABLE', 'Captured source exceeds limits or its sealed hash changed.');
+    const limit = snapshot.actionId !== REPOSITORY_BROWSER_ACTION ? SOURCE_LIMIT_BYTES : sourceMatch[2] === 'typescript' ? REPOSITORY_SOURCE_LIMIT_BYTES : sourceMatch[2] === 'javascript' ? REPOSITORY_JAVASCRIPT_LIMIT_BYTES : REPOSITORY_MAP_LIMIT_BYTES;
+    if (Buffer.byteLength(selection.text) > limit || sha256(selection.text) !== selection.hash) throw new StudyError('EVIDENCE_UNAVAILABLE', 'Captured source exceeds limits or its sealed hash changed.');
     return { uri, mimeType: selection.mimeType, text: selection.text };
   }
   throw new StudyError('NOT_FOUND', 'Unknown resource kind.');

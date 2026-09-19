@@ -177,13 +177,15 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "zod": "4.6.5",
     "codebook-cycle-0001": "link:../experiments/cycle-0001",
-    "codebook-cycle-0004": "link:../experiments/cycle-0004"
+    "codebook-cycle-0004": "link:../experiments/cycle-0004",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "24.13.5",
     "@types/vscode": "1.120.0",
+    "@vscode/debugprotocol": "1.68.0",
+    "devtools-protocol": "0.0.1698617",
     "typescript": "5.9.3"
   }
 }

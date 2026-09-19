@@ -392,7 +392,7 @@ export class StudyService {
       if (this.stopping || record.stopping) return;
       const definition = record.profile === REPOSITORY_BROWSER_PROFILE ? record.definition : record.profile;
       if (!definition) throw new StudyError('RUNTIME_FAILED', 'Configured source binding is absent.');
-      record.runtime = await this.environment.createRuntime(join(this.storageRoot, this.instanceId, record.id), definition);
+      record.runtime = await this.environment.createRuntime(join(this.storageRoot, this.instanceId, record.id), definition, { signal: record.cancellation.signal, deadlineAt: record.deadlineAt, preparationDeadlineAt: record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS });
       const acquired = record.runtime.view();
       if (acquired.profile !== record.profile) throw new StudyError('RUNTIME_FAILED', 'Acquired runtime belongs to another profile.');
       if (acquired.profile === REPOSITORY_BROWSER_PROFILE && JSON.stringify(acquired.definition) !== JSON.stringify(definition)) throw new StudyError('RUNTIME_FAILED', 'Acquired runtime changed the accepted repository definition.');
