@@ -8,6 +8,7 @@ import { LearningLibrary } from '../learningLibrary';
 import { buildRecordingContext } from '../utils/buildRecordingContext';
 import { captureStudy } from '../utils/captureStudy';
 import { projectRecording } from '../utils/projectRecording';
+import { readResource } from '../resources';
 import { validateRecordingContext } from '../utils/validateRecordingContext';
 import { ControlledRuntime, createHarness } from './helpers';
 
@@ -167,5 +168,28 @@ test('context rejects source tampering, rewritten availability and a hash from a
     await assert.rejects(harness.store.saveContext({ ...context, studyHash: sha256('wrong checkpoint'), historyRevision: revision + 1 }), /saved study checkpoint/);
     await writeFile(join(harness.store.path(context.studyId), 'context.json'), JSON.stringify(changed));
     await assert.rejects(harness.store.readContext(context.studyId), /source is incomplete or changed/);
+  } finally { await harness.close(); }
+});
+
+
+test('rediscovery rejects valid JSON recorded values that differ from the saved study checkpoint', async () => {
+  // Arrange
+  const harness = await contextHarness(), { service, record, store } = harness;
+  try {
+    record.recording!.frame({ bytes: png, elapsedMs: 20, kind: 'stream' }); harness.clock(100);
+    service.action({ ...harness.receipt, key: 'cart', action: 'add-to-cart' }); harness.clock(200);
+    await service.stop(harness.receipt); await harness.checkpoint();
+    const id = record.recording!.header.studyId, saved = await store.readContext(id);
+    saved.context.study.observations[0]!.values.price = 25;
+    const corrupt = JSON.stringify(saved.context);
+    await writeFile(join(store.path(id), 'context.json'), corrupt);
+    // Act / Assert: a new URI cannot turn a parseable changed value into an observed fact.
+    await assert.rejects(store.readContext(id), /differs from the saved study checkpoint/);
+    const base = `codebook://${service.instanceId}/studies/${id}/recording`;
+    await assert.rejects(readResource(service, `${base}/context/${sha256(corrupt)}`), /differs from the saved study checkpoint/);
+    const metadata = await readResource(service, base);
+    assert.ok('text' in metadata); assert.equal(JSON.parse(metadata.text).contextUri, undefined);
+    assert.match(JSON.parse(metadata.text).contextReason, /differs from the saved study checkpoint/);
+    assert.equal((await harness.library.readStudy(id)).observations[0]!.values.price, 24);
   } finally { await harness.close(); }
 });

@@ -43,6 +43,7 @@ export class RecordingStore {
   private readonly active = new Map<string, RecordingWriter>();
   private readonly sessionId = randomUUID();
   private writes: Promise<unknown> = Promise.resolve();
+  private resourceVerification?: { key: string; pending: Promise<RecordingIndex> };
 
   constructor(readonly learningDirectory: string, readonly workspaceKey: string, limits: Partial<RecordingLimits> = {}, private readonly io: RecordingIo = recordingDiskIo) {
     recordingHashSchema.parse(workspaceKey);
@@ -95,6 +96,7 @@ export class RecordingStore {
     if (seal && (seal.journalHash !== sha256(bytes) || seal.journalBytes !== bytes.byteLength)) throw new Error('Sealed recording journal is corrupt.');
     const lines = bytes.toString('utf8').split('\n'), incomplete = lines.pop();
     const entries: RecordingEntry[] = [];
+    const verifiedFrames = new Map<string, { byteLength: number; width: number; height: number }>();
     let lastMs = header.startedMs, frameCount = 0, hasGap = false, reason: string | undefined;
     for (const line of lines) {
       try {
@@ -102,8 +104,12 @@ export class RecordingStore {
         if (entry.sequence !== entries.length + 1 || entry.elapsedMs < lastMs || entries.at(-1)?.type === 'end') throw new Error('Recording order or receipt time changed.');
         if (entry.type === 'frame') {
           if (hasGap) throw new Error('Recording frames continue after a declared missing tail.');
-          const png = await this.readFrame(studyId, entry.hash), dimensions = readPngDimensions(png);
-          if (png.byteLength !== entry.byteLength || dimensions.width !== entry.width || dimensions.height !== entry.height) throw new Error('Recording frame metadata differs from its bytes.');
+          let verified = verifiedFrames.get(entry.hash);
+          if (!verified) {
+            const png = await this.readFrame(studyId, entry.hash);
+            verified = { byteLength: png.byteLength, ...readPngDimensions(png) }; verifiedFrames.set(entry.hash, verified);
+          }
+          if (verified.byteLength !== entry.byteLength || verified.width !== entry.width || verified.height !== entry.height) throw new Error('Recording frame metadata differs from its bytes.');
           frameCount++;
         }
         if (entry.type === 'gap') hasGap = true;
@@ -118,6 +124,24 @@ export class RecordingStore {
     if (seal && (incomplete || end?.type !== 'end' || end.elapsedMs !== seal.endMs || end.status !== seal.status || end.reason !== seal.reason || frameCount !== seal.frameCount || disk.pngBytes !== seal.pngBytes || (hasGap && seal.status === 'complete'))) throw new Error('Recording final checkpoint differs from its journal or stored blobs.');
     const status = seal ? seal.status === 'complete' ? 'finalized' : 'partial' : this.ownerState(header, this.active.get(studyId));
     return { header, entries, seal, status, endMs: seal?.endMs, lastVerifiedMs: lastMs, reason: reason ?? seal?.reason ?? (incomplete ? 'Interrupted journal tail; end time unknown.' : !seal ? 'Capture has no verified final checkpoint; end time is unknown.' : undefined) };
+  }
+
+  /** Pins one sealed index for resource paging after current header/seal/journal validation; returned PNGs still require {@link readFrame}, and playback uses fresh {@link read}. @example await store.readResourceIndex(studyId) */
+  async readResourceIndex(studyId: string): Promise<RecordingIndex> {
+    const header = await this.header(studyId), seal = await this.seal(studyId);
+    // Growing/interrupted prefixes cannot borrow a previously sealed verification.
+    if (!seal) return this.read(studyId);
+    const journal = await this.file(studyId, RECORDING_JOURNAL_FILE, MAX_RECORDING_JOURNAL_BYTES);
+    if (sha256(journal) !== seal.journalHash || journal.byteLength !== seal.journalBytes) throw new Error('Sealed recording journal is corrupt.');
+    const key = sha256(JSON.stringify([header, seal]));
+    if (this.resourceVerification?.key === key) return this.resourceVerification.pending;
+    const pending = this.read(studyId).then(index => {
+      if (!isDeepStrictEqual(index.header, header) || !isDeepStrictEqual(index.seal, seal)) throw new Error('Recording changed during verification; rediscover its resources.');
+      return index;
+    });
+    const reservation = { key, pending }; this.resourceVerification = reservation;
+    try { return await pending; }
+    catch (error) { if (this.resourceVerification === reservation) this.resourceVerification = undefined; throw error; }
   }
 
   /** Reads one canonical hash-named PNG with independent content validation; no arbitrary path reaches disk. @example await store.readFrame(studyId, hash) */
@@ -142,7 +166,7 @@ export class RecordingStore {
       if (checkpoint.status !== 'saved' || context.studyHash !== sha256(JSON.stringify(checkpoint.study)) || !isDeepStrictEqual(context.study, compact)) throw new Error('Recording context differs from the saved study checkpoint.');
       const existing = await lstat(join(this.path(context.studyId), RECORDING_CONTEXT_FILE)).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
       if (existing) {
-        const previous = (await this.readContext(context.studyId)).context;
+        const previous = (await this.readContextFile(context.studyId)).context;
         if (context.historyRevision < previous.historyRevision) throw new Error('Older recording context cannot replace a later revision.');
         if (context.historyRevision === previous.historyRevision && !isDeepStrictEqual(context, previous)) throw new Error('Recording context revision already names different bytes.');
         // Recorded availability is immutable even when a later context adds interpretation/confirmation.
@@ -166,6 +190,15 @@ export class RecordingStore {
 
   /** Pins the latest context by content hash; an old URI fails explicitly instead of returning new bytes under it. @example await store.readContext(studyId, expectedHash) */
   async readContext(studyId: string, expectedHash?: string): Promise<{ hash: string; context: RecordingContext }> {
+    const saved = await this.readContextFile(studyId, expectedHash);
+    const checkpoint = await new LearningLibrary(this.learningDirectory, this.workspaceKey).readCheckpoint(studyId);
+    const { captures: _captures, ...compact } = checkpoint.study;
+    if (checkpoint.status !== 'saved' || saved.context.studyHash !== sha256(JSON.stringify(checkpoint.study)) || !isDeepStrictEqual(saved.context.study, compact)) throw new Error('Recording context differs from the saved study checkpoint. Reload after its matching context is saved.');
+    return saved;
+  }
+
+  /** Reads context structure for public verification or append-only upgrades after the archive advances; callers qualify checkpoint equality separately. @example await this.readContextFile(studyId) */
+  private async readContextFile(studyId: string, expectedHash?: string): Promise<{ hash: string; context: RecordingContext }> {
     if (expectedHash) recordingHashSchema.parse(expectedHash);
     const bytes = await this.file(studyId, RECORDING_CONTEXT_FILE, MAX_RECORDING_CONTEXT_BYTES), hash = sha256(bytes);
     if (expectedHash && expectedHash !== hash) throw new Error('Recording context is stale; rediscover the current context resource.');
@@ -228,6 +261,8 @@ export class RecordingStore {
 
   /** Validates immutable recording provenance on discovery and replay. @example await store.header(studyId) */
   async header(studyId: string): Promise<RecordingHeader> {
+    const location = await lstat(this.path(studyId)).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+    if (!location) throw new Error('No saved recording is available for this study. Open its available study history or select another recording.');
     const header = recordingHeaderSchema.parse(JSON.parse((await this.file(studyId, RECORDING_HEADER_FILE, MAX_RECORDING_HEADER_BYTES)).toString()));
     if (header.workspaceKey !== this.workspaceKey || header.studyId !== studyId) throw new Error('Recording belongs to another workspace or study.');
     return header;

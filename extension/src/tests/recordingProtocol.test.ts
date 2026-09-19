@@ -79,7 +79,9 @@ test('recording pages are bounded and foreign frames, paths and concurrent stale
     await assert.rejects(client.read(`${base}/frame/${sha256('not-recorded')}`), /does not belong/);
     await assert.rejects(client.read(`${base}/frames/01`), /canonical/);
     await assert.rejects(readResource(harness.service, `${base}?file=/etc/passwd`), /canonical/);
+    // Direct guards reject raw aliases; the public SDK safely normalizes this alias before identity validation.
     await assert.rejects(readResource(harness.service, `${base}/../recording`), /canonical/);
+    assert.deepEqual(await client.read(`${base}/../recording`), await client.read(base));
   } finally { await client.close(); await controller.dispose(); await endpoint.close(); await harness.close(); }
 });
 
@@ -95,4 +97,31 @@ test('a corrupt playback preference loses only navigation and leaves stored unde
   const { readFile } = await import('node:fs/promises');
   assert.equal(await readFile(join(directory, 'progress.v2.json'), 'utf8'), 'learner-owned history');
   await harness.close();
+});
+
+test('concurrent recorded PNG reads share sealed verification and still reject changed frame bytes', async () => {
+  // Arrange
+  const harness = await createHarness(), workspaceKey = sha256(harness.directory), store = new RecordingStore(join(harness.directory, 'learning'), workspaceKey);
+  harness.service.recordings = store;
+  const runId = randomUUID(), studyId = `${harness.service.instanceId}_${runId}`;
+  const writer = await store.start({ workspaceKey, studyId, instanceId: harness.service.instanceId, runId, runtimeId: randomUUID(), profile: 'paired-cart-demo', sourceBuild: { revision: 'test', dirty: false, sourceHash: sha256('build') } }, 0);
+  for (const elapsedMs of [0, 50, 100]) writer.frame({ bytes: png, elapsedMs, kind: 'stream' });
+  await writer.finish(150);
+  let reads = 0; const read = store.readFrame.bind(store);
+  store.readFrame = async (id, hash) => { reads++; return read(id, hash); };
+  const base = `codebook://${harness.service.instanceId}/studies/${studyId}/recording`, uri = `${base}/frame/${sha256(png)}`;
+  try {
+    // Act
+    const frames = await Promise.all([readResource(harness.service, uri), readResource(harness.service, uri), readResource(harness.service, uri)]);
+    // Assert: one unique PNG verification plus three independently verified returned payloads.
+    assert.equal(reads, 4); assert.equal(frames.length, 3);
+    await readResource(harness.service, uri); assert.equal(reads, 5);
+    await writeFile(join(store.path(studyId), `${sha256(png)}.png`), Buffer.concat([png, Buffer.from('corrupt')]));
+    await assert.rejects(readResource(harness.service, uri), /hash mismatch/);
+    await assert.rejects(readResource(harness.service, base), /hash mismatch/);
+    // A cached index cannot conceal a changed journal, even for a previously valid frame URI.
+    await writeFile(join(store.path(studyId), `${sha256(png)}.png`), png);
+    const { appendFile } = await import('node:fs/promises'); await appendFile(join(store.path(studyId), 'frames.jsonl'), ' ');
+    await assert.rejects(readResource(harness.service, uri), /journal is corrupt/);
+  } finally { await harness.close(); }
 });

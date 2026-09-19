@@ -168,3 +168,33 @@ test('switching studies discards an older load without borrowing its source or r
   assert.equal(observed.length, 1); assert.equal(observed[0]?.studyId, other.index.header.studyId);
   assert.equal(player.controller.state().presentedMs, 0); assert.equal(player.controller.state().mode, 'paused'); await player.controller.dispose();
 });
+
+test('seeking inside the same recorded frame restores the cleared image before reporting readiness', async () => {
+  // Arrange
+  const player = playbackHarness(); player.open(); await player.controller.settle();
+  // Act: both positions use the first frame and no observation, but a seek cleared its visible renderer.
+  player.seek(25); await player.controller.settle();
+  // Assert
+  assert.equal(player.controller.state().readiness, 'ready'); assert.equal(player.displayed(), 25);
+  assert.equal(player.controller.state().cleared, false); assert.deepEqual(player.presented, [0, 25]);
+  await player.controller.dispose();
+});
+
+for (const interrupt of ['pause', 'hide'] as const) test(`an initial recording load interrupted by ${interrupt} can be explicitly reopened without application execution`, async () => {
+  // Arrange
+  const player = playbackHarness(); let release: () => void = () => undefined;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  player.dependencies.load = async () => { await held; return player.data; };
+  // Act
+  player.open(); if (interrupt === 'pause') player.pause(); else player.controller.hide();
+  release(); await player.controller.settle();
+  assert.equal(player.controller.state().presentedMs, undefined); assert.deepEqual(player.saved, []);
+  if (interrupt === 'pause') player.open(); else player.controller.reveal();
+  await player.controller.settle();
+  // Assert
+  assert.equal(player.controller.state().readiness, 'ready'); assert.equal(player.controller.state().mode, 'paused');
+  assert.equal(player.displayed(), 0); assert.equal(player.controller.state().cleared, false);
+  player.controller.command({ studyId: player.data.index.header.studyId, action: 'play', expectedRevision: player.controller.state().revision });
+  assert.equal(player.controller.state().mode, 'playing');
+  await player.controller.dispose();
+});

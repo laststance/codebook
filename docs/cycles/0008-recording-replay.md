@@ -371,3 +371,10 @@ Completion: Step 0 retained connected scope with two minimal stateful roles; arc
 **VERDICT:** Plan reviews complete; ENG1–ENG3 implemented. Clean `f9806fa` has 231 passing tests and recording/restart proof in both hosts. ENG4 browser motion/constrained/error QA, documentation, root-agent replay and implementation review remain pending. Owner acceptance and final reviews remain pending.
 
 NO UNRESOLVED DECISIONS
+
+
+## Implementation review checkpoint — 2026-09-19
+
+[Ten findings and coverage record](evidence/0008/review/review.md). Two fixing passes and a final primary inspection; four fresh specialist reviews completed. Additional fresh specialist/adversarial reviewers could not start at the agent-thread limit. A reused security/API lens and primary inspection do not fill that missing independence. Own-harness outside selection was rejected without a nested process; unchanged earlier provider timeout was not retried. **DONE_WITH_CONCERNS, completed:false, converged:false.** No final-product reviewer count advances.
+
+The repaired value-corruption case, initial-load interruption, same-frame repaint and sealed-resource read amplification have red-before/green-after tests. The full suite passes 237/237; the final unused constant removal also compiles. README/help now describe API 1.2, safe SDK URI normalization, fresh versus pinned verification and explicit retry behavior. The next action is final clean-candidate native validation in each host, refreshed browser motion/error/layout checks, and actual driving-agent replay. Prior `f9806fa` native evidence is not attributed to the newer code.

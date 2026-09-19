@@ -218,3 +218,11 @@ test('foreign identities and impossible PNG dimensions stop capture without enla
   assert.throws(() => store.path('../other'), /Invalid/);
   assert.throws(() => new RecordingStore('/unused', workspaceKey, { slots: 17 }), /Invalid recording limit/);
 });
+
+
+test('a study without a recording offers history recovery without exposing a filesystem error', async context => {
+  // Arrange
+  const { store, binding } = await recordingHarness(context);
+  // Act / Assert
+  await assert.rejects(store.read(binding.studyId), /No saved recording is available for this study/);
+});

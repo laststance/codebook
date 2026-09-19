@@ -24,7 +24,7 @@ export async function readRecordingResource(service: StudyService, uri: string):
   const studyId = match[1], suffix = match[2], base = recordingUri(studyId);
   try {
     if (suffix?.startsWith('context/')) return json((await store.readContext(studyId, suffix.slice('context/'.length))).context);
-    const index = await store.read(studyId);
+    const index = await (suffix ? store.readResourceIndex(studyId) : store.read(studyId));
     if (!suffix) {
       let contextHash: string | undefined, contextReason: string | undefined;
       try { contextHash = (await store.readContext(studyId)).hash; } catch (error) { contextReason = String(error); }
@@ -37,6 +37,7 @@ export async function readRecordingResource(service: StudyService, uri: string):
       if (!Number.isSafeInteger(cursor)) throw new StudyError('INVALID_REFERENCE', 'Frame cursor is outside its integer range.');
       const entries = index.entries.filter(entry => entry.sequence > cursor).slice(0, RECORDING_FRAME_PAGE_SIZE), last = entries.at(-1)?.sequence ?? cursor;
       return json({ entries: entries.map(entry => entry.type === 'frame' ? { ...entry, uri: `${base}/frame/${entry.hash}` } : entry), afterSequence: cursor, lastSequence: last,
+        verification: 'Current sealed journal identity with a pinned verified index; individual PNG bytes are reverified when fetched. Recording metadata and playback Open perform fresh full verification.',
         nextUri: index.entries.some(entry => entry.sequence > last) ? `${base}/frames/${last}` : undefined, status: index.status, endMs: index.endMs });
     }
     const hash = suffix.slice('frame/'.length);

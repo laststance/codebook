@@ -135,7 +135,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     button('run')!.textContent = `Run ${selectedProfile?.title ?? 'selected scenario'}`;
     button('click')!.textContent = message.nextAction ? `${message.nextAction.title} once` : 'No action available';
     button('stop')!.textContent = liveProfile ? `Stop ${liveProfile.title}` : 'Stop';
-    element('loading').hidden = !message.loading; element('selected').hidden = message.loading;
+    element('loading').hidden = !message.loading;
+    text('loading', recording?.readiness === 'failed' ? 'Recorded context unavailable. Reload after resolving the reported problem.' : 'Loading the selected observation…'); element('selected').hidden = message.loading;
     for (const tab of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-tab]'))) {
       const selected = tab.dataset.tab === contentTab;
       tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;
@@ -153,7 +154,7 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     text('value-caption', model.observation ? 'Actual primitive values captured at this stop.' : 'No values captured for this item.');
     replace('values', model.observation?.values, () => Object.entries(model.observation?.values ?? {}).map(([name, value]) => { const row = document.createElement('tr'); for (const content of [name, String(value)]) { const cell = document.createElement('td'); cell.textContent = content; row.append(cell); } return row; }));
     const interpretations = model.observation?.interpretations ?? [];
-    replace('interpretations', interpretations, () => interpretations.length ? interpretations.map(value => { const paragraph = document.createElement('p'); paragraph.className = 'interpretation'; paragraph.textContent = value.text; return paragraph; }) : [document.createTextNode(recording ? 'No explanation was available by this recorded time.' : 'No agent explanation attached. Captured facts remain available below.')]);
+    replace('interpretations', [Boolean(recording), interpretations], () => interpretations.length ? interpretations.map(value => { const paragraph = document.createElement('p'); paragraph.className = 'interpretation'; paragraph.textContent = value.text; return paragraph; }) : [document.createTextNode(recording ? 'No explanation was available by this recorded time.' : 'No agent explanation attached. Captured facts remain available below.')]);
     const later = recording?.laterInterpretations ?? []; element('later-annotations').hidden = !later.length;
     replace('later-interpretations', later, () => later.map(value => { const paragraph = document.createElement('p'); paragraph.className = 'interpretation'; paragraph.textContent = `${value.availableMs === null ? 'Availability time unknown' : `Added at ${seconds(value.availableMs)}${recording?.range && value.availableMs > recording.range.endMs ? ' — after recording ended' : ''}`} · ${value.text}`; return paragraph; }));
     const focusedItem = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.item : undefined;

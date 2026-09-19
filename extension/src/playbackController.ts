@@ -47,7 +47,7 @@ export class PlaybackController {
     if (this.disposed) throw new Error('Playback controller is closed.');
     if (input.expectedRevision !== this.controlRevision) throw new Error(`Stale playback revision; current revision is ${this.controlRevision}.`);
     if (input.action === 'open') {
-      if (this.studyId === input.studyId) return this.state();
+      if (this.studyId === input.studyId && this.readiness !== 'idle' && this.readiness !== 'failed') return this.state();
       this.remember(); this.controlRevision++; this.mode = 'paused'; this.stopTimer();
       this.studyId = input.studyId; this.data = undefined; this.presented = undefined; this.requestedMs = undefined; this.boundaries = [];
       this.queue({ studyId: input.studyId, save: true }); return this.state();
@@ -109,7 +109,9 @@ export class PlaybackController {
 
   /** Re-presents the committed bundle after a new renderer becomes visible, always paused after a hide. @example controller.reveal() */
   reveal(): void {
-    if (this.disposed || !this.presented || !this.studyId) return;
+    if (this.disposed || !this.studyId) return;
+    // A hidden first load has no committed bundle; revealing explicitly restarts that cancelled read.
+    if (!this.presented) { if (this.readiness === 'idle') this.queue({ studyId: this.studyId, save: true }); return; }
     this.queue({ studyId: this.studyId, positionMs: this.presented.projection.positionMs, restore: this.presented, save: false });
   }
 
@@ -157,7 +159,8 @@ export class PlaybackController {
           if (frameHash && !image) { image = await this.dependencies.frame(request.studyId, frameHash, abort.signal); if (!current()) continue; }
           const bundle: PlaybackBundle = request.restore ?? { studyId: request.studyId, contextHash: data.contextHash, context: data.context, projection, image };
           const contextChanged = this.contextKey(bundle) !== (this.presented && this.contextKey(this.presented));
-          const changed = Boolean(request.restore) || this.presentationKey(bundle) !== (this.presented && this.presentationKey(this.presented));
+          // Explicit seeks clear pixels even when their frame/context matches the last committed bundle.
+          const changed = this.cleared || Boolean(request.restore) || this.presentationKey(bundle) !== (this.presented && this.presentationKey(this.presented));
           if (contextChanged && !this.cleared) { this.cleared = true; this.dependencies.invalidate(); this.dependencies.changed(); }
           if (changed) { await this.dependencies.present(bundle, abort.signal); if (!current()) continue; }
           if (!current()) continue;
