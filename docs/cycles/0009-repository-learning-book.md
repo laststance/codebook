@@ -129,16 +129,48 @@ Acceptance checklist: public schemas/examples complete; three-step connected-age
 - D1 answered: “A — 7項目すべて確認（推奨）.” Review all seven dimensions. This approves coverage, not a visual direction or any remedy.
 - Three generated mockups are ready. A emphasizes one article column; B adds adjacent navigation/context; C uses compact navigation. They illustrate the Wiki reader inside the default Study workspace, not replacements for the three approved product layouts. Example code/text is fictional presentation content, not observed application behavior.
 - All current images passed the designer's automated image-quality check. Primary visual inspection rejected the original A/C collages despite their automated passes; those originals remain in `initial-generated/`, and A/C were regenerated as individual screens and checked again. An image-quality pass is not a plan review or native UX proof.
-- Durable local directory: `/Users/ryotamurakami/.gstack/projects/codebook/designs/cycle0009-repository-wiki-20260919`. It contains current PNGs, briefs, quality results, a SHA-256 manifest, generation sessions and `design-board.html`. `approved.json` does not exist because no direction is approved yet.
+- Durable local directory: `/Users/ryotamurakami/.gstack/projects/codebook/designs/cycle0009-repository-wiki-20260919`. It contains current PNGs, briefs, quality results, a SHA-256 manifest, generation sessions, `design-board.html` and the owner-confirmed `approved.json`.
 - Comparison board: `http://127.0.0.1:55031/boards/b-20260919-084919-rzgkcn/`. The designer emitted `BOARD_URL`, and an independent GET returned HTTP 200. This URL is local to this machine, not a remote issue attachment.
 - D2 feedback received through the board: B rated 5/5, A/C unrated; action `more_like_B`. Owner comment: “I understand this source revisionがでかすぎ、シンプルに小さいunderstandチェックボックスでいい”. Preserve B's composition and simplify that control. Original feedback is retained in `feedback-round-1.json`; consuming the pending request does not manufacture final approval.
 - The built-in imagegen editor produced `variant-B-compact.png`, removing the large acknowledgement panel and its helper text in favor of a small `understand` checkbox. Other composition remains. The image passed automated checking, and the board was reloaded. An HTTP response's three embedded image hashes match the exact current A/B-compact/C files; B-compact SHA-256 is `9fe687a6ff72923d70f55db20065f00e6d7a9518368af70361679996b6d41e8a`.
-- D3 pending: confirm the understood feedback once: B's composition with the compact checkbox becomes the seven-pass review reference. Save `approved.json` only after the actual answer. Do not re-ask which variant the owner chose. The skill requires this interpretation check before the seven passes; its image checker, earlier product-layout approval and D1 do not replace it.
-- All seven passes and any individual remedy decisions remain pending; engineering follows their amendments. Independent plan coverage remains unavailable; the image checker is not a fresh independent final-product reviewer.
+- D3 answered: “はい、修正版 B でレビューを進める（推奨）”. B's composition with the compact checkbox is the approved seven-pass review reference; `approved.json` preserves the actual answer and image hash. Do not re-ask the variant or checkbox choice.
+- Pass 1 is recorded below. Pass 2 has D4 pending; later passes have not run. Engineering follows the completed design amendments. Independent plan coverage remains unavailable at the previously observed provider/thread boundaries; the image checker is not a fresh independent final-product reviewer.
+
+### Approved mockup
+
+| Screen | Full mockup path | Direction | Constraint |
+| --- | --- | --- | --- |
+| Repository Wiki within Study workspace | `/Users/ryotamurakami/.gstack/projects/codebook/designs/cycle0009-repository-wiki-20260919/variant-B-compact.png` | B: native source beside article with adjacent article/relationship navigation | Compact `understand` checkbox, without the large acknowledgement panel or helper paragraph. Mockup copy/code is illustrative, not the implementation contract. |
+
+### Pass 1 — Information architecture
+
+Score: 8 → 10/10 for plan specificity after the owner's D3 visual-direction decision. No additional unresolved information-architecture finding. This is not a usability-test result.
+
+The three priorities are: (1) selected article and its explanation, (2) exact source citation and native source, (3) related source structure and retained observations. Repository/article navigation identifies location; revision and source/evidence labels identify context. Progress remains a small learner action, not a competing panel. The diagram records the approved composition and already planned navigation; it adds no unapproved feature.
+
+```text
+codebook / Repository Wiki
+├─ Book + revision / article tree
+├─ Native cited TypeScript source
+└─ Wiki reader
+   ├─ Article title + Source-derived / Agent interpretation
+   ├─ Sections + exact source citations  |  On this page / source relations
+   ├─ Related retained study (explicit partial/unknown status)
+   └─ [ ] understand
+
+Article / relation → selected node → immutable native cited source
+Article → View observation → exact saved observation → Return to Wiki
+Article → View recording  → paused recorded moment  → Return to Wiki
+Return restores the original book / revision / node; no application input.
+```
+
+### Pass 2 — Interaction states, in progress
+
+Initial score: 8/10. D4 pending: an article may cite multiple sources, while the primary implementation draft binds understanding to its primary anchor. The plan does not clearly say whether changes to secondary citations also place the article in Review needed. Option A (recommended) retains historical understanding and shows article-level Review needed when any cited source changes; option B uses that article-level status only for the primary source and labels other changed citations locally. Neither remedy is accepted yet. Keep the approved compact checkbox in both alternatives.
 
 ## Selected implementation contract
 
-These were primary-agent engineering and UX decisions under D008, not formal `/plan-eng-review` or `/plan-design-review` results. Both skill definitions require an explicit owner-named target outside Plan mode: “only if the user EXPLICITLY names the target.” Raphtalia answered the scope question, “Cycle 0009 の計画を対象にする（推奨）.” The target gate is now resolved. The formal design checkpoint above records all seven passes selected, B feedback received and D3 interpretation confirmation pending. No visual direction or remedy is approved by the focus answer alone. Further implementation is paused during these plan reviews; the source/schema draft below remains unvalidated at runtime.
+These were primary-agent engineering and UX decisions under D008, not formal `/plan-eng-review` or `/plan-design-review` results. Both skill definitions require an explicit owner-named target outside Plan mode: “only if the user EXPLICITLY names the target.” Raphtalia answered the scope question, “Cycle 0009 の計画を対象にする（推奨）.” The target gate is now resolved. The formal design checkpoint records all seven passes selected, B with compact checkbox approved and D4 source-change presentation pending. No other remedy is approved by the scope/focus answers. Further implementation is paused during these plan reviews; the source/schema draft below remains unvalidated at runtime.
 
 ### Architecture and alternatives
 
@@ -230,7 +262,7 @@ Next: finish the now explicitly scoped formal design review, then engineering; r
 | --- | --- | --- | --- | --- | --- |
 | DX Review | `/plan-devex-review` | Agent source/content contract | 1 primary | DONE_WITH_CONCERNS | Eight passes, four implementation tasks; planning specificity 4.4 → 9.8, actual DX unmeasured |
 | Outside Review | Installed skill preflight / known provider and thread limits | Independent challenge | 0 completed | unavailable | Own-harness nested Codex is excluded; native thread limit and prior external timeout remain unchanged |
-| Design Review | `/plan-design-review` | Reader UX | 1 started | in progress | Explicit target and all seven passes selected; initial specificity 8/10; B feedback applied to mockup; D3 interpretation confirmation pending |
+| Design Review | `/plan-design-review` | Reader UX | 1 started | in progress | B with compact checkbox approved; Pass 1 8 → 10, Pass 2 8 with D4 pending; later passes not run |
 | Eng Review | `/plan-eng-review` | Storage, identity, source scope | 0 | target selected, not started | Await design amendments; earlier primary contract is not a skill result |
 | CEO Review | Existing goal/design | Product scope unchanged | 0 this cycle | not requested | Existing product direction retained |
 
@@ -239,4 +271,4 @@ OUTSIDE COVERAGE: unavailable; no independent result or cross-model agreement in
 VERDICT: DX plan recorded with concerns; formal design in progress and eng review still required. Source draft passes typecheck and 11 filesystem/schema tests only; no product acceptance follows from this report.
 
 **UNRESOLVED DECISIONS:**
-- Design Step 0.5 D3 interpretation confirmation pending: B composition with the requested compact `understand` checkbox. Scope and all seven passes are selected; B's board feedback is retained and the revised image is ready.
+- D4 pending: whether any changed citation places its article in Review needed, or only the primary citation does. No remedy is accepted yet; later design passes and engineering remain pending.
