@@ -1,8 +1,9 @@
 import { chmod, lstat, mkdir, readdir } from 'node:fs/promises';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { join } from 'node:path';
-import { LEARNING_SCHEMA_VERSION_V2, MAX_LEARNER_DECISIONS, MAX_LIBRARY_FILES, MAX_STUDY_ARCHIVE_BYTES, PRIVATE_DIRECTORY_MODE, PROGRESS_LIMIT_BYTES, PROGRESS_V2_FILE, STUDY_V2_SUFFIX, STUDY_METADATA_V2_SUFFIX, STUDY_METADATA_LIMIT_BYTES } from './constants';
-import { learnerDecisionSchema, selectionSchema, studyMetadataSchema, type StudyCatalogEntry, type LearnerDecision, type LearnerProgress, type StudyArchive, type StudySelection } from './studySchemas';
+import { LEARNING_SCHEMA_VERSION_V2, LEARNING_SCHEMA_VERSION_V3, MAX_LEARNER_DECISIONS, MAX_LIBRARY_FILES, MAX_STUDY_ARCHIVE_BYTES, PRIVATE_DIRECTORY_MODE, PROGRESS_LIMIT_BYTES, PROGRESS_V2_FILE, PROGRESS_V3_FILE, STUDY_V2_SUFFIX, STUDY_METADATA_V2_SUFFIX, STUDY_METADATA_LIMIT_BYTES } from './constants';
+import { selectionSchema, studyMetadataSchema, type StudyCatalogEntry, type StudyArchive, type StudySelection } from './studySchemas';
+import { learnerIntentSchema, repositorySelectionSchema, type LearnerDecision, type LearnerProgress, type RepositorySelection } from './learnerSchemas';
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite';
 import { readBoundedFile } from './utils/readBoundedFile';
 import { studyIdSchema } from './legacyStudySchemas';
@@ -63,21 +64,24 @@ export class LearningLibrary {
     }
   }
 
-  /** Normalizes legacy progress in memory only when v2 is absent; corrupt v2 fails closed. @example await library.readProgress() */
+  /** Prefers v3 by existence, normalizing validated v2/v1 without altering their files or hiding corruption. @example await library.readProgress() */
   async readProgress(): Promise<LearnerProgress> {
     await this.initialize();
-    const modern = join(this.directory, PROGRESS_V2_FILE), modernStat = await this.optionalStat(modern);
-    const path = modernStat ? modern : join(this.directory, 'progress.json'), stat = modernStat ?? await this.optionalStat(path);
-    if (!stat) return { version: LEARNING_SCHEMA_VERSION_V2, workspaceKey: this.workspaceKey, decisions: [] };
-    if (!stat.isFile()) throw new Error('Progress is not a regular file.');
-    const value: unknown = JSON.parse((await readBoundedFile(path, PROGRESS_LIMIT_BYTES)).toString());
-    if (modernStat && (!value || typeof value !== 'object' || !('version' in value) || value.version !== LEARNING_SCHEMA_VERSION_V2)) throw new Error('Version 2 progress has an incompatible schema.');
-    return decodeLearnerProgress(value, this.workspaceKey);
+    // Presence selects the format. An unreadable/newer preferred file cannot resurrect older choices.
+    for (const [filename, version] of [[PROGRESS_V3_FILE, LEARNING_SCHEMA_VERSION_V3], [PROGRESS_V2_FILE, LEARNING_SCHEMA_VERSION_V2], ['progress.json', 1]] as const) {
+      const path = join(this.directory, filename), stat = await this.optionalStat(path);
+      if (!stat) continue;
+      if (!stat.isFile()) throw new Error('Progress is not a regular file.');
+      const value: unknown = JSON.parse((await readBoundedFile(path, PROGRESS_LIMIT_BYTES)).toString());
+      if (!value || typeof value !== 'object' || !('version' in value) || value.version !== version) throw new Error(`Version ${version} progress has an incompatible schema.`);
+      return decodeLearnerProgress(value, this.workspaceKey);
+    }
+    return { version: LEARNING_SCHEMA_VERSION_V3, workspaceKey: this.workspaceKey, decisions: [] };
   }
 
   /** Appends an explicit learner intent after re-reading under the cross-window lock. @example await library.decide({id,item:'paired-cart-demo/server',sourceHash,understood:true,at}) */
   decide(input: LearnerDecision): Promise<LearnerProgress> {
-    const decision = learnerDecisionSchema.parse(input);
+    const decision = learnerIntentSchema.parse(input);
     return this.locked(async () => {
       const progress = await this.readProgress(), prior = progress.decisions.find(value => value.id === decision.id);
       if (prior) {
@@ -86,7 +90,7 @@ export class LearningLibrary {
       }
       if (progress.decisions.length >= MAX_LEARNER_DECISIONS) throw new Error('Understanding history is full; no previous decision was removed.');
       const next = { ...progress, decisions: [...progress.decisions, decision] };
-      await atomicPrivateWrite(join(this.directory, PROGRESS_V2_FILE), next, PROGRESS_LIMIT_BYTES); return next;
+      await atomicPrivateWrite(join(this.directory, PROGRESS_V3_FILE), next, PROGRESS_LIMIT_BYTES); return next;
     });
   }
 
@@ -95,7 +99,16 @@ export class LearningLibrary {
     const selection = selectionSchema.parse(input);
     return this.locked(async () => {
       const progress = await this.readProgress();
-      await atomicPrivateWrite(join(this.directory, PROGRESS_V2_FILE), { ...progress, selection }, PROGRESS_LIMIT_BYTES);
+      await atomicPrivateWrite(join(this.directory, PROGRESS_V3_FILE), { ...progress, selection }, PROGRESS_LIMIT_BYTES);
+    });
+  }
+
+  /** Persists exact repository reading/return context in the shared ledger without acknowledging code. @example await library.selectRepository(selection) */
+  selectRepository(input: RepositorySelection): Promise<void> {
+    const repositorySelection = repositorySelectionSchema.parse(input);
+    return this.locked(async () => {
+      const progress = await this.readProgress();
+      await atomicPrivateWrite(join(this.directory, PROGRESS_V3_FILE), { ...progress, repositorySelection }, PROGRESS_LIMIT_BYTES);
     });
   }
 

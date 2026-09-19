@@ -6,7 +6,7 @@ import { dirname } from 'node:path';
 /** Injects only editor effects into compiled boundary modules while preserving actual Node/SDK code. @example await loadModule<typeof import('../../environment')>(path, {vscode: stub}) */
 export async function loadModule<Module>(path: string, dependencies: Record<string, unknown>): Promise<Module> {
   const required = createRequire(path), module = { exports: {} };
-  runInNewContext(await readFile(path, 'utf8'), { module, exports: module.exports, __dirname: dirname(path), __filename: path, Buffer, process, console, setInterval, clearInterval, AbortController,
+  runInNewContext(await readFile(path, 'utf8'), { module, exports: module.exports, __dirname: dirname(path), __filename: path, Buffer, process, console, setInterval, clearInterval, setTimeout, clearTimeout, AbortController, AbortSignal,
     require: (name: string) => Object.hasOwn(dependencies, name) ? dependencies[name] : required(name) }, { filename: path });
   // A dynamically evaluated CommonJS export has no static TypeScript type; callers supply the original module contract.
   return module.exports as Module;

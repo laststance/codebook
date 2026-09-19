@@ -11,6 +11,8 @@ import { RecordingStore } from '../recordingStore';
 import type { StudyViewMessage } from '../ui/studyHtml';
 import { ControlledRuntime, createHarness } from './helpers';
 import { loadModule } from './utils/loadModule';
+import { bookObservationHash } from '../utils/bookObservationHash';
+import type { BookObservationBinding } from '../repositorySchemas';
 
 /** Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions. @example const reader = await workspaceHarness() */
 async function workspaceHarness(attach = true, deterministicClock = false) {
@@ -30,12 +32,16 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     toString() { return `${this.scheme}://${this.authority}${this.path}`; }
   }
   class TabInputText { constructor(readonly uri: Uri) {} }
-  type Tab = { input: TabInputText };
+  class TabInputWebview { constructor(readonly viewType: string) {} }
+  type Tab = { input: TabInputText | TabInputWebview; label?: string };
   const groups: { viewColumn: number; tabs: Tab[]; activeTab?: Tab }[] = [{ viewColumn: 2, tabs: [] }];
+  let changedGroups = (_event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => {};
   let sourceProvider = async (_uri: Uri) => '';
   let nextOpen: { wait: Promise<void>; entered(): void } | undefined;
   let nextCommand: { name: string; wait: Promise<void>; entered(): void } | undefined;
   const commands: string[] = [];
+  let editorLayout: unknown = { orientation: 0, groups: [{}] };
+  let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined;
   const panels = new Set<ReturnType<typeof panel>>();
   const receivers = new Map<string, (message: unknown) => void>();
   let automaticContextReceipt = false, contextCoversSource = false, displayedImage: string | undefined;
@@ -54,11 +60,29 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     reveal: async (participant: string, options: { select: boolean; focus: boolean }) => { assert.equal(options.focus, false); if (options.select) outline.selection = [participant]; } };
   const watcher = { onDidChange(callback: () => void) { changed = callback; return disposable(); }, onDidCreate: disposable, onDidDelete: disposable, dispose() {} };
   const boundary = await loadModule<typeof import('../studyWorkspace')>(resolve(__dirname, '../studyWorkspace.js'), {
-    vscode: { EventEmitter, Uri, TabInputText, Position: class {}, Range: class {}, ViewColumn: { One: 1, Two: 2, Three: 3 }, ThemeColor: class {}, RelativePattern: class {},
-      commands: { executeCommand: async (name: string) => { commands.push(name); const held = nextCommand; if (held?.name === name) { nextCommand = undefined; held.entered(); await held.wait; } } },
+    vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, Position: class {}, Range: class {}, ViewColumn: { One: 1, Two: 2, Three: 3 }, ThemeColor: class {}, RelativePattern: class {},
+      commands: { async executeCommand(name: string, layout?: unknown): Promise<unknown> {
+        commands.push(name); const held = nextCommand; if (held?.name === name) { nextCommand = undefined; held.entered(); await held.wait; }
+        if (name === failingCommand) { failingCommand = undefined; throw new Error('Native layout command failed'); }
+        if (name === 'runCommands') {
+          assert.ok(layout && typeof layout === 'object' && 'commands' in layout && Array.isArray(layout.commands));
+          // Both native hosts notify child failures without rejecting the accepted batch promise.
+          try { for (const command of layout.commands) await this.executeCommand(typeof command === 'string' ? command : command.command, typeof command === 'string' ? undefined : command.args); } catch {}
+          return;
+        }
+        if (name === 'vscode.getEditorLayout') return JSON.parse(JSON.stringify(editorLayout, (key, value) => key === 'groups' && Array.isArray(value) ? value.map(group => ({ size: 1, ...group })) : value));
+        if (name === 'vscode.setEditorLayout') {
+          settledLayout = structuredClone(layout);
+          editorLayout = transientLayout ? { orientation: 0, groups: [{ size: 0.5, groups: [{ size: 0.5 }, { size: 475.83333333333326 }] }, { size: 659.5 }] } : structuredClone(layout);
+          const opened: typeof groups = [];
+          for (const column of [1, 3]) if (!groups.some(group => group.viewColumn === column)) { const group = { viewColumn: column, tabs: [] }; groups.push(group); opened.push(group); }
+          if (opened.length) changedGroups({ opened, closed: [], changed: [] });
+        }
+        if (name === 'workbench.action.evenEditorWidths') editorLayout = structuredClone(settledLayout);
+      } },
       window: { createTextEditorDecorationType: disposable, createTreeView: () => outline, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: disposable, createWebviewPanel: panel,
         showTextDocument: async (document: { uri: Uri; getText(): string }) => { const tab = { input: new TabInputText(document.uri) }; groups[0]!.tabs.push(tab); groups[0]!.activeTab = tab; return { document, setDecorations() {} }; },
-        tabGroups: { all: groups, close: async (tabs: Tab[]) => { groups[0]!.tabs = groups[0]!.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
+        tabGroups: { all: groups, onDidChangeTabGroups: (callback: typeof changedGroups) => { changedGroups = callback; return disposable(); }, close: async (tabs: Tab[]) => { groups[0]!.tabs = groups[0]!.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
       workspace: { textDocuments: [], registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
         openTextDocument: async (uri: Uri) => { const held = nextOpen; nextOpen = undefined; if (held) { held.entered(); await held.wait; } const text = await sourceProvider(uri); return { uri, getText: () => text }; },
         onDidChangeTextDocument: disposable, createFileSystemWatcher: () => watcher } },
@@ -69,13 +93,32 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       async presentMissing() { displayedImage = undefined; }
     } },
   });
-  const controls = { start: async () => harness.service, connect: async () => {} };
+  const controls = { start: async () => harness.service, connect: async () => {}, returnToRepository: async () => {} };
   const createReader = () => new boundary.StudyWorkspace({ extensionPath: join(harness.directory, 'extension'), globalStorageUri: { fsPath: join(harness.directory, 'storage') }, subscriptions: [] }, controls);
   const reader = createReader();
   if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
   return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
     clock(value: number) { clock = value; }, acknowledgeContext() { automaticContextReceipt = true; }, displayedImage: () => displayedImage,
     coverSourceWhenContextFocused() { contextCoversSource = true; },
+    editorLayout: () => structuredClone(editorLayout), changeEditorLayout(layout: unknown) { editorLayout = structuredClone(layout); },
+    showTransientNativeSizes() { transientLayout = true; },
+    failNextCommand(name: string) { failingCommand = name; },
+    addForeignDraft() { const tab = { input: new TabInputText(Uri.file(join(harness.directory, 'notes.txt'))), isDirty: true }; groups[0]!.tabs.push(tab); return tab; },
+    resyncEditorGroups(change?: 'move' | 'replace') {
+      // Give each fake group a distinct stable input, like the actual singleton panels/native source tabs.
+      for (const group of groups) if (!group.tabs.length) group.tabs.push({ input: new TabInputText(Uri.file(`/group-${group.viewColumn}`)) });
+      const previous = [...groups];
+      groups.splice(0, groups.length, ...groups.map(group => ({ ...group, tabs: group.tabs.map(tab => ({ ...tab, label: 'Recorded application', input: tab.input instanceof TabInputText ? new TabInputText(tab.input.uri) : new TabInputWebview(tab.input.viewType) })) })));
+      if (change === 'move') { const first = groups[0]!.tabs; groups[0]!.tabs = groups[1]!.tabs; groups[1]!.tabs = first; }
+      changedGroups({ opened: change === 'replace' ? [...groups] : [], closed: change === 'replace' ? previous : [], changed: [...groups] });
+    },
+    seedPanelTabs(kind: 'known' | 'unknown' | 'duplicate') {
+      for (const group of groups) {
+        const type = group.viewColumn === 1 ? 'codebook.scopedBrowser' : group.viewColumn === 2 ? 'codebook.repositoryWiki' : 'codebook.studyContext';
+        const tab = { label: 'Application', input: new TabInputWebview(`${kind === 'unknown' ? 'foreign-' : 'mainThreadWebview-'}${type}`) };
+        group.tabs = kind === 'duplicate' ? [tab, { ...tab }] : [tab];
+      }
+    },
     holdNextImage() {
       let release = () => {}, entered = () => {};
       const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
@@ -109,6 +152,305 @@ async function recordedReaderHarness() {
   return { ...harness, studyId, store, record, png, controller: service.playbackController! };
 }
 
+test('book evidence opens the exact historical observation and retains a restart-safe Return to Wiki target', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
+  try {
+    const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
+    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    await library.selectRepository({ bookId: 'architecture', revision: 1, nodeId: 'cart', anchorIndex: 0, location: { sectionIndex: 1, fraction: 0.5, focusId: 'section-1' } });
+    // Act
+    await harness.reader.openRepositoryEvidence(binding, false);
+    const view = harness.reader.inspect().view!;
+    // Assert
+    assert.equal(view.model.observation?.id, observation.id); assert.equal(view.model.selection.follow, false); assert.equal(view.model.continueArguments, undefined);
+    assert.equal(harness.runtimes[0]!.dispatches, 1); assert.equal((await library.readProgress()).repositorySelection?.location?.fraction, 0.5);
+    assert.equal((await library.readProgress()).decisions.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('book recording links seek the exact captured observation time while playback stays paused and runtime input stays unchanged', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
+  try {
+    const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
+    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    // Act
+    await harness.reader.openRepositoryEvidence(binding, true);
+    const view = harness.reader.inspect().view!;
+    // Assert
+    assert.equal(view.model.observation?.id, observation.id); assert.equal(view.recording?.presentedMs, 100); assert.equal(view.recording?.mode, 'paused');
+    assert.equal(view.model.continueArguments, undefined); assert.equal(harness.runtimes[0]!.dispatches, 1); assert.equal((await library.readProgress()).decisions.length, 0);
+  } finally { await harness.close(); }
+});
+
+for (const recording of [false, true]) test(`Wiki ${recording ? 'recording' : 'observation'} entry preserves hidden navigation panes while explicit Open Study still reveals them`, async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
+  try {
+    const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
+    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    harness.commands.length = 0;
+    // Act
+    await harness.reader.openRepositoryEvidence(binding, recording);
+    const evidenceNavigation = harness.commands.filter(name => name === 'codebook.learningOutline.focus' || name === 'codebook.observedMoments.focus');
+    await harness.reader.open();
+    // Assert
+    assert.deepEqual(evidenceNavigation, []);
+    assert.deepEqual(harness.commands.filter(name => name === 'codebook.learningOutline.focus' || name === 'codebook.observedMoments.focus'), ['codebook.learningOutline.focus', 'codebook.observedMoments.focus']);
+    assert.equal(harness.reader.inspect().view!.model.observation?.id, observation.id);
+    assert.equal(harness.runtimes[0]!.dispatches, 1); assert.equal((await library.readProgress()).decisions.length, 0);
+  } finally { await harness.close(); }
+});
+
+for (const recording of [false, true]) test(`explicit Open Study reveals navigation even while a Wiki ${recording ? 'recording' : 'observation'} entry is waiting for source`, async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
+  const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
+  const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+  harness.commands.length = 0; const source = harness.holdNextSource();
+  const navigation = harness.reader.openRepositoryEvidence(binding, recording);
+  try {
+    await source.started;
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.deepEqual(harness.commands.filter(name => name === 'codebook.learningOutline.focus' || name === 'codebook.observedMoments.focus'), ['codebook.learningOutline.focus', 'codebook.observedMoments.focus']);
+  } finally { source.release(); await navigation; await harness.close(); }
+});
+
+test('book evidence rejects a changed captured observation before selecting history or opening replay', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
+  try {
+    const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
+    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: '0'.repeat(64), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    // Act / Assert
+    await assert.rejects(harness.reader.openRepositoryEvidence(binding, false), /exact saved checkpoint/);
+    await assert.rejects(harness.reader.openRepositoryEvidence(binding, true), /exact saved checkpoint/);
+    assert.equal(harness.runtimes[0]!.dispatches, 1); assert.equal(harness.reader.inspect().view?.recording, undefined);
+  } finally { await harness.close(); }
+});
+
+test('closing the article during a pending checkpoint prevents the later evidence read from opening study panes', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage(), originalRead = library.readCheckpoint.bind(library);
+  let release = () => {}, enter = () => {};
+  const entered = new Promise<void>(resolve => { enter = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  try {
+    const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
+    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    await harness.reader.close(); library.readCheckpoint = async (...arguments_: Parameters<typeof originalRead>) => { const checkpoint = await originalRead(...arguments_); enter(); await held; return checkpoint; };
+    const cancellation = new AbortController();
+    // Act
+    const pending = harness.reader.openRepositoryEvidence(binding, false, cancellation.signal), rejected = assert.rejects(pending, /abort/i);
+    await entered; cancellation.abort(); release(); await rejected;
+    // Assert
+    assert.equal(harness.reader.inspect().opened, false); assert.equal(harness.counts().panels, 0); assert.equal(harness.runtimes[0]!.dispatches, 1);
+  } finally { release(); library.readCheckpoint = originalRead; await harness.close(); }
+});
+
+for (const recording of [false, true]) test(`cancelling ${recording ? 'recording' : 'observation'} navigation during native source acquisition prevents its later source reveal and focus commands`, async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
+  const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
+  const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+  await harness.reader.close(); const source = harness.holdNextSource(), cancellation = new AbortController();
+  try {
+    // Act
+    const pending = harness.reader.openRepositoryEvidence(binding, recording, cancellation.signal), rejected = assert.rejects(pending, /abort/i);
+    await source.started; const commands = [...harness.commands]; cancellation.abort(); source.release(); await rejected;
+    // Assert
+    assert.equal(harness.groups[0]!.tabs.length, 0); assert.deepEqual(harness.commands, commands); assert.equal(harness.reader.inspect().opened, false);
+    assert.equal(harness.runtimes[0]!.dispatches, 1); assert.equal((await library.readProgress()).decisions.length, 0);
+    await harness.reader.open(); assert.equal(harness.reader.inspect().opened, true);
+  } finally { source.release(); await harness.close(); }
+});
+
+test('cancelling a first reader entry drains its accepted workbench layout batch without dispatching another mutation', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false), cancellation = new AbortController(), layout = harness.holdNextCommand('runCommands');
+  try {
+    // Act
+    const opening = harness.reader.open(cancellation.signal), rejected = assert.rejects(opening, /abort/i);
+    await layout.started; const commands = [...harness.commands]; cancellation.abort(); layout.release(); await rejected;
+    // Assert
+    assert.deepEqual(harness.commands, [...commands, 'vscode.setEditorLayout', 'workbench.action.evenEditorWidths', 'vscode.getEditorLayout']); assert.equal(harness.reader.inspect().opened, false);
+    await harness.reader.open(); assert.equal(harness.reader.inspect().opened, true);
+  } finally { layout.release(); await harness.close(); }
+});
+
+test('returning to Wiki places source beside article without merging tabs and the next evidence entry restores Study panes', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    await harness.reader.open(); const groups = [...harness.groups], draft = harness.addForeignDraft();
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal); const readingLayout = harness.editorLayout();
+    await harness.reader.open();
+    // Assert
+    assert.deepEqual(readingLayout, { orientation: 0, groups: [{}, {}, {}] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.deepEqual(harness.groups, groups); assert.equal(harness.groups[0]!.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
+    assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 3); assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+for (const change of ['shape', 'size', 'identity', 'extra-group']) test(`returning to Wiki preserves a learner's ${change} change to the native editor layout`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    await harness.reader.open();
+    if (change === 'shape') harness.changeEditorLayout({ orientation: 1, groups: [{}, {}, {}] });
+    if (change === 'size') harness.changeEditorLayout({ orientation: 0, groups: [{ size: 0.7, groups: [{ size: 0.3 }, { size: 0.7 }] }, { size: 0.3 }] });
+    if (change === 'identity') harness.groups[0] = { ...harness.groups[0]! };
+    if (change === 'extra-group') harness.groups.push({ viewColumn: 4, tabs: [] });
+    const layout = harness.editorLayout(), groups = [...harness.groups], draft = harness.addForeignDraft();
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal); await harness.reader.open();
+    // Assert
+    assert.deepEqual(harness.editorLayout(), layout); assert.deepEqual(harness.groups, groups);
+    assert.equal(harness.groups[0]!.tabs.includes(draft), true); assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 1);
+  } finally { await harness.close(); }
+});
+
+test('evidence entry preserves a learner resize made while reading the Wiki', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false), layout = { orientation: 0, groups: [{ size: 0.2 }, { size: 0.6 }, { size: 0.2 }] };
+  try {
+    await harness.reader.open(); await harness.reader.arrangeRepository(new AbortController().signal); harness.changeEditorLayout(layout);
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.deepEqual(harness.editorLayout(), layout); assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 2);
+  } finally { await harness.close(); }
+});
+
+test('cancelling Wiki navigation while checking native layout ownership cannot rearrange the editor later', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false), cancellation = new AbortController();
+  let release = () => {};
+  try {
+    await harness.reader.open(); const held = harness.holdNextCommand('vscode.getEditorLayout'); release = held.release;
+    // Act
+    const navigation = harness.reader.arrangeRepository(cancellation.signal), rejected = assert.rejects(navigation, /abort/i);
+    await held.started; cancellation.abort(); held.release(); await rejected;
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 1);
+  } finally { release(); await harness.close(); }
+});
+
+test('returning to Wiki during a cancelled Study layout waits for the accepted host effect then restores side-by-side reading', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false), cancellation = new AbortController();
+  let release = () => {};
+  try {
+    await harness.reader.open(); await harness.reader.arrangeRepository(new AbortController().signal);
+    const held = harness.holdNextCommand('runCommands'); release = held.release;
+    const opening = harness.reader.open(cancellation.signal), rejected = assert.rejects(opening, /abort/i);
+    // Act
+    await held.started; cancellation.abort(); const returning = harness.reader.arrangeRepository(new AbortController().signal);
+    held.release(); await rejected; await returning;
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{}, {}, {}] });
+    assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 4);
+    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, 4);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { release(); await harness.close(); }
+});
+
+for (const change of ['shape', 'size']) test(`a manual ${change} change during the host layout receipt never becomes Codebook-owned on the next Wiki return`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false), manual = change === 'shape' ? { orientation: 1, groups: [{}, {}, {}] } : { orientation: 0, groups: [{ size: 0.7, groups: [{ size: 0.3 }, { size: 0.7 }] }, { size: 0.3 }] };
+  let release = () => {};
+  try {
+    await harness.reader.open(); const held = harness.holdNextCommand('vscode.getEditorLayout'); release = held.release;
+    // Act
+    const arranging = harness.reader.action('arrange'); await held.started;
+    harness.changeEditorLayout(manual); held.release(); await arranging;
+    await harness.reader.arrangeRepository(new AbortController().signal);
+    // Assert
+    assert.deepEqual(harness.editorLayout(), manual); assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 2);
+    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, 2);
+  } finally { release(); await harness.close(); }
+});
+
+test('Cursor wrapper-only tab resync preserves Wiki and Study layout switching during an in-flight ownership read', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  let release = () => {};
+  try {
+    await harness.reader.open(); const held = harness.holdNextCommand('vscode.getEditorLayout'); release = held.release;
+    // Act
+    const returning = harness.reader.arrangeRepository(new AbortController().signal); await held.started;
+    harness.resyncEditorGroups(); held.release(); await returning; const wiki = harness.editorLayout();
+    harness.resyncEditorGroups(); await harness.reader.open();
+    // Assert
+    assert.deepEqual(wiki, { orientation: 0, groups: [{}, {}, {}] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 3);
+  } finally { release(); await harness.close(); }
+});
+
+for (const change of ['move', 'replace'] as const) test(`a host tab resync cannot disguise a learner group ${change} as Codebook ownership`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    await harness.reader.open(); harness.resyncEditorGroups(change);
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal);
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 1);
+  } finally { await harness.close(); }
+});
+
+for (const kind of ['known', 'unknown', 'duplicate'] as const) test(`Cursor ${kind} webview inputs ${kind === 'known' ? 'retain layout ownership across application title changes' : 'cannot acquire Codebook layout ownership during resync'}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    await harness.reader.open(); harness.seedPanelTabs(kind);
+    // Act
+    harness.resyncEditorGroups(); await harness.reader.arrangeRepository(new AbortController().signal);
+    // Assert
+    assert.deepEqual(harness.editorLayout(), kind === 'known' ? { orientation: 0, groups: [{}, {}, {}] } : { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, kind === 'known' ? 2 : 1);
+  } finally { await harness.close(); }
+});
+
+for (const newerSelection of [false, true]) test(`cancelling linked evidence during a shared refresh ${newerSelection ? 'preserves a newer learner profile' : 'keeps the existing study and prevents a later background source reveal'}`, async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
+  clearInterval(harness.reader['timer']); harness.reader['timer'] = undefined;
+  await harness.reader.open(); await harness.reader.select('paired-cart-demo/browser');
+  const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
+  const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+  const checkpoint = harness.reader['checkpoint'].bind(harness.reader), open = harness.reader.open.bind(harness.reader);
+  let release = () => {}, enter = () => {}, openEntered = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; }), entered = new Promise<void>(resolve => { enter = resolve; }), reachedOpen = new Promise<void>(resolve => { openEntered = resolve; });
+  harness.reader['checkpoint'] = async (...arguments_: Parameters<typeof checkpoint>) => { await checkpoint(...arguments_); enter(); await held; };
+  harness.reader.open = async signal => { openEntered(); await open(signal); };
+  const cancellation = new AbortController();
+  try {
+    // Act
+    const background = harness.reader['refresh'](); await entered;
+    const pending = harness.reader.openRepositoryEvidence(binding, false, cancellation.signal), rejected = assert.rejects(pending, /abort/i);
+    await reachedOpen; await new Promise<void>(resolve => setImmediate(resolve));
+    if (newerSelection) await harness.reader.selectProfile('checkout-demo');
+    const tabs = [...harness.groups[0]!.tabs], commands = [...harness.commands];
+    cancellation.abort(); release(); await background; await rejected; await harness.reader['refresh']();
+    // Assert
+    assert.deepEqual(harness.groups[0]!.tabs, tabs); assert.deepEqual(harness.commands, commands);
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.reader['sourceReady'](), true);
+    assert.equal(harness.reader.inspect().view?.model.selection.itemId, newerSelection ? 'checkout-demo/cart-mutation' : 'paired-cart-demo/browser');
+    assert.equal(harness.runtimes[0]!.dispatches, 1);
+    await harness.reader.openRepositoryEvidence(binding, false); await harness.reader['refresh']();
+    assert.equal(harness.reader.inspect().view?.model.observation?.id, observation.id);
+  } finally { release(); harness.reader['checkpoint'] = checkpoint; harness.reader.open = open; await harness.close(); }
+});
+
 test('Recording opens paused with no future source and seeking binds captured values without executing or marking understanding', async () => {
   // Arrange
   const harness = await recordedReaderHarness();
@@ -129,6 +471,24 @@ test('Recording opens paused with no future source and seeking binds captured va
   } finally { await harness.close(); }
 });
 
+test('returning from recording to Wiki keeps background study refresh from covering the article with captured source', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    harness.controls.returnToRepository = async () => { harness.controller.hide(); harness.groups[0]!.activeTab = undefined; };
+    const tabs = [...harness.groups[0]!.tabs], commands = [...harness.commands];
+    // Act
+    await harness.reader.action('return-wiki'); await harness.reader['refresh'](); await harness.reader.retire(harness.service);
+    // Assert
+    assert.deepEqual(harness.groups[0]!.tabs, tabs); assert.deepEqual(harness.commands, commands); assert.equal(harness.groups[0]!.activeTab, undefined);
+    assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.runtimes[0]!.dispatches, 1);
+    harness.controller.reveal(); await harness.controller.settle();
+    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.reader.inspect().view?.model.observation?.elapsedMs, 100);
+  } finally { await harness.close(); }
+});
+
 test('opening a recording restores its captured source after context focus covers the manually moved source group', async () => {
   // Arrange
   const harness = await recordedReaderHarness(); harness.coverSourceWhenContextFocused();
@@ -138,7 +498,7 @@ test('opening a recording restores its captured source after context focus cover
     // Assert
     const state = harness.reader.inspect();
     assert.equal(state.view?.recording?.readiness, 'ready', state.view?.recording?.reason);
-    assert.equal(harness.groups[0]?.activeTab?.input.uri.toString(), state.sourceUri);
+    const input = harness.groups[0]?.activeTab?.input; assert.ok(input && 'uri' in input); assert.equal(input.uri.toString(), state.sourceUri);
   } finally { await harness.close(); }
 });
 
@@ -434,7 +794,7 @@ test('a closed source file change marks prior understanding for review without c
   const harness = await workspaceHarness();
   try {
     await harness.reader.understand(true);
-    const directory = harness.reader.inspect().libraryDirectory!, before = await readFile(join(directory, 'progress.v2.json'), 'utf8');
+    const directory = harness.reader.inspect().libraryDirectory!, before = await readFile(join(directory, 'progress.v3.json'), 'utf8');
     const updatesBefore = harness.counts().outlineUpdates;
     assert.equal(harness.reader.inspect().view!.model.understoodCount, 1);
     // Act: the editor has no open source document; the filesystem watcher owns this update.
@@ -442,7 +802,7 @@ test('a closed source file change marks prior understanding for review without c
     await waitUntil(() => harness.reader.inspect().view!.model.reviewCount === 1, 'closed source review signal', 1_000);
     // Assert
     assert.equal(harness.reader.inspect().view!.model.understoodCount, 0);
-    assert.equal(await readFile(join(directory, 'progress.v2.json'), 'utf8'), before);
+    assert.equal(await readFile(join(directory, 'progress.v3.json'), 'utf8'), before);
     assert.equal(harness.reader.inspect().view!.model.source.hash, sha256('const price = 25;'));
     assert.ok(harness.counts().outlineUpdates > updatesBefore, 'The closed reader still updates its installed outline');
   } finally { await harness.close(); }
@@ -474,7 +834,7 @@ test('reopening the reader restores a captured source tab after Close removed it
     await harness.reader.open();
     // Assert
     assert.equal(harness.groups[0]!.tabs.length, 1);
-    assert.match(harness.groups[0]!.activeTab!.input.uri.toString(), /Captured-server\.mts$/);
+    const input = harness.groups[0]!.activeTab!.input; assert.ok('uri' in input); assert.match(input.uri.toString(), /Captured-server\.mts$/);
   } finally { await harness.close(); }
 });
 
@@ -762,7 +1122,7 @@ test('repeated source edits replace the transient reader tab instead of accumula
     }
     // Assert
     assert.equal(harness.groups[0]!.tabs.length, 1);
-    assert.match(harness.groups[0]!.activeTab!.input.uri.toString(), /Captured-server\.mts$/);
+    const input = harness.groups[0]!.activeTab!.input; assert.ok('uri' in input); assert.match(input.uri.toString(), /Captured-server\.mts$/);
   } finally { await harness.close(); }
 });
 
@@ -822,14 +1182,14 @@ test('a coalesced newer checkpoint reports failure when its predecessor fails in
   } finally { rejectFirst(); context.mock.restoreAll(); await harness.close(); }
 });
 
-test('Close drains an accepted arrangement without issuing another layout change afterward', async () => {
+test('Close drains an accepted workbench arrangement batch without dispatching another layout change afterward', async () => {
   // Arrange
   const harness = await workspaceHarness();
   let release = () => {};
   try {
     await harness.reader.open();
     const widthsBefore = harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length;
-    const held = harness.holdNextCommand('vscode.setEditorLayout'); release = held.release;
+    const held = harness.holdNextCommand('runCommands'); release = held.release;
     const arranging = harness.reader.action('arrange'); await held.started;
     let closed = false;
     // Act
@@ -839,9 +1199,37 @@ test('Close drains an accepted arrangement without issuing another layout change
     held.release(); await arranging.catch(() => undefined); await closing;
     // Assert
     assert.equal(closedWhileArrangementPending, false);
-    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, widthsBefore);
+    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, widthsBefore + 1);
     assert.equal(harness.reader.inspect().opened, false);
   } finally { release(); await harness.close(); }
+});
+
+test('native transient half-pixel layout sizes are finalized in the workbench before Wiki ownership is verified', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.showTransientNativeSizes();
+  try {
+    // Act
+    await harness.reader.open(); await harness.reader.arrangeRepository(new AbortController().signal);
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{}, {}, {}] });
+    assert.equal(harness.commands.filter(name => name === 'runCommands').length, 2);
+    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, 2);
+  } finally { await harness.close(); }
+});
+
+for (const command of ['vscode.setEditorLayout', 'workbench.action.evenEditorWidths']) test(`a host-suppressed ${command} failure warns the learner and cannot claim the incomplete layout for a later Wiki return`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.showTransientNativeSizes(); harness.failNextCommand(command);
+  try {
+    // Act
+    await harness.reader.open(); const incompleteLayout = harness.editorLayout();
+    await harness.reader.arrangeRepository(new AbortController().signal);
+    // Assert
+    assert.deepEqual(harness.editorLayout(), incompleteLayout);
+    assert.equal(harness.commands.filter(name => name === 'runCommands').length, 1);
+    assert.equal(harness.reader.inspect().view!.errors.includes('Error: The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.'), true);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
 });
 
 

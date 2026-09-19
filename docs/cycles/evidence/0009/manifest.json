@@ -1,0 +1,873 @@
+{
+  "cycle": "0009",
+  "observedAt": "2026-09-19",
+  "goalVersion": 3,
+  "scope": "Bounded repository source authoring and native Wiki/evidence navigation; not arbitrary repository execution or final acceptance",
+  "candidate": {
+    "baseRevision": "7a16827e9f17f420aa2175ad23e2ac1e4f72547d",
+    "dirtyAtValidation": true,
+    "sourceHash": "72930ccaea8a50e1cfd6ce896f6753bb2eb2d9ebaeaa418ecc84714696a1522d",
+    "sourceCount": 180,
+    "sourceHashInventory": "source-hashes.txt"
+  },
+  "tests": {
+    "command": "pnpm --dir extension test",
+    "passed": 238,
+    "failed": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "durationMs": 16774.828042,
+    "log": "artifacts/cycle-0009/validation-238/extension-tests.log"
+  },
+  "hosts": [
+    {
+      "host": "vscode",
+      "directory": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8",
+      "initial": "artifacts/cycle-0009/native/vscode/2026-09-19T11-49-04.465Z-712c35ec",
+      "expectedReplayMs": 67527.0615,
+      "originalStudyOutcome": "partial",
+      "version": {
+        "id": "vscode",
+        "productVersion": "1.138.0",
+        "apiVersion": "1.138.0",
+        "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda"
+      },
+      "buildSourceHash": "72930ccaea8a50e1cfd6ce896f6753bb2eb2d9ebaeaa418ecc84714696a1522d",
+      "publicationTimings": [
+        {
+          "operation": "codebook_publish_book",
+          "durationMs": 33.866333
+        },
+        {
+          "operation": "read-resource",
+          "durationMs": 3.0140409999999918
+        },
+        {
+          "operation": "codebook_open_book",
+          "durationMs": 143.706667
+        }
+      ],
+      "flows": [
+        {
+          "label": "reading-100",
+          "expectedReplayMs": 67527.0615,
+          "outcomes": [
+            {
+              "destination": "observation",
+              "beforeSequence": 3,
+              "afterSequence": 4,
+              "selection": {
+                "bookId": "codebook-learning-guide",
+                "revision": 2,
+                "nodeId": "cart-state",
+                "anchorIndex": 1,
+                "location": {
+                  "sectionIndex": 5,
+                  "fraction": 0.891156462585034,
+                  "focusId": "evidence-1-observation"
+                }
+              },
+              "layout": {
+                "orientation": 0,
+                "groups": [
+                  {
+                    "size": 464
+                  },
+                  {
+                    "size": 464
+                  },
+                  {
+                    "size": 464
+                  }
+                ]
+              }
+            },
+            {
+              "destination": "recording",
+              "beforeSequence": 5,
+              "afterSequence": 6,
+              "selection": {
+                "bookId": "codebook-learning-guide",
+                "revision": 2,
+                "nodeId": "cart-state",
+                "anchorIndex": 1,
+                "location": {
+                  "sectionIndex": 5,
+                  "fraction": 0.8905228758169934,
+                  "focusId": "evidence-1-recording"
+                }
+              },
+              "layout": {
+                "orientation": 0,
+                "groups": [
+                  {
+                    "size": 464
+                  },
+                  {
+                    "size": 464
+                  },
+                  {
+                    "size": 464
+                  }
+                ]
+              }
+            }
+          ],
+          "reader": {
+            "width": 464,
+            "height": 808,
+            "scrollWidth": 464
+          },
+          "hostViewport": {
+            "width": 1440,
+            "height": 900,
+            "dpr": 2
+          },
+          "chromeMetrics": "display-only fields are not visibility proof; use native video",
+          "decisionsUnchanged": true,
+          "unrelatedDraftPreserved": true
+        },
+        {
+          "label": "reading-200",
+          "expectedReplayMs": 67527.0615,
+          "outcomes": [
+            {
+              "destination": "observation",
+              "beforeSequence": 8,
+              "afterSequence": 9,
+              "selection": {
+                "bookId": "codebook-learning-guide",
+                "revision": 2,
+                "nodeId": "cart-state",
+                "anchorIndex": 1,
+                "location": {
+                  "sectionIndex": 6,
+                  "fraction": 0.5435540069686411,
+                  "focusId": "evidence-1-observation"
+                }
+              },
+              "layout": {
+                "orientation": 0,
+                "groups": [
+                  {
+                    "size": 224
+                  },
+                  {
+                    "size": 224
+                  },
+                  {
+                    "size": 224
+                  }
+                ]
+              }
+            },
+            {
+              "destination": "recording",
+              "beforeSequence": 10,
+              "afterSequence": 11,
+              "selection": {
+                "bookId": "codebook-learning-guide",
+                "revision": 2,
+                "nodeId": "cart-state",
+                "anchorIndex": 1,
+                "location": {
+                  "sectionIndex": 6,
+                  "fraction": 0.5435540069686411,
+                  "focusId": "evidence-1-recording"
+                }
+              },
+              "layout": {
+                "orientation": 0,
+                "groups": [
+                  {
+                    "size": 224
+                  },
+                  {
+                    "size": 224
+                  },
+                  {
+                    "size": 224
+                  }
+                ]
+              }
+            }
+          ],
+          "reader": {
+            "width": 224,
+            "height": 358,
+            "scrollWidth": 224
+          },
+          "hostViewport": {
+            "width": 720,
+            "height": 450,
+            "dpr": 4
+          },
+          "chromeMetrics": "actual DOM bounding rectangles",
+          "decisionsUnchanged": true,
+          "unrelatedDraftPreserved": true
+        }
+      ],
+      "sessionEnded": true,
+      "profileSettingsRestoredByteForByte": true
+    },
+    {
+      "host": "cursor",
+      "directory": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966",
+      "initial": "artifacts/cycle-0009/native/cursor/2026-09-19T12-24-05.408Z-cc2ccf41",
+      "expectedReplayMs": 95669.726125,
+      "originalStudyOutcome": "demonstrated",
+      "version": {
+        "id": "cursor",
+        "productVersion": "3.21.13",
+        "apiVersion": "1.128.0",
+        "commit": "e44a49c17e334d442e58bbde931d791200f014a0"
+      },
+      "buildSourceHash": "72930ccaea8a50e1cfd6ce896f6753bb2eb2d9ebaeaa418ecc84714696a1522d",
+      "publicationTimings": [
+        {
+          "operation": "codebook_publish_book",
+          "durationMs": 37.101292
+        },
+        {
+          "operation": "codebook_open_book",
+          "durationMs": 107.09937500000001
+        }
+      ],
+      "flows": [
+        {
+          "label": "reading-100",
+          "expectedReplayMs": 95669.726125,
+          "outcomes": [
+            {
+              "destination": "observation",
+              "beforeSequence": 3,
+              "afterSequence": 7,
+              "selection": {
+                "bookId": "codebook-learning-guide",
+                "revision": 2,
+                "nodeId": "cart-state",
+                "anchorIndex": 2,
+                "location": {
+                  "sectionIndex": 5,
+                  "fraction": 0.26360544217687076,
+                  "focusId": "evidence-1-observation"
+                }
+              },
+              "layout": {
+                "orientation": 0,
+                "groups": [
+                  {
+                    "size": 426
+                  },
+                  {
+                    "size": 426
+                  },
+                  {
+                    "size": 428
+                  }
+                ]
+              }
+            },
+            {
+              "destination": "recording",
+              "beforeSequence": 8,
+              "afterSequence": 12,
+              "selection": {
+                "bookId": "codebook-learning-guide",
+                "revision": 2,
+                "nodeId": "cart-state",
+                "anchorIndex": 2,
+                "location": {
+                  "sectionIndex": 5,
+                  "fraction": 0.2636363636363636,
+                  "focusId": "evidence-1-recording"
+                }
+              },
+              "layout": {
+                "orientation": 0,
+                "groups": [
+                  {
+                    "size": 426
+                  },
+                  {
+                    "size": 426
+                  },
+                  {
+                    "size": 428
+                  }
+                ]
+              }
+            }
+          ],
+          "reader": {
+            "width": 426,
+            "height": 708,
+            "scrollWidth": 426
+          },
+          "hostViewport": {
+            "width": 1280,
+            "height": 800,
+            "dpr": 2
+          },
+          "chromeMetrics": "actual DOM bounding rectangles",
+          "decisionsUnchanged": true,
+          "unrelatedDraftPreserved": true
+        },
+        {
+          "label": "reading-200",
+          "expectedReplayMs": 95669.726125,
+          "outcomes": [
+            {
+              "destination": "observation",
+              "beforeSequence": 14,
+              "afterSequence": 18,
+              "selection": {
+                "bookId": "codebook-learning-guide",
+                "revision": 2,
+                "nodeId": "cart-state",
+                "anchorIndex": 2,
+                "location": {
+                  "sectionIndex": 6,
+                  "fraction": 0.5871080139372822,
+                  "focusId": "evidence-1-observation"
+                }
+              },
+              "layout": {
+                "orientation": 0,
+                "groups": [
+                  {
+                    "size": 220
+                  },
+                  {
+                    "size": 220
+                  },
+                  {
+                    "size": 220
+                  }
+                ]
+              }
+            },
+            {
+              "destination": "recording",
+              "beforeSequence": 19,
+              "afterSequence": 23,
+              "selection": {
+                "bookId": "codebook-learning-guide",
+                "revision": 2,
+                "nodeId": "cart-state",
+                "anchorIndex": 2,
+                "location": {
+                  "sectionIndex": 6,
+                  "fraction": 0.5871080139372822,
+                  "focusId": "evidence-1-recording"
+                }
+              },
+              "layout": {
+                "orientation": 0,
+                "groups": [
+                  {
+                    "size": 220
+                  },
+                  {
+                    "size": 220
+                  },
+                  {
+                    "size": 220
+                  }
+                ]
+              }
+            }
+          ],
+          "reader": {
+            "width": 220,
+            "height": 308,
+            "scrollWidth": 220
+          },
+          "hostViewport": {
+            "width": 640,
+            "height": 400,
+            "dpr": 4
+          },
+          "chromeMetrics": "actual DOM bounding rectangles",
+          "decisionsUnchanged": true,
+          "unrelatedDraftPreserved": true
+        }
+      ],
+      "sessionEnded": true,
+      "profileSettingsRestoredByteForByte": true
+    }
+  ],
+  "artifactAvailability": "Local private ignored artifacts in this checkout. Copy them with the manifest before moving or deleting the workspace. Credentials and raw recordings are not committed.",
+  "limitations": [
+    "Same-host development review only; not outside-model or final ten-review acceptance.",
+    "Runtime authoring exercised the existing fixed checkout fixture; source authoring used actual Codebook repository files.",
+    "VS Code saved execution remains partial; native reading/return success cannot repair its missing initial phase image.",
+    "Manual zoom/layout changes invalidate layout ownership and are preserved; 200% reading checks do not certify automatic Study rearrangement.",
+    "Old cropped zoom screenshots and intermediate failed cuts are not successful native evidence.",
+    "No PR, merge, packaged install or publication proof."
+  ],
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0009/handoff-20260919-190104/manifest.json",
+      "bytes": 981,
+      "sha256": "22732c2ed7c1c09d76227df2c15dc09bf87ffd8cd1c8f940916c471cf9839e92"
+    },
+    {
+      "path": "artifacts/cycle-0009/native-reader-flow.mjs",
+      "bytes": 5526,
+      "sha256": "2dd8cc0736d5f99941bd2c248be6abde8fd48446adef1808b3b5b7d4ddf07ec8"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T12-24-05.408Z-cc2ccf41/authored-book-v1.json",
+      "bytes": 6653,
+      "sha256": "e615766fce026a68bb3d890fa83f9895da72b527f56e2d0b01cc8cee9154ffb7"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T12-24-05.408Z-cc2ccf41/authored-book-v2.json",
+      "bytes": 8873,
+      "sha256": "613077681cb0aafffbf1f170c3dd54b67417b3abc1ed490d28874375c6ac4b4e"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T12-24-05.408Z-cc2ccf41/authoring-publish-v1.json",
+      "bytes": 9507,
+      "sha256": "b44946566982264a768222a93ee5f6635508a0bce57e2f1fcef0e88fca216383"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T12-24-05.408Z-cc2ccf41/authoring-publish-v2.json",
+      "bytes": 26065,
+      "sha256": "fab66a5e9577ba8539b16d7fdc422e632a6cfa05f965c00fa9dde1a54bb4c355"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T12-24-05.408Z-cc2ccf41/authoring-sources.json",
+      "bytes": 439627,
+      "sha256": "de927fbc1af9806407c01a7804186ed8565ca95dbb24687cb351f62e4dbe8cb1"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T12-24-05.408Z-cc2ccf41/runtime-final.json",
+      "bytes": 9796,
+      "sha256": "52eabe93cdec058e376673994cb1e7ae55fa83f518bbe5b84b4bbb7aa10cbc29"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-100-before-metrics.txt",
+      "bytes": 1462,
+      "sha256": "43606b5d16133f9095e307d0eabae0a8511d64e1c844b472adcde0e7e7f2eb49"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-100-observation-metrics.txt",
+      "bytes": 1472,
+      "sha256": "46b444fad4ee2a81ba21bc28da430742405f8661889c34f6ff5c5458e1682eca"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-100-recording-metrics.txt",
+      "bytes": 1470,
+      "sha256": "88082b1b9050e11c9e2f6354691c96e96038997311c655e86aafc6725ef92b3c"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-100-transcript.json",
+      "bytes": 10215,
+      "sha256": "60c6d2bdb7322c0fc4c20cc3b003af95d8d06ef29c78750f4045f07512ba1c27"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-100.webm",
+      "bytes": 813849,
+      "sha256": "bf823bea87f229d5b49b0963597833d52036228fd8679051b28728ce1a3da41b"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-200-01.png",
+      "bytes": 366708,
+      "sha256": "33c46de441998d6a78558578eb6b6271ad973d7acc53d76febf728e0f208b2c1"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-200-02.png",
+      "bytes": 272719,
+      "sha256": "9271e09d32b51c957d7e96ca3acf2369fa9c8399c0bff8940a2b75136588c6b6"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-200-before-metrics.txt",
+      "bytes": 1481,
+      "sha256": "3df55940e42c092efeb5fcbfdf62f9e21f6e0a1a5451a07525d3bf478f1181ef"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-200-final.png",
+      "bytes": 291281,
+      "sha256": "ca6f9bb3ef8571b73dd4d3ca235f4026581cf15a6503b72e5abb2ad81988c255"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-200-observation-metrics.txt",
+      "bytes": 1471,
+      "sha256": "ca95dc2f83ac0448b1ee048f211adbf413838bd84ab4d504117e78efd811475c"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-200-recording-metrics.txt",
+      "bytes": 1469,
+      "sha256": "eefca6ff599929e8b4ba4e3f296cb4e451511b7e5967c8f95d20cee81e4b2f32"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-200-transcript.json",
+      "bytes": 10503,
+      "sha256": "583abe274ddd5b880ea44091d4138e4996f8e4b2c65a2353e906ec56874fd859"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reading-200.webm",
+      "bytes": 575999,
+      "sha256": "6bcd07f4c19b7e4cbd576d0592fde7d7ff21626f3f52b893962745343e6c60cb"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-0.json",
+      "bytes": 64755,
+      "sha256": "f91a165f855d2b955f72bcb8ae64194a12efb44f3dc57c1e2abe900a5c8959a1"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-1.json",
+      "bytes": 86229,
+      "sha256": "834d8074bd20afe2fb5c49b8172e5691d9786e439cbb316af3d10975104f6cb6"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-10.json",
+      "bytes": 45349,
+      "sha256": "f8ac66cf54ceecb970b642dcaf1994aa4028afc5dda894ce1cb5e36cb394a4f3"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-11.json",
+      "bytes": 45349,
+      "sha256": "626a7c22260f757d78aa9efc13dde09d4ca2f13e36ae0e820239ce05f97632a2"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-12.json",
+      "bytes": 45743,
+      "sha256": "dbbfdd942ecf9bd9c65cf9414fa3d3011b1d2daebd5ac775513c3d0754cf0158"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-13.json",
+      "bytes": 45743,
+      "sha256": "dfa7eb3bd6fcecabe60a7eeb3e96d952cf34c71b8a327c34c612bc9b526d74d2"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-14.json",
+      "bytes": 87580,
+      "sha256": "c780f82a6a0caa684c219ef96316814a3e6d6cfa21bc958f76374807c3ba8d45"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-15.json",
+      "bytes": 87186,
+      "sha256": "a523d5ced3fd1706cd114c734c15229c7b6d7395b4cb6dc88beccc756d32bb30"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-16.json",
+      "bytes": 87186,
+      "sha256": "93a217b6df0a4a845bd30110a5a64d861cc419a21e61d8b134bed6f5d7021595"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-17.json",
+      "bytes": 87186,
+      "sha256": "330141edf53e9d388c5166b63fd28e87d9201585f89d7f716f22ae1570fbeeba"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-18.json",
+      "bytes": 87582,
+      "sha256": "40080fd67ff42dd42ae213b236bea31317b39ca83a6841b9ec7a65c0dcc2f293"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-19.json",
+      "bytes": 46008,
+      "sha256": "2febad6d27aeee0ab6277032414732f476198b9fcf5dd26b88174fe0753d3039"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-2.json",
+      "bytes": 86229,
+      "sha256": "875565be3febf37e29b880a6d3ef7cb7ae538297411468f5cf9262db065038eb"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-20.json",
+      "bytes": 45350,
+      "sha256": "a7bcbc3eac41143ed1f46be5f0a7928e9251874e2877badd365e0d8bac0f79de"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-21.json",
+      "bytes": 45350,
+      "sha256": "d53ea51ae015f412ec74b0550eeef004b52de7f78635c63090db78205735423c"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-22.json",
+      "bytes": 45350,
+      "sha256": "d57703b7538e2f2641b85cfe378c1a43a8eb66bc13441b29512f5b8400885e65"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-23.json",
+      "bytes": 45744,
+      "sha256": "48cc050d6a149184a8d512631c4b88f0ab7b1860b9923afcaa3d90a835d47829"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-24.json",
+      "bytes": 45590,
+      "sha256": "ed71686eee5414890fbb4c784079727b80631b959db789b30dd8ae47cfcd1082"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-3.json",
+      "bytes": 87600,
+      "sha256": "12b9a1b99c41a1358238b075b019c54c2a236de7efe12e677e3cde7605311214"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-4.json",
+      "bytes": 87176,
+      "sha256": "7ebf5819c8c8bc0a4f28bdd6e2303e73a253ea426d83a4fc162b1e046ca5b37a"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-5.json",
+      "bytes": 87176,
+      "sha256": "114b2ebe638a504849e110851a1cf6b3e235016b7ca711a06a994f48ef88f2df"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-6.json",
+      "bytes": 87176,
+      "sha256": "bae5cb0f8e2f3b45af5752617cede44f2e44e4665fc7612bc7b03ba265445698"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-7.json",
+      "bytes": 87573,
+      "sha256": "504e648495c94ae503fb32d2195a598065434e1c50b8da5b04ba26d243617878"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-8.json",
+      "bytes": 46097,
+      "sha256": "eadcc34109373b325992a98e029314d884b309059109d53e5b16bbd95ef5dba9"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-9.json",
+      "bytes": 45348,
+      "sha256": "4526bf1511012ce1c809ef8890c071679d00d514f7d36e8c917fb8a9c7c82dc2"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/reload-launch.json",
+      "bytes": 22582,
+      "sha256": "37045b96e74db51b7150add7c099e4e9588c758de6ad442294a6a4f8b680bc7a"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/cursor/2026-09-19T13-49-49.511Z-d8664966/repository-command.json",
+      "bytes": 33,
+      "sha256": "437299faa5e2f7a4ee7965392275b60aab2cebd043359792e141f81dd8351e93"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T11-49-04.465Z-712c35ec/authored-book-v1.json",
+      "bytes": 6653,
+      "sha256": "b1b974b03d7d56bc4d375322f6b791559531520b64bf077848ed22140e2e6c33"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T11-49-04.465Z-712c35ec/authored-book-v2.json",
+      "bytes": 8770,
+      "sha256": "6460a6fd51f9ce56cdce9ee111f465de2b837723a6bba90cb166902d13dd663a"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T11-49-04.465Z-712c35ec/authoring-publish-v1.json",
+      "bytes": 28803,
+      "sha256": "8dabfd38e37153164ffbfa58913feaa02f0942665fdf9ec685d47133ac19334e"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T11-49-04.465Z-712c35ec/authoring-publish-v2.json",
+      "bytes": 44187,
+      "sha256": "8d34d356aff930d89c617998941d7bcaaef251547f41cd9aa0b778605149a8ff"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T11-49-04.465Z-712c35ec/authoring-sources.json",
+      "bytes": 644626,
+      "sha256": "7fb884a982fb0fbeed2b9488b13f325719e7083880b57a53a212186448db46a9"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T11-49-04.465Z-712c35ec/runtime-final.json",
+      "bytes": 146339,
+      "sha256": "07a36cfa66e74e9003b50281578f201d58f930916b4a6b0651ba54c7abf84bbb"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-100-before-metrics.txt",
+      "bytes": 1416,
+      "sha256": "790489604edacf15cebc1e45af0c89b4eb20bfb7cf9d7d35be7590650e6f0628"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-100-observation-metrics.txt",
+      "bytes": 1450,
+      "sha256": "5cc4e38a690b5eed0e1daf970e7b88fcf51005ee6d656b9013ff07b95081ccfd"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-100-recording-metrics.txt",
+      "bytes": 1448,
+      "sha256": "355ecbf6c3f7a38cfdd3d32a0abb09499b49fc7b1d34943bdd65646b9f0903e7"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-100-transcript.json",
+      "bytes": 10175,
+      "sha256": "95fa0b907bac5ac21933f194c7b3c7fa84ef9b3294ba776dc6dff70154ade067"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-100.webm",
+      "bytes": 770416,
+      "sha256": "4b0910b5bd5a1fbf4b51d2dbea4fff7d35f31be2d7744f7ed5cf0e26dd8efff3"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-200-01.png",
+      "bytes": 256833,
+      "sha256": "d08df4f8019e27b5ac1411a87974959f6974729663a5fa04593c8ae1806a3358"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-200-02.png",
+      "bytes": 282119,
+      "sha256": "de242c881ec560d376a92db8583e4f2d69daefe0738a4cc34300cb38fc021d05"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-200-03.png",
+      "bytes": 282203,
+      "sha256": "598a1e8bcc0e309e411d03d0e95bce8180f5feed00a42e0e0323915af8f8fbb8"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-200-before-metrics.txt",
+      "bytes": 1487,
+      "sha256": "9299bbd1feab57e55a2604ed078b5e328ed32db41410e228ce6337b0c1e6a048"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-200-final.png",
+      "bytes": 296662,
+      "sha256": "1f31a8c999a864102af03abc032c4fa60426ea70b527d23b8c028fe60b6fd86d"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-200-observation-metrics.txt",
+      "bytes": 1471,
+      "sha256": "87eba67cd4b4e72d3fc07f55bf9ae46d9164b6429eefc990989973f45d4f1e3b"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-200-recording-metrics.txt",
+      "bytes": 1469,
+      "sha256": "3f937ad0e050467a76b696086f0e02bfa933ff34f6e7269d84c93ea677b0df22"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-200-transcript.json",
+      "bytes": 10195,
+      "sha256": "e6275d4294ca04e45899c00df52da9ef1ac99bdc7273d68b68b01439d8671cda"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reading-200.webm",
+      "bytes": 472475,
+      "sha256": "4c13230eda493e41a55bb07ef3125346cbcee8d38c68e0fae53443acef4dd140"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-0.json",
+      "bytes": 64438,
+      "sha256": "c016c4d73896983b381f72b10b588d8165e78e5534e0c176fe6a1a19a25f5cef"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-1.json",
+      "bytes": 85777,
+      "sha256": "5ef99bda80017c2cf27f929e41c513925ed3cb05520aeb07e15fce039de69719"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-10.json",
+      "bytes": 45513,
+      "sha256": "919870f573335b79ffade48b0eddb3d13b3d4081301cfe09f61e596b9524a38d"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-11.json",
+      "bytes": 45249,
+      "sha256": "851d042386a07fdea2dd97329f66c0d65bff454c947755d3e251e0002b35d038"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-12.json",
+      "bytes": 45095,
+      "sha256": "ccc3c83ece306c835b78ebe89d0027e58ec84952ff3d70be13cc9015b9f38a7e"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-2.json",
+      "bytes": 85777,
+      "sha256": "889c64b6e8dbcdc7f8eb07f33974cf863e2f83ec41ca065d42acd60866f2b0f2"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-3.json",
+      "bytes": 87132,
+      "sha256": "94547ad633e20e8ffa66a37515f099736cb0e4202034726b8f19701a45be7538"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-4.json",
+      "bytes": 87097,
+      "sha256": "2b81d25ccdd2fdd8943f64bca1f9dac47689ec53035a2064c3e6030a3442f580"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-5.json",
+      "bytes": 45600,
+      "sha256": "61c9c80068b08b5fbe423916e430f24d5917a76e00c371fb14c5c82636b88f78"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-6.json",
+      "bytes": 45247,
+      "sha256": "1d984274fc39fca473e358dabad845a28241aba844fe91b7e6238a9f44cb0456"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-7.json",
+      "bytes": 45247,
+      "sha256": "7e1fc037c837e026c279b693b32ce4ced482795b04bbfb106abfcf4371f3f64c"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-8.json",
+      "bytes": 87109,
+      "sha256": "107d4c59d8b9787c8dcfbf3be7f581f2bdd589ceeb056ec35ff6cea9ed57a00e"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-9.json",
+      "bytes": 87111,
+      "sha256": "ae724d0fc84aa1794413ff2a0c86ccf6f28823e683af6455a5d9110dffccfefd"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/reload-launch.json",
+      "bytes": 22567,
+      "sha256": "eace94021c7966ef615281f3617d814964c00642dc4ecfd5540a3a2d9b3e1278"
+    },
+    {
+      "path": "artifacts/cycle-0009/native/vscode/2026-09-19T13-45-38.305Z-e09a4aa8/repository-command.json",
+      "bytes": 33,
+      "sha256": "196e742f6414904b706554ccd6c50ebc46f94b2b0c4dea7c6a490240cc939d7f"
+    },
+    {
+      "path": "artifacts/cycle-0009/validation-238/build.json",
+      "bytes": 20698,
+      "sha256": "39f83c6ad3b8500a9b7f622964a83c5bc5d995be231491e653fbe4460f474d86"
+    },
+    {
+      "path": "artifacts/cycle-0009/validation-238/concurrent-open-red.log",
+      "bytes": 2131,
+      "sha256": "5497887043fc6227797c7300b34e8650990fecf6ead3b650aa12ff10cec2f5c3"
+    },
+    {
+      "path": "artifacts/cycle-0009/validation-238/extension-tests.log",
+      "bytes": 28389,
+      "sha256": "28a2d072331b6b8ad2208ca31d7965db1dda334ceb3470ba628bfda48b19dcaa"
+    },
+    {
+      "path": "artifacts/cycle-0009/validation-238/navigation-chrome-red.log",
+      "bytes": 2151,
+      "sha256": "7311c552b0faa2902056c61f8341fc00e1af1818f860c90f2df0bb8db2c415dc"
+    },
+    {
+      "path": "artifacts/cycle-0009/validation-238/readme-example.json",
+      "bytes": 427,
+      "sha256": "716d7be46f80c4ad7c55a6dab982e942efe0797687b79a675ad453d6979a2b60"
+    },
+    {
+      "path": "artifacts/cycle-0009/webview-qa/flow-result-208-2.txt",
+      "bytes": 6979,
+      "sha256": "eeb7cea355b035bfccf5409e7f4ca485e509abd4e23078f8521e671ff4983e0a"
+    },
+    {
+      "path": "artifacts/cycle-0009/webview-qa/interaction-208-2.webm",
+      "bytes": 454484,
+      "sha256": "d9887de6b0e42eff0bc90c8a8727664417d4534a326b72e1b5f871a83a1290b4"
+    },
+    {
+      "path": "artifacts/cycle-0009/webview-qa/manifest.json",
+      "bytes": 4314,
+      "sha256": "d2cd0d16a946a79a24035150ea6799448c82145006d76f98475a8080acbf4977"
+    }
+  ],
+  "documentationExample": {
+    "path": "artifacts/cycle-0009/validation-238/readme-example.json",
+    "transport": "actual SDK/HTTP with temporary tracked Git source; native reader mocked out",
+    "exitCode": 0,
+    "runtimeRuns": 0,
+    "learnerDecisions": 0
+  }
+}

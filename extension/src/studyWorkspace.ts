@@ -16,7 +16,7 @@ import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { CAPTURE_TIMEOUT_MS } from 'codebook-cycle-0001/dist/constants';
 import { requireWorkspace, type StudyPresentation } from './environment';
 import { StudyError } from './errors';
-import { MAX_SOURCE_DOCUMENTS, PLAYBACK_SECOND_MS, SOURCE_LIMIT_BYTES, STUDY_REFRESH_INTERVAL_MS, STUDY_SOURCE_SCHEME } from './constants';
+import { HORIZONTAL_EDITOR_ORIENTATION, MAX_SOURCE_DOCUMENTS, PLAYBACK_SECOND_MS, SOURCE_LIMIT_BYTES, STUDY_EDITOR_GROUP_COUNT, STUDY_REFRESH_INTERVAL_MS, STUDY_SOURCE_SCHEME } from './constants';
 import { LEARNING_ITEMS, participantSchema, projectStudy, studyIdSchema, type LearnerDecision, type LearnerProgress, type SourceBaselines, type StudyArchive, type StudySelection } from './studyModel';
 import type { StudyRecord, StudyService } from './service';
 import { captureStudy } from './utils/captureStudy';
@@ -24,8 +24,11 @@ import { capturedAppHtml } from './utils/capturedAppHtml';
 import { studyHtml, type StudyViewMessage } from './ui/studyHtml';
 import { readBoundedFile } from './utils/readBoundedFile';
 import { createRecordingObserver } from './utils/createRecordingObserver';
+import type { BookObservationBinding } from './repositorySchemas';
+import { bookObservationHash } from './utils/bookObservationHash';
+import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout';
 
-const actionSchema = z.enum(['run', 'click', 'continue', 'stop', 'connect', 'return-current', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry', 'reload-recording']);
+const actionSchema = z.enum(['run', 'click', 'continue', 'stop', 'connect', 'return-current', 'return-wiki', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry', 'reload-recording']);
 const revisionShape = { revision: z.number().int().nonnegative() };
 const messageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('ready') }),
@@ -84,14 +87,20 @@ export class StudyWorkspace {
   private closing = false;
   private closingPromise?: Promise<void>;
   private arranging?: Promise<void>;
+  private layoutReceipt?: { mode: 'study' | 'repository'; signature: string; groups: { group: vscode.TabGroup; column: vscode.ViewColumn }[] };
+  private readonly editorGroupIdentities = new WeakMap<vscode.TabGroup, symbol>();
+  private observedEditorGroups: { group: vscode.TabGroup; column: vscode.ViewColumn }[] = [];
   private disposed = false;
   private lifetime = 0;
+  private openRequest = 0;
   private busy = false;
   private saving = false;
   private loading = false;
   private revision = 0;
   private sourceRevision?: number;
   private historyRequest = 0;
+  private repositoryNavigation?: number;
+  private repositoryRecordingOpen?: { studyId: string; revision: number };
   private pendingHistory?: number;
   private rendering: Promise<void> = Promise.resolve();
   private refreshing?: Promise<void>;
@@ -106,7 +115,69 @@ export class StudyWorkspace {
   private lastOutlineSelection?: StudyItemId;
   private lastOutlineModelKey?: string;
 
-  constructor(private readonly context: WorkspaceContext, private readonly controls: { start(): Promise<StudyService>; connect(): Promise<void> }) { this.installReaders(); }
+  constructor(private readonly context: WorkspaceContext, private readonly controls: { start(): Promise<StudyService>; connect(): Promise<void>; returnToRepository?(): Promise<void> }) { this.installReaders(); }
+
+  /** Shares the existing workspace ledger with the repository reader without creating runtime prerequisites. @example await workspace.learningStorage() */
+  async learningStorage(): Promise<LearningLibrary> { await this.initialize(); return this.library!; }
+
+  /** Restores side-by-side reading for {@link RepositoryReader} only while the last Codebook arrangement remains owned. @example await workspace.arrangeRepository(signal) */
+  async arrangeRepository(signal: AbortSignal): Promise<void> { await this.arrange(signal, 'repository', true); }
+
+  /** Opens exact validated book evidence and its recorded time without dispatching input or borrowing a live pause. @example await workspace.openRepositoryEvidence(binding, true) */
+  async openRepositoryEvidence(binding: BookObservationBinding, recording: boolean, signal?: AbortSignal): Promise<void> {
+    const lifetime = this.lifetime, request = ++this.historyRequest;
+    const assertCurrent = () => { signal?.throwIfAborted(); this.assertLifetime(lifetime); if (request !== this.historyRequest) throw new Error('Evidence navigation was superseded.'); };
+    assertCurrent();
+    await this.initialize(); assertCurrent();
+    const checkpoint = await this.library!.readCheckpoint(binding.studyId); assertCurrent();
+    const observation = checkpoint.study.observations.find(value => value.id === binding.observationId);
+    if (request !== this.historyRequest || checkpoint.status !== 'saved' || !observation || observation.itemId !== binding.itemId || observation.source.hash !== binding.sourceHash || bookObservationHash(observation) !== binding.observationHash) throw new Error('The linked observation no longer matches its exact saved checkpoint.');
+    this.progress = await this.library!.readProgress(); assertCurrent();
+    if (request !== this.historyRequest) throw new Error('Evidence navigation was superseded.');
+    const previousSelection = this.selection, previousArchive = this.selectedArchive, previousSelectionKey = this.lastSelectionKey, previousSourceUri = this.sourceUri, previousSourceReady = this.sourceReady();
+    // Shared refresh may finish checkpoint I/O, but only this signal-bound navigation may render its new selection.
+    this.repositoryNavigation = request; this.revision++; this.lastSelectionKey = undefined;
+    try {
+      this.leavePlayback(); this.pendingHistory = undefined;
+      if (recording) {
+        const saved = await this.recordings!.readContext(binding.studyId); assertCurrent();
+        const recorded = saved.context.study.observations.find(value => value.id === binding.observationId);
+        if (request !== this.historyRequest || !recorded || bookObservationHash(recorded) !== binding.observationHash) throw new Error('The recording does not contain this exact observation.');
+        let ownedRevision: number | undefined;
+        const cancel = () => { if (ownedRevision !== undefined && this.playback!.state().revision === ownedRevision) this.leavePlayback(); };
+        signal?.addEventListener('abort', cancel, { once: true });
+        try {
+          assertCurrent(); await this.openRecording(binding.studyId, signal, 'repository'); ownedRevision = this.playback!.state().revision;
+          if (signal?.aborted) cancel(); assertCurrent();
+          await this.playback!.settle(); assertCurrent();
+          const state = this.playback!.state();
+          if (!state.range || binding.elapsedMs < state.range.startMs || binding.elapsedMs > state.range.endMs) throw new Error('The observation is outside the verified recording range.');
+          ownedRevision = this.playback!.command({ studyId: binding.studyId, action: 'seek', expectedRevision: state.revision, positionMs: binding.elapsedMs }).revision;
+          await this.playback!.settle(); assertCurrent();
+          const bundle = this.playback!.bundle();
+          if (bundle?.studyId !== binding.studyId || bundle.projection.positionMs !== binding.elapsedMs || bundle.projection.observation?.id !== binding.observationId) throw new Error('Exact recorded observation could not be presented.');
+        } finally { signal?.removeEventListener('abort', cancel); }
+        return;
+      }
+      this.selectedArchive = checkpoint.study; this.loadedHistory.set(binding.studyId, { signature: checkpoint.study.materialSignature, status: 'saved' });
+      this.selection = { studyId: binding.studyId, profile: checkpoint.study.profile, itemId: binding.itemId, follow: false, tab: 'live' };
+      if (this.message().model.observation?.id !== binding.observationId) throw new Error('Selected item does not identify the linked observation.');
+      await this.open(signal, 'repository'); assertCurrent();
+      if (request !== this.historyRequest || this.message().model.observation?.id !== binding.observationId) throw new Error('Evidence navigation was superseded.');
+      await this.saveSelection();
+    } catch (error) {
+      // Roll back only the cancelled intent; newer learner navigation owns its own selection and presentation.
+      if (this.repositoryNavigation === request && this.historyRequest === request) {
+        this.selection = previousSelection; this.selectedArchive = previousArchive; this.lastSelectionKey = previousSelectionKey;
+        this.revision++; this.loading = false; this.lastRendered = undefined;
+        // Retain verified native readiness only when the cancelled navigation never replaced the prior source.
+        this.sourceRevision = previousSourceReady && this.sourceUri === previousSourceUri ? this.revision : undefined;
+        if (this.sourceRevision === undefined) this.lastSelectionKey = undefined;
+        this.publish();
+      }
+      throw error;
+    } finally { if (this.repositoryNavigation === request) this.repositoryNavigation = undefined; }
+  }
 
   readonly presentation: StudyPresentation = {
     createViewport: (runId, record, fail, scenario) => {
@@ -146,23 +217,35 @@ export class StudyWorkspace {
     if (!this.timer) { this.timer = setInterval(() => { void this.refresh().catch(error => this.report('archive', error)); }, STUDY_REFRESH_INTERVAL_MS); this.timer.unref(); }
   }
 
-  /** Opens the shared reader and adopts an already paused MCP run without repeating its input. @example await workspace.open() */
-  async open(): Promise<void> {
-    const lifetime = this.lifetime; this.assertLifetime(lifetime);
-    await this.initialize(); this.assertLifetime(lifetime);
+  /** Opens the shared reader without runtime input; explicit Study entry also reveals its outline/timeline. @example await workspace.open() */
+  async open(signal?: AbortSignal, origin: 'study' | 'repository' = 'study'): Promise<void> {
+    signal?.throwIfAborted(); const lifetime = this.lifetime; this.assertLifetime(lifetime); signal?.throwIfAborted();
+    const request = ++this.openRequest;
+    await this.initialize(); this.assertLifetime(lifetime); signal?.throwIfAborted();
     const firstOpen = !this.opened; this.opened = true; this.closing = false;
-    this.installReaders(); this.ensureApp(); this.ensureContext();
-    if (firstOpen && this.currentRecord() && this.selection.follow) this.selection = { ...this.selection, follow: true, tab: 'live' };
-    await this.refresh(); await this.renderSelection();
-    this.assertLifetime(lifetime);
-    if (firstOpen) await this.arrange();
-    this.assertLifetime(lifetime);
-    await vscode.commands.executeCommand('codebook.learningOutline.focus');
-    this.assertLifetime(lifetime);
-    await vscode.commands.executeCommand('codebook.observedMoments.focus');
-    this.assertLifetime(lifetime);
-    this.contextPanel?.reveal(undefined, false);
-    if (this.recordingActive && (firstOpen || !this.replayViewport)) this.playback?.reveal();
+    const cancel = () => {
+      // A cancelled first entry cannot let background refresh finish its UI, or retire a newer explicit Open.
+      if (firstOpen && request === this.openRequest) this.opened = false;
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
+    try {
+      this.installReaders(); this.ensureApp(); this.ensureContext();
+      if (firstOpen && this.currentRecord() && this.selection.follow) this.selection = { ...this.selection, follow: true, tab: 'live' };
+      await this.refresh(signal); signal?.throwIfAborted(); await this.renderSelection(true, false, signal);
+      this.assertLifetime(lifetime); signal?.throwIfAborted();
+      // Wiki evidence keeps the learner's navigation chrome unchanged; explicit Study still reveals its outline/timeline.
+      if (origin === 'study') {
+        await vscode.commands.executeCommand('codebook.learningOutline.focus');
+        this.assertLifetime(lifetime); signal?.throwIfAborted();
+        await vscode.commands.executeCommand('codebook.observedMoments.focus');
+      }
+      this.assertLifetime(lifetime); signal?.throwIfAborted();
+      this.contextPanel?.reveal(undefined, false);
+      if (this.recordingActive && (firstOpen || !this.replayViewport)) this.playback?.reveal();
+      // Capture ownership after explicit view reveals finish resizing the native workbench.
+      await this.arrange(signal, 'study', !firstOpen);
+      this.assertLifetime(lifetime); signal?.throwIfAborted();
+    } finally { signal?.removeEventListener('abort', cancel); }
   }
 
   /** Explicitly checkpoints final service state after accepted runtime/explanation cleanup has completed. @example await workspace.retire(service) */
@@ -175,7 +258,7 @@ export class StudyWorkspace {
     }
     await this.library?.flush(); await this.recordings?.flush();
     if (this.service === service) { this.service = undefined; clearInterval(this.timer); this.timer = undefined; }
-    if (this.opened) await this.renderSelection();
+    if (this.opened && !this.recordingActive) await this.renderSelection();
     if (failure) throw new Error(`Runtime released; final reader history was not saved: ${String(failure)}`);
   }
 
@@ -188,7 +271,7 @@ export class StudyWorkspace {
       const displayed = this.message().model, requestedProfile = this.selection.profile; this.busy = true; this.publish();
       try {
         if (action === 'run') {
-          this.leavePlayback();
+          this.historyRequest++; this.leavePlayback();
           const service = await this.controls.start(); this.assertLifetime(lifetime);
           this.pendingHistory = undefined; const profile = requestedProfile;
           this.selection = { profile, itemId: STUDY_PROFILES[profile].items[0]!.id, follow: true, tab: 'live' };
@@ -214,11 +297,12 @@ export class StudyWorkspace {
       return;
     }
     if (action === 'connect') { await this.controls.connect(); return; }
+    if (action === 'return-wiki') { if (!this.controls.returnToRepository) throw new Error('Repository reader unavailable.'); await this.controls.returnToRepository(); return; }
     if (action === 'reload-recording') {
       const studyId = this.selection.studyId; if (!this.recordingActive || !studyId) throw new Error('Select a recording first.');
       this.leavePlayback(); await this.openRecording(studyId); return;
     }
-    if (action === 'return-current') { this.leavePlayback(); this.pendingHistory = undefined; this.selection = { ...this.selection, follow: true, tab: 'live' }; await this.refresh(); await this.renderSelection(true, true); }
+    if (action === 'return-current') { this.historyRequest++; this.leavePlayback(); this.pendingHistory = undefined; this.selection = { ...this.selection, follow: true, tab: 'live' }; await this.refresh(); await this.renderSelection(true, true); }
     if (action === 'source') { await this.renderSelection(false); this.lastActiveRegion = 'source'; }
     if (action === 'focus-app') { this.app?.reveal(undefined, false); this.lastActiveRegion = 'app'; }
     if (action === 'focus-context') { this.contextPanel?.reveal(undefined, false); this.lastActiveRegion = 'context'; }
@@ -271,6 +355,7 @@ export class StudyWorkspace {
     if (this.selection.studyId === this.activeArchive?.id) this.selectedArchive = this.activeArchive;
     const selected = itemSchema.parse(itemId);
     if (!STUDY_PROFILES[this.selection.profile].items.some(item => item.id === selected)) throw new Error('Select the matching study profile first.');
+    this.historyRequest++;
     if (this.recordingActive) {
       const observed = this.playback?.bundle()?.context?.study.observations.find(value => value.itemId === selected);
       if (!observed) throw new Error('This item has no recorded observation to seek to.');
@@ -285,6 +370,7 @@ export class StudyWorkspace {
     const lifetime = this.lifetime; await this.initialize(); this.assertLifetime(lifetime);
     if (this.currentRecord() && !this.currentRecord()!.stopped) throw new Error('Stop the active study before choosing another scenario.');
     const selected = profileSchema.parse(profile);
+    this.historyRequest++;
     this.leavePlayback();
     this.pendingHistory = undefined; this.selectedArchive = undefined;
     this.selection = { profile: selected, itemId: STUDY_PROFILES[selected].items[0]!.id, follow: false, tab: 'overview' };
@@ -316,6 +402,7 @@ export class StudyWorkspace {
   async close(): Promise<void> {
     if (this.closingPromise) return this.closingPromise;
     this.closing = true; this.revision++; this.lifetime++; this.pendingHistory = undefined; this.lastRendered = undefined;
+    this.repositoryRecordingOpen = undefined;
     this.playback?.hide();
     const pending = this.closingPromise = (async () => {
       await this.refreshing;
@@ -327,6 +414,7 @@ export class StudyWorkspace {
       const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === STUDY_SOURCE_SCHEME && tab.input.uri.authority === this.library?.workspaceKey);
       if (tabs.length && !await vscode.window.tabGroups.close(tabs, true)) throw new Error('Some captured source readers could not close.');
       this.opened = false; this.contextPanel?.dispose(); this.contextPanel = undefined; this.app?.dispose(); this.app = undefined;
+      this.layoutReceipt = undefined;
       this.sourceUri = undefined; this.sourceRevision = undefined; this.lastSelectionKey = undefined; this.documents.clear();
     })();
     try { await pending; } finally { if (this.closingPromise === pending) { this.closingPromise = undefined; this.closing = false; } }
@@ -410,12 +498,13 @@ export class StudyWorkspace {
   }
 
   /** Coalesces observation updates while keeping control operations independent of disk/render work. @example await this.refresh() */
-  private async refresh(): Promise<void> {
+  private async refresh(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     if (this.refreshing) return this.refreshing;
     const attempt = (async () => {
       const record = this.currentRecord();
       // Refresh every retained projection without letting an older run replace current runtime ownership.
-      if (this.service) for (const retained of this.service.records.values()) await this.checkpoint(this.service, retained);
+      if (this.service) for (const retained of this.service.records.values()) { await this.checkpoint(this.service, retained); signal?.throwIfAborted(); }
       if (this.selection.follow && this.activeArchive) {
         const state = record && this.service?.state(record);
         const current = Object.values(state?.participants ?? {}).find(participant => participant.resumable)?.itemId;
@@ -423,7 +512,8 @@ export class StudyWorkspace {
         const retained = this.selection.profile === profile ? this.selection.itemId : STUDY_PROFILES[profile].items[0]!.id;
         this.selection = { ...this.selection, profile, studyId: this.activeArchive.id, itemId: current ?? retained };
       }
-      if (this.opened && !this.closing) await this.renderSelection();
+      // Playback owns recorded source presentation; background checkpoints cannot reveal it over the returned Wiki.
+      if (this.opened && !this.closing && !this.recordingActive && this.repositoryNavigation === undefined) await this.renderSelection(true, false, signal);
     })();
     this.refreshing = attempt;
     try { await attempt; } finally { if (this.refreshing === attempt) this.refreshing = undefined; }
@@ -516,13 +606,20 @@ export class StudyWorkspace {
   private currentRecord(): StudyRecord | undefined { return this.service && [...this.service.records.values()].at(-1); }
 
   /** Opens a validated local recording through the same revisioned controller used by MCP; no application operation is dispatched. @example await workspace.openRecording(studyId) */
-  async openRecording(studyId: string): Promise<void> {
-    await this.initialize(); this.assertLifetime(this.lifetime);
-    this.playback!.command({ studyId: studyIdSchema.parse(studyId), action: 'open', expectedRevision: this.playback!.state().revision });
+  async openRecording(studyId: string, signal?: AbortSignal, origin: 'study' | 'repository' = 'study'): Promise<void> {
+    signal?.throwIfAborted(); const lifetime = this.lifetime;
+    await this.initialize(); this.assertLifetime(lifetime); signal?.throwIfAborted();
+    const id = studyIdSchema.parse(studyId), revision = this.playback!.state().revision;
+    // Bind chrome preservation to this exact open, including a load queued behind cancelled playback work.
+    this.repositoryRecordingOpen = origin === 'repository' ? { studyId: id, revision: revision + 1 } : undefined;
+    this.playback!.command({ studyId: id, action: 'open', expectedRevision: revision });
   }
 
   /** Loads immutable film/context before arranging its reader, restoring only the separately saved paused position. @example await this.loadPlayback(id, signal) */
   private async loadPlayback(studyId: string, signal: AbortSignal): Promise<PlaybackData> {
+    const intent = this.repositoryRecordingOpen;
+    const origin = intent?.studyId === studyId && intent.revision === this.playback!.state().revision ? 'repository' : 'study';
+    if (origin === 'repository') this.repositoryRecordingOpen = undefined;
     this.recordingActive = true; this.pendingHistory = undefined; this.selection = { ...this.selection, studyId, follow: false };
     this.viewport?.showHistory(capturedAppHtml({ ...this.message(), loading: true }));
     const index = await this.recordings!.read(studyId); signal.throwIfAborted();
@@ -541,7 +638,7 @@ export class StudyWorkspace {
     try { const saved = await this.recordings!.readPreference(); if (saved?.studyId === studyId) preferredPositionMs = saved.positionMs; this.errors.delete('playback-preference'); }
     catch (error) { this.report('playback-preference', error); }
     signal.throwIfAborted();
-    await this.open(); signal.throwIfAborted();
+    await this.open(signal, origin); signal.throwIfAborted();
     await this.ensureReplayViewport(signal); signal.throwIfAborted();
     return { index, context, contextHash, contextReason, preferredPositionMs };
   }
@@ -566,7 +663,7 @@ export class StudyWorkspace {
     this.selection = { ...this.selection, studyId: bundle.studyId, itemId: bundle.projection.observation?.itemId ?? STUDY_PROFILES[this.selection.profile].items[0]!.id, follow: false };
     const viewport = await this.ensureReplayViewport(signal); signal.throwIfAborted();
     // Opening the workspace may focus context over a manually moved source group; restore only when its native tab is inactive.
-    await this.renderSelection(true, !this.sourceReady()); signal.throwIfAborted();
+    await this.renderSelection(true, !this.sourceReady(), signal); signal.throwIfAborted();
     if (!this.sourceReady()) throw new Error('Recorded source has not reached the matching native reader.');
     if (bundle.image) await viewport.present(bundle.image.toString('base64'), `Recorded · ${(bundle.projection.positionMs / PLAYBACK_SECOND_MS).toFixed(2)} s`);
     else await viewport.presentMissing(bundle.projection.missing ?? 'No recorded application image.', signal);
@@ -579,6 +676,7 @@ export class StudyWorkspace {
 
   /** Leaves historical presentation on explicit navigation, never stopping or continuing the independently owned runtime. @example this.leavePlayback() */
   private leavePlayback(): void {
+    this.repositoryRecordingOpen = undefined;
     if (!this.recordingActive) return;
     this.playback?.leave(); this.replayViewport?.close(); this.replayViewport = undefined; this.recordingActive = false;
     this.playbackPending = undefined; this.playbackPresentingReady = false; this.lastApplicationKey = undefined; this.lastSelectionKey = undefined;
@@ -603,7 +701,7 @@ export class StudyWorkspace {
       : !study?.terminal || study.finalOutcome !== 'demonstrated' ? 'pending' : historyOutcome === 'saved' ? 'demonstrated' : historyOutcome === 'pending' ? 'pending' : 'partial');
     const projectionInput = { selection: this.selection, study, live, progress: this.progress, baselines: this.baselines, currentSourceAvailable: this.currentSourceAvailable };
     return { type: 'study', revision: this.revision, model: this.recordingActive ? projectPlaybackStudy(projectionInput, bundle) : projectStudy(projectionInput),
-      contentTab: this.recordingActive ? 'recording' : this.selection.tab,
+      contentTab: this.recordingActive ? 'recording' : this.selection.tab, repositoryReturnAvailable: Boolean(this.controls.returnToRepository && this.progress?.repositorySelection),
       recording: playbackState && { ...playbackState, pauseConfirmed: bundle?.projection.pauseConfirmed ?? false, rendererConfirmed: bundle?.projection.rendererConfirmed ?? false, laterInterpretations: bundle?.projection.laterInterpretations ?? [] },
       study: study && { id: study.id, state: study.state, terminal: study.terminal, profile: study.profile, createdAt: study.createdAt, reason: study.reason, finalOutcome: study.finalOutcome, links: this.recordingActive ? [] : study.links,
         historyOutcome, studyOutcome },
@@ -643,7 +741,8 @@ export class StudyWorkspace {
   }
 
   /** Serializes source opens and invalidates obsolete selection work before it can qualify context/app correspondence. @example await this.renderSelection() */
-  private renderSelection(preserveFocus = true, forceSource = false): Promise<void> {
+  private renderSelection(preserveFocus = true, forceSource = false, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     if (!this.opened || this.closing || !this.baselines || this.pendingHistory !== undefined) return Promise.resolve();
     const initial = this.message(true);
     const selectionKey = JSON.stringify([initial.model.selection.studyId, initial.model.selection.itemId, initial.model.source.hash, initial.model.observation?.id, initial.model.selection.follow]);
@@ -653,6 +752,7 @@ export class StudyWorkspace {
     const revision = ++this.revision; this.lastSelectionKey = selectionKey; this.loading = true; this.sourceRevision = undefined; this.lastRendered = undefined; this.publish();
     if (!initial.model.selection.follow) this.presentApplication({ ...initial, loading: true });
     const pending = this.rendering.catch(() => undefined).then(async () => {
+      signal?.throwIfAborted();
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
       const message = this.message(true);
       const itemId = message.model.selection.itemId, source = message.model.source;
@@ -661,10 +761,12 @@ export class StudyWorkspace {
       // Native documents retain their own visible bytes; the provider cache must remain bounded across edits.
       for (const cached of this.documents.keys()) { if (this.documents.size <= MAX_SOURCE_DOCUMENTS) break; this.documents.delete(cached); }
       const document = await vscode.workspace.openTextDocument(uri);
+      signal?.throwIfAborted();
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
       const group = vscode.window.tabGroups.all.find(group => group.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === this.sourceUri?.toString()));
       const position = new vscode.Position(source.line - 1, 0);
       const editor = await vscode.window.showTextDocument(document, { viewColumn: group?.viewColumn ?? vscode.ViewColumn.Two, preserveFocus, preview: false, selection: new vscode.Range(position, position) });
+      signal?.throwIfAborted();
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
       if (sha256(editor.document.getText()) !== source.hash) throw new Error('Displayed captured source does not match the selected observation.');
       const previousUri = this.sourceUri;
@@ -673,6 +775,7 @@ export class StudyWorkspace {
       if (previousUri && previousUri.toString() !== uri.toString() && previousUri.path.startsWith('/source-derived/')) {
         const obsolete = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === previousUri.toString());
         if (obsolete.length && !await vscode.window.tabGroups.close(obsolete, true)) throw new Error('Obsolete source-derived reader could not close.');
+        signal?.throwIfAborted();
         this.documents.delete(previousUri.toString());
       }
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
@@ -680,7 +783,11 @@ export class StudyWorkspace {
       if (revision !== this.revision || this.closing) return;
       this.sourceRevision = revision; this.loading = false; this.errors.delete('reader'); this.publish();
     });
-    this.rendering = pending.catch(error => { if (revision === this.revision && !this.closing && this.pendingHistory === undefined) this.report('reader', error); });
+    this.rendering = pending.catch(error => {
+      if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
+      if (signal?.aborted) { this.lastSelectionKey = undefined; this.loading = false; return; }
+      this.report('reader', error);
+    });
     return this.rendering;
   }
 
@@ -733,6 +840,8 @@ export class StudyWorkspace {
   /** Registers native readers once, keeping checkbox persistence under explicit learner control. @example this.installReaders() */
   private installReaders(): void {
     if (this.outline) return;
+    this.observeEditorGroups();
+    this.disposables.push(vscode.window.tabGroups.onDidChangeTabGroups(event => this.observeEditorGroups(event)));
     this.highlight = vscode.window.createTextEditorDecorationType({ isWholeLine: true, backgroundColor: new vscode.ThemeColor('editor.stackFrameHighlightBackground') });
     this.disposables.push(vscode.workspace.registerTextDocumentContentProvider(STUDY_SOURCE_SCHEME, { provideTextDocumentContent: uri => this.provideSource(uri) }));
     this.outline = vscode.window.createTreeView('codebook.learningOutline', { manageCheckboxStateManually: true, treeDataProvider: {
@@ -783,19 +892,77 @@ export class StudyWorkspace {
     if (!source || source.hash !== hash) throw new Error('This captured source revision is unavailable.'); return source.text;
   }
 
-  /** Arranges only on explicit entry/actions; additional foreign groups are preserved without merging. @example await this.arrange() */
-  private async arrange(): Promise<void> {
-    if (vscode.window.tabGroups.all.length > 3) { this.report('layout', new Error('Existing editor groups were preserved. Use the focus commands or arrange the Codebook panes manually.')); return; }
-    if (this.arranging) return this.arranging;
-    const lifetime = this.lifetime; this.assertLifetime(lifetime);
+  /** Switches explicit reader entry between owned layouts without merging groups or replacing manual arrangements. @example await this.arrange(signal, 'repository', true) */
+  private async arrange(signal?: AbortSignal, mode: 'study' | 'repository' = 'study', ownedOnly = false): Promise<void> {
+    const lifetime = this.lifetime, assertCurrent = () => { this.assertLifetime(lifetime); signal?.throwIfAborted(); };
+    assertCurrent();
+    // A later explicit navigation must drain an accepted host command before applying its own target.
+    while (this.arranging) { await this.arranging.catch(() => undefined); assertCurrent(); }
     const pending = this.arranging = (async () => {
-      await vscode.commands.executeCommand('vscode.setEditorLayout', { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
-      // Close drains the accepted host command and cancels any follow-up layout mutation.
-      this.assertLifetime(lifetime);
-      await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
-      this.assertLifetime(lifetime); this.errors.delete('layout'); this.publish();
+      if (ownedOnly) {
+        const receipt = this.layoutReceipt;
+        if (!receipt || receipt.mode === mode) return;
+        const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent();
+        // Structure, sizes and native group identities must all still match our last completed arrangement.
+        const groups = vscode.window.tabGroups.all;
+        if (receipt !== this.layoutReceipt || JSON.stringify(layout) !== receipt.signature || !this.sameEditorGroups(receipt.groups, groups)) { this.layoutReceipt = undefined; return; }
+      }
+      if (vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) { this.layoutReceipt = undefined; this.report('layout', new Error('Existing editor groups were preserved. Use the focus commands or arrange the Codebook panes manually.')); return; }
+      this.layoutReceipt = undefined;
+      const retainedGroups = [...vscode.window.tabGroups.all];
+      // The workbench accepts both native effects together; its interim split sizes are not a receipt.
+      await vscode.commands.executeCommand('runCommands', { commands: [
+        { command: 'vscode.setEditorLayout', args: { orientation: HORIZONTAL_EDITOR_ORIENTATION, groups: mode === 'study' ? [{ groups: [{}, {}] }, {}] : Array.from({ length: vscode.window.tabGroups.all.length }, () => ({})) } },
+        'workbench.action.evenEditorWidths',
+      ] });
+      // Drain the accepted batch after navigation abort, then let only a newer intent change the layout again.
+      const receipt = await this.rememberLayout(mode, lifetime, retainedGroups); assertCurrent();
+      // runCommands reports child failures through host notifications, so only the actual layout can certify success.
+      if (!receipt) { this.report('layout', new Error('The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.')); return; }
+      this.errors.delete('layout'); this.publish();
     })();
     try { await pending; } finally { if (this.arranging === pending) this.arranging = undefined; }
+  }
+
+  /** Retains actual accepted layout effects for newer navigation while {@link close} invalidates the owner. @example await this.rememberLayout('study', lifetime, groups) */
+  private async rememberLayout(mode: 'study' | 'repository', lifetime: number, retainedGroups: readonly vscode.TabGroup[]): Promise<StudyWorkspace['layoutReceipt']> {
+    this.assertLifetime(lifetime);
+    const groups = vscode.window.tabGroups.all.map(group => ({ group, column: group.viewColumn }));
+    const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); this.assertLifetime(lifetime);
+    // Changed split ratios, topology or native groups never become newly owned during a receipt read.
+    const current = vscode.window.tabGroups.all;
+    return this.layoutReceipt = layout && groups.length === STUDY_EDITOR_GROUP_COUNT && retainedGroups.every(group => current.some(candidate => this.editorGroupIdentities.get(group) && this.editorGroupIdentities.get(candidate) === this.editorGroupIdentities.get(group))) && this.sameEditorGroups(groups, current)
+      && isBalancedEditorLayout(layout, mode)
+      ? { mode, signature: JSON.stringify(layout), groups } : undefined;
+  }
+
+  /** Retains logical ownership across Cursor's wrapper-only tab-model resync, never across moved or replaced groups. @example this.observeEditorGroups(event) */
+  private observeEditorGroups(event?: vscode.TabGroupChangeEvent): void {
+    const current = vscode.window.tabGroups.all, previous = this.observedEditorGroups;
+    const resync = event && !event.opened.length && !event.closed.length && event.changed.length === current.length && current.length === previous.length;
+    for (const group of current) {
+      if (this.editorGroupIdentities.has(group)) continue;
+      const matches = resync ? previous.filter(entry => entry.column === group.viewColumn && this.sameEditorTabs(entry.group, group)) : [];
+      this.editorGroupIdentities.set(group, matches.length === 1 ? this.editorGroupIdentities.get(matches[0]!.group) ?? Symbol() : Symbol());
+    }
+    this.observedEditorGroups = current.map(group => ({ group, column: group.viewColumn }));
+  }
+
+  /** Rejects ambiguous inputs during host resync while title/activity changes keep the same singleton Codebook tab identity. @example this.sameEditorTabs(before, after) */
+  private sameEditorTabs(before: vscode.TabGroup, after: vscode.TabGroup): boolean {
+    const key = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputText ? `text:${tab.input.uri.toString()}`
+      : tab.input instanceof vscode.TabInputWebview && ['codebook.scopedBrowser', 'codebook.studyContext', 'codebook.repositoryWiki'].some(kind => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType)) ? `webview:${tab.input.viewType}` : undefined;
+    const previous = before.tabs.map(key), current = after.tabs.map(key);
+    return previous.length > 0 && previous.length === current.length && new Set(previous).size === previous.length
+      && previous.every((value, index) => value !== undefined && value === current[index]);
+  }
+
+  /** Checks stable group identity and grid position before {@link arrange} changes an owned layout. @example this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) */
+  private sameEditorGroups(previous: NonNullable<StudyWorkspace['layoutReceipt']>['groups'], current: readonly vscode.TabGroup[]): boolean {
+    return previous.length === current.length && previous.every(({ group, column }) => {
+      const identity = this.editorGroupIdentities.get(group);
+      return identity !== undefined && current.some(candidate => this.editorGroupIdentities.get(candidate) === identity && candidate.viewColumn === column);
+    });
   }
 
   /** Accepts only bounded named UI messages, rejecting stale controls before dispatch. @example await this.receive(message) */

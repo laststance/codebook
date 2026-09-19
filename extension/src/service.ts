@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import type { RepositoryBookStore } from './repositoryBook';
+import type { SourceListInput, SourceReadInput, PublishBookInput, OpenBookInput } from './repositorySchemas';
+import { BOOK_INPUT_LIMIT_BYTES, BOOK_MAX_SOURCES, HTTP_BODY_LIMIT_BYTES, REPOSITORY_SOURCE_LIMIT_BYTES } from './constants';
 import { join } from 'node:path';
 import type { ParticipantSnapshot } from 'codebook-cycle-0004/dist/inspectParticipant';
 import { ACTIVE_TIMEOUT_MS, API_VERSION, MAINTENANCE_INTERVAL_MS, MAX_EXPLANATIONS, MAX_RUNS, MAX_UI_TEXT_CHARS, RUN_TIMEOUT_MS } from './constants';
@@ -42,6 +45,11 @@ export class StudyService {
   readonly records = new Map<string, StudyRecord>();
   recordings?: RecordingStore;
   playbackController?: PlaybackController;
+  repository?: RepositoryBookStore;
+  repositoryPublished?: () => Promise<void>;
+  repositoryReader?: (input: OpenBookInput, signal: AbortSignal) => Promise<{ bookId: string; revision: number; nodeId: string; anchorIndex: number; sourceUri: string }>;
+  private readonly repositoryRetirement = new AbortController();
+  private readonly repositoryOpens = new Set<Promise<unknown>>();
   private readonly startKeys = new Map<string, StudyRecord>();
   private readonly maintenance: ReturnType<typeof setInterval>;
   private stopping = false;
@@ -58,7 +66,10 @@ export class StudyService {
 
   /** Describes actual capabilities before an agent chooses an operation; called by discovery. @example await service.status() */
   async status() {
-    const prerequisites = await this.environment.prerequisites();
+    const [prerequisites, repository] = await Promise.all([
+      this.environment.prerequisites().catch(error => ({ ready: false, missing: [String(error)] })),
+      this.repository ? this.sources({ instanceId: this.instanceId }).then(() => ({ ready: true, reason: undefined }), error => ({ ready: false, reason: String(error) })) : Promise.resolve({ ready: false, reason: 'Repository storage is unavailable.' }),
+    ]);
     return { instanceId: this.instanceId, apiVersion: API_VERSION, workspace: this.environment.workspace,
       host: this.environment.host, build: this.environment.build, prerequisites, stopping: this.stopping,
       profiles: PROFILE_IDS.map(id => {
@@ -71,7 +82,51 @@ export class StudyService {
       runs: [...this.records.values()].map(record => ({ runId: record.id, uri: this.uri(record.id), state: this.state(record).state })),
       recording: this.recordings ? { libraryUri: `codebook://${this.instanceId}/library`, playbackUri: `codebook://${this.instanceId}/playback`, playbackAvailable: Boolean(this.playbackController), limits: this.recordings.limits,
         instructions: 'Saved recordings survive server/runtime exit. Discover their study IDs using libraryUri; current-instance URIs and playback revisions must be copied, not guessed. Playback never starts, clicks or continues a run.' } : undefined,
+      repository: { ...repository, catalogUri: `codebook://${this.instanceId}/repository`, helpUri: 'codebook://help/repository', readerAvailable: Boolean(this.repositoryReader),
+        scope: 'Trusted local selected workspace at its Git working-tree root; tracked eligible UTF-8 text only. No runtime adapter or Chrome/debugger is required for source authoring.',
+        limits: { documentBytes: BOOK_INPUT_LIMIT_BYTES, httpEnvelopeBytes: HTTP_BODY_LIMIT_BYTES, sourceBytes: REPOSITORY_SOURCE_LIMIT_BYTES, sourcesPerRevision: BOOK_MAX_SOURCES },
+        authoring: ['codebook_sources', 'codebook_source', 'codebook_publish_book', 'codebook_open_book'] },
       recovery: 'Same instance: initialize a new transport and read the existing run. Server restart: copy new credentials first. Never automatically repeat a click.' };
+  }
+
+  /** Returns only currently owned repository storage without imposing runtime prerequisites. @example service.repositoryStore(instanceId) */
+  repositoryStore(instanceId: string): RepositoryBookStore {
+    this.assertMutable(instanceId); this.environment.assertWorkspace?.();
+    if (!this.repository) throw new StudyError('PREREQUISITE_MISSING', 'Repository source/book storage is unavailable in this editor.');
+    return this.repository;
+  }
+
+  /** Lists bounded tracked names through the current instance, independently of runtime support. @example await service.sources({instanceId}) */
+  async sources(input: SourceListInput) {
+    const result = await this.repositoryStore(input.instanceId).sources.list(input.cursor); this.repositoryStore(input.instanceId);
+    return { instanceId: this.instanceId, ...result };
+  }
+
+  /** Reads one exact tracked source without navigating or running the application. @example await service.source({instanceId,path:'src/main.ts'}) */
+  async source(input: SourceReadInput) {
+    const result = await this.repositoryStore(input.instanceId).sources.read(input.path, input.expectedHash); this.repositoryStore(input.instanceId);
+    return { instanceId: this.instanceId, ...result };
+  }
+
+  /** Publishes/retrieves an immutable intent receipt; connection lifetime never becomes persisted book identity. @example await service.publishBook(input) */
+  async publishBook(input: PublishBookInput, signal?: AbortSignal) {
+    const store = this.repositoryStore(input.instanceId), { instanceId: _instanceId, ...intent } = input;
+    const receipt = await store.publish(intent, AbortSignal.any([this.repositoryRetirement.signal, ...(signal ? [signal] : [])]));
+    // Reader refresh failure cannot turn a committed publication into a failed write receipt.
+    void this.repositoryPublished?.().catch(() => undefined);
+    return { instanceId: this.instanceId, ...receipt, uri: `codebook://${this.instanceId}/books/${receipt.bookId}/${receipt.revision}` };
+  }
+
+  /** Opens only the explicitly named article/citation through the native reader without understanding or runtime input. @example await service.openBook(input) */
+  async openBook(input: OpenBookInput, signal?: AbortSignal) {
+    this.repositoryStore(input.instanceId);
+    if (!this.repositoryReader) throw new StudyError('BOOK_UNAVAILABLE', 'The repository reader is not available in this host.');
+    const cancellation = AbortSignal.any([this.repositoryRetirement.signal, ...(signal ? [signal] : [])]); cancellation.throwIfAborted();
+    const opening = this.repositoryReader(input, cancellation); this.repositoryOpens.add(opening);
+    try {
+      const receipt = await opening; cancellation.throwIfAborted(); this.repositoryStore(input.instanceId);
+      return { instanceId: this.instanceId, ...receipt };
+    } finally { this.repositoryOpens.delete(opening); }
   }
 
   /** Routes a typed historical control to the workspace's shared controller, never to a live runtime operation. @example service.playback({...identity,action:'pause',expectedRevision:2}) */
@@ -286,8 +341,10 @@ export class StudyService {
   /** Prevents late acquisitions escaping shutdown while preserving retryable cleanup failures. @example await service.shutdown() */
   async shutdown(): Promise<void> {
     this.stopping = true; clearInterval(this.maintenance);
+    this.repositoryRetirement.abort();
     const attempt = this.shutdownPromise ??= (async () => {
-      const results = await Promise.allSettled([...this.records.values()].map(record => this.stopRecord(record)));
+      // Cancelled navigation failures are expected; drain accepted host effects before reporting retirement.
+      const results = await Promise.allSettled([this.repository?.flush(), Promise.allSettled([...this.repositoryOpens]), ...[...this.records.values()].map(record => this.stopRecord(record))]);
       const failures = results.flatMap(result => result.status === 'rejected' ? [String(result.reason)] : []);
       if (failures.length) throw new StudyError('RUNTIME_FAILED', 'Owned shutdown remains incomplete.', failures.join('; '));
     })();

@@ -7,6 +7,8 @@ import type { StudyService } from './service';
 import { omittedDetail } from './utils/omittedDetail';
 import { readBoundedFile } from './utils/readBoundedFile';
 import { readRecordingResource } from './utils/readRecordingResource';
+import { readRepositoryResource } from './utils/readRepositoryResource';
+import { BOOK_INPUT_LIMIT_BYTES, HTTP_BODY_LIMIT_BYTES, REPOSITORY_SOURCE_LIMIT_BYTES, REPOSITORY_SOURCE_EXTENSIONS, REPOSITORY_EXCLUDED_DIRECTORIES } from './constants';
 
 export type ResourceContent = { uri: string; mimeType: string; text: string } | { uri: string; mimeType: string; blob: string };
 
@@ -14,6 +16,15 @@ export type ResourceContent = { uri: string; mimeType: string; text: string } | 
 export async function readResource(service: StudyService, uri: string): Promise<ResourceContent> {
   const json = (value: unknown): ResourceContent => ({ uri, mimeType: 'application/json', text: JSON.stringify(value) });
   if (uri === 'codebook://help/errors') return json(ERROR_RECOVERY);
+  if (uri === 'codebook://help/repository') return json({
+    entry: 'Read codebook_status.repository, then codebook_sources and exact codebook_source paths. Author structured plain-text sections, verified path/hash/inclusive line citations and source-derived relations. Publish a complete document with expectedRevision and a stable key; open only the returned retained revision.',
+    boundaries: { sourceBytes: REPOSITORY_SOURCE_LIMIT_BYTES, documentBytes: BOOK_INPUT_LIMIT_BYTES, httpEnvelopeBytes: HTTP_BODY_LIMIT_BYTES, extensions: REPOSITORY_SOURCE_EXTENSIONS, excludedDirectories: REPOSITORY_EXCLUDED_DIRECTORIES,
+      rules: 'Trusted local selected Git root. Tracked regular UTF-8 files; no symlinks, hidden paths, secret/key names or lockfiles. This is not a secret-content detector. Nothing runs and no remote repository is fetched.' },
+    recovery: 'Source mismatch: reread the exact path and update citations explicitly. Revision conflict: read the current book. Lost response: reuse identical key/input to recover the original receipt even after source changes. Missing history: discover saved studies in the library; never run application input as recovery.',
+    understanding: 'Only an explicit learner action changes understanding. v3 progress retains typed runtime source decisions and complete canonical citation contexts; old v1/v2 bytes remain. Older builds cannot overwrite v3, and their later old-format writes are not merged automatically.',
+    evidence: 'Agent text and relations are interpretation. Optional observation links must name exact saved study/observation/source identities; partial or unavailable evidence stays visible. Source reading does not prove this repository has a runtime adapter.',
+    tutorial: 'extension/README.md: Learn this repository',
+  });
   if (uri === 'codebook://help/studies') return json({
     entry: 'Call codebook_status, select a returned profile, then start with a stable key. checkout-demo is one local product and confirmation, without payment or arbitrary repository setup.',
     sequence: ['Read the returned manifestUri once ready; it freezes source hashes and expected actions/stops.', 'Send only the action named in nextActions, with a stable key unique to that action.', 'For each current pause, read its snapshotUri and sourceUri, save an interpretation using only present captured value paths, then copy its exact continueArguments.', 'After cart completion, use nextActions to submit checkout. Repeat evidence reading at order creation and purchase confirmation.', 'Read the terminal state and stop result. Separate runtime/capture evidence from saved learning history and personal understanding.'],
@@ -25,6 +36,7 @@ export async function readResource(service: StudyService, uri: string): Promise<
   });
   const url = new URL(uri);
   if (url.protocol !== 'codebook:' || url.search || url.hash || url.username || url.password || url.port) throw new StudyError('INVALID_REFERENCE', 'Use a canonical resource URI.');
+  if (url.pathname === '/repository' || url.pathname.startsWith('/books/')) return readRepositoryResource(service, uri);
   if (url.pathname === '/library' || url.pathname === '/playback' || url.pathname.startsWith('/studies/')) return readRecordingResource(service, uri);
   const match = /^\/runs\/([a-f0-9-]+)(?:\/(.*))?$/.exec(url.pathname);
   if (!match?.[1]) throw new StudyError('NOT_FOUND', 'Unknown resource.');

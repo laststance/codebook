@@ -24,6 +24,7 @@ export interface StudyEnvironment {
   readonly workspace: string;
   readonly host: HostConfiguration;
   readonly build: { revision: string; dirty: boolean; sourceHash: string };
+  assertWorkspace?(): void;
   prerequisites(): Promise<{ ready: boolean; missing: string[] }>;
   createRuntime(directory: string, profile?: ProfileId): Promise<StudyRuntime>;
 }

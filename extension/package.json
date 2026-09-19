@@ -10,7 +10,9 @@
     "node": ">=24"
   },
   "main": "./dist/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "extensionKind": [
     "workspace"
   ],
@@ -94,6 +96,18 @@
       {
         "command": "codebook.study.retry",
         "title": "Codebook: Retry Study Storage"
+      },
+      {
+        "command": "codebook.openRepositoryWiki",
+        "title": "Codebook: Open Repository Wiki"
+      },
+      {
+        "command": "codebook.closeRepositoryWiki",
+        "title": "Codebook: Close Repository Wiki"
+      },
+      {
+        "command": "codebook.study.return-wiki",
+        "title": "Codebook: Return to Wiki"
       }
     ],
     "configuration": {
@@ -131,6 +145,10 @@
     },
     "views": {
       "codebook": [
+        {
+          "id": "codebook.repositoryWiki",
+          "name": "Repository Wiki"
+        },
         {
           "id": "codebook.learningOutline",
           "name": "Learning outline"

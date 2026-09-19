@@ -77,7 +77,9 @@ export async function createEnvironment(context: Pick<vscode.ExtensionContext, '
     catch { missing.push('Build the extension and paired-cart-demo packages with pnpm build.'); }
     return { ready: missing.length === 0, missing, nodeExecutable, chrome };
   };
-  return { workspace, host, build, prerequisites: async () => { const { ready, missing } = await resolvePrerequisites(); return { ready, missing }; },
+  return { workspace, host, build,
+    assertWorkspace() { if (requireWorkspace() !== workspace) throw new StudyError('STALE_INSTANCE', 'Workspace identity changed; reconnect before reading or publishing repository content.'); },
+    prerequisites: async () => { const { ready, missing } = await resolvePrerequisites(); return { ready, missing }; },
     async createRuntime(directory: string, profile: ProfileId = 'paired-cart-demo'): Promise<StudyRuntime> {
       const prerequisites = await resolvePrerequisites();
       if (!prerequisites.ready || !prerequisites.nodeExecutable || !prerequisites.chrome) throw new StudyError('PREREQUISITE_MISSING', prerequisites.missing.join('; '));

@@ -12,6 +12,7 @@ export interface StudyViewMessage {
   nextAction?: StudyAction; liveProfile?: ProfileId; profiles: { id: ProfileId; title: string; description: string }[];
   moments: { id: string; itemId: string; title: string; at: string; elapsedMs?: number }[]; studies: StudyCatalogEntry[];
   contentTab?: 'overview' | 'live' | 'recording';
+  repositoryReturnAvailable?: boolean;
   recording?: PlaybackState & Pick<PlaybackBundle['projection'], 'pauseConfirmed' | 'rendererConfirmed' | 'laterInterpretations'>;
 }
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getState(): { visited?: string[] } | undefined; setState(state: unknown): void };
@@ -20,7 +21,7 @@ declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getS
 export function studyHtml(kind: 'context' | 'moments'): string {
   const nonce = randomUUID();
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${kind === 'moments' ? 'moments-only' : ''}">
-<div class="live-strip"><div id="runtime" role="status" aria-live="polite">No running study</div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
+<button data-action="return-wiki" hidden>← Return to Wiki</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite">No running study</div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
 <p id="study-state" class="status" hidden></p>
 <p id="errors" class="error" role="status" aria-live="polite"></p><button data-action="retry" hidden>Retry storage / refresh</button>
 <section id="recording-transport" aria-label="Recorded playback" hidden><h2>Recorded walkthrough</h2><p id="recording-status" role="status" aria-live="polite"></p><div class="row"><button class="primary" id="playback-toggle" data-playback="play">Play recording</button><button data-playback="start">Replay from start</button><button data-action="reload-recording">Reload saved recording</button></div><label for="playhead">Recorded position</label><input id="playhead" type="range" min="0" max="0" step="1" value="0"><p id="playback-position"></p><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p><p class="muted">Playback changes this reader only. It does not run application code or mark understanding.</p></section>
@@ -90,6 +91,7 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     const message: StudyViewMessage = event.data;
     if (message?.type !== 'study') return;
     current = message; const { model, recording } = message, contentTab = message.contentTab ?? model.selection.tab;
+    button('return-wiki')!.hidden = !message.repositoryReturnAvailable;
     // Offline replay prioritizes its own controls; an independently active runtime keeps its explicit stop/return strip.
     if (strip) strip.hidden = Boolean(recording && (!message.liveState || message.liveState === 'stopped'));
     element('next-scenario').hidden = Boolean(recording);

@@ -3,14 +3,15 @@ import { STUDY_PROFILES } from 'codebook-cycle-0004/dist/profiles';
 import type { StudyItemId } from 'codebook-cycle-0004/dist/constants';
 import type { StudyService } from './service';
 import { participantSchema, sourceSchema } from './legacyStudySchemas';
-import { studyArchiveSchema, selectionSchema, progressSchema, learnerDecisionSchema } from './studySchemas';
+import { studyArchiveSchema, selectionSchema } from './studySchemas';
+import type { LearnerProgress, SavedLearnerDecision } from './learnerSchemas';
 export { participantSchema, studyIdSchema, sourceSchema } from './legacyStudySchemas';
-export { capturedImageSchema, observationSchema, studyArchiveSchema, selectionSchema, progressSchema, learnerDecisionSchema } from './studySchemas';
+export { capturedImageSchema, observationSchema, studyArchiveSchema, selectionSchema } from './studySchemas';
 
 export type StudyArchive = z.infer<typeof studyArchiveSchema>;
 export type StudySelection = z.infer<typeof selectionSchema>;
-export type LearnerProgress = z.infer<typeof progressSchema>;
-export type LearnerDecision = z.infer<typeof learnerDecisionSchema>;
+export type { LearnerProgress, LearnerDecision } from './learnerSchemas';
+export { progressV3Schema as progressSchema, learnerDecisionV3Schema as learnerDecisionSchema } from './learnerSchemas';
 export type StudyParticipant = z.infer<typeof participantSchema>;
 export type SourceBaseline = z.infer<typeof sourceSchema> & { path: string };
 export type SourceBaselines = Record<StudyParticipant, SourceBaseline>;
@@ -20,9 +21,9 @@ export const LEARNING_ITEMS = Object.values(STUDY_PROFILES).flatMap(profile => p
 
 /** Separates current-source understanding from retained historical decisions for {@link projectStudy}. @example learningState(progress, 'paired-cart-demo/server', hash).reviewNeeded */
 export function learningState(progress: LearnerProgress | undefined, item: StudyItemId, currentHash: string | undefined) {
-  const latest = new Map<string, LearnerDecision>();
+  const latest = new Map<string, SavedLearnerDecision>();
   // A later uncheck supersedes only that source revision, never another historical decision.
-  for (const decision of progress?.decisions ?? []) if (decision.item === item) latest.set(decision.sourceHash, decision);
+  for (const decision of progress?.decisions ?? []) if (decision.item === item && decision.context.kind === 'source') latest.set(decision.sourceHash, decision);
   const current = currentHash ? latest.get(currentHash) : undefined;
   return { known: Boolean(progress) && Boolean(currentHash), understood: current?.understood === true, at: current?.at,
     reviewNeeded: current?.understood !== true && [...latest.values()].some(decision => decision.sourceHash !== currentHash && decision.understood), history: [...latest.values()] };
