@@ -2,11 +2,11 @@
 
 Updated: 2026-09-19\
 Product stage: repository Wiki connected to fixed-profile observations/replay in both native editors; general runtime and installed-product usefulness unverified\
-Active cycle: none — Cycle 0009 is closed locally; its remote closure sync is next\
+Active cycle: none — Cycle 0009 is closed; select the bounded runtime candidate below\
 Last cycle: [0009 — Repository learning book](docs/cycles/0009-repository-learning-book.md) — bounded result demonstrated, implementation `1bd10b3`, 238 tests and normal/200% native returns pass\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: none\
-Last cycle issue: [#10](https://github.com/laststance/codebook/issues/10) — remote closure sync pending after pushed records\
+Last cycle issue: [#10](https://github.com/laststance/codebook/issues/10) — closed with [pushed evidence](https://github.com/laststance/codebook/issues/10#issuecomment-5742534461) at `0313c33`\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
@@ -54,7 +54,7 @@ D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answer
 
 The checkpoint was restored in this same checkout and branch `codex/cycle-0009-repository-learning-book` at `6f22f12`. All seven draft hashes matched; their original bytes remain in ignored `artifacts/cycle-0009/handoff-20260919-190104/`. No reset, stash, clean or new worktree was used. Fresh reviewer creation succeeded, and both independent plan amendments now have regressions: committed-key recovery before mutable preparation and a bounded 1 MiB + 64 KiB HTTP envelope. The same reviewer subsequently completed bounded implementation/design rereviews; thread capacity later prevented another fresh reviewer. This does not count toward outside-model or final-product reviews.
 
-Finish Cycle 0009 remote sync: implementation `1bd10b3` is committed, the clean source fingerprint matches the validated 238-test native cut, and the closure records are ready. Push this same branch, then update and close Issue #10 with evidence links. Keep Issue #1 open. Both isolated native sessions have ended with exit 0 and restored settings; no native QA process needs resuming. Private recordings/transcripts must be copied to an accessible durable location before this workspace is moved or deleted; the manifest identifies hashes and availability.
+Cycle 0009 delivery is synchronized: implementation `1bd10b3` and closure records `0313c33` are pushed, the clean source fingerprint matches the validated 238-test native cut, and Issue #10 is [closed with evidence](https://github.com/laststance/codebook/issues/10#issuecomment-5742534461). Select and open the bounded runtime feasibility cycle below on this same branch. Keep Issue #1 open. Both isolated native sessions have ended with exit 0 and restored settings; no native QA process needs resuming. Private recordings/transcripts must be copied to an accessible durable location before this workspace is moved or deleted; the manifest identifies hashes and availability.
 
 The next single candidate is a bounded **real-repository runtime feasibility** cycle: select one non-fixture local TypeScript application after read-only inspection, freeze its supported launch/debug/source and expected-observation contract, then test the smallest meaningful runtime path. The actual Codebook repository authoring result proves source reading only; execution still requires the fixed demo profiles. Resolve that core constraint before polishing an already demonstrated reader layer. Do not use the production Zumen checkout as an experimental target.
 
