@@ -21,6 +21,23 @@ async function connect(descriptor: ConnectionDescriptor) {
 }
 const receiptSchema = z.object({ instanceId: z.string(), runId: z.string(), runUri: z.string() });
 
+test('MCP discovery declares application execution effects without broadening source reader or storage annotations', async () => {
+  // Arrange
+  const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
+  try {
+    // Act
+    const discovery = await connection.client.listTools();
+    // Assert
+    for (const name of ['codebook_start', 'codebook_action', 'codebook_continue']) {
+      const annotations = discovery.tools.find(tool => tool.name === name)!.annotations;
+      assert.equal(annotations?.readOnlyHint, false); assert.equal(annotations?.destructiveHint, true); assert.equal(annotations?.openWorldHint, true);
+    }
+    assert.equal(discovery.tools.find(tool => tool.name === 'codebook_source')!.annotations?.readOnlyHint, true);
+    assert.equal(discovery.tools.find(tool => tool.name === 'codebook_publish_book')!.annotations?.openWorldHint, false);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await connection.close(); await endpoint.close(); await harness.close(); }
+});
+
 test('real MCP discovery, action and reconnect retain one runtime and one click after GET 405', async () => {
   // Arrange
   const harness = await createHarness(), endpoint = await startServer(harness.service), first = await connect(endpoint.descriptor);

@@ -319,6 +319,8 @@ export class StudyService {
       state: record.stopped ? 'stopped' : record.stopping ? 'stopping' : terminalReason ? 'failed' : !record.prepared ? 'preparing' : runtime?.status ?? 'preparing',
       runtimeState: runtime?.status, createdAt: new Date(record.createdAt).toISOString(), deadlineAt: new Date(record.deadlineAt).toISOString(), activeTimeoutMs: ACTIVE_TIMEOUT_MS,
       nextActions, participants, operation: record.action?.receipt, operations: [...record.actions.values()].map(action => action.receipt), observed: runtime?.observed, links: runtime?.links,
+      // Dispatch and ACK change recoverable evidence even while the runtime remains in the same acting state.
+      operationProgress: runtime?.profile === REPOSITORY_BROWSER_PROFILE && runtime.operation ? { ...runtime.operation, continuedPause: runtime.operation.continuedPause && { ...runtime.operation.continuedPause } } : undefined,
       manifestUri: runtime?.manifest ? this.uri(record.id, 'manifest') : undefined, manifestHash: runtime?.manifest?.hash,
       configurationHash: record.profile === REPOSITORY_BROWSER_PROFILE ? record.definition?.configurationHash : undefined,
       itemId: record.profile === REPOSITORY_BROWSER_PROFILE ? record.definition?.descriptor.itemId : undefined,

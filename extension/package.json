@@ -123,7 +123,7 @@
           "type": "string",
           "default": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
           "scope": "machine",
-          "description": "Chrome executable for the explicitly selected local demo profile."
+          "description": "Chrome executable for the explicitly selected local demo or configured repository profile."
         }
       }
     },

@@ -24,7 +24,8 @@ export function validateConfiguredStudyEvidence(study: Omit<ConfiguredStudy, 'ca
       const path = `${inspection.mode}:${inspection.path}`;
       if (values.has(path) === unavailable.has(path)) throw new Error('Configured inspection must have one captured or unavailable result.');
       if (inspection.mode === 'type' && values.has(path) && !REPOSITORY_CAPTURED_TYPES.some(type => type === values.get(path))) throw new Error('Configured type inspection is not a captured type string.');
-      if (inspection.required && unavailable.has(path)) throw new Error('Configured committed observation lacks a required fact.');
+      // Partial source/value evidence remains readable, but it cannot qualify continuation or completed execution.
+      if (inspection.required && unavailable.has(path) && (study.finalOutcome === 'demonstrated' || study.operation?.continuedPause || study.operation?.afterVerified)) throw new Error('Configured completed or continued observation lacks a required fact.');
     }
     for (const interpretation of observation.interpretations) {
       if (new Set(interpretation.facts.map(fact => fact.path)).size !== interpretation.facts.length || interpretation.facts.some(fact => !values.has(fact.path) || values.get(fact.path) !== fact.value)) throw new Error('Configured interpretation facts differ from its observation.');

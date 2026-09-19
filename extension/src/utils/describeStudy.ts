@@ -16,9 +16,9 @@ export function describeStudy(input: DescriptorInput): StudyDescriptor {
   if (input.profile !== REPOSITORY_BROWSER_PROFILE) return STUDY_PROFILES[input.profile];
   const configuration = 'configuration' in input ? input.configuration : undefined;
   const itemId = 'configuration' in input ? input.descriptor?.itemId ?? `repository/${input.configuration.book.bookId}/${input.configuration.book.nodeId}` : input.itemId;
-  const title = configuration?.action.title ?? 'Repository browser action';
-  return { id: REPOSITORY_BROWSER_PROFILE, title, description: 'One configured browser action in the selected repository article.',
-    items: [{ id: itemId, title, participant: 'browser', capturePhase: 'paused-browser',
+  const descriptor = 'descriptor' in input ? input.descriptor : undefined;
+  return { id: REPOSITORY_BROWSER_PROFILE, title: descriptor?.bookTitle ?? 'Repository browser study', description: 'One configured browser action in the selected repository article.',
+    items: [{ id: itemId, title: descriptor?.nodeTitle ?? 'Repository article', participant: 'browser', capturePhase: 'paused-browser',
       overview: configuration ? `Read the article and its cited source at ${configuration.source.path}:${configuration.source.line}. Runtime values appear only after the configured action reaches its verified pause.` : 'The configured article remains selected. Recorded source and values are unavailable at this position.' }],
-    actions: [{ id: REPOSITORY_BROWSER_ACTION, title }], capturePhases: CONFIGURED_CAPTURE_PHASES, requiredLinks: [] };
+    actions: [{ id: REPOSITORY_BROWSER_ACTION, title: configuration?.action.title ?? 'Repository browser action' }], capturePhases: CONFIGURED_CAPTURE_PHASES, requiredLinks: [] };
 }

@@ -14,6 +14,19 @@ import { inspectConfiguredValues } from '../utils/inspectConfiguredValues';
 import { configuredDomExpression } from '../utils/configuredDomExpression';
 import { assertDevelopmentWorkspace } from '../utils/assertDevelopmentWorkspace';
 import { repositoryHarness } from './utils/repositoryHarness';
+import { assertConfiguredSourceDocuments } from '../utils/assertConfiguredSourceDocuments';
+import { configuredDefinitionSchema } from '../configuredStudySchemas';
+import { createConfiguredStudy } from './utils/createConfiguredStudy';
+
+test('unchanged native BOM and mixed-EOL source buffers pass identity guards while actual edits still reject', () => {
+  // Arrange
+  const study = createConfiguredStudy('\uFEFFconst nextTheme = "dark";\r\n// Retained second line.\r');
+  const definition = configuredDefinitionSchema.parse({ configuration: study.configuration, configurationHash: study.configurationHash, descriptor: study.descriptor }), document = { uri: { scheme: 'file', fsPath: '/repository/src/theme.ts' }, getText: () => 'const nextTheme = "dark";\n// Retained second line.\n' };
+  // Act / Assert
+  assert.doesNotThrow(() => assertConfiguredSourceDocuments('/repository', definition, [document]));
+  assert.throws(() => assertConfiguredSourceDocuments('/repository', definition, [{ ...document, getText: () => 'const nextTheme = "light";\n// Retained second line.\n' }]), { code: 'SOURCE_CHANGED' });
+  assert.equal(definition.descriptor.sources[0]!.text, '\uFEFFconst nextTheme = "dark";\r\n// Retained second line.\r');
+});
 
 for (const path of ['src/ordinary.tsx', 'components/deep/another.ts']) test(`configured discovery finds ${path} in a root client chunk without any fixed parent module name`, async context => {
   // Arrange
@@ -51,7 +64,7 @@ test('configured build reads reject linked files linked ancestors directory targ
   await assert.rejects(readRepositoryBuildText(directory, 'linked-directory/outside.js', 100), /Linked build paths/);
   await assert.rejects(readRepositoryBuildText(directory, join(external, 'outside.js'), 100), /escapes/);
   await assert.rejects(readRepositoryBuildText(directory, '.git', 100), /regular file/);
-  await assert.rejects(readRepositoryBuildText(directory, 'invalid.js', 100), /encoded data/);
+  await assert.rejects(readRepositoryBuildText(directory, 'invalid.js', 100), { name: 'TypeError', code: 'ERR_ENCODING_INVALID_ENCODED_DATA' });
   await assert.rejects(readRepositoryBuildText(directory, 'source.ts', 100, AbortSignal.abort()), /abort/i);
 });
 
@@ -68,14 +81,13 @@ test('a foreign Next lock is preserved and prevents readiness before any applica
 test('configured inspection reads actual finite zero false null string and type values with side-effect checks on the exact frame', async () => {
   // Arrange
   const requests: Protocol.Debugger.EvaluateOnCallFrameRequest[] = [];
-  const values: Record<string, Protocol.Runtime.RemoteObject> = { count: { type: 'number', value: 0 }, enabled: { type: 'boolean', value: false }, selection: { type: 'object', subtype: 'null', value: null }, title: { type: 'string', value: 'observed' }, 'typeof handler': { type: 'string', value: 'function' } };
+  const environment = { count: 0, enabled: false, selection: null, title: 'observed', handler() {} };
   const inspections = [{ path: 'count', mode: 'value' as const, required: true }, { path: 'enabled', mode: 'value' as const, required: false }, { path: 'selection', mode: 'value' as const, required: false }, { path: 'title', mode: 'value' as const, required: false }, { path: 'handler', mode: 'type' as const, required: true }];
   // Act
-  const result = await inspectConfiguredValues(async parameters => { requests.push(parameters); return { result: values[parameters.expression]! }; }, 'exact-frame', inspections, () => {});
+  const result = await inspectConfiguredValues(async parameters => { requests.push(parameters); const value = runInNewContext(parameters.expression, environment); return { result: { type: typeof value, value } }; }, 'exact-frame', inspections, () => {});
   // Assert
   assert.deepEqual(result, { values: { 'value:count': 0, 'value:enabled': false, 'value:selection': null, 'value:title': 'observed', 'type:handler': 'function' }, unavailableValues: [] });
-  assert.equal(requests.length, 5); assert.equal(requests.every(request => request.callFrameId === 'exact-frame' && request.throwOnSideEffect === true && request.returnByValue === true), true);
-  assert.deepEqual(requests.map(request => request.expression), ['count', 'enabled', 'selection', 'title', 'typeof handler']);
+  assert.equal(requests.length, 5); assert.equal(requests.every(request => request.callFrameId === 'exact-frame' && request.throwOnSideEffect === true && request.returnByValue === true && request.timeout === 1000), true);
 });
 
 test('unavailable optional inspections stay labeled and required objects getters nonfinite undefined or oversized values cannot certify a pause', async () => {
@@ -89,8 +101,26 @@ test('unavailable optional inspections stay labeled and required objects getters
   for (const response of results) {
     const optional = await inspectConfiguredValues(async () => response, 'frame', [{ path: 'local', mode: 'value', required: false }], () => {});
     assert.deepEqual(optional.values, {}); assert.equal(optional.unavailableValues[0]?.path, 'value:local'); assert.equal(optional.unavailableValues.length, 1);
-    await assert.rejects(inspectConfiguredValues(async () => response, 'frame', [{ path: 'local', mode: 'value', required: true }], () => {}), /Required inspection value:local is unavailable/);
+    const required = await inspectConfiguredValues(async () => response, 'frame', [{ path: 'local', mode: 'value', required: true }], () => {});
+    assert.deepEqual(required.values, {}); assert.equal(required.unavailableValues[0]?.path, 'value:local');
   }
+});
+
+test('large optional application objects and strings become unavailable before any payload is serialized for the debugger transport', async () => {
+  // Arrange: evaluate the actual generated expression, then model the protocol serialization boundary.
+  const payloadSizes: number[] = [];
+  const environment = { huge: Array(10_000).fill('private application data'), long: 'x'.repeat(20_000), useful: 0 };
+  const evaluate = async (parameters: Protocol.Debugger.EvaluateOnCallFrameRequest): Promise<Protocol.Debugger.EvaluateOnCallFrameResponse> => {
+    const value = runInNewContext(parameters.expression, environment);
+    const result = { type: typeof value, value };
+    payloadSizes.push(Buffer.byteLength(JSON.stringify(result)));
+    return { result };
+  };
+  // Act
+  const facts = await inspectConfiguredValues(evaluate, 'exact-frame', [{ path: 'huge', mode: 'value', required: false }, { path: 'long', mode: 'value', required: false }, { path: 'useful', mode: 'value', required: true }], () => {});
+  // Assert
+  assert.deepEqual(facts.values, { 'value:useful': 0 }); assert.deepEqual(facts.unavailableValues.map(value => value.path), ['value:huge', 'value:long']);
+  assert.deepEqual(payloadSizes, [20, 20, 27]);
 });
 
 test('a pause invalidated while an evaluation response is delayed cannot publish that response as captured facts', async () => {

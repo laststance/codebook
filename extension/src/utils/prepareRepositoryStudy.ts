@@ -21,7 +21,8 @@ export async function prepareRepositoryStudy(input: RepositoryConfiguration, boo
   if (node.learningItemId !== undefined) throw new StudyError('INVALID_CONFIGURATION', 'configuration.book.nodeId must retain its default repository identity; a demo alias cannot become a configured study.');
   const paths = new Set(node.anchors.map(anchor => anchor.path));
   const definition = configuredDefinitionSchema.parse({ configuration, configurationHash: sha256(JSON.stringify(configuration)), descriptor: {
-    itemId: `repository/${configuration.book.bookId}/${node.id}`, anchors: node.anchors, citationContext: citationContext(node.anchors), sources: selected.revision.sources.filter(source => paths.has(source.path)),
+    itemId: `repository/${configuration.book.bookId}/${node.id}`, bookTitle: selected.revision.document.title, nodeTitle: node.title,
+    anchors: node.anchors, citationContext: citationContext(node.anchors), sources: selected.revision.sources.filter(source => paths.has(source.path)),
   } });
   try { assertConfiguredDescriptor(configuration, definition.descriptor); }
   catch (error) { throw new StudyError('INVALID_CONFIGURATION', 'configuration.source and configuration.book.anchorIndex must identify a valid position in the same captured citation.', String(error)); }

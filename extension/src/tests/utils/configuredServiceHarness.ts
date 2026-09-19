@@ -28,8 +28,11 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
   /** Creates one synthetic declared stop so shared lifecycle tests can distinguish browser-only evidence. @example runtime.action('click', 'repository-click') */
   action(key: string, action: RuntimeAction) {
     if (action !== 'repository-click' || this.operation) throw new Error('conflict: wrong or repeated configured input');
+    const declaredSource = this.definition.descriptor.sources.find(source => source.path === this.definition.configuration.source.path);
+    if (!declaredSource) throw new Error('The configured test definition is missing its selected source.');
     this.dispatches++; this.operation = { id: randomUUID(), key, inputDispatched: true, inputAcknowledged: true, afterVerified: false }; this.status = 'paused-browser';
-    const pause = this.gate.stop('browser-session', 1), reference = createConfiguredStudy().observations[0]!;
+    // Synthetic observations must use the same custom bytes exposed by the runtime source resource.
+    const pause = this.gate.stop('browser-session', 1), reference = createConfiguredStudy(declaredSource.text).observations[0]!;
     const { snapshotUri: _uri, interpretations: _interpretations, ...snapshot } = reference;
     const receipt = this.evidence.record('snapshot.committed', { snapshotId: `${pause.sessionId}:${pause.generation}` });
     this.snapshots.push({ ...snapshot, id: `${pause.sessionId}:${pause.generation}`, pause, capturedAt: receipt.wallTime, elapsedMs: receipt.elapsedMs }); return this.operation;

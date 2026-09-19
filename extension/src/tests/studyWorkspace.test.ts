@@ -50,11 +50,13 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let editorLayout: unknown = { orientation: 0, groups: [{}] };
   let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined;
   const panels = new Set<ReturnType<typeof panel>>();
+  const postedMessages: StudyViewMessage[] = [];
   const receivers = new Map<string, (message: unknown) => void>();
   let automaticContextReceipt = false, contextCoversSource = false, displayedImage: string | undefined;
   let nextImage: { wait: Promise<void>; entered(): void } | undefined;
   function panel(kind: string) {
     const value = { webview: { html: '', postMessage: async (message: StudyViewMessage) => {
+      postedMessages.push(message);
       if (automaticContextReceipt && kind === 'codebook.studyContext' && message.type === 'study' && !message.loading) {
         receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
       }
@@ -63,11 +65,13 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     panels.add(value); return value;
   }
   const initialSelection: string[] = [];
-  const outline = { ...disposable(), visible: true, selection: initialSelection, onDidChangeCheckboxState: disposable, onDidChangeVisibility: disposable,
+  let outlineCheckbox = (_event: { items: [string, number][] }) => {};
+  let outlineItem = (_itemId: string): { checkboxState?: number; description?: string } => ({});
+  const outline = { ...disposable(), visible: true, selection: initialSelection, onDidChangeCheckboxState: (callback: typeof outlineCheckbox) => { outlineCheckbox = callback; return disposable(); }, onDidChangeVisibility: disposable,
     reveal: async (participant: string, options: { select: boolean; focus: boolean }) => { assert.equal(options.focus, false); if (options.select) outline.selection = [participant]; } };
   const watcher = { onDidChange(callback: () => void) { changed = callback; return disposable(); }, onDidCreate: disposable, onDidDelete: disposable, dispose() {} };
   const boundary = await loadModule<typeof import('../studyWorkspace')>(resolve(__dirname, '../studyWorkspace.js'), {
-    vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, Position: class {}, Range: class {}, ViewColumn: { One: 1, Two: 2, Three: 3 }, ThemeColor: class {}, RelativePattern: class {},
+    vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position: class {}, Range: class {}, ViewColumn: { One: 1, Two: 2, Three: 3 }, ThemeColor: class {}, RelativePattern: class {},
       commands: { async executeCommand(name: string, layout?: unknown): Promise<unknown> {
         commands.push(name); const held = nextCommand; if (held?.name === name) { nextCommand = undefined; held.entered(); await held.wait; }
         if (name === failingCommand) { failingCommand = undefined; throw new Error('Native layout command failed'); }
@@ -87,11 +91,11 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         }
         if (name === 'workbench.action.evenEditorWidths') editorLayout = structuredClone(settledLayout);
       } },
-      window: { createTextEditorDecorationType: disposable, createTreeView: () => outline, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: disposable, createWebviewPanel: panel,
+      window: { createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: disposable, createWebviewPanel: panel,
         showTextDocument: async (document: { uri: Uri; getText(): string }) => { const tab = { input: new TabInputText(document.uri) }; groups[0]!.tabs.push(tab); groups[0]!.activeTab = tab; return { document, setDecorations() {} }; },
         tabGroups: { all: groups, onDidChangeTabGroups: (callback: typeof changedGroups) => { changedGroups = callback; return disposable(); }, close: async (tabs: Tab[]) => { groups[0]!.tabs = groups[0]!.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
       workspace: { textDocuments: [], registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
-        openTextDocument: async (uri: Uri) => { const held = nextOpen; nextOpen = undefined; if (held) { held.entered(); await held.wait; } const text = await sourceProvider(uri); return { uri, getText: () => text }; },
+        openTextDocument: async (uri: Uri) => { const held = nextOpen; nextOpen = undefined; if (held) { held.entered(); await held.wait; } const text = uri.scheme === 'file' ? await readFile(uri.fsPath, 'utf8') : await sourceProvider(uri); return { uri, getText: () => text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n') }; },
         onDidChangeTextDocument: disposable, createFileSystemWatcher: () => watcher } },
     './environment': { requireWorkspace: () => harness.directory }, 'codebook-cycle-0001/dist/browserViewport': { BrowserViewport: class {
       async reveal() {} async showLive() {} showHistory() {} close() {}
@@ -106,6 +110,8 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const reader = createReader();
   if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
   return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, articleOpens, articleReturns, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
+    outlineItem: (itemId: string) => outlineItem(itemId), changeOutlineCheckbox: (itemId: string, checked: boolean) => outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
+    postedMessages: () => postedMessages,
     clock(value: number) { clock = value; }, acknowledgeContext() { automaticContextReceipt = true; }, displayedImage: () => displayedImage,
     coverSourceWhenContextFocused() { contextCoversSource = true; },
     editorLayout: () => structuredClone(editorLayout), changeEditorLayout(layout: unknown) { editorLayout = structuredClone(layout); },
@@ -545,6 +551,44 @@ test('a fresh reader restores the saved recording position paused and a live-run
     assert.equal(reloaded.inspect().view?.contentTab, 'recording'); assert.equal(reloaded.inspect().view?.model.observation?.values.price, 24);
     assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
   } finally { await reloaded.dispose(); await harness.close(); }
+});
+
+test('starting a live viewport after closing recorded Study leaves its old film closed and preserves the saved replay position', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    await harness.reader.close();
+    // Act
+    const liveViewport = harness.reader.presentation.createViewport!('next-live-run', () => {}, () => {}, 'normal');
+    await harness.controller.settle();
+    // Assert
+    assert.equal(harness.reader.inspect().opened, false);
+    assert.equal(harness.controller.state().studyId, undefined);
+    assert.equal(harness.controller.state().readiness, 'idle');
+    assert.equal((await harness.store.readPreference())?.positionMs, 100);
+    liveViewport.close();
+  } finally { await harness.close(); }
+});
+
+test('starting a live viewport while recorded Study is open preserves the independently selected film', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    // Act
+    const liveViewport = harness.reader.presentation.createViewport!('next-live-run', () => {}, () => {}, 'normal');
+    await harness.controller.settle();
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.reader.inspect().view?.contentTab, 'recording');
+    assert.equal(harness.controller.state().studyId, harness.studyId);
+    assert.equal(harness.controller.state().readiness, 'ready');
+    assert.equal(harness.controller.state().presentedMs, 100);
+    liveViewport.close();
+  } finally { await harness.close(); }
 });
 
 test('retiring before the next polling tick preserves the last accepted interpretation and terminal state', async context => {
@@ -1325,8 +1369,8 @@ test('an MCP source reveal rejects a host rendering failure instead of recording
 });
 
 /** Connects actual Git/book/history/recording/reader code to a controlled configured runtime; native paint remains mocked. @example const harness = await configuredWorkspaceHarness() */
-async function configuredWorkspaceHarness() {
-  const harness = await workspaceHarness(false), directory = await realpath(harness.directory), library = await harness.reader.learningStorage(), study = createConfiguredStudy();
+async function configuredWorkspaceHarness(sourceText?: string) {
+  const harness = await workspaceHarness(false), directory = await realpath(harness.directory), library = await harness.reader.learningStorage(), study = createConfiguredStudy(sourceText);
   const git = promisify(execFile);
   await git('git', ['init', '--quiet', directory]); await mkdir(join(directory, 'src'));
   for (const source of study.descriptor!.sources) await writeFile(join(directory, source.path), source.text);
@@ -1350,6 +1394,86 @@ async function configuredWorkspaceHarness() {
     async close() { books.dispose(); await harness.close(); } };
 }
 
+test('configured Study sends captured facts without copying retained source bodies into its webviews', async () => {
+  // Arrange
+  const harness = await configuredWorkspaceHarness();
+  try {
+    await harness.start();
+    // Act
+    await harness.reader.action('click');
+    const posted = harness.postedMessages().findLast(message => message.model.observation?.actionId === 'repository-click');
+    // Assert: native/archive source stays intact while webview metadata remains sufficient.
+    assert.ok(posted?.model.observation?.actionId === 'repository-click');
+    assert.equal(posted.model.source.text, ''); assert.equal(posted.model.observation.source.text, '');
+    assert.equal(posted.model.observation.values['value:enabled'], false);
+    assert.equal(harness.reader.inspect().view!.model.source.text, 'const nextTheme = "dark";\n');
+    assert.equal(harness.reader.inspect().view!.model.observation!.source.text, 'const nextTheme = "dark";\n');
+  } finally { await harness.close(); }
+});
+
+test('closing during configured citation verification never reopens a captured source tab', async context => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval'] });
+  const harness = await configuredWorkspaceHarness(), inspect = RepositorySourceService.prototype.inspect;
+  let release = () => {}, entered = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  let selection: Promise<void> | undefined;
+  try {
+    await harness.start(); await harness.reader.action('click'); await harness.reader.action('stop'); await harness.reader.selectProfile(PROFILE_ID);
+    context.mock.method(RepositorySourceService.prototype, 'inspect', async function (this: RepositorySourceService, ...arguments_: Parameters<typeof inspect>) {
+      const states = await inspect.apply(this, arguments_); entered(); await held; return states;
+    });
+    // Act
+    selection = harness.reader.selectProfile('repository-browser'); void selection.catch(() => undefined); await started;
+    await harness.reader.close(); release();
+    // Assert
+    await assert.rejects(selection, /workspace was closed/);
+    assert.equal(harness.reader.inspect().opened, false); assert.equal(harness.reader.inspect().sourceUri, undefined);
+    assert.equal(harness.groups.flatMap(group => group.tabs).length, 0);
+  } finally { release(); await selection?.catch(() => undefined); context.mock.restoreAll(); await harness.close(); context.mock.timers.reset(); }
+});
+
+test('configured captured and current native readers accept unchanged BOM and mixed line endings without changing retained bytes', async () => {
+  // Arrange
+  const source = '\uFEFFconst nextTheme = "dark";\r\n// Retained second line.\r', harness = await configuredWorkspaceHarness(source);
+  try {
+    // Act
+    const record = await harness.start(); await harness.reader.action('source'); await harness.reader.action('current-file');
+    // Assert
+    assert.equal(harness.reader.inspect().view!.loading, false);
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    assert.equal(harness.reader.inspect().view!.model.source.text, source);
+    assert.equal(harness.reader.inspect().view!.model.source.hash, sha256(source));
+    assert.equal(await readFile(join(harness.directory, 'src/theme.ts'), 'utf8'), source);
+    // Capture and persist the custom bytes too; preparation alone cannot verify fixture fidelity.
+    await harness.reader.action('click');
+    assert.equal(harness.reader.inspect().view!.model.observation!.source.text, '\uFEFFconst nextTheme = "dark";\r\n// Retained second line.\r');
+    await harness.reader.action('stop');
+    const saved = await harness.library.readStudy(`${harness.service.instanceId}_${record.id}`);
+    assert.equal(saved.observations[0]!.source.text, '\uFEFFconst nextTheme = "dark";\r\n// Retained second line.\r');
+    assert.equal(saved.observations[0]!.source.hash, '1859ebb4deb7f0440871f8ddbc3cea090984845ce0cfde0ab648ebb493bf01f2');
+  } finally { await harness.close(); }
+});
+
+test('failed evidence navigation preserves the previous exact article return pose in memory and after restart', async context => {
+  // Arrange
+  const harness = await configuredWorkspaceHarness(); let restarted: ReturnType<typeof harness.createReader> | undefined;
+  try {
+    const record = await harness.start(); await harness.reader.action('click'); await harness.reader.action('stop');
+    const study = await harness.library.readStudy(`${harness.service.instanceId}_${record.id}`), observation = study.observations[0]!;
+    const binding: BookObservationBinding = { nodeId: 'theme', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    const origin = { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 1, location: { sectionIndex: 2, fraction: 0.75, focusId: 'section-2' } };
+    await harness.reader.openRepositoryEvidence(binding, false, undefined, origin);
+    context.mock.method(RecordingStore.prototype, 'readContext', async () => { throw new Error('Injected missing recording context'); });
+    // Act
+    await assert.rejects(harness.reader.openRepositoryEvidence(binding, true, undefined, { ...origin, anchorIndex: 0, location: { sectionIndex: 0, fraction: 0, focusId: 'section-0' } }), /Injected missing/);
+    await harness.reader.action('return-wiki'); await harness.reader.close(); restarted = harness.createReader(); await restarted.open(); await restarted.action('return-wiki');
+    // Assert
+    assert.equal(JSON.stringify(harness.articleReturns), JSON.stringify([origin, origin]));
+    assert.equal(JSON.stringify((await harness.library.readProgress()).repositoryReturn), JSON.stringify({ studyId: study.id, selection: origin }));
+  } finally { context.mock.restoreAll(); await restarted?.dispose(); await harness.close(); }
+});
+
 test('agent-configured input uses the shared reader and complete article understanding without opening or closing a raw target tab', async () => {
   // Arrange
   const harness = await configuredWorkspaceHarness();
@@ -1362,7 +1486,7 @@ test('agent-configured input uses the shared reader and complete article underst
     const view = harness.reader.inspect().view!;
     // Assert
     assert.equal(view.model.selection.itemId, 'repository/interface/theme'); assert.equal(view.model.progressByItem.length, 1); assert.equal(view.nextAction, undefined);
-    assert.equal(view.model.matching, true); assert.equal(view.model.currentItemTitle, 'Change theme'); assert.equal(view.model.selectedUnderstanding.understood, true); assert.equal(view.model.understoodCount, 1);
+    assert.equal(view.model.matching, true); assert.equal(view.model.currentItemTitle, 'Theme'); assert.equal(view.model.selectedUnderstanding.understood, true); assert.equal(view.model.understoodCount, 1);
     assert.ok(view.model.observation?.actionId === 'repository-click'); assert.equal(view.model.observation.values['value:selection'], null);
     assert.match(harness.reader.inspect().sourceUri!, /^codebook-source:/);
     assert.equal(harness.groups.flatMap(group => group.tabs).some(tab => tab.input instanceof Object && 'uri' in tab.input && tab.input.uri.fsPath === join(harness.directory, 'src/theme.ts')), false);
@@ -1371,13 +1495,34 @@ test('agent-configured input uses the shared reader and complete article underst
   } finally { await harness.close(); }
 });
 
-test('a configured rerun explicitly creates a fresh run with the same full intent and sends no input until the learner acts', async () => {
+test('configured recording-context failure remains visible beside independently saved observation history', async () => {
+  // Arrange
+  const harness = await configuredWorkspaceHarness();
+  try {
+    const saveContext = harness.service.recordings!.saveContext.bind(harness.service.recordings!);
+    harness.service.recordings!.saveContext = async () => { throw new Error('Injected recording context write failure'); };
+    // Act
+    const record = await harness.start(); await harness.reader.action('click'); await harness.reader.action('stop');
+    const view = harness.reader.inspect().view!;
+    // Assert
+    assert.equal(record.recordingReceipt?.status, 'failed'); assert.equal(view.study?.historyOutcome, 'saved');
+    assert.equal(view.study?.recordingSave?.contextStatus, 'failed'); assert.match(view.study?.recordingSave?.contextReason ?? '', /Injected recording context write failure/);
+    assert.ok(view.model.observation); assert.equal(view.model.continueArguments, undefined);
+    harness.service.recordings!.saveContext = saveContext; await harness.reader.action('retry');
+    assert.equal(harness.reader.inspect().view?.study?.recordingSave?.contextStatus, 'saved'); assert.equal(harness.configuredRuntimes[0]!.dispatches, 1);
+  } finally { await harness.close(); }
+});
+
+test('configured history rejects learner Run and only a fresh agent request creates another run without dispatching input', async () => {
   // Arrange
   const harness = await configuredWorkspaceHarness();
   try {
     const first = await harness.start(); await harness.reader.action('click'); await harness.reader.action('stop');
     // Act
-    await harness.reader.action('run'); const second = [...harness.service.records.values()].at(-1)!; await second.preparation; await harness.reader['refresh']();
+    assert.equal(harness.reader.inspect().view!.canRun, false);
+    await assert.rejects(harness.reader.action('run'), /agent.*new configured study/i);
+    assert.equal(harness.service.records.size, 1); assert.equal(harness.configuredRuntimes.length, 1);
+    const second = await harness.start();
     // Assert
     assert.notEqual(second.id, first.id); assert.equal(second.profile, 'repository-browser'); assert.ok(second.profile === 'repository-browser');
     assert.equal(JSON.stringify(second.configuration), JSON.stringify(harness.study.configuration)); assert.notEqual(second.key, first.key);
@@ -1403,6 +1548,34 @@ test('a configured article decision survives reader restart and secondary-file d
     assert.equal(view.model.source.text, 'const nextTheme = "dark";\n'); assert.equal(view.model.continueArguments, undefined);
     assert.equal(JSON.stringify((await harness.library.readProgress()).decisions), JSON.stringify(before)); assert.equal(harness.configuredRuntimes.length, 1);
   } finally { await restarted?.dispose(); await harness.close(); }
+});
+
+test('a configured outline cannot write historical understanding after a secondary citation changes', async () => {
+  // Arrange
+  const harness = await configuredWorkspaceHarness();
+  try {
+    await harness.start(); await harness.reader.action('click'); await harness.reader.action('stop');
+    assert.equal(harness.outlineItem('repository/interface/theme').checkboxState, 0);
+    harness.changeOutlineCheckbox('repository/interface/theme', true);
+    await waitUntil(() => harness.reader.inspect().view!.model.understoodCount === 1, 'current citation understanding', 1_000);
+    assert.equal(harness.outlineItem('repository/interface/theme').checkboxState, 1);
+    const before = JSON.stringify((await harness.library.readProgress()).decisions);
+    // Act
+    await writeFile(join(harness.directory, 'src/mode.ts'), 'export const mode = "contrast";\n'); await harness.reader.action('retry');
+    const item = harness.outlineItem('repository/interface/theme');
+    assert.equal(item.checkboxState, undefined); assert.equal(item.description, 'Review needed');
+    harness.changeOutlineCheckbox('repository/interface/theme', false);
+    await waitUntil(() => harness.reader.inspect().view!.errors.some(error => error.includes('Current citations differ')), 'rejected stale outline event', 1_000);
+    // Assert
+    assert.equal(JSON.stringify((await harness.library.readProgress()).decisions), before);
+    assert.equal(harness.reader.inspect().view!.model.selectedUnderstanding.understood, true);
+    assert.equal(harness.reader.inspect().view!.model.understoodCount, 0);
+    await harness.reader.understand(false);
+    assert.equal(harness.reader.inspect().view!.model.selectedUnderstanding.understood, false);
+    const decisions = (await harness.library.readProgress()).decisions;
+    assert.equal(decisions.length, 2); assert.equal(decisions[1]!.understood, false);
+    assert.equal(JSON.stringify(decisions[1]!.context), JSON.stringify(decisions[0]!.context));
+  } finally { await harness.close(); }
 });
 
 test('direct configured entry opens its article at the beginning while actual article origins restore their exact pose after restart', async () => {

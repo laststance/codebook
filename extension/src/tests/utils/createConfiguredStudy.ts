@@ -4,9 +4,9 @@ import { repositoryConfigSchema } from '../../repositoryConfigSchemas';
 import { citationContext } from '../../utils/citationContext';
 
 /** Supplies immutable configured history for decoder/storage tests without pretending to run an app or debugger. @example createConfiguredStudy().observations[0]?.values['value:nextTheme'] // 'dark' */
-export function createConfiguredStudy(): ConfiguredStudy {
+export function createConfiguredStudy(source = 'const nextTheme = "dark";\n'): ConfiguredStudy {
   const instanceId = '11111111-1111-4111-8111-111111111111', runId = '22222222-2222-4222-8222-222222222222';
-  const source = 'const nextTheme = "dark";\n', secondary = 'export const mode = "display";\n';
+  const secondary = 'export const mode = "display";\n';
   const anchors = [{ path: 'src/theme.ts', hash: sha256(source), startLine: 1, endLine: 1 }, { path: 'src/mode.ts', hash: sha256(secondary), startLine: 1, endLine: 1 }];
   const configuration = repositoryConfigSchema.parse({ version: 1, adapter: 'next-dev-webpack', book: { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 0 },
     source: { path: 'src/theme.ts', hash: sha256(source), line: 1, column: 1 },
@@ -18,8 +18,8 @@ export function createConfiguredStudy(): ConfiguredStudy {
     version: 3, workspaceKey: '0'.repeat(64), id: `${instanceId}_${runId}`, instanceId, runId, profile: 'repository-browser',
     createdAt: '2026-09-20T00:00:00.000Z', savedAt: '2026-09-20T00:00:10.000Z', state: 'stopped', terminal: true, finalOutcome: 'demonstrated', materialSignature: sha256('material'),
     configuration, configurationHash: sha256(JSON.stringify(configuration)),
-    descriptor: { itemId: 'repository/interface/theme', anchors, citationContext: citationContext(anchors),
-      sources: [{ path: 'src/theme.ts', hash: sha256(source), text: source, lineCount: 2 }, { path: 'src/mode.ts', hash: sha256(secondary), text: secondary, lineCount: 2 }] },
+    descriptor: { itemId: 'repository/interface/theme', bookTitle: 'Interface', nodeTitle: 'Theme', anchors, citationContext: citationContext(anchors),
+      sources: [{ path: 'src/theme.ts', hash: sha256(source), text: source, lineCount: source.split(/\r\n?|\n/).length }, { path: 'src/mode.ts', hash: sha256(secondary), text: secondary, lineCount: 2 }] },
     operation: { id: '33333333-3333-4333-8333-333333333333', key: 'change-theme', inputDispatched: true, inputAcknowledged: true, continuedPause: pause, afterVerified: true },
     observations: [{ id: 'browser-session:1', itemId: 'repository/interface/theme', actionId: 'repository-click', capturePhase: 'paused-browser',
       snapshotUri: `codebook://${instanceId}/runs/${runId}/snapshots/browser-session%3A1`, participant: 'browser', capturedAt: '2026-09-20T00:00:02.000Z', elapsedMs: 2_000, pause,

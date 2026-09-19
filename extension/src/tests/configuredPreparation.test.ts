@@ -35,6 +35,7 @@ test('configured preparation binds the exact older article and all of its source
   const definition = await prepareRepositoryStudy(configuration, books, control);
   // Assert
   assert.equal(definition.configuration.book.revision, 1); assert.equal(definition.descriptor.itemId, 'repository/interface/theme');
+  assert.equal(definition.descriptor.bookTitle, 'Interface'); assert.equal(definition.descriptor.nodeTitle, 'Theme');
   assert.deepEqual(definition.descriptor.sources.map(source => source.path), ['src/theme.ts', 'src/mode.ts']);
   assert.equal(definition.descriptor.sources[0]?.text, 'const nextTheme = "dark";\n');
   assert.equal(definition.descriptor.citationContext.anchors.length, 2);

@@ -17,7 +17,7 @@ export type RuntimeSource = Pick<SealedSource, 'source' | 'javascript' | 'source
 export type ConfiguredRuntimeView = Pick<DemoRuntimeView, 'runId' | 'status' | 'cleaned' | 'resourcesReleased' | 'runtimeOutcome' | 'captureOutcome' | 'finalOutcome' | 'captures' | 'failures' | 'events' | 'artifactDirectory' | 'activeSessionIds'> & {
   profile: typeof REPOSITORY_BROWSER_PROFILE;
   definition: ConfiguredDefinition;
-  manifest?: { hash: string; configurationHash: string; configuration: ConfiguredDefinition['configuration']; descriptor: Pick<ConfiguredDefinition['descriptor'], 'itemId' | 'anchors' | 'citationContext'>; itemId: ConfiguredObservation['itemId']; sourceHash: string; javascriptHash: string; mapHash: string };
+  manifest?: { hash: string; configurationHash: string; configuration: ConfiguredDefinition['configuration']; descriptor: Pick<ConfiguredDefinition['descriptor'], 'itemId' | 'bookTitle' | 'nodeTitle' | 'anchors' | 'citationContext'>; itemId: ConfiguredObservation['itemId']; sourceHash: string; javascriptHash: string; mapHash: string };
   participants: { browser: Omit<DemoRuntimeView['participants']['browser'], 'snapshot'> & { snapshot: ConfiguredRuntimeSnapshot | undefined } };
   snapshots: ConfiguredRuntimeSnapshot[];
   operation: ConfiguredStudy['operation'];

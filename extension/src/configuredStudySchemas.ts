@@ -8,7 +8,7 @@ import { citationContextSchema } from './citationSchemas';
 import { repositoryItemSchema } from './identitySchemas';
 import { sourceSchema, studyIdSchema } from './legacyStudySchemas';
 import { inspectionPathSchema, repositoryConfigSchema } from './repositoryConfigSchemas';
-import { repositorySourceSchema } from './repositorySchemas';
+import { bookDocumentSchema, bookNodeSchema, repositorySourceSchema } from './repositorySchemas';
 import { bookAnchorSchema, repositoryHashSchema } from './sourceSchemas';
 import { capturedImageSchema, selectionSchema } from './studySchemas';
 
@@ -21,6 +21,7 @@ export const configuredFactPathSchema = z.string().refine(value => {
 export const configuredFactValueSchema = z.union([z.string().max(REPOSITORY_LITERAL_LIMIT_CHARS), z.number().finite(), z.boolean(), z.null()]);
 export const configuredDescriptorSchema = z.strictObject({
   itemId: repositoryItemSchema,
+  bookTitle: bookDocumentSchema.shape.title, nodeTitle: bookNodeSchema.shape.title,
   anchors: z.array(bookAnchorSchema).min(1).max(BOOK_MAX_ANCHORS), citationContext: citationContextSchema,
   sources: z.array(repositorySourceSchema).min(1).max(BOOK_MAX_ANCHORS),
 });

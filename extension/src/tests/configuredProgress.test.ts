@@ -45,6 +45,22 @@ test('configured selection upgrades progress only on explicit write and preserve
   assert.equal(await readFile(legacyPath, 'utf8'), legacyBytes); assert.equal(JSON.parse(await readFile(path, 'utf8')).version, 4);
 });
 
+test('a cancelled return receipt cannot erase another window\'s later article position and its own receipt can be cleared', async context => {
+  // Arrange
+  const { directory, study, library, legacy } = await progressHarness(context), other = new LearningLibrary(directory, study.workspaceKey);
+  const cancelled = { studyId: study.id, selection: { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 0 } };
+  const newer = { studyId: study.id, selection: { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 1, location: { sectionIndex: 2, fraction: 0.75, focusId: 'section-2' } } };
+  await library.rememberRepositoryReturn(cancelled); await other.rememberRepositoryReturn(newer);
+  // Act
+  await library.rememberRepositoryReturn(undefined, cancelled);
+  const preserved = await other.readProgress(); await library.rememberRepositoryReturn(undefined, newer);
+  const cleared = await new LearningLibrary(directory, study.workspaceKey).readProgress();
+  // Assert
+  assert.equal(preserved.repositoryReturn?.selection.anchorIndex, 1);
+  assert.deepEqual(preserved.repositoryReturn?.selection.location, { sectionIndex: 2, fraction: 0.75, focusId: 'section-2' });
+  assert.equal(cleared.repositoryReturn, undefined); assert.deepEqual(cleared.decisions, legacy.decisions);
+});
+
 test('version 3 remains closed to configured selections and version 4 cannot persist arbitrary live authority', async context => {
   // Arrange
   const { legacy, selection } = await progressHarness(context);

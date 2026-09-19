@@ -1,6 +1,8 @@
 import { join, resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import type { TestContext } from 'node:test';
 import type { DebugSession } from 'vscode';
+import type { ViewportRecordingObserver } from 'codebook-cycle-0001/dist/browserViewport';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { configuredDefinitionSchema } from '../../configuredStudySchemas';
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun';
@@ -21,8 +23,12 @@ export async function configuredRuntimeHarness(context: TestContext, control?: R
   const bundle: BundleSource = { sourcePath, source, javascript, sourceMap: JSON.stringify({ version: 3, sources: [sourcePath], sourcesContent: [source], names: [], mappings: 'AAAA' }), mapSource: sourcePath, scriptUrl: 'webpack-internal:///(app-pages-browser)/./src/theme.ts', chunkPath: join(repository.directory, '.next/dev/chunk.js'), chunkHash: '0'.repeat(64) };
   const releases: string[] = [], mouse: { type?: string; timeout?: number }[] = [], commands: string[] = [], listeners = new Map<string, (event: unknown) => void>();
   const timers = new Map<number, { at: number; callback: () => void }>(); let clock = 0, timerId = 0, requestSequence = 0;
-  let emitInputPause = true, removedAck = true, bound = false, ready = true, inputResolve = () => {}, inputReject = (_error: Error) => {}, onClose = () => {}, heldPhase: string | undefined, releaseCapture = () => {}, captureEntered = () => {};
+  let emitInputPause = true, emitPreparationResume = false, removedAck = true, bound = false, ready = true, inputResolve = () => {}, inputReject = (_error: Error) => {}, onClose = () => {}, heldPhase: string | undefined, releaseCapture = () => {}, captureEntered = () => {};
   let run: ConfiguredBrowserRun;
+  let recordingObserver = (): ViewportRecordingObserver | undefined => undefined;
+  let rejectedCapture: string | undefined, requiredValueUnavailable = false;
+  let hideViewportAtPause = false, viewportReady = true;
+  let controlledContinuation = false, continuationEntered = () => {}, acknowledgeContinuation = () => {}, rejectContinuation = (_error: Error) => {};
   type TestBreakpoint = { id: string; location: { uri: { fsPath: string }; range: { start: { line: number; character: number } } } };
   const userBreakpoint: TestBreakpoint = { id: 'learner-owned', location: { uri: { fsPath: sourcePath }, range: { start: { line: 10, character: 0 } } } };
   const breakpoints: TestBreakpoint[] = [userBreakpoint];
@@ -34,25 +40,45 @@ export async function configuredRuntimeHarness(context: TestContext, control?: R
       if (command === 'stackTrace') return { stackFrames: [{ id: 1, name: 'configured', source: { path: sourcePath }, line: 1, column: 1 }] };
       if (command === 'continue') {
         run.onRequest(selected, { type: 'request', seq: ++requestSequence, command, arguments: arguments_ });
+        // Controlled cases deliver response, DAP, CDP and input receipts independently.
+        if (controlledContinuation) {
+          const response = new Promise<void>((resolve, reject) => { acknowledgeContinuation = resolve; rejectContinuation = reject; });
+          continuationEntered(); await response; return {};
+        }
         run.onEvent(selected, { type: 'event', seq: ++requestSequence, event: 'continued', body: { threadId: 1 } });
         listeners.get('Debugger.resumed')?.({}); inputResolve(); return {};
       }
       throw new Error(`Unexpected DAP command: ${command}`);
     }, getDebugProtocolBreakpoint: async breakpoint => bound && breakpoints.some(candidate => candidate.id === breakpoint.id) ? { id: 1, verified: true, line: 1, column: 1 } : undefined };
+  const emitCdpPause = () => {
+    listeners.get('Debugger.paused')?.({ reason: 'other', hitBreakpoints: ['mapped-source'], callFrames: [{ callFrameId: 'selected-frame', location: { scriptId: 'actual', lineNumber: 0, columnNumber: 0 } }] });
+  };
   const emitPause = () => {
-    listeners.get('Debugger.paused')?.({ reason: 'other', callFrames: [{ callFrameId: 'selected-frame', location: { scriptId: 'actual', lineNumber: 0, columnNumber: 0 } }] });
+    // A real debugger may reveal an existing source tab over the leased application panel.
+    if (hideViewportAtPause) viewportReady = false;
+    emitCdpPause();
     run.onEvent(selected, { seq: ++requestSequence, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
   };
   const proxy = {
     closed: false, get onClose() { return onClose; }, set onClose(listener: () => void) { onClose = listener; },
     on(event: string, listener: (value: unknown) => void) { listeners.set(event, listener); }, async subscribe() {}, aggregateScreencastTelemetry() {},
-    close() { if (this.closed) return; this.closed = true; releases.push('cdp'); inputReject(new Error('CDP disconnected')); onClose(); },
+    close() { if (this.closed) return; this.closed = true; releases.push('cdp'); inputReject(new Error('CDP disconnected')); rejectContinuation(new Error('DAP disconnected')); onClose(); },
     async request(method: string, parameters?: { expression?: string; type?: string }, timeout?: number) {
       if (method === 'Runtime.evaluate') return { result: { value: parameters?.expression === 'location.href' ? 'about:blank' : parameters?.expression === 'location.origin' ? 'http://127.0.0.1:4321' : { ready, x: 12, y: 18 } } };
-      if (method === 'Page.navigate') { bound = true; listeners.get('Debugger.scriptParsed')?.({ scriptId: 'actual', url: bundle.scriptUrl, executionContextId: 1 }); return {}; }
+      if (method === 'Page.navigate') {
+        bound = true;
+        // js-debug can resume internal source-map stops without exposing a DAP stop.
+        if (emitPreparationResume) emitCdpPause();
+        listeners.get('Debugger.scriptParsed')?.({ scriptId: 'actual', url: bundle.scriptUrl, executionContextId: 1 });
+        if (emitPreparationResume) { listeners.get('Debugger.resumed')?.({}); emitCdpPause(); listeners.get('Debugger.resumed')?.({}); }
+        return {};
+      }
       if (method === 'Debugger.getScriptSource') return { scriptSource: javascript };
-      if (method === 'Debugger.evaluateOnCallFrame') return { result: { value: parameters?.expression === 'nextTheme' ? 'dark' : parameters?.expression === 'typeof setTheme' ? 'function' : parameters?.expression === 'enabled' ? false : parameters?.expression === 'selection' ? null : undefined } };
-      if (method === 'Page.captureScreenshot') return { data: Buffer.from('synthetic pixels').toString('base64') };
+      if (method === 'Debugger.evaluateOnCallFrame') {
+        try { return { result: { value: runInNewContext(parameters?.expression ?? '', { nextTheme: requiredValueUnavailable ? undefined : 'dark', setTheme() {}, enabled: false, selection: null }) } }; }
+        catch { return { result: { type: 'undefined' }, exceptionDetails: { exceptionId: 1, text: 'Unavailable test local', lineNumber: 0, columnNumber: 0 } }; }
+      }
+      if (method === 'Page.captureScreenshot') return { data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=' };
       if (method === 'Input.dispatchMouseEvent') {
         mouse.push({ type: parameters?.type, timeout });
         if (parameters?.type === 'mousePressed') return {};
@@ -84,8 +110,9 @@ export async function configuredRuntimeHarness(context: TestContext, control?: R
     vscode, './ownedRepositoryBreakpoint': breakpointModule,
     'codebook-cycle-0001/dist/hostBrowser': { HostBrowser: class {
       async launch(configuration: DebugSession['configuration']) { root.configuration.name = configuration.name; run.addSession(root); run.addSession(selected); }
-      async attachViewport() {} async reveal() {} resumeViewport() {}
-      async presentCapture(data: string, phase: string) { if (phase === heldPhase) { captureEntered(); await new Promise<void>(resolve => { releaseCapture = resolve; }); } return { epoch: 'test', id: 1, hash: sha256(Buffer.from(data, 'base64')) }; }
+      async attachViewport() {} async reveal() { viewportReady = true; } resumeViewport() {}
+      recordCapture(data: string, phase: string) { const observer = recordingObserver(); observer?.frame({ data, phase, kind: 'phase', elapsedMs: observer.elapsedMs() }); }
+      async presentCapture(data: string, phase: string) { if (!viewportReady) throw new Error('Webview is not ready'); if (phase === heldPhase) { captureEntered(); await new Promise<void>(resolve => { releaseCapture = resolve; }); } if (phase === rejectedCapture) return undefined; return { epoch: 'test', id: 1, hash: sha256(Buffer.from(data, 'base64')) }; }
       async drainAcquisitions() { releases.push('acquisitions'); } async close() { releases.push('browser'); }
     } },
     'codebook-cycle-0001/dist/cdp': { Cdp: { connect: async () => proxy } },
@@ -94,9 +121,20 @@ export async function configuredRuntimeHarness(context: TestContext, control?: R
     './utils/launchDevelopmentServer': { launchDevelopmentServer: () => ({ ready: async () => { releases.push('application acquired'); return 'http://127.0.0.1:4321'; }, close: async () => { releases.push('application'); } }) },
   }, { setTimeout: (callback: () => void, delay: number) => { const id = ++timerId; timers.set(id, { at: clock + delay, callback }); return id; }, clearTimeout: (id: number) => { timers.delete(id); } });
   run = owned = new runtimeModule.ConfiguredBrowserRun({ directory: join(repository.directory, '.runtime'), workspace: repository.directory, node: process.execPath, host: { id: 'vscode', productVersion: 'test', apiVersion: 'test', commit: 'test' }, definition, control, assertWorkspace() {}, revealSource: async () => { releases.push('captured source'); } });
-  return { ...repository, run, definition, documents, breakpoints, userBreakpoint, mouse, commands, releases, emitPause,
+  return { ...repository, run, definition, documents, breakpoints, userBreakpoint, mouse, commands, releases, emitPause, emitCdpPause,
+    observeRecording(observer: () => ViewportRecordingObserver | undefined) { recordingObserver = observer; },
+    rejectCapture(phase: string) { rejectedCapture = phase; }, requireUnavailableValue() { requiredValueUnavailable = true; },
     suppressInputPause() { emitInputPause = false; },
+    resumeDuringPreparation() { emitPreparationResume = true; },
+    hideViewportOnPause() { hideViewportAtPause = true; },
     manualResume() { listeners.get('Debugger.resumed')?.({}); },
+    holdContinuation() {
+      controlledContinuation = true;
+      const started = new Promise<void>(resolve => { continuationEntered = resolve; });
+      return { started, response: () => acknowledgeContinuation(), input: () => inputResolve(),
+        dap: (threadId = 1) => run.onEvent(selected, { type: 'event', seq: ++requestSequence, event: 'continued', body: { threadId } }),
+        cdp: () => listeners.get('Debugger.resumed')?.({}) };
+    },
     setReady(value: boolean) { ready = value; }, suppressRetirementAck() { removedAck = false; },
     holdCapture(phase: string) { heldPhase = phase; const started = new Promise<void>(resolve => { captureEntered = resolve; }); return { started, release: () => { heldPhase = undefined; releaseCapture(); } }; },
     advance(milliseconds: number) { clock += milliseconds; for (const [id, timer] of [...timers]) if (timer.at <= clock) { timers.delete(id); timer.callback(); } },

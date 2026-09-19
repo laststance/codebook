@@ -100,3 +100,32 @@ test('missing, duplicate and oversized evaluated modules cannot become a sealed 
   assert.throws(() => extractDevelopmentModule(chunk + chunk, sourcePath, source, '/repo/layout.js', 'webpack-internal:///theme.tsx'), /Ambiguous evaluated module/);
   assert.throws(() => extractDevelopmentModule('a'.repeat(REPOSITORY_JAVASCRIPT_LIMIT_BYTES + 1), sourcePath, source, '/repo/layout.js', 'webpack-internal:///theme.tsx'), /exceeds byte limit/);
 });
+
+test('Next webpack placeholder metadata keeps the final selected module available without executing it', () => {
+  // Arrange: native Next emits the placeholder before its map and effective webpack URL.
+  const map = JSON.stringify(payload);
+  const script = `throw new Error('must never execute');\n//# sourceURL=[module]\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(map).toString('base64')}\n//# sourceURL=webpack-internal:///theme.tsx\n`;
+  const chunk = `eval(${JSON.stringify(script)});`;
+  // Act
+  const result = extractDevelopmentModule(chunk, sourcePath, source, '/repo/layout.js', 'webpack-internal:///theme.tsx');
+  // Assert
+  assert.ok(result);
+  assert.equal(result.javascript, script); assert.equal(result.sourceMap, map);
+  assert.equal(result.sourcePath, '/repo/src/theme.tsx'); assert.equal(result.scriptUrl, 'webpack-internal:///theme.tsx');
+});
+
+test('competing or trailing script identities cannot impersonate the selected webpack module', () => {
+  // Arrange
+  const selected = '//# sourceURL=webpack-internal:///theme.tsx\n';
+  const module = `work();\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(payload)).toString('base64')}\n`;
+  const conflictingDirectives = [
+    `//# sourceURL=webpack-internal:///foreign.tsx\n${selected}`,
+    `${selected}//# sourceURL=webpack-internal:///foreign.tsx\n`,
+    `${selected}//# sourceURL=[module]\n`,
+    `${selected}${selected}`,
+  ];
+  // Act / Assert
+  for (const directives of conflictingDirectives) {
+    assert.throws(() => extractDevelopmentModule(`eval(${JSON.stringify(module + directives)});`, sourcePath, source, '/repo/layout.js', 'webpack-internal:///theme.tsx'), /ambiguous script identity/);
+  }
+});

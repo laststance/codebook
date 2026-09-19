@@ -33,6 +33,7 @@ import { repositorySelectionSchema, type RepositorySelection } from './learnerSc
 import { RepositorySourceService } from './repositorySource';
 import { describeStudy } from './utils/describeStudy';
 import { selectStudy } from './utils/selectStudy';
+import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText';
 
 const actionSchema = z.enum(['run', 'click', 'continue', 'stop', 'connect', 'return-current', 'return-wiki', 'open-article', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry', 'reload-recording']);
 const revisionShape = { revision: z.number().int().nonnegative() };
@@ -148,10 +149,12 @@ export class StudyWorkspace {
     this.progress = await this.library!.readProgress(); assertCurrent();
     if (request !== this.historyRequest) throw new Error('Evidence navigation was superseded.');
     const previousSelection = this.selection, previousArchive = this.selectedArchive, previousSelectionKey = this.lastSelectionKey, previousSourceUri = this.sourceUri, previousSourceReady = this.sourceReady();
+    const previousOrigin = this.repositoryOrigin, previousReturn = this.progress.repositoryReturn;
     // Shared refresh may finish checkpoint I/O, but only this signal-bound navigation may render its new selection.
     this.repositoryNavigation = request; this.revision++; this.lastSelectionKey = undefined;
     const returnSelection = origin ?? this.progress?.repositorySelection;
-    this.repositoryOrigin = returnSelection ? { studyId: binding.studyId, selection: repositorySelectionSchema.parse(returnSelection) } : undefined;
+    const proposedOrigin = returnSelection ? { studyId: binding.studyId, selection: repositorySelectionSchema.parse(returnSelection) } : undefined;
+    this.repositoryOrigin = proposedOrigin;
     try {
       if (this.repositoryOrigin) { await this.library!.rememberRepositoryReturn(this.repositoryOrigin); assertCurrent(); }
       this.leavePlayback(); this.pendingHistory = undefined;
@@ -186,11 +189,14 @@ export class StudyWorkspace {
       // Roll back only the cancelled intent; newer learner navigation owns its own selection and presentation.
       if (this.repositoryNavigation === request && this.historyRequest === request) {
         this.selection = previousSelection; this.selectedArchive = previousArchive; this.lastSelectionKey = previousSelectionKey;
+        this.repositoryOrigin = previousOrigin; this.progress = { ...this.progress, repositoryReturn: previousReturn };
         this.revision++; this.loading = false; this.lastRendered = undefined;
         // Retain verified native readiness only when the cancelled navigation never replaced the prior source.
         this.sourceRevision = previousSourceReady && this.sourceUri === previousSourceUri ? this.revision : undefined;
         if (this.sourceRevision === undefined) this.lastSelectionKey = undefined;
         this.publish();
+        // Rollback uses the shared lock and compare-and-set so later navigation cannot lose its durable origin.
+        if (proposedOrigin) await this.library!.rememberRepositoryReturn(previousReturn, proposedOrigin).catch(storageError => this.report('progress', storageError));
       }
       throw error;
     } finally { if (this.repositoryNavigation === request) this.repositoryNavigation = undefined; }
@@ -198,6 +204,8 @@ export class StudyWorkspace {
 
   readonly presentation: StudyPresentation = {
     createViewport: (runId, record, fail, scenario) => {
+      // A new run may replace a closed reader, but an open recording keeps its independently selected film.
+      if (!this.opened) this.leavePlayback();
       const panel = this.ensureApp(), leaseId = randomUUID(); this.leaseId = leaseId;
       panel.title = `codebook · Application ${runId.slice(0, 8)}`;
       const studyRecord = [...this.service?.records.values() ?? []].find(candidate => candidate.runtime?.id === runId);
@@ -287,20 +295,16 @@ export class StudyWorkspace {
     await this.initialize(); this.assertLifetime(lifetime);
     if (['run', 'click', 'continue', 'stop'].includes(action)) {
       if (this.busy) throw new Error('A study control request is already pending.');
-      const displayed = this.message().model, requestedProfile = this.selection.profile, requestedStudy = this.selectedStudy(); this.busy = true; this.publish();
+      const displayed = this.message().model, requestedProfile = this.selection.profile; this.busy = true; this.publish();
       try {
         if (action === 'run') {
+          // Retained configuration is reading context; only a fresh agent request can authorize another configured run.
+          if (requestedProfile === REPOSITORY_BROWSER_PROFILE) throw new Error('Ask your agent to prepare a new configured study with current source validation.');
           this.historyRequest++; this.leavePlayback();
           const service = await this.controls.start(); this.assertLifetime(lifetime);
           this.pendingHistory = undefined; const profile = requestedProfile;
-          if (profile === REPOSITORY_BROWSER_PROFILE) {
-            if (requestedStudy?.version !== 3) throw new Error('Open a configured study before rerunning its action.');
-            const receipt = service.start({ instanceId: service.instanceId, profile, configuration: requestedStudy.configuration, key: randomUUID() });
-            this.selection = { ...selectStudy(requestedStudy), studyId: `${service.instanceId}_${receipt.runId}`, follow: true, tab: 'live' };
-          } else {
-            this.selection = { profile, itemId: STUDY_PROFILES[profile].items[0]!.id, follow: true, tab: 'live' };
-            service.start({ instanceId: service.instanceId, profile, key: randomUUID() });
-          }
+          this.selection = { profile, itemId: STUDY_PROFILES[profile].items[0]!.id, follow: true, tab: 'live' };
+          service.start({ instanceId: service.instanceId, profile, key: randomUUID() });
         } else {
           const service = this.service, record = this.currentRecord();
           if (!service || !record) throw new Error('No current runtime. Reading saved history never starts one.');
@@ -348,7 +352,7 @@ export class StudyWorkspace {
       const path = study?.version === 3 ? join(this.repositorySources!.workspace, study.configuration.source.path) : this.baselines![this.message().model.selectedItem.participant].path;
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(path));
       this.assertLifetime(lifetime);
-      if (sha256(document.getText()) !== this.message().model.source.hash) this.report('source', new Error('Current file differs from the selected captured source. The captured document remains unchanged.'));
+      if (normalizeNativeSourceText(document.getText()) !== normalizeNativeSourceText(this.message().model.source.text)) this.report('source', new Error('Current file differs from the selected captured source. The captured document remains unchanged.'));
       await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
     }
     if (action === 'retry') {
@@ -424,8 +428,8 @@ export class StudyWorkspace {
     this.selection = selectStudy(archive, this.selection);
   }
 
-  /** Persists only an explicit learner choice, keeping the last saved value visible on failure. @example await workspace.understand(true) */
-  async understand(understood?: boolean, itemId?: RetainedStudySelection['itemId'], sourceHash?: string): Promise<void> {
+  /** Saves explicit reader/outline choices to their displayed source context, retaining the saved value on failure. @example await workspace.understand(true) */
+  async understand(understood?: boolean, itemId?: RetainedStudySelection['itemId'], sourceHash?: string, scope: 'selected' | 'current' = 'selected'): Promise<void> {
     const lifetime = this.lifetime; this.assertLifetime(lifetime);
     await this.initialize(); this.assertLifetime(lifetime);
     const selected = this.message().model;
@@ -435,6 +439,8 @@ export class StudyWorkspace {
     const decision = { id: randomUUID(), sourceHash: sourceHash ?? selected.source.hash, understood: understood ?? !selected.selectedUnderstanding.understood, at: new Date().toISOString() };
     if (selected.selection.profile === REPOSITORY_BROWSER_PROFILE) {
       if (item !== selected.selection.itemId || !selected.selectedUnderstanding.context) throw new Error('Select the configured article before changing its complete citation understanding.');
+      // The outline summarizes current citations; its stale events cannot edit the historical reader context.
+      if (scope === 'current' && (!selected.currentSourceAvailable || selected.sourceChanged)) throw new Error('Current citations differ from the captured study. Read the article before changing current understanding.');
       this.pendingDecision = { ...decision, item, context: selected.selectedUnderstanding.context };
     } else this.pendingDecision = { ...decision, item: itemSchema.parse(item) };
     this.saving = true; this.publish();
@@ -806,17 +812,20 @@ export class StudyWorkspace {
     const descriptor = describeStudy(study ?? this.selection);
     const liveDescriptor = record && describeStudy(record.profile === REPOSITORY_BROWSER_PROFILE ? { ...record, descriptor: record.definition?.descriptor } : record);
     const nextAction = liveDescriptor?.actions.find(action => live?.nextActions.includes(action.id));
+    const playbackRecording: NonNullable<StudyViewMessage['study']>['recordingSave'] = bundle && playbackState?.recordingStatus ? { status: playbackState.recordingStatus === 'interrupted' || playbackState.recordingStatus === 'unfinalized' ? 'partial' : playbackState.recordingStatus,
+      contextStatus: bundle.context ? 'saved' : 'unavailable', reason: playbackState.recordingReason, contextReason: playbackState.contextReason } : undefined;
     const projectionInput = { selection: this.selection, study, live, liveDescriptor, progress: this.progress, baselines: this.baselines, currentSourceAvailable: this.currentSourceAvailable, citationSources: this.citationSources };
     return { type: 'study', revision: this.revision, model: this.recordingActive ? projectPlaybackStudy(projectionInput, bundle) : projectStudy(projectionInput),
       contentTab: this.recordingActive ? 'recording' : this.selection.tab, repositoryReturnAvailable: Boolean(this.controls.returnToRepository && this.repositoryOrigin?.studyId === this.selection.studyId && this.repositoryOrigin),
       repositoryArticleAvailable: Boolean(study?.version === 3 && this.controls.openArticle),
       recording: playbackState && { ...playbackState, pauseConfirmed: bundle?.projection.pauseConfirmed ?? false, rendererConfirmed: bundle?.projection.rendererConfirmed ?? false, laterInterpretations: bundle?.projection.laterInterpretations ?? [] },
       study: study && { id: study.id, state: study.state, terminal: study.terminal, profile: study.profile, createdAt: study.createdAt, reason: study.reason, finalOutcome: study.finalOutcome, links: this.recordingActive ? [] : study.links,
-        historyOutcome, studyOutcome },
+        historyOutcome, studyOutcome, recordingSave: selectedState ? { status: selectedState.recording.status, contextStatus: staleArchive ? 'pending' : selectedState.recording.contextStatus,
+          reason: selectedState.recording.reason, contextReason: selectedState.recording.contextReason } : playbackRecording },
       liveState: live?.state, deadlineAt: live?.deadlineAt, busy: this.busy, saving: this.saving, loading: this.loading || Boolean(playbackState?.cleared && !this.playbackPresentingReady), errors: [...this.errors.values(), ...this.catalog.flatMap(entry => entry.reason ? [entry.reason] : [])],
       nextAction, liveProfile: live?.profile, liveTitle: liveDescriptor?.title,
       profiles: [...Object.values(STUDY_PROFILES), ...(descriptor.id === REPOSITORY_BROWSER_PROFILE ? [descriptor] : liveDescriptor?.id === REPOSITORY_BROWSER_PROFILE ? [liveDescriptor] : [])].map(profile => ({ id: profile.id, title: profile.title, description: profile.description })),
-      canClick: !this.recordingActive && Boolean(nextAction), canRun: (!record || record.stopped) && (this.selection.profile !== REPOSITORY_BROWSER_PROFILE || study?.version === 3),
+      canClick: !this.recordingActive && Boolean(nextAction), canRun: (!record || record.stopped) && this.selection.profile !== REPOSITORY_BROWSER_PROFILE,
       moments: (study?.observations ?? []).map(observation => ({ id: observation.id, itemId: observation.itemId, title: descriptor.items.find(item => item.id === observation.itemId)?.title ?? 'Captured observation', at: observation.capturedAt, elapsedMs: observation.elapsedMs })), studies: this.catalog };
   }
 
@@ -824,7 +833,10 @@ export class StudyWorkspace {
   private publish(): void {
     if (!this.baselines) return;
     const message = this.message();
-    const compact = { ...message, model: { ...message.model, image: undefined, source: { ...message.model.source, text: '' } } };
+    // Native readers retain full source; neither duplicate body belongs in the webview signature or message.
+    const observation = message.model.observation;
+    const compact = { ...message, model: { ...message.model, image: undefined, source: { ...message.model.source, text: '' },
+      observation: observation && { ...observation, source: { ...observation.source, text: '' } } } };
     const signature = JSON.stringify(compact);
     if (signature === this.lastPublished) return;
     this.lastPublished = signature;
@@ -852,7 +864,11 @@ export class StudyWorkspace {
   private async renderSelection(preserveFocus = true, forceSource = false, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     if (!this.opened || this.closing || !this.baselines || this.pendingHistory !== undefined) return Promise.resolve();
+    const lifetime = this.lifetime;
     await this.refreshCitations();
+    // Citation I/O can outlive Close or a later Open; it cannot create a new rendering revision afterward.
+    this.assertLifetime(lifetime); signal?.throwIfAborted();
+    if (!this.opened || this.pendingHistory !== undefined) return;
     const initial = this.message(true);
     const selectionKey = JSON.stringify([initial.model.selection.studyId, initial.model.selection.itemId, initial.model.source.hash, initial.model.observation?.id, initial.model.selection.follow]);
     if (!forceSource && preserveFocus && this.lastSelectionKey === selectionKey) {
@@ -878,7 +894,7 @@ export class StudyWorkspace {
       const editor = await vscode.window.showTextDocument(document, { viewColumn: group?.viewColumn ?? vscode.ViewColumn.Two, preserveFocus, preview: false, selection: new vscode.Range(position, position) });
       signal?.throwIfAborted();
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
-      if (sha256(editor.document.getText()) !== source.hash) throw new Error('Displayed captured source does not match the selected observation.');
+      if (normalizeNativeSourceText(editor.document.getText()) !== normalizeNativeSourceText(source.text)) throw new Error('Displayed captured source does not match the selected observation.');
       const previousUri = this.sourceUri;
       this.sourceUri = uri; if (this.highlight) editor.setDecorations(this.highlight, [new vscode.Range(position, position)]);
       // Replace transient source-derived revisions while preserving deliberately opened observed-source tabs.
@@ -959,16 +975,18 @@ export class StudyWorkspace {
       getChildren: async () => { await this.initialize(); return this.message().model.progressByItem.map(item => item.id); },
       getParent: () => undefined,
       getTreeItem: itemId => {
-        const value = this.message().model.progressByItem.find(item => item.id === itemId)!;
+        const model = this.message().model, value = model.progressByItem.find(item => item.id === itemId)!;
         const item = new vscode.TreeItem(value.title, vscode.TreeItemCollapsibleState.None); item.id = value.id;
         item.description = !value.known ? 'Current source unavailable' : value.reviewNeeded ? 'Review needed' : value.understood ? 'Learner understood' : 'Not marked';
         item.command = { command: 'codebook.selectLearningItem', title: 'Read learning item', arguments: [itemId] };
-        if (value.known) item.checkboxState = value.understood ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
+        // Current progress stays visible after drift, but only the displayed captured context is editable in Study.
+        if (value.known && (model.selection.profile !== REPOSITORY_BROWSER_PROFILE || !model.sourceChanged)) item.checkboxState = value.understood ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
+        else if (model.selection.profile === REPOSITORY_BROWSER_PROFILE) item.tooltip = 'Read the article to review current citations; the Study checkbox applies to its captured source.';
         return item;
       },
     } });
     this.disposables.push(this.outline, this.outline.onDidChangeVisibility(() => { this.lastOutlineSelection = undefined; this.syncOutline(); }), this.outline.onDidChangeCheckboxState(event => {
-      for (const [itemId, state] of event.items) void this.understand(state === vscode.TreeItemCheckboxState.Checked, itemId, this.selection.profile === REPOSITORY_BROWSER_PROFILE ? undefined : this.baselines![LEARNING_ITEMS.find(item => item.id === itemId)!.participant].hash).catch(error => this.report('progress', error));
+      for (const [itemId, state] of event.items) void this.understand(state === vscode.TreeItemCheckboxState.Checked, itemId, this.selection.profile === REPOSITORY_BROWSER_PROFILE ? undefined : this.baselines![LEARNING_ITEMS.find(item => item.id === itemId)!.participant].hash, 'current').catch(error => this.report('progress', error));
     }));
     this.disposables.push(vscode.window.registerWebviewViewProvider('codebook.observedMoments', { resolveWebviewView: view => {
       this.moments = view; view.webview.options = { enableScripts: true, localResourceRoots: [] }; view.webview.html = studyHtml('moments');

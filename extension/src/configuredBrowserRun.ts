@@ -78,6 +78,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private origin?: string;
   private operation?: ConfiguredRuntimeView['operation'];
   private snapshot?: ConfiguredRuntimeSnapshot;
+  private snapshotReady = false;
   private readonly failures: string[] = [];
   private readonly captures: ConfiguredRuntimeView['captures'] = {};
   private readonly cancel = () => { void this.stop().catch(error => this.failures.push(String(error))); };
@@ -123,8 +124,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.evidence.save('sealed-source.ts', this.bundle.source); this.alive();
     await this.evidence.save('sealed-module.js', this.bundle.javascript); this.alive();
     await this.evidence.save('sealed-module.map.json', this.bundle.sourceMap); this.alive();
-    const { itemId, anchors, citationContext } = this.definition.descriptor;
-    const bound = { configurationHash: this.definition.configurationHash, configuration: this.definition.configuration, descriptor: { itemId, anchors, citationContext }, itemId,
+    const { itemId, bookTitle, nodeTitle, anchors, citationContext } = this.definition.descriptor;
+    const bound = { configurationHash: this.definition.configurationHash, configuration: this.definition.configuration, descriptor: { itemId, bookTitle, nodeTitle, anchors, citationContext }, itemId,
       sourceHash: this.verifier.hashes.typescript, javascriptHash: this.verifier.hashes.javascript, mapHash: this.verifier.hashes.sourceMap };
     this.manifest = { ...bound, hash: sha256(JSON.stringify(bound)) };
     this.evidence.record('source.sealed', { ...bound, discovery: acquired.discovery, scriptUrl: this.bundle.scriptUrl, chunkHash: this.bundle.chunkHash });
@@ -144,7 +145,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.script = event; this.evidence.record('script.selected', { scriptId: event.scriptId, url: event.url, executionContextId: event.executionContextId });
     });
     cdp.on('Debugger.paused', event => {
-      if (this.cleaning || event.reason === 'instrumentation') return;
+      if (this.cleaning) return;
+      this.evidence.record('cdp.pause-observed', { reason: event.reason, scriptId: event.callFrames[0]?.location.scriptId, hitBreakpointCount: event.hitBreakpoints?.length, inputDispatched: this.operation?.inputDispatched ?? false });
+      // Adapter setup stops have no learning operation; real pre-input DAP stops remain rejected by {@link onEvent}.
+      if (event.reason === 'instrumentation' || !this.operation) return;
       if (this.stopped || this.snapshot || this.continuation) { this.fail('Additional browser stop invalidated the one-pause operation'); return; }
       this.stopped = { event };
     });
@@ -268,19 +272,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const executed = await this.requireCdp().request('Debugger.getScriptSource', { scriptId: callFrame.location.scriptId }); current();
     this.verifier!.verify(executed.scriptSource, this.bundle!.source, callFrame.location, this.script!.scriptId, frame.line, frame.column);
     const facts = await inspectConfiguredValues(parameters => this.requireCdp().request('Debugger.evaluateOnCallFrame', parameters), callFrame.callFrameId, this.definition.configuration.inspections, current); current();
-    await this.capture('paused-browser', current); current();
-    // The first stop is the only slot; retirement must be confirmed before publishing continuation authority.
-    await this.breakpoint!.retire(this.selected!, this.abort.signal); current();
+    let inspectionFailure: Error | undefined;
+    try {
+      const missing = this.definition.configuration.inspections.find(inspection => inspection.required && facts.unavailableValues.some(value => value.path === `${inspection.mode}:${inspection.path}`));
+      if (missing) throw new Error(`Required inspection ${missing.mode}:${missing.path} is unavailable; captured facts remain readable.`);
+      await this.capture('paused-browser', current, pause); current();
+      // The first stop is the only slot; retirement must be confirmed before publishing continuation authority.
+      await this.breakpoint!.retire(this.selected!, this.abort.signal); current();
+    } catch (error) {
+      // A still-owned verified stop retains its facts even when its image or required inspection is incomplete.
+      current(); inspectionFailure = error instanceof Error ? error : new Error(String(error));
+    }
     const receipt = this.evidence.record('snapshot.committed', { snapshotId: `${pause.sessionId}:${pause.generation}` });
     const snapshot: ConfiguredRuntimeSnapshot = { id: `${pause.sessionId}:${pause.generation}`, itemId: this.definition.descriptor.itemId, actionId: REPOSITORY_BROWSER_ACTION, capturePhase: 'paused-browser', participant: 'browser',
       pause: { ...pause }, capturedAt: receipt.wallTime, elapsedMs: receipt.elapsedMs,
       source: { text: this.bundle!.source, hash: this.verifier!.hashes.typescript, line: frame.line, column: frame.column, javascriptHash: this.verifier!.hashes.javascript, mapHash: this.verifier!.hashes.sourceMap, scriptId: this.script!.scriptId, scriptUrl: this.script!.url, generated: { line: callFrame.location.lineNumber, column: callFrame.location.columnNumber ?? 0 } }, ...facts };
-    await this.evidence.save('snapshot.json', snapshot); current(); this.snapshot = snapshot; await this.persist();
+    try { await this.evidence.save('snapshot.json', snapshot); }
+    catch (error) { current(); this.snapshot = snapshot; throw error; }
+    current(); this.snapshot = snapshot;
+    if (inspectionFailure) { this.gate.invalidate(true); throw inspectionFailure; }
+    this.snapshotReady = true; await this.persist();
   }
 
   /** Reserves one exact tuple before source revalidation; only owned retired breakpoints can lead to an acknowledged continuation. @example await run.continue('browser', pause) */
   async continue(participant: 'server' | 'browser', pause: PauseIdentity): Promise<void> {
-    if (participant !== 'browser' || this.cleaning || !this.snapshot || !this.breakpoint?.retired || !this.gate.matches(this.snapshot.pause) || !this.gate.reserve(pause)) throw new Error('conflict: stale, foreign or unverified pause');
+    if (participant !== 'browser' || this.cleaning || !this.snapshotReady || !this.snapshot || !this.breakpoint?.retired || !this.gate.matches(this.snapshot.pause) || !this.gate.reserve(pause)) throw new Error('conflict: stale, foreign or unverified pause');
     try {
       await this.verifySources(); this.alive();
       if (this.gate.phase !== 'resume-requested' || this.gate.current?.generation !== pause.generation) throw new Error('conflict: pause changed before continue');
@@ -327,15 +343,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     assertConfiguredSourceDocuments(this.options.workspace, this.definition, vscode.workspace.textDocuments);
   }
   /** Retains exact pixels only after the source generation and native renderer both acknowledge the phase. @example await this.capture('paused-browser', current) */
-  private async capture(phase: typeof CONFIGURED_CAPTURE_PHASES[number], current = () => this.alive()): Promise<void> {
+  private async capture(phase: typeof CONFIGURED_CAPTURE_PHASES[number], current = () => this.alive(), pause?: PauseIdentity): Promise<void> {
     this.captures[phase] = { status: 'pending' };
+    this.evidence.record('capture.requested', { phase, pause });
     try {
       const result = await this.requireCdp().request('Page.captureScreenshot', { format: 'png' }, CAPTURE_TIMEOUT_MS); current();
-      const file = `${phase}.png`; await this.evidence.save(file, Buffer.from(result.data, 'base64')); current();
+      const bytes = Buffer.from(result.data, 'base64'), hash = sha256(bytes);
+      // Record receipt-time pixels before disk/renderer waits; only the later exact-pause receipt confirms correspondence.
+      this.evidence.record('capture.response-received', { phase, pause, hash }); this.browser.recordCapture(result.data, phase);
+      const file = `${phase}.png`; await this.evidence.save(file, bytes); current();
+      // Native debugger focus can hide the leased panel; reacquire renderer readiness without closing the learner's source tab.
+      await this.browser.reveal(this.abort.signal); current();
       const renderer = await this.browser.presentCapture(result.data, phase); current();
-      if (!renderer || renderer.hash !== sha256(Buffer.from(result.data, 'base64'))) throw new Error('Renderer did not acknowledge exact phase bytes');
-      this.captures[phase] = { status: 'captured', file, renderer }; this.evidence.record('capture.committed', { phase, ...this.captures[phase] });
-    } catch (error) { this.captures[phase] = { status: 'failed', error: String(error) }; throw error; }
+      if (!renderer || renderer.hash !== hash) throw new Error('Renderer did not acknowledge exact phase bytes');
+      this.captures[phase] = { status: 'captured', file, renderer }; this.evidence.record('capture.received', { phase, pause, renderer });
+    } catch (error) { this.captures[phase] = { status: 'failed', error: String(error) }; this.evidence.record('capture.failed', { phase, pause, reason: String(error) }); throw error; }
   }
   /** Reveals only the committed immutable source through the shared reader and drains its accepted presentation work on cleanup. @example await run.reveal(snapshot) */
   reveal(snapshot: RuntimeSnapshot): Promise<void> {
@@ -351,7 +373,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const captureOutcome = CONFIGURED_CAPTURE_PHASES.every(phase => this.captures[phase]?.status === 'captured') ? 'complete' : 'incomplete';
     return { runId: this.id, profile: REPOSITORY_BROWSER_PROFILE, definition: this.definition, manifest: this.manifest, status: this.status, cleaned: this.cleaned, resourcesReleased: this.resourcesReleased,
       runtimeOutcome, captureOutcome, finalOutcome: !this.cleaned ? 'pending-teardown' : runtimeOutcome === 'demonstrated' ? captureOutcome === 'complete' ? 'demonstrated' : 'partial' : 'not-demonstrated',
-      participants: { browser: { sessionId: this.selected?.id, pause: this.gate.current, phase: this.gate.phase, snapshot: this.snapshot, continued: this.operation?.continuedPause, conflict: this.gate.conflict } },
+      participants: { browser: { sessionId: this.selected?.id, pause: this.gate.current, phase: this.gate.phase, snapshot: this.snapshotReady ? this.snapshot : undefined, continued: this.operation?.continuedPause, conflict: this.gate.conflict } },
       snapshots: this.snapshot ? [this.snapshot] : [], operation: this.operation, nextAction: this.status === 'ready' && !this.operation ? REPOSITORY_BROWSER_ACTION : undefined,
       observed: this.operation?.afterVerified ? { afterVerified: true } : undefined, links: [], captures: this.captures, failures: [...this.failures], events: this.evidence.events, artifactDirectory: this.evidence.directory, activeSessionIds: [...this.activeSessions] };
   }

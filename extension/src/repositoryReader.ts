@@ -12,6 +12,7 @@ import type { BookObservationBinding, OpenBookInput } from './repositorySchemas'
 import { repositoryMessageSchema, type repositoryActionSchema, type RepositoryViewMessage } from './repositoryView';
 import { repositoryHtml } from './ui/repositoryHtml';
 import { citationLearningState } from './utils/citationLearningState';
+import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText';
 import type { LearningLibrary } from './learningLibrary';
 import type { z } from 'zod';
 
@@ -134,7 +135,7 @@ export class RepositoryReader {
       const source = await this.store!.sources.read(anchor.path, anchor.hash); this.assertCurrent(generation);
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(join(this.store!.sources.workspace, anchor.path))); this.assertCurrent(generation);
       // Native text models omit BOM and normalize mixed line endings; exact disk bytes were verified above.
-      if (document.isDirty || document.getText().replace(/\r\n?/g, '\n') !== source.text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')) throw new Error('Current editor text differs from the citation; retained source remains available.');
+      if (document.isDirty || normalizeNativeSourceText(document.getText()) !== normalizeNativeSourceText(source.text)) throw new Error('Current editor text differs from the citation; retained source remains available.');
       await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false, selection: this.range(anchor.startLine, anchor.endLine) }); this.assertCurrent(generation);
     }
   }

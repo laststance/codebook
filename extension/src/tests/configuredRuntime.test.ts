@@ -3,6 +3,69 @@ import assert from 'node:assert/strict';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness';
 
+test('internal browser setup stops do not consume the configured learning pause or prevent its later completion', async context => {
+  // Arrange
+  const { run, resumeDuringPreparation, mouse, commands } = await configuredRuntimeHarness(context); resumeDuringPreparation();
+  // Act
+  await run.prepare();
+  // Assert: setup notifications grant no learner pause or input authority.
+  assert.equal(run.view().status, 'ready'); assert.equal(run.view().snapshots.length, 0); assert.equal(mouse.length, 0);
+  assert.equal(commands.filter(command => command === 'continue').length, 0);
+  run.action('one', 'repository-click'); const snapshot = await waitUntil(() => run.view().snapshots[0], 'configured learning pause');
+  await run.continue('browser', snapshot.pause); await waitUntil(() => run.view().status === 'completed', 'configured completion'); await run.stop();
+  assert.equal(run.view().finalOutcome, 'demonstrated'); assert.equal(run.view().snapshots.length, 1); assert.equal(mouse.length, 2);
+  assert.equal(commands.filter(command => command === 'continue').length, 1);
+});
+
+test('a real debugger stop before configured input still fails instead of being ignored as browser setup', async context => {
+  // Arrange
+  const { run, emitPause, mouse, commands } = await configuredRuntimeHarness(context); await run.prepare();
+  // Act
+  emitPause(); await run.stop();
+  // Assert
+  assert.equal(run.view().finalOutcome, 'not-demonstrated'); assert.equal(run.view().snapshots.length, 0); assert.equal(mouse.length, 0);
+  assert.match(run.view().failures.join('\n'), /Unexpected or additional browser stop/);
+  assert.equal(commands.filter(command => command === 'continue').length, 0);
+});
+
+test('a debugger-revealed raw source tab does not prevent the matching configured pause image or alter the learner document', async context => {
+  // Arrange
+  const { run, hideViewportOnPause, documents, commands } = await configuredRuntimeHarness(context), document = documents[0]!;
+  await run.prepare(); hideViewportOnPause();
+  // Act
+  run.action('one', 'repository-click'); const snapshot = await waitUntil(() => run.view().snapshots[0], 'captured pause');
+  // Assert
+  assert.equal(run.view().status, 'paused-browser'); assert.equal(run.view().captures['paused-browser']?.status, 'captured');
+  assert.equal(documents[0], document); assert.equal(document.text, 'const nextTheme = "dark";\n'); assert.equal(document.isDirty, false);
+  assert.equal(commands.filter(command => command === 'continue').length, 0);
+  await run.continue('browser', snapshot.pause); await waitUntil(() => run.view().status === 'completed', 'configured completion'); await run.stop();
+  assert.equal(run.view().finalOutcome, 'demonstrated'); assert.equal(run.view().captureOutcome, 'complete');
+});
+
+test('an input-time browser resume fails before its stop can obtain DAP correlation or continuation authority', async context => {
+  // Arrange
+  const { run, suppressInputPause, emitCdpPause, manualResume, mouse, commands } = await configuredRuntimeHarness(context);
+  await run.prepare(); suppressInputPause(); run.action('one', 'repository-click'); await waitUntil(() => mouse.length === 2, 'configured input');
+  // Act
+  emitCdpPause(); manualResume(); await run.stop();
+  // Assert
+  assert.equal(run.view().finalOutcome, 'not-demonstrated'); assert.equal(run.view().snapshots.length, 0); assert.equal(mouse.length, 2);
+  assert.equal(run.view().operation?.afterVerified, false); assert.match(run.view().failures.join('\n'), /resumed outside its owned continuation/);
+  assert.equal(commands.filter(command => command === 'continue').length, 0);
+});
+
+test('a second browser-only stop during capture revokes continuation before any second DAP stop arrives', async context => {
+  // Arrange
+  const { run, emitCdpPause, holdCapture, mouse, commands } = await configuredRuntimeHarness(context);
+  await run.prepare(); const held = holdCapture('paused-browser'); run.action('one', 'repository-click'); await held.started;
+  // Act
+  emitCdpPause(); held.release(); await run.stop();
+  // Assert
+  assert.equal(run.view().finalOutcome, 'not-demonstrated'); assert.equal(run.view().snapshots.length, 0); assert.equal(mouse.length, 2);
+  assert.equal(run.view().operation?.afterVerified, false); assert.match(run.view().failures.join('\n'), /Additional browser stop/);
+  assert.equal(commands.filter(command => command === 'continue').length, 0);
+});
+
 test('one configured browser action keeps a 70-second pause controllable and completes only after original continuation input and renderer ACKs', async context => {
   // Arrange
   const { run, advance, mouse, breakpoints, userBreakpoint, commands } = await configuredRuntimeHarness(context); await run.prepare();
@@ -29,6 +92,53 @@ test('a second selected stop during capture cancels the observation instead of o
   // Assert
   assert.equal(run.view().status, 'failed'); assert.equal(run.view().snapshots.length, 0); assert.equal(run.view().operation?.afterVerified, false);
   assert.equal(commands.filter(command => command === 'continue').length, 0); assert.equal(run.view().participants.browser.pause, undefined);
+});
+
+for (const missing of ['response', 'dap', 'cdp', 'input'] as const) test(`configured Continue cannot certify completion without its ${missing} acknowledgement`, async context => {
+  // Arrange
+  const { run, holdContinuation, advance, commands, mouse } = await configuredRuntimeHarness(context), receipts = holdContinuation();
+  await run.prepare(); run.action('one', 'repository-click'); const snapshot = await waitUntil(() => run.view().snapshots[0], 'captured pause');
+  const continuation = run.continue('browser', snapshot.pause).then(() => 'acknowledged', () => 'rejected'); await receipts.started;
+  // Act: the other independent receipts cannot stand in for the missing one.
+  for (const receipt of ['response', 'dap', 'cdp', 'input'] as const) if (receipt !== missing) receipts[receipt]();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  // Assert
+  assert.equal(run.view().operation?.afterVerified, false); assert.equal(run.view().captures.after, undefined);
+  advance(20000); await run.stop();
+  assert.equal(await continuation, missing === 'response' ? 'rejected' : 'acknowledged');
+  assert.equal(run.view().finalOutcome, 'not-demonstrated'); assert.equal(run.view().resourcesReleased, true);
+  assert.equal(run.view().snapshots[0], snapshot); assert.equal(mouse.length, 2); assert.equal(commands.filter(command => command === 'continue').length, 1);
+});
+
+for (const order of [['response', 'dap', 'cdp'], ['response', 'cdp', 'dap'], ['dap', 'response', 'cdp'], ['dap', 'cdp', 'response'], ['cdp', 'response', 'dap'], ['cdp', 'dap', 'response']] as const) test(`configured Continue completes once when acknowledgements arrive ${order.join(' then ')}`, async context => {
+  // Arrange
+  const { run, holdContinuation, commands, mouse } = await configuredRuntimeHarness(context), receipts = holdContinuation();
+  await run.prepare(); run.action('one', 'repository-click'); const snapshot = await waitUntil(() => run.view().snapshots[0], 'captured pause');
+  const continuation = run.continue('browser', snapshot.pause); await receipts.started; receipts.input();
+  // Act / Assert: every proper prefix remains incomplete, independent of receipt order.
+  for (const [index, receipt] of order.entries()) {
+    receipts[receipt](); await new Promise<void>(resolve => setImmediate(resolve));
+    if (index < 2) assert.equal(run.view().operation?.afterVerified, false);
+  }
+  await continuation; await waitUntil(() => run.view().status === 'completed', 'verified after state'); await run.stop();
+  assert.equal(run.view().finalOutcome, 'demonstrated'); assert.equal(run.view().operation?.afterVerified, true);
+  assert.equal(run.view().events.filter(event => event.type === 'screen.observed').length, 1);
+  assert.equal(mouse.length, 2); assert.equal(commands.filter(command => command === 'continue').length, 1);
+});
+
+for (const invalid of ['foreign-thread', 'duplicate-continued'] as const) test(`a ${invalid} receipt after authorized Continue revokes completion without another input`, async context => {
+  // Arrange
+  const { run, holdContinuation, commands, mouse } = await configuredRuntimeHarness(context), receipts = holdContinuation();
+  await run.prepare(); run.action('one', 'repository-click'); const snapshot = await waitUntil(() => run.view().snapshots[0], 'captured pause');
+  const continuation = run.continue('browser', snapshot.pause).catch(() => undefined); await receipts.started;
+  // Act: retain one missing receipt while the invalid notification races the authorized continuation.
+  receipts.response(); receipts.input();
+  if (invalid === 'duplicate-continued') receipts.dap();
+  receipts.dap(invalid === 'foreign-thread' ? 99 : 1); receipts.cdp(); await continuation; await run.stop();
+  // Assert
+  assert.equal(run.view().finalOutcome, 'not-demonstrated'); assert.equal(run.view().operation?.afterVerified, false);
+  assert.equal(run.view().snapshots[0], snapshot); assert.equal(run.view().resourcesReleased, true);
+  assert.equal(mouse.length, 2); assert.equal(commands.filter(command => command === 'continue').length, 1);
 });
 
 test('a second selected stop racing the after renderer cannot replace the first observation or certify completion', async context => {

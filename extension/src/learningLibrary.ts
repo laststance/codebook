@@ -1,6 +1,7 @@
 import { chmod, lstat, mkdir, readdir } from 'node:fs/promises';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { LEARNING_SCHEMA_VERSION_V2, LEARNING_SCHEMA_VERSION_V3, LEARNING_SCHEMA_VERSION_V4, MAX_LEARNER_DECISIONS, MAX_LIBRARY_FILES, MAX_STUDY_ARCHIVE_BYTES, PRIVATE_DIRECTORY_MODE, PROGRESS_LIMIT_BYTES, PROGRESS_V2_FILE, PROGRESS_V3_FILE, PROGRESS_V4_FILE, STUDY_STORAGE_FORMATS, STUDY_METADATA_LIMIT_BYTES } from './constants';
 import { studyMetadataSchema, type StudyCatalogEntry } from './studySchemas';
 import { configuredStudyMetadataSchema } from './configuredStudySchemas';
@@ -126,12 +127,14 @@ export class LearningLibrary {
     });
   }
 
-  /** Retains an actual article-to-evidence origin for restart-safe Return without inferring one from unrelated reading history. @example await library.rememberRepositoryReturn({studyId, selection}) */
-  rememberRepositoryReturn(input: NonNullable<LearnerProgress['repositoryReturn']>): Promise<void> {
-    const repositoryReturn = repositoryReturnSchema.parse(input);
+  /** Saves or conditionally restores {@link StudyWorkspace}'s exact return receipt without overwriting newer navigation. @example await library.rememberRepositoryReturn(previous, cancelled) */
+  rememberRepositoryReturn(input: LearnerProgress['repositoryReturn'], expected?: NonNullable<LearnerProgress['repositoryReturn']>): Promise<void> {
+    const repositoryReturn = repositoryReturnSchema.optional().parse(input), expectedReturn = repositoryReturnSchema.optional().parse(expected);
     return this.locked(async () => {
-      await this.readStudy(repositoryReturn.studyId);
+      if (repositoryReturn) await this.readStudy(repositoryReturn.studyId);
       const progress = await this.readProgress();
+      // A failed navigation may restore only the receipt it wrote; another window's later return wins.
+      if (expectedReturn && !isDeepStrictEqual(progress.repositoryReturn, expectedReturn)) return;
       await atomicPrivateWrite(join(this.directory, PROGRESS_V4_FILE), { ...progress, repositoryReturn }, PROGRESS_LIMIT_BYTES);
     });
   }

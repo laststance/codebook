@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { StudyCatalogEntry } from '../studySchemas';
-import type { projectStudy } from '../studyModel';
+import type { LiveStudy, projectStudy } from '../studyModel';
 import type { RetainedStudy } from '../retainedStudySchemas';
 import type { StudyDescriptor } from '../utils/describeStudy';
 import type { PlaybackState, PlaybackBundle } from '../playbackController';
 import { STUDY_STYLES, STUDY_UI_OPTIONS } from './constants';
 
 export interface StudyViewMessage {
-  type: 'study'; revision: number; model: ReturnType<typeof projectStudy>; study?: Pick<RetainedStudy, 'id' | 'state' | 'terminal' | 'createdAt' | 'reason' | 'profile' | 'finalOutcome' | 'links'> & { historyOutcome: string; studyOutcome: string };
+  type: 'study'; revision: number; model: ReturnType<typeof projectStudy>; study?: Pick<RetainedStudy, 'id' | 'state' | 'terminal' | 'createdAt' | 'reason' | 'profile' | 'finalOutcome' | 'links'> & { historyOutcome: string; studyOutcome: string; recordingSave?: Pick<LiveStudy['recording'], 'status' | 'contextStatus' | 'reason' | 'contextReason'> };
   liveState?: string; deadlineAt?: string; busy: boolean; saving: boolean; loading: boolean; errors: string[]; canClick: boolean; canRun: boolean;
   nextAction?: StudyDescriptor['actions'][number]; liveProfile?: RetainedStudy['profile']; liveTitle?: string; profiles: Pick<StudyDescriptor, 'id' | 'title' | 'description'>[];
   moments: { id: string; itemId: string; title: string; at: string; elapsedMs?: number }[]; studies: StudyCatalogEntry[];
@@ -23,14 +23,14 @@ export function studyHtml(kind: 'context' | 'moments'): string {
   const nonce = randomUUID();
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${kind === 'moments' ? 'moments-only' : ''}">
 <button data-action="return-wiki" hidden>← Return to Wiki</button><button data-action="open-article" hidden>Open article</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite">No running study</div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
-<p id="study-state" class="status" hidden></p>
+<p id="study-state" class="status" hidden></p><p id="recording-save-state" class="status" role="status" aria-live="polite" hidden></p>
 <p id="errors" class="error" role="status" aria-live="polite"></p><button data-action="retry" hidden>Retry storage / refresh</button>
 <section id="recording-transport" aria-label="Recorded playback" hidden><h2>Recorded walkthrough</h2><p id="recording-status" role="status" aria-live="polite"></p><div class="row"><button class="primary" id="playback-toggle" data-playback="play">Play recording</button><button data-playback="start">Replay from start</button><button data-action="reload-recording">Reload saved recording</button></div><label for="playhead">Recorded position</label><input id="playhead" type="range" min="0" max="0" step="1" value="0"><p id="playback-position"></p><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p><p class="muted">Playback changes this reader only. It does not run application code or mark understanding.</p></section>
 <div ${kind === 'moments' ? 'hidden' : ''}><h1 id="title">Study the checkout flow</h1><div id="next-scenario"><label for="profiles">Scenario for the next run</label><select id="profiles" aria-label="Study scenario"><option value="checkout-demo">Checkout demo</option><option value="paired-cart-demo">Paired cart demo</option></select><div class="row"><button class="primary" data-action="run">Run selected scenario</button><button data-action="click">Add to cart once</button><button data-action="connect">Connect your agent</button></div><p class="muted" id="profile-description">Choose a local demo to connect the screen with its actual source and values.</p></div>
 <div role="tablist" aria-label="Study content"><button id="overview-tab" role="tab" data-tab="overview" aria-controls="overview" aria-selected="true">Overview</button><button id="live-tab" role="tab" data-tab="live" aria-controls="live-content" aria-selected="false" tabindex="-1">Live</button><button id="recording-tab" role="tab" data-tab="recording" aria-controls="live-content" aria-selected="false" tabindex="-1">Recording</button></div>
 <div id="loading" class="status" hidden>Loading the selected observation…</div><div id="selected"><div class="status" id="observation"></div><div id="overview" role="tabpanel" aria-labelledby="overview-tab"><h2>Source-derived overview</h2><p id="overview-text"></p><button class="link" data-action="source">Read the linked source</button></div><div id="live-content" role="tabpanel" aria-labelledby="live-tab"><section><h2>Agent interpretation</h2><div id="interpretations"></div></section><section><h2>Captured values</h2><p class="muted" id="value-caption"></p><div class="table-scroll"><table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody id="values"></tbody></table></div></section></div>
 <details id="later-annotations" hidden><summary>Later annotations — not available at this recorded time</summary><p class="muted">These explanations were added later. They do not change what was observed in the recording.</p><div id="later-interpretations"></div></details>
-<section><div class="row"><button class="link" data-action="source">Captured / source-derived document</button><button class="link" data-action="current-file">Open current file</button></div><p id="source-version" class="muted"></p><p id="source-drift" class="error"></p><label><input id="understood" type="checkbox"><span><span id="understanding-label">I understand this source revision</span><span id="save-state" class="muted"></span></span></label><p id="progress" class="muted"></p></section></div>
+<section><div class="row"><button class="link" data-action="source">Captured / source-derived document</button><button class="link" data-action="current-file">Open current file</button></div><p id="source-version" class="muted"></p><p id="source-drift" class="error"></p><label><input id="understood" type="checkbox" aria-describedby="understanding-description"><span><span id="understanding-label">I understand this source revision</span><span id="save-state" class="muted"></span></span></label><p id="understanding-description" class="muted" hidden>Applies to this article and every captured citation shown here.</p><p id="progress" class="muted"></p></section></div>
 <section><h2>Source-linked flow</h2><div id="flow"></div><p id="correspondence" class="muted"></p></section>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <section><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div><label for="studies">Saved studies</label><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select></section>
@@ -118,24 +118,31 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     text('title', item?.title ?? 'Study the checkout flow');
     const selectedProfile = message.profiles.find(profile => profile.id === model.selection.profile), liveProfile = message.profiles.find(profile => profile.id === message.liveProfile);
     const profiles = element('profiles');
-    if (profiles instanceof HTMLSelectElement) { replace('profiles', message.profiles, () => message.profiles.map(profile => { const option = document.createElement('option'); option.value = profile.id; option.textContent = profile.title; return option; })); profiles.value = model.selection.profile; profiles.disabled = message.busy || !message.canRun; }
-    text('profile-description', selectedProfile?.description ?? 'Scenario unavailable.');
+    if (profiles instanceof HTMLSelectElement) { replace('profiles', message.profiles, () => message.profiles.map(profile => { const option = document.createElement('option'); option.value = profile.id; option.textContent = profile.title; return option; })); profiles.value = model.selection.profile; profiles.disabled = message.busy || Boolean(message.liveState && message.liveState !== 'stopped'); }
+    text('profile-description', model.selection.profile === 'repository-browser' ? 'Ask your agent to prepare a new operation in this article. Reading saved configuration never starts it. You can choose a demo separately.' : selectedProfile?.description ?? 'Scenario unavailable.');
     text('runtime', model.currentItemId ? `${message.liveTitle ?? liveProfile?.title ?? 'Live study'} — paused at ${model.currentItemTitle}` : `${message.liveTitle ?? liveProfile?.title ?? 'Runtime'} — ${message.nextAction?.id === 'checkout' ? 'Cart updated — checkout available' : message.liveState ?? 'not running'}`);
     text('deadline', message.deadlineAt && !message.study?.terminal ? `Study wall limit: ${new Date(message.deadlineAt).toLocaleTimeString()}. History remains readable after expiry.` : 'Reading history does not restart execution.');
     const outcome = message.study?.studyOutcome;
     const scenario = model.scenarioProgress;
-    const outcomeLabel = outcome === 'demonstrated' ? message.study?.profile === 'checkout-demo' ? 'Purchase confirmed — evidence complete' : 'Evidence complete'
+    const outcomeLabel = outcome === 'demonstrated' ? message.study?.profile === 'checkout-demo' ? 'Purchase confirmed — observation saved' : 'Observation saved'
       : outcome === 'partial' ? scenario?.purchaseObserved ? 'Purchase observed — partial evidence' : 'Partial evidence'
       : outcome === 'not-demonstrated' ? 'Evidence not demonstrated' : scenario?.purchaseObserved && message.study?.terminal ? 'Purchase observed — evidence checks pending' : 'Evidence checks pending';
     const endedProgress = message.study?.terminal && !recording ? ` Last observed stop: ${scenario?.lastObservedTitle ?? 'none'}.${message.study.profile === 'checkout-demo' && !scenario?.purchaseObserved ? ' Purchase confirmation screen was not observed.' : ''}` : '';
     const missingEvidence = message.study?.terminal && scenario ? [scenario.missingImageTitles.length ? `Missing images: ${scenario.missingImageTitles.join(', ')}.` : '', scenario.unverifiedLinkCount ? `${scenario.unverifiedLinkCount} runtime connections unverified.` : ''].filter(Boolean).join(' ') : '';
     element('study-state').hidden = !message.study || Boolean(recording && document.body.classList.contains('moments-only'));
     text('study-state', message.study ? `${recording ? 'Recorded study (whole run)' : message.study.terminal ? 'Study ended' : 'Study in progress'} — ${outcomeLabel} · runtime: ${message.study.finalOutcome} · history: ${message.study.historyOutcome}.${endedProgress}${missingEvidence ? ` ${missingEvidence}` : ''}${message.study.reason ? ` ${message.study.reason}` : ''}` : '');
-    text('errors', message.errors.join('\n')); button('retry')!.hidden = !message.errors.length;
+    const savedRecording = message.study?.recordingSave;
+    const recordingLabel = !savedRecording ? 'Recording not verified in this reader. Open Recording to inspect its saved evidence.'
+      : savedRecording.status === 'partial' || savedRecording.status === 'failed' || savedRecording.contextStatus === 'failed' ? `Recording incomplete: ${savedRecording.reason ?? savedRecording.contextReason ?? 'Matching recording evidence is unavailable.'} Use Retry storage / refresh or open Recording to inspect retained evidence.`
+      : savedRecording.status === 'finalized' && savedRecording.contextStatus === 'saved' ? 'Recording saved.'
+      : savedRecording.status === 'recording' ? 'Recording in progress; saving is not complete.'
+      : savedRecording.status === 'finalized' ? 'Recording frames saved; matching source and explanation context is pending.' : 'Recording unavailable for this study.';
+    text('recording-save-state', message.study ? recordingLabel : ''); element('recording-save-state').hidden = !message.study;
+    text('errors', message.errors.join('\n')); button('retry')!.hidden = !message.errors.length && savedRecording?.contextStatus !== 'failed' && savedRecording?.status !== 'failed' && savedRecording?.status !== 'partial';
     button('continue')!.disabled = message.busy || message.loading || !model.continueArguments;
     button('return-current')!.disabled = !model.currentParticipant || model.matching && model.selection.follow;
     button('stop')!.disabled = message.busy || !message.liveState || message.liveState === 'stopped';
-    button('run')!.disabled = message.busy || !message.canRun; button('click')!.disabled = message.busy || !message.canClick;
+    button('run')!.hidden = model.selection.profile === 'repository-browser'; button('run')!.disabled = message.busy || !message.canRun; button('click')!.disabled = message.busy || !message.canClick;
     button('run')!.textContent = `Run ${selectedProfile?.title ?? 'selected scenario'}`;
     button('click')!.textContent = message.nextAction ? `${message.nextAction.title} once` : 'No action available';
     button('stop')!.textContent = liveProfile ? `Stop ${message.liveTitle ?? liveProfile.title}` : 'Stop';
@@ -150,7 +157,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     text('overview-text', item?.overview ?? 'Source unavailable.');
     text('observation', recording ? model.observation ? `Recorded observation · ${seconds(model.observation.elapsedMs)}${recording.pauseConfirmed ? ' · pause verified' : ''}${recording.rendererConfirmed ? ' · original renderer receipt available' : ''}` : 'No source or values were observed by this recorded position.' : !model.observation && !model.currentSourceAvailable ? 'Current source unavailable — read a captured observation or retry.' : model.observation ? `${model.matching ? 'Observed in this run — current inspected pause' : 'Captured observation — history'} · ${new Date(model.observation.capturedAt).toLocaleString()}` : message.study?.terminal ? 'Not observed before this study ended — source-derived material only' : 'Not observed — source-derived material only');
     text('source-version', recording && !model.observation ? 'No captured source at this time. The source pane shows an explicit placeholder.' : !model.observation && !model.currentSourceAvailable ? 'No current source version could be verified.' : `${model.observation ? 'Captured source' : 'Source-derived document'} · line ${model.source.line} · ${model.source.hash.slice(0, 12)}`);
-    text('understanding-label', model.selection.profile === 'repository-browser' ? 'I understand this article and all cited source revisions' : 'I understand this source revision');
+    text('understanding-label', model.selection.profile === 'repository-browser' ? 'understand' : 'I understand this source revision');
+    element('understanding-description').hidden = model.selection.profile !== 'repository-browser';
     text('source-drift', !model.currentSourceAvailable ? 'Current source unavailable. Historical source and understanding are retained.' : model.sourceChanged ? model.selection.profile === 'repository-browser' ? 'Review needed — a cited source changed. Historical understanding still refers to the complete captured citation set.' : 'Review needed — source changed. This is the captured older revision.' : '');
     const checkbox = element('understood');
     if (checkbox instanceof HTMLInputElement) { checkbox.checked = model.selectedUnderstanding.understood; checkbox.disabled = message.saving || message.loading || !model.selectedUnderstanding.known; }
@@ -173,7 +181,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     const studies = element('studies');
     if (studies instanceof HTMLSelectElement) {
       const previous = studies.value;
-      replace('studies', message.studies, () => message.studies.map(study => { const option = document.createElement('option'); option.value = study.id; option.textContent = `${message.profiles.find(profile => profile.id === study.profile)?.title ?? (study.profile === 'repository-browser' ? 'Repository browser action' : 'Unknown scenario')}${study.format === 'legacy-v1' ? ' (legacy)' : ''} · ${new Date(study.savedAt).toLocaleString()} · ${study.outcome} · ${study.id.slice(-8)}`; return option; }));
+      // Unloaded configured entries must not borrow the selected article's title through a shared profile ID.
+      replace('studies', message.studies, () => message.studies.map(study => { const option = document.createElement('option'); option.value = study.id; option.textContent = `${study.profile === 'repository-browser' ? 'Repository browser study' : message.profiles.find(profile => profile.id === study.profile)?.title ?? 'Unknown scenario'}${study.format === 'legacy-v1' ? ' (legacy)' : ''} · ${new Date(study.savedAt).toLocaleString()} · ${study.outcome} · ${study.id.slice(-8)}`; return option; }));
       studies.value = model.selection.studyId ?? previous;
     }
     for (const link of Array.from(document.querySelectorAll<HTMLButtonElement>('.link[data-action]'))) link.classList.toggle('visited', visited.has(link.dataset.action ?? ''));

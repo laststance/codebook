@@ -14,7 +14,8 @@ export function extractDevelopmentModule(chunk: string, sourcePath: string, sour
     const javascript: string = JSON.parse(literal[1]!);
     const urls = [...javascript.matchAll(/^\/\/# sourceURL=(.+)$/gm)];
     if (!urls.some(url => sameScriptUrl(scriptUrl, url[1]!))) continue;
-    if (urls.length !== 1) throw new Error('Module has ambiguous script identity');
+    // Next webpack emits a non-identifying placeholder before the effective final script URL.
+    if (!sameScriptUrl(scriptUrl, urls.at(-1)![1]!) || urls.slice(0, -1).some(url => url[1] !== '[module]')) throw new Error('Module has ambiguous script identity');
     const encodedMaps = [...javascript.matchAll(/^\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-8)?;base64,([A-Za-z\d+/=]+)$/gm)];
     if (encodedMaps.length !== 1) throw new Error('Module has missing or ambiguous inline maps');
     const mapBytes = Buffer.from(encodedMaps[0]![1]!, 'base64');

@@ -10,6 +10,7 @@ import { decodeLearnerProgress } from '../utils/decodeLearnerProgress';
 import { describeStudy } from '../utils/describeStudy';
 import { projectPlaybackStudy } from '../utils/projectPlaybackStudy';
 import { selectStudy } from '../utils/selectStudy';
+import { capturedAppHtml } from '../utils/capturedAppHtml';
 import { createConfiguredStudy } from './utils/createConfiguredStudy';
 import { configuredServiceHarness } from './utils/configuredServiceHarness';
 
@@ -25,16 +26,36 @@ function configuredProjectionInput(understood = false) {
   return { study, selection: selectStudy(study), baselines, citationSources, progress };
 }
 
+test('a configured title containing quotes and markup stays literal in the captured application image description', () => {
+  // Arrange
+  const input = configuredProjectionInput(); input.study.descriptor!.nodeTitle = '\"><h1>Injected title</h1><img alt="';
+  // Act
+  const html = capturedAppHtml({ type: 'study', revision: 1, model: projectStudy(input), busy: false, saving: false, loading: false, errors: [], canClick: false, canRun: false, profiles: [], moments: [], studies: [] });
+  // Assert
+  assert.equal(html.includes('<h1>Injected title</h1>'), false);
+  assert.ok(html.includes('alt="Application pixels captured at the selected &quot;&gt;&lt;h1&gt;Injected title&lt;/h1&gt;&lt;img alt=&quot; pause"'));
+});
+
 test('a configured study displays one declared browser item and actual false/null facts without inventing checkout progress', () => {
   // Arrange / Act
   const model = projectStudy(configuredProjectionInput());
   // Assert
-  assert.deepEqual(model.progressByItem.map(item => [item.id, item.title, item.participant]), [['repository/interface/theme', 'Change theme', 'browser']]);
+  assert.deepEqual(model.progressByItem.map(item => [item.id, item.title, item.participant]), [['repository/interface/theme', 'Theme', 'browser']]);
   assert.ok(model.observation?.actionId === 'repository-click');
   assert.equal(model.observation?.values['value:enabled'], false); assert.equal(model.observation?.values['value:selection'], null);
   assert.equal(model.observation?.actionId, 'repository-click');
   assert.equal(model.scenarioProgress?.purchaseObserved, undefined); assert.equal(model.scenarioProgress?.unverifiedLinkCount, 0);
   assert.equal(model.understoodCount, 0); assert.equal(model.selectedUnderstanding.understood, false); assert.equal(model.continueArguments, undefined);
+});
+
+test('changing a configured operation title never renames its captured article or offline learning item', () => {
+  // Arrange
+  const input = configuredProjectionInput(); input.study.configuration.action.title = 'Inspect the next theme'; input.study.configurationHash = sha256(JSON.stringify(input.study.configuration));
+  // Act
+  const descriptor = describeStudy(input.study), saved = buildRecordingContext(input.study, [], 1), recorded = describeStudy(saved.study);
+  // Assert
+  assert.equal(descriptor.title, 'Interface'); assert.equal(descriptor.items[0]!.title, 'Theme'); assert.equal(descriptor.actions[0]!.title, 'Inspect the next theme');
+  assert.equal(recorded.title, 'Interface'); assert.equal(recorded.items[0]!.title, 'Theme'); assert.equal(recorded.actions[0]!.title, 'Inspect the next theme');
 });
 
 test('source-only article understanding remains the same complete citation decision in configured history', () => {
@@ -78,7 +99,7 @@ test('failed configured preparation remains its declared article with unavailabl
   // Act
   const model = projectStudy(input);
   // Assert
-  assert.equal(model.selectedItem.id, 'repository/interface/theme'); assert.equal(model.selectedItem.title, 'Change theme');
+  assert.equal(model.selectedItem.id, 'repository/interface/theme'); assert.equal(model.selectedItem.title, 'Repository article');
   assert.equal(model.source.text, '// Configured source is unavailable. Open the article or retry preparation.\n');
   assert.equal(model.observation, undefined); assert.equal(model.selectedUnderstanding.known, false); assert.equal(model.continueArguments, undefined);
 });
@@ -102,7 +123,7 @@ test('only the exact current configured snapshot enables Continue while another 
     continueArguments: { instanceId: '11111111-1111-4111-8111-111111111111', runId: input.study.runId, participant: 'browser', ...observation.pause } } } };
   // Act / Assert
   const matching = projectStudy({ ...input, live, liveDescriptor: describeStudy(input.study) });
-  assert.equal(matching.matching, true); assert.equal(matching.continueArguments?.generation, 1); assert.equal(matching.currentItemTitle, 'Change theme');
+  assert.equal(matching.matching, true); assert.equal(matching.continueArguments?.generation, 1); assert.equal(matching.currentItemTitle, 'Theme');
   const foreign = projectStudy({ ...input, live: { ...live, runId: 'other-run' } });
   assert.equal(foreign.matching, false); assert.equal(foreign.continueArguments, undefined); assert.ok(foreign.observation?.actionId === 'repository-click'); assert.equal(foreign.observation?.values['value:nextTheme'], 'dark');
   live.participants.browser.resumable = false;

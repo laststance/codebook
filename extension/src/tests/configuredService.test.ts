@@ -11,6 +11,26 @@ import { configuredServiceHarness } from './utils/configuredServiceHarness';
 
 const receiptSchema = z.object({ instanceId: z.string(), runId: z.string(), runUri: z.string() });
 
+test('dispatch and acknowledgement each invalidate a saved configured checkpoint without changing the acting runtime state', async context => {
+  // Arrange
+  const { service, configuration, runtimes } = await configuredServiceHarness(context);
+  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'progress', configuration }), record = service.record(receipt);
+  await record.preparation; service.action({ ...receipt, action: 'repository-click', key: 'one' });
+  const runtime = runtimes[0]!; runtime.status = 'acting'; runtime.operation!.inputDispatched = false; runtime.operation!.inputAcknowledged = false;
+  const accepted = service.state(record), revision = service.beginHistory(record, accepted.materialSignature)!;
+  service.reportHistory(record, accepted.materialSignature, revision, 'saved');
+  // Act
+  runtime.operation!.inputDispatched = true; const dispatched = service.state(record);
+  const dispatchedRevision = service.beginHistory(record, dispatched.materialSignature)!; service.reportHistory(record, dispatched.materialSignature, dispatchedRevision, 'saved');
+  runtime.operation!.inputAcknowledged = true; const acknowledged = service.state(record);
+  // Assert
+  assert.equal(dispatched.state, 'acting'); assert.equal(acknowledged.state, 'acting');
+  assert.notEqual(accepted.materialSignature, dispatched.materialSignature); assert.notEqual(dispatched.materialSignature, acknowledged.materialSignature);
+  assert.equal(dispatched.historyOutcome.status, 'pending'); assert.equal(acknowledged.historyOutcome.status, 'pending');
+  assert.equal(acknowledged.operation?.operationId, runtime.operation!.id);
+  assert.equal(acknowledged.operationProgress?.inputDispatched, true); assert.equal(acknowledged.operationProgress?.inputAcknowledged, true);
+});
+
 test('missing repository runtime support prevents acquisition while source authoring remains available', async context => {
   // Arrange
   const { service, configuration, environment, runtimes, books } = await configuredServiceHarness(context);
@@ -184,6 +204,7 @@ test('API 1.4 discovery exposes the bounded configured profile and its executabl
   assert.equal(status.apiVersion, '1.4'); assert.ok(profile && 'requiresConfiguration' in profile);
   assert.equal(profile.requiresConfiguration, true); assert.equal(profile.minimumExtensionVersion, '0.2.0');
   assert.equal(profile.helpUri, 'codebook://help/repository-browser'); assert.equal(profile.limits.runTimeoutMs, 600000); assert.equal(profile.limits.pauseHoldTimeoutMs, 300000);
+  assert.deepEqual(JSON.parse(JSON.stringify(profile.limits)).sourceBytes, { typescript: 262144, javascript: 8388608, map: 16777216 });
   assert.deepEqual(profile.items, []); assert.deepEqual(profile.requiredLinks, []); assert.equal(profile.actions[0]?.id, 'repository-click');
   assert.ok('text' in help);
   const contract = z.object({ configurationSchema: z.object({ type: z.literal('object'), additionalProperties: z.literal(false), required: z.array(z.string()), properties: z.record(z.string(), z.unknown()) }), sequence: z.array(z.string()), recovery: z.string() }).parse(JSON.parse(help.text));
