@@ -1,9 +1,9 @@
 # Cycle 0009 — Source-grounded repository learning content
 
 Type: product-increment
-Status: implementing
+Status: planning
 Result: pending
-Delivery: planning records committed; implementation starting locally
+Delivery: planning records committed; source draft tested locally, implementation paused for formal reviews
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/10
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -30,8 +30,8 @@ Authority: agent-selected next cycle under D008/D015 and Raphtalia's continuous 
 
 1. Inspect existing source, learning schemas, navigation and persisted identity. Inventory reusable code before choosing an API/schema.
 2. `/plan-devex-review` on this cycle: repository source discovery/read/reveal, authored-content validation, version/conflict/error and observed-link contracts.
-3. Primary UX assessment: reading/codemap navigation, source-derived versus observed labeling, stale/empty/error states within Study workspace. `/plan-design-review` remains uninvoked: its explicit user-named-target gate has no matching owner answer for this agent-selected cycle. Do not label the primary assessment a completed skill. Final design is context; later layouts are not this implementation scope.
-4. Primary engineering assessment: bounded file access/storage, source anchors, identity/history, persistence and regressions. `/plan-eng-review` has the same explicit target gate; an asynchronous target question is pending for both formal skills. Implementation remains authorized by D008; these primary assessments do not count as completed GStack or independent reviews. Freeze the exact contract before implementation.
+3. `/plan-design-review`: reading/codemap navigation, source-derived versus observed labeling, stale/empty/error states within Study workspace. Raphtalia explicitly selected this cycle's plan in the target question on 2026-09-19; the formal skill is now started. Earlier primary assessment is not retroactively a completed skill. Final design is context; later layouts are not this implementation scope.
+4. `/plan-eng-review`: bounded file access/storage, source anchors, identity/history, persistence and regressions, after formal UX decisions. The same owner answer explicitly selected this plan for engineering. Freeze reviewed amendments before continuing implementation; earlier primary assessments are not formal or independent results.
 5. Implement one connected slice; actual external-agent authoring and actual-host navigation in VS Code and Cursor; browser interaction QA and meaningful `/review`. Investigate unexplained failures before retries.
 
 These are review tasks, not a pre-approved implementation design. Routine reversible decisions stay agent-owned under D008; independent reviewers remain unavailable at the previously observed thread limit until that condition changes. Record coverage honestly; no substitute counts toward the final ten-review gate.
@@ -123,9 +123,20 @@ Principles: zero friction after connection has a concrete bounded path; learn-by
 
 Acceptance checklist: public schemas/examples complete; three-step connected-agent flow timed; every error identifies problem/cause/fix/reference; source and evidence labels understandable; old archives/decisions preserved; TypeScript checks and actual SDK tests pass; both hosts independently exercised; recorded motion checked if introduced. One-command packaged installation, public community, hosted playground, new SDK languages and other OS claims remain outside this cycle's acceptance. They are not manufactured checklist passes. No extra TODO file duplicates PRODUCT_GOAL or existing unresolved native findings.
 
+## Formal design review checkpoint
+
+- Target: this plan, explicitly selected by Raphtalia for `/plan-design-review` and `/plan-eng-review`. Design session: `52288-1789806897-7824ad63`. Initial overall impression: 8/10; the six scored passes have not yet run.
+- D1 answered: “A — 7項目すべて確認（推奨）.” Review all seven dimensions. This approves coverage, not a visual direction or any remedy.
+- Three generated mockups are ready. A emphasizes one article column; B adds adjacent navigation/context; C uses compact navigation. They illustrate the Wiki reader inside the default Study workspace, not replacements for the three approved product layouts. Example code/text is fictional presentation content, not observed application behavior.
+- All current images passed the designer's automated image-quality check. Primary visual inspection rejected the original A/C collages despite their automated passes; those originals remain in `initial-generated/`, and A/C were regenerated as individual screens and checked again. An image-quality pass is not a plan review or native UX proof.
+- Durable local directory: `/Users/ryotamurakami/.gstack/projects/codebook/designs/cycle0009-repository-wiki-20260919`. It contains current PNGs, briefs, quality results, a SHA-256 manifest, generation sessions and `design-board.html`. `approved.json` does not exist because no direction is approved yet.
+- Comparison board: `http://127.0.0.1:55031/boards/b-20260919-084919-rzgkcn/`. The designer emitted `BOARD_URL`, and an independent GET returned HTTP 200. Codex browser opening is queued; actual owner viewing is not claimed. This URL is local to this machine, not a remote issue attachment.
+- D2 pending: owner submits the board or supplies equivalent text feedback. Then read `feedback.json` (or pending remix feedback), confirm the understood direction once, and save `approved.json` only after the actual answer. The skill requires user selection before the seven passes. Do not substitute its image checker, the earlier product-layout approval, or D1 for this choice.
+- All seven passes and any individual remedy decisions remain pending; engineering follows their amendments. Independent plan coverage remains unavailable; the image checker is not a fresh independent final-product reviewer.
+
 ## Selected implementation contract
 
-These are primary-agent engineering and UX decisions under D008, not formal `/plan-eng-review` or `/plan-design-review` results. Both skill definitions require an explicit owner-named target outside Plan mode: “only if the user EXPLICITLY names the target.” The current host is Default mode and this cycle is agent-selected. A scope question is pending; no skill preamble, mockup or formal review pass has been run for either. No owner answer is inferred from silence. Normal authorized implementation may proceed independently.
+These were primary-agent engineering and UX decisions under D008, not formal `/plan-eng-review` or `/plan-design-review` results. Both skill definitions require an explicit owner-named target outside Plan mode: “only if the user EXPLICITLY names the target.” Raphtalia answered the scope question, “Cycle 0009 の計画を対象にする（推奨）.” The target gate is now resolved. The formal design checkpoint above records all seven passes selected and D2 comparison-board feedback pending. No visual direction or remedy is approved by the focus answer. Further implementation is paused during these plan reviews; the source/schema draft below remains unvalidated at runtime.
 
 ### Architecture and alternatives
 
@@ -201,7 +212,7 @@ Performance expectations: no repository scan on each UI repaint, no binary/frame
 
 ## Attempts and evidence
 
-No implementation or validation yet. Cycle 0008's source/runtime/replay checks remain historical evidence with their exact revision and limitations; they do not verify this increment.
+Initial uncommitted draft: repository source service, input schemas, source bounds/errors and eleven filesystem/schema regression cases. On 2026-09-19, `pnpm --dir extension typecheck`, `pnpm --dir extension exec tsc -p tsconfig.json` and `node --test extension/dist/tests/repositorySource.test.js` passed (11 tests, zero skipped/cancelled/failed). Tests use real temporary Git repositories and files, including changed bytes, traversal, symlinks, unsupported/binary data and stale discovery. No public API/reader/native integration is implemented. The draft compilation did not regenerate clean build provenance; no native capability follows from it. Cycle 0008's source/runtime/replay checks remain historical evidence with their exact revision and limitations; they do not verify this increment.
 
 ## Result and decision
 
@@ -209,7 +220,7 @@ Pending. No capability state advances merely because this plan/issue exists. Kee
 
 ## Handoff
 
-Next: implement the bounded source service/schema, then storage/progress and reader. DX review is recorded; formal UX/engineering skill scopes await an optional owner reply, while primary implementation decisions above proceed under D008. No new durable GStack learning emerged in this planning review. Branch `codex/cycle-0009-repository-learning-book` starts at `7330a3a`, preserving the unmerged Cycle 0008 increment; no separate task or background automation created. Temporary Cycle 0008 native/QA processes are closed. Product final gate remains 0/10 and owner acceptance outstanding.
+Next: finish the now explicitly scoped formal design review, then engineering; resume source/store/reader implementation after the reviewed amendments. DX review is recorded. No new durable GStack learning emerged in that planning review. Branch `codex/cycle-0009-repository-learning-book` starts at `7330a3a`, preserving the unmerged Cycle 0008 increment; no separate task or background automation created. Temporary Cycle 0008 native/QA processes are closed. Product final gate remains 0/10 and owner acceptance outstanding.
 
 ## GSTACK REVIEW REPORT
 
@@ -217,13 +228,13 @@ Next: implement the bounded source service/schema, then storage/progress and rea
 | --- | --- | --- | --- | --- | --- |
 | DX Review | `/plan-devex-review` | Agent source/content contract | 1 primary | DONE_WITH_CONCERNS | Eight passes, four implementation tasks; planning specificity 4.4 → 9.8, actual DX unmeasured |
 | Outside Review | Installed skill preflight / known provider and thread limits | Independent challenge | 0 completed | unavailable | Own-harness nested Codex is excluded; native thread limit and prior external timeout remain unchanged |
-| Design Review | `/plan-design-review` considered | Reader UX | 0 | not invoked | Explicit user-named target gate unresolved; primary assessment will be labeled separately |
-| Eng Review | `/plan-eng-review` considered | Storage, identity, source scope | 0 | not invoked | Target question pending; primary engineering contract above is not a skill result |
+| Design Review | `/plan-design-review` | Reader UX | 1 started | in progress | Explicit target and all seven passes selected; initial specificity 8/10; three quality-checked mockups on a working local board; D2 feedback pending |
+| Eng Review | `/plan-eng-review` | Storage, identity, source scope | 0 | target selected, not started | Await design amendments; earlier primary contract is not a skill result |
 | CEO Review | Existing goal/design | Product scope unchanged | 0 this cycle | not requested | Existing product direction retained |
 
 OUTSIDE COVERAGE: unavailable; no independent result or cross-model agreement inferred. Prior Cycle 0008 reviews do not cover this increment.
 
-VERDICT: DX plan recorded with concerns; formal eng review remains required before shipping. Routine authorized implementation proceeds under the separately labeled primary contract. No product acceptance follows from this report.
+VERDICT: DX plan recorded with concerns; formal design in progress and eng review still required. Source draft passes typecheck and 11 filesystem/schema tests only; no product acceptance follows from this report.
 
 **UNRESOLVED DECISIONS:**
-- Optional formal design/engineering skill invocation: pending explicit owner-named target, not a missing implementation requirement.
+- Design Step 0.5 comparison-board feedback pending. Scope and all seven passes are explicitly selected; no remedy or visual direction approval is inferred from those answers.
