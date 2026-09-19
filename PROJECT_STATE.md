@@ -2,11 +2,11 @@
 
 Updated: 2026-09-20\
 Product stage: one real-repository browser action demonstrated in both editors; product runtime still fixed-profile, installed usefulness unverified\
-Active cycle: none — Cycle 0010 demonstrated; synchronize closure, then open the D019 browser-study integration cycle\
-Last cycle: [0010 — Real-repository browser runtime feasibility](docs/cycles/0010-real-repository-runtime.md) — demonstrated, 38 tests and 14 native cases; clean implementation `9bfe1e8` matches the validated inventory; closure push pending\
+Active cycle: [0011 — Configurable repository browser study](docs/cycles/0011-repository-browser-study.md) — planning; bounded DX review started under D019\
+Last cycle: [0010 — Real-repository browser runtime feasibility](docs/cycles/0010-real-repository-runtime.md) — demonstrated, 38 tests and 14 native cases; clean implementation `9bfe1e8`; closure `c91af0e` pushed; validated inventory matches\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: none — [#11](https://github.com/laststance/codebook/issues/11) closure sync pending\
-Last cycle issue: [#11](https://github.com/laststance/codebook/issues/11) — open until validated closure records are pushed\
+Active cycle issue: [#12](https://github.com/laststance/codebook/issues/12) — open\
+Last cycle issue: [#11](https://github.com/laststance/codebook/issues/11) — [closed with evidence](https://github.com/laststance/codebook/issues/11#issuecomment-5743608909)\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
@@ -56,11 +56,11 @@ D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answer
 
 The checkpoint was restored in this same checkout and branch `codex/cycle-0009-repository-learning-book` at `6f22f12`. All seven draft hashes matched; their original bytes remain in ignored `artifacts/cycle-0009/handoff-20260919-190104/`. No reset, stash, clean or new worktree was used. Fresh reviewer creation succeeded, and both independent plan amendments now have regressions: committed-key recovery before mutable preparation and a bounded 1 MiB + 64 KiB HTTP envelope. The same reviewer subsequently completed bounded implementation/design rereviews; thread capacity later prevented another fresh reviewer. This does not count toward outside-model or final-product reviews.
 
-Cycle 0009 delivery is synchronized: implementation `1bd10b3` and closure records `0313c33` are pushed, the clean source fingerprint matches the validated 238-test native cut, and Issue #10 is [closed with evidence](https://github.com/laststance/codebook/issues/10#issuecomment-5742534461). Cycle 0010 and Issue #11 are selected and open on this same branch. Keep Issue #1 open. Both isolated native sessions have ended with exit 0 and restored settings; the root browser adapter on port 57743 has also stopped. No native QA process needs resuming. Private recordings/transcripts must be copied to an accessible durable location before this workspace is moved or deleted; the manifest identifies hashes and availability.
+Cycle 0009 delivery is synchronized: implementation `1bd10b3` and closure records `0313c33` are pushed, the clean source fingerprint matches the validated 238-test native cut, and Issue #10 is [closed with evidence](https://github.com/laststance/codebook/issues/10#issuecomment-5742534461). Cycle 0010 and Issue #11 are now closed; Cycle 0011 and Issue #12 are the one selected active cycle on this same branch. Keep Issue #1 open. Both isolated native sessions have ended with exit 0 and restored settings; the root browser adapter on port 57743 has also stopped. No native QA process needs resuming. Private recordings/transcripts must be copied to an accessible durable location before this workspace is moved or deleted; the manifest identifies hashes and availability.
 
 [Cycle 0010](docs/cycles/0010-real-repository-runtime.md) is demonstrated against unchanged Laststance.io `43d0399`: 38 tests and the final seven-case matrix in each host pass. Its source fingerprint and final native records are frozen. The original target remains clean; original seven handoff backups match 7/7. No owned native process or Playwright browser session remains.
 
-Next: push the final source and closure records (clean implementation `9bfe1e8` matches the validated inventory), synchronize/close Issue #11, then open the D019 cycle for configurable browser-study product integration. Run its required DX/engineering and conditional design reviews before implementation. Preserve the existing checkout and reader, the approved product/design decisions and this same branch.
+Next: finish `/plan-devex-review` on [Cycle 0011](docs/cycles/0011-repository-browser-study.md), then conditional design and engineering review before implementation. Issue #11 is closed and #12 is open; the D019 integration plan is the only active cycle. No runtime implementation has started for Cycle 0011. Preserve the existing checkout and reader, the approved product/design decisions and this same branch.
 
 Native phase-ACK reliability remains qualified: retain failed/partial captures and use a changed, evidence-backed hypothesis for any follow-up. G01–G11, both later layouts, recording, three intended uses, packaging, owner acceptance and ten fresh sequential reviews remain required. The branch retains the unmerged Cycle 0008 increment; no PR, merge, package or publication claim follows from this cycle.
 
