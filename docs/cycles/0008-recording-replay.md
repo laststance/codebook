@@ -3,7 +3,7 @@
 Type: product-increment
 Status: closed
 Result: demonstrated (recording and offline replay); native presentation reliability inconclusive
-Delivery: committed; GitHub reconciliation pending
+Delivery: committed and pushed (`7330a3a`); issue closed, no merge/package claim
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/9
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -61,7 +61,7 @@ Browser QA at `a68005d` passes 28 behavior, nine constrained-layout and three is
 
 Implementation review repaired ten findings but is **not converged**: four fresh specialists completed, additional independent/adversarial capacity was unavailable, and outside-provider coverage is absent. Actual-agent discovery then exposed and verified one additional SDK-schema fix. Final acceptance reviews remain **0/10**. No CI, PR approval, merge, VSIX, installation, publication or owner-acceptance claim.
 
-**Keep** the bounded immutable recorder, as-of context, independent understanding and shared revision-checked playback. **Revise later** native presentation reliability only from a measured failing stage or a supported owner-driven reproduction. Never promote missing frame confirmation to complete success. Next selected candidate under D008/D015: a source-grounded repository learning document and codemap, bridging actual workspace source to the existing learning/observation/recording identities. Ordinary execution, both layouts and installation remain final requirements. Issue #9 closes only after these committed records are pushed and linked.
+**Keep** the bounded immutable recorder, as-of context, independent understanding and shared revision-checked playback. **Revise later** native presentation reliability only from a measured failing stage or a supported owner-driven reproduction. Never promote missing frame confirmation to complete success. Next selected candidate under D008/D015: a source-grounded repository learning document and codemap, bridging actual workspace source to the existing learning/observation/recording identities. Ordinary execution, both layouts and installation remain final requirements. [Issue #9 closure report](https://github.com/laststance/codebook/issues/9#issuecomment-5740396725) links remote evidence `7330a3a` and attaches the sanitized replay video/frame; the bounded cycle issue is closed.
 
 
 ## Developer experience review — 2026-09-19

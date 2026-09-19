@@ -2,11 +2,11 @@
 
 Updated: 2026-09-19\
 Product stage: connected checkout, durable learning and offline replay demonstrated on fixed profiles; native reliability/usefulness unverified\
-Active cycle: none; Cycle 0009 repository learning document selected, pending setup\
+Active cycle: [0009 — Repository learning book](docs/cycles/0009-repository-learning-book.md) — planning\
 Last cycle: [0008 — Recording and offline replay](docs/cycles/0008-recording-replay.md) — mechanisms demonstrated; native reliability inconclusive\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: none\
-Last cycle issue: [#9](https://github.com/laststance/codebook/issues/9) — closure records prepared; push/comment/close pending\
+Active cycle issue: [#10](https://github.com/laststance/codebook/issues/10) — open\
+Last cycle issue: [#9](https://github.com/laststance/codebook/issues/9) — closed with remote evidence `7330a3a` and attached replay video\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
@@ -46,9 +46,9 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Close Cycle 0008 tracking: commit/push its closure records and sanitized evidence, comment with exact links on Issue #9, then close it. Next open only Cycle 0009: an agent-authored repository learning document/wiki and source-linked codemap. Review its bounded API → UX → engineering contract, then implement; the first repository is this codebase, read-only source study, alongside links to already captured demo learning items. Do not imply ordinary-workspace execution from source reading. This removes the hard-coded macro-content bottleneck toward G02/G10; it is not a new final requirement.
+Cycle 0008 evidence is pushed and [reported on Issue #9](https://github.com/laststance/codebook/issues/9#issuecomment-5740396725), which is closed. Advance only Cycle 0009: an agent-authored repository learning document/wiki and source-linked codemap. Review its bounded API → UX → engineering contract, then implement; the first repository is this codebase, read-only source study, alongside links to already captured demo learning items. Do not imply ordinary-workspace execution from source reading. This removes the hard-coded macro-content bottleneck toward G02/G10; it is not a new final requirement.
 
-Native phase-ACK reliability remains unresolved after a clean Cursor partial run and one non-reproducing diagnostic. Do not repeat unchanged attempts or bypass the locked desktop. Preserve phase evidence and qualify success. All G01–G11 outcomes, both future layouts, real-repository execution, packaging, owner feedback and final reviews remain required. Branch `feat/cycle-0008-recording-replay` contains the recorded increment; no PR/merge/package/publication claim.
+Native phase-ACK reliability remains unresolved after a clean Cursor partial run and one non-reproducing diagnostic. Do not repeat unchanged attempts or bypass the locked desktop. Preserve phase evidence and qualify success. All G01–G11 outcomes, both future layouts, real-repository execution, packaging, owner feedback and final reviews remain required. Branch `codex/cycle-0009-repository-learning-book` starts from the committed Cycle 0008 increment `7330a3a`; no PR/merge/package/publication claim.
 
 ## Full-product completion gate
 
