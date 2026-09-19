@@ -732,7 +732,8 @@
       "raw": "<owned-profile>.log",
       "shared": "tests/discovery-red.txt",
       "rawSha256": "b1c0b40396409156714e36be19505775bc88c787e876adfacdf50c8bbb406600",
-      "sharedSha256": "7adb0cac89d0b6067c756ccb46dafe682765a6d3d1bb87eed1c2c8a2eeceda78"
+      "sharedSha256": "ea4bb1697478880eca465a0216ccdf833232e6f59a86a84a10048319802ab03a",
+      "transformation": "Path sanitization and trailing whitespace removal; raw digest retained."
     }
   ],
   "sanitization": "Allowlisted local fixture evidence. Credentials, descriptors, raw editor logs/profiles excluded; paths, local endpoints and hostname redacted. Source hashes checked before sanitization; PNG/video bytes unchanged."
