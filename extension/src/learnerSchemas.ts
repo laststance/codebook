@@ -1,15 +1,11 @@
 import { z } from 'zod';
 import { BOOK_MAX_ANCHORS, BOOK_MAX_SECTIONS, REPOSITORY_FIXED_READING_SECTIONS, KEY_LENGTH_LIMIT, LEARNING_SCHEMA_VERSION_V3, MAX_LEARNER_DECISIONS } from './constants';
-import { itemSchema, learnerDecisionSchema as legacyDecisionSchema, selectionSchema } from './studySchemas';
-import { bookIdSchema } from './repositorySchemas';
+import { learnerDecisionSchema as legacyDecisionSchema, selectionSchema } from './studySchemas';
+import { bookIdSchema, learningItemSchema } from './identitySchemas';
+export { repositoryItemSchema, learningItemSchema } from './identitySchemas';
 import { bookAnchorSchema, repositoryHashSchema } from './sourceSchemas';
 import { citationContext } from './utils/citationContext';
 
-export const repositoryItemSchema = z.string().refine(value => {
-  const [prefix, bookId, nodeId, extra] = value.split('/');
-  return prefix === 'repository' && extra === undefined && bookIdSchema.safeParse(bookId).success && bookIdSchema.safeParse(nodeId).success;
-}, 'Use repository/<bookId>/<nodeId> with stable book and node IDs.');
-export const learningItemSchema = z.union([itemSchema, repositoryItemSchema]);
 export const citationContextSchema = z.strictObject({ kind: z.literal('citations'), hash: repositoryHashSchema, anchors: z.array(bookAnchorSchema).min(1).max(BOOK_MAX_ANCHORS) })
   .refine(context => JSON.stringify(context) === JSON.stringify(citationContext(context.anchors)), 'Citation context must have a verified canonical hash and deduplicated ordering.');
 const singleSourceDecisionSchema = legacyDecisionSchema.extend({ context: z.strictObject({ kind: z.literal('source') }) });

@@ -472,6 +472,8 @@ Engineering tasks artifact: `/Users/ryotamurakami/.gstack/projects/codebook/task
 
 Selection baseline: Cycle 0010's final experiment passed 38 tests and seven native cases in each required editor; original Laststance.io stays clean, all seven handoff backups match, and no owned native process remains. The public product `createEnvironment` still constructs `PairedRun`; `StudyRuntime` aliases its view/action/continue/source contracts. These current couplings motivate review before implementation. The earlier native phase-ACK failure remains unresolved and must not be hidden by the successful final experiment.
 
+Implementation checkpoint 1: shared `identitySchemas` preserves existing authoring/learner schema semantics; strict internal `repositoryConfigSchemas` defines the reviewed bounded configuration. Public start/discovery is deliberately not wired until the runtime/storage contract is ready. `tsc` passes; new 11 configuration tests plus legacy migration, citation progress and book publication tests pass **41/41**, zero failed/skipped/cancelled. This verifies grammar/canonical ordering/byte limits and unchanged existing identities, not repository execution or new-format persistence. Original handoff backups still match 7/7.
+
 ## Result and decision
 
 Result: pending. No new implementation or product capability is verified by selecting this cycle. One active cycle only. The full destination and all final acceptance requirements remain unchanged.

@@ -124,4 +124,29 @@ export const BOOK_REVISION_LIMIT_BYTES = 4_194_304;
 export const BOOK_FILE_LIMIT_BYTES = 8_388_608;
 export const BOOK_PREPARE_TIMEOUT_MS = 20_000;
 export const BOOK_SOURCE_CONCURRENCY = 4;
+export const REPOSITORY_BROWSER_PROFILE = 'repository-browser';
+export const REPOSITORY_BROWSER_ACTION = 'repository-click';
+export const REPOSITORY_CONFIG_VERSION = 1;
+export const REPOSITORY_CONFIG_LIMIT_BYTES = 65_536;
+export const REPOSITORY_SELECTOR_LIMIT_CHARS = 512;
+export const REPOSITORY_CONDITION_LIMIT = 8;
+export const REPOSITORY_ATTRIBUTE_LIMIT_CHARS = 64;
+export const REPOSITORY_LITERAL_LIMIT_CHARS = 1_024;
+export const REPOSITORY_INSPECTION_LIMIT = 10;
+export const REPOSITORY_INSPECTION_PATH_LIMIT_CHARS = 128;
+export const REPOSITORY_INSPECTION_SEGMENT_LIMIT = 4;
+export const REPOSITORY_STORAGE_ENTRY_LIMIT = 16;
+export const REPOSITORY_STORAGE_KEY_LIMIT_CHARS = 128;
+export const REPOSITORY_STORAGE_VALUE_LIMIT_CHARS = 2_048;
+export const REPOSITORY_STORAGE_LIMIT_BYTES = 16_384;
+export const REPOSITORY_SETUP_TIMEOUT_MS = 90_000;
+export const REPOSITORY_PAUSE_HOLD_TIMEOUT_MS = 300_000;
+export const REPOSITORY_RUN_TIMEOUT_MS = 600_000;
+export const REPOSITORY_RESERVED_INSPECTION_ROOTS = [
+  'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else', 'enum',
+  'export', 'extends', 'false', 'finally', 'for', 'function', 'if', 'implements', 'import', 'in', 'instanceof', 'interface',
+  'let', 'new', 'null', 'package', 'private', 'protected', 'public', 'return', 'static', 'super', 'switch', 'this', 'throw',
+  'true', 'try', 'typeof', 'undefined', 'var', 'void', 'while', 'with', 'yield', 'NaN', 'Infinity',
+] as const;
+export const REPOSITORY_FORBIDDEN_INSPECTION_SEGMENTS = ['__proto__', 'prototype', 'constructor'] as const;
 export { ACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, HOLD_DURATION_MS, CONTROL_RESPONSE_LIMIT_MS } from 'codebook-cycle-0001/dist/constants';

@@ -1,14 +1,15 @@
 import { z } from 'zod';
-import { BOOK_ID_LIMIT_CHARS, BOOK_MAX_ANCHORS, BOOK_MAX_EDGES, BOOK_MAX_LINKS, BOOK_MAX_NODES, BOOK_MAX_REVISIONS, BOOK_MAX_SECTIONS, BOOK_MAX_SOURCES, BOOK_SCHEMA_VERSION, BOOK_SECTION_LIMIT_CHARS, BOOK_TITLE_LIMIT_CHARS, KEY_LENGTH_LIMIT, REPOSITORY_SOURCE_LIMIT_BYTES } from './constants';
+import { BOOK_MAX_ANCHORS, BOOK_MAX_EDGES, BOOK_MAX_LINKS, BOOK_MAX_NODES, BOOK_MAX_REVISIONS, BOOK_MAX_SECTIONS, BOOK_MAX_SOURCES, BOOK_SCHEMA_VERSION, BOOK_SECTION_LIMIT_CHARS, BOOK_TITLE_LIMIT_CHARS, KEY_LENGTH_LIMIT, REPOSITORY_SOURCE_LIMIT_BYTES } from './constants';
 import { itemSchema } from './studySchemas';
 import { studyIdSchema } from './legacyStudySchemas';
 import { bookAnchorSchema, repositoryHashSchema, repositoryPathSchema } from './sourceSchemas';
+import { bookIdSchema } from './identitySchemas';
+export { bookIdSchema } from './identitySchemas';
 export { bookAnchorSchema, repositoryHashSchema, repositoryPathSchema } from './sourceSchemas';
 
 export const repositorySourceSchema = z.strictObject({ path: repositoryPathSchema, hash: repositoryHashSchema, text: z.string().max(REPOSITORY_SOURCE_LIMIT_BYTES), lineCount: z.number().int().positive() });
 export const sourceListSchema = z.strictObject({ instanceId: z.uuid(), cursor: z.string().regex(/^[a-f0-9]{64}:(0|[1-9]\d*)$/).optional() });
 export const sourceReadSchema = z.strictObject({ instanceId: z.uuid(), path: repositoryPathSchema, expectedHash: repositoryHashSchema.optional() });
-export const bookIdSchema = z.string().min(1).max(BOOK_ID_LIMIT_CHARS).regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/);
 export const bookObservationLinkSchema = z.strictObject({ studyId: studyIdSchema, observationId: z.string().min(1).max(KEY_LENGTH_LIMIT), sourceHash: repositoryHashSchema });
 export const bookNodeSchema = z.strictObject({ id: bookIdSchema, title: z.string().min(1).max(BOOK_TITLE_LIMIT_CHARS),
   sections: z.array(z.strictObject({ title: z.string().min(1).max(BOOK_TITLE_LIMIT_CHARS), text: z.string().min(1).max(BOOK_SECTION_LIMIT_CHARS) })).min(1).max(BOOK_MAX_SECTIONS),
