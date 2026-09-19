@@ -31,6 +31,12 @@ export class StudyClient {
   async tool<Schema extends z.ZodType>(name: string, arguments_: Record<string, unknown>, schema: Schema): Promise<z.output<Schema>> {
     const started = performance.now(), result = await this.client.callTool({ name, arguments: arguments_ });
     this.transcript.push({ operation: name, input: arguments_, output: result, durationMs: performance.now() - started });
+    // SDK argument validation can reject before the domain handler supplies its structured outcome.
+    if (result.isError && result.structuredContent === undefined) {
+      const content = z.array(z.object({ type: z.string(), text: z.string().optional() })).safeParse(result.content);
+      const reason = content.success ? content.data.flatMap(item => item.type === 'text' && item.text ? [item.text] : []).join('\n') : undefined;
+      throw new Error(reason || 'MCP rejected the tool arguments before execution.');
+    }
     const outcome = outcomeSchema.parse(result.structuredContent);
     if (!outcome.ok) throw new Error(`${outcome.error.code}: ${outcome.error.message} ${outcome.error.recovery}`);
     if (result.isError) throw new Error('MCP tool marked a success record as error');

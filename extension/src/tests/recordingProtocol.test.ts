@@ -54,6 +54,24 @@ test('new server credentials discover and replay a stored recording with no live
   } finally { await client.close(); await controller.dispose(); await endpoint.close(); await harness.close(); }
 });
 
+test('agents discover playback arguments and invalid seek shapes dispatch no controls', async () => {
+  // Arrange
+  const harness = await createHarness(), store = new RecordingStore(join(harness.directory, 'learning'), sha256(harness.directory));
+  const controller = installPlayback(harness.service, store), endpoint = await startServer(harness.service), client = await StudyClient.connect(endpoint.descriptor);
+  try {
+    // Act
+    const discovery = await client.discover(), playbackTool = discovery.tools.tools.find(tool => tool.name === 'codebook_playback');
+    const studyId = `${harness.service.instanceId}_${randomUUID()}`;
+    // Assert: successful calls with hard-coded arguments cannot prove the agent's discovery boundary.
+    assert.ok(playbackTool); assert.deepEqual(Object.keys(playbackTool.inputSchema.properties ?? {}).sort(), ['action', 'expectedRevision', 'instanceId', 'positionMs', 'studyId']);
+    assert.deepEqual(playbackTool.inputSchema.required?.slice().sort(), ['action', 'expectedRevision', 'instanceId', 'studyId']);
+    assert.match(JSON.stringify(playbackTool.inputSchema.properties?.positionMs), /Required only for seek/);
+    await assert.rejects(client.tool('codebook_playback', { instanceId: harness.service.instanceId, studyId, action: 'seek', expectedRevision: 0 }, stateSchema), /Invalid arguments/);
+    await assert.rejects(client.tool('codebook_playback', { instanceId: harness.service.instanceId, studyId, action: 'open', expectedRevision: 0, positionMs: 1 }, stateSchema), /Invalid arguments/);
+    assert.equal(controller.state().revision, 0); assert.equal(harness.runtimes.length, 0);
+  } finally { await client.close(); await controller.dispose(); await endpoint.close(); await harness.close(); }
+});
+
 test('recording pages are bounded and foreign frames, paths and concurrent stale controls are rejected', async () => {
   // Arrange
   const harness = await createHarness(), workspaceKey = sha256(harness.directory), store = new RecordingStore(join(harness.directory, 'learning'), workspaceKey);
