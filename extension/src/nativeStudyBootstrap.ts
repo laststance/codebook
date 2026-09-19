@@ -17,6 +17,7 @@ export async function run(): Promise<void> {
   if (!directory) throw new Error('Missing learner native suite');
   const checkout = process.env.CODEBOOK_PROFILE === 'checkout-demo', firstItem = checkout ? 'checkout-demo/cart-mutation' : 'paired-cart-demo/server';
   const reload = process.env.CODEBOOK_STUDY_RELOAD === '1', prefix = reload ? 'reload' : 'live';
+  const recording = process.env.CODEBOOK_STUDY_CASE === 'recording';
   const extension = vscode.extensions.getExtension<ReturnType<typeof activate>>('laststance.codebook');
   assert.ok(extension); const api = await extension.activate();
   const checks: Record<string, unknown> = { host: vscode.env.appName, apiVersion: vscode.version, node: process.versions.node, independentVisualInspection: false };
@@ -46,7 +47,7 @@ export async function run(): Promise<void> {
   };
   const record = () => {
     const state = inspect();
-    checks.presentation = { revision: state.view!.revision, selection: state.view!.model.selection, outlineSelection: state.outlineSelection, observation: state.view!.model.observation, currentParticipant: state.view!.model.currentParticipant, matching: state.view!.model.matching, loading: state.view!.loading, errors: state.view!.errors, sourceUri: state.sourceUri, rendered: state.rendered, opened: state.opened, leaseId: state.leaseId };
+    checks.presentation = { revision: state.view!.revision, selection: state.view!.model.selection, outlineSelection: state.outlineSelection, observation: state.view!.model.observation, currentParticipant: state.view!.model.currentParticipant, matching: state.view!.model.matching, loading: state.view!.loading, errors: state.view!.errors, recording: state.view!.recording, sourceUri: state.sourceUri, rendered: state.rendered, opened: state.opened, leaseId: state.leaseId };
     checks.groups = vscode.window.tabGroups.all.map(group => ({ column: group.viewColumn, active: group.activeTab?.label, tabs: group.tabs.map(tab => ({ label: tab.label, dirty: tab.isDirty, active: tab.isActive, uri: tab.input instanceof vscode.TabInputText ? tab.input.uri.toString() : undefined })) }));
   };
   const exercise = async (action: NativeStudyAction, expectedItem?: StudyItemId) => {
@@ -100,6 +101,19 @@ export async function run(): Promise<void> {
       assert.equal(group.activeTab.input.uri.toString(), state.sourceUri, 'Debugger raw source cannot replace the captured reader');
       checks.nativeCapturedTabActive = true;
     }
+    if (action === 'assert-recording') {
+      const { state, view } = await rendered(expectedItem ?? firstItem, false);
+      assert.equal(view.contentTab, 'recording'); assert.equal(view.recording?.readiness, 'ready'); assert.equal(view.recording.cleared, false);
+      assert.equal(state.rendered?.presentationRevision, view.recording.presentationRevision); assert.equal(view.model.continueArguments, undefined);
+      assert.equal(view.model.understoodCount, 0, 'Playback never changes learner understanding');
+      assert.equal(view.model.observation?.values.price, 24); checks.recordedNativeSourceMatched = true;
+    }
+    if (action === 'close-recording-pane') {
+      const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith('codebook.scopedBrowser'));
+      assert.equal(tabs.length, 1); assert.equal(await vscode.window.tabGroups.close(tabs, true), true);
+      assert.equal(inspect().view?.recording?.mode, 'paused'); checks.replayPaneClosed = true;
+    }
+    if (action === 'open-recording-pane') await vscode.commands.executeCommand('codebook.openStudyWorkspace');
     if (action === 'close-reader') {
       await vscode.commands.executeCommand('codebook.closeStudyWorkspace');
       assert.equal(inspect().opened, false); preserveForeign();
@@ -129,7 +143,7 @@ export async function run(): Promise<void> {
       assert.equal(view.model.understoodCount, process.env.CODEBOOK_STUDY_CASE === 'history' ? 1 : 0);
       assert.equal(view.study?.terminal, true); assert.equal(view.model.currentParticipant, undefined); assert.equal(view.model.continueArguments, undefined);
       assert.equal(inspect().leaseId, undefined); preserveForeign(); record(); checks.reloadedWithoutExecution = true;
-      await vscode.commands.executeCommand('codebook.closeStudyWorkspace'); await publish(); return;
+      if (!recording) { await vscode.commands.executeCommand('codebook.closeStudyWorkspace'); await publish(); return; }
     }
     descriptorPath = await vscode.commands.executeCommand<string>('codebook.startAgentServer'); assert.ok(descriptorPath); await publish();
     while (true) {

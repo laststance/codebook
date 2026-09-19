@@ -1,13 +1,14 @@
-import { chmod, lstat, mkdir, open, readdir, unlink } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir } from 'node:fs/promises';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { join } from 'node:path';
-import { LEARNING_SCHEMA_VERSION_V2, MAX_LEARNER_DECISIONS, MAX_LIBRARY_FILES, MAX_STUDY_ARCHIVE_BYTES, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, PROGRESS_LIMIT_BYTES, PROGRESS_V2_FILE, STUDY_V2_SUFFIX, STUDY_METADATA_V2_SUFFIX, STUDY_METADATA_LIMIT_BYTES } from './constants';
+import { LEARNING_SCHEMA_VERSION_V2, MAX_LEARNER_DECISIONS, MAX_LIBRARY_FILES, MAX_STUDY_ARCHIVE_BYTES, PRIVATE_DIRECTORY_MODE, PROGRESS_LIMIT_BYTES, PROGRESS_V2_FILE, STUDY_V2_SUFFIX, STUDY_METADATA_V2_SUFFIX, STUDY_METADATA_LIMIT_BYTES } from './constants';
 import { learnerDecisionSchema, selectionSchema, studyMetadataSchema, type StudyCatalogEntry, type LearnerDecision, type LearnerProgress, type StudyArchive, type StudySelection } from './studySchemas';
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite';
 import { readBoundedFile } from './utils/readBoundedFile';
 import { studyIdSchema } from './legacyStudySchemas';
 import { decodeStudyArchive } from './utils/decodeStudyArchive';
 import { decodeLearnerProgress } from './utils/decodeLearnerProgress';
+import { withStorageLock } from './utils/withStorageLock';
 
 /** Retains learner choices and bounded sealed studies across editor restarts without restoring runtime authority. @example const library = new LearningLibrary(directory, workspaceKey) */
 export class LearningLibrary {
@@ -183,10 +184,7 @@ export class LearningLibrary {
   private locked<Value>(operation: () => Promise<Value>): Promise<Value> {
     const pending = this.writes.then(async () => {
       await this.initialize();
-      const path = join(this.directory, 'writer.lock');
-      const handle = await open(path, 'wx', PRIVATE_FILE_MODE).catch(error => { if (error.code === 'EEXIST') throw new Error('Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.'); throw error; });
-      try { await handle.writeFile(JSON.stringify({ pid: process.pid })); return await operation(); }
-      finally { await handle.close(); await unlink(path); }
+      return withStorageLock(this.directory, operation);
     });
     this.writes = pending.catch(() => undefined); return pending;
   }

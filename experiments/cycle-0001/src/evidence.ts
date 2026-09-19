@@ -1,5 +1,6 @@
 import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { NANOSECONDS_PER_MILLISECOND } from './constants';
 
 export interface RecordedEvent {
   sequence: number;
@@ -27,7 +28,7 @@ export class Evidence {
 
   /** Records a local receipt time immediately when any runtime lane reports evidence. @example evidence.record('input.accepted', { operationId: 'op' }) */
   record(type: string, detail: unknown = {}): RecordedEvent {
-    const event = { sequence: this.events.length + 1, elapsedMs: Number(process.hrtime.bigint() - this.started) / 1e6, wallTime: new Date().toISOString(), type, detail };
+    const event = { sequence: this.events.length + 1, elapsedMs: this.elapsedMs(), wallTime: new Date().toISOString(), type, detail };
     const serialized = JSON.stringify(event) + '\n';
     const bytes = Buffer.byteLength(serialized);
     // Product adapters stop buffering on overload; legacy experiments preserve their existing contract.
@@ -42,6 +43,9 @@ export class Evidence {
     this.pending = this.pending.then(() => appendFile(join(this.directory, 'events.jsonl'), serialized)).catch(error => { this.failure = String(error); }).finally(() => { this.queuedBytes -= bytes; });
     return captured;
   }
+
+  /** Shares the run's monotonic receipt clock with optional recording observers; pause time remains included. @example evidence.elapsedMs() // 1250.5 */
+  elapsedMs(): number { return Number(process.hrtime.bigint() - this.started) / NANOSECONDS_PER_MILLISECOND; }
 
   /** Confirms queued directory initialization before setup proceeds, called by the run. @example await evidence.initialize() */
   async initialize(): Promise<void> {

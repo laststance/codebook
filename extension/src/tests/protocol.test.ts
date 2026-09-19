@@ -38,8 +38,8 @@ test('real MCP discovery, action and reconnect retain one runtime and one click 
     const repeated = await second.client.callTool({ name: 'codebook_action', arguments: arguments_ });
     const state = await second.client.readResource({ uri: receipt.runUri });
     // Assert
-    assert.deepEqual(discovery.tools.map(tool => tool.name).sort(), ['codebook_action', 'codebook_continue', 'codebook_explain', 'codebook_reveal', 'codebook_start', 'codebook_status', 'codebook_stop']);
-    assert.equal(templates.resourceTemplates.length, 7); assert.equal(accepted.isError, undefined);
+    assert.deepEqual(discovery.tools.map(tool => tool.name).sort(), ['codebook_action', 'codebook_continue', 'codebook_explain', 'codebook_playback', 'codebook_reveal', 'codebook_start', 'codebook_status', 'codebook_stop']);
+    assert.equal(templates.resourceTemplates.length, 13); assert.equal(accepted.isError, undefined);
     assert.deepEqual(repeated.structuredContent, accepted.structuredContent); assert.equal(harness.runtimes[0]?.dispatches, 1);
     assert.match(JSON.stringify(state), /paused-server/);
     const get = await fetch(endpoint.descriptor.url, { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } }); assert.equal(get.status, 405);
@@ -54,7 +54,7 @@ test('MCP checkout discovers its action order and preserves the first receipt an
   try {
     const discovery = await connection.client.callTool({ name: 'codebook_status', arguments: {} });
     const catalog = z.object({ data: z.object({ apiVersion: z.string(), profiles: z.array(z.object({ id: z.string(), actions: z.array(z.object({ id: z.string() })), items: z.array(z.object({ id: z.string() })), limits: z.object({ runTimeoutMs: z.number() }) })) }) }).parse(discovery.structuredContent).data;
-    assert.equal(catalog.apiVersion, '1.1');
+    assert.equal(catalog.apiVersion, '1.2');
     const checkout = catalog.profiles.find(profile => profile.id === 'checkout-demo')!;
     assert.deepEqual(checkout.actions.map(action => action.id), ['add-to-cart', 'checkout']); assert.equal(checkout.items.length, 4); assert.equal(checkout.limits.runTimeoutMs, 300_000);
     const started = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: 'checkout-demo', key: 'purchase' } });
@@ -181,7 +181,7 @@ test('deleting an in-flight MCP session settles its HTTP response and preserves 
     }
     // Assert
     const recovered = await connect(endpoint.descriptor);
-    try { assert.equal((await recovered.client.listTools()).tools.length, 7); }
+    try { assert.equal((await recovered.client.listTools()).tools.length, 8); }
     finally { await recovered.close(); }
     assert.equal(harness.runtimes[0]?.dispatches, 1); assert.equal(harness.runtimes[0]?.stopped, false);
   } finally { await endpoint.close(); await harness.close(); }
@@ -200,10 +200,10 @@ test('cancelled MCP calls release HTTP capacity without closing their shared ses
       const pending = assert.rejects(connection.client.callTool({ name: 'codebook_status', arguments: {} }, undefined, { signal: abort.signal }));
       try { await waitUntil(() => entered, 'held cancellable status', 1_000); abort.abort(); await pending; }
       finally { release(); }
-      assert.equal((await connection.client.listTools()).tools.length, 7);
+      assert.equal((await connection.client.listTools()).tools.length, 8);
     }
     // Assert
-    assert.equal((await connection.client.listResourceTemplates()).resourceTemplates.length, 7);
+    assert.equal((await connection.client.listResourceTemplates()).resourceTemplates.length, 13);
     assert.equal(harness.runtimes.length, 0);
   } finally { await connection.close(); await endpoint.close(); await harness.close(); }
 });

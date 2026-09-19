@@ -1,0 +1,361 @@
+import { randomUUID } from 'node:crypto';
+import { lstat, mkdir, open, opendir } from 'node:fs/promises';
+import { hostname } from 'node:os';
+import { isDeepStrictEqual } from 'node:util';
+import { join } from 'node:path';
+import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { IMAGE_LIMIT_BYTES, MAX_RECORDINGS, MAX_RECORDING_CONTEXT_BYTES, MAX_RECORDING_FRAMES, MAX_RECORDING_HEADER_BYTES, MAX_RECORDING_JOURNAL_BYTES, MAX_RECORDING_METADATA_FILES, MAX_RECORDING_PENDING_BYTES, MAX_RECORDING_PNG_BYTES, MAX_RECORDING_TOTAL_BYTES, MAX_UI_TEXT_CHARS, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, RECORDING_CONTEXT_FILE, RECORDING_DIRECTORY, RECORDING_HEADER_FILE, RECORDING_JOURNAL_FILE, RECORDING_REASON_LIMIT_CHARS, RECORDING_SAMPLE_INTERVAL_MS, RECORDING_SEAL_FILE, RECORDING_TERMINAL_RESERVE_BYTES, RECORDING_VERSION } from './constants';
+import { studyIdSchema } from './legacyStudySchemas';
+import { recordingBindingSchema, recordingEntrySchema, recordingFrameSchema, recordingHashSchema, recordingHeaderSchema, recordingSealSchema, type RecordingBinding, type RecordingCatalogEntry, type RecordingContext, type RecordingEntry, type RecordingFrame, type RecordingHeader, type RecordingIndex, type RecordingSeal } from './recordingSchemas';
+import { atomicPrivateWrite } from './utils/atomicPrivateWrite';
+import { readBoundedFile } from './utils/readBoundedFile';
+import { readPngDimensions } from './utils/readPngDimensions';
+import { withStorageLock } from './utils/withStorageLock';
+import { validateRecordingContext } from './utils/validateRecordingContext';
+import { LearningLibrary } from './learningLibrary';
+import { PLAYBACK_PREFERENCE_FILE, PLAYBACK_PREFERENCE_LIMIT_BYTES } from './constants';
+import { playbackPreferenceSchema, type PlaybackPreference } from './playbackSchemas';
+
+const defaultLimits = { slots: MAX_RECORDINGS, frames: MAX_RECORDING_FRAMES, pngBytes: MAX_RECORDING_PNG_BYTES, pendingBytes: MAX_RECORDING_PENDING_BYTES, journalBytes: MAX_RECORDING_JOURNAL_BYTES };
+export type RecordingLimits = typeof defaultLimits;
+export interface RecordingIo {
+  json: typeof atomicPrivateWrite;
+  binary(path: string, bytes: Buffer): Promise<void>;
+  append(path: string, line: string): Promise<void>;
+}
+export const recordingDiskIo: RecordingIo = {
+  json: atomicPrivateWrite,
+  async binary(path, bytes) {
+    const handle = await open(path, 'wx', PRIVATE_FILE_MODE);
+    try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
+  },
+  async append(path, line) {
+    const handle = await open(path, 'a', PRIVATE_FILE_MODE);
+    try { await handle.writeFile(line); await handle.sync(); } finally { await handle.close(); }
+  },
+};
+export type RecordingInput = Pick<RecordingFrame, 'elapsedMs' | 'kind' | 'phase' | 'browserTimestamp'> & { bytes: Buffer };
+
+/** Owns bounded local filmstrips for {@link StudyWorkspace}; reads never restore runtime authority. @example const store = new RecordingStore(learningDirectory, workspaceKey) */
+export class RecordingStore {
+  readonly directory: string;
+  readonly limits: RecordingLimits;
+  private readonly active = new Map<string, RecordingWriter>();
+  private readonly sessionId = randomUUID();
+  private writes: Promise<unknown> = Promise.resolve();
+
+  constructor(readonly learningDirectory: string, readonly workspaceKey: string, limits: Partial<RecordingLimits> = {}, private readonly io: RecordingIo = recordingDiskIo) {
+    recordingHashSchema.parse(workspaceKey);
+    this.directory = join(learningDirectory, RECORDING_DIRECTORY);
+    this.limits = { ...defaultLimits, ...limits };
+    // Overrides only lower bounds for controlled tests; no caller can enlarge the production budget.
+    for (const key of Object.keys(defaultLimits)) {
+      const limit = Reflect.get(this.limits, key), maximum = Reflect.get(defaultLimits, key);
+      if (!Number.isInteger(limit) || limit < 1 || limit > maximum) throw new Error(`Invalid recording limit: ${key}`);
+    }
+    if (this.limits.journalBytes <= RECORDING_TERMINAL_RESERVE_BYTES) throw new Error('Recording journal must reserve terminal metadata.');
+  }
+
+  /** Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted. @example await store.start(binding, runtime.evidence.elapsedMs()) */
+  start(input: RecordingBinding, startedMs: number): Promise<RecordingWriter> {
+    const binding = recordingBindingSchema.parse(input);
+    if (binding.workspaceKey !== this.workspaceKey) return Promise.reject(new Error('Recording belongs to another workspace.'));
+    const pending = this.writes.then(() => withStorageLock(this.learningDirectory, async () => {
+      await this.initialize();
+      if ((await this.identities()).length >= this.limits.slots) throw new Error('Recording library is full; no recording was removed.');
+      const directory = this.path(binding.studyId);
+      await mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE });
+      const header = recordingHeaderSchema.parse({ ...binding, version: RECORDING_VERSION, createdAt: new Date().toISOString(), startedMs, clock: 'runtime-receipt-ms', owner: { pid: process.pid, hostname: hostname(), sessionId: this.sessionId }, sampleIntervalMs: RECORDING_SAMPLE_INTERVAL_MS });
+      await this.io.json(join(directory, RECORDING_HEADER_FILE), header, MAX_RECORDING_HEADER_BYTES);
+      await this.io.binary(join(directory, RECORDING_JOURNAL_FILE), Buffer.alloc(0));
+      const writer = new RecordingWriter(directory, header, this.limits, this.io);
+      this.active.set(header.studyId, writer); return writer;
+    }));
+    this.writes = pending.catch(() => undefined); return pending;
+  }
+
+  /** Discovers incomplete headers independently of study archives, with per-entry failure instead of unrelated data substitution. @example await store.list() */
+  async list(): Promise<RecordingCatalogEntry[]> {
+    await this.initialize();
+    const result: RecordingCatalogEntry[] = [];
+    for (const studyId of await this.identities()) {
+      try {
+        const header = await this.header(studyId), seal = await this.seal(studyId);
+        const writer = this.active.get(studyId);
+        result.push({ studyId, profile: header.profile, createdAt: header.createdAt, status: seal ? seal.status === 'complete' ? 'finalized' : 'partial' : this.ownerState(header, writer), endMs: seal?.endMs, lastVerifiedMs: writer?.state().lastWrittenMs ?? header.startedMs, reason: writer?.state().reason ?? seal?.reason ?? (seal ? undefined : 'Capture has no verified final checkpoint; end time is unknown.') });
+      } catch (error) { result.push({ studyId, status: 'partial', lastVerifiedMs: 0, reason: String(error).slice(0, MAX_UI_TEXT_CHARS) }); }
+    }
+    return result;
+  }
+
+  /** Verifies journal order, sealed bytes and every referenced PNG once when opening playback. @example const index = await store.read(studyId) */
+  async read(studyId: string): Promise<RecordingIndex> {
+    const header = await this.header(studyId), disk = await this.inventory(studyId), seal = await this.seal(studyId);
+    const bytes = await this.file(studyId, RECORDING_JOURNAL_FILE, MAX_RECORDING_JOURNAL_BYTES);
+    if (seal && (seal.journalHash !== sha256(bytes) || seal.journalBytes !== bytes.byteLength)) throw new Error('Sealed recording journal is corrupt.');
+    const lines = bytes.toString('utf8').split('\n'), incomplete = lines.pop();
+    const entries: RecordingEntry[] = [];
+    let lastMs = header.startedMs, frameCount = 0, hasGap = false, reason: string | undefined;
+    for (const line of lines) {
+      try {
+        const entry = recordingEntrySchema.parse(JSON.parse(line));
+        if (entry.sequence !== entries.length + 1 || entry.elapsedMs < lastMs || entries.at(-1)?.type === 'end') throw new Error('Recording order or receipt time changed.');
+        if (entry.type === 'frame') {
+          if (hasGap) throw new Error('Recording frames continue after a declared missing tail.');
+          const png = await this.readFrame(studyId, entry.hash), dimensions = readPngDimensions(png);
+          if (png.byteLength !== entry.byteLength || dimensions.width !== entry.width || dimensions.height !== entry.height) throw new Error('Recording frame metadata differs from its bytes.');
+          frameCount++;
+        }
+        if (entry.type === 'gap') hasGap = true;
+        lastMs = entry.elapsedMs; entries.push(entry);
+      } catch (error) {
+        // Unsealed recovery exposes only its verified prefix; a sealed mismatch must never certify success.
+        if (seal) throw error;
+        reason = `Interrupted recording after verified prefix: ${String(error)}`; break;
+      }
+    }
+    const end = entries.at(-1);
+    if (seal && (incomplete || end?.type !== 'end' || end.elapsedMs !== seal.endMs || end.status !== seal.status || end.reason !== seal.reason || frameCount !== seal.frameCount || disk.pngBytes !== seal.pngBytes || (hasGap && seal.status === 'complete'))) throw new Error('Recording final checkpoint differs from its journal or stored blobs.');
+    const status = seal ? seal.status === 'complete' ? 'finalized' : 'partial' : this.ownerState(header, this.active.get(studyId));
+    return { header, entries, seal, status, endMs: seal?.endMs, lastVerifiedMs: lastMs, reason: reason ?? seal?.reason ?? (incomplete ? 'Interrupted journal tail; end time unknown.' : !seal ? 'Capture has no verified final checkpoint; end time is unknown.' : undefined) };
+  }
+
+  /** Reads one canonical hash-named PNG with independent content validation; no arbitrary path reaches disk. @example await store.readFrame(studyId, hash) */
+  async readFrame(studyId: string, hash: string): Promise<Buffer> {
+    recordingHashSchema.parse(hash);
+    const bytes = await this.file(studyId, `${hash}.png`, IMAGE_LIMIT_BYTES);
+    if (sha256(bytes) !== hash) throw new Error('Recorded frame hash mismatch.');
+    readPngDimensions(bytes); return bytes;
+  }
+
+  /** Commits exact saved-study context after archive persistence; append-only later annotations cannot alter the sealed film. @example await store.saveContext(context) */
+  saveContext(input: RecordingContext): Promise<{ hash: string; context: RecordingContext }> {
+    const serialized = JSON.stringify(input);
+    if (Buffer.byteLength(serialized) > MAX_RECORDING_CONTEXT_BYTES) return Promise.reject(new Error('Recording context exceeds its reserved replacement capacity.'));
+    // Compare the persisted JSON shape: optional undefined fields do not survive an archive round trip.
+    const context = validateRecordingContext(JSON.parse(serialized), this.workspaceKey);
+    const pending = this.writes.then(() => withStorageLock(this.learningDirectory, async () => {
+      const header = await this.header(context.studyId);
+      if (header.profile !== context.study.profile) throw new Error('Recording context changed profile.');
+      const checkpoint = await new LearningLibrary(this.learningDirectory, this.workspaceKey).readCheckpoint(context.studyId);
+      const { captures: _captures, ...compact } = checkpoint.study;
+      if (checkpoint.status !== 'saved' || context.studyHash !== sha256(JSON.stringify(checkpoint.study)) || !isDeepStrictEqual(context.study, compact)) throw new Error('Recording context differs from the saved study checkpoint.');
+      const existing = await lstat(join(this.path(context.studyId), RECORDING_CONTEXT_FILE)).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+      if (existing) {
+        const previous = (await this.readContext(context.studyId)).context;
+        if (context.historyRevision < previous.historyRevision) throw new Error('Older recording context cannot replace a later revision.');
+        if (context.historyRevision === previous.historyRevision && !isDeepStrictEqual(context, previous)) throw new Error('Recording context revision already names different bytes.');
+        // Recorded availability is immutable even when a later context adds interpretation/confirmation.
+        for (const prior of previous.interpretationAvailability) if (!context.interpretationAvailability.some(value => isDeepStrictEqual(prior, value))) throw new Error('Recorded interpretation availability changed.');
+        for (const prior of previous.phases) {
+          const next = context.phases.find(value => value.phase === prior.phase);
+          if (!next || Object.entries(prior).some(([key, value]) => value !== undefined && !isDeepStrictEqual(value, Reflect.get(next, key)))) throw new Error('Recorded phase availability changed.');
+        }
+        for (const prior of previous.study.observations) {
+          const next = context.study.observations.find(value => value.id === prior.id);
+          if (!next || !isDeepStrictEqual({ ...prior, interpretations: [] }, { ...next, interpretations: [] }) || prior.interpretations.some(value => !next.interpretations.some(candidate => isDeepStrictEqual(value, candidate)))) throw new Error('Recording context rewrites captured facts.');
+        }
+      }
+      const bytes = Buffer.byteLength(JSON.stringify(context)), disk = await this.inventory(context.studyId);
+      if (bytes > MAX_RECORDING_CONTEXT_BYTES || disk.totalBytes + bytes > MAX_RECORDING_TOTAL_BYTES) throw new Error('Recording context exceeds its reserved replacement capacity.');
+      await this.io.json(join(this.path(context.studyId), RECORDING_CONTEXT_FILE), context, MAX_RECORDING_CONTEXT_BYTES);
+      return { hash: sha256(JSON.stringify(context)), context };
+    }));
+    this.writes = pending.catch(() => undefined); return pending;
+  }
+
+  /** Pins the latest context by content hash; an old URI fails explicitly instead of returning new bytes under it. @example await store.readContext(studyId, expectedHash) */
+  async readContext(studyId: string, expectedHash?: string): Promise<{ hash: string; context: RecordingContext }> {
+    if (expectedHash) recordingHashSchema.parse(expectedHash);
+    const bytes = await this.file(studyId, RECORDING_CONTEXT_FILE, MAX_RECORDING_CONTEXT_BYTES), hash = sha256(bytes);
+    if (expectedHash && expectedHash !== hash) throw new Error('Recording context is stale; rediscover the current context resource.');
+    const context = validateRecordingContext(JSON.parse(bytes.toString()), this.workspaceKey), header = await this.header(studyId);
+    if (context.studyId !== studyId || context.study.profile !== header.profile) throw new Error('Recording context belongs to another study.');
+    return { hash, context };
+  }
+
+  /** Drains metadata writes during workspace retirement; individual failed receipts remain failed. @example await store.flush() */
+  async flush(): Promise<void> { await this.writes; }
+
+  /** Reads only replay navigation; a damaged preference never migrates or resets learner decisions. @example await store.readPreference() */
+  async readPreference(): Promise<PlaybackPreference | undefined> {
+    const path = join(this.learningDirectory, PLAYBACK_PREFERENCE_FILE);
+    const stat = await lstat(path).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+    if (!stat) return undefined;
+    if (!stat.isFile()) throw new Error('Playback preference is not a regular file.');
+    const preference = playbackPreferenceSchema.parse(JSON.parse((await readBoundedFile(path, PLAYBACK_PREFERENCE_LIMIT_BYTES)).toString()));
+    if (preference.workspaceKey !== this.workspaceKey) throw new Error('Playback preference belongs to another workspace.');
+    return preference;
+  }
+
+  /** Saves explicit confirmed navigation in a separate bounded file, never in the learning decision log. @example await store.savePreference(preference) */
+  savePreference(input: PlaybackPreference): Promise<void> {
+    const preference = playbackPreferenceSchema.parse(input);
+    if (preference.workspaceKey !== this.workspaceKey) return Promise.reject(new Error('Playback preference belongs to another workspace.'));
+    const pending = this.writes.then(() => withStorageLock(this.learningDirectory, () => this.io.json(join(this.learningDirectory, PLAYBACK_PREFERENCE_FILE), preference, PLAYBACK_PREFERENCE_LIMIT_BYTES)));
+    this.writes = pending.catch(() => undefined); return pending;
+  }
+
+  /** Reads bounded regular recording files for metadata/resources after canonical directory validation. @example await store.file(studyId, RECORDING_CONTEXT_FILE, limit) */
+  async file(studyId: string, name: string, limit: number): Promise<Buffer> {
+    if (![RECORDING_HEADER_FILE, RECORDING_JOURNAL_FILE, RECORDING_SEAL_FILE, RECORDING_CONTEXT_FILE].includes(name) && !/^[a-f0-9]{64}\.png$/.test(name)) throw new Error('Invalid recording filename.');
+    const directory = this.path(studyId);
+    if (!(await lstat(this.directory)).isDirectory() || !(await lstat(directory)).isDirectory()) throw new Error('Recording location is not a regular directory.');
+    const path = join(directory, name);
+    if (!(await lstat(path)).isFile()) throw new Error('Recording is not a regular file.');
+    return readBoundedFile(path, limit);
+  }
+
+  /** Counts blobs, orphan files and atomic temporaries before validating the full recording budget. @example await store.inventory(studyId) */
+  async inventory(studyId: string): Promise<{ pngBytes: number; totalBytes: number }> {
+    const directory = this.path(studyId);
+    if (!(await lstat(directory)).isDirectory()) throw new Error('Recording directory is unavailable.');
+    let fileCount = 0, pngBytes = 0, totalBytes = 0;
+    for await (const entry of await opendir(directory)) {
+      if (++fileCount > MAX_RECORDING_FRAMES + MAX_RECORDING_METADATA_FILES) throw new Error('Recording directory has excess files.');
+      const stat = await lstat(join(directory, entry.name));
+      if (!stat.isFile()) throw new Error('Recording contains a non-regular file.');
+      totalBytes += stat.size;
+      if (/^[a-f0-9]{64}\.png$/.test(entry.name)) pngBytes += stat.size;
+      else if (![RECORDING_HEADER_FILE, RECORDING_JOURNAL_FILE, RECORDING_SEAL_FILE, RECORDING_CONTEXT_FILE].includes(entry.name) && !/^(?:header|context|sealed)\.json\.[a-f0-9-]{36}\.tmp$/.test(entry.name)) throw new Error('Recording contains unknown files.');
+      if (pngBytes > MAX_RECORDING_PNG_BYTES || totalBytes > MAX_RECORDING_TOTAL_BYTES) throw new Error('Recording storage exceeds its bound, including orphan files.');
+    }
+    return { pngBytes, totalBytes };
+  }
+
+  /** Gives metadata writers a canonical destination; callers still hold {@link withStorageLock}. @example store.path(studyId) */
+  path(studyId: string): string { return join(this.directory, studyIdSchema.parse(studyId)); }
+
+  /** Validates immutable recording provenance on discovery and replay. @example await store.header(studyId) */
+  async header(studyId: string): Promise<RecordingHeader> {
+    const header = recordingHeaderSchema.parse(JSON.parse((await this.file(studyId, RECORDING_HEADER_FILE, MAX_RECORDING_HEADER_BYTES)).toString()));
+    if (header.workspaceKey !== this.workspaceKey || header.studyId !== studyId) throw new Error('Recording belongs to another workspace or study.');
+    return header;
+  }
+
+  /** Treats only absent seals as unfinished; unreadable/corrupt finalization cannot fall back silently. @example await this.seal(studyId) */
+  private async seal(studyId: string): Promise<RecordingSeal | undefined> {
+    const stat = await lstat(join(this.path(studyId), RECORDING_SEAL_FILE)).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+    if (!stat) return undefined;
+    const seal = recordingSealSchema.parse(JSON.parse((await this.file(studyId, RECORDING_SEAL_FILE, MAX_RECORDING_HEADER_BYTES)).toString()));
+    if (seal.studyId !== studyId || seal.workspaceKey !== this.workspaceKey) throw new Error('Recording seal belongs to another study.');
+    return seal;
+  }
+
+  /** Keeps uncertain live/PID-reused owners unfinalized; only an absent local process establishes interruption. @example this.ownerState(header) // 'interrupted' */
+  private ownerState(header: RecordingHeader, writer?: RecordingWriter): RecordingIndex['status'] {
+    if (writer && header.owner.sessionId === this.sessionId) return writer.state().status === 'recording' ? 'recording' : 'partial';
+    if (header.owner.hostname !== hostname()) return 'unfinalized';
+    try { process.kill(header.owner.pid, 0); return 'unfinalized'; }
+    catch (error) { return error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH' ? 'interrupted' : 'unfinalized'; }
+  }
+
+  /** Scans a bounded directory stream so interrupted reservations count against capacity. @example await this.identities() */
+  private async identities(): Promise<string[]> {
+    const identities: string[] = [];
+    for await (const entry of await opendir(this.directory)) {
+      if (identities.length >= MAX_RECORDINGS) throw new Error('Recording library exceeds its directory limit; no history was deleted.');
+      if (!entry.isDirectory()) throw new Error('Recording library contains a non-directory entry.');
+      identities.push(studyIdSchema.parse(entry.name));
+    }
+    return identities;
+  }
+
+  /** Creates private storage without following a symlink in the recording root. @example await this.initialize() */
+  private async initialize(): Promise<void> {
+    await mkdir(this.directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+    if (!(await lstat(this.directory)).isDirectory()) throw new Error('Recording root is not a regular directory.');
+  }
+}
+
+/** Admits frames synchronously, then serializes blob→journal→seal; recording failure never owns debugger control. @example writer.frame({ bytes, elapsedMs: 250, kind: 'stream' }) */
+export class RecordingWriter {
+  private pending: Promise<void> = Promise.resolve();
+  private finishing?: Promise<RecordingSeal>;
+  private finalized = false;
+  private accepting = true;
+  private failure?: string;
+  private ioFailure?: string;
+  private sequence = 0;
+  private frameCount = 0;
+  private pngBytes = 0;
+  private pendingBytes = 0;
+  private pendingHighWater = 0;
+  private journalBytes = 0;
+  private journal = '';
+  private lastAdmittedMs: number;
+  private lastWrittenMs: number;
+  private lastStreamMs = -Infinity;
+  private readonly hashes = new Set<string>();
+
+  constructor(readonly directory: string, readonly header: RecordingHeader, private readonly limits: RecordingLimits, private readonly io: RecordingIo) {
+    this.lastAdmittedMs = header.startedMs; this.lastWrittenMs = header.startedMs;
+  }
+
+  /** Reserves all byte/count costs before I/O; sampling skips are declared policy, rejected frames create a missing tail. @example writer.frame(frame) // true */
+  frame(input: RecordingInput): boolean {
+    if (!this.accepting) return false;
+    try {
+      if (!Number.isFinite(input.elapsedMs) || input.elapsedMs < this.lastAdmittedMs) throw new Error('Recording receipt clock moved backwards.');
+      if (input.kind === 'stream' && input.elapsedMs - this.lastStreamMs < RECORDING_SAMPLE_INTERVAL_MS) return false;
+      const dimensions = readPngDimensions(input.bytes), hash = sha256(input.bytes), isNew = !this.hashes.has(hash);
+      const entry = recordingFrameSchema.parse({ type: 'frame', sequence: this.sequence + 1, elapsedMs: input.elapsedMs, hash, byteLength: input.bytes.byteLength, ...dimensions, kind: input.kind, phase: input.phase, browserTimestamp: input.browserTimestamp });
+      const line = JSON.stringify(entry) + '\n', lineBytes = Buffer.byteLength(line), binaryBytes = isNew ? input.bytes.byteLength : 0;
+      if (this.frameCount >= this.limits.frames || this.pngBytes + binaryBytes > this.limits.pngBytes || this.pendingBytes + binaryBytes + lineBytes > this.limits.pendingBytes || this.journalBytes + lineBytes > this.limits.journalBytes - RECORDING_TERMINAL_RESERVE_BYTES) throw new Error('Recording frame capacity reached; verified prefix retained.');
+      this.sequence++; this.frameCount++; this.pngBytes += binaryBytes; this.journalBytes += lineBytes; this.hashes.add(hash); this.lastAdmittedMs = input.elapsedMs;
+      if (input.kind === 'stream') this.lastStreamMs = input.elapsedMs;
+      const bytes = isNew ? Buffer.from(input.bytes) : undefined;
+      this.pendingBytes += binaryBytes + lineBytes; this.pendingHighWater = Math.max(this.pendingHighWater, this.pendingBytes);
+      this.pending = this.pending.then(async () => {
+        if (this.ioFailure) return;
+        if (bytes) await this.io.binary(join(this.directory, `${hash}.png`), bytes);
+        await this.io.append(join(this.directory, RECORDING_JOURNAL_FILE), line);
+        this.journal += line; this.lastWrittenMs = entry.elapsedMs;
+      }).catch(error => { this.ioFailure = String(error); this.accepting = false; this.failure ??= `Recording storage failed: ${String(error)}`; }).finally(() => { this.pendingBytes -= binaryBytes + lineBytes; });
+      return true;
+    } catch (error) { this.stopFrames(input.elapsedMs, String(error)); return false; }
+  }
+
+  /** Marks a known loss without blocking runtime teardown; terminal metadata retains its reserved capacity. @example writer.stopFrames(400, 'stream disconnected') */
+  stopFrames(elapsedMs: number, reason: string): void {
+    if (!this.accepting) return;
+    this.accepting = false; this.failure = reason.slice(0, RECORDING_REASON_LIMIT_CHARS);
+    const entry: RecordingEntry = { type: 'gap', sequence: ++this.sequence, elapsedMs: Math.max(Number.isFinite(elapsedMs) ? elapsedMs : this.lastAdmittedMs, this.lastAdmittedMs), reason: this.failure };
+    this.lastAdmittedMs = entry.elapsedMs;
+    this.pending = this.pending.then(() => this.appendTerminal(entry)).catch(error => { this.ioFailure = String(error); });
+  }
+
+  /** Seals only after every accepted write; failed terminal I/O leaves an unknown end and no success receipt. @example await writer.finish(runtime.evidence.elapsedMs()) */
+  finish(endMs: number): Promise<RecordingSeal> {
+    if (this.finishing) return this.finishing;
+    if (!this.frameCount) this.stopFrames(endMs, 'No application frame was recorded.');
+    this.accepting = false;
+    this.finishing = this.pending.then(async () => {
+      if (this.ioFailure) throw new Error(`Recording interrupted; end time unknown. ${this.ioFailure}`);
+      if (!Number.isFinite(endMs) || endMs < this.lastAdmittedMs) throw new Error('Recording end precedes a received frame.');
+      const end: RecordingEntry = { type: 'end', sequence: ++this.sequence, elapsedMs: endMs, status: this.failure ? 'partial' : 'complete', reason: this.failure };
+      await this.appendTerminal(end);
+      const seal = recordingSealSchema.parse({ version: RECORDING_VERSION, studyId: this.header.studyId, workspaceKey: this.header.workspaceKey, finalizedAt: new Date().toISOString(), endMs, status: end.status, reason: end.reason, frameCount: this.frameCount, pngBytes: this.pngBytes, journalBytes: Buffer.byteLength(this.journal), journalHash: sha256(this.journal) });
+      await this.io.json(join(this.directory, RECORDING_SEAL_FILE), seal, MAX_RECORDING_HEADER_BYTES);
+      this.finalized = true;
+      return seal;
+    }).catch(error => { this.ioFailure = String(error); this.failure ??= String(error); throw error; });
+    return this.finishing;
+  }
+
+  /** Exposes bounded capture telemetry without parsing blobs on every workspace refresh. @example writer.state().pendingBytes // 0 */
+  state() {
+    return { status: this.accepting ? 'recording' as const : this.failure ? 'partial' as const : this.finalized ? 'finalized' as const : 'finalizing' as const, reason: this.failure, frameCount: this.frameCount, pngBytes: this.pngBytes, pendingBytes: this.pendingBytes, pendingHighWaterBytes: this.pendingHighWater, lastWrittenMs: this.lastWrittenMs };
+  }
+
+  /** Flushes accepted writes for tests/checkpoints while each finalization still owns its own result. @example await writer.flush() */
+  async flush(): Promise<void> { await this.pending; if (this.ioFailure) throw new Error(this.ioFailure); }
+
+  /** Appends only reserved gap/end records after frame admission closes; it never repairs a torn failed write. @example await this.appendTerminal(end) */
+  private async appendTerminal(entry: RecordingEntry): Promise<void> {
+    if (this.ioFailure) throw new Error(this.ioFailure);
+    const line = JSON.stringify(recordingEntrySchema.parse(entry)) + '\n';
+    if (Buffer.byteLength(this.journal) + Buffer.byteLength(line) > this.limits.journalBytes) throw new Error('Recording terminal reserve exceeded.');
+    await this.io.append(join(this.directory, RECORDING_JOURNAL_FILE), line); this.journal += line; this.lastWrittenMs = entry.elapsedMs;
+  }
+}

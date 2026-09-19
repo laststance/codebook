@@ -9,25 +9,32 @@ import { STUDY_PROFILES } from 'codebook-cycle-0004/dist/profiles';
 import type { ProfileId, StudyItemId } from 'codebook-cycle-0004/dist/constants';
 import { itemSchema, profileSchema, type StudyCatalogEntry } from './studySchemas';
 import { LearningLibrary } from './learningLibrary';
+import { RecordingStore } from './recordingStore';
+import { PlaybackController, type PlaybackBundle, type PlaybackData } from './playbackController';
+import { projectPlaybackStudy } from './utils/projectPlaybackStudy';
+import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
+import { CAPTURE_TIMEOUT_MS } from 'codebook-cycle-0001/dist/constants';
 import { requireWorkspace, type StudyPresentation } from './environment';
 import { StudyError } from './errors';
-import { MAX_SOURCE_DOCUMENTS, SOURCE_LIMIT_BYTES, STUDY_REFRESH_INTERVAL_MS, STUDY_SOURCE_SCHEME } from './constants';
+import { MAX_SOURCE_DOCUMENTS, PLAYBACK_SECOND_MS, SOURCE_LIMIT_BYTES, STUDY_REFRESH_INTERVAL_MS, STUDY_SOURCE_SCHEME } from './constants';
 import { LEARNING_ITEMS, participantSchema, projectStudy, studyIdSchema, type LearnerDecision, type LearnerProgress, type SourceBaselines, type StudyArchive, type StudySelection } from './studyModel';
 import type { StudyRecord, StudyService } from './service';
 import { captureStudy } from './utils/captureStudy';
 import { capturedAppHtml } from './utils/capturedAppHtml';
 import { studyHtml, type StudyViewMessage } from './ui/studyHtml';
 import { readBoundedFile } from './utils/readBoundedFile';
+import { createRecordingObserver } from './utils/createRecordingObserver';
 
-const actionSchema = z.enum(['run', 'click', 'continue', 'stop', 'connect', 'return-current', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry']);
+const actionSchema = z.enum(['run', 'click', 'continue', 'stop', 'connect', 'return-current', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry', 'reload-recording']);
 const revisionShape = { revision: z.number().int().nonnegative() };
 const messageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('ready') }),
-  z.strictObject({ type: z.literal('rendered'), ...revisionShape, itemId: itemSchema, snapshotUri: z.string().optional() }),
+  z.strictObject({ type: z.literal('rendered'), ...revisionShape, itemId: itemSchema, snapshotUri: z.string().optional(), presentationRevision: z.number().int().nonnegative().optional() }),
   z.strictObject({ type: z.literal('action'), ...revisionShape, action: actionSchema }),
   z.strictObject({ type: z.literal('select'), ...revisionShape, itemId: itemSchema }),
   z.strictObject({ type: z.literal('profile'), ...revisionShape, profile: profileSchema }),
-  z.strictObject({ type: z.literal('tab'), ...revisionShape, tab: z.enum(['overview', 'live']) }),
+  z.strictObject({ type: z.literal('tab'), ...revisionShape, tab: z.enum(['overview', 'live', 'recording']) }),
+  z.strictObject({ type: z.literal('playback'), ...revisionShape, action: z.enum(['play', 'pause', 'seek']), expectedRevision: z.number().int().nonnegative(), positionMs: z.number().finite().nonnegative().optional() }),
   z.strictObject({ type: z.literal('history'), ...revisionShape, studyId: studyIdSchema }),
   z.strictObject({ type: z.literal('understanding'), ...revisionShape, understood: z.boolean() }),
 ]);
@@ -37,6 +44,13 @@ type WorkspaceContext = Pick<vscode.ExtensionContext, 'extensionPath' | 'subscri
 export class StudyWorkspace {
   private service?: StudyService;
   private library?: LearningLibrary;
+  private recordings?: RecordingStore;
+  private playback?: PlaybackController;
+  private recordingActive = false;
+  private replayViewport?: BrowserViewport;
+  private replayNeedsReveal = false;
+  private playbackPending?: PlaybackBundle;
+  private playbackPresentingReady = false;
   private initializing?: Promise<void>;
   private baselines?: SourceBaselines;
   private baselineRevision = 0;
@@ -84,12 +98,13 @@ export class StudyWorkspace {
   private timer?: ReturnType<typeof setInterval>;
   private lastActiveRegion: 'app' | 'context' | 'source' = 'context';
   private restoringSource = false;
-  private lastRendered?: { revision: number; itemId: StudyItemId; snapshotUri?: string };
+  private lastRendered?: { revision: number; itemId: StudyItemId; snapshotUri?: string; presentationRevision?: number };
   private lastSelectionKey?: string;
   private lastApplicationKey?: string;
   private lastPublished?: string;
   private outlineRendering: Promise<void> = Promise.resolve();
   private lastOutlineSelection?: StudyItemId;
+  private lastOutlineModelKey?: string;
 
   constructor(private readonly context: WorkspaceContext, private readonly controls: { start(): Promise<StudyService>; connect(): Promise<void> }) { this.installReaders(); }
 
@@ -97,15 +112,18 @@ export class StudyWorkspace {
     createViewport: (runId, record, fail, scenario) => {
       const panel = this.ensureApp(), leaseId = randomUUID(); this.leaseId = leaseId;
       panel.title = `codebook · Application ${runId.slice(0, 8)}`;
+      const studyRecord = [...this.service?.records.values() ?? []].find(candidate => candidate.runtime?.id === runId);
       const viewport = new BrowserViewport(runId, record, fail, scenario, { panel, released: () => {
         // A retired runtime cannot close or replace the panel attached to a newer lease.
         if (this.leaseId !== leaseId) return;
         this.viewport = undefined; this.leaseId = undefined;
         if (this.opened && this.baselines) void this.renderSelection().catch(error => this.report('reader', error));
         else { panel.dispose(); if (this.app === panel) this.app = undefined; }
-      } });
+      } }, studyRecord && createRecordingObserver(studyRecord));
       this.viewport = viewport;
       if (this.opened && !this.selection.follow && this.baselines) viewport.showHistory(capturedAppHtml(this.message()));
+      // A new live lease cannot replace the independently selected recording renderer.
+      if (this.recordingActive) { this.replayViewport?.close(); this.replayViewport = undefined; this.playback?.hide(); this.playback?.reveal(); }
       return viewport;
     },
     prepareSource: async path => {
@@ -124,7 +142,7 @@ export class StudyWorkspace {
 
   /** Attaches the same service before it is advertised to MCP, without starting any runtime. @example await workspace.attach(service) */
   async attach(service: StudyService): Promise<void> {
-    await this.initialize(); this.service = service;
+    await this.initialize(); this.service = service; service.recordings = this.recordings; service.playbackController = this.playback;
     if (!this.timer) { this.timer = setInterval(() => { void this.refresh().catch(error => this.report('archive', error)); }, STUDY_REFRESH_INTERVAL_MS); this.timer.unref(); }
   }
 
@@ -144,6 +162,7 @@ export class StudyWorkspace {
     await vscode.commands.executeCommand('codebook.observedMoments.focus');
     this.assertLifetime(lifetime);
     this.contextPanel?.reveal(undefined, false);
+    if (this.recordingActive && (firstOpen || !this.replayViewport)) this.playback?.reveal();
   }
 
   /** Explicitly checkpoints final service state after accepted runtime/explanation cleanup has completed. @example await workspace.retire(service) */
@@ -154,7 +173,7 @@ export class StudyWorkspace {
     for (const record of service.records.values()) {
       try { await this.checkpoint(service, record, true); } catch (error) { failure = error; this.report('archive', error); }
     }
-    await this.library?.flush();
+    await this.library?.flush(); await this.recordings?.flush();
     if (this.service === service) { this.service = undefined; clearInterval(this.timer); this.timer = undefined; }
     if (this.opened) await this.renderSelection();
     if (failure) throw new Error(`Runtime released; final reader history was not saved: ${String(failure)}`);
@@ -169,6 +188,7 @@ export class StudyWorkspace {
       const displayed = this.message().model, requestedProfile = this.selection.profile; this.busy = true; this.publish();
       try {
         if (action === 'run') {
+          this.leavePlayback();
           const service = await this.controls.start(); this.assertLifetime(lifetime);
           this.pendingHistory = undefined; const profile = requestedProfile;
           this.selection = { profile, itemId: STUDY_PROFILES[profile].items[0]!.id, follow: true, tab: 'live' };
@@ -194,7 +214,11 @@ export class StudyWorkspace {
       return;
     }
     if (action === 'connect') { await this.controls.connect(); return; }
-    if (action === 'return-current') { this.pendingHistory = undefined; this.selection = { ...this.selection, follow: true, tab: 'live' }; await this.refresh(); await this.renderSelection(true, true); }
+    if (action === 'reload-recording') {
+      const studyId = this.selection.studyId; if (!this.recordingActive || !studyId) throw new Error('Select a recording first.');
+      this.leavePlayback(); await this.openRecording(studyId); return;
+    }
+    if (action === 'return-current') { this.leavePlayback(); this.pendingHistory = undefined; this.selection = { ...this.selection, follow: true, tab: 'live' }; await this.refresh(); await this.renderSelection(true, true); }
     if (action === 'source') { await this.renderSelection(false); this.lastActiveRegion = 'source'; }
     if (action === 'focus-app') { this.app?.reveal(undefined, false); this.lastActiveRegion = 'app'; }
     if (action === 'focus-context') { this.contextPanel?.reveal(undefined, false); this.lastActiveRegion = 'context'; }
@@ -247,6 +271,11 @@ export class StudyWorkspace {
     if (this.selection.studyId === this.activeArchive?.id) this.selectedArchive = this.activeArchive;
     const selected = itemSchema.parse(itemId);
     if (!STUDY_PROFILES[this.selection.profile].items.some(item => item.id === selected)) throw new Error('Select the matching study profile first.');
+    if (this.recordingActive) {
+      const observed = this.playback?.bundle()?.context?.study.observations.find(value => value.itemId === selected);
+      if (!observed) throw new Error('This item has no recorded observation to seek to.');
+      this.playback!.command({ studyId: this.selection.studyId!, action: 'seek', expectedRevision: this.playback!.state().revision, positionMs: observed.elapsedMs }); return;
+    }
     this.selection = { ...this.selection, itemId: selected, follow: false };
     await this.renderSelection(); await this.saveSelection();
   }
@@ -256,6 +285,7 @@ export class StudyWorkspace {
     const lifetime = this.lifetime; await this.initialize(); this.assertLifetime(lifetime);
     if (this.currentRecord() && !this.currentRecord()!.stopped) throw new Error('Stop the active study before choosing another scenario.');
     const selected = profileSchema.parse(profile);
+    this.leavePlayback();
     this.pendingHistory = undefined; this.selectedArchive = undefined;
     this.selection = { profile: selected, itemId: STUDY_PROFILES[selected].items[0]!.id, follow: false, tab: 'overview' };
     await this.renderSelection(true, true); await this.saveSelection();
@@ -273,7 +303,7 @@ export class StudyWorkspace {
     await this.initialize(); this.assertLifetime(lifetime);
     const selected = this.message().model;
     const item = itemId ?? selected.selection.itemId;
-    if (this.saving || this.loading) throw new Error('Wait for the current source or pending understanding write.');
+    if (this.saving || this.message().loading) throw new Error('Wait for the current source or pending understanding write.');
     if (!selected.selectedUnderstanding.known) throw new Error('Understanding requires readable source and learning storage.');
     this.saving = true; this.publish();
     this.pendingDecision = { id: randomUUID(), item, sourceHash: sourceHash ?? selected.source.hash, understood: understood ?? !selected.selectedUnderstanding.understood, at: new Date().toISOString() };
@@ -286,11 +316,13 @@ export class StudyWorkspace {
   async close(): Promise<void> {
     if (this.closingPromise) return this.closingPromise;
     this.closing = true; this.revision++; this.lifetime++; this.pendingHistory = undefined; this.lastRendered = undefined;
+    this.playback?.hide();
     const pending = this.closingPromise = (async () => {
       await this.refreshing;
       const record = this.currentRecord();
       if (record && this.service && !record.stopped) { await this.service.stop({ instanceId: this.service.instanceId, runId: record.id }); await this.checkpoint(this.service, record, true); }
       await Promise.allSettled([this.arranging]);
+      await this.playback?.settle(); this.replayViewport?.close(); this.replayViewport = undefined;
       await this.rendering; await this.outlineRendering; await Promise.allSettled(this.archiveWrites.values()); await this.library?.flush();
       const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === STUDY_SOURCE_SCHEME && tab.input.uri.authority === this.library?.workspaceKey);
       if (tabs.length && !await vscode.window.tabGroups.close(tabs, true)) throw new Error('Some captured source readers could not close.');
@@ -301,7 +333,7 @@ export class StudyWorkspace {
   }
 
   /** Releases observers after extension shutdown has retired its service; read-only harnesses inspect state via {@link inspect}. @example await workspace.dispose() */
-  async dispose(): Promise<void> { this.disposed = true; clearInterval(this.timer); await this.close(); for (const disposable of this.disposables) disposable.dispose(); this.highlight?.dispose(); this.treeChanges.dispose(); }
+  async dispose(): Promise<void> { this.disposed = true; clearInterval(this.timer); await this.close(); await this.playback?.dispose(); for (const disposable of this.disposables) disposable.dispose(); this.highlight?.dispose(); this.treeChanges.dispose(); }
 
   /** Cancels reader intents accepted before Close, while permitting a later explicit Open. @example this.assertLifetime(lifetime) */
   private assertLifetime(lifetime: number): void { if (this.disposed || this.closing || lifetime !== this.lifetime) throw new Error('The study workspace was closed; repeat the action explicitly if needed.'); }
@@ -314,6 +346,18 @@ export class StudyWorkspace {
     this.initializing ??= (async () => {
       const workspace = await realpath(requireWorkspace()), key = sha256(workspace);
       this.library = new LearningLibrary(join(this.context.globalStorageUri.fsPath, 'learning', key), key);
+      this.recordings = new RecordingStore(this.library.directory, key);
+      this.playback = new PlaybackController({
+        load: (studyId, signal) => this.loadPlayback(studyId, signal),
+        frame: async (studyId, hash, signal) => { signal.throwIfAborted(); const bytes = await this.recordings!.readFrame(studyId, hash); signal.throwIfAborted(); return bytes; },
+        present: (bundle, signal) => this.presentPlayback(bundle, signal),
+        invalidate: () => {
+          this.playbackPending = undefined; this.playbackPresentingReady = false; this.revision++; this.lastRendered = undefined;
+          this.sourceRevision = undefined; this.lastSelectionKey = undefined; this.replayViewport?.clearRecorded();
+        },
+        changed: () => { if (this.playback?.state().readiness === 'ready' && !this.playback.state().cleared) { this.playbackPending = undefined; this.playbackPresentingReady = false; } this.publish(); },
+        save: bundle => this.recordings!.savePreference({ version: 1, workspaceKey: key, studyId: bundle.studyId, contextHash: bundle.contextHash, positionMs: bundle.projection.positionMs }),
+      });
       // Current files may disappear while immutable saved observations remain independently readable.
       await this.readBaselines().catch(() => undefined);
       try { this.progress = await this.library.readProgress(); if (this.progress.selection) this.selection = { ...this.progress.selection, follow: false }; }
@@ -415,6 +459,7 @@ export class StudyWorkspace {
           this.loadedHistory.set(id, { signature, status: 'saved' });
           this.catalog = await this.library!.list();
           const current = this.reportCheckpoint(service, record, signature, checkpointRevision, 'saved');
+          if (current) await service.saveRecordingContext(record, archive, checkpointRevision);
           // A history read may have selected older bytes after capture but before this durable write.
           if (current && this.selection.studyId === id && this.selectedArchive?.id === id) this.selectedArchive = archive;
           if (this.pendingArchives.get(id) === checkpoint) this.pendingArchives.delete(id);
@@ -461,11 +506,81 @@ export class StudyWorkspace {
   /** Resolves service ownership from explicit records, never the focused debug session. @example this.currentRecord()?.id */
   private currentRecord(): StudyRecord | undefined { return this.service && [...this.service.records.values()].at(-1); }
 
+  /** Opens a validated local recording through the same revisioned controller used by MCP; no application operation is dispatched. @example await workspace.openRecording(studyId) */
+  async openRecording(studyId: string): Promise<void> {
+    await this.initialize(); this.assertLifetime(this.lifetime);
+    this.playback!.command({ studyId: studyIdSchema.parse(studyId), action: 'open', expectedRevision: this.playback!.state().revision });
+  }
+
+  /** Loads immutable film/context before arranging its reader, restoring only the separately saved paused position. @example await this.loadPlayback(id, signal) */
+  private async loadPlayback(studyId: string, signal: AbortSignal): Promise<PlaybackData> {
+    this.recordingActive = true; this.pendingHistory = undefined; this.selection = { ...this.selection, studyId, follow: false };
+    this.viewport?.showHistory(capturedAppHtml({ ...this.message(), loading: true }));
+    const index = await this.recordings!.read(studyId); signal.throwIfAborted();
+    const profile = index.header.profile;
+    this.selection = { ...this.selection, profile, itemId: STUDY_PROFILES[profile].items[0]!.id };
+    let context: PlaybackData['context'], contextHash: string | undefined, contextReason: string | undefined, preferredPositionMs: number | undefined;
+    try { const saved = await this.recordings!.readContext(studyId); context = saved.context; contextHash = saved.hash; }
+    catch (error) { contextReason = `Recorded source/value context unavailable: ${String(error)}`; }
+    signal.throwIfAborted();
+    try {
+      const saved = await this.readSavedArchive(studyId); signal.throwIfAborted(); this.selectedArchive = saved;
+      if (context && sha256(JSON.stringify(saved)) !== context.studyHash) this.report('playback-context', new Error('Saved study changed after this recording context. Reload after its matching context is saved.'));
+      else this.errors.delete('playback-context');
+    } catch (error) { this.report('playback-context', error); }
+    signal.throwIfAborted();
+    try { const saved = await this.recordings!.readPreference(); if (saved?.studyId === studyId) preferredPositionMs = saved.positionMs; this.errors.delete('playback-preference'); }
+    catch (error) { this.report('playback-preference', error); }
+    signal.throwIfAborted();
+    await this.open(); signal.throwIfAborted();
+    await this.ensureReplayViewport(signal); signal.throwIfAborted();
+    return { index, context, contextHash, contextReason, preferredPositionMs };
+  }
+
+  /** Reuses the bounded PNG renderer without CDP, acquiring a fresh lease after replay-panel recreation. @example await this.ensureReplayViewport(signal) */
+  private async ensureReplayViewport(signal: AbortSignal): Promise<BrowserViewport> {
+    if (this.replayViewport) {
+      if (this.replayNeedsReveal) { this.replayNeedsReveal = false; await this.replayViewport.reveal(signal); signal.throwIfAborted(); }
+      return this.replayViewport;
+    }
+    const panel = this.ensureApp(); panel.title = 'codebook · Recorded application';
+    const viewport = new BrowserViewport(this.selection.studyId!, () => undefined, () => this.playback?.hide(), 'normal', { panel, released() {} }, undefined, 'recording');
+    this.replayViewport = viewport;
+    try { await viewport.reveal(signal); signal.throwIfAborted(); return viewport; }
+    catch (error) { if (this.replayViewport === viewport) { viewport.close(); this.replayViewport = undefined; } throw error; }
+  }
+
+  /** Confirms the recorded PNG, captured native source and matching context together before the controller commits a playhead. @example await this.presentPlayback(bundle, signal) */
+  private async presentPlayback(bundle: PlaybackBundle, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    this.playbackPending = bundle; this.playbackPresentingReady = false;
+    this.selection = { ...this.selection, studyId: bundle.studyId, itemId: bundle.projection.observation?.itemId ?? STUDY_PROFILES[this.selection.profile].items[0]!.id, follow: false };
+    const viewport = await this.ensureReplayViewport(signal); signal.throwIfAborted();
+    await this.renderSelection(); signal.throwIfAborted();
+    if (!this.sourceReady()) throw new Error('Recorded source has not reached the matching native reader.');
+    if (bundle.image) await viewport.present(bundle.image.toString('base64'), `Recorded · ${(bundle.projection.positionMs / PLAYBACK_SECOND_MS).toFixed(2)} s`);
+    else await viewport.presentMissing(bundle.projection.missing ?? 'No recorded application image.', signal);
+    signal.throwIfAborted(); this.playbackPresentingReady = true; this.lastRendered = undefined; this.lastPublished = undefined; this.publish();
+    const revision = this.revision, presentationRevision = this.playback!.state().presentationRevision;
+    await waitUntil(() => this.lastRendered?.revision === revision && this.lastRendered.presentationRevision === presentationRevision && this.lastRendered.snapshotUri === bundle.projection.observation?.snapshotUri,
+      'matching recorded context presentation', CAPTURE_TIMEOUT_MS, signal);
+    signal.throwIfAborted();
+  }
+
+  /** Leaves historical presentation on explicit navigation, never stopping or continuing the independently owned runtime. @example this.leavePlayback() */
+  private leavePlayback(): void {
+    if (!this.recordingActive) return;
+    this.playback?.leave(); this.replayViewport?.close(); this.replayViewport = undefined; this.recordingActive = false;
+    this.playbackPending = undefined; this.playbackPresentingReady = false; this.lastApplicationKey = undefined; this.lastSelectionKey = undefined;
+  }
+
   /** Joins compact live state with the selected archive; event logs never enter webview messages. @example this.message().model */
-  private message(): StudyViewMessage {
+  private message(forSource = false): StudyViewMessage {
     if (!this.baselines) throw new Error('Study reader is not initialized.');
     const record = this.currentRecord(), live = record && this.service?.state(record);
-    const study = this.selection.studyId === this.activeArchive?.id ? this.activeArchive : this.selectedArchive;
+    const playbackState = this.recordingActive ? this.playback?.state() : undefined;
+    const bundle = this.recordingActive ? ((forSource || this.playbackPresentingReady || playbackState?.cleared) ? this.playbackPending ?? this.playback?.bundle() : this.playback?.bundle()) : undefined;
+    const study = this.recordingActive ? bundle?.context && { ...bundle.context.study, captures: [] } : this.selection.studyId === this.activeArchive?.id ? this.activeArchive : this.selectedArchive;
     const selectedRecord = study?.instanceId === this.service?.instanceId && study ? this.service?.records.get(study.runId) : undefined;
     const selectedState = selectedRecord && this.service?.state(selectedRecord), receipt = study && this.historyReceipts.get(study.id), loaded = study && this.loadedHistory.get(study.id);
     const staleArchive = Boolean(selectedState && selectedState.materialSignature !== study?.materialSignature);
@@ -476,14 +591,17 @@ export class StudyWorkspace {
       : loaded?.signature === study?.materialSignature ? loaded?.status ?? 'unavailable' : 'unavailable');
     const studyOutcome = rejectedDisk ? study?.finalOutcome === 'not-demonstrated' ? 'not-demonstrated' : 'partial' : (!staleArchive ? selectedState?.studyOutcome : undefined) ?? (study?.finalOutcome === 'not-demonstrated' ? 'not-demonstrated' : study?.finalOutcome === 'partial' ? 'partial'
       : !study?.terminal || study.finalOutcome !== 'demonstrated' ? 'pending' : historyOutcome === 'saved' ? 'demonstrated' : historyOutcome === 'pending' ? 'pending' : 'partial');
-    return { type: 'study', revision: this.revision, model: projectStudy({ selection: this.selection, study, live, progress: this.progress, baselines: this.baselines, currentSourceAvailable: this.currentSourceAvailable }),
-      study: study && { id: study.id, state: study.state, terminal: study.terminal, profile: study.profile, createdAt: study.createdAt, reason: study.reason, finalOutcome: study.finalOutcome, links: study.links,
+    const projectionInput = { selection: this.selection, study, live, progress: this.progress, baselines: this.baselines, currentSourceAvailable: this.currentSourceAvailable };
+    return { type: 'study', revision: this.revision, model: this.recordingActive ? projectPlaybackStudy(projectionInput, bundle) : projectStudy(projectionInput),
+      contentTab: this.recordingActive ? 'recording' : this.selection.tab,
+      recording: playbackState && { ...playbackState, pauseConfirmed: bundle?.projection.pauseConfirmed ?? false, rendererConfirmed: bundle?.projection.rendererConfirmed ?? false, laterInterpretations: bundle?.projection.laterInterpretations ?? [] },
+      study: study && { id: study.id, state: study.state, terminal: study.terminal, profile: study.profile, createdAt: study.createdAt, reason: study.reason, finalOutcome: study.finalOutcome, links: this.recordingActive ? [] : study.links,
         historyOutcome, studyOutcome },
-      liveState: live?.state, deadlineAt: live?.deadlineAt, busy: this.busy, saving: this.saving, loading: this.loading, errors: [...this.errors.values(), ...this.catalog.flatMap(entry => entry.reason ? [entry.reason] : [])],
+      liveState: live?.state, deadlineAt: live?.deadlineAt, busy: this.busy, saving: this.saving, loading: this.loading || Boolean(playbackState?.cleared && !this.playbackPresentingReady), errors: [...this.errors.values(), ...this.catalog.flatMap(entry => entry.reason ? [entry.reason] : [])],
       nextAction: live && STUDY_PROFILES[live.profile].actions.find(action => live.nextActions.includes(action.id)), liveProfile: live?.profile,
       profiles: Object.values(STUDY_PROFILES).map(profile => ({ id: profile.id, title: profile.title, description: profile.description })),
-      canClick: live ? STUDY_PROFILES[live.profile].actions.some(action => live.nextActions.includes(action.id)) : false, canRun: !record || record.stopped,
-      moments: (study?.observations ?? []).map(observation => ({ id: observation.id, itemId: observation.itemId, title: LEARNING_ITEMS.find(item => item.id === observation.itemId)!.title, at: observation.capturedAt })), studies: this.catalog };
+      canClick: !this.recordingActive && live ? STUDY_PROFILES[live.profile].actions.some(action => live.nextActions.includes(action.id)) : false, canRun: !record || record.stopped,
+      moments: (study?.observations ?? []).map(observation => ({ id: observation.id, itemId: observation.itemId, title: LEARNING_ITEMS.find(item => item.id === observation.itemId)!.title, at: observation.capturedAt, elapsedMs: observation.elapsedMs })), studies: this.catalog };
   }
 
   /** Publishes a matching projection with stable DOM controls, excluding images from the context channel. @example this.publish() */
@@ -496,7 +614,9 @@ export class StudyWorkspace {
     this.lastPublished = signature;
     void this.contextPanel?.webview.postMessage(compact); void this.moments?.webview.postMessage(compact);
     if (this.outline) this.outline.message = message.model.currentSourceAvailable ? `${message.model.understoodCount} of ${message.model.progressByItem.length} understood for current source · ${message.model.reviewCount} needs review` : 'Current source unavailable · historical understanding retained';
-    this.treeChanges.fire(undefined);
+    const outlineKey = JSON.stringify([message.model.progressByItem, message.model.currentSourceAvailable]);
+    // Playhead ticks do not rebuild native checkboxes when the learner/source state is unchanged.
+    if (outlineKey !== this.lastOutlineModelKey) { this.lastOutlineModelKey = outlineKey; this.treeChanges.fire(undefined); }
     this.syncOutline();
   }
 
@@ -515,7 +635,7 @@ export class StudyWorkspace {
   /** Serializes source opens and invalidates obsolete selection work before it can qualify context/app correspondence. @example await this.renderSelection() */
   private renderSelection(preserveFocus = true, forceSource = false): Promise<void> {
     if (!this.opened || this.closing || !this.baselines || this.pendingHistory !== undefined) return Promise.resolve();
-    const initial = this.message();
+    const initial = this.message(true);
     const selectionKey = JSON.stringify([initial.model.selection.studyId, initial.model.selection.itemId, initial.model.source.hash, initial.model.observation?.id, initial.model.selection.follow]);
     if (!forceSource && preserveFocus && this.lastSelectionKey === selectionKey) {
       this.presentApplication(initial); this.publish(); return Promise.resolve();
@@ -524,7 +644,7 @@ export class StudyWorkspace {
     if (!initial.model.selection.follow) this.presentApplication({ ...initial, loading: true });
     const pending = this.rendering.catch(() => undefined).then(async () => {
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
-      const message = this.message();
+      const message = this.message(true);
       const itemId = message.model.selection.itemId, source = message.model.source;
       const uri = vscode.Uri.from({ scheme: STUDY_SOURCE_SCHEME, authority: this.library!.workspaceKey, path: `/${message.model.observation ? message.study!.id : 'source-derived'}/${encodeURIComponent(itemId)}/${source.hash}/Captured-${itemId.split('/').at(-1)}.mts` });
       this.documents.set(uri.toString(), source.text);
@@ -561,6 +681,7 @@ export class StudyWorkspace {
 
   /** Updates the app only when selected phase bytes/mode change, preserving a historical panel across live ticks. @example this.presentApplication(message) */
   private presentApplication(message: StudyViewMessage): void {
+    if (this.recordingActive) return;
     const image = message.model.image;
     const key = JSON.stringify([this.leaseId, message.model.selection, message.study?.terminal, message.loading, image?.status, image?.status === 'captured' ? image.hash : image?.reason]);
     if (key === this.lastApplicationKey) return; this.lastApplicationKey = key;
@@ -577,8 +698,14 @@ export class StudyWorkspace {
     const panel = vscode.window.createWebviewPanel('codebook.scopedBrowser', 'codebook · Application', { viewColumn: vscode.ViewColumn.One, preserveFocus: true }, { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true });
     this.app = panel;
     this.lastApplicationKey = undefined;
-    panel.onDidDispose(() => { if (this.app === panel) this.app = undefined; });
-    panel.onDidChangeViewState(() => { if (panel.active) this.lastActiveRegion = 'app'; });
+    panel.onDidDispose(() => { if (this.app === panel) { this.app = undefined; this.replayViewport = undefined; if (this.recordingActive) this.playback?.hide(); } });
+    let visible = panel.visible;
+    panel.onDidChangeViewState(() => {
+      if (panel.active) this.lastActiveRegion = 'app';
+      if (visible === panel.visible) return; visible = panel.visible;
+      // Only visibility of the replay surface pauses playback; runtime/debugger exit is unrelated.
+      if (this.recordingActive) { this.replayNeedsReveal = true; if (visible) this.playback?.reveal(); else this.playback?.hide(); }
+    });
     return panel;
   }
 
@@ -668,16 +795,35 @@ export class StudyWorkspace {
     if (message.type === 'ready') { this.lastPublished = undefined; this.publish(); return; }
     if (message.type === 'rendered') {
       const selected = this.message().model;
-      if (origin === 'context' && !this.loading && message.revision === this.revision && message.itemId === selected.selection.itemId && message.snapshotUri === selected.observation?.snapshotUri) this.lastRendered = message;
+      if (origin === 'context' && !this.message().loading && message.revision === this.revision && message.itemId === selected.selection.itemId && message.snapshotUri === selected.observation?.snapshotUri
+        && (!this.recordingActive || message.presentationRevision === this.playback?.state().presentationRevision)) this.lastRendered = message;
       return;
     }
     if (message.revision !== this.revision) throw new Error('The displayed study changed. Inspect the current view before acting.');
     if (message.type === 'action') await this.action(message.action);
     if (message.type === 'select') await this.select(message.itemId);
     if (message.type === 'profile') await this.selectProfile(message.profile);
-    if (message.type === 'tab') { this.selection = { ...this.selection, tab: message.tab }; this.publish(); await this.saveSelection(); }
+    if (message.type === 'tab') {
+      if (message.tab === 'recording') {
+        const studyId = this.selection.studyId ?? (await this.recordings!.readPreference())?.studyId;
+        if (!studyId) throw new Error('Select a saved study before opening its recording.');
+        await this.openRecording(studyId);
+      } else { this.leavePlayback(); this.selection = { ...this.selection, tab: message.tab }; await this.renderSelection(); this.publish(); await this.saveSelection(); }
+    }
+    if (message.type === 'playback') {
+      if (!this.recordingActive || !this.selection.studyId) throw new Error('Open a recording before controlling playback.');
+      const identity = { studyId: this.selection.studyId, expectedRevision: message.expectedRevision };
+      if (message.action === 'seek') {
+        if (message.positionMs === undefined) throw new Error('Seek requires a recorded position.');
+        this.playback!.command({ ...identity, action: 'seek', positionMs: message.positionMs });
+      } else {
+        if (message.positionMs !== undefined) throw new Error('Only Seek accepts a position.');
+        this.playback!.command({ ...identity, action: message.action });
+      }
+    }
     if (message.type === 'understanding') await this.understand(message.understood);
     if (message.type === 'history') {
+      if (this.recordingActive) { await this.openRecording(message.studyId); return; }
       const request = ++this.historyRequest; this.pendingHistory = request; this.loading = true; this.lastRendered = undefined; this.publish();
       try {
         const archive = await this.readSavedArchive(message.studyId);

@@ -1,5 +1,5 @@
 import type { ProtocolMapping } from 'devtools-protocol/types/protocol-mapping';
-import { ACTIVE_TIMEOUT_MS } from './constants';
+import { ACTIVE_TIMEOUT_MS, STREAM_TELEMETRY_INTERVAL_MS } from './constants';
 
 interface PendingRequest {
   method: string;
@@ -21,6 +21,7 @@ export class Cdp {
   private readonly delayedTimers = new Set<ReturnType<typeof setTimeout>>();
   onClose?: () => void;
   closed = false;
+  private streamTelemetry?: { clock(): number; at: number; sent: number; responses: number };
 
   constructor(private readonly socket: Transport, private readonly log: Log) {
     socket.addEventListener('message', event => {
@@ -84,6 +85,9 @@ export class Cdp {
     this.listeners.set(method, listeners);
   }
 
+  /** Bounds successful per-frame ACK logs for optional product recording; failures and all other CDP commands remain exact. @example cdp.aggregateScreencastTelemetry(() => evidence.elapsedMs()) */
+  aggregateScreencastTelemetry(clock: () => number): void { this.streamTelemetry ??= { clock, at: clock(), sent: 0, responses: 0 }; }
+
   /** Releases just this proxy connection during owned-run teardown. @example cdp.close() */
   close(): void {
     this.disconnected();
@@ -101,7 +105,8 @@ export class Cdp {
         reject(new Error(`CDP ${method} timed out`));
       }, timeoutMs);
       this.pending.set(id, { method, resolve, reject, timer, delayMs });
-      this.log('cdp.sent', { id, method });
+      if (method === 'Page.screencastFrameAck' && this.streamTelemetry) { this.streamTelemetry.sent++; this.flushStreamTelemetry(); }
+      else this.log('cdp.sent', { id, method });
       try { this.socket.send(JSON.stringify({ id, method, params })); }
       catch { this.log('cdp.send-failed', { id, method }); this.close(); }
     });
@@ -117,7 +122,8 @@ export class Cdp {
     }
     clearTimeout(pending.timer);
     this.pending.delete(message.id);
-    this.log('cdp.response', { id: message.id, method: pending.method, failed: Boolean(message.error) });
+    if (pending.method === 'Page.screencastFrameAck' && this.streamTelemetry && !message.error) { this.streamTelemetry.responses++; this.flushStreamTelemetry(); }
+    else this.log('cdp.response', { id: message.id, method: pending.method, failed: Boolean(message.error) });
     if (message.error) pending.reject(new Error(`${pending.method}: ${message.error.message}`));
     else pending.resolve(message.result);
   }
@@ -132,6 +138,17 @@ export class Cdp {
     }
     for (const timer of this.delayedTimers) clearTimeout(timer);
     this.pending.clear();
+    this.flushStreamTelemetry(true);
     this.onClose?.();
+  }
+
+  /** Emits a bounded cumulative interval summary on frame traffic and teardown without suppressing failure events. @example this.flushStreamTelemetry(true) */
+  private flushStreamTelemetry(final = false): void {
+    const summary = this.streamTelemetry;
+    if (!summary || (!summary.sent && !summary.responses)) return;
+    const now = summary.clock();
+    if (!final && now - summary.at < STREAM_TELEMETRY_INTERVAL_MS) return;
+    this.log('cdp.screencast-summary', { sinceMs: summary.at, untilMs: now, sent: summary.sent, responses: summary.responses });
+    summary.at = now; summary.sent = 0; summary.responses = 0;
   }
 }

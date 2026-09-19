@@ -6,6 +6,7 @@ import { ERROR_RECOVERY, StudyError } from './errors';
 import type { StudyService } from './service';
 import { omittedDetail } from './utils/omittedDetail';
 import { readBoundedFile } from './utils/readBoundedFile';
+import { readRecordingResource } from './utils/readRecordingResource';
 
 export type ResourceContent = { uri: string; mimeType: string; text: string } | { uri: string; mimeType: string; blob: string };
 
@@ -23,6 +24,7 @@ export async function readResource(service: StudyService, uri: string): Promise<
   });
   const url = new URL(uri);
   if (url.protocol !== 'codebook:' || url.search || url.hash || url.username || url.password || url.port) throw new StudyError('INVALID_REFERENCE', 'Use a canonical resource URI.');
+  if (url.pathname === '/library' || url.pathname === '/playback' || url.pathname.startsWith('/studies/')) return readRecordingResource(service, uri);
   const match = /^\/runs\/([a-f0-9-]+)(?:\/(.*))?$/.exec(url.pathname);
   if (!match?.[1]) throw new StudyError('NOT_FOUND', 'Unknown resource.');
   const record = service.record({ instanceId: url.hostname, runId: match[1] }); const suffix = match[2];

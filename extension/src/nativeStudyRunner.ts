@@ -4,6 +4,7 @@ import { closeSync, openSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { profileSchema } from './studySchemas';
 import type { StudyItemId } from 'codebook-cycle-0004/dist/constants';
@@ -13,14 +14,15 @@ import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { StudyClient, connectionSchema } from './client';
 import { createNativeProfile } from './utils/createNativeProfile';
+import { exerciseNativeRecording } from './utils/exerciseNativeRecording';
 import { eventsSchema, receiptSchema, snapshotSchema, stateSchema, statusSchema } from './nativeSchemas';
 import { nativeStudyResultSchema, type NativeStudyAction } from './nativeStudySchemas';
-import { NATIVE_EDITOR_START_TIMEOUT_MS, NATIVE_OBSERVATION_TIMEOUT_MS, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, PROFILE_ID } from './constants';
+import { CONTROL_RESPONSE_LIMIT_MS, HOLD_DURATION_MS, NATIVE_EDITOR_START_TIMEOUT_MS, NATIVE_OBSERVATION_TIMEOUT_MS, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, PROFILE_ID } from './constants';
 
 const packageRoot = resolve(__dirname, '..'), hostId = selectHost(process.env.CODEBOOK_HOST);
 const selectedProfile = profileSchema.parse(process.env.CODEBOOK_PROFILE ?? PROFILE_ID), checkout = selectedProfile === 'checkout-demo';
-const scenario = z.enum(['normal', 'history']).parse(process.argv[2] ?? 'normal');
-const suiteDirectory = join(packageRoot, '../artifacts/cycle-0007/product', hostId, selectedProfile, `${scenario}-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}`);
+const scenario = z.enum(['normal', 'history', 'recording']).parse(process.argv[2] ?? 'normal');
+const suiteDirectory = join(packageRoot, scenario === 'recording' ? '../artifacts/cycle-0008/product' : '../artifacts/cycle-0007/product', hostId, selectedProfile, `${scenario}-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}`);
 type State = z.infer<typeof stateSchema>;
 
 /** Runs actual MCP execution and native learner command assertions in one isolated profile, then reloads saved history. @example CODEBOOK_HOST=cursor node dist/nativeStudyRunner.js history */
@@ -37,10 +39,10 @@ async function main(): Promise<void> {
     const exit = new Promise<void>((resolveExit, reject) => { child.once('exit', () => resolveExit()); child.once('error', reject); });
     return { child, exit, arguments_ };
   };
-  let editor = launch(false), sequence = 0, agent: StudyClient | undefined, activeIdentity: { instanceId: string; runId: string } | undefined;
+  let editor = launch(false), sequence = 0, bridgePrefix = 'live', agent: StudyClient | undefined, activeIdentity: { instanceId: string; runId: string } | undefined;
   const bridge = async (action?: NativeStudyAction, itemId?: StudyItemId) => {
     if (action) { sequence++; await writeFile(join(suiteDirectory, 'study-command.json'), JSON.stringify({ sequence, action, itemId })); }
-    const result = await waitUntil(async () => { try { return nativeStudyResultSchema.parse(JSON.parse(await readFile(join(suiteDirectory, `live-${sequence}.json`), 'utf8'))); } catch { return undefined; } }, 'native learner assertion', NATIVE_EDITOR_START_TIMEOUT_MS);
+    const result = await waitUntil(async () => { try { return nativeStudyResultSchema.parse(JSON.parse(await readFile(join(suiteDirectory, `${bridgePrefix}-${sequence}.json`), 'utf8'))); } catch { return undefined; } }, 'native learner assertion', NATIVE_EDITOR_START_TIMEOUT_MS);
     if (result.error) throw new Error(result.error); return result;
   };
   const observe = async (uri: string, predicate: (state: State) => boolean) => waitUntil(async () => {
@@ -90,6 +92,12 @@ async function main(): Promise<void> {
         initialPause = paused.participants.server.continueArguments;
         await bridge('open-paused');
         if (scenario === 'history') await bridge('select-history'); else await bridge('move-source');
+        if (scenario === 'recording') {
+          const held = performance.now(); await delay(HOLD_DURATION_MS); const probe = performance.now();
+          const waiting: State = await agent.json(receipt.runUri, stateSchema), controlMs = performance.now() - probe;
+          assert.equal(waiting.participants.server.resumable, true); assert.ok(controlMs < CONTROL_RESPONSE_LIMIT_MS);
+          results.checks.hold = { durationMs: performance.now() - held, controlMs };
+        }
       } else if (scenario === 'history' && (checkout ? index <= 2 : index === 1)) {
         await bridge('assert-history', step.itemId);
         await assert.rejects(agent.tool('codebook_reveal', { ...identity, snapshotUri }, z.unknown()), /BUSY/);
@@ -112,8 +120,8 @@ async function main(): Promise<void> {
       return state.cleaned && ['saved', 'failed'].includes(state.historyOutcome.status) ? state : undefined;
     }, 'terminal runtime and reader checkpoint', NATIVE_OBSERVATION_TIMEOUT_MS);
     assert.deepEqual(final.observed, checkout ? { cartCount: 1, completedClicks: 1, orderId: `order-${final.runtimeRunId}`, total: 24, status: 'confirmed', completedCheckouts: 1 } : { cartCount: 1, completedClicks: 1 });
-    assert.deepEqual(final.activeSessionIds, []); assert.equal(final.finalOutcome, scenario === 'normal' ? 'demonstrated' : 'partial');
-    assert.equal(final.historyOutcome.status, 'saved'); assert.equal(final.studyOutcome, scenario === 'normal' ? 'demonstrated' : 'partial');
+    assert.deepEqual(final.activeSessionIds, []); assert.equal(final.finalOutcome, scenario === 'history' ? 'partial' : 'demonstrated');
+    assert.equal(final.historyOutcome.status, 'saved'); assert.equal(final.studyOutcome, scenario === 'history' ? 'partial' : 'demonstrated');
     assert.equal(final.observations.length, checkout ? 4 : 2); assert.equal(final.links?.length, checkout ? 11 : 5);
     for (const original of originals) assert.deepEqual(await agent.read(original.uri), original.value, 'Earlier evidence remains immutable after later stops and cleanup');
     const recorded: z.infer<typeof eventsSchema>['events'] = []; let eventsUri: string | undefined = final.eventsUri;
@@ -121,15 +129,30 @@ async function main(): Promise<void> {
     assert.equal(recorded.filter(event => event.type === 'input.dispatched').length, checkout ? 2 : 1);
     assert.equal(recorded.filter(event => event.type === 'continue.accepted').length, checkout ? 4 : 2);
     results.checks.final = final; results.checks.exactDeclaredInputs = true;
+    const studyId = `${identity.instanceId}_${identity.runId}`;
+    if (scenario === 'recording') results.checks.recording = await exerciseNativeRecording(agent, studyId, join(suiteDirectory, 'recording'), bridge);
     await bridge('close-reader');
     await writeFile(join(suiteDirectory, 'transcript.json'), JSON.stringify(agent.transcript, null, 2));
     await agent.close(); agent = undefined;
     results.checks.native = (await bridge('finish')).checks;
     editor.child.kill(); await awaitResponse(editor.exit, 'first owned learner editor exit');
     editor = launch(true);
+    bridgePrefix = 'reload'; sequence = 0;
     const reloaded = await waitUntil(async () => { try { return nativeStudyResultSchema.parse(JSON.parse(await readFile(join(suiteDirectory, 'reload-0.json'), 'utf8'))); } catch { return undefined; } }, 'native learner reload', NATIVE_EDITOR_START_TIMEOUT_MS);
     if (reloaded.error) throw new Error(reloaded.error); assert.equal(reloaded.checks.reloadedWithoutExecution, true);
-    results.checks.reload = reloaded.checks; results.passed = true;
+    results.checks.reload = reloaded.checks;
+    if (scenario === 'recording') {
+      assert.ok(reloaded.descriptorPath); activeIdentity = undefined;
+      const fresh = connectionSchema.parse(JSON.parse(await readFile(reloaded.descriptorPath, 'utf8')));
+      assert.notEqual(fresh.instanceId, identity.instanceId);
+      agent = await StudyClient.connect(fresh);
+      await assert.rejects(agent.read(`codebook://${identity.instanceId}/library`), /STALE_INSTANCE/);
+      results.checks.recordingReload = await exerciseNativeRecording(agent, studyId, join(suiteDirectory, 'recording-reloaded'), bridge, true);
+      await bridge('close-reader');
+      await writeFile(join(suiteDirectory, 'reload-transcript.json'), JSON.stringify(agent.transcript, null, 2)); await agent.close(); agent = undefined;
+      await bridge('finish');
+    }
+    results.passed = true;
   } catch (error) { results.error = String(error); process.exitCode = 1; }
   finally {
     if (agent) {

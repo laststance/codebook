@@ -2,6 +2,8 @@ export const ERROR_RECOVERY = {
   NOT_FOUND: 'Read codebook_status and use a resource reference from the selected instance and run.',
   STALE_INSTANCE: 'Copy the current connection from the editor, initialize, and read codebook_status. Never replay input automatically.',
   STALE_PAUSE: 'Read the run resource and use its current continue arguments only if resumable.',
+  STALE_PLAYBACK: 'Read the current playback URI and use its returned revision/study identity. Never retry by starting or continuing a run.',
+  PLAYBACK_UNAVAILABLE: 'Inspect playback and the selected recording for missing/corrupt data. Leave and reopen Recording after repair; playback never retries application input.',
   BUSY: 'Read the run resource and its nextActions. Do not send another click with a new key.',
   SOURCE_CHANGED: 'Read the captured source resource. The current editor file no longer matches that capture.',
   RUNTIME_FAILED: 'Read the terminal reason and captured history. Stop owned resources; do not retry the click automatically.',

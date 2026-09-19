@@ -10,6 +10,12 @@ import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { StudyError, domainError } from './errors';
 import type { StudyEnvironment, StudyRuntime } from './runtime';
 import type { ActionInput, ContinueInput, ExplainInput, RevealInput, RunInput, StartInput } from './schemas';
+import type { RecordingStore, RecordingWriter } from './recordingStore';
+import type { RecordingSeal } from './recordingSchemas';
+import type { StudyArchive } from './studySchemas';
+import { buildRecordingContext } from './utils/buildRecordingContext';
+import type { PlaybackController } from './playbackController';
+import type { PlaybackCommand } from './playbackSchemas';
 
 export interface Explanation {
   id: string; instanceId: string; runId: string; snapshotUri: string; sourceHash: string;
@@ -26,12 +32,16 @@ export interface StudyRecord {
   explanationKeys: Map<string, { signature: string; result: Promise<{ explanationUri: string }> }>;
   sourceReveals: Set<Promise<void>>;
   historyReceipt?: { revision: number; signature: string; status: 'pending' | 'saved' | 'failed'; reason?: string };
+  recording?: RecordingWriter; recordingEndMs?: number; recordingSeal?: RecordingSeal; recordingFailure?: string;
+  recordingReceipt?: { signature: string; historyRevision: number; status: 'pending' | 'saved' | 'failed'; contextHash?: string; studyHash?: string; reason?: string };
 }
 
 /** Owns MCP intent/history independently of transport sessions; commands construct it once per editor instance. @example service.start({instanceId, profile:'paired-cart-demo', key:'study-1'}) */
 export class StudyService {
   readonly instanceId = randomUUID();
   readonly records = new Map<string, StudyRecord>();
+  recordings?: RecordingStore;
+  playbackController?: PlaybackController;
   private readonly startKeys = new Map<string, StudyRecord>();
   private readonly maintenance: ReturnType<typeof setInterval>;
   private stopping = false;
@@ -59,7 +69,17 @@ export class StudyService {
       capabilities: ['start', 'add-to-cart', 'checkout', 'pause-evidence', 'continue', 'explain', 'reveal-source', 'stop', 'historical-resources'],
       limits: { activeRuns: 1, retainedRuns: MAX_RUNS, explanationsPerRun: MAX_EXPLANATIONS, activeTimeoutMs: ACTIVE_TIMEOUT_MS, runTimeoutMs: RUN_TIMEOUT_MS, timeoutFieldsApplyTo: 'paired-cart-demo; use each selected profile.limits for other profiles' },
       runs: [...this.records.values()].map(record => ({ runId: record.id, uri: this.uri(record.id), state: this.state(record).state })),
+      recording: this.recordings ? { libraryUri: `codebook://${this.instanceId}/library`, playbackUri: `codebook://${this.instanceId}/playback`, playbackAvailable: Boolean(this.playbackController), limits: this.recordings.limits,
+        instructions: 'Saved recordings survive server/runtime exit. Discover their study IDs using libraryUri; current-instance URIs and playback revisions must be copied, not guessed. Playback never starts, clicks or continues a run.' } : undefined,
       recovery: 'Same instance: initialize a new transport and read the existing run. Server restart: copy new credentials first. Never automatically repeat a click.' };
+  }
+
+  /** Routes a typed historical control to the workspace's shared controller, never to a live runtime operation. @example service.playback({...identity,action:'pause',expectedRevision:2}) */
+  playback(input: PlaybackCommand) {
+    this.assertMutable(input.instanceId);
+    if (!this.playbackController) throw new StudyError('PREREQUISITE_MISSING', 'The playback workspace is unavailable.');
+    try { return { ...this.playbackController.command(input), uri: `codebook://${this.instanceId}/playback` }; }
+    catch (error) { throw new StudyError(String(error).includes('Stale playback revision') ? 'STALE_PLAYBACK' : 'PLAYBACK_UNAVAILABLE', String(error), `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`); }
   }
 
   /** Reserves intent before prerequisite I/O so duplicate starts cannot create two runtimes. @example service.start(input).runUri */
@@ -193,6 +213,22 @@ export class StudyService {
     record.historyReceipt = { revision, signature, status, reason: reason?.slice(0, MAX_UI_TEXT_CHARS) }; return true;
   }
 
+  /** Saves context only after the matching learner archive; recording failure cannot rewrite its execution/history outcome. @example await service.saveRecordingContext(record, archive, revision) */
+  async saveRecordingContext(record: StudyRecord, archive: StudyArchive, historyRevision: number): Promise<void> {
+    if (!this.recordings || !record.recording || this.state(record).materialSignature !== archive.materialSignature || record.historyReceipt?.revision !== historyRevision || record.historyReceipt.status !== 'saved') return;
+    const receipt: NonNullable<StudyRecord['recordingReceipt']> = { signature: archive.materialSignature, historyRevision, status: 'pending' };
+    record.recordingReceipt = receipt;
+    try {
+      const context = buildRecordingContext(archive, record.runtime?.view().events ?? [], historyRevision);
+      const saved = await this.recordings.saveContext(context);
+      // A newer history/annotation owns success even when this older filesystem write finishes last.
+      if (record.recordingReceipt !== receipt || this.state(record).materialSignature !== receipt.signature || record.historyReceipt?.revision !== historyRevision) return;
+      record.recordingReceipt = { ...receipt, status: 'saved', contextHash: saved.hash, studyHash: context.studyHash };
+    } catch (error) {
+      if (record.recordingReceipt === receipt) record.recordingReceipt = { ...receipt, status: 'failed', reason: String(error).slice(0, MAX_UI_TEXT_CHARS) };
+    }
+  }
+
   /** Projects bounded current state and actionable next steps without copying the full event log. @example service.state(record).nextActions */
   state(record: StudyRecord) {
     const runtime = record.runtime?.view();
@@ -232,7 +268,19 @@ export class StudyService {
     const studyOutcome = material.finalOutcome === 'not-demonstrated' ? 'not-demonstrated' : material.finalOutcome === 'partial' ? 'partial'
       : material.finalOutcome !== 'demonstrated' || !terminal ? 'pending'
       : historyOutcome.status === 'saved' ? 'demonstrated' : historyOutcome.status === 'pending' ? 'pending' : 'partial';
-    return { ...material, materialSignature, historyOutcome, studyOutcome };
+    const recordingReceipt = record.recordingReceipt;
+    const recordingCurrent = recordingReceipt?.signature === materialSignature && recordingReceipt?.historyRevision === receipt?.revision;
+    const capture = record.recording?.state();
+    const recording = { capture, status: record.recordingFailure ? 'failed' as const : record.recordingSeal ? record.recordingSeal.status === 'complete' ? 'finalized' as const : 'partial' as const : capture?.status === 'partial' ? 'partial' as const : record.recording ? 'recording' as const : 'unavailable' as const,
+      reason: record.recordingFailure ?? record.recordingSeal?.reason ?? capture?.reason, endMs: record.recordingSeal?.endMs,
+      contextStatus: recordingCurrent ? recordingReceipt!.status : recordingReceipt ? 'pending' as const : 'unavailable' as const,
+      contextHash: recordingCurrent && recordingReceipt?.status === 'saved' ? recordingReceipt.contextHash : undefined,
+      studyHash: recordingCurrent && recordingReceipt?.status === 'saved' ? recordingReceipt.studyHash : undefined,
+      contextReason: recordingCurrent ? recordingReceipt?.reason : undefined };
+    const recordedStudyOutcome = studyOutcome === 'not-demonstrated' ? 'not-demonstrated' : studyOutcome === 'partial' ? 'partial' : studyOutcome !== 'demonstrated' ? 'pending'
+      : recording.status === 'finalized' && recording.contextStatus === 'saved' ? 'demonstrated'
+      : recording.status === 'recording' || recording.contextStatus === 'pending' ? 'pending' : 'partial';
+    return { ...material, materialSignature, historyOutcome, studyOutcome, recording, recordedStudyOutcome };
   }
 
   /** Prevents late acquisitions escaping shutdown while preserving retryable cleanup failures. @example await service.shutdown() */
@@ -267,6 +315,12 @@ export class StudyService {
       if (this.stopping || record.stopping) return;
       record.runtime = await this.environment.createRuntime(join(this.storageRoot, this.instanceId, record.id), record.profile);
       if (this.stopping || record.stopping) return;
+      if (this.recordings) {
+        // Reserve capture before preparation can receive frames or expose action readiness.
+        try { record.recording = await this.recordings.start({ workspaceKey: this.recordings.workspaceKey, studyId: `${this.instanceId}_${record.id}`, instanceId: this.instanceId, runId: record.id, runtimeId: record.runtime.id, profile: record.profile, sourceBuild: this.environment.build }, record.runtime.evidence.elapsedMs()); }
+        catch (error) { record.recordingFailure = `Recording unavailable before input: ${String(error)}`; }
+      }
+      if (this.stopping || record.stopping) return;
       await record.runtime.prepare(); record.prepared = true;
     } catch (error) { record.error = domainError(error); record.runtime?.fail(record.error.message); }
     // Schedule cleanup after preparation settles to avoid awaiting this promise from itself.
@@ -281,7 +335,22 @@ export class StudyService {
       await record.preparation;
       await Promise.allSettled([...record.explanationKeys.values()].map(value => value.result));
       await Promise.allSettled([...record.sourceReveals]);
-      if (record.runtime) await record.runtime.stop();
+      if (record.runtime) {
+        try { await record.runtime.stop(); }
+        finally {
+          if (record.recording) {
+            const runtime = record.runtime.view();
+            const failure = runtime.events.find(event => event.type === 'run.failed');
+            if (failure || !runtime.resourcesReleased) record.recording.stopFrames(failure?.elapsedMs ?? record.runtime.evidence.elapsedMs(), 'Runtime interrupted or cleanup incomplete; recorded prefix retained.');
+            try {
+              const seal = await record.recording.finish(record.recordingEndMs ?? record.runtime.evidence.elapsedMs());
+              await this.recordings?.read(record.recording.header.studyId);
+              record.recordingSeal = seal;
+            }
+            catch (error) { record.recordingFailure = String(error).slice(0, MAX_UI_TEXT_CHARS); }
+          }
+        }
+      }
       record.stopped = true; record.cleanupError = undefined;
     })();
     try { await attempt; } catch (error) { record.cleanupError = domainError(error); record.stopPromise = undefined; throw error; }

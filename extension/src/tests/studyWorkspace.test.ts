@@ -7,12 +7,15 @@ import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { PROFILE_ID } from '../constants';
 import { LearningLibrary } from '../learningLibrary';
-import { createHarness } from './helpers';
+import { RecordingStore } from '../recordingStore';
+import type { StudyViewMessage } from '../ui/studyHtml';
+import { ControlledRuntime, createHarness } from './helpers';
 import { loadModule } from './utils/loadModule';
 
 /** Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions. @example const reader = await workspaceHarness() */
-async function workspaceHarness(attach = true) {
-  const harness = await createHarness(), fixture = join(harness.directory, 'experiments/cycle-0004/fixture');
+async function workspaceHarness(attach = true, deterministicClock = false) {
+  let clock = 0;
+  const harness = await createHarness({ create: async (directory, profile) => { const runtime = new ControlledRuntime(directory, profile); if (deterministicClock) runtime.evidence.elapsedMs = () => clock; return runtime; } }), fixture = join(harness.directory, 'experiments/cycle-0004/fixture');
   await mkdir(fixture, { recursive: true });
   await writeFile(join(fixture, 'server.mts'), 'const price = 24;'); await writeFile(join(fixture, 'client.mts'), 'const count = 1;');
   let changed = () => {};
@@ -35,8 +38,15 @@ async function workspaceHarness(attach = true) {
   const commands: string[] = [];
   const panels = new Set<ReturnType<typeof panel>>();
   const receivers = new Map<string, (message: unknown) => void>();
+  let automaticContextReceipt = false, displayedImage: string | undefined;
+  let nextImage: { wait: Promise<void>; entered(): void } | undefined;
   function panel(kind: string) {
-    const value = { webview: { html: '', postMessage: async () => true, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, title: '', reveal() {}, onDidDispose: disposable, onDidChangeViewState: disposable, dispose() { panels.delete(value); } };
+    const value = { webview: { html: '', postMessage: async (message: StudyViewMessage) => {
+      if (automaticContextReceipt && kind === 'codebook.studyContext' && message.type === 'study' && !message.loading) {
+        receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
+      }
+      return true;
+    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, title: '', reveal() {}, onDidDispose: disposable, onDidChangeViewState: disposable, dispose() { panels.delete(value); } };
     panels.add(value); return value;
   }
   const initialSelection: string[] = [];
@@ -52,13 +62,24 @@ async function workspaceHarness(attach = true) {
       workspace: { textDocuments: [], registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
         openTextDocument: async (uri: Uri) => { const held = nextOpen; nextOpen = undefined; if (held) { held.entered(); await held.wait; } const text = await sourceProvider(uri); return { uri, getText: () => text }; },
         onDidChangeTextDocument: disposable, createFileSystemWatcher: () => watcher } },
-    './environment': { requireWorkspace: () => harness.directory }, 'codebook-cycle-0001/dist/browserViewport': {},
+    './environment': { requireWorkspace: () => harness.directory }, 'codebook-cycle-0001/dist/browserViewport': { BrowserViewport: class {
+      async reveal() {} async showLive() {} showHistory() {} close() {}
+      clearRecorded() { displayedImage = undefined; }
+      async present(image: string) { const held = nextImage; nextImage = undefined; if (held) { held.entered(); await held.wait; } displayedImage = image; }
+      async presentMissing() { displayedImage = undefined; }
+    } },
   });
   const controls = { start: async () => harness.service, connect: async () => {} };
   const createReader = () => new boundary.StudyWorkspace({ extensionPath: join(harness.directory, 'extension'), globalStorageUri: { fsPath: join(harness.directory, 'storage') }, subscriptions: [] }, controls);
   const reader = createReader();
   if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
   return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
+    clock(value: number) { clock = value; }, acknowledgeContext() { automaticContextReceipt = true; }, displayedImage: () => displayedImage,
+    holdNextImage() {
+      let release = () => {}, entered = () => {};
+      const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
+      nextImage = { wait, entered }; return { started, release };
+    },
     holdNextCommand(name: string) {
       let release = () => {}, entered = () => {};
       const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
@@ -72,6 +93,76 @@ async function workspaceHarness(attach = true) {
     },
     async close() { await reader.retire(harness.service); await reader.dispose(); await harness.close(); } };
 }
+
+/** Saves a real recording/context with deterministic synthetic runtime values; native paints remain an explicitly mocked boundary. @example const harness = await recordedReaderHarness() */
+async function recordedReaderHarness() {
+  const harness = await workspaceHarness(true, true), service = harness.service;
+  service.environment.build.sourceHash = sha256('recorded-build'); harness.acknowledgeContext();
+  await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=', 'base64');
+  assert.ok(record.recording); record.recording.frame({ bytes: png, elapsedMs: 20, kind: 'stream' });
+  harness.clock(100); await harness.reader.action('click');
+  harness.clock(200); await harness.reader.action('stop');
+  const studyId = record.recording.header.studyId, directory = harness.reader.inspect().libraryDirectory!;
+  const store = new RecordingStore(directory, directory.split('/').at(-1)!);
+  return { ...harness, studyId, store, record, png, controller: service.playbackController! };
+}
+
+test('Recording opens paused with no future source and seeking binds captured values without executing or marking understanding', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    // Act
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const before = harness.reader.inspect().view!;
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    const observed = harness.reader.inspect().view!;
+    // Assert
+    assert.equal(before.contentTab, 'recording'); assert.equal(before.recording?.mode, 'paused'); assert.equal(before.model.observation, undefined);
+    assert.equal(before.model.source.text, '// No source was observed by this recorded position.\n'); assert.equal(before.model.selectedUnderstanding.known, false);
+    assert.equal(observed.recording?.readiness, 'ready', observed.recording?.reason); assert.equal(observed.model.observation?.values.cartCount, 0);
+    assert.equal(observed.model.source.text, 'const price = 24;'); assert.equal(observed.model.continueArguments, undefined);
+    assert.equal(harness.displayedImage(), harness.png.toString('base64')); assert.equal(harness.runtimes[0]!.dispatches, 1); assert.equal(harness.runtimes[0]!.releases, 1);
+    const library = new LearningLibrary(harness.store.learningDirectory, harness.store.workspaceKey);
+    assert.equal((await library.readProgress()).decisions.length, 0); assert.equal((await harness.store.readPreference())?.positionMs, 100);
+  } finally { await harness.close(); }
+});
+
+test('Pause during a late recorded image restores the previous source and preserves only the confirmed position', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle(); const delayed = harness.holdNextImage();
+    // Act
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await delayed.started;
+    assert.equal(harness.reader.inspect().view?.loading, true);
+    harness.controller.command({ action: 'pause', studyId: harness.studyId, expectedRevision: harness.controller.state().revision }); delayed.release(); await harness.controller.settle();
+    // Assert
+    const view = harness.reader.inspect().view!;
+    assert.equal(view.recording?.readiness, 'ready', view.recording?.reason); assert.equal(view.recording?.presentedMs, 0);
+    assert.equal(view.model.observation, undefined); assert.equal(view.model.source.text, '// No source was observed by this recorded position.\n');
+    assert.equal(harness.displayedImage(), undefined); assert.equal((await harness.store.readPreference())?.positionMs, 0);
+  } finally { await harness.close(); }
+});
+
+test('a fresh reader restores the saved recording position paused and a live-runtime retirement does not exit playback', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  const reloaded = harness.createReader();
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    await harness.reader.close();
+    // Act
+    await reloaded.attach(harness.service); await reloaded.openRecording(harness.studyId); await harness.service.playbackController!.settle();
+    const restored = reloaded.inspect().view!;
+    await reloaded.retire(harness.service);
+    // Assert
+    assert.equal(restored.recording?.readiness, 'ready', restored.recording?.reason); assert.equal(restored.recording?.presentedMs, 100); assert.equal(restored.recording?.mode, 'paused');
+    assert.equal(reloaded.inspect().view?.contentTab, 'recording'); assert.equal(reloaded.inspect().view?.model.observation?.values.price, 24);
+    assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
+  } finally { await reloaded.dispose(); await harness.close(); }
+});
 
 test('retiring before the next polling tick preserves the last accepted interpretation and terminal state', async context => {
   // Arrange: the poll never fires; finalization must explicitly collect the latest service state.

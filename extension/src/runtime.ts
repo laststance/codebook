@@ -10,7 +10,7 @@ export type Participant = ParticipantSnapshot['participant'];
 /** Keeps MCP independent of VS Code imports while reusing the proven coordinator's concrete data contracts. @example const runtime: StudyRuntime = environment.createRuntime(directory) */
 export interface StudyRuntime {
   readonly id: PairedRun['id'];
-  readonly evidence: Pick<Evidence, 'save' | 'flush' | 'record' | 'failure' | 'directory'>;
+  readonly evidence: Pick<Evidence, 'save' | 'flush' | 'record' | 'failure' | 'directory' | 'elapsedMs'>;
   prepare: PairedRun['prepare'];
   view: PairedRun['view'];
   action: PairedRun['acceptAction'];
