@@ -8,7 +8,10 @@
     "dirtyAtValidation": true,
     "sourceHash": "72930ccaea8a50e1cfd6ce896f6753bb2eb2d9ebaeaa418ecc84714696a1522d",
     "sourceCount": 180,
-    "sourceHashInventory": "source-hashes.txt"
+    "sourceHashInventory": "source-hashes.txt",
+    "committedRevision": "1bd10b39c35ef9f9e4ff3e5da003edc21219ac70",
+    "committedTreeVerifiedClean": true,
+    "committedSourceMatchesValidatedSource": true
   },
   "tests": {
     "command": "pnpm --dir extension test",
@@ -826,6 +829,11 @@
       "path": "artifacts/cycle-0009/validation-238/build.json",
       "bytes": 20698,
       "sha256": "39f83c6ad3b8500a9b7f622964a83c5bc5d995be231491e653fbe4460f474d86"
+    },
+    {
+      "path": "artifacts/cycle-0009/validation-238/committed-build.json",
+      "bytes": 20699,
+      "sha256": "10f615ed62bcd0854eb3153f4114a00d397c1256c90d921618e9f96fc67cf0e5"
     },
     {
       "path": "artifacts/cycle-0009/validation-238/concurrent-open-red.log",

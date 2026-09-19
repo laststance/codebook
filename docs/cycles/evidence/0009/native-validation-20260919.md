@@ -65,7 +65,7 @@ The bounded correction preserves navigation chrome for Wiki evidence entry while
 
 ## Final 238-test validation
 
-`pnpm --dir extension test` passed **238/238**, with zero failed, cancelled or skipped tests, in 16774.828042 ms. Both final native processes used source hash `72930ccaea8a50e1cfd6ce896f6753bb2eb2d9ebaeaa418ecc84714696a1522d`, 180 inventoried files, on dirty base `7a16827e9f17f420aa2175ad23e2ac1e4f72547d`. The [sanitized manifest](manifest.json) identifies the source inventory, host/version, original authoring sessions, final receipts and private artifact hashes. Validation preceded the implementation commit; later documentation changes do not alter that source fingerprint.
+`pnpm --dir extension test` passed **238/238**, with zero failed, cancelled or skipped tests, in 16774.828042 ms. Both final native processes used source hash `72930ccaea8a50e1cfd6ce896f6753bb2eb2d9ebaeaa418ecc84714696a1522d`, 180 inventoried files, on dirty base `7a16827e9f17f420aa2175ad23e2ac1e4f72547d`. The [sanitized manifest](manifest.json) identifies the source inventory, host/version, original authoring sessions, final receipts and private artifact hashes. Validation preceded implementation commit `1bd10b39c35ef9f9e4ff3e5da003edc21219ac70`; its clean source inventory was subsequently verified identical. Later documentation changes do not alter that source fingerprint.
 
 | Final actual-editor evidence | VS Code 1.138.0 | Cursor 3.21.13 |
 | --- | --- | --- |

@@ -1,9 +1,9 @@
 # Cycle 0009 — Source-grounded repository learning content
 
 Type: product-increment
-Status: validating
+Status: closed
 Result: demonstrated within the bounded source-authoring and reader scope
-Delivery: local-only; implementation and evidence complete, commit/push and issue closure pending
+Delivery: committed — implementation `1bd10b3`; matching clean source fingerprint verified; remote closure sync pending
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/10
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -556,7 +556,7 @@ This is source-only real-repository evidence. The runtime remains limited to pre
 
 ## Handoff
 
-The requested restoration, new-reviewer availability check, independent plan challenge and reviewed Cycle 0009 implementation are complete locally. Preserve the original seven-file backup. D016/D017 and all actual owner answers remain resolved. Commit/push the final implementation and evidence on `codex/cycle-0009-repository-learning-book`, verify its source fingerprint against the native cut, then close Issue #10 with committed links. The branch retains the unmerged Cycle 0008 increment; no PR, merge, package or publication is claimed. Both isolated QA hosts are stopped. Goal #1 stays open, final reviews remain 0/10, and owner acceptance is outstanding. Continue only the selected next bounded cycle under D008; no separate task or background automation was created.
+The requested restoration, new-reviewer availability check, independent plan challenge and reviewed Cycle 0009 implementation are complete locally. Preserve the original seven-file backup. D016/D017 and all actual owner answers remain resolved. Implementation commit `1bd10b39c35ef9f9e4ff3e5da003edc21219ac70` is clean and its 180-file source fingerprint exactly matches the validated native cut. Push the closure records on `codex/cycle-0009-repository-learning-book`, then close Issue #10 with committed links. The branch retains the unmerged Cycle 0008 increment; no PR, merge, package or publication is claimed. Both isolated QA hosts are stopped. Goal #1 stays open, final reviews remain 0/10, and owner acceptance is outstanding. Continue only the selected next bounded cycle under D008; no separate task or background automation was created.
 
 ## GSTACK REVIEW REPORT
 
@@ -574,6 +574,6 @@ The requested restoration, new-reviewer availability check, independent plan cha
 
 OUTSIDE COVERAGE: unavailable in `cycle-0009-dx-plan`, `cycle0009-design` and `cycle0009-eng`. Own-harness nested Codex execution is excluded; native thread capacity was exhausted in this session. No outside-provider result or cross-model agreement is inferred; same-host independent development findings are recorded separately. Primary reviews ran in the Codex host with unknown recorded model identity. Prior Cycle 0008 reviews do not cover this increment.
 
-VERDICT: The bounded Cycle 0009 source-authoring and native reader result is demonstrated on the 238-test candidate in both required hosts. Fresh reviewer creation succeeded; independent plan amendments and subsequent R1–R9/D1–D6 findings are resolved within scope. Full skill convergence, outside-model coverage and final-product acceptance are not claimed. Commit/push and Cycle #10 closure remain the delivery step; Goal #1 remains open.
+VERDICT: The bounded Cycle 0009 source-authoring and native reader result is demonstrated on the 238-test candidate in both required hosts. Fresh reviewer creation succeeded; independent plan amendments and subsequent R1–R9/D1–D6 findings are resolved within scope. Full skill convergence, outside-model coverage and final-product acceptance are not claimed. Implementation `1bd10b3` is committed with a matching clean source fingerprint. Push the closure records and synchronize Cycle #10; Goal #1 remains open.
 
 NO UNRESOLVED DECISIONS
