@@ -15,6 +15,8 @@ The approved destination is a chat-driven application walkthrough with actual de
 
 [Study workspace](docs/designs/assets/01-study-workspace.png) is the default. [Living book](docs/designs/assets/02-living-book.png) and [Guided walkthrough](docs/designs/assets/03-guided-walkthrough.png) are later required selectable layouts over the same data/session. The images are approved concepts, not implemented UI or a precise component/token specification.
 
+For the repository Wiki within Study workspace, [D016](DECISIONS.md#d016--preserve-the-approved-repository-reader-experience-2026-09-19) and the [Cycle 0009 design review](docs/cycles/0009-repository-learning-book.md#formal-design-review-checkpoint) record the approved B composition: compact `understand`, article review state across every citation, one column with relationships below in narrow readers, and return to the original section/reading position. These refine this reader; they do not replace the three required product layouts. The cycle records the immutable local reference image path/hash and implementation checks.
+
 ## Review boundary
 
 Review and plan only the active, explicitly selected cycle. Keep the full product goal as context and acceptance direction. Decision D002 replaces the baseline design's original first-task sizing with adaptive increments; do not turn the full checkout plus all layouts into one implementation plan. Preserve each skill's scope gate and applicable requirements.
