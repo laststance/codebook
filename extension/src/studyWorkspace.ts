@@ -355,7 +355,16 @@ export class StudyWorkspace {
           this.playbackPending = undefined; this.playbackPresentingReady = false; this.revision++; this.lastRendered = undefined;
           this.sourceRevision = undefined; this.lastSelectionKey = undefined; this.replayViewport?.clearRecorded();
         },
-        changed: () => { if (this.playback?.state().readiness === 'ready' && !this.playback.state().cleared) { this.playbackPending = undefined; this.playbackPresentingReady = false; } this.publish(); },
+        changed: () => {
+          const state = this.playback?.state();
+          if (state?.readiness === 'ready' && !state.cleared) { this.playbackPending = undefined; this.playbackPresentingReady = false; }
+          // A failed load has no live renderer to finish its loading state; retire any pending image before showing the reason.
+          if (state?.readiness === 'failed' && this.recordingActive && this.app) {
+            this.replayViewport?.close(); this.replayViewport = undefined;
+            this.app.webview.html = capturedAppHtml(this.message());
+          }
+          this.publish();
+        },
         save: bundle => this.recordings!.savePreference({ version: 1, workspaceKey: key, studyId: bundle.studyId, contextHash: bundle.contextHash, positionMs: bundle.projection.positionMs }),
       });
       // Current files may disappear while immutable saved observations remain independently readable.
