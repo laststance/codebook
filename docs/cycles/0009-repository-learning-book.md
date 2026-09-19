@@ -1,8 +1,7 @@
 # Cycle 0009 — Source-grounded repository learning content
 
 Type: product-increment
-Status: blocked
-Blocker: owner answer to design-review D4; resume the existing review on that answer
+Status: planning
 Result: pending
 Delivery: planning records committed; source draft tested locally, implementation paused for formal reviews
 Goal version: 3
@@ -126,7 +125,7 @@ Acceptance checklist: public schemas/examples complete; three-step connected-age
 
 ## Formal design review checkpoint
 
-- Target: this plan, explicitly selected by Raphtalia for `/plan-design-review` and `/plan-eng-review`. Design session: `52288-1789806897-7824ad63`. Initial overall impression: 8/10; the six scored passes have not yet run.
+- Target: this plan, explicitly selected by Raphtalia for `/plan-design-review` and `/plan-eng-review`. Design session: `52288-1789806897-7824ad63`. Initial overall impression: 8/10; individual pass scores below assess plan specificity, not delivered UX.
 - D1 answered: “A — 7項目すべて確認（推奨）.” Review all seven dimensions. This approves coverage, not a visual direction or any remedy.
 - Three generated mockups are ready. A emphasizes one article column; B adds adjacent navigation/context; C uses compact navigation. They illustrate the Wiki reader inside the default Study workspace, not replacements for the three approved product layouts. Example code/text is fictional presentation content, not observed application behavior.
 - All current images passed the designer's automated image-quality check. Primary visual inspection rejected the original A/C collages despite their automated passes; those originals remain in `initial-generated/`, and A/C were regenerated as individual screens and checked again. An image-quality pass is not a plan review or native UX proof.
@@ -135,7 +134,7 @@ Acceptance checklist: public schemas/examples complete; three-step connected-age
 - D2 feedback received through the board: B rated 5/5, A/C unrated; action `more_like_B`. Owner comment: “I understand this source revisionがでかすぎ、シンプルに小さいunderstandチェックボックスでいい”. Preserve B's composition and simplify that control. Original feedback is retained in `feedback-round-1.json`; consuming the pending request does not manufacture final approval.
 - The built-in imagegen editor produced `variant-B-compact.png`, removing the large acknowledgement panel and its helper text in favor of a small `understand` checkbox. Other composition remains. The image passed automated checking, and the board was reloaded. An HTTP response's three embedded image hashes match the exact current A/B-compact/C files; B-compact SHA-256 is `9fe687a6ff72923d70f55db20065f00e6d7a9518368af70361679996b6d41e8a`.
 - D3 answered: “はい、修正版 B でレビューを進める（推奨）”. B's composition with the compact checkbox is the approved seven-pass review reference; `approved.json` preserves the actual answer and image hash. Do not re-ask the variant or checkbox choice.
-- Pass 1 is recorded below. Pass 2 has D4 pending; later passes have not run. Engineering follows the completed design amendments. Independent plan coverage remains unavailable at the previously observed provider/thread boundaries; the image checker is not a fresh independent final-product reviewer.
+- D4 answered “A”: a change to any cited source places the article in Review needed without deleting historical understanding. D5 answered “A — 記事を1列にし、関係図は下へ（推奨）”: the narrow reader uses one article column. All seven passes are evaluated below; Pass 7 identifies D6, return reading position, as the remaining decision. Engineering follows the completed design amendments. Independent plan coverage remains unavailable at the previously observed provider/thread boundaries; the image checker is not a fresh independent final-product reviewer.
 
 ### Approved mockup
 
@@ -165,15 +164,80 @@ Article → View recording  → paused recorded moment  → Return to Wiki
 Return restores the original book / revision / node; no application input.
 ```
 
-### Pass 2 — Interaction states, in progress
+### Pass 2 — Interaction states
 
-Initial score: 8/10. D4 pending: an article may cite multiple sources, while the primary implementation draft binds understanding to its primary anchor. The plan does not clearly say whether changes to secondary citations also place the article in Review needed. Option A (recommended) retains historical understanding and shows article-level Review needed when any cited source changes; option B uses that article-level status only for the primary source and labels other changed citations locally. Neither remedy is accepted yet. Keep the approved compact checkbox in both alternatives.
+Score: 8 → 10/10 after D4. Raphtalia answered “A”: compare all sources cited by the selected article; any changed source produces an article-level Review needed status near its revision. Keep the compact checkbox and historical decisions. The first anchor still identifies the native source/default runtime alias; it cannot exempt secondary citations from the article's review state. Understanding the retained historical text never acknowledges unseen current bytes. Unavailable sources remain explicitly unverified, not current. Engineering must preserve this outcome across shared runtime-item aliases and repository identities.
 
-Blocked audit, 2026-09-19: the same unanswered D4 condition persists across the original question turn and two automatic goal continuations. The preceding continuation produced no new implementation evidence and was not a verified wait on a running job. Rechecking the conversation, cycle and feedback artifacts yields no D4 answer. The invoked review explicitly requires an individual decision before editing or advancing; later design passes, engineering and further implementation cannot proceed through this gate. No equivalent question is reissued and no elapsed-time default is applied. Resume this review on the actual D4 answer; keep approved B, the full product goal and final 0/10 review count unchanged.
+| Feature | Loading | Empty | Error | Success | Partial / stale |
+| --- | --- | --- | --- | --- | --- |
+| Book/article selection | Retain navigation and selected title; disable actions against unresolved content | Explain that a connected agent can create the first source-backed article; show connection/help actions | Identify the unavailable book and Retry; keep other valid books accessible | Exact book/revision/node and article sections | New revision available with Load latest; keep historical selection until explicit navigation |
+| Source citations | Citation remains named while its current status is checked | A valid article always has an anchor; absent/invalid anchors are an error, not a blank success | Name changed/missing/unreadable source; retain captured-source access where intact | Open the exact captured source/range; current-file action remains separate | Any changed citation gives article-level Review needed; show old/current source identity; no claim of current understanding |
+| Source relationships | Keep article readable while loading its validated revision | State that this revision has no related nodes; article citations remain available | Malformed endpoints invalidate the revision with an actionable error | Labeled, keyboard-operable related-node links | Label all relations Source-derived; no visual implication that the path ran |
+| Observations/recording | Name the chosen retained study/moment; disable unresolved destination | Explain that no observed/recorded moment is linked; reading remains available | Missing/corrupt link shows its reason instead of a working-looking destination | Exact observation or paused replay moment, with Return to Wiki | Preserve Partial recorded study and source-version differences; no input playback |
+| Learner understanding | Retain last committed check; disable save while pending | Unchecked until an explicit learner decision | Retain committed state and expose Retry | Compact understand checkbox reflects that historical source context | Retain historical check/history with Review needed; authoring and observation never auto-check it |
+
+The table expands already accepted state requirements and D4; it adds no authoring operation or runtime behavior. No other unresolved state finding remains.
+
+Historical blocker: D4 was unanswered across its question turn and two automatic continuations, so the goal was marked blocked. The owner's actual “A” answer resolves that condition and review work resumes here. No elapsed-time default was used. The app's goal API exposes no resume operation; the saved product/cycle state reflects resumed work without claiming an API status change.
+
+### Pass 3 — Journey and emotional arc
+
+Score: 9 → 10/10 after rendering the existing accepted journey, then revised to 8/10 during Pass 7 reconciliation: the plan restores the exact article but does not yet specify its reading position (D6). Emotional descriptions are design hypotheses, not owner usability evidence.
+
+| Step | Learner does | Intended feeling | Supporting accepted behavior |
+| --- | --- | --- | --- |
+| First 5 seconds | Opens Repository Wiki and selects an article | Oriented | Selected book/revision/title, current tree node and Source-derived / Agent interpretation labels |
+| First useful minutes | Reads a section and opens its citation | Able to verify the explanation | Immutable source/range beside article; no debugger prerequisite for reading |
+| Follows a relation | Selects the next explained node | Understands the structure | Named relation and exact article/source selection; no fabricated observed edge |
+| Inspects evidence | Opens a saved observation or recorded moment | Can distinguish explanation from proof | Exact source-bound observation, partial status and paused replay |
+| Returns to reading | Uses Return to Wiki | Recognizes the same explanation | Original book/revision/node restored, including saved-reader restart; viewport/section restoration is D6 pending |
+| Marks understanding | Toggles understand | Owns learning progress | One compact learner control, committed-save feedback, independent from agent/runtime actions |
+| Returns after edits or months | Revisits an older article | Can trust the history | Retained explanation/decisions; any cited-source change shows Review needed; explicit Load latest |
+
+The five-minute connected-agent target remains unmeasured. Long-term confidence comes from retained versions and evidence, not a guessed completion percentage. Pass 7's D6 remains open for the return leg; other journey steps introduce no new unresolved requirement.
+
+### Pass 4 — Visual specificity
+
+Score: 10 → 10/10 for this bounded plan. Mode: READ for article content; OPERATE for native editor, navigation and evidence actions. Approved B supplies the composition; existing native theme/typography supplies implementation values. Generated example prose and oversized raster text are not literal product copy or token values.
+
+| Hard rejection | Result / evidence |
+| --- | --- |
+| Generic SaaS card grid | No: article/source/editor structure, not a feature grid |
+| Beautiful image with weak product identity | No: codebook native activity and repository navigation; no decorative image |
+| Strong headline with no action | No: citations, source relations and named observation/replay actions |
+| Busy imagery behind text | No: native editor surfaces and text |
+| Repeated mood sections | No: each article section explains a cited responsibility |
+| Unmotivated carousel | No carousel |
+| Stacked decorative cards as app layout | No: article is continuous; outlined relation entries are interactive destinations, not ornamental panels |
+
+Litmus: product identifiable YES (codebook activity/title); primary anchor YES (selected article); headline scan YES (article/section responsibilities); one job per section YES; necessary grouping YES (interactive relation destinations and a distinct saved-study context); motion improves this reading surface NO (no new animation is needed); understandable without decorative shadows YES. The NO does not prescribe unnecessary motion. Existing moving replay is separate behavior with its own recording/frame evidence requirement. No unresolved visual-specificity finding.
+
+### Pass 5 — Design system alignment
+
+Score: 9 → 10/10 after mapping the existing approved native vocabulary. No new brand or component decision. Reuse `extension/src/ui/constants.ts`: host font via `--vscode-font-family`, source via `--vscode-editor-font-family`, 16 px body, 20 px title, 16 px section heading, 1.5 body line-height, 16 px outer padding, existing 8/12/16/20 px spacing, 4 px control corners. Colors use `--vscode-editor-background`, `--vscode-foreground`, `--vscode-descriptionForeground`, `--vscode-panel-border`, `--vscode-button-*`, `--vscode-textLink-*` and `--vscode-focusBorder`; high-contrast boundaries retain `--vscode-contrastBorder`.
+
+Native editor/tree controls remain native. Webview citations reuse visibly linked/visited styling and focus treatment. The compact understand row reuses the small native checkbox and label; a generous transparent hit area does not reintroduce the rejected panel. Semantic states use words as well as color. The approved image is a composition reference; implementation inherits the learner's actual VS Code/Cursor theme rather than hard-coding the mockup's dark colors. No issues found; continue.
+
+### Pass 6 — Responsive and accessibility
+
+Score: 8 → 10/10 after D5 A. At reader content widths below 800 CSS px, use one article column, an On this page disclosure near the title and source relationships after article sections. At 800 px and above, use approved B's article plus adjacent navigation/relationship context. The threshold is the implementation fit for a readable column plus secondary context, not a new product mode. Native source remains a separate editor group; the reader never forces window resizing. Cap reading measure at 72ch where space permits, use available width below it, wrap long paths and preserve the DOM reading order. Do not shrink body type to fit columns.
+
+At 320/390/600 px and 200% zoom, show title/revision/status first, then article/citations, relationships, related observations and the compact checkbox. Controls may wrap; article text has no horizontal scrollbar. No new tab system or mandatory animation. Native disclosure/buttons support keyboard activation. Semantic main/article/nav regions and ordered headings identify context; source status and revision describe the small checkbox without restoring its rejected visible helper panel. Keep visible focus on live updates, a 44 px interactive label area around the visually small check, text/contrast checks in host light/dark/high-contrast themes, visited citation distinction and textual state labels. Record browser behavior and actual-host evidence separately. No unresolved responsive/accessibility decision.
+
+### Pass 7 — Decision reconciliation
+
+| Decision | Status / impact |
+| --- | --- |
+| Wide composition and learner check | D3 approved: B with compact understand; do not reopen |
+| Source change scope | D4 A approved: any cited source can require article review; preserve historical understanding |
+| Narrow reader | D5 A approved: one column, small disclosure and relationships below; wide B retained |
+| Return reading position | D6 pending: exact article/revision/node is already retained, but returning from observation/replay may restart at the top of a long article. A (recommended) restores the original section/reading position; B restores the article at its top. Resolve before treating the journey as complete. |
+
+D6 is the remaining design finding; its two remedies are pending, not implementation tasks. No out-of-scope TODO proposal or new product requirement was selected.
 
 ## Selected implementation contract
 
-These were primary-agent engineering and UX decisions under D008, not formal `/plan-eng-review` or `/plan-design-review` results. Both skill definitions require an explicit owner-named target outside Plan mode: “only if the user EXPLICITLY names the target.” Raphtalia answered the scope question, “Cycle 0009 の計画を対象にする（推奨）.” The target gate is now resolved. The formal design checkpoint records all seven passes selected, B with compact checkbox approved and D4 source-change presentation pending. No other remedy is approved by the scope/focus answers. Further implementation is paused during these plan reviews; the source/schema draft below remains unvalidated at runtime.
+These were primary-agent engineering and UX decisions under D008, not formal `/plan-eng-review` or `/plan-design-review` results. Both skill definitions require an explicit owner-named target outside Plan mode: “only if the user EXPLICITLY names the target.” Raphtalia answered the scope question, “Cycle 0009 の計画を対象にする（推奨）.” The target gate is resolved. The formal design checkpoint records B with compact checkbox, D4 any-citation review state and D5 one-column narrow layout approved; D6 return reading position is pending. No other remedy is approved by the scope/focus answers. Further implementation is paused during these plan reviews; the source/schema draft below remains unvalidated at runtime.
 
 ### Architecture and alternatives
 
@@ -208,7 +272,7 @@ Content publication, selection, understanding and runtime control have separate 
 ### Document, identity and storage
 
 - Stable `bookId` and node IDs are lowercase slugs (maximum 64 characters); revision is a positive integer. Document contains title, summary, 1–64 nodes and 0–128 directed edges. Each node has title, up to 12 titled text sections (each text ≤12,000 characters), 1–8 source anchors, and up to 8 optional observation links. Whole submitted document ≤1 MiB; sealed revision ≤4 MiB. Duplicate IDs, unknown edge endpoints and invalid ranges fail before any write.
-- Primary anchor is explicitly the first anchor. A repository node's default learning identity is `repository/<bookId>/<nodeId>`. An optional existing runtime `learningItemId` is accepted only when a verified linked observation names that item and the initial primary source hash matches its capture. That binding cannot change in later revisions. An updated source then produces the normal Review needed state; old observations remain labeled with their own source hash.
+- Primary anchor is explicitly the first anchor. A repository node's default learning identity is `repository/<bookId>/<nodeId>`. An optional existing runtime `learningItemId` is accepted only when a verified linked observation names that item and the initial primary source hash matches its capture. That binding cannot change in later revisions. Under approved D4, article-level Review needed checks every cited source, including secondary anchors; primary identity cannot suppress that state. Preserve old learner decisions and observations with their own source versions. Engineering must bind the full citation context without duplicating or overwriting the shared runtime-item history.
 - A runtime observation link carries `studyId`, `observationId` and captured `sourceHash`. Resolve it against `LearningLibrary.readCheckpoint`, require a saved checkpoint and exact observation identity/hash. Preserve the checkpoint's outcome, including partial. A later annotation/checkpoint may append facts; it must not retarget or replace the linked observation. Missing/corrupt history disables the destination with its reason.
 - One private atomic file per book retains at most 20 revisions within an 8 MiB file limit; at most 16 books. No eviction. `withStorageLock` serializes publication with learner/recording storage. Read/schema/hash validation happens on every public read; corruption must not fall back to an older valid revision silently. A revision includes its request key, input digest, immutable copied source and publication time.
 - Publication accepts `expectedRevision` (0 for creation) and a stable key. Under the writer lock, re-read current content; identical key/input returns its original receipt, changed input under that key fails, stale expected revision fails. Validate all sources and observation references before atomic commit. A failed temporary write, bound or validation retains the previous file.
@@ -233,14 +297,14 @@ Every error keeps the existing `code/message/recovery` envelope. Reuse SDK pre-h
 - Add a Repository Wiki entry to the existing codebook activity container. The reader is a document tab within Study workspace, not a fourth display mode. It contains a book/revision selector, article list, current title, “Source-derived · Agent interpretation” label, sections with source buttons, a labeled relationship list, learner checkbox and related observed moments.
 - Selection is one explicit `book/revision/node/anchor` record, persisted independently of authoring. Click a node/relationship to select it; click a citation to open its immutable native source. “Open current file” is separate and rejects changed/unsaved bytes. A newer book revision announces availability and offers Load latest; it never steals historical selection or rewrites an open article.
 - “View observation” opens exactly the existing saved study and observation in Study workspace with follow disabled. “View recording” opens that study's existing replay, then seeks its recorded elapsed time without play or runtime input. A visible Return to Wiki action restores the prior exact article/node/revision, including after a saved-reader restart. Unknown/unrecorded evidence shows a reason instead of a false active link.
-- The primary source drives source-versioned understanding. Existing runtime-item aliases use the same learner record; repository-only nodes use new stable identities. Saving is disabled during pending storage; failure retains the last committed checkbox and exposes explicit Retry. Historical understanding is labeled as historical; source drift never shows a current completion claim.
+- The compact `understand` checkbox records explicit learner understanding of the retained source context. Existing runtime-item aliases use the same learner record; repository-only nodes use new stable identities. Any changed cited source produces article-level Review needed near the revision, even if the primary source still matches. Preserve historical decisions; checking an old article never acknowledges changed current bytes. Saving is disabled during pending storage; failure retains the last committed checkbox and exposes explicit Retry. Historical understanding is labeled as historical; unreadable sources are unverified and source drift never shows a current completion claim.
 - Empty: explain how a connected agent authors the first article and expose connection/help actions. Loading: retain navigation but disable stale destination/checkbox actions. Stale: show old/current hashes and retain cited-source access. Corrupt/missing: show the affected book or link with retry, without hiding other valid books. Partial runtime: label the linked study partial. No unlabeled success colors or invented coverage percentage.
-- Semantic headings, native buttons/selects, keyboard Tab/Enter/Space, visible focus, 44-pixel targets, theme tokens and wrapped content at 320/390/600 px and 200% zoom. Relationship list remains usable without graph layout; no forced animation or drag interaction. Only changed content replaces DOM nodes so focus survives live status updates. Normal browser checks validate these states; native API/pixels are separately classified.
+- Semantic headings, native buttons/selects, keyboard Tab/Enter/Space, visible focus, 44-pixel hit areas around the small checkbox, theme tokens and wrapped content at 320/390/600 px and 200% zoom. Under D5, readers below 800 CSS px use one article column, a small On this page disclosure and relationships below; wider readers retain B's adjacent context. Keep 16 px body text and cap measure at 72ch, without forced horizontal article scrolling. Relationship list remains usable without graph layout; no forced animation or drag interaction. Only changed content replaces DOM nodes so focus survives live status updates. Normal browser checks validate these states; native API/pixels are separately classified.
 
 ### Build and evidence sequence
 
 1. Source service and schema tests: a real temporary Git repository, tracking/path/encoding/size/identity changes; no mock replaces filesystem membership. Public SDK discovery tests inspect the actual advertised schema and error behavior.
-2. Store/progress tests: concurrent writers, stale revisions, lost response/idempotency, source changes during validation, atomic failure, bounds, malformed/unknown history, retained revisions, v1/v2 migration and failed v3 without fallback. Runtime partial/wrong observation links and alias binding are explicit cases.
+2. Store/progress tests: concurrent writers, stale revisions, lost response/idempotency, source changes during validation, atomic failure, bounds, malformed/unknown history, retained revisions, v1/v2 migration and failed v3 without fallback. Runtime partial/wrong observation links and alias binding are explicit cases. D4 regression: changing only a secondary cited file must produce article-level Review needed while retaining the historical checkbox/decision and original captured bytes; an unchanged primary file cannot clear it.
 3. Reader/native bridge: repository source provider, article navigation, existing exact observation/replay opening, return, native source hash/selection and independent learner progress. Confirm zero application operations from all reading paths.
 4. Actual driving-agent authoring of codebook source in each host: discover → choose/read source → create at least three useful nodes/relations → publish → open → inspect source → navigate retained observation/replay and return → restart. Preserve both host versions, clean source/build identity, request transcript, elapsed times and state before/after. A scripted publisher is fixture evidence only.
 5. Browser interaction QA on the real rendering module plus native host checks, then `/review` where its applicable gates permit. Retain missing independent/native pixel coverage; a primary review is not one of the final ten.
@@ -257,7 +321,7 @@ Pending. No capability state advances merely because this plan/issue exists. Kee
 
 ## Handoff
 
-Next: receive D4's actual answer, resume the existing formal design review at Pass 2, then complete the remaining passes and engineering; resume source/store/reader implementation after the reviewed amendments. Do not restart scope or visual selection. DX review is recorded. No new durable GStack learning emerged in that planning review. Branch `codex/cycle-0009-repository-learning-book` starts at `7330a3a`, preserving the unmerged Cycle 0008 increment; no separate task or background automation created. Temporary Cycle 0008 native/QA processes are closed. Product final gate remains 0/10 and owner acceptance outstanding.
+Next: resolve D6's return-reading-position choice, reconcile Pass 3 and finish the design report, then engineering; resume source/store/reader implementation after the reviewed amendments. D4/D5 are resolved by actual owner answers. Do not restart scope, visual selection or those choices. DX review is recorded. No new durable GStack learning emerged in that planning review. Branch `codex/cycle-0009-repository-learning-book` starts at `7330a3a`, preserving the unmerged Cycle 0008 increment; no separate task or background automation created. Temporary Cycle 0008 native/QA processes are closed. Product final gate remains 0/10 and owner acceptance outstanding.
 
 ## GSTACK REVIEW REPORT
 
@@ -265,13 +329,13 @@ Next: receive D4's actual answer, resume the existing formal design review at Pa
 | --- | --- | --- | --- | --- | --- |
 | DX Review | `/plan-devex-review` | Agent source/content contract | 1 primary | DONE_WITH_CONCERNS | Eight passes, four implementation tasks; planning specificity 4.4 → 9.8, actual DX unmeasured |
 | Outside Review | Installed skill preflight / known provider and thread limits | Independent challenge | 0 completed | unavailable | Own-harness nested Codex is excluded; native thread limit and prior external timeout remain unchanged |
-| Design Review | `/plan-design-review` | Reader UX | 1 started | blocked on D4 | B with compact checkbox approved; Pass 1 8 → 10, Pass 2 8 with D4 pending; later passes not run |
+| Design Review | `/plan-design-review` | Reader UX | 1 started | in progress | Seven passes evaluated; D3/D4/D5 approved; Pass 7 identifies D6 return position, leaving journey 8/10 pending |
 | Eng Review | `/plan-eng-review` | Storage, identity, source scope | 0 | target selected, not started | Await design amendments; earlier primary contract is not a skill result |
 | CEO Review | Existing goal/design | Product scope unchanged | 0 this cycle | not requested | Existing product direction retained |
 
 OUTSIDE COVERAGE: unavailable; no independent result or cross-model agreement inferred. Prior Cycle 0008 reviews do not cover this increment.
 
-VERDICT: DX plan recorded with concerns; formal design is blocked on unanswered D4 and eng review is still required. Source draft passes typecheck and 11 filesystem/schema tests only; no product acceptance follows from this report.
+VERDICT: DX plan recorded with concerns; seven design passes evaluated with D6 return position still open; eng review is still required. Source draft passes typecheck and 11 filesystem/schema tests only; no product acceptance follows from this report.
 
 **UNRESOLVED DECISIONS:**
-- D4 pending: whether any changed citation places its article in Review needed, or only the primary citation does. No remedy is accepted yet; later design passes and engineering remain pending.
+- D6 pending: return from observation/replay to the original article's reading position versus its top. No return-position remedy is accepted yet; design completion and engineering remain pending.
