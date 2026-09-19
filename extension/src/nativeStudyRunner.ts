@@ -136,6 +136,8 @@ async function main(): Promise<void> {
     await agent.close(); agent = undefined;
     results.checks.native = (await bridge('finish')).checks;
     editor.child.kill(); await awaitResponse(editor.exit, 'first owned learner editor exit');
+    // The previous process's Finish must not become a command for the newly started bridge.
+    await writeFile(join(suiteDirectory, 'study-command.json'), JSON.stringify({ sequence: 0, action: 'inspect' }));
     editor = launch(true);
     bridgePrefix = 'reload'; sequence = 0;
     const reloaded = await waitUntil(async () => { try { return nativeStudyResultSchema.parse(JSON.parse(await readFile(join(suiteDirectory, 'reload-0.json'), 'utf8'))); } catch { return undefined; } }, 'native learner reload', NATIVE_EDITOR_START_TIMEOUT_MS);
