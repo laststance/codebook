@@ -2,7 +2,7 @@
 
 Updated: 2026-09-19\
 Product stage: connected study and durable learning mechanisms demonstrated; full native usability unverified\
-Active cycle: [0008 — Recording and offline replay](docs/cycles/0008-recording-replay.md) — planning\
+Active cycle: [0008 — Recording and offline replay](docs/cycles/0008-recording-replay.md) — implementation\
 Last cycle: [0007 — Cart-to-confirmation scenario](docs/cycles/0007-checkout-scenario.md) — mechanisms demonstrated; native reliability inconclusive\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#9](https://github.com/laststance/codebook/issues/9) — open\
@@ -44,7 +44,7 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Review and implement the active Cycle 0008: synchronized recording/offline replay of the fixed checkout (D014). Cycle 0007 closure and issue #8 are synchronized; evidence is on origin/main at `6840178`. Plan only moving frames, shared event/observation timing, playback after runtime exit and explicit partial/gap handling. Preserve historical phase receipts and source versions. Carry the intermittent render-ACK risk without inventing a cause or repeating an unchanged diagnostic. Current code passes 96/46/43 tests, 16 clean native cases and bounded webview checks; current actual-agent outcomes are complete Cursor and partial-image VS Code. D008 authorizes continuation; no final goal is removed.
+Implement ENG1→ENG4 of active Cycle 0008: synchronized recording/offline replay of the fixed checkout (D014). DX, design and engineering plans are complete, including three fresh same-host challenges (2/5/3 findings adopted). External coverage is unavailable after one Claude Code timeout; no repeated unchanged invocation. Start with the optional shared clock/frame seam and bounded recording store, then context/outcome, playback/API/UI and separate native host evidence. The cycle contains exact limits and T1–T9 tests. Cycle 0007 evidence remains on origin/main at `6840178`; 96/46/43 tests and prior native outcomes are baseline only, not recording proof. Preserve source versions, legacy archives and the unresolved render-ACK distinction. D008 authorizes continuation; no final goal is removed.
 
 Cycle 0007 source and final host evidence are frozen at `8be0913`. No CI, PR approval, VSIX, installed-product or publication claim exists. Desktop-lock-dependent native visual checks remain unverified; do not bypass or repeatedly retry the unchanged lock.
 
