@@ -123,7 +123,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.evidence.save('sealed-source.ts', this.bundle.source); this.alive();
     await this.evidence.save('sealed-module.js', this.bundle.javascript); this.alive();
     await this.evidence.save('sealed-module.map.json', this.bundle.sourceMap); this.alive();
-    const bound = { configurationHash: this.definition.configurationHash, itemId: this.definition.descriptor.itemId, sourceHash: this.verifier.hashes.typescript, javascriptHash: this.verifier.hashes.javascript, mapHash: this.verifier.hashes.sourceMap };
+    const { itemId, anchors, citationContext } = this.definition.descriptor;
+    const bound = { configurationHash: this.definition.configurationHash, configuration: this.definition.configuration, descriptor: { itemId, anchors, citationContext }, itemId,
+      sourceHash: this.verifier.hashes.typescript, javascriptHash: this.verifier.hashes.javascript, mapHash: this.verifier.hashes.sourceMap };
     this.manifest = { ...bound, hash: sha256(JSON.stringify(bound)) };
     this.evidence.record('source.sealed', { ...bound, discovery: acquired.discovery, scriptUrl: this.bundle.scriptUrl, chunkHash: this.bundle.chunkHash });
     // Raw source tabs are learner-owned; only a breakpoint is acquired here, never a file editor.

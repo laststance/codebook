@@ -9,7 +9,7 @@ import { STUDY_STYLES, STUDY_UI_OPTIONS } from './constants';
 export interface StudyViewMessage {
   type: 'study'; revision: number; model: ReturnType<typeof projectStudy>; study?: Pick<RetainedStudy, 'id' | 'state' | 'terminal' | 'createdAt' | 'reason' | 'profile' | 'finalOutcome' | 'links'> & { historyOutcome: string; studyOutcome: string };
   liveState?: string; deadlineAt?: string; busy: boolean; saving: boolean; loading: boolean; errors: string[]; canClick: boolean; canRun: boolean;
-  nextAction?: StudyDescriptor['actions'][number]; liveProfile?: RetainedStudy['profile']; profiles: Pick<StudyDescriptor, 'id' | 'title' | 'description'>[];
+  nextAction?: StudyDescriptor['actions'][number]; liveProfile?: RetainedStudy['profile']; liveTitle?: string; profiles: Pick<StudyDescriptor, 'id' | 'title' | 'description'>[];
   moments: { id: string; itemId: string; title: string; at: string; elapsedMs?: number }[]; studies: StudyCatalogEntry[];
   contentTab?: 'overview' | 'live' | 'recording';
   repositoryReturnAvailable?: boolean;
@@ -120,7 +120,7 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     const profiles = element('profiles');
     if (profiles instanceof HTMLSelectElement) { replace('profiles', message.profiles, () => message.profiles.map(profile => { const option = document.createElement('option'); option.value = profile.id; option.textContent = profile.title; return option; })); profiles.value = model.selection.profile; profiles.disabled = message.busy || !message.canRun; }
     text('profile-description', selectedProfile?.description ?? 'Scenario unavailable.');
-    text('runtime', model.currentItemId ? `${liveProfile?.title ?? 'Live study'} — paused at ${model.currentItemTitle}` : `${liveProfile?.title ?? 'Runtime'} — ${message.nextAction?.id === 'checkout' ? 'Cart updated — checkout available' : message.liveState ?? 'not running'}`);
+    text('runtime', model.currentItemId ? `${message.liveTitle ?? liveProfile?.title ?? 'Live study'} — paused at ${model.currentItemTitle}` : `${message.liveTitle ?? liveProfile?.title ?? 'Runtime'} — ${message.nextAction?.id === 'checkout' ? 'Cart updated — checkout available' : message.liveState ?? 'not running'}`);
     text('deadline', message.deadlineAt && !message.study?.terminal ? `Study wall limit: ${new Date(message.deadlineAt).toLocaleTimeString()}. History remains readable after expiry.` : 'Reading history does not restart execution.');
     const outcome = message.study?.studyOutcome;
     const scenario = model.scenarioProgress;
@@ -138,7 +138,7 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     button('run')!.disabled = message.busy || !message.canRun; button('click')!.disabled = message.busy || !message.canClick;
     button('run')!.textContent = `Run ${selectedProfile?.title ?? 'selected scenario'}`;
     button('click')!.textContent = message.nextAction ? `${message.nextAction.title} once` : 'No action available';
-    button('stop')!.textContent = liveProfile ? `Stop ${liveProfile.title}` : 'Stop';
+    button('stop')!.textContent = liveProfile ? `Stop ${message.liveTitle ?? liveProfile.title}` : 'Stop';
     element('loading').hidden = !message.loading;
     text('loading', recording?.readiness === 'failed' ? 'Recorded context unavailable. Reload after resolving the reported problem.' : 'Loading the selected observation…'); element('selected').hidden = message.loading;
     for (const tab of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-tab]'))) {

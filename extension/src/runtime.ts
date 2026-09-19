@@ -17,7 +17,7 @@ export type RuntimeSource = Pick<SealedSource, 'source' | 'javascript' | 'source
 export type ConfiguredRuntimeView = Pick<DemoRuntimeView, 'runId' | 'status' | 'cleaned' | 'resourcesReleased' | 'runtimeOutcome' | 'captureOutcome' | 'finalOutcome' | 'captures' | 'failures' | 'events' | 'artifactDirectory' | 'activeSessionIds'> & {
   profile: typeof REPOSITORY_BROWSER_PROFILE;
   definition: ConfiguredDefinition;
-  manifest?: { hash: string; configurationHash: string; itemId: ConfiguredObservation['itemId']; sourceHash: string; javascriptHash: string; mapHash: string };
+  manifest?: { hash: string; configurationHash: string; configuration: ConfiguredDefinition['configuration']; descriptor: Pick<ConfiguredDefinition['descriptor'], 'itemId' | 'anchors' | 'citationContext'>; itemId: ConfiguredObservation['itemId']; sourceHash: string; javascriptHash: string; mapHash: string };
   participants: { browser: Omit<DemoRuntimeView['participants']['browser'], 'snapshot'> & { snapshot: ConfiguredRuntimeSnapshot | undefined } };
   snapshots: ConfiguredRuntimeSnapshot[];
   operation: ConfiguredStudy['operation'];
@@ -45,6 +45,6 @@ export interface StudyEnvironment {
   readonly host: HostConfiguration;
   readonly build: { revision: string; dirty: boolean; sourceHash: string };
   assertWorkspace?(): void;
-  prerequisites(): Promise<{ ready: boolean; missing: string[] }>;
+  prerequisites(): Promise<{ ready: boolean; missing: string[]; profiles?: Partial<Record<ProfileId | typeof REPOSITORY_BROWSER_PROFILE, { ready: boolean; missing: string[] }>> }>;
   createRuntime(directory: string, definition?: RuntimeDefinition, control?: RuntimeControl): Promise<StudyRuntime>;
 }

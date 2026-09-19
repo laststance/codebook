@@ -11,6 +11,23 @@ import { configuredServiceHarness } from './utils/configuredServiceHarness';
 
 const receiptSchema = z.object({ instanceId: z.string(), runId: z.string(), runUri: z.string() });
 
+test('missing repository runtime support prevents acquisition while source authoring remains available', async context => {
+  // Arrange
+  const { service, configuration, environment, runtimes, books } = await configuredServiceHarness(context);
+  environment.prerequisites = async () => ({ ready: true, missing: [], profiles: { 'repository-browser': { ready: false, missing: ['Install the supported Next development runtime.'] } } });
+  // Act
+  const status = await service.status(), receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'unsupported-workspace', configuration });
+  const record = service.record(receipt); await record.preparation; await service.stop(receipt);
+  const source = await service.source({ instanceId: service.instanceId, path: configuration.source.path });
+  const article = await books.readDefinition(configuration.book.bookId, configuration.book.revision);
+  const published = await service.publishBook({ instanceId: service.instanceId, bookId: 'source-only', expectedRevision: 0, key: 'still-available', document: article.revision.document });
+  // Assert
+  assert.equal(status.prerequisites.ready, true); assert.equal(status.profiles.find(profile => profile.id === 'repository-browser')?.prerequisites.ready, false);
+  assert.equal(status.repository.ready, true); assert.equal(record.error?.code, 'PREREQUISITE_MISSING');
+  assert.equal(record.error?.message, 'Install the supported Next development runtime.'); assert.equal(runtimes.length, 0);
+  assert.equal(source.hash, configuration.source.hash); assert.equal(published.bookId, 'source-only'); assert.equal(published.revision, 1);
+});
+
 test('duplicate configured starts reserve one immutable intent before article I/O and reject any changed configuration', async context => {
   // Arrange
   const { service, books, configuration, runtimes } = await configuredServiceHarness(context), read = books.readDefinition.bind(books);
@@ -156,4 +173,21 @@ test('real SDK accepts the bounded configured object and reconnects to the origi
     assert.equal(invalid.isError, true); assert.equal(service.records.size, 1);
     assert.deepEqual((await second.callTool({ name: 'codebook_start', arguments: start })).structuredContent, result.structuredContent);
   } finally { await first.close(); await second?.close(); await endpoint.close(); }
+});
+
+test('API 1.4 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async context => {
+  // Arrange
+  const { service, runtimes } = await configuredServiceHarness(context);
+  // Act
+  const status = await service.status(), profile = status.profiles.find(profile => profile.id === 'repository-browser'), help = await readResource(service, 'codebook://help/repository-browser');
+  // Assert
+  assert.equal(status.apiVersion, '1.4'); assert.ok(profile && 'requiresConfiguration' in profile);
+  assert.equal(profile.requiresConfiguration, true); assert.equal(profile.minimumExtensionVersion, '0.2.0');
+  assert.equal(profile.helpUri, 'codebook://help/repository-browser'); assert.equal(profile.limits.runTimeoutMs, 600000); assert.equal(profile.limits.pauseHoldTimeoutMs, 300000);
+  assert.deepEqual(profile.items, []); assert.deepEqual(profile.requiredLinks, []); assert.equal(profile.actions[0]?.id, 'repository-click');
+  assert.ok('text' in help);
+  const contract = z.object({ configurationSchema: z.object({ type: z.literal('object'), additionalProperties: z.literal(false), required: z.array(z.string()), properties: z.record(z.string(), z.unknown()) }), sequence: z.array(z.string()), recovery: z.string() }).parse(JSON.parse(help.text));
+  assert.deepEqual(contract.configurationSchema.required, ['version', 'adapter', 'book', 'source', 'action', 'inspections']);
+  assert.match(contract.sequence.join('\n'), /afterVerified/); assert.match(contract.sequence.join('\n'), /saved studyId/);
+  assert.equal(service.records.size, 0); assert.equal(runtimes.length, 0);
 });

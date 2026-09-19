@@ -20,6 +20,7 @@ import type { PlaybackController } from './playbackController';
 import type { PlaybackCommand } from './playbackSchemas';
 import { REPOSITORY_BROWSER_ACTION, REPOSITORY_BROWSER_PROFILE, REPOSITORY_RUN_TIMEOUT_MS, REPOSITORY_SETUP_TIMEOUT_MS } from './constants';
 import type { ConfiguredDefinition, ConfiguredFactValue } from './configuredStudySchemas';
+import { CONFIGURED_PROFILE } from './configuredProfile';
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy';
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes';
 
@@ -77,14 +78,16 @@ export class StudyService {
       this.environment.prerequisites().catch(error => ({ ready: false, missing: [String(error)] })),
       this.repository ? this.sources({ instanceId: this.instanceId }).then(() => ({ ready: true, reason: undefined }), error => ({ ready: false, reason: String(error) })) : Promise.resolve({ ready: false, reason: 'Repository storage is unavailable.' }),
     ]);
+    const profilePrerequisites = 'profiles' in prerequisites ? prerequisites.profiles : undefined;
+    const commonPrerequisites = { ready: prerequisites.ready, missing: prerequisites.missing };
     return { instanceId: this.instanceId, apiVersion: API_VERSION, workspace: this.environment.workspace,
       host: this.environment.host, build: this.environment.build, prerequisites, stopping: this.stopping,
-      profiles: PROFILE_IDS.map(id => {
+      profiles: [...PROFILE_IDS.map(id => {
         const definition = STUDY_PROFILES[id];
         const catalog = { ...definition, items: definition.items.map(item => ({ ...item, expectedValues: stopExpectations('<runtimeRunId>', item) })), expectations: definition.actions.map(action => ({ actionId: action.id, ...actionExpectations('<runtimeRunId>', action.id) })) };
-        return { ...catalog, catalogHash: sha256(JSON.stringify(catalog)) };
-      }),
-      capabilities: ['start', 'add-to-cart', 'checkout', 'pause-evidence', 'continue', 'explain', 'reveal-source', 'stop', 'historical-resources'],
+        return { ...catalog, catalogHash: sha256(JSON.stringify(catalog)), prerequisites: profilePrerequisites?.[id] ?? commonPrerequisites };
+      }), { ...CONFIGURED_PROFILE, prerequisites: profilePrerequisites?.[REPOSITORY_BROWSER_PROFILE] ?? commonPrerequisites }],
+      capabilities: ['start', 'add-to-cart', 'checkout', REPOSITORY_BROWSER_ACTION, 'pause-evidence', 'continue', 'explain', 'reveal-source', 'stop', 'historical-resources'],
       limits: { activeRuns: 1, retainedRuns: MAX_RUNS, explanationsPerRun: MAX_EXPLANATIONS, activeTimeoutMs: ACTIVE_TIMEOUT_MS, runTimeoutMs: RUN_TIMEOUT_MS, timeoutFieldsApplyTo: 'paired-cart-demo; use each selected profile.limits for other profiles' },
       runs: [...this.records.values()].map(record => ({ runId: record.id, uri: this.uri(record.id), state: this.state(record).state })),
       recording: this.recordings ? { libraryUri: `codebook://${this.instanceId}/library`, playbackUri: `codebook://${this.instanceId}/playback`, playbackAvailable: Boolean(this.playbackController), limits: this.recordings.limits,
@@ -192,7 +195,7 @@ export class StudyService {
     this.assertMutable(input.instanceId); const record = this.record(input);
     if (!record.runtime || record.stopping || record.stopped || record.error || record.runtime.evidence.failure || this.now() >= record.deadlineAt) throw new StudyError('STALE_PAUSE', 'The run cannot resume this historical pause.');
     try { await record.runtime.continue(input.participant, { sessionId: input.sessionId, threadId: input.threadId, generation: input.generation }); }
-    catch (error) { throw new StudyError(String(error).includes('conflict:') ? 'STALE_PAUSE' : 'RUNTIME_FAILED', 'Continue was not confirmed.', String(error)); }
+    catch (error) { if (error instanceof StudyError) throw error; throw new StudyError(String(error).includes('conflict:') ? 'STALE_PAUSE' : 'RUNTIME_FAILED', 'Continue was not confirmed.', String(error)); }
     return { accepted: true, runUri: this.uri(record.id) };
   }
 
@@ -388,7 +391,9 @@ export class StudyService {
         this.environment.assertWorkspace?.();
       }
       const prerequisites = await this.environment.prerequisites();
-      if (!prerequisites.ready) throw new StudyError('PREREQUISITE_MISSING', prerequisites.missing.join('; '));
+      // Shared Node/Chrome availability alone cannot authorize an unsupported selected profile.
+      const selectedPrerequisites = prerequisites.profiles?.[record.profile] ?? prerequisites;
+      if (!selectedPrerequisites.ready) throw new StudyError('PREREQUISITE_MISSING', selectedPrerequisites.missing.join('; '));
       if (this.stopping || record.stopping) return;
       const definition = record.profile === REPOSITORY_BROWSER_PROFILE ? record.definition : record.profile;
       if (!definition) throw new StudyError('RUNTIME_FAILED', 'Configured source binding is absent.');

@@ -1,5 +1,6 @@
-export const API_VERSION = '1.3';
-export const EXTENSION_VERSION = '0.1.0';
+export const API_VERSION = '1.4';
+export const EXTENSION_VERSION = '0.2.0';
+export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0';
 export const PROFILE_ID = 'paired-cart-demo';
 export const LOOPBACK_ADDRESS = '127.0.0.1';
 export const DYNAMIC_PORT = 0;

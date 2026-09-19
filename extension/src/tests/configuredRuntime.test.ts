@@ -134,3 +134,14 @@ test('the service cancellation signal retires an already held configured runtime
   // Assert
   assert.equal(run.view().resourcesReleased, true); assert.equal(run.view().participants.browser.pause, undefined); assert.equal(run.view().snapshots[0], snapshot); assert.equal(mouse.length, 2);
 });
+
+test('the pre-input configured manifest retains the full accepted intent and complete citation identity without source-code blobs', async context => {
+  // Arrange
+  const { run, mouse } = await configuredRuntimeHarness(context);
+  // Act
+  await run.prepare(); const manifest = run.view().manifest;
+  // Assert
+  assert.ok(manifest); assert.equal(manifest.configuration.source.path, 'src/theme.ts'); assert.equal(manifest.configuration.action.title, 'Change theme');
+  assert.equal(manifest.descriptor.itemId, 'repository/interface/theme'); assert.equal(manifest.descriptor.citationContext.anchors.length, 2);
+  assert.equal(manifest.configurationHash, run.definition.configurationHash); assert.equal('sources' in manifest.descriptor, false); assert.equal(mouse.length, 0);
+});

@@ -54,7 +54,7 @@ test('MCP checkout discovers its action order and preserves the first receipt an
   try {
     const discovery = await connection.client.callTool({ name: 'codebook_status', arguments: {} });
     const catalog = z.object({ data: z.object({ apiVersion: z.string(), profiles: z.array(z.object({ id: z.string(), actions: z.array(z.object({ id: z.string() })), items: z.array(z.object({ id: z.string() })), limits: z.object({ runTimeoutMs: z.number() }) })) }) }).parse(discovery.structuredContent).data;
-    assert.equal(catalog.apiVersion, '1.3');
+    assert.equal(catalog.apiVersion, '1.4');
     const checkout = catalog.profiles.find(profile => profile.id === 'checkout-demo')!;
     assert.deepEqual(checkout.actions.map(action => action.id), ['add-to-cart', 'checkout']); assert.equal(checkout.items.length, 4); assert.equal(checkout.limits.runTimeoutMs, 300_000);
     const started = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: 'checkout-demo', key: 'purchase' } });

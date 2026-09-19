@@ -814,7 +814,7 @@ export class StudyWorkspace {
       study: study && { id: study.id, state: study.state, terminal: study.terminal, profile: study.profile, createdAt: study.createdAt, reason: study.reason, finalOutcome: study.finalOutcome, links: this.recordingActive ? [] : study.links,
         historyOutcome, studyOutcome },
       liveState: live?.state, deadlineAt: live?.deadlineAt, busy: this.busy, saving: this.saving, loading: this.loading || Boolean(playbackState?.cleared && !this.playbackPresentingReady), errors: [...this.errors.values(), ...this.catalog.flatMap(entry => entry.reason ? [entry.reason] : [])],
-      nextAction, liveProfile: live?.profile,
+      nextAction, liveProfile: live?.profile, liveTitle: liveDescriptor?.title,
       profiles: [...Object.values(STUDY_PROFILES), ...(descriptor.id === REPOSITORY_BROWSER_PROFILE ? [descriptor] : liveDescriptor?.id === REPOSITORY_BROWSER_PROFILE ? [liveDescriptor] : [])].map(profile => ({ id: profile.id, title: profile.title, description: profile.description })),
       canClick: !this.recordingActive && Boolean(nextAction), canRun: (!record || record.stopped) && (this.selection.profile !== REPOSITORY_BROWSER_PROFILE || study?.version === 3),
       moments: (study?.observations ?? []).map(observation => ({ id: observation.id, itemId: observation.itemId, title: descriptor.items.find(item => item.id === observation.itemId)?.title ?? 'Captured observation', at: observation.capturedAt, elapsedMs: observation.elapsedMs })), studies: this.catalog };
