@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { DebugProtocol } from '@vscode/debugprotocol';
@@ -13,11 +13,12 @@ import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { settleCleanup } from 'codebook-cycle-0001/dist/utils/settleCleanup';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { EVIDENCE_EVENT_LIMIT, EVIDENCE_LIMIT_BYTES, EXPECTED_VALUES, OPTIONAL_EXPRESSIONS, RUN_TIMEOUT_MS, SCRIPT_DIAGNOSTIC_LIMIT, SETUP_TIMEOUT_MS, STACK_FRAME_LIMIT, TARGET_SOURCE_COLUMN, TARGET_SOURCE_LINE } from './constants';
+import { EVIDENCE_EVENT_LIMIT, EVIDENCE_LIMIT_BYTES, EXPECTED_VALUES, OPTIONAL_EXPRESSIONS, RUN_TIMEOUT_MS, SCRIPT_DIAGNOSTIC_LIMIT, SETUP_TIMEOUT_MS, SOURCE_LIMIT_BYTES, STACK_FRAME_LIMIT, TARGET_SOURCE_COLUMN, TARGET_SOURCE_LINE } from './constants';
 import { createBundleVerifier } from './utils/createBundleVerifier';
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle';
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer';
 import { sameScriptUrl } from './utils/sameScriptUrl';
+import { readBoundedText } from './utils/readBoundedText';
 
 export interface RepositoryConfig { directory: string; target: string; node: string; host: HostConfiguration; revision: string; sourceFingerprint: string }
 type Source = Awaited<ReturnType<typeof readDevelopmentBundle>>['bundle'];
@@ -84,7 +85,7 @@ export class RepositoryRun {
     await this.evidence.initialize(); this.alive();
     this.app = launchDevelopmentServer(this.config.target, this.config.node, (type, detail) => this.evidence.record(type, detail));
     this.origin = await this.app.ready(this.abort.signal); this.alive();
-    const acquired = await readDevelopmentBundle(this.config.target); this.alive();
+    const acquired = await readDevelopmentBundle(this.config.target, this.abort.signal); this.alive();
     this.source = acquired.bundle; this.verifier = createBundleVerifier(this.source);
     await this.evidence.save('sealed-source.tsx', this.source.source);
     await this.evidence.save('sealed-module.js', this.source.javascript);
@@ -110,7 +111,7 @@ export class RepositoryRun {
       this.script = event; this.evidence.record('script.selected', { scriptId: event.scriptId, url: event.url, executionContextId: event.executionContextId });
     });
     cdp.on('Debugger.paused', event => { this.stopped = { event }; });
-    cdp.on('Debugger.resumed', () => { this.stopped = undefined; });
+    cdp.on('Debugger.resumed', () => this.onCdpResumed());
     await cdp.subscribe(['Debugger.scriptParsed', 'Debugger.paused', 'Debugger.resumed']);
     await this.browser.attachViewport(cdp, this.abort.signal); this.alive();
     await cdp.request('Page.addScriptToEvaluateOnNewDocument', { source: `if (location.origin === ${JSON.stringify(this.origin)}) localStorage.setItem('theme', 'light');` });
@@ -139,7 +140,7 @@ export class RepositoryRun {
         try {
           const proxy: { host: string; port: number; path: string } = await awaitResponse(session.customRequest('requestCDPProxy'), 'owned proxy', this.abort.signal);
           candidate = await this.acquire(Cdp.connect(`ws://${proxy.host}:${proxy.port}${proxy.path}`, (type, detail) => this.evidence.record(type, detail))); this.alive();
-          const result = await candidate.request('Runtime.evaluate', { expression: 'location.href', returnByValue: true }); this.alive();
+          const result = await awaitResponse(candidate.request('Runtime.evaluate', { expression: 'location.href', returnByValue: true }), 'owned page identity', this.abort.signal); this.alive();
           if (result.result.value === 'about:blank') matches.push({ session, cdp: candidate });
         } catch (error) { if (this.abort.signal.aborted) throw error; }
         finally { if (candidate && !matches.some(match => match.cdp === candidate)) candidate.close(); }
@@ -169,6 +170,16 @@ export class RepositoryRun {
     this.alive();
     await cdp.request('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...coordinates }, RUN_TIMEOUT_MS);
     this.alive(); this.operation!.acknowledged = true; this.evidence.record('input.acknowledged');
+  }
+
+  /** Revokes an externally resumed stop before delayed DAP events can grant false ownership. @example run.onCdpResumed() */
+  onCdpResumed(): void {
+    const generation = this.stopped?.generation; this.stopped = undefined;
+    this.evidence.record('cdp.resumed', { generation });
+    // A delayed CDP event for an older stop must not invalidate a newer DAP generation.
+    if (generation === undefined || generation !== this.gate.current?.generation) return;
+    if (this.continuation?.generation !== generation) this.fail('Selected browser resumed outside its owned continuation');
+    else this.gate.invalidate();
   }
 
   /** Invalidates authority before unexpected outgoing DAP resume requests can change execution. @example run.onRequest(selected, request) */
@@ -214,7 +225,7 @@ export class RepositoryRun {
     const frame = stack.stackFrames[0], callFrame = stopped.event.callFrames[0]!;
     if (!frame?.source?.path || resolve(frame.source.path) !== this.source!.sourcePath || frame.line !== TARGET_SOURCE_LINE) throw new Error('DAP frame differs from exact repository source');
     const executed = await this.requireCdp().request('Debugger.getScriptSource', { scriptId: callFrame.location.scriptId }); current();
-    const local = await readFile(this.source!.sourcePath, 'utf8'); current();
+    const local = await readBoundedText(this.source!.sourcePath, SOURCE_LIMIT_BYTES, this.abort.signal); current();
     const source = this.verifier!.verify(executed.scriptSource, local, callFrame.location, this.script!.scriptId, frame.line, frame.column);
     const values: Snapshot['values'] = {}, evaluations: Snapshot['evaluations'] = [];
     for (const [expression, expected] of Object.entries(EXPECTED_VALUES)) {
@@ -230,19 +241,24 @@ export class RepositoryRun {
       values[expression] = response.exceptionDetails ? { unavailable: response.exceptionDetails.text } : response.result.value ?? { unavailable: 'No primitive value at this frame' };
     }
     const snapshot: Snapshot = { id: randomUUID(), pause, frame, source, values, evaluations };
-    await this.evidence.save('snapshot.json', snapshot); current(); this.snapshot = snapshot;
+    await this.evidence.save('snapshot.json', snapshot); current();
+    // Publish live authority only after its paused frame is acknowledged; continue cannot race the renderer.
+    await this.capture('paused-1', pause); current(); this.snapshot = snapshot;
     this.evidence.record('snapshot.committed', { snapshotId: snapshot.id, pause });
-    await this.capture('paused-1', pause); current(); await this.persist();
+    await this.persist();
   }
 
   /** Reserves exact authority synchronously, then checks raw source again before continuing once. @example await run.continue(currentPause) */
   async continue(pause: PauseIdentity): Promise<void> {
-    if (this.cleaning || !this.snapshot || !this.gate.reserve(pause)) throw new Error('conflict: stale, foreign or already reserved pause');
-    const local = await readFile(this.source!.sourcePath, 'utf8'); this.alive();
-    if (sha256(local) !== this.verifier!.hashes.typescript || this.gate.phase !== 'resume-requested' || this.gate.current?.generation !== pause.generation) { this.fail('Source or pause changed before continue'); throw new Error('conflict: changed source or pause'); }
-    this.continuation = pause; this.expectedResumeRequests += 1;
-    this.evidence.record('continue.accepted', pause);
-    try { await awaitResponse(this.selected!.customRequest('continue', { threadId: pause.threadId }), 'repository continue', this.abort.signal); }
+    if (this.cleaning || !this.snapshot || !this.gate.matches(this.snapshot.pause) || !this.gate.reserve(pause)) throw new Error('conflict: stale, foreign or already reserved pause');
+    // Every failure after reservation revokes authority; the historical snapshot grants no future pause permission.
+    try {
+      const local = await readBoundedText(this.source!.sourcePath, SOURCE_LIMIT_BYTES, this.abort.signal); this.alive();
+      if (sha256(local) !== this.verifier!.hashes.typescript || this.gate.phase !== 'resume-requested' || this.gate.current?.generation !== pause.generation) throw new Error('conflict: Source or pause changed before continue');
+      this.continuation = pause; this.expectedResumeRequests += 1;
+      this.evidence.record('continue.accepted', pause);
+      await awaitResponse(this.selected!.customRequest('continue', { threadId: pause.threadId }), 'repository continue', this.abort.signal);
+    }
     catch (error) { this.fail(`Continue uncertain: ${String(error)}`); throw error; }
   }
 
@@ -265,9 +281,10 @@ export class RepositoryRun {
   }
 
   /** Runs deliberate native interference only through private QA commands. @example await run.interfere('manual-resume') */
-  async interfere(action: 'manual-resume' | 'source-drift'): Promise<void> {
+  async interfere(action: 'manual-resume' | 'cdp-resume' | 'source-drift'): Promise<void> {
     if (!this.gate.current || !this.snapshot) throw new Error('Interference requires a captured pause');
     if (action === 'manual-resume') await this.selected!.customRequest('continue', { threadId: this.gate.current.threadId });
+    else if (action === 'cdp-resume') await this.requireCdp().request('Debugger.resume', {});
     else { this.drifted = true; await writeFile(this.source!.sourcePath, `${this.source!.source}\n// Isolated source-drift negative test.\n`); }
   }
 
@@ -287,20 +304,30 @@ export class RepositoryRun {
   }
 
   /** Shares cleanup so cancellation can reject pending input before awaiting its settlement. @example await run.cleanup() */
-  cleanup(): Promise<void> { return this.cleanupPromise ??= this.cleanupOwned(); }
+  async cleanup(): Promise<void> {
+    const attempt = this.cleanupPromise ??= this.cleanupOwned();
+    // Repeated stop shares active work but may retry an incomplete release after that attempt fails.
+    try { await attempt; } catch (error) { if (this.cleanupPromise === attempt) this.cleanupPromise = undefined; throw error; }
+  }
 
-  /** Executes the reviewed acquisition → close → settlement ordering and publishes success only after persistence. @example await this.cleanupOwned() */
+  /** Releases known transports/roots before draining acquisition and settling work; publishes cleanup only after persistence. @example await this.cleanupOwned() */
   private async cleanupOwned(): Promise<void> {
     this.cleaning = true; this.abort.abort(); this.gate.invalidate(); this.browser.resumeViewport(); clearTimeout(this.timer);
     if (!['failed', 'observed'].includes(this.status)) this.status = 'cancelled';
     const failures = await settleCleanup([
-      { description: 'preparation settle', release: () => awaitResponse(this.preparation?.catch(() => undefined) ?? Promise.resolve(), 'repository preparation') },
+      { description: 'selected CDP close', release: () => this.cdp?.close() },
+    ]);
+    // Known roots may be the only operation that can settle a pending native launch.
+    failures.push(...await this.stopKnownDebuggers());
+    failures.push(...await settleCleanup([
       { description: 'browser acquisitions', release: () => this.browser.drainAcquisitions() },
       { description: 'source/proxy acquisitions', release: () => awaitResponse(Promise.allSettled(this.acquisitions), 'repository acquisitions') },
-      { description: 'selected CDP close', release: () => this.cdp?.close() },
+      // Preparation includes protocol requests; close their transport before awaiting the whole preparation.
+      { description: 'preparation settle', release: () => awaitResponse(this.preparation?.catch(() => undefined) ?? Promise.resolve(), 'repository preparation') },
       { description: 'owned breakpoint', release: () => { if (this.breakpoint) vscode.debug.removeBreakpoints([this.breakpoint]); } },
-    ]);
-    failures.push(...await settleCleanup([...this.sessions.values()].filter(session => !session.parentSession && this.activeSessions.has(session.id)).map(session => ({ description: 'owned debugger stop', release: () => awaitResponse(vscode.debug.stopDebugging(session), 'repository debugger stop') }))));
+    ]));
+    // A late acquisition is adopted by the tracker and still receives an explicit post-drain stop sweep.
+    failures.push(...await this.stopKnownDebuggers());
     failures.push(...await settleCleanup([
       { description: 'owned application stop', release: () => this.app?.close() },
       { description: 'protocol activities settle', release: () => awaitResponse(Promise.allSettled(this.activities), 'repository protocol activities') },
@@ -318,6 +345,11 @@ export class RepositoryRun {
     try { await this.persist(); }
     catch (error) { this.cleaned = false; this.status = 'failed'; this.failures.push(`Final evidence persistence failed: ${String(error)}`); throw error; }
     if (failures.length) throw new Error(failures.join('; '));
+  }
+
+  /** Stops only currently known owned roots before and after acquisition draining in {@link cleanupOwned}. @example await this.stopKnownDebuggers() */
+  private stopKnownDebuggers(): Promise<string[]> {
+    return settleCleanup([...this.sessions.values()].filter(session => !session.parentSession && this.activeSessions.has(session.id)).map(session => ({ description: 'owned debugger stop', release: () => awaitResponse(vscode.debug.stopDebugging(session), 'repository debugger stop') })));
   }
 
   /** Writes host-qualified evidence without upgrading observed to demonstrated before release/flush. @example await this.persist() */

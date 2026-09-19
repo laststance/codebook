@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "frozenBeforeFirstInput": true,
   "targetRevision": "43d039938287ed494a66f4fad198da2464a9e7b0",
   "mode": "next dev --webpack",
@@ -40,5 +40,26 @@
     "vscode",
     "cursor"
   ],
-  "classification": "private runtime experiment; not public MCP or installed-product acceptance"
+  "classification": "private runtime experiment; not public MCP or installed-product acceptance",
+  "amendment": "Runtime/source expectations unchanged; freeze added failure controls before the post-review native matrix.",
+  "nativeCases": [
+    "normal",
+    "manual-resume",
+    "cdp-resume",
+    "source-drift",
+    "held-cancel",
+    "decoy",
+    "cancel-prepare"
+  ],
+  "decoy": {
+    "kind": "independently owned pwa-node real stop",
+    "startedAfter": "primary paused capture acknowledged",
+    "focus": "actual unrelated debugger",
+    "expected": "foreign continue rejected; own run continues once; decoy remains paused and stack-readable after primary cleanup; QA owner then releases it"
+  },
+  "cancelPreparation": {
+    "inputCount": 0,
+    "expected": "finite cancellation with no owned resources and unchanged unrelated dirty draft",
+    "cleanupLimitMs": 10000
+  }
 }

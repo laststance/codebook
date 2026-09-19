@@ -1,9 +1,9 @@
 # Cycle 0010 — Real-repository browser runtime feasibility
 
 Type: experiment
-Status: implementing
-Result: pending
-Delivery: local-only; reviewed plan and isolated production build
+Status: closed
+Result: demonstrated
+Delivery: validated local experiment; commit/push and issue closure pending
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/11
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -38,7 +38,7 @@ No owner decision is pending. Build outputs, source-map format and capture feasi
 
 ## Validation contract
 
-Expectation version: **2, frozen before first input** in [expectations.json](evidence/0010/expectations.json). The original production hypothesis failed before input. This development-mode cut requires `otherTheme = dark` and `typeof setTheme = function`; surrounding render locals are optional because they may not survive closure optimization. No value has yet been captured in a real pause.
+Expectation version: **3, amended before the post-review native matrix** in [expectations.json](evidence/0010/expectations.json). The original production hypothesis failed before input. This development-mode cut requires `otherTheme = dark` and `typeof setTheme = function`; surrounding render locals are optional because they may not survive closure optimization. The v2 native cut captured both required values in each host. Version 3 keeps these source/value expectations and adds actual decoy, CDP-resume and preparation-cancellation controls.
 
 | Check | Expected observable result | Real procedure | Evidence required |
 | --- | --- | --- | --- |
@@ -77,11 +77,13 @@ The initial preflight alone demonstrated no runtime behavior. Subsequent isolate
 
 ## Result and decision
 
-Result: pending. Select this one-action source-map/identity question before designing a general repository launch API. Keep the verified Cycle 0009 reader and all fixed-profile behavior. No capability status advances yet; no package, release, owner or final-review approval is claimed.
+Result: **demonstrated** for the unchanged target's one browser action in both required hosts. [Final native validation](evidence/0010/native-validation-20260920.md) and [sanitized manifest](evidence/0010/manifest.json) bind 38 tests, 14 passing native cases, both inspected normal videos, 136 absent recorded PID occurrences and source fingerprint `1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb`. Keep the bounded development-map verifier, explicit target/pause authority and owned control/lifecycle. The original production-map route remains falsified and historical phase-ACK failure remains unresolved; later passes do not repair it.
+
+Next candidate: connect a configured ordinary-repository browser action to the existing MCP/Study/book/recording model, replacing its fixed-profile-only runtime assumption. A lasting API requires DX and engineering review; presentation changes require design review. Preserve the complete destination, the fixed checkout and Cycle 0009 reader. G03 has additional bounded real-repository evidence; G06 public general-runtime, G10 installed usefulness, all layouts and integrated final acceptance remain unverified. See D019. No package, merge, publication, owner or final-review approval follows.
 
 ## Handoff
 
-Exact next action: inspect the successful isolated production build's declared page chunks, freeze the exact source/map/value contract, then implement the bounded experiment. Stay on `codex/cycle-0009-repository-learning-book` in the same Codebook checkout. Cycle 0009's isolated editor sessions and root browser adapter have stopped; no run needs resuming. D018 records the selected route. No separate task, recurring automation or background job is created. The final goal remains active with 0/10 final reviews.
+Exact next action: commit/push the validated source and these records, reconcile the clean commit against the frozen 60-file inventory, synchronize and close Issue #11, then open the selected browser-study integration cycle under D019. Both native hosts and managed runtimes have exited; no QA session needs resuming. Preserve private artifacts and earlier failed/diagnostic cuts. Stay on `codex/cycle-0009-repository-learning-book`; final reviews remain 0/10.
 
 
 ## Engineering review — Step 0 and reuse
@@ -226,12 +228,41 @@ The development preflight compiled the unchanged application, then hit the origi
 
 The experimental verifier/acquirer, owned runtime and private native bootstrap are implemented. Initial source/control tests pass **11/11**, zero failures/skips/cancellations. The compiled acquirer reads 4,046,765 bytes in 17.17 ms on the retained build; source/JS/map hashes match the preflight. This measures acquisition, not runtime correctness. Required actual closure values are fixed before input in expectation v2; optional `resolvedTheme`/`mounted` retain explicit unavailable responses. Existing fixed-profile/product source remains unchanged. Native normal/failure matrix, live motion and full implementation review are pending.
 
+## Native script identity investigation and first pause
+
+`/investigate`: **DONE** for the selected-module timeout. Chrome normalizes the `/./` segment in `Debugger.scriptParsed.url`, while the emitted `sourceURL` retains it. Raw string equality missed the correct script. `sameScriptUrl` compares full parsed URL identities, preserving protocol/host/path boundaries and rejecting invalid URLs. The regression first failed (11 pass, 1 fail), then all **12/12** experiment tests passed. Clean `621a63f` subsequently bound the real VS Code breakpoint to ThemeToggle **19:5** and the exact sealed JS/map/TSX. Two earlier no-input timeouts and their cleanup are retained under `artifacts/cycle-0010/native/vscode/`; the diagnostic cut is not acceptance.
+
+Clean VS Code run `2026-09-19T15-05-50.796Z-21a918b3`, run ID `b0979e0b-ed63-4667-a64f-7c2004a70e20`: exactly one mouse input reached the expected handler; required values were `otherTheme = dark` and `typeof setTheme = function`. Optional `resolvedTheme` and `mounted` produced real ReferenceErrors and remain unavailable. Before/paused screenshots earned exact renderer receipts. The DAP stop at `15:07:18.041Z` remained held until the one accepted continue at `15:08:13.701Z` (**55,660 ms**). Input acknowledged after continuing, and the after DOM/saved PNG became dark.
+
+The same run **failed native presentation**: no acknowledgement returned for the resumed live frame or final image. Its video still shows the paused light image, so the dark saved PNG alone does not verify visible completion. The external controller's final assertion failed; it did not persist its normal-success latency report. Cleanup released every owned debugger/browser/app resource and preserved the unrelated dirty draft; the editor exited 0. Retain `native-normal.webm` as a **partial/failed attempt despite its filename**, plus `paused-video.png`, `continued-video.png`, final receipt and events. Chrome was **153.0.8010.53**, newer than earlier cycle evidence. Cursor is untested for this cut.
+
+Next investigation: trace renderer message receipt/decode/paint across the long pause without changing application input or granting synthetic paint receipts. The URL fix's scope lock is released; native presentation reliability remains an open, separate failure.
+
+Follow-up `/investigate`: **DONE_WITH_CONCERNS; diagnosis inconclusive, no runtime fix.** A receive/rAF journal at `2026-09-19T15-16-55.924Z-58c23fd7` passed a 45,069 ms hold (state 64.24 ms, continue 53.88 ms). Its renderer stayed visible and delivered reset, live and after messages; instrumentation prevents treating that cut as clean acceptance. The first video-start used an unsupported named option; the later corrected positional command records only the latter pause/continuation. Its launcher exited 0 with full cleanup.
+
+The next **uninstrumented** VS Code run `2026-09-19T15-21-45.311Z-98e40b22` uses unchanged `621a63f` runtime source (only project records dirty). It passed a **70,058 ms** hold, **52.30 ms** state query and **52.45 ms** continue. Exactly one input/stop/continue occurred. Duplicate input, foreign pause and duplicate continue were rejected; before/paused/after PNG hashes match actual renderer receipts. Extracted native video frames at 8, 20 and 79.72 seconds show the light application, TSX 19:5 pause and dark application after continuation. Cleanup and editor exit pass. This disproves a simple hold-duration-only explanation; it does not repair the earlier intermittent failure. Keep that reliability concern open for integrated acceptance. The renderer investigation remained read-only; no scope lock or speculative timeout change was needed. Relevant API references: [VS Code message delivery](https://code.visualstudio.com/api/references/vscode-api#Webview.postMessage), [Electron visibility semantics](https://www.electronjs.org/docs/latest/api/browser-window#page-visibility). Neither proves the cause of the failed cut.
+
+## Implementation review and current validation checkpoint — 2026-09-20
+
+The prior runtime `621a63f` also passed an uninstrumented Cursor normal run at `artifacts/cycle-0010/native/cursor/2026-09-19T15-23-51.134Z-ba145222`: 70,055 ms hold, 52.22 ms state and 49.94 ms continue; one input/stop/continue, exact three frame/renderer hashes, full cleanup and exit 0. Its video frames at 20 and 82.8 seconds show paused light/source and resumed dark; the 8-second frame still shows Connecting and is not before-app proof. Both hosts then passed manual-resume, source-drift and held-cancel cases. These are earlier-runtime observations, not validation of subsequent fixes.
+
+The first `/review` fixing pass repaired nine findings, documented in [implementation review](evidence/0010/implementation-review-20260920.md). Red-before tests reproduce the snapshot-generation, source-read failure, mapping-range, surviving-worker, early snapshot publication and CDP/DAP ordering defects. The first fixing-pass experiment suite passes **28/28**, zero failed/skipped/cancelled. The source-discovery tests additionally cover path escape, 2,049 candidates, aggregate bytes, shared deadline and cancellation. Native decoy acquisition is bounded, preserves unsaved drafts and closes late sessions in an actual-coordinator boundary test.
+
+Plan audit: T1 source/map tuple and T2 owned coordinator are implemented; T3 native normal/negative evidence exists on the earlier runtime, but current-source expanded validation remains pending; T4 resource ceilings have focused tests. General public MCP/launch, installation, later layouts and final product evidence are outside this experiment and remain required. Four fresh development reviewers were created across the pass; one additional creation initially hit the thread limit, and the existing security reviewer plus testing/maintainability specialists were reused for additional lenses. A native red-team and separate adversarial reader completed. Reused lenses are not fresh-context coverage, and none count as final-product review. Outside review preflight is `under_codex`; no outside process was started and coverage is unavailable. First pass made edits, so it does not certify the repaired tree; full rereview is next.
+
+Second full diff review added four fixes: retry rejected cleanup attempts, close selected CDP before whole preparation settlement, enforce the shared deadline after the final extraction, and abort provisional-proxy identity waits. Focused red-before evidence now passes **33/33**. Fresh security/performance/simplification rereviews found no additional defects; a separate fresh red-team/adversarial pass is running. Candidate source inventory is `1b7d155f62b78ff921bb78f35189d9886c7f482db7e52a9f08b5d6379c3bf4cc` (59 files, dirty base `621a63f`). Native validation remains pending for these repairs.
+
+Second red-team also required stopping already-known debugger roots before raw launch settlement, followed by a late-root sweep. This fifth second-pass repair now passes **34/34** tests. A proxy-retention candidate was withdrawn: its mock omitted the real root termination that closes that connection, so it did not establish a surviving-resource defect. No speculative registry was added.
+
+Third pass added the planned automatic timeout coverage, repaired native decoy parent-console focus, and attached native launcher exit/error listeners before metadata I/O. Final build and **38/38** tests pass. The [implementation review](evidence/0010/implementation-review-20260920.md) preserves R1–R17, red/green evidence, two fresh final specialists, reused lenses/adversarial coverage and missing outside review. Three fixing cycles are exhausted: no convergence claim. Final candidate fingerprint `1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb` covers 60 source/test files on dirty base `621a63f`; final native matrix subsequently passed 14/14, with both normal videos inspected; see the final validation record.
+
 ## GSTACK REVIEW REPORT
 
 Scope: Cycle 0010 plan at `e22f8ec` plus the recorded six remedies. Log read on 2026-09-19. Earlier Cycle 0009 design/DX decisions are retained; its non-converged diff review and missing outside coverage are historical, not cleared by this plan review.
 
 | Review | Trigger | Why | Runs | Status | Findings |
 | --- | --- | --- | --- | --- | --- |
+| Implementation Review | `/review` | Current experiment diff and untracked source | 3 fixing passes | NON-CONVERGED, cap reached | R1–R17 repaired; 38 tests pass; final 14 native cases pass; outside unavailable |
 | Eng Review | `/plan-eng-review` | Architecture, tests and resource bounds | 1 | CLEAR (PLAN) | Four primary issues incorporated; zero unresolved decisions or identified unhandled failure paths |
 | Native independent challenge | native fallback, host `codex`, source `in-host` | Independent plan inspection | 1 | COMPLETED, findings incorporated | Two additional findings: teardown ordering and recording path |
 | Outside Review | installed Codex outside preflight | Independent provider coverage | 0 | UNAVAILABLE | `under_codex`; no external invocation, provider `none` |
@@ -241,6 +272,6 @@ Scope: Cycle 0010 plan at `e22f8ec` plus the recorded six remedies. Log read on 
 
 **OUTSIDE COVERAGE:** plan-review phase unavailable; native independent output does not supply external or cross-model coverage. No final-product review is counted.
 
-**VERDICT:** ENG CLEARED for bounded implementation. The isolated build passes; runtime, source-map, native motion and cleanup evidence remain pending. Full-product final reviews remain 0/10.
+**VERDICT:** Initial plan cleared for bounded implementation. The implementation review ended after three fixing passes with all 17 concrete findings/coverage gaps repaired and 38 tests passing; convergence is false and outside coverage is missing. Current-source native validation passes 14/14 and both videos are inspected. This closes only the experiment; full-product final reviews remain 0/10.
 
 NO UNRESOLVED DECISIONS

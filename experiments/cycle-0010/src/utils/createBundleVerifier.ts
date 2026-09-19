@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { Protocol } from 'devtools-protocol';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { bundleSchema, mapSchema, type BundleSource } from '../bundleSource';
+import { isSourcePosition } from './isSourcePosition';
 
 /** Seals one parsed map for {@link RepositoryRun} before input, rejecting ambiguous originals without changing legacy verification. @example createBundleVerifier(bundle).hashes.sourceMap.length // 64 */
 export function createBundleVerifier(input: BundleSource) {
@@ -23,6 +24,8 @@ export function createBundleVerifier(input: BundleSource) {
       if (sha256(executed) !== hashes.javascript) throw new Error('Executed JavaScript differs from frozen module');
       if (sha256(local) !== hashes.typescript) throw new Error('Current original differs from frozen source');
       if (location.scriptId !== scriptId) throw new Error('Paused script differs from selected module');
+      if (!isSourcePosition(bundle.javascript, location.lineNumber, location.columnNumber ?? 0)) throw new Error('Generated position is outside executed source');
+      if (!isSourcePosition(bundle.source, frameLine - 1, frameColumn - 1)) throw new Error('DAP position is outside original source');
       const mapping = sourceMap.findEntry(location.lineNumber, location.columnNumber ?? 0);
       if (!('originalSource' in mapping) || canonicalSource(mapping.originalSource) !== originalPath || mapping.originalLine + 1 !== frameLine || mapping.originalColumn + 1 !== frameColumn) throw new Error('Generated location does not match exact DAP source position');
       return { ...hashes, scriptId, scriptLocation: location, mapping };

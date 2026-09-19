@@ -59,6 +59,17 @@ test('a changed executable or original, foreign script and wrong source column r
   assert.throws(() => verifier.verify(javascript, source, location, 'selected-script', 2, 1), /exact DAP source position/);
 });
 
+test('a debugger coordinate outside the executed module cannot inherit its last source mapping', () => {
+  // Arrange
+  const verifier = createBundleVerifier(bundle);
+  // Act / Assert
+  assert.throws(() => verifier.verify(javascript, source, { ...location, lineNumber: 999 }, 'selected-script', 1, 1), /outside executed source/);
+  assert.throws(() => verifier.verify(javascript, source, { ...location, columnNumber: 999 }, 'selected-script', 1, 1), /outside executed source/);
+  assert.equal(verifier.verify(javascript, source, { ...location, columnNumber: 21 }, 'selected-script', 1, 1).scriptLocation.columnNumber, 21);
+  const invalidOriginal = createBundleVerifier({ ...bundle, sourceMap: JSON.stringify({ ...payload, mappings: 'ACu+BA' }) });
+  assert.throws(() => invalidOriginal.verify(javascript, source, location, 'selected-script', 1000, 1), /outside original source/);
+});
+
 test('missing originals, altered content and unsupported map forms fail before runtime input', () => {
   // Arrange / Act / Assert
   assert.throws(() => createBundleVerifier({ ...bundle, sourceMap: '{' }), SyntaxError);

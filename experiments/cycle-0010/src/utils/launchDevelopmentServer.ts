@@ -32,18 +32,28 @@ export function launchDevelopmentServer(target: string, node: string, record: (t
       return origin;
     },
     /** Stops only the acquired process group and verifies its listener; cleanup calls this even after failed readiness. @example await app.close() */
-    close() {
-      return closing ??= (async () => {
+    async close() {
+      const attempt = closing ??= (async () => {
         if (child.pid) {
           try { process.kill(-child.pid, 'SIGTERM'); }
           catch (cause) { if (!(cause && typeof cause === 'object' && 'code' in cause && cause.code === 'ESRCH')) throw cause; }
-          try { await awaitResponse(exited, 'owned Next exit', undefined, APPLICATION_EXIT_TIMEOUT_MS); }
-          catch { process.kill(-child.pid, 'SIGKILL'); await awaitResponse(exited, 'owned Next forced exit', undefined, APPLICATION_EXIT_TIMEOUT_MS); }
-          await waitUntil(() => { try { process.kill(-child.pid!, 0); return false; } catch (cause) { if (cause && typeof cause === 'object' && 'code' in cause && cause.code === 'ESRCH') return true; throw cause; } }, 'owned Next process group exit', APPLICATION_EXIT_TIMEOUT_MS);
+          const waitForExit = async () => {
+            await awaitResponse(exited, 'owned Next exit', undefined, APPLICATION_EXIT_TIMEOUT_MS);
+            await waitUntil(() => { try { process.kill(-child.pid!, 0); return false; } catch (cause) { if (cause && typeof cause === 'object' && 'code' in cause && cause.code === 'ESRCH') return true; throw cause; } }, 'owned Next process group exit', APPLICATION_EXIT_TIMEOUT_MS);
+          };
+          // A leader may exit before its workers; escalation must cover the entire owned group.
+          try { await waitForExit(); }
+          catch {
+            try { process.kill(-child.pid, 'SIGKILL'); }
+            catch (cause) { if (!(cause && typeof cause === 'object' && 'code' in cause && cause.code === 'ESRCH')) throw cause; }
+            await waitForExit();
+          }
         }
         if (origin) await waitUntil(() => isEndpointClosed(origin!), 'owned Next listener exit', APPLICATION_EXIT_TIMEOUT_MS);
         record('application.closed', { pid: child.pid, origin, exitCode: child.exitCode, signal: child.signalCode, log });
       })();
+      // Preserve successful release, while allowing a later stop to retry a failed signal or exit check.
+      try { await attempt; } catch (cause) { if (closing === attempt) closing = undefined; throw cause; }
     },
   };
 }
