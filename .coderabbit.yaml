@@ -1,0 +1,152 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Review policy follows AGENTS.md and the active cycle linked by PROJECT_STATE.md.
+language: ja-JP
+tone_instructions: >-
+  Be concise and evidence-based. Explain the trigger, user impact, and smallest
+  useful fix. Write review comments in Japanese; keep suggested code, comments,
+  and project documentation in English.
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  review_status: true
+  review_details: true
+  fail_commit_status: true
+  collapse_walkthrough: true
+  poem: false
+  in_progress_fortune: false
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+
+  # Keep product code, experiment sources, tests, lockfiles, and evidence manifests.
+  path_filters:
+    # Dependencies, generated output, and local tool state.
+    - "!**/node_modules/**"
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!**/.next/**"
+    - "!**/coverage/**"
+    - "!**/.pnpm-store/**"
+    - "!**/*.tsbuildinfo"
+    - "!**/*.vsix"
+    - "!.gstack/**"
+    - "!.codex/**"
+    - "!.serena/**"
+    - "!**/.DS_Store"
+    # Private runtime captures and browser-generated reports.
+    - "!artifacts/**"
+    - "!**/test-results/**"
+    - "!**/playwright-report/**"
+    - "!**/.playwright-cli/**"
+    # Historical source copies and media are evidence, not maintained product code.
+    - "!docs/cycles/evidence/**/fixture/**"
+    - "!docs/cycles/evidence/**/*-executed.{js,mjs,cjs}"
+    - "!docs/cycles/evidence/**/*.{png,jpg,jpeg,webp,gif,mp4,webm,mov,log,tap}"
+
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Read AGENTS.md and the authority documents supplied as code guidelines.
+        Follow the active cycle linked by PROJECT_STATE.md; PRODUCT_GOAL.md is
+        the full destination, not a demand to finish every capability in each PR.
+        Hosted reviews cannot access developer-home rule files, local tools, or
+        private artifacts. Use available repository and inline rules; report any
+        unavailable instructions or evidence as coverage limits, never as verified.
+        Respect approved decisions in DECISIONS.md and the current cycle. Report
+        demonstrated regressions against them; do not reopen accepted design or
+        architecture choices as style preferences.
+        Prioritize correctness, data loss, security, ownership, concurrency, and
+        actionable test gaps introduced or exposed by this change. Read relevant
+        callers and tests before asserting a defect. Separate reproduced issues
+        from hypotheses and limitations outside the declared support matrix.
+        Keep implementation, automated tests, actual VS Code and Cursor evidence,
+        review, merge, packaging, publication, and installed acceptance distinct.
+        A clean review is not final product acceptance or a final sequential review.
+
+    - path: "**/*.{ts,tsx,mts,cts}"
+      instructions: |
+        Reuse existing utilities and schema-derived types before proposing new
+        abstractions. Prefer descriptive names, explicit types at boundaries,
+        and narrowing over unnecessary casts or any. Type-only fixes must preserve
+        runtime behavior. Put production magic numbers in constants.ts with unit
+        suffixes; literal expected values in tests are intentional.
+        Reusable functions and classes need a concise purpose/trigger/caller
+        description and a concrete @example. Link workspace symbols with
+        {@link Symbol}. Do not demand boilerplate on one-off test callbacks.
+        Use concise explanatory comments for non-obvious branches and loops.
+        Propose changes that fit the existing TypeScript module and build setup.
+
+    - path: "extension/src/**"
+      instructions: |
+        The extension owns runtime state and immutable evidence; external agents
+        operate through the extension-owned MCP API. Check target/session/thread
+        identity, source and build hashes, pause generation, cancellation, bounded
+        deadlines, resource ownership, and cleanup on every failure path.
+        Independently validate DAP, CDP, input, and rendered-frame acknowledgements;
+        temporal proximity alone does not prove causality. Preserve partial facts
+        without granting stale Continue authority or claiming complete success.
+        Check schema validation, storage bounds, atomicity, historical migration,
+        and offline replay without executing the application. Understanding is an
+        explicit learner action, separate from execution success and source drift.
+        Preserve unrelated editor tabs, dirty buffers, breakpoints, and processes.
+        Review cross-host assumptions against the cycle's declared support matrix.
+
+    - path: "extension/src/ui/**"
+      instructions: |
+        Follow DESIGN.md and the approved design, as amended by DECISIONS.md and
+        the active cycle. Preserve compact understand controls, complete citation
+        context, exact reading returns, and shared learning/recording identities.
+        Check keyboard focus, constrained widths, 200% zoom, supported themes,
+        loading/error/paused states, escaped dynamic content, and message validation.
+        Static HTML or screenshots do not establish native usability or motion;
+        animation claims require recorded video and inspected frames in each host.
+
+    - path: "**/{tests,__tests__}/**"
+      instructions: |
+        Prefer DAMP and observable behavior over mirroring the implementation.
+        Use test rather than it, descriptive regression names, Arrange/Act/Assert,
+        and hard-coded expected values. Do not replace expected literals with the
+        implementation constant being tested. Use toBeVisible for displayed UI.
+        Verify fixtures faithfully bind custom source text, hashes, and identities.
+        Check meaningful cancellation, race, persistence, and partial-failure cases;
+        distinguish mocked boundaries from real debugger/browser/native evidence.
+        Do not add redundant tests for reversible low-impact documentation changes.
+
+    - path: "experiments/**"
+      instructions: |
+        These are maintained feasibility harnesses, not generated throwaway output.
+        Review observation fidelity, deadlines, cleanup, target isolation, and
+        reproducibility. Keep fixture/mechanism success separate from real-repository
+        and installed-product support; avoid demanding production feature scope.
+
+    - path: "**/*.md"
+      instructions: |
+        Check commands, API versions, linked evidence, counts, and completion claims
+        against the current cycle. Preserve failed or inconclusive attempts as history.
+        Keep source revision, dirty state, host/version, artifact availability, and
+        limitations explicit. Do not treat source hashes or tests as native proof.
+
+    - path: "**/pnpm-lock.yaml"
+      instructions: |
+        Review unexpected dependency, integrity, peer-resolution, and local-patch
+        changes against package.json and the supported runtime. Ignore generated
+        formatting churn; do not request hand edits to pnpm-generated lock entries.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "PRODUCT_GOAL.md"
+      - "PROJECT_STATE.md"
+      - "DEVELOPMENT.md"
+      - "DECISIONS.md"
+      - "DESIGN.md"
+      # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
+      - files: "docs/cycles/0011-repository-browser-study.md"
+        applyTo: "**/*"
+      - files: "docs/designs/codebook.md"
+        applyTo: "extension/src/**"
