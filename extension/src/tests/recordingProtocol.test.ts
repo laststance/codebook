@@ -49,7 +49,8 @@ test('new server credentials discover and replay a stored recording with no live
     assert.equal(recording.status, 'finalized'); assert.equal(recording.endMs, 100); assert.match(recording.contextReason, /context\.json/);
     assert.equal((await client.json(discovery.recording.playbackUri, stateSchema)).presentedMs, 100);
     assert.equal((await store.readPreference())?.positionMs, 100); assert.equal(harness.runtimes.length, 0);
-    await assert.rejects(client.read(`codebook://${instanceId}/studies/${studyId}/recording`), /different server instance/);
+    await assert.rejects(client.read(`codebook://${instanceId}/studies/${studyId}/recording`), error =>
+      z.object({ data: z.object({ code: z.literal('STALE_INSTANCE'), recovery: z.string().min(1) }) }).safeParse(error).success);
   } finally { await client.close(); await controller.dispose(); await endpoint.close(); await harness.close(); }
 });
 

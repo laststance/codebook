@@ -148,7 +148,9 @@ async function main(): Promise<void> {
       const fresh = connectionSchema.parse(JSON.parse(await readFile(reloaded.descriptorPath, 'utf8')));
       assert.notEqual(fresh.instanceId, identity.instanceId);
       agent = await StudyClient.connect(fresh);
-      await assert.rejects(agent.read(`codebook://${identity.instanceId}/library`), /STALE_INSTANCE/);
+      // MCP resource failures carry domain identity in error data, separate from the readable message.
+      await assert.rejects(agent.read(`codebook://${identity.instanceId}/library`), error =>
+        z.object({ data: z.object({ code: z.literal('STALE_INSTANCE'), recovery: z.string().min(1) }) }).safeParse(error).success);
       results.checks.recordingReload = await exerciseNativeRecording(agent, studyId, join(suiteDirectory, 'recording-reloaded'), bridge, true);
       await bridge('close-reader');
       await writeFile(join(suiteDirectory, 'reload-transcript.json'), JSON.stringify(agent.transcript, null, 2)); await agent.close(); agent = undefined;
