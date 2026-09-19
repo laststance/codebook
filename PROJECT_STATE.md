@@ -2,7 +2,7 @@
 
 Updated: 2026-09-19\
 Product stage: repository Wiki connected to fixed-profile observations/replay in both native editors; general runtime and installed-product usefulness unverified\
-Active cycle: [0010 — Real-repository browser runtime feasibility](docs/cycles/0010-real-repository-runtime.md) — planning; four-section primary engineering review complete, independent plan challenge and isolated build preflight next\
+Active cycle: [0010 — Real-repository browser runtime feasibility](docs/cycles/0010-real-repository-runtime.md) — planning; primary review and fresh independent challenge complete with six remedies; isolated production build passes but Sentry deletes browser maps; development-mode source preflight next\
 Last cycle: [0009 — Repository learning book](docs/cycles/0009-repository-learning-book.md) — bounded result demonstrated, implementation `1bd10b3`, 238 tests and normal/200% native returns pass\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#11](https://github.com/laststance/codebook/issues/11) — open\

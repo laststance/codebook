@@ -3,7 +3,7 @@
 Type: experiment
 Status: planning
 Result: pending
-Delivery: not-applicable; bounded plan and target preflight only
+Delivery: local-only; reviewed plan and isolated production build
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/11
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -73,7 +73,7 @@ Frozen input hashes:
 | `next.config.mjs` | `d8025166c1b471ab64500654fe4c3be3f1aa891d98cb376ad641f5d1d61194b1` |
 | `AGENTS.md` | `f67a039c96cd06d972f3a89fca65d1cd5c8d3ce91ee2d1829c82fd3c135db900` |
 
-No isolated clone, experiment implementation, native run or product capability is demonstrated by this preflight.
+The initial preflight alone demonstrated no runtime behavior. Subsequent isolated setup: detached clone at the exact target commit, no environment files copied, `pnpm install --frozen-lockfile` succeeded in 7.03 seconds, then `pnpm build` succeeded in 34.63 seconds with Node 24.21.0, pnpm 10.33.0, Next 16.3.4, React 19.2.8 and next-themes 0.4.6. Receipts and logs are under `artifacts/cycle-0010/`; the build inherited no secret environment inputs. Source-map feasibility and native behavior remain unverified.
 
 ## Result and decision
 
@@ -81,7 +81,7 @@ Result: pending. Select this one-action source-map/identity question before desi
 
 ## Handoff
 
-Exact next action: read `/Users/ryotamurakami/.agents/skills/gstack/plan-eng-review/SKILL.md` and review only this experiment, then freeze the build-specific expectation contract. Stay on `codex/cycle-0009-repository-learning-book` in the same Codebook checkout. Cycle 0009's isolated editor sessions and root browser adapter have stopped; no run needs resuming. D018 records the selected route. No separate task, recurring automation or background job is created. The final goal remains active with 0/10 final reviews.
+Exact next action: inspect the successful isolated production build's declared page chunks, freeze the exact source/map/value contract, then implement the bounded experiment. Stay on `codex/cycle-0009-repository-learning-book` in the same Codebook checkout. Cycle 0009's isolated editor sessions and root browser adapter have stopped; no run needs resuming. D018 records the selected route. No separate task, recurring automation or background job is created. The final goal remains active with 0/10 final reviews.
 
 
 ## Engineering review — Step 0 and reuse
@@ -113,7 +113,7 @@ The new verifier accepts only a bounded frozen bundle/map/source tuple and a cur
 
 **2. [P1] confidence 9/10 — Input settlement must not own the control loop.** The plan calls for a “40-second learner hold” before continuing, while existing `Cdp.request` has a 20,000 ms default. `HostBrowser` already uses a multiplexed CDP connection; the new private bootstrap must not await a click request in the same serial handler that later accepts continue. Decision 2A: acknowledge one owned input intent immediately, retain its in-flight promise separately, and keep state/inspect/continue/stop commands independently responsive. Use a run-bounded input deadline long enough for the declared hold, separate active-work/learner-hold accounting, and reserve the pause synchronously before issuing continue. Alternative 2B, a second bespoke HTTP control service, adds transport/credential code without solving ownership. Choose 2A, reusing current primitives.
 
-Subscribe before dispatch. Own the root/child debug sessions using explicit run configuration and target identity, not the active editor/debug session. Accept exactly one input; repeated intent yields its receipt, conflicting/new second input rejects. Actual DAP/CDP resume, termination, source change or cancellation invalidate live authority; a completed historical snapshot remains labeled historical. Drain pending launch/input/inspection before releasing only owned sessions, browser and application child process; do not claim success when acquisition or persistence is unresolved. An input timeout never retries the click. The normal run budget is at least 120 seconds after readiness; setup/build are separately bounded. Control-response expectation remains under 2,000 ms during a 40,000 ms hold.
+Subscribe before dispatch. Own the root/child debug sessions using explicit run configuration and target identity, not the active editor/debug session. Accept exactly one input; repeated intent yields its receipt, conflicting/new second input rejects. Actual DAP/CDP resume, termination, source change or cancellation invalidate live authority; a completed historical snapshot remains labeled historical. Teardown separates non-cancellable acquisition from protocol work: invalidate authority, drain acquisition with a finite deadline, close selected CDP to reject pending input/inspection, stop owned debug/app resources, then settle protocol activities and release the viewport/profile. Never await paused input before the operation that can end it. Do not claim success when acquisition or persistence is unresolved. An input timeout never retries the click. The normal run budget is at least 120 seconds after readiness; setup/build are separately bounded. Control-response expectation remains under 2,000 ms during a 40,000 ms hold.
 
 ```text
 frozen target + isolated production build
@@ -126,7 +126,8 @@ frozen target + isolated production build
                       | 40 s learner hold                |
  independent state/continue/stop -> reserve exact pause --+
                       -> observe dark DOM -> teardown -> flush -> verdict
- any identity/error/cancel -> revoke control -> drain -> owned cleanup -> failed/partial record
+ any identity/error/cancel -> revoke -> drain acquisition -> close CDP / stop owned targets
+                          -> settle protocol work -> release viewport/profile -> flush failure
 ```
 
 ## Engineering review — Code quality
@@ -152,7 +153,7 @@ owned coordinator                               learner inspects a held applicat
   pending input + DAP/CDP pause -> snapshot       [native] 40 s hold; state < 2 s
   duplicate input/continue -> reject/recover      [unit + native] exactly one visible toggle
   manual resume/wrong target -> invalidate       [native] stale continue never accepted
-  cancel/disconnect -> drain/cleanup             [unit + finite native] no late owned resources
+  cancel/disconnect -> close then settle         [unit + finite native] pending input cannot deadlock
   cleanup -> evidence flush -> verdict           [unit] failed flush never demonstrated
 ```
 
@@ -176,8 +177,8 @@ Initial ceilings to validate against the measured build: 2,048 candidate files, 
 ## Implementation Tasks
 
 - [ ] **T1 (P1, human: ~1 day / agent: ~1 hour)** — Bundle source verification. Surfaced by Architecture 1A. Files: experiment source schemas/constants, `utils/verifyBundleSource.ts`, bundle-source tests. Verify exact JS/map/TSX and wrong/ambiguous/drift rejection without changing existing `verifySource` semantics.
-- [ ] **T2 (P1, human: ~1 day / agent: ~1 hour)** — Owned one-action coordinator and finite native bootstrap. Surfaced by Architecture 2A. Files: experiment coordinator, bootstrap and runner. Verify separately responsive state/continue/stop during pending input, exact pause identity and drained owned teardown.
-- [ ] **T3 (P1, human: ~half day / agent: ~45 minutes)** — Failure matrix and both-host evidence. Surfaced by Tests 3A. Files: experiment lifecycle tests/runner and sanitized cycle evidence. Verify normal hold plus malformed maps, duplicate/interference/cancellation, failed persistence and independently inspected video frames.
+- [ ] **T2 (P1, human: ~1 day / agent: ~1 hour)** — Owned one-action coordinator and finite native bootstrap. Surfaced by Architecture 2A and independent I1/I2. Files: experiment coordinator, bootstrap and runner. Verify separately responsive state/continue/stop during pending input, exact pause identity, acquisition drain followed by CDP close/owned stop before protocol settlement, and one private-command receipt bound to the owned Chrome input.
+- [ ] **T3 (P1, human: ~half day / agent: ~45 minutes)** — Failure matrix and both-host evidence. Surfaced by Tests 3A and independent I1/I2. Files: experiment lifecycle tests/runner and sanitized cycle evidence. Verify normal hold plus malformed maps, duplicate/interference/cancellation, failed persistence and independently inspected video frames. Establish the isolated editor-renderer recording endpoint before input; retain its target/PID/profile/run identity with the command and owned Chrome receipts.
 - [ ] **T4 (P2, human: ~2 hours / agent: ~20 minutes)** — Bounded build manifest and timings. Surfaced by Performance 4A. Files: experiment build/source acquisition and constants. Verify oversized/deadline cases, immutable per-run reuse and separate build/hold/control measurements.
 
 No new tasks from Code Quality. No additional TODO proposal: remaining product capabilities already live in PRODUCT_GOAL.md/PROJECT_STATE.md and no new deferred feature was invented. Dependency: T4 isolated build/manifest -> T1 verified tuple -> T2 coordinator -> T3 native matrix; pure failure tests accompany each module. Sequential implementation, no parallelization opportunity in the shared coordinator.
@@ -190,9 +191,50 @@ No new tasks from Code Quality. No additional TODO proposal: remaining product c
 | Optimized-away variables | Explicit unavailable reason; never infer a captured value; mandatory expectation must still pass |
 | Paused input exceeds active deadline | Independent control with run-bounded input ownership; timed hold and timeout test |
 | Manual resume/double continue | Synchronous pause reservation/invalidation; actual native interference and unit races |
-| Cancel/late acquire/disconnect | Revoke new effects, drain accepted work, stop only owned resources; late-acquire tests |
+| Cancel/late acquire/disconnect | Revoke, drain acquisition, close CDP/stop owned targets, then settle input/inspection; held-input cancellation and late-acquire tests |
+| Native recording unavailable | No substitute tab; retain missing native video coverage separately from protocol/browser images |
 | Cleanup or persistence fails | Failed/partial result with reason; no demonstrated verdict; failed-flush test |
 
 Critical gaps after these planned remedies: zero uncovered silent failure paths identified. Actual implementation coverage is still pending.
 
-Review artifacts: `/Users/ryotamurakami/.gstack/projects/codebook/ryotamurakami-codex-cycle-0009-repository-learning-book-eng-review-test-plan-20260919-142846.md`; tasks `/Users/ryotamurakami/.gstack/projects/codebook/tasks-eng-review-20260919-142846.jsonl`. Native independent challenge is in progress; outside-provider coverage is unavailable because this installed skill selects its own Codex harness. No outside process was started.
+Review artifacts: `/Users/ryotamurakami/.gstack/projects/codebook/ryotamurakami-codex-cycle-0009-repository-learning-book-eng-review-test-plan-20260919-142846.md`; tasks `/Users/ryotamurakami/.gstack/projects/codebook/tasks-eng-review-20260919-142846.jsonl`.
+
+## Independent plan challenge
+
+Fresh native subagent creation succeeded: `/root/cycle0010_plan_challenge`, read-only fresh context, no runtime/build/browser access. It completed with two additional findings against `e22f8ec`; these were not discoveries of the primary review. Both recommendations are individually adopted under the user's explicit recommended-choice delegation.
+
+- **I1 [P1, confidence 9/10]: teardown deadlock.** The primary text incorrectly drained paused input before closing its connection. Existing Cdp requests have no AbortSignal; closing rejects pending requests. Adopt the acquisition/protocol split above, matching the existing PairedRun cleanup order. Add a held-input cancellation test whose input never naturally settles; cleanup must finish before the input deadline and cannot dispatch again or resume unrelated targets. Native finite-cancellation evidence remains required.
+- **I2 [P2, confidence 8/10]: recording transport.** HostBrowser's Chrome is headless and pipe-only; its viewport accepts renderer acknowledgements, not browser clicks. Adopt the existing isolated editor `--remote-debugging-port=0` QA option for Playwright CLI recording. The CLI records the selected editor renderer containing the owned viewport and source; the private command sends exactly one CDP mouse input to the owned Chrome. Preserve editor PID/profile/webContents target, run ID, command sequence, selected Chrome target/script and capture receipts. Establish the CLI connection before input. Do not open a separate app tab to satisfy this evidence. Missing recording reachability stays missing native coverage.
+
+These findings correct the primary plan; they are same-harness development review, not external/cross-model or final-product approval. Outside coverage is unavailable (`CODEX_MODE: under_codex`); no external process was launched. Setup repair would be `setup --host codex`, outside this experiment. Final-product reviews remain 0/10.
+
+Completion summary: scope retained; Architecture 2, Code Quality 0, Tests 1, Performance 1 primary issues; independent additions 2. Reuse inventory, scope exclusions, test diagram and four tasks are written. Zero new TODOs, zero unresolved decisions, zero identified uncovered failure paths after the planned remedies. One sequential implementation lane. Lake Score 1/1 complete-versus-shortcut recommendation; runtime coverage is still pending.
+
+## Production source-map investigation and changed hypothesis
+
+`/investigate` result: **DONE_WITH_CONCERNS — root cause demonstrated; target code intentionally unchanged, no repair or runtime acceptance claimed.** The successful frozen production build declares 18 root-page JavaScript scripts but retains zero browser `.map` files. Its server maps do not establish browser execution. See `artifacts/cycle-0010/production-source-preflight.json` and the build log.
+
+Installed Sentry 10.73.0 client webpack configuration defaults `sourcemaps.deleteSourcemapsAfterUpload` to true; its deletion hook is separate from the no-auth upload guard. A minimal same-dependency webpack probe, with no credentials and telemetry disabled, keeps `main.js.map` when deletion is off and removes it when on. `artifacts/cycle-0010/sentry-probe-receipt.json` records both successful compilations. Two initial probe setup errors (obsolete compiled-webpack init method, then Next's private minifier resolution) occurred before compilation; removing the nonexistent init call and disabling probe minification made the dependency-level comparison executable. No target fix/test is claimed, and no product test was needed for this read-only diagnosis. No related TODO or prior matching learning was found.
+
+Production attempt outcome: **falsified prerequisite**, before any browser input. Do not restore source mappings by editing the handler/config or substituting a server map. The root checkout remains clean; the isolated build generated a change to `src/lib/articles-manifest.ts`, recorded separately from the six frozen inputs, including unchanged ThemeToggle.
+
+Recommended next hypothesis, already allowed by plan step 3: use the same exact source and dependencies with owned `next dev --webpack --hostname 127.0.0.1` on an isolated port. Installed Next 16.3.4 debugging docs and Context7 document client source maps and the webpack CLI option. Sentry's production-only deletion branch is inactive in this mode. Acquire and seal the actual evaluated module and inline source map before the first click; retain its containing declared chunk and emitted script URL separately. Require original `sourcesContent` equality and current script/target identity just as planned. No minified-name assumption or dev success is pre-credited. Development build/HMR source changes must invalidate the sealed tuple. The production diagnostic scope lock was released after retaining its receipt.
+
+## GSTACK REVIEW REPORT
+
+Scope: Cycle 0010 plan at `e22f8ec` plus the recorded six remedies. Log read on 2026-09-19. Earlier Cycle 0009 design/DX decisions are retained; its non-converged diff review and missing outside coverage are historical, not cleared by this plan review.
+
+| Review | Trigger | Why | Runs | Status | Findings |
+| --- | --- | --- | --- | --- | --- |
+| Eng Review | `/plan-eng-review` | Architecture, tests and resource bounds | 1 | CLEAR (PLAN) | Four primary issues incorporated; zero unresolved decisions or identified unhandled failure paths |
+| Native independent challenge | native fallback, host `codex`, source `in-host` | Independent plan inspection | 1 | COMPLETED, findings incorporated | Two additional findings: teardown ordering and recording path |
+| Outside Review | installed Codex outside preflight | Independent provider coverage | 0 | UNAVAILABLE | `under_codex`; no external invocation, provider `none` |
+| CEO Review | no new product premise | Current goal unchanged | 0 in this cycle | NOT TRIGGERED | No new product decision |
+| Design Review | no new product presentation | Preserve D016 | 0 in this cycle | NOT TRIGGERED | Cycle 0009 approved reader choices retained |
+| DX Review | private experiment only | Defer lasting API until evidence | 0 in this cycle | NOT TRIGGERED | Current public interface unchanged |
+
+**OUTSIDE COVERAGE:** plan-review phase unavailable; native independent output does not supply external or cross-model coverage. No final-product review is counted.
+
+**VERDICT:** ENG CLEARED for bounded implementation. The isolated build passes; runtime, source-map, native motion and cleanup evidence remain pending. Full-product final reviews remain 0/10.
+
+NO UNRESOLVED DECISIONS
