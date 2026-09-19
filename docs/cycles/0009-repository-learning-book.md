@@ -3,7 +3,7 @@
 Type: product-increment
 Status: planning
 Result: pending
-Delivery: planning records committed; source draft tested locally, implementation paused for formal reviews
+Delivery: formal plan reviews complete; source draft tested locally; product integration pending
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/10
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -268,6 +268,13 @@ These four design tasks refine DX tasks T2/T3; they do not add a parallel implem
 
 No additional tasks arise from Passes 4/5; their token/specificity checks constrain these tasks. Pass 7 reconciles DT4 rather than duplicating it. Machine-readable tasks: `/Users/ryotamurakami/.gstack/projects/codebook/tasks-design-review-20260919-092944.jsonl` (four `jq -nc` records, design session `52288-1789806897-7824ad63`). Estimates describe implementation, not completed work.
 
+Engineering findings add two tasks to the same sequential implementation:
+
+- [ ] **ET1 (P1, human: ~half day / agent: ~30min)** — Bind shared understanding to the complete canonical citation context; preserve typed legacy single-source decisions. Surfaced by Architecture finding 1 / engineering D2 A. Files: `extension/src/studySchemas.ts`, `extension/src/studyModel.ts`, `extension/src/learningLibrary.ts`, shared migration/learning tests. Verify secondary/range/set changes, prose-only reuse, runtime aliases, exact uncheck and failed migration.
+- [ ] **ET2 (P1, human: ~half day / agent: ~30–45min)** — Prepare sources outside the shared writer queue, then revalidate and atomically publish. Surfaced by Architecture finding 2 / engineering D3 A. Files: `extension/src/repositorySource.ts`, planned `extension/src/repositoryBook.ts`, existing storage utilities and book/protocol tests. Verify concurrent learner/recorder writes, stale publication, bounded preparation, cancellation/lost receipt and retained old bytes after failure.
+
+No new tasks from Code Quality, Tests or Performance; those sections specify verification and constraints for the existing tasks. Machine-readable engineering tasks: `/Users/ryotamurakami/.gstack/projects/codebook/tasks-eng-review-20260919-185532.jsonl` (two `jq -nc` records). QA handoff: `/Users/ryotamurakami/.gstack/projects/codebook/ryotamurakami-codex-cycle-0009-repository-learning-book-eng-review-test-plan-20260919-185532.md`.
+
 ## Design completion summary
 
 | Dimension | Before → after | Basis |
@@ -287,9 +294,170 @@ No additional tasks arise from Passes 4/5; their token/specificity checks constr
 
 The plan is design-complete. Perform `/design-review` and behavior/native checks after implementation. Independent plan voices remain unavailable; no final acceptance review is counted. The engineering review is already explicitly authorized for this same plan, so its target is not requested again.
 
+## Engineering review preflight
+
+Scope: this Cycle 0009 plan, explicitly selected by Raphtalia for both formal reviews. `/plan-eng-review` session `52288-1789810435-2fc76fc8`, started after design completion at `be52f13`. Interactive mode; no invented owner answer or auto-selection. Product/recent-decision brain digests are unavailable; the committed product, cycle and D016 records retain the actual accepted context.
+
+Step 0 reuse inventory: `LearningLibrary` already owns source-versioned learner decisions, saved checkpoints and cross-window storage coordination; `atomicPrivateWrite` and `withStorageLock` supply bounded replacement and writer ownership. `StudyWorkspace` supplies native selection, captured-source documents and paused recording navigation. Repository discovery/read and a versioned authored book are the missing behaviors. Keep the existing runtime schemas and checkpoint validation. No new server, database, package dependency or artifact distribution type is necessary for this increment. No TODOS.md is present; the six recorded scope exclusions retain packaging/final acceptance explicitly.
+
+Search-before-building findings: [Layer 1] reuse the existing storage primitives rather than introducing another locking mechanism; Node 24 documents that asynchronous filesystem operations do not synchronize concurrent modifications ([Node 24 filesystem API](https://nodejs.org/docs/latest-v24.x/api/fs.html#promises-api)). [Layer 1] Git's tracked-name enumeration is a built-in, so a custom recursive repository crawler is unnecessary ([git ls-files](https://git-scm.com/docs/git-ls-files)). [Layer 1] the host already offers JSON webview state and panel serialization; retaining a hidden DOM is not required merely to remember a reading position ([VS Code webview persistence](https://code.visualstudio.com/api/extension-guides/webview#persistence)). Context7 and official primary documentation were consulted; Aside is absent. A panel's own state is destroyed when that panel is disposed, and restart restoration requires a serializer or extension-owned persistent selection. These facts inform the upcoming mechanics review; they do not change D6's accepted outcome or verify Cursor behavior.
+
+Complexity gate: the current plan necessarily touches more than eight files (source/schema/store/reader, extension activation, protocol/resources, shared progress and tests) and proposes at least two new services/classes. The installed skill requires an owner decision before Architecture / Code Quality / Tests / Performance. Raphtalia answered engineering D1, “B — 現在の責務分離を維持する（推奨）”. Retain the dedicated small book persistence/validation module and thin reader, reusing existing history and storage primitives. No scope reduction is adopted; do not reopen this boundary during later sections. Architecture review can now proceed. Design D3–D6 remain approved.
+
+## Engineering review — Architecture
+
+Prior learnings applied: `recorded-context-read-checkpoint` (confidence 10/10, 2026-09-19), `recorder-learner-shared-local-lock` (9/10, 2026-09-19) and `mcp-union-discovery-object-boundary` (9/10, 2026-09-19). Public reads must validate retained observation facts, shared stores must use the existing canonical-directory writer queue, and MCP discovery must be checked against installed SDK 1.30.0. Source-only authoring must remain available without runtime prerequisites. These are existing contract requirements, not new approvals or runtime evidence.
+
+### Finding 1 — Understanding context (P1, confidence 9/10)
+
+Motivating plan requirement: “Engineering must bind the full citation context without duplicating or overwriting the shared runtime-item history” (Document, identity and storage). Existing interface: `extension/src/studySchemas.ts:34` defines `learnerDecisionSchema` with one `sourceHash`; `extension/src/studyModel.ts:25` projects decisions using `latest.set(decision.sourceHash, decision)`. That existing single-source context cannot by itself acknowledge a multi-citation article. This is a missing proposed integration contract, not a demonstrated regression.
+
+Engineering D2 A approved: “A — 引用するコードの組み合わせ（推奨）”. Store the stable learning item plus a canonical citation-context identity, computed from the validated path/full-byte hash/inclusive line ranges; exact duplicates and ordering do not create a different set. Shared learner history retains every prior intent. Agent prose edits or unrelated book revisions do not clear a matching citation-context decision. Adding/changing/removing a citation or changing its range produces a different context. Runtime single-source decisions remain explicitly single-source; they never acknowledge an article's additional unreviewed citations. Any cross-view equivalence must prove the same represented source context, not only a matching primary hash.
+
+Migrate old decisions without changing IDs, times, boolean values or their single-source meaning; keep v1/v2 files. Reject corrupt/unknown v3 instead of falling back. Checking/unchecking affects only the selected retained context, and a stale reader context cannot issue a decision for another revision. Authoring and navigation cannot create learner decisions. Required tests: secondary-only drift, same cited code with edited prose, changed ranges/set, runtime aliases with additional citations, exact-context uncheck, legacy migration, duplicate intent/conflict, failed write preserving old state and unavailable current source. This refines DT2/T2/T3 and resolves the understanding-context remedy across later review sections.
+
+### Finding 2 — Publication blocks shared writers (P1, confidence 8/10)
+
+Motivating original plan text: “Under the writer lock, re-read current content” followed by “Validate all sources and observation references before atomic commit” (Document, identity and storage). `extension/src/repositorySource.ts:37` executes `await this.catalog()` on every read; lines 72/74 call Git twice. `extension/src/utils/withStorageLock.ts:15` holds the shared writer lock across `await operation()`. Performing all preparation there can delay learner/recording writes; this is a proposed integration risk, not measured production latency.
+
+Engineering D3 A approved: “A — 準備と最後の保存を分ける（推奨）”. Prepare source/catalog acquisition, anchor validation and observation-link checks outside the shared lock. Use one bounded acquisition context for the publication instead of two Git processes per anchor; deduplicate path/hash acquisitions. Retain per-source full-byte hashes, identity and acquisition/check times, not an atomic whole-workspace revision claim. Under the existing writer lock, re-read book state, resolve same-key retry/conflict, revalidate prepared source identity/current hashes and exact saved observation facts, then atomically publish. A source/index/root or reference change invalidates preparation; preserve the old book and require explicit refresh/retry. No long Git enumeration, model work or source fetching belongs inside the final commit section.
+
+Apply a 20-second publication budget checked throughout preparation and before commit, with at most four concurrent source reads and the existing byte/file bounds. These are implementation targets, not measured service promises. Expired/cancelled preparation cannot begin publication. Once an atomic write is in flight, retain ownership until its outcome is known; response loss or cancellation is not proof of rollback. Identical request-key recovery must report the actual committed receipt if rename succeeded. Never release a lock around still-running writes, retry application input or publish a late preparation through a new request. Measure preparation, lock wait and lock-held time separately.
+
+Required tests: slow preparation allows learner/recording writers to complete; same/different-key concurrent publishers; source and tracked-set changes during preparation; stale expected revision; changed observation checkpoint/facts; timeout before commit; cancellation and late I/O completion; failed temporary write/rename; lost response after successful commit; exact retained old book on rejected publication. Assert identical-key retry does not create another revision. Maximum-source/document cases must demonstrate bounded work without claiming platform-wide latency. Later Performance review checks this remedy rather than reopening it.
+
+```text
+publish intent
+  → validate object / bounds / instance
+  → prepare catalog + exact source + saved-link evidence   [no shared lock]
+  → reserve existing writer lock
+      → existing key? identical receipt / conflict
+      → expected revision + source identities + linked facts still valid?
+          no  → reject; old book retained
+          yes → atomic publish → committed receipt
+  → release after owned I/O settles
+source/edit/deadline during preparation → reject; no later publication
+transport response lost after commit → inspect/retry SAME key; no extra revision
+```
+
+### Architecture coverage and failure handling
+
+| Boundary | Realistic failure | Required response already in scope |
+| --- | --- | --- |
+| Auth/instance/workspace → source service | Agent reuses a connection after a folder/trust change | Reject wrong or retired instance; dispose owned observers; no implicit new target |
+| Git catalog → bounded source | Stale cursor, symlink, oversized/binary/deleted/changed file | Explicit rejection and rediscovery; no traversal or fallback to another file |
+| Source/document → book store | Invalid anchor/edge, changed source, duplicate retry or simultaneous revision | Whole-document validation, D3 preparation/commit checks and retained prior content |
+| Saved checkpoint → observation/replay link | Valid-looking JSON has changed captured facts or history is missing | Compare exact saved identities/hashes on public read; unavailable destination with a reason |
+| Learner action → shared progress | Secondary citation changed, old intent retried or migration/write fails | D2 exact context, idempotent append, old files/decisions retained, explicit save recovery |
+| Native reader → citation/return | Unsaved current editor bytes, stale navigation response or missing old book | Immutable cited source remains the authority; validate navigation generation and D6 exact return context; never silently select latest |
+| Reader → runtime | A graph entry looks observed or reading auto-starts execution | Authored source labels; read/open/return paths have zero application operations |
+| Shutdown/restart | Accepted storage or selection write is still pending | Drain owned writes; recover committed immutable revision/selection, never restore runtime authority |
+| Distribution | Development host works but installed extension does not | Keep packaged installation explicitly outside this cycle and required for final G10/G11 |
+
+No additional architecture finding remains after D1–D3. No new service deployment, background indexer, language parser, graph engine or dependency is introduced. Book storage remains separate under D1 B; shared identity/storage primitives remain authoritative. Native editor evidence, ordinary-repository runtime and final acceptance remain unverified.
+
+## Engineering review — Code quality
+
+No additional issues found. D1 keeps source acquisition, book persistence and native reader ownership explicit; D2 extends the shared learner ledger instead of creating a second understanding store. Reuse `StudyError`, schema-derived types, bounded file reads, `atomicPrivateWrite`, `withStorageLock` and existing checkpoint/source navigation. The renderer uses structured text, nonce CSP and `textContent`; authored text does not become executable HTML. Keep protocol handlers thin and put numeric bounds in `constants.ts`. Existing lifecycle/request-generation checks must cover new reader callbacks. Do not widen fixed runtime profiles to accommodate repository nodes.
+
+The existing `StudyWorkspace` is a coupling hotspot, so the new reader composes its exact observation/replay navigation rather than taking over runtime polling or recording. This implements D1's accepted boundary; it is not a second architecture choice. No obsolete inline diagram was found in the touched draft. Add a short prepare → validate → commit diagram beside the new publication owner; retain the existing ownership comments around shared storage. Short descriptor reads fail safely in the draft; implementation should handle bounded partial reads without claiming a source edit solely because one read returned fewer bytes.
+
+## Engineering review — Tests
+
+Detected framework: `node:test` with `node:assert/strict`, from `extension/package.json` and current tests; `CLAUDE.md` delegates to AGENTS.md and declares no separate framework or prompt-pattern suite. Commands: `pnpm --dir extension typecheck`, focused compiled tests while implementing, then `pnpm --dir extension test` for the integrated candidate. Browser/native flows complement these tests. No new framework is required.
+
+The source draft has eleven previously passing real-filesystem/schema cases, including exact BOM/CRLF bytes, stale hashes, traversal, tracking changes, symlinks, invalid data, mutation during reading and pagination. Those results do not cover a book store or reader. Existing runtime/recording tests are regression references, not Cycle 0009 integration evidence. There is no measured full-branch coverage percentage yet.
+
+```text
+ENTRY / CODE PATH                                      LEARNER / AGENT FLOW
+MCP status + object-schema discovery [planned E2E]      discover source-only capability
+  |- trusted local root / wrong instance / bad input      |- no debugger prerequisites
+  |- bounded list / empty / next page / stale cursor       `- clear unsupported-root error
+  `- acquire source [11 draft source/schema tests]
+      |- tracked + regular + UTF-8 + exact hash            inspect exact cited bytes
+      `- absent / excluded / link / changed / too large    recover by read, never execute
+
+publish book [planned E2E, D3]                         author -> publish -> retained receipt
+  |- shape / IDs / edges / range / byte-count guards       |- invalid citation names its cause
+  |- deduplicated bounded preparation outside lock        |- another learner save can finish
+  |- source + checkpoint + alias validation               `- timeout retains original book
+  `- shared writer queue -> re-read current file
+      |- same key+input -> original receipt                recover lost response, no new revision
+      |- key reuse / stale revision -> conflict            read current revision, explicit retry
+      |- revalidation / expired preparation -> reject
+      `- atomic write -> success OR retained old file      no late unowned commit / no fallback
+
+read book / resources [planned E2E]                    reopen exact book/revision/node
+  |- schema + hash + source + checkpoint verification      |- unavailable link has a reason
+  `- corrupt / unknown / missing -> explicit failure       `- other valid books remain usable
+
+shared progress v3 [planned regression, D2]            compact understand checkbox
+  |- v3 exists -> validate; else normalize v2/v1            |- source-set match survives prose edit
+  |- single-source != additional citation context          |- secondary drift -> Review needed
+  |- exact set/ranges -> stable context identity            |- old understanding stays historical
+  `- intent retry / conflict / failed save                  `- retry preserves original target
+
+reader messages / native source [planned E2E]          select -> citation -> observation/replay
+  |- current revision + lifetime guard                     |- no app input / no learner mutation
+  |- immutable source / changed or unsaved current file     |- Return restores section + position
+  |- exact retained observation + partial state            |- repeat after restart / resize / zoom
+  `- newer revision / obsolete completion / close          `- never substitute another revision
+
+rendered reader [planned browser + native QA]          keyboard / focus / narrow layouts
+  |- normal / loading / empty / stale / corrupt             |- 320 / 390 / 600 px + 200% zoom
+  |- text-only authored content / CSP / bounded messages    |- small checkbox, usable hit area
+  `- stable DOM + section-relative restoration              `- relations below article when narrow
+
+actual external agent [planned EVAL, existing DX scope]
+  discovery -> read -> >=3 nodes + relations -> publish -> source -> return -> restart
+  validation error -> discovered recovery -> retained prior content; no runtime/progress mutation
+  VS Code and Cursor: separate host/build/transcript/timing records, never one inferred from another
+```
+
+Legend: draft tests are existing local evidence; every `planned` branch remains unverified until implemented and run. E2E means actual boundaries rather than a replacement mock; EVAL means the driving agent chooses calls from public discovery. The existing DX measurement contract already includes validation errors and recovery; this diagram makes that requirement explicit without adding a new feature or a new approval choice. No additional missing *plan requirement* was found; the unimplemented paths above are implementation work, not completed tests.
+
+| Test owner | Required behavior and failure assertions |
+| --- | --- |
+| `repositorySource.test.ts` | Retain the eleven cases; add empty/exact/over-limit source and catalog bounds, unavailable/timed-out/oversized Git output, bounded short reads, changed tracking/root during acquisition and deduplicated batch concurrency. Four reads maximum; source identity/hash checks remain per file. |
+| `repositoryBook.test.ts` (new) | Exact duplicate intent returns one receipt; changed input/key or stale expected revision fails. Prepare while a learner/recorder save completes; edit during preparation or final checks rejects publication. Late preparation cannot begin a write; accepted writer ownership lasts until its outcome is known. Failed rename, malformed/unknown file, 17th book, 21st revision and combined byte overflow retain prior bytes. Repeated anchors copy one source; inconsistent hashes for one path fail. Validate range endpoints and exact checkpoint/partial/alias identity on publication and public read. |
+| `learning.test.ts`, `legacyMigration.test.ts` | **Critical regression protection:** v1/v2 IDs/times/values and runtime selection survive v3; corrupt v3 never falls back. D2 canonical sets ignore ordering/exact duplicates, but changed ranges, added/removed/secondary citations differ. Prose-only updates keep the check. Old single-source decisions cannot check a larger article. Check/uncheck/retry acts once on the original context and failed migration leaves old files intact. No regression has been observed yet. |
+| `protocol.test.ts`, repository protocol cases | Real installed SDK discovery advertises object-shaped arguments and source-only availability. Invalid inputs dispatch no work; foreign/stale identities and malformed resource URIs fail. Public receipt/read/retry behavior survives a lost HTTP response. A cancelled transport does not release an in-flight file writer or repeat publication. Existing authentication, session limits and runtime calls retain their behavior. |
+| `repositoryReader.test.ts` (new), `studyWorkspace.test.ts` | Exact selection/source/observation/recording and return; saved restart and section-relative restore. Missing destination keeps a recovery action, never another article. Changed secondary source, unsaved current text, failed checkbox save, stale revision message, late success/failure, rapid navigation, close during startup and runtime retirement cannot change a newer target or resurrect panels. Compare app-operation and learner-decision counts before/after navigation. |
+| Actual renderer / each native host | The approved B hierarchy, narrow layout, theme, keyboard, focus, text escaping, disabled/retry states and long-article restoration. Native source URI/hash/selection plus renderer confirmation are separate from native pixels. Record and inspect video frames for any motion/transition claim. |
+| Actual agent authoring in each host | Use real codebook source, at least three useful nodes/relations and public discovery; inspect exact citations and interpretation labels. Cover the already-required source/revision error recovery without a private prescribed tool sequence. Record exact transcript, model time separately, zero runtime actions and zero learner-decision changes. Controlled source-change evidence uses an owned QA copy, never silently edits the learner's repository. No before/after quality score is invented for this new capability. |
+
+Existing regression anchors: shared recorder/learner locking (`recordingStore.test.ts:25`), real SDK discovery (`recordingProtocol.test.ts:57`), history checkpoint revalidation (`studyWorkspace.test.ts:670`), stale open/close/retry ownership (`studyWorkspace.test.ts:451`, `:514`, `:848`), learner byte/atomic-write limits (`learning.test.ts:177`, `:217`) and transport cancellation (`protocol.test.ts:162`, `:190`). Re-run affected tests against the final candidate; historical passing counts do not satisfy this cycle.
+
+Failure handling is required for every branch in the diagram: rejection preserves prior content or selection, exposes the existing structured error/recovery, and has a corresponding test row. The architecture failure table remains authoritative for the nine integration boundaries. No uncovered silent failure with both missing handling and missing planned tests remains; actual tests and native evidence are still pending.
+
+## Engineering review — Performance
+
+No additional issues found beyond Architecture finding 2. D3 removes per-file Git preparation from the shared write queue and requires one bounded acquisition context, deduplicated source work and at most four reads at once. Preserve the final revalidation and count its duration separately; a 20-second budget is a selected guard, not a measured responsiveness promise. No retry loop, background indexer or repository scan runs on every repaint.
+
+Bound working data by declared limits: 32 sources at 256 KiB, input 1 MiB, sealed revision 4 MiB, retained file 8 MiB, 16 books and 20 revisions. These bounds are independent: fitting the source-count limit does not promise that a revision fits its byte limit. Reject aggregate overflow before replacing any file; do not load all full book files concurrently merely to populate selectors. Reuse the prepared immutable bytes inside one request and refresh mutable source/checkpoint facts explicitly; no persistent cache may hide drift. Preserve section-relative position and unchanged DOM nodes rather than retaining every hidden article DOM. Record discovery/preparation/queue/commit/navigation timings and retained byte counts during implementation evidence.
+
+## Engineering completion summary
+
+| Check | Result |
+| --- | --- |
+| Step 0 | Scope accepted as-is, D1 B responsibility separation |
+| Architecture | Two findings, resolved by actual D2 A and D3 A answers |
+| Code quality | Zero additional findings; existing primitives reused |
+| Tests | Branch/user-flow diagram produced; zero additional missing plan requirements; all new integration/host evidence still pending |
+| Performance | Zero additional findings; preparation bottleneck resolved in D3 plan |
+| Required outputs | Six exclusions, reuse inventory, two engineering tasks and QA artifact |
+| TODOS.md | Zero new proposals; no duplicate roadmap created |
+| Failure modes | Zero critical unplanned silent gaps; nine boundaries and branch-specific tests recorded |
+| Outside voice | Unavailable: own-harness Codex invocation blocked, native agent quota previously exhausted; no unchanged retry |
+| Parallelization | One sequential lane; shared schemas/service/reader ownership, no independent implementation lane |
+| Lake score | N/A: D1–D3 compared implementation kinds, not coverage shortcuts |
+| Unresolved decisions | Zero |
+
+Sequential implementation, no parallelization opportunity: source/schema → shared context/store → public service/protocol → reader/navigation → integrated tests and host evidence. The plan's native and real-agent steps follow the connected implementation; no extra cross-lane gate is introduced. Relevant DX/design/engineering plan reviews are complete. Existing continuous delegation authorizes resuming implementation; another navigation-only permission question is unnecessary. `/review` and delivery checks still apply to the resulting implementation.
+
 ## Selected implementation contract
 
-The initial contract was a primary-agent engineering/UX assessment under D008, not a retroactive formal review. Both skill definitions require an explicit owner-named target outside Plan mode: “only if the user EXPLICITLY names the target.” Raphtalia answered the scope question, “Cycle 0009 の計画を対象にする（推奨）.” The target gate is resolved. The completed formal design review adds the individually approved D3–D6 outcomes: B with compact checkbox, any-citation review state, one-column narrow layout and return reading position. Engineering mechanics below remain subject to `/plan-eng-review`; scope/focus answers approve no additional remedy. Further implementation is paused during these plan reviews; the source/schema draft below remains unvalidated at runtime.
+The initial contract was a primary-agent engineering/UX assessment under D008, not a retroactive formal review. Both skill definitions require an explicit owner-named target outside Plan mode: “only if the user EXPLICITLY names the target.” Raphtalia answered the scope question, “Cycle 0009 の計画を対象にする（推奨）.” The target gate is resolved. The completed formal design review adds the individually approved D3–D6 outcomes: B with compact checkbox, any-citation review state, one-column narrow layout and return reading position. The completed formal engineering review retains responsibility separation under D1 B and adds the individually approved D2 A context and D3 A publication mechanics. Implementation may resume under D008; the source/schema draft below remains unvalidated at runtime.
 
 ### Architecture and alternatives
 
@@ -324,11 +492,11 @@ Content publication, selection, understanding and runtime control have separate 
 ### Document, identity and storage
 
 - Stable `bookId` and node IDs are lowercase slugs (maximum 64 characters); revision is a positive integer. Document contains title, summary, 1–64 nodes and 0–128 directed edges. Each node has title, up to 12 titled text sections (each text ≤12,000 characters), 1–8 source anchors, and up to 8 optional observation links. Whole submitted document ≤1 MiB; sealed revision ≤4 MiB. Duplicate IDs, unknown edge endpoints and invalid ranges fail before any write.
-- Primary anchor is explicitly the first anchor. A repository node's default learning identity is `repository/<bookId>/<nodeId>`. An optional existing runtime `learningItemId` is accepted only when a verified linked observation names that item and the initial primary source hash matches its capture. That binding cannot change in later revisions. Under approved D4, article-level Review needed checks every cited source, including secondary anchors; primary identity cannot suppress that state. Preserve old learner decisions and observations with their own source versions. Engineering must bind the full citation context without duplicating or overwriting the shared runtime-item history.
+- Primary anchor is explicitly the first anchor. A repository node's default learning identity is `repository/<bookId>/<nodeId>`. An optional existing runtime `learningItemId` is accepted only when a verified linked observation names that item and the initial primary source hash matches its capture. That binding cannot change in later revisions. Under approved D4, article-level Review needed checks every cited source, including secondary anchors; primary identity cannot suppress that state. Preserve old learner decisions and observations with their own source versions. Engineering D2 A binds understanding to the canonical complete citation context in the shared append-only history; primary-only runtime decisions cannot acknowledge an article's additional citations.
 - A runtime observation link carries `studyId`, `observationId` and captured `sourceHash`. Resolve it against `LearningLibrary.readCheckpoint`, require a saved checkpoint and exact observation identity/hash. Preserve the checkpoint's outcome, including partial. A later annotation/checkpoint may append facts; it must not retarget or replace the linked observation. Missing/corrupt history disables the destination with its reason.
-- One private atomic file per book retains at most 20 revisions within an 8 MiB file limit; at most 16 books. No eviction. `withStorageLock` serializes publication with learner/recording storage. Read/schema/hash validation happens on every public read; corruption must not fall back to an older valid revision silently. A revision includes its request key, input digest, immutable copied source and publication time.
-- Publication accepts `expectedRevision` (0 for creation) and a stable key. Under the writer lock, re-read current content; identical key/input returns its original receipt, changed input under that key fails, stale expected revision fails. Validate all sources and observation references before atomic commit. A failed temporary write, bound or validation retains the previous file.
-- Upgrade shared learner progress to a new v3 file/decoder that admits repository identities while preserving existing runtime selection and decisions. Read v3 by existence, otherwise normalize validated v2/v1 in memory. First explicit write creates v3; retain old files. Malformed or unknown-version v3 never falls back. Older builds may read retained old files and cannot overwrite v3; document that their later old-format decisions are not automatically merged. Reuse the existing append-only intent/lock implementation and generic source-understanding projection. Agent APIs expose no understanding mutation.
+- One private atomic file per book retains at most 20 revisions within an 8 MiB file limit; at most 16 books. No eviction. `withStorageLock` serializes the final publication with learner/recording storage; engineering D3 keeps source preparation outside that lock. Read/schema/hash validation happens on every public read; corruption must not fall back to an older valid revision silently. A revision includes its request key, input digest, immutable copied source and publication time.
+- Publication accepts `expectedRevision` (0 for creation) and a stable key. Under engineering D3 A, prepare verified source copies and observation references outside the shared lock using a bounded deduplicated acquisition context. Under the writer lock, re-read current content; identical key/input returns its original receipt, changed input under that key fails, stale expected revision fails. Revalidate prepared source identities/hashes and linked checkpoint facts before atomic commit. A failed temporary write, bound, deadline or validation retains the previous file; a lost response after successful commit is recovered with the same key. Track preparation/commit timing and per-source check times without claiming an atomic whole-workspace snapshot. Use a 20-second preparation/publication budget and four concurrent source reads; do not abandon an in-flight writer or treat cancellation as rollback.
+- Upgrade shared learner progress to a new v3 file/decoder that admits repository identities while preserving existing runtime selection and decisions. Read v3 by existence, otherwise normalize validated v2/v1 in memory. First explicit write creates v3; retain old files. Malformed or unknown-version v3 never falls back. Older builds may read retained old files and cannot overwrite v3; document that their later old-format decisions are not automatically merged. Reuse the existing append-only intent/lock implementation; extend the understanding projection to exact typed single-source or citation-set contexts under engineering D2 A. Preserve the original IDs/times/values and context meaning during migration. Prose-only edits reuse a matching context; changed citation ranges or sets do not. Agent APIs expose no understanding mutation.
 
 ### Public API and recovery
 
@@ -373,20 +541,20 @@ Pending. No capability state advances merely because this plan/issue exists. Kee
 
 ## Handoff
 
-Next: run the already authorized engineering review on this Cycle 0009 plan, then resume source/store/reader implementation after reviewed amendments. D3–D6 are resolved by actual owner answers; do not restart scope, visual selection or those choices. DX and design reviews are recorded separately from implementation evidence. Branch `codex/cycle-0009-repository-learning-book` starts at `7330a3a`, preserving the unmerged Cycle 0008 increment; no separate task or background automation created. Temporary Cycle 0008 native/QA processes are closed. Product final gate remains 0/10 and owner acceptance outstanding.
+User requested `/context-save` on 2026-09-19 before further implementation, to resume in a new session able to create fresh subagents. Next: restore this same checkout and branch, check fresh reviewer availability and obtain a bounded independent Cycle 0009 plan challenge. Keep it separate from external-model and final-product review coverage. Then implement the reviewed source/context/store contract and connect public authoring and the native reader. Design D3–D6 and engineering D1–D3 are resolved by actual owner answers; do not restart scope, visual selection or those choices. DX/design/engineering plan reviews are recorded separately from implementation evidence. Branch `codex/cycle-0009-repository-learning-book` starts at `7330a3a`, preserving the unmerged Cycle 0008 increment; no separate task or background automation created. Temporary Cycle 0008 native/QA processes are closed. Product final gate remains 0/10 and owner acceptance outstanding.
 
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 | --- | --- | --- | --- | --- | --- |
-| DX Review | `/plan-devex-review` | Agent source/content contract | 1 primary, Codex host | CLEAR (PLAN); actual DX unmeasured | Eight passes, four implementation tasks; planning specificity 4.4 → 9.8; zero unresolved decisions; log commit `0b5c690` |
-| Outside Review | Installed workflow; known provider/thread restrictions | Independent challenge | 0 completed | unavailable | Recorded `source: none`, `outside_provider: none`; DX phase `cycle-0009-dx-plan` and design phase `cycle0009-design` remain uncovered |
-| Design Review | `/plan-design-review` | Reader UX | 1 primary, Codex host | CLEAR (FULL PLAN) | Seven passes complete; D3–D6 individually approved; minimum specificity 8 → 10, four tasks, zero unresolved; log commit `7b078e7` |
-| Eng Review | `/plan-eng-review` | Storage, identity, source scope | 0 | required; target selected | Next review; earlier primary engineering contract is not a formal skill result |
+| DX Review | `/plan-devex-review` | Agent source/content contract | 1 primary, Codex host | CLEAR (PLAN); actual DX unmeasured | Eight passes, four tasks; specificity 4.4 → 9.8; zero unresolved; log commit `0b5c690` |
+| Outside Review | Installed workflow preflight | Independent challenge | 0 completed | unavailable | `source: none`, `outside_provider: none`; DX, design and engineering phases lack independent coverage |
+| Design Review | `/plan-design-review` | Reader UX | 1 primary, Codex host | CLEAR (FULL PLAN) | Seven passes, approved D3–D6; specificity 8 → 10; four tasks, zero unresolved; log commit `7b078e7` |
+| Eng Review | `/plan-eng-review` | Architecture, code quality, tests, performance | 1 primary, Codex host | CLEAR (PLAN) | Two architecture findings resolved by D2 A / D3 A; D1 B retains separation; zero unresolved or critical unplanned gaps; log commit `be52f13` |
 | CEO Review | Existing goal/design | Product scope unchanged | 0 this cycle | not requested | Existing product direction retained |
 
-OUTSIDE COVERAGE: unavailable for both current plan phases; no independent result or cross-model agreement inferred. Primary reviews ran in the Codex host with unknown recorded model identity. Prior Cycle 0008 reviews do not cover this increment.
+OUTSIDE COVERAGE: unavailable in `cycle-0009-dx-plan`, `cycle0009-design` and `cycle0009-eng`. Own-harness nested Codex execution is excluded; native thread capacity was exhausted in this session. No independent result or cross-model agreement is inferred. Primary reviews ran in the Codex host with unknown recorded model identity. Prior Cycle 0008 reviews do not cover this increment.
 
-VERDICT: DX and design plans are clear with no unanswered decisions. Engineering review required before implementation continues. Source draft passes typecheck and 11 filesystem/schema tests only; implementation, native UX and final acceptance remain unverified for this cycle.
+VERDICT: DX, design and engineering plans are clear; implementation remains unverified. The source draft previously passed typecheck and eleven filesystem/schema tests only. Raphtalia requested a new-session handoff before implementation to regain fresh-agent availability; obtain a bounded independent plan challenge there if creation succeeds. Do not restart approved choices or count that plan challenge toward the final ten product reviews. Goal #1 and Cycle #10 stay open.
 
 NO UNRESOLVED DECISIONS
