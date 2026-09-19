@@ -3,7 +3,7 @@
 Type: experiment
 Status: closed
 Result: demonstrated
-Delivery: validated local experiment; commit/push and issue closure pending
+Delivery: committed experiment at `9bfe1e8`; push/issue closure pending
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/11
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -83,7 +83,7 @@ Next candidate: connect a configured ordinary-repository browser action to the e
 
 ## Handoff
 
-Exact next action: commit/push the validated source and these records, reconcile the clean commit against the frozen 60-file inventory, synchronize and close Issue #11, then open the selected browser-study integration cycle under D019. Both native hosts and managed runtimes have exited; no QA session needs resuming. Preserve private artifacts and earlier failed/diagnostic cuts. Stay on `codex/cycle-0009-repository-learning-book`; final reviews remain 0/10.
+Exact next action: push the validated implementation/closure records, synchronize and close Issue #11, then open the selected browser-study integration cycle under D019. Clean implementation `9bfe1e8` matches all 60 frozen source hashes and the launcher hash. Both native hosts and managed runtimes have exited; no QA session needs resuming. Preserve private artifacts and earlier failed/diagnostic cuts. Stay on `codex/cycle-0009-repository-learning-book`; final reviews remain 0/10.
 
 
 ## Engineering review — Step 0 and reuse

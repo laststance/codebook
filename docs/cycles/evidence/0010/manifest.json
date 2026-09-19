@@ -2361,5 +2361,16 @@
         "sources.json": "f4abf7ac59593dc39cbe679cead44cfa3c0f32595dcd79d95d235a8fb80aacad"
       }
     }
-  ]
+  ],
+  "cleanImplementation": {
+    "commit": "9bfe1e8d91eef28a8a889ad1fba8f316af0089d0",
+    "sourceInventoryMatches": true,
+    "launcherMatches": true,
+    "workingTreeCleanAtVerification": true
+  },
+  "originalHandoffBackups": {
+    "manifest": "artifacts/cycle-0009/handoff-20260919-190104/manifest.json",
+    "matched": 7,
+    "total": 7
+  }
 }
