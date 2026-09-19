@@ -1,0 +1,1682 @@
+[
+  {
+    "operation": "discover",
+    "input": {},
+    "output": {
+      "tools": {
+        "tools": [
+          {
+            "name": "codebook_status",
+            "description": "Discover this exact workspace/instance, prerequisites, supported demo profile, limits and existing run resources.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": true,
+              "destructiveHint": false,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_start",
+            "description": "Prepare the declared demo asynchronously. Same key/arguments returns its original run. Poll nextActions before clicking; one active run maximum.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "instanceId",
+                "profile",
+                "key"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_action",
+            "description": "Accept the next declared action from nextActions and immediately return its receipt. Reuse the same key with identical action on response loss, including after later actions. Wrong-order or repeated actions with new keys are rejected.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "add-to-cart",
+                    "checkout"
+                  ]
+                }
+              },
+              "required": [
+                "instanceId",
+                "runId",
+                "key",
+                "action"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_continue",
+            "description": "Continue only the current inspected pause. Copy all continueArguments from the run resource. A stale/reserved/historical pause is rejected; read state before recovery.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "participant": {
+                  "type": "string",
+                  "enum": [
+                    "server",
+                    "browser"
+                  ]
+                },
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "threadId": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "generation": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "instanceId",
+                "runId",
+                "participant",
+                "sessionId",
+                "threadId",
+                "generation"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_stop",
+            "description": "Release only this run’s owned browser/debug resources. Waits for cleanup and final evidence persistence. Captured resources stay readable.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "required": [
+                "instanceId",
+                "runId"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_explain",
+            "description": "Save labeled agent interpretation for one committed snapshot. Supply its exact TypeScript hash and declared captured value paths; server renders observed facts. Never changes understanding.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "snapshotUri": {
+                  "type": "string",
+                  "maxLength": 1024
+                },
+                "sourceHash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "valuePaths": {
+                  "minItems": 1,
+                  "maxItems": 10,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "operationId",
+                      "cartId",
+                      "productId",
+                      "price",
+                      "cartCount",
+                      "admittedCount",
+                      "cartOperationId",
+                      "orderId",
+                      "total",
+                      "orderCount"
+                    ]
+                  }
+                },
+                "interpretation": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                }
+              },
+              "required": [
+                "instanceId",
+                "runId",
+                "key",
+                "snapshotUri",
+                "sourceHash",
+                "valuePaths",
+                "interpretation"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "codebook_reveal",
+            "description": "Reveal the exact source location bound to this snapshot while its run is active. Rejects changed source or cleanup; read its immutable source resource after stop or drift.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "snapshotUri": {
+                  "type": "string",
+                  "maxLength": 1024
+                }
+              },
+              "required": [
+                "instanceId",
+                "runId",
+                "snapshotUri"
+              ],
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          }
+        ]
+      },
+      "resources": {
+        "resourceTemplates": [
+          {
+            "name": "run",
+            "uriTemplate": "codebook://{instance}/runs/{run}",
+            "description": "Current readiness, nextActions, exact continuation arguments, deadline and historical references."
+          },
+          {
+            "name": "manifest",
+            "uriTemplate": "codebook://{instance}/runs/{run}/manifest",
+            "description": "Profile, action expectations and exact source hashes frozen before any input, with a manifest hash."
+          },
+          {
+            "name": "events",
+            "uriTemplate": "codebook://{instance}/runs/{run}/events/{afterSequence}",
+            "description": "Ordered events after a sequence, at most 50 per page; explicit nextUri and truncation."
+          },
+          {
+            "name": "snapshot",
+            "uriTemplate": "codebook://{instance}/runs/{run}/snapshots/{snapshot}",
+            "description": "Immutable captured values and source binding; reading does not make it a live pause."
+          },
+          {
+            "name": "source",
+            "uriTemplate": "codebook://{instance}/runs/{run}/snapshots/{snapshot}/source/{kind}",
+            "description": "Sealed typescript/javascript/map bytes. These remain historical after local source changes."
+          },
+          {
+            "name": "image",
+            "uriTemplate": "codebook://{instance}/runs/{run}/images/{phase}",
+            "description": "Confirmed PNG for a phase returned by this profile/run. Each observation keeps its original phase; unavailable is explicit."
+          },
+          {
+            "name": "explanation",
+            "uriTemplate": "codebook://{instance}/runs/{run}/explanations/{explanation}",
+            "description": "Persisted captured facts and separately labeled agent interpretation."
+          }
+        ]
+      }
+    },
+    "durationMs": 8.138624999999593
+  },
+  {
+    "operation": "codebook_status",
+    "input": {},
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"instanceId\": \"d1d32e79-b57b-4135-ad1b-901079f4421c\", \"apiVersion\": \"1.1\", \"workspace\": \"<repo>/artifacts/cycle-0005/cursor/suite-2026-09-19T01-32-21.154Z-50021af0/workspace\", \"host\": {\"id\": \"cursor\", \"productVersion\": \"3.21.12\", \"apiVersion\": \"1.128.0\", \"commit\": \"05ddb9e824590e2c1db6bd2548dd71bf67ac9d20\", \"browserBackend\": \"managed\"}, \"build\": {\"revision\": \"8be09135bd2df56f54cdd5895af30ec0d8769da8\", \"dirty\": false, \"sourceHash\": \"20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea\"}, \"prerequisites\": {\"ready\": true, \"missing\": []}, \"stopping\": false, \"profiles\": [{\"id\": \"paired-cart-demo\", \"title\": \"Paired cart demo\", \"description\": \"One local cart click with actual server and browser pauses.\", \"actions\": [{\"id\": \"add-to-cart\", \"title\": \"Add to cart\", \"selector\": \"#add\", \"route\": \"api/cart\", \"afterCapture\": \"after\"}], \"items\": [{\"participant\": \"server\", \"action\": \"add-to-cart\", \"title\": \"Server cart mutation\", \"file\": \"server.mts\", \"marker\": \"CODEBOOK_SERVER_STOP\", \"overview\": \"The server admits the selected cart request and adds the product to its cart state. The stop is immediately before that mutation. Source structure alone does not establish an observed execution.\", \"id\": \"paired-cart-demo/server\", \"capturePhase\": \"paused-server\", \"artifactPrefix\": \"server\", \"expectedValues\": {\"operationId\": \"<runtimeRunId>\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 0, \"admittedCount\": 2}}, {\"participant\": \"browser\", \"action\": \"add-to-cart\", \"title\": \"Browser display update\", \"file\": \"client.mts\", \"marker\": \"CODEBOOK_BROWSER_STOP\", \"overview\": \"The browser awaits the selected cart response and updates the displayed count. The stop is immediately before the DOM update. Request correspondence requires a complete verified observation set.\", \"id\": \"paired-cart-demo/browser\", \"capturePhase\": \"paused-browser\", \"artifactPrefix\": \"browser\", \"expectedValues\": {\"operationId\": \"<runtimeRunId>\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 1, \"admittedCount\": 2}}], \"requiredLinks\": [\"intent-request\", \"request-server\", \"server-response\", \"response-browser\", \"browser-screen\"], \"capturePhases\": [\"before\", \"paused-server\", \"paused-browser\", \"after\"], \"limits\": {\"runTimeoutMs\": 120000, \"setupTimeoutMs\": 20000, \"activeTimeoutMs\": 20000, \"activeBudget\": \"whole-run\"}, \"expectations\": [{\"actionId\": \"add-to-cart\", \"selectedRequest\": {\"operationId\": \"<runtimeRunId>\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24}, \"backgroundRequest\": {\"operationId\": \"<runtimeRunId>-background\", \"cartId\": \"background\", \"productId\": \"background-02\", \"price\": 99}, \"selectedResponse\": {\"operationId\": \"<runtimeRunId>\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 1, \"admittedCount\": 2}, \"backgroundResponse\": {\"operationId\": \"<runtimeRunId>-background\", \"cartId\": \"background\", \"productId\": \"background-02\", \"price\": 99, \"cartCount\": 1, \"admittedCount\": 2}}], \"catalogHash\": \"07aa96eef8802e028877eb8129f27938dfde8e3cf87c869ff5fe2303b60e1bd2\"}, {\"id\": \"checkout-demo\", \"title\": \"Checkout demo\", \"description\": \"Add one local product, then create an order and observe purchase confirmation in the same application. No real payment.\", \"actions\": [{\"id\": \"add-to-cart\", \"title\": \"Add to cart\", \"selector\": \"#add\", \"route\": \"api/cart\", \"afterCapture\": \"after-cart\"}, {\"id\": \"checkout\", \"title\": \"Checkout\", \"selector\": \"#checkout\", \"route\": \"api/checkout\", \"afterCapture\": \"after-confirmation\"}], \"items\": [{\"participant\": \"server\", \"action\": \"add-to-cart\", \"title\": \"Cart mutation\", \"file\": \"server.mts\", \"marker\": \"CODEBOOK_SERVER_STOP\", \"overview\": \"The server admits the selected cart request and adds the product to its cart state. The stop is immediately before that mutation. Source structure alone does not establish an observed execution.\", \"id\": \"checkout-demo/cart-mutation\", \"capturePhase\": \"paused-cart-mutation\", \"artifactPrefix\": \"cart-mutation\", \"expectedValues\": {\"operationId\": \"<runtimeRunId>\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 0, \"admittedCount\": 2}}, {\"participant\": \"browser\", \"action\": \"add-to-cart\", \"title\": \"Cart update\", \"file\": \"client.mts\", \"marker\": \"CODEBOOK_BROWSER_STOP\", \"overview\": \"The browser awaits the selected cart response and updates the displayed count. The stop is immediately before the DOM update. Request correspondence requires a complete verified observation set.\", \"id\": \"checkout-demo/cart-update\", \"capturePhase\": \"paused-cart-update\", \"artifactPrefix\": \"cart-update\", \"expectedValues\": {\"operationId\": \"<runtimeRunId>\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 1, \"admittedCount\": 2}}, {\"id\": \"checkout-demo/order-creation\", \"participant\": \"server\", \"action\": \"checkout\", \"title\": \"Order creation\", \"file\": \"server.mts\", \"marker\": \"CODEBOOK_ORDER_STOP\", \"capturePhase\": \"paused-order-creation\", \"artifactPrefix\": \"order-creation\", \"overview\": \"The server checks the checkout request against the retained cart and derives the order total from its items. The stop is immediately before storing the order; its order count is still zero.\", \"expectedValues\": {\"operationId\": \"<runtimeRunId>-checkout\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartOperationId\": \"<runtimeRunId>\", \"cartCount\": 1, \"admittedCount\": 2, \"orderId\": \"order-<runtimeRunId>\", \"total\": 24, \"orderCount\": 0}}, {\"id\": \"checkout-demo/purchase-confirmation\", \"participant\": \"browser\", \"action\": \"checkout\", \"title\": \"Purchase confirmation\", \"file\": \"client.mts\", \"marker\": \"CODEBOOK_CONFIRMATION_STOP\", \"capturePhase\": \"paused-purchase-confirmation\", \"artifactPrefix\": \"purchase-confirmation\", \"overview\": \"The browser has received the selected order response. The stop is immediately before displaying its confirmation. Captured order values and the later screen observation establish the result.\", \"expectedValues\": {\"operationId\": \"<runtimeRunId>-checkout\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartOperationId\": \"<runtimeRunId>\", \"cartCount\": 1, \"admittedCount\": 2, \"orderId\": \"order-<runtimeRunId>\", \"total\": 24, \"orderCount\": 1}}], \"requiredLinks\": [\"intent-request\", \"request-server\", \"server-response\", \"response-browser\", \"browser-screen\", \"cart-result-checkout-input\", \"checkout-intent-request\", \"checkout-request-server\", \"checkout-server-response\", \"checkout-response-browser\", \"checkout-browser-screen\"], \"capturePhases\": [\"before\", \"paused-cart-mutation\", \"paused-cart-update\", \"after-cart\", \"paused-order-creation\", \"paused-purchase-confirmation\", \"after-confirmation\"], \"limits\": {\"runTimeoutMs\": 300000, \"setupTimeoutMs\": 20000, \"activeTimeoutMs\": 20000, \"activeBudget\": \"per-action\"}, \"expectations\": [{\"actionId\": \"add-to-cart\", \"selectedRequest\": {\"operationId\": \"<runtimeRunId>\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24}, \"backgroundRequest\": {\"operationId\": \"<runtimeRunId>-background\", \"cartId\": \"background\", \"productId\": \"background-02\", \"price\": 99}, \"selectedResponse\": {\"operationId\": \"<runtimeRunId>\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 1, \"admittedCount\": 2}, \"backgroundResponse\": {\"operationId\": \"<runtimeRunId>-background\", \"cartId\": \"background\", \"productId\": \"background-02\", \"price\": 99, \"cartCount\": 1, \"admittedCount\": 2}}, {\"actionId\": \"checkout\", \"selectedRequest\": {\"operationId\": \"<runtimeRunId>-checkout\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartOperationId\": \"<runtimeRunId>\"}, \"backgroundRequest\": {\"operationId\": \"<runtimeRunId>-checkout-background\", \"cartId\": \"background\", \"productId\": \"background-02\", \"price\": 99, \"cartOperationId\": \"<runtimeRunId>-background\"}, \"selectedResponse\": {\"operationId\": \"<runtimeRunId>-checkout\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartOperationId\": \"<runtimeRunId>\", \"cartCount\": 1, \"admittedCount\": 2, \"orderId\": \"order-<runtimeRunId>\", \"total\": 24, \"orderCount\": 1}, \"backgroundResponse\": {\"operationId\": \"<runtimeRunId>-checkout-background\", \"cartId\": \"background\", \"productId\": \"background-02\", \"price\": 99, \"cartOperationId\": \"<runtimeRunId>-background\", \"cartCount\": 1, \"admittedCount\": 2, \"orderId\": \"order-<runtimeRunId>-background\", \"total\": 99, \"orderCount\": 1}}], \"catalogHash\": \"f6e31054daa2ad64fd1fde838f197199a82f5fd11e8b4c038437692047a100fb\"}], \"capabilities\": [\"start\", \"add-to-cart\", \"checkout\", \"pause-evidence\", \"continue\", \"explain\", \"reveal-source\", \"stop\", \"historical-resources\"], \"limits\": {\"activeRuns\": 1, \"retainedRuns\": 16, \"explanationsPerRun\": 32, \"activeTimeoutMs\": 20000, \"runTimeoutMs\": 120000, \"timeoutFieldsApplyTo\": \"paired-cart-demo; use each selected profile.limits for other profiles\"}, \"runs\": [], \"recovery\": \"Same instance: initialize a new transport and read the existing run. Server restart: copy new credentials first. Never automatically repeat a click.\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+          "apiVersion": "1.1",
+          "workspace": "<repo>/artifacts/cycle-0005/cursor/suite-2026-09-19T01-32-21.154Z-50021af0/workspace",
+          "host": {
+            "id": "cursor",
+            "productVersion": "3.21.12",
+            "apiVersion": "1.128.0",
+            "commit": "05ddb9e824590e2c1db6bd2548dd71bf67ac9d20",
+            "browserBackend": "managed"
+          },
+          "build": {
+            "revision": "8be09135bd2df56f54cdd5895af30ec0d8769da8",
+            "dirty": false,
+            "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea"
+          },
+          "prerequisites": {
+            "ready": true,
+            "missing": []
+          },
+          "stopping": false,
+          "profiles": [
+            {
+              "id": "paired-cart-demo",
+              "title": "Paired cart demo",
+              "description": "One local cart click with actual server and browser pauses.",
+              "actions": [
+                {
+                  "id": "add-to-cart",
+                  "title": "Add to cart",
+                  "selector": "#add",
+                  "route": "api/cart",
+                  "afterCapture": "after"
+                }
+              ],
+              "items": [
+                {
+                  "participant": "server",
+                  "action": "add-to-cart",
+                  "title": "Server cart mutation",
+                  "file": "server.mts",
+                  "marker": "CODEBOOK_SERVER_STOP",
+                  "overview": "The server admits the selected cart request and adds the product to its cart state. The stop is immediately before that mutation. Source structure alone does not establish an observed execution.",
+                  "id": "paired-cart-demo/server",
+                  "capturePhase": "paused-server",
+                  "artifactPrefix": "server",
+                  "expectedValues": {
+                    "operationId": "<runtimeRunId>",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24,
+                    "cartCount": 0,
+                    "admittedCount": 2
+                  }
+                },
+                {
+                  "participant": "browser",
+                  "action": "add-to-cart",
+                  "title": "Browser display update",
+                  "file": "client.mts",
+                  "marker": "CODEBOOK_BROWSER_STOP",
+                  "overview": "The browser awaits the selected cart response and updates the displayed count. The stop is immediately before the DOM update. Request correspondence requires a complete verified observation set.",
+                  "id": "paired-cart-demo/browser",
+                  "capturePhase": "paused-browser",
+                  "artifactPrefix": "browser",
+                  "expectedValues": {
+                    "operationId": "<runtimeRunId>",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24,
+                    "cartCount": 1,
+                    "admittedCount": 2
+                  }
+                }
+              ],
+              "requiredLinks": [
+                "intent-request",
+                "request-server",
+                "server-response",
+                "response-browser",
+                "browser-screen"
+              ],
+              "capturePhases": [
+                "before",
+                "paused-server",
+                "paused-browser",
+                "after"
+              ],
+              "limits": {
+                "runTimeoutMs": 120000,
+                "setupTimeoutMs": 20000,
+                "activeTimeoutMs": 20000,
+                "activeBudget": "whole-run"
+              },
+              "expectations": [
+                {
+                  "actionId": "add-to-cart",
+                  "selectedRequest": {
+                    "operationId": "<runtimeRunId>",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24
+                  },
+                  "backgroundRequest": {
+                    "operationId": "<runtimeRunId>-background",
+                    "cartId": "background",
+                    "productId": "background-02",
+                    "price": 99
+                  },
+                  "selectedResponse": {
+                    "operationId": "<runtimeRunId>",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24,
+                    "cartCount": 1,
+                    "admittedCount": 2
+                  },
+                  "backgroundResponse": {
+                    "operationId": "<runtimeRunId>-background",
+                    "cartId": "background",
+                    "productId": "background-02",
+                    "price": 99,
+                    "cartCount": 1,
+                    "admittedCount": 2
+                  }
+                }
+              ],
+              "catalogHash": "07aa96eef8802e028877eb8129f27938dfde8e3cf87c869ff5fe2303b60e1bd2"
+            },
+            {
+              "id": "checkout-demo",
+              "title": "Checkout demo",
+              "description": "Add one local product, then create an order and observe purchase confirmation in the same application. No real payment.",
+              "actions": [
+                {
+                  "id": "add-to-cart",
+                  "title": "Add to cart",
+                  "selector": "#add",
+                  "route": "api/cart",
+                  "afterCapture": "after-cart"
+                },
+                {
+                  "id": "checkout",
+                  "title": "Checkout",
+                  "selector": "#checkout",
+                  "route": "api/checkout",
+                  "afterCapture": "after-confirmation"
+                }
+              ],
+              "items": [
+                {
+                  "participant": "server",
+                  "action": "add-to-cart",
+                  "title": "Cart mutation",
+                  "file": "server.mts",
+                  "marker": "CODEBOOK_SERVER_STOP",
+                  "overview": "The server admits the selected cart request and adds the product to its cart state. The stop is immediately before that mutation. Source structure alone does not establish an observed execution.",
+                  "id": "checkout-demo/cart-mutation",
+                  "capturePhase": "paused-cart-mutation",
+                  "artifactPrefix": "cart-mutation",
+                  "expectedValues": {
+                    "operationId": "<runtimeRunId>",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24,
+                    "cartCount": 0,
+                    "admittedCount": 2
+                  }
+                },
+                {
+                  "participant": "browser",
+                  "action": "add-to-cart",
+                  "title": "Cart update",
+                  "file": "client.mts",
+                  "marker": "CODEBOOK_BROWSER_STOP",
+                  "overview": "The browser awaits the selected cart response and updates the displayed count. The stop is immediately before the DOM update. Request correspondence requires a complete verified observation set.",
+                  "id": "checkout-demo/cart-update",
+                  "capturePhase": "paused-cart-update",
+                  "artifactPrefix": "cart-update",
+                  "expectedValues": {
+                    "operationId": "<runtimeRunId>",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24,
+                    "cartCount": 1,
+                    "admittedCount": 2
+                  }
+                },
+                {
+                  "id": "checkout-demo/order-creation",
+                  "participant": "server",
+                  "action": "checkout",
+                  "title": "Order creation",
+                  "file": "server.mts",
+                  "marker": "CODEBOOK_ORDER_STOP",
+                  "capturePhase": "paused-order-creation",
+                  "artifactPrefix": "order-creation",
+                  "overview": "The server checks the checkout request against the retained cart and derives the order total from its items. The stop is immediately before storing the order; its order count is still zero.",
+                  "expectedValues": {
+                    "operationId": "<runtimeRunId>-checkout",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24,
+                    "cartOperationId": "<runtimeRunId>",
+                    "cartCount": 1,
+                    "admittedCount": 2,
+                    "orderId": "order-<runtimeRunId>",
+                    "total": 24,
+                    "orderCount": 0
+                  }
+                },
+                {
+                  "id": "checkout-demo/purchase-confirmation",
+                  "participant": "browser",
+                  "action": "checkout",
+                  "title": "Purchase confirmation",
+                  "file": "client.mts",
+                  "marker": "CODEBOOK_CONFIRMATION_STOP",
+                  "capturePhase": "paused-purchase-confirmation",
+                  "artifactPrefix": "purchase-confirmation",
+                  "overview": "The browser has received the selected order response. The stop is immediately before displaying its confirmation. Captured order values and the later screen observation establish the result.",
+                  "expectedValues": {
+                    "operationId": "<runtimeRunId>-checkout",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24,
+                    "cartOperationId": "<runtimeRunId>",
+                    "cartCount": 1,
+                    "admittedCount": 2,
+                    "orderId": "order-<runtimeRunId>",
+                    "total": 24,
+                    "orderCount": 1
+                  }
+                }
+              ],
+              "requiredLinks": [
+                "intent-request",
+                "request-server",
+                "server-response",
+                "response-browser",
+                "browser-screen",
+                "cart-result-checkout-input",
+                "checkout-intent-request",
+                "checkout-request-server",
+                "checkout-server-response",
+                "checkout-response-browser",
+                "checkout-browser-screen"
+              ],
+              "capturePhases": [
+                "before",
+                "paused-cart-mutation",
+                "paused-cart-update",
+                "after-cart",
+                "paused-order-creation",
+                "paused-purchase-confirmation",
+                "after-confirmation"
+              ],
+              "limits": {
+                "runTimeoutMs": 300000,
+                "setupTimeoutMs": 20000,
+                "activeTimeoutMs": 20000,
+                "activeBudget": "per-action"
+              },
+              "expectations": [
+                {
+                  "actionId": "add-to-cart",
+                  "selectedRequest": {
+                    "operationId": "<runtimeRunId>",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24
+                  },
+                  "backgroundRequest": {
+                    "operationId": "<runtimeRunId>-background",
+                    "cartId": "background",
+                    "productId": "background-02",
+                    "price": 99
+                  },
+                  "selectedResponse": {
+                    "operationId": "<runtimeRunId>",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24,
+                    "cartCount": 1,
+                    "admittedCount": 2
+                  },
+                  "backgroundResponse": {
+                    "operationId": "<runtimeRunId>-background",
+                    "cartId": "background",
+                    "productId": "background-02",
+                    "price": 99,
+                    "cartCount": 1,
+                    "admittedCount": 2
+                  }
+                },
+                {
+                  "actionId": "checkout",
+                  "selectedRequest": {
+                    "operationId": "<runtimeRunId>-checkout",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24,
+                    "cartOperationId": "<runtimeRunId>"
+                  },
+                  "backgroundRequest": {
+                    "operationId": "<runtimeRunId>-checkout-background",
+                    "cartId": "background",
+                    "productId": "background-02",
+                    "price": 99,
+                    "cartOperationId": "<runtimeRunId>-background"
+                  },
+                  "selectedResponse": {
+                    "operationId": "<runtimeRunId>-checkout",
+                    "cartId": "selected",
+                    "productId": "tote-01",
+                    "price": 24,
+                    "cartOperationId": "<runtimeRunId>",
+                    "cartCount": 1,
+                    "admittedCount": 2,
+                    "orderId": "order-<runtimeRunId>",
+                    "total": 24,
+                    "orderCount": 1
+                  },
+                  "backgroundResponse": {
+                    "operationId": "<runtimeRunId>-checkout-background",
+                    "cartId": "background",
+                    "productId": "background-02",
+                    "price": 99,
+                    "cartOperationId": "<runtimeRunId>-background",
+                    "cartCount": 1,
+                    "admittedCount": 2,
+                    "orderId": "order-<runtimeRunId>-background",
+                    "total": 99,
+                    "orderCount": 1
+                  }
+                }
+              ],
+              "catalogHash": "f6e31054daa2ad64fd1fde838f197199a82f5fd11e8b4c038437692047a100fb"
+            }
+          ],
+          "capabilities": [
+            "start",
+            "add-to-cart",
+            "checkout",
+            "pause-evidence",
+            "continue",
+            "explain",
+            "reveal-source",
+            "stop",
+            "historical-resources"
+          ],
+          "limits": {
+            "activeRuns": 1,
+            "retainedRuns": 16,
+            "explanationsPerRun": 32,
+            "activeTimeoutMs": 20000,
+            "runTimeoutMs": 120000,
+            "timeoutFieldsApplyTo": "paired-cart-demo; use each selected profile.limits for other profiles"
+          },
+          "runs": [],
+          "recovery": "Same instance: initialize a new transport and read the existing run. Server restart: copy new credentials first. Never automatically repeat a click."
+        }
+      }
+    },
+    "durationMs": 68.30279199999859
+  },
+  {
+    "operation": "codebook_start",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "profile": "checkout-demo",
+      "key": "agent-checkout-request"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\",\"accepted\":true,\"deadlineAt\":\"2026-09-19T01:37:52.895Z\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+          "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+          "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+          "accepted": true,
+          "deadlineAt": "2026-09-19T01:37:52.895Z"
+        }
+      }
+    },
+    "durationMs": 4.374834000000192
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"runtimeRunId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"profile\":\"checkout-demo\",\"state\":\"ready\",\"runtimeState\":\"ready\",\"createdAt\":\"2026-09-19T01:32:52.895Z\",\"deadlineAt\":\"2026-09-19T01:37:52.895Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"add-to-cart\",\"stop\",\"read-history\"],\"participants\":{\"server\":{\"phase\":\"running\",\"resumable\":false},\"browser\":{\"phase\":\"running\",\"resumable\":false}},\"operations\":[],\"links\":[{\"id\":\"intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"browser-screen\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"cart-result-checkout-input\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-browser-screen\",\"status\":\"unknown\",\"evidence\":[]}],\"manifestUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest\",\"manifestHash\":\"9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592\",\"observations\":[],\"runtimeOutcome\":\"not-demonstrated\",\"captureOutcome\":\"incomplete\",\"finalOutcome\":\"pending-teardown\",\"cleaned\":false,\"resourcesReleased\":false,\"activeSessionIds\":[\"459ef0b7-93ab-4ca4-8607-859a8b7c5a99\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb\",\"41b7dc5c-9125-4b56-bec7-baaea6ab3490\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177\"],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before\"}],\"explanations\":[],\"eventsUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\",\"materialSignature\":\"976eceaad9c5af3a74dc4181bc283c4205e72942c0e61c74b3bc52532f2e1da5\",\"historyOutcome\":{\"status\":\"saved\",\"materialSignature\":\"976eceaad9c5af3a74dc4181bc283c4205e72942c0e61c74b3bc52532f2e1da5\",\"checkpointRevision\":5,\"savedSignature\":\"976eceaad9c5af3a74dc4181bc283c4205e72942c0e61c74b3bc52532f2e1da5\"},\"studyOutcome\":\"pending\"}"
+      }
+    ],
+    "durationMs": 3.00616699999955
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest",
+        "mimeType": "application/json",
+        "text": "{\"profile\":{\"id\":\"checkout-demo\",\"title\":\"Checkout demo\",\"description\":\"Add one local product, then create an order and observe purchase confirmation in the same application. No real payment.\",\"actions\":[{\"id\":\"add-to-cart\",\"title\":\"Add to cart\",\"selector\":\"#add\",\"route\":\"api/cart\",\"afterCapture\":\"after-cart\"},{\"id\":\"checkout\",\"title\":\"Checkout\",\"selector\":\"#checkout\",\"route\":\"api/checkout\",\"afterCapture\":\"after-confirmation\"}],\"items\":[{\"participant\":\"server\",\"action\":\"add-to-cart\",\"title\":\"Cart mutation\",\"file\":\"server.mts\",\"marker\":\"CODEBOOK_SERVER_STOP\",\"overview\":\"The server admits the selected cart request and adds the product to its cart state. The stop is immediately before that mutation. Source structure alone does not establish an observed execution.\",\"id\":\"checkout-demo/cart-mutation\",\"capturePhase\":\"paused-cart-mutation\",\"artifactPrefix\":\"cart-mutation\"},{\"participant\":\"browser\",\"action\":\"add-to-cart\",\"title\":\"Cart update\",\"file\":\"client.mts\",\"marker\":\"CODEBOOK_BROWSER_STOP\",\"overview\":\"The browser awaits the selected cart response and updates the displayed count. The stop is immediately before the DOM update. Request correspondence requires a complete verified observation set.\",\"id\":\"checkout-demo/cart-update\",\"capturePhase\":\"paused-cart-update\",\"artifactPrefix\":\"cart-update\"},{\"id\":\"checkout-demo/order-creation\",\"participant\":\"server\",\"action\":\"checkout\",\"title\":\"Order creation\",\"file\":\"server.mts\",\"marker\":\"CODEBOOK_ORDER_STOP\",\"capturePhase\":\"paused-order-creation\",\"artifactPrefix\":\"order-creation\",\"overview\":\"The server checks the checkout request against the retained cart and derives the order total from its items. The stop is immediately before storing the order; its order count is still zero.\"},{\"id\":\"checkout-demo/purchase-confirmation\",\"participant\":\"browser\",\"action\":\"checkout\",\"title\":\"Purchase confirmation\",\"file\":\"client.mts\",\"marker\":\"CODEBOOK_CONFIRMATION_STOP\",\"capturePhase\":\"paused-purchase-confirmation\",\"artifactPrefix\":\"purchase-confirmation\",\"overview\":\"The browser has received the selected order response. The stop is immediately before displaying its confirmation. Captured order values and the later screen observation establish the result.\"}],\"requiredLinks\":[\"intent-request\",\"request-server\",\"server-response\",\"response-browser\",\"browser-screen\",\"cart-result-checkout-input\",\"checkout-intent-request\",\"checkout-request-server\",\"checkout-server-response\",\"checkout-response-browser\",\"checkout-browser-screen\"],\"capturePhases\":[\"before\",\"paused-cart-mutation\",\"paused-cart-update\",\"after-cart\",\"paused-order-creation\",\"paused-purchase-confirmation\",\"after-confirmation\"],\"limits\":{\"runTimeoutMs\":300000,\"setupTimeoutMs\":20000,\"activeTimeoutMs\":20000,\"activeBudget\":\"per-action\"}},\"expectations\":[{\"selectedRequest\":{\"operationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"cartId\":\"selected\",\"productId\":\"tote-01\",\"price\":24},\"backgroundRequest\":{\"operationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f-background\",\"cartId\":\"background\",\"productId\":\"background-02\",\"price\":99},\"selectedResponse\":{\"operationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"cartId\":\"selected\",\"productId\":\"tote-01\",\"price\":24,\"cartCount\":1,\"admittedCount\":2},\"backgroundResponse\":{\"operationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f-background\",\"cartId\":\"background\",\"productId\":\"background-02\",\"price\":99,\"cartCount\":1,\"admittedCount\":2}},{\"selectedRequest\":{\"operationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f-checkout\",\"cartId\":\"selected\",\"productId\":\"tote-01\",\"price\":24,\"cartOperationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\"},\"backgroundRequest\":{\"operationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f-checkout-background\",\"cartId\":\"background\",\"productId\":\"background-02\",\"price\":99,\"cartOperationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f-background\"},\"selectedResponse\":{\"operationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f-checkout\",\"cartId\":\"selected\",\"productId\":\"tote-01\",\"price\":24,\"cartOperationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"cartCount\":1,\"admittedCount\":2,\"orderId\":\"order-a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"total\":24,\"orderCount\":1},\"backgroundResponse\":{\"operationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f-checkout-background\",\"cartId\":\"background\",\"productId\":\"background-02\",\"price\":99,\"cartOperationId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f-background\",\"cartCount\":1,\"admittedCount\":2,\"orderId\":\"order-a83a8756-136d-4bee-b73a-8cb52e19f57f-background\",\"total\":99,\"orderCount\":1}}],\"sources\":[{\"itemId\":\"checkout-demo/cart-mutation\",\"typescriptHash\":\"31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a\",\"javascriptHash\":\"8b826120475300f1044a45f8f3530f344a173df025d6e1a7e4c13fc9089d143e\",\"sourceMapHash\":\"f2cf568c2a6f3edbda9efa3b2da658f9034d014d919d5c34b77710a2d432de61\",\"line\":23},{\"itemId\":\"checkout-demo/order-creation\",\"typescriptHash\":\"31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a\",\"javascriptHash\":\"8b826120475300f1044a45f8f3530f344a173df025d6e1a7e4c13fc9089d143e\",\"sourceMapHash\":\"f2cf568c2a6f3edbda9efa3b2da658f9034d014d919d5c34b77710a2d432de61\",\"line\":38},{\"itemId\":\"checkout-demo/cart-update\",\"typescriptHash\":\"96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c\",\"javascriptHash\":\"1334865643ba799870cda2d025d59528277de8fee35a2600f2e9dd2168a3038b\",\"sourceMapHash\":\"5f8f85fbfd35305078845594445d1fcb0e493b8822d1acdaa20e1702c58519a1\",\"line\":29},{\"itemId\":\"checkout-demo/purchase-confirmation\",\"typescriptHash\":\"96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c\",\"javascriptHash\":\"1334865643ba799870cda2d025d59528277de8fee35a2600f2e9dd2168a3038b\",\"sourceMapHash\":\"5f8f85fbfd35305078845594445d1fcb0e493b8822d1acdaa20e1702c58519a1\",\"line\":54}],\"hash\":\"9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592\"}"
+      }
+    ],
+    "durationMs": 2.085917000000336
+  },
+  {
+    "operation": "codebook_action",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "key": "cart-once",
+      "action": "add-to-cart"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "operationId": "62c5668e-bb30-46dd-9e2b-01025c3f3bc5",
+          "key": "cart-once",
+          "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+        }
+      }
+    },
+    "durationMs": 4.338749999995343
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"runtimeRunId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"profile\":\"checkout-demo\",\"state\":\"paused-server\",\"runtimeState\":\"paused-server\",\"createdAt\":\"2026-09-19T01:32:52.895Z\",\"deadlineAt\":\"2026-09-19T01:37:52.895Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"continue-server\",\"stop\",\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"phase\":\"paused\",\"resumable\":true,\"continueArguments\":{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"participant\":\"server\",\"sessionId\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb\",\"threadId\":0,\"generation\":1}},\"browser\":{\"phase\":\"running\",\"resumable\":false}},\"operation\":{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},\"operations\":[{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}],\"links\":[{\"id\":\"intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"browser-screen\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"cart-result-checkout-input\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-browser-screen\",\"status\":\"unknown\",\"evidence\":[]}],\"manifestUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest\",\"manifestHash\":\"9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592\",\"observations\":[{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"participant\":\"server\",\"capturePhase\":\"paused-cart-mutation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\"}],\"runtimeOutcome\":\"not-demonstrated\",\"captureOutcome\":\"incomplete\",\"finalOutcome\":\"pending-teardown\",\"cleaned\":false,\"resourcesReleased\":false,\"activeSessionIds\":[\"459ef0b7-93ab-4ca4-8607-859a8b7c5a99\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb\",\"41b7dc5c-9125-4b56-bec7-baaea6ab3490\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177\"],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before\"},{\"phase\":\"paused-cart-mutation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation\"}],\"explanations\":[],\"eventsUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\",\"materialSignature\":\"7de2d511a120d2da8d8e540ca50a8475f4cae0bc83f13c41a04091a773f146ef\",\"historyOutcome\":{\"status\":\"saved\",\"materialSignature\":\"7de2d511a120d2da8d8e540ca50a8475f4cae0bc83f13c41a04091a773f146ef\",\"checkpointRevision\":7,\"savedSignature\":\"7de2d511a120d2da8d8e540ca50a8475f4cae0bc83f13c41a04091a773f146ef\"},\"studyOutcome\":\"pending\"}"
+      }
+    ],
+    "durationMs": 3.25920899999619
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1",
+        "mimeType": "application/json",
+        "text": "{\"id\": \"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\", \"participant\": \"server\", \"itemId\": \"checkout-demo/cart-mutation\", \"actionId\": \"add-to-cart\", \"capturePhase\": \"paused-cart-mutation\", \"pause\": {\"sessionId\": \"19d4ae5c-c2fb-465f-844d-f73ef8071dfb\", \"threadId\": 0, \"generation\": 1}, \"frame\": {\"id\": 0, \"name\": \"addProduct\", \"line\": 23, \"column\": 9, \"source\": {\"name\": \"<owned-profile>/User/globalStorage/laststance.codebook/agent/d1d32e79-b57b-4135-ad1b-901079f4421c/d4c47789-f190-46fe-8089-1f96b9044f0d/a83a8756-136d-4bee-b73a-8cb52e19f57f/fixture/server.mts\", \"path\": \"<owned-profile>/User/globalStorage/laststance.codebook/agent/d1d32e79-b57b-4135-ad1b-901079f4421c/d4c47789-f190-46fe-8089-1f96b9044f0d/a83a8756-136d-4bee-b73a-8cb52e19f57f/fixture/server.mts\", \"sourceReference\": 0}, \"presentationHint\": \"normal\", \"canRestart\": true}, \"values\": {\"operationId\": \"a83a8756-136d-4bee-b73a-8cb52e19f57f\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 0, \"admittedCount\": 2}, \"evaluations\": [{\"expression\": \"tuple.operationId\", \"value\": {\"type\": \"string\", \"result\": \"'a83a8756-136d-4bee-b73a-8cb52e19f57f'\", \"variablesReference\": 0}}, {\"expression\": \"tuple.cartId\", \"value\": {\"type\": \"string\", \"result\": \"'selected'\", \"variablesReference\": 0}}, {\"expression\": \"tuple.productId\", \"value\": {\"type\": \"string\", \"result\": \"'tote-01'\", \"variablesReference\": 0}}, {\"expression\": \"tuple.price\", \"value\": {\"type\": \"number\", \"result\": \"24\", \"variablesReference\": 0}}, {\"expression\": \"state.items.length\", \"value\": {\"type\": \"number\", \"result\": \"0\", \"variablesReference\": 0}}, {\"expression\": \"admittedCount\", \"value\": {\"type\": \"number\", \"result\": \"2\", \"variablesReference\": 0}}], \"source\": {\"scriptId\": \"165\", \"scriptLocation\": {\"scriptId\": \"165\", \"lineNumber\": 18, \"columnNumber\": 10}, \"mapping\": {\"generatedLine\": 18, \"generatedColumn\": 10, \"originalSource\": \"../fixture/server.mts\", \"originalLine\": 22, \"originalColumn\": 8}, \"typescriptHash\": \"31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a\", \"javascriptHash\": \"8b826120475300f1044a45f8f3530f344a173df025d6e1a7e4c13fc9089d143e\", \"sourceMapHash\": \"f2cf568c2a6f3edbda9efa3b2da658f9034d014d919d5c34b77710a2d432de61\"}, \"snapshotUri\": \"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\", \"historical\": true, \"sourceUri\": \"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\"}"
+      }
+    ],
+    "durationMs": 3.251250000001164
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript",
+        "mimeType": "text/typescript",
+        "text": "import { createServer } from 'node:http';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { BODY_LIMIT_BYTES, EXPECTED_ADMISSIONS, EXPECTED_CART_ITEMS } from './constants.mjs';\n\nconst directory = dirname(dirname(fileURLToPath(import.meta.url)));\nconst configuration: { runId: string; scenario: string; profile?: string } = JSON.parse(await readFile(join(directory, 'fixture-config.json'), 'utf8'));\ninterface Tuple { operationId: string; cartId: string; productId: string; price: number }\ninterface CheckoutTuple extends Tuple { cartOperationId: string }\nconst arrivals: Tuple[] = [];\nconst checkoutArrivals: CheckoutTuple[] = [];\nconst carts = new Map<string, { items: { id: string; price: number }[]; lastOperationId: string; orders: { id: string; total: number }[] }>();\nlet releaseBarrier: () => void = () => undefined;\nconst barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });\nlet releaseCheckoutBarrier: () => void = () => undefined;\nconst checkoutBarrier = new Promise<void>(resolve => { releaseCheckoutBarrier = resolve; });\n\n/** Mutates one admitted cart after both requests arrive; the HTTP fixture calls this at the server study stop. @example addProduct({ operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24 }) */\nfunction addProduct(tuple: Tuple) {\n  const state = carts.get(tuple.cartId) ?? { items: [], lastOperationId: '', orders: [] };\n  const admittedCount = arrivals.length;\n  state.items.push({ id: tuple.productId, price: tuple.price }); // CODEBOOK_SERVER_STOP\n  state.lastOperationId = tuple.operationId;\n  carts.set(tuple.cartId, state);\n  return { ...tuple, cartCount: state.items.length, admittedCount };\n}\n\n/** Creates one order from retained cart state after both checkout requests arrive; the checkout route supplies its tuple. @example createOrder({operationId:'run-checkout',cartOperationId:'run',cartId:'selected',productId:'tote-01',price:24}) */\nfunction createOrder(tuple: CheckoutTuple) {\n  const state = carts.get(tuple.cartId);\n  if (!state || state.lastOperationId !== tuple.cartOperationId || state.items.length !== EXPECTED_CART_ITEMS || state.orders.length) throw new Error('Checkout does not match one unpurchased cart');\n  const product = state.items[0]!;\n  if (product.id !== tuple.productId || product.price !== tuple.price) throw new Error('Checkout product differs from retained cart');\n  const admittedCount = checkoutArrivals.length;\n  const orderId = `order-${state.lastOperationId}`;\n  const total = state.items.reduce((sum, item) => sum + item.price, 0);\n  state.orders.push({ id: orderId, total }); // CODEBOOK_ORDER_STOP\n  return { ...tuple, cartCount: state.items.length, admittedCount, orderId, total, orderCount: state.orders.length };\n}\n\nconst server = createServer((request, response) => {\n  void (async () => {\n    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;\n    const prefix = `/runs/${configuration.runId}/`;\n    response.setHeader('cache-control', 'no-store');\n    if (!pathname.startsWith(prefix)) { response.writeHead(404).end(); return; }\n    const route = pathname.slice(prefix.length);\n    if (request.method === 'GET' && ['index.html', 'client.mjs', 'client.mjs.map', 'constants.mjs', 'constants.mjs.map'].includes(route)) {\n      const bytes = await readFile(join(directory, route === 'index.html' ? route : `build/${route}`));\n      response.setHeader('content-type', route === 'index.html' ? 'text/html' : 'text/javascript');\n      response.end(bytes); return;\n    }\n    const checkout = route === 'api/checkout';\n    if (request.method !== 'POST' || !['api/cart', 'api/redirected', 'api/checkout'].includes(route) || checkout && configuration.profile !== 'checkout-demo') { response.writeHead(404).end(); return; }\n    const injectFault = configuration.profile === 'checkout-demo' ? checkout : route === 'api/cart';\n    if (injectFault && configuration.scenario === 'redirect') { response.writeHead(307, { location: `${prefix}api/redirected` }).end(); return; }\n    const chunks: Buffer[] = []; let bytes = 0;\n    for await (const chunk of request) {\n      bytes += chunk.length;\n      if (bytes > BODY_LIMIT_BYTES) { response.writeHead(413).end(); return; }\n      chunks.push(chunk);\n    }\n    const body: unknown = JSON.parse(Buffer.concat(chunks).toString());\n    if (!body || typeof body !== 'object' || !('cartId' in body) || typeof body.cartId !== 'string' || !('productId' in body) || typeof body.productId !== 'string' || !('price' in body) || typeof body.price !== 'number') { response.writeHead(400).end(); return; }\n    const tuple: Tuple = { operationId: String(request.headers['x-codebook-operation'] ?? ''), cartId: body.cartId, productId: body.productId, price: body.price };\n    // Separate admission barriers keep second-action counters independent while retaining the same carts.\n    let result: ReturnType<typeof addProduct> | ReturnType<typeof createOrder>;\n    if (checkout) {\n      if (!('cartOperationId' in body) || typeof body.cartOperationId !== 'string') { response.writeHead(400).end(); return; }\n      const checkoutTuple = { ...tuple, cartOperationId: body.cartOperationId };\n      checkoutArrivals.push(checkoutTuple);\n      if (checkoutArrivals.length === EXPECTED_ADMISSIONS) releaseCheckoutBarrier();\n      await checkoutBarrier;\n      result = createOrder(checkoutTuple);\n    } else {\n      arrivals.push(tuple);\n      if (arrivals.length === EXPECTED_ADMISSIONS) releaseBarrier();\n      await barrier;\n      result = addProduct(tuple);\n    }\n    if (injectFault && tuple.cartId === 'selected') {\n      if (configuration.scenario === 'backend-exit') process.exit(1);\n      if (configuration.scenario === 'absent-response') return;\n      if (configuration.scenario === 'wrong-response-id') result.operationId = 'wrong-operation';\n      if (configuration.scenario === 'wrong-response-value') result.cartCount = 2;\n    }\n    response.setHeader('content-type', 'application/json');\n    response.end(JSON.stringify(result));\n  })().catch(error => { response.writeHead(500).end(String(error)); });\n});\nserver.listen(0, '127.0.0.1', () => {\n  const address = server.address();\n  if (!address || typeof address === 'string') throw new Error('No owned fixture listener');\n  void writeFile(join(directory, 'backend-endpoint.json'), JSON.stringify({ runId: configuration.runId, pid: process.pid, origin: `http://127.0.0.1:${address.port}`, executable: process.execPath, version: process.version }));\n});\n"
+      }
+    ],
+    "durationMs": 1.769625000000815
+  },
+  {
+    "operation": "codebook_explain",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "key": "cart-mutation",
+      "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1",
+      "sourceHash": "31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a",
+      "valuePaths": [
+        "productId",
+        "price",
+        "cartCount"
+      ],
+      "interpretation": "At server.mts line 23, tote-01 costs 24 and the selected cart still contains 0 items. Continuing executes the push. The browser display awaits the response and its later DOM update."
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"explanationUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "explanationUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4"
+        }
+      }
+    },
+    "durationMs": 4.09375
+  },
+  {
+    "operation": "codebook_reveal",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"revealed\":true,\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\",\"line\":23}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "revealed": true,
+          "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1",
+          "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript",
+          "line": 23
+        }
+      }
+    },
+    "durationMs": 7.535207999993872
+  },
+  {
+    "operation": "codebook_continue",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "participant": "server",
+      "sessionId": "19d4ae5c-c2fb-465f-844d-f73ef8071dfb",
+      "threadId": 0,
+      "generation": 1
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"accepted\":true,\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "accepted": true,
+          "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+        }
+      }
+    },
+    "durationMs": 8.714583000000857
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"runtimeRunId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"profile\":\"checkout-demo\",\"state\":\"paused-browser\",\"runtimeState\":\"paused-browser\",\"createdAt\":\"2026-09-19T01:32:52.895Z\",\"deadlineAt\":\"2026-09-19T01:37:52.895Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"continue-browser\",\"stop\",\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"phase\":\"running\",\"resumable\":false},\"browser\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\",\"itemId\":\"checkout-demo/cart-update\",\"actionId\":\"add-to-cart\",\"phase\":\"paused\",\"resumable\":true,\"continueArguments\":{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"participant\":\"browser\",\"sessionId\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177\",\"threadId\":1,\"generation\":1}}},\"operation\":{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},\"operations\":[{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}],\"links\":[{\"id\":\"intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"browser-screen\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"cart-result-checkout-input\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-browser-screen\",\"status\":\"unknown\",\"evidence\":[]}],\"manifestUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest\",\"manifestHash\":\"9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592\",\"observations\":[{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"participant\":\"server\",\"capturePhase\":\"paused-cart-mutation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"itemId\":\"checkout-demo/cart-update\",\"actionId\":\"add-to-cart\",\"participant\":\"browser\",\"capturePhase\":\"paused-cart-update\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\"}],\"runtimeOutcome\":\"not-demonstrated\",\"captureOutcome\":\"incomplete\",\"finalOutcome\":\"pending-teardown\",\"cleaned\":false,\"resourcesReleased\":false,\"activeSessionIds\":[\"459ef0b7-93ab-4ca4-8607-859a8b7c5a99\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb\",\"41b7dc5c-9125-4b56-bec7-baaea6ab3490\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177\"],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before\"},{\"phase\":\"paused-cart-mutation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation\"},{\"phase\":\"paused-cart-update\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-update\"}],\"explanations\":[\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4\"],\"eventsUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\",\"materialSignature\":\"7b9e06c70d8e8c36f3a986488f9d01ea08d96e6ce41b7bbea87b10bfb693e7fa\",\"historyOutcome\":{\"status\":\"saved\",\"materialSignature\":\"7b9e06c70d8e8c36f3a986488f9d01ea08d96e6ce41b7bbea87b10bfb693e7fa\",\"checkpointRevision\":8,\"savedSignature\":\"7b9e06c70d8e8c36f3a986488f9d01ea08d96e6ce41b7bbea87b10bfb693e7fa\"},\"studyOutcome\":\"pending\"}"
+      }
+    ],
+    "durationMs": 2.4140000000043074
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1",
+        "mimeType": "application/json",
+        "text": "{\"id\": \"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\", \"participant\": \"browser\", \"itemId\": \"checkout-demo/cart-update\", \"actionId\": \"add-to-cart\", \"capturePhase\": \"paused-cart-update\", \"pause\": {\"sessionId\": \"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177\", \"threadId\": 1, \"generation\": 1}, \"frame\": {\"id\": 52, \"name\": \"<anonymous>\", \"line\": 29, \"column\": 5, \"source\": {\"name\": \"fixture/client.mts\", \"path\": \"<owned-profile>/User/globalStorage/laststance.codebook/agent/d1d32e79-b57b-4135-ad1b-901079f4421c/d4c47789-f190-46fe-8089-1f96b9044f0d/a83a8756-136d-4bee-b73a-8cb52e19f57f/fixture/client.mts\", \"sourceReference\": 0}, \"presentationHint\": \"normal\", \"canRestart\": false}, \"values\": {\"operationId\": \"a83a8756-136d-4bee-b73a-8cb52e19f57f\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 1, \"admittedCount\": 2}, \"evaluations\": [{\"expression\": \"result.operationId\", \"value\": {\"type\": \"string\", \"result\": \"'a83a8756-136d-4bee-b73a-8cb52e19f57f'\", \"variablesReference\": 0}}, {\"expression\": \"result.cartId\", \"value\": {\"type\": \"string\", \"result\": \"'selected'\", \"variablesReference\": 0}}, {\"expression\": \"result.productId\", \"value\": {\"type\": \"string\", \"result\": \"'tote-01'\", \"variablesReference\": 0}}, {\"expression\": \"result.price\", \"value\": {\"type\": \"number\", \"result\": \"24\", \"variablesReference\": 0}}, {\"expression\": \"result.cartCount\", \"value\": {\"type\": \"number\", \"result\": \"1\", \"variablesReference\": 0}}, {\"expression\": \"result.admittedCount\", \"value\": {\"type\": \"number\", \"result\": \"2\", \"variablesReference\": 0}}], \"source\": {\"scriptId\": \"3\", \"scriptLocation\": {\"scriptId\": \"3\", \"lineNumber\": 24, \"columnNumber\": 8}, \"mapping\": {\"generatedLine\": 24, \"generatedColumn\": 8, \"originalSource\": \"../fixture/client.mts\", \"originalLine\": 28, \"originalColumn\": 4}, \"typescriptHash\": \"96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c\", \"javascriptHash\": \"1334865643ba799870cda2d025d59528277de8fee35a2600f2e9dd2168a3038b\", \"sourceMapHash\": \"5f8f85fbfd35305078845594445d1fcb0e493b8822d1acdaa20e1702c58519a1\"}, \"snapshotUri\": \"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\", \"historical\": true, \"sourceUri\": \"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\"}"
+      }
+    ],
+    "durationMs": 2.935291000001598
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript",
+        "mimeType": "text/typescript",
+        "text": "import { PRODUCT, BACKGROUND_PRODUCT } from './constants.mjs';\n\nconst runId = document.documentElement.dataset.runId!;\nconst scenario = document.documentElement.dataset.scenario!;\nconst checkoutProfile = document.documentElement.dataset.profile === 'checkout-demo';\nconst count = document.querySelector('#count')!;\nconst clicks = document.querySelector('#clicks')!;\nconst status = document.querySelector('#status')!;\ninterface CartResult { operationId: string; cartId: string; productId: string; price: number; cartCount: number; admittedCount: number }\ninterface OrderResult extends CartResult { cartOperationId: string; orderId: string; total: number; orderCount: number }\nlet selectedCart: CartResult | undefined;\nlet backgroundCart: CartResult | undefined;\nconst checkoutButton = document.querySelector<HTMLButtonElement>('#checkout')!;\ncheckoutButton.hidden = !checkoutProfile;\n\n/** Sends each fixture request once from the click handler; its headers and body are debugger correlation evidence. @example requestCart('selected', 'run', PRODUCT) */\nasync function requestCart(cartId: string, operationId: string, product: typeof PRODUCT): Promise<CartResult> {\n  const response = await fetch('api/cart', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) }, body: JSON.stringify({ cartId, productId: product.id, price: product.price }) });\n  if (!response.ok) throw new Error(`Cart HTTP ${response.status}`);\n  return response.json();\n}\n\ndocument.querySelector('#add')!.addEventListener('click', () => {\n  void (async () => {\n    status.textContent = 'Two requests pending; waiting for the server.';\n    const selected = requestCart('selected', !checkoutProfile && scenario === 'missing-id' ? '' : runId, PRODUCT);\n    const background = requestCart('background', !checkoutProfile && scenario === 'duplicate-id' ? runId : `${runId}-background`, BACKGROUND_PRODUCT);\n    const [result, backgroundResult] = await Promise.all([selected, background]);\n    count.textContent = String(result.cartCount); // CODEBOOK_BROWSER_STOP\n    clicks.textContent = String(Number(clicks.textContent) + 1);\n    selectedCart = result; backgroundCart = backgroundResult;\n    checkoutButton.disabled = false;\n    status.textContent = `Selected cart updated; background cart ${backgroundResult.cartCount}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\n\n/** Carries the observed cart operation into one checkout request; the checkout click supplies its actual cart result. @example await requestCheckout(selectedCart) */\nasync function requestCheckout(cart: CartResult): Promise<OrderResult> {\n  const selected = cart.cartId === 'selected';\n  const operationId = selected && scenario === 'missing-id' ? '' : selected || scenario === 'duplicate-id' ? `${runId}-checkout` : `${runId}-checkout-background`;\n  const response = await fetch('api/checkout', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) },\n    body: JSON.stringify({ cartId: cart.cartId, productId: cart.productId, price: cart.price, cartOperationId: cart.operationId }) });\n  if (!response.ok) throw new Error(`Checkout HTTP ${response.status}`);\n  return response.json();\n}\n\ncheckoutButton.addEventListener('click', () => {\n  if (!checkoutProfile || !selectedCart || !backgroundCart || checkoutButton.disabled) return;\n  const selected = selectedCart, background = backgroundCart;\n  checkoutButton.disabled = true;\n  void (async () => {\n    status.textContent = 'Creating the selected and background orders.';\n    const [result, backgroundResult] = await Promise.all([requestCheckout(selected), requestCheckout(background)]);\n    document.querySelector('#order-id')!.textContent = result.orderId; // CODEBOOK_CONFIRMATION_STOP\n    document.querySelector('#order-total')!.textContent = String(result.total);\n    document.querySelector<HTMLElement>('#confirmation')!.hidden = false;\n    document.querySelector('#checkouts')!.textContent = String(Number(document.querySelector('#checkouts')!.textContent) + 1);\n    document.documentElement.dataset.orderStatus = 'confirmed';\n    status.textContent = `Purchase confirmed; background order ${backgroundResult.orderId}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\ndocument.documentElement.dataset.ready = 'true';\n"
+      }
+    ],
+    "durationMs": 1.3941670000058366
+  },
+  {
+    "operation": "codebook_explain",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "key": "cart-update",
+      "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1",
+      "sourceHash": "96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c",
+      "valuePaths": [
+        "productId",
+        "price",
+        "cartCount"
+      ],
+      "interpretation": "The browser response now contains tote-01, price 24, and cartCount 1. At client.mts line 29 the DOM update has not executed. Continuing updates the visible count, retains this response and enables Checkout."
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"explanationUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f25d06c7-8fb5-45ca-b54d-27f344183a4b\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "explanationUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f25d06c7-8fb5-45ca-b54d-27f344183a4b"
+        }
+      }
+    },
+    "durationMs": 3.4974999999976717
+  },
+  {
+    "operation": "codebook_reveal",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"revealed\":true,\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\",\"line\":29}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "revealed": true,
+          "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1",
+          "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript",
+          "line": 29
+        }
+      }
+    },
+    "durationMs": 6.743916999999783
+  },
+  {
+    "operation": "codebook_continue",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "participant": "browser",
+      "sessionId": "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177",
+      "threadId": 1,
+      "generation": 1
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"accepted\":true,\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "accepted": true,
+          "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+        }
+      }
+    },
+    "durationMs": 5.903749999997672
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"runtimeRunId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"profile\":\"checkout-demo\",\"state\":\"ready\",\"runtimeState\":\"ready\",\"createdAt\":\"2026-09-19T01:32:52.895Z\",\"deadlineAt\":\"2026-09-19T01:37:52.895Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"checkout\",\"stop\",\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"phase\":\"running\",\"resumable\":false},\"browser\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\",\"itemId\":\"checkout-demo/cart-update\",\"actionId\":\"add-to-cart\",\"phase\":\"running\",\"resumable\":false}},\"operation\":{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},\"operations\":[{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}],\"observed\":{\"cartCount\":1,\"completedClicks\":1},\"links\":[{\"id\":\"intent-request\",\"status\":\"observed\",\"evidence\":[\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"60032.6\"]},{\"id\":\"request-server\",\"status\":\"observed\",\"evidence\":[\"60032.6\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\"]},{\"id\":\"server-response\",\"status\":\"observed\",\"evidence\":[\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\"]},{\"id\":\"response-browser\",\"status\":\"observed\",\"evidence\":[\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\"]},{\"id\":\"browser-screen\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"event:176\"]},{\"id\":\"cart-result-checkout-input\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-browser-screen\",\"status\":\"unknown\",\"evidence\":[]}],\"manifestUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest\",\"manifestHash\":\"9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592\",\"observations\":[{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"participant\":\"server\",\"capturePhase\":\"paused-cart-mutation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"itemId\":\"checkout-demo/cart-update\",\"actionId\":\"add-to-cart\",\"participant\":\"browser\",\"capturePhase\":\"paused-cart-update\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\"}],\"runtimeOutcome\":\"not-demonstrated\",\"captureOutcome\":\"incomplete\",\"finalOutcome\":\"pending-teardown\",\"cleaned\":false,\"resourcesReleased\":false,\"activeSessionIds\":[\"459ef0b7-93ab-4ca4-8607-859a8b7c5a99\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb\",\"41b7dc5c-9125-4b56-bec7-baaea6ab3490\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177\"],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before\"},{\"phase\":\"paused-cart-mutation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation\"},{\"phase\":\"paused-cart-update\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-update\"},{\"phase\":\"after-cart\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-cart\"}],\"explanations\":[\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f25d06c7-8fb5-45ca-b54d-27f344183a4b\"],\"eventsUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\",\"materialSignature\":\"c0e62a7890b149108c66726250f4de1f3d0a991f217180817d810e958366a76f\",\"historyOutcome\":{\"status\":\"saved\",\"materialSignature\":\"c0e62a7890b149108c66726250f4de1f3d0a991f217180817d810e958366a76f\",\"checkpointRevision\":10,\"savedSignature\":\"c0e62a7890b149108c66726250f4de1f3d0a991f217180817d810e958366a76f\"},\"studyOutcome\":\"pending\"}"
+      }
+    ],
+    "durationMs": 2.9662919999973383
+  },
+  {
+    "operation": "codebook_action",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "key": "checkout-once",
+      "action": "checkout"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "operationId": "2db91379-eb7c-4155-a8da-2e056b5021c1",
+          "key": "checkout-once",
+          "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+        }
+      }
+    },
+    "durationMs": 3.3969160000124248
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"runtimeRunId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"profile\":\"checkout-demo\",\"state\":\"paused-server\",\"runtimeState\":\"paused-server\",\"createdAt\":\"2026-09-19T01:32:52.895Z\",\"deadlineAt\":\"2026-09-19T01:37:52.895Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"continue-server\",\"stop\",\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\",\"itemId\":\"checkout-demo/order-creation\",\"actionId\":\"checkout\",\"phase\":\"paused\",\"resumable\":true,\"continueArguments\":{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"participant\":\"server\",\"sessionId\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb\",\"threadId\":0,\"generation\":2}},\"browser\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\",\"itemId\":\"checkout-demo/cart-update\",\"actionId\":\"add-to-cart\",\"phase\":\"running\",\"resumable\":false}},\"operation\":{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},\"operations\":[{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}],\"observed\":{\"cartCount\":1,\"completedClicks\":1},\"links\":[{\"id\":\"intent-request\",\"status\":\"observed\",\"evidence\":[\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"60032.6\"]},{\"id\":\"request-server\",\"status\":\"observed\",\"evidence\":[\"60032.6\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\"]},{\"id\":\"server-response\",\"status\":\"observed\",\"evidence\":[\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\"]},{\"id\":\"response-browser\",\"status\":\"observed\",\"evidence\":[\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\"]},{\"id\":\"browser-screen\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"event:176\"]},{\"id\":\"cart-result-checkout-input\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-browser-screen\",\"status\":\"unknown\",\"evidence\":[]}],\"manifestUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest\",\"manifestHash\":\"9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592\",\"observations\":[{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"participant\":\"server\",\"capturePhase\":\"paused-cart-mutation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"itemId\":\"checkout-demo/cart-update\",\"actionId\":\"add-to-cart\",\"participant\":\"browser\",\"capturePhase\":\"paused-cart-update\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\"},{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\",\"itemId\":\"checkout-demo/order-creation\",\"actionId\":\"checkout\",\"participant\":\"server\",\"capturePhase\":\"paused-order-creation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\"}],\"runtimeOutcome\":\"not-demonstrated\",\"captureOutcome\":\"incomplete\",\"finalOutcome\":\"pending-teardown\",\"cleaned\":false,\"resourcesReleased\":false,\"activeSessionIds\":[\"459ef0b7-93ab-4ca4-8607-859a8b7c5a99\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb\",\"41b7dc5c-9125-4b56-bec7-baaea6ab3490\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177\"],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before\"},{\"phase\":\"paused-cart-mutation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation\"},{\"phase\":\"paused-cart-update\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-update\"},{\"phase\":\"after-cart\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-cart\"},{\"phase\":\"paused-order-creation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-order-creation\"}],\"explanations\":[\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f25d06c7-8fb5-45ca-b54d-27f344183a4b\"],\"eventsUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\",\"materialSignature\":\"6e3c79de5ae1a503ebb7e66055d55f349191c9e29bf8c8c71b0173c6eef3e03d\",\"historyOutcome\":{\"status\":\"saved\",\"materialSignature\":\"6e3c79de5ae1a503ebb7e66055d55f349191c9e29bf8c8c71b0173c6eef3e03d\",\"checkpointRevision\":11,\"savedSignature\":\"6e3c79de5ae1a503ebb7e66055d55f349191c9e29bf8c8c71b0173c6eef3e03d\"},\"studyOutcome\":\"pending\"}"
+      }
+    ],
+    "durationMs": 2.9954999999899883
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2",
+        "mimeType": "application/json",
+        "text": "{\"id\": \"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\", \"participant\": \"server\", \"itemId\": \"checkout-demo/order-creation\", \"actionId\": \"checkout\", \"capturePhase\": \"paused-order-creation\", \"pause\": {\"sessionId\": \"19d4ae5c-c2fb-465f-844d-f73ef8071dfb\", \"threadId\": 0, \"generation\": 2}, \"frame\": {\"id\": 55, \"name\": \"createOrder\", \"line\": 38, \"column\": 9, \"source\": {\"name\": \"<owned-profile>/User/globalStorage/laststance.codebook/agent/d1d32e79-b57b-4135-ad1b-901079f4421c/d4c47789-f190-46fe-8089-1f96b9044f0d/a83a8756-136d-4bee-b73a-8cb52e19f57f/fixture/server.mts\", \"path\": \"<owned-profile>/User/globalStorage/laststance.codebook/agent/d1d32e79-b57b-4135-ad1b-901079f4421c/d4c47789-f190-46fe-8089-1f96b9044f0d/a83a8756-136d-4bee-b73a-8cb52e19f57f/fixture/server.mts\", \"sourceReference\": 0}, \"presentationHint\": \"normal\", \"canRestart\": true}, \"values\": {\"operationId\": \"a83a8756-136d-4bee-b73a-8cb52e19f57f-checkout\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 1, \"admittedCount\": 2, \"cartOperationId\": \"a83a8756-136d-4bee-b73a-8cb52e19f57f\", \"orderId\": \"order-a83a8756-136d-4bee-b73a-8cb52e19f57f\", \"total\": 24, \"orderCount\": 0}, \"evaluations\": [{\"expression\": \"tuple.operationId\", \"value\": {\"type\": \"string\", \"result\": \"'a83a8756-136d-4bee-b73a-8cb52e19f57f-checkout'\", \"variablesReference\": 0}}, {\"expression\": \"tuple.cartId\", \"value\": {\"type\": \"string\", \"result\": \"'selected'\", \"variablesReference\": 0}}, {\"expression\": \"tuple.productId\", \"value\": {\"type\": \"string\", \"result\": \"'tote-01'\", \"variablesReference\": 0}}, {\"expression\": \"tuple.price\", \"value\": {\"type\": \"number\", \"result\": \"24\", \"variablesReference\": 0}}, {\"expression\": \"state.items.length\", \"value\": {\"type\": \"number\", \"result\": \"1\", \"variablesReference\": 0}}, {\"expression\": \"admittedCount\", \"value\": {\"type\": \"number\", \"result\": \"2\", \"variablesReference\": 0}}, {\"expression\": \"state.lastOperationId\", \"value\": {\"type\": \"string\", \"result\": \"'a83a8756-136d-4bee-b73a-8cb52e19f57f'\", \"variablesReference\": 0}}, {\"expression\": \"orderId\", \"value\": {\"type\": \"string\", \"result\": \"'order-a83a8756-136d-4bee-b73a-8cb52e19f57f'\", \"variablesReference\": 0}}, {\"expression\": \"total\", \"value\": {\"type\": \"number\", \"result\": \"24\", \"variablesReference\": 0}}, {\"expression\": \"state.orders.length\", \"value\": {\"type\": \"number\", \"result\": \"0\", \"variablesReference\": 0}}], \"source\": {\"scriptId\": \"165\", \"scriptLocation\": {\"scriptId\": \"165\", \"lineNumber\": 34, \"columnNumber\": 10}, \"mapping\": {\"generatedLine\": 34, \"generatedColumn\": 10, \"originalSource\": \"../fixture/server.mts\", \"originalLine\": 37, \"originalColumn\": 8}, \"typescriptHash\": \"31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a\", \"javascriptHash\": \"8b826120475300f1044a45f8f3530f344a173df025d6e1a7e4c13fc9089d143e\", \"sourceMapHash\": \"f2cf568c2a6f3edbda9efa3b2da658f9034d014d919d5c34b77710a2d432de61\"}, \"snapshotUri\": \"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\", \"historical\": true, \"sourceUri\": \"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\"}"
+      }
+    ],
+    "durationMs": 2.6590410000062548
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript",
+        "mimeType": "text/typescript",
+        "text": "import { createServer } from 'node:http';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { BODY_LIMIT_BYTES, EXPECTED_ADMISSIONS, EXPECTED_CART_ITEMS } from './constants.mjs';\n\nconst directory = dirname(dirname(fileURLToPath(import.meta.url)));\nconst configuration: { runId: string; scenario: string; profile?: string } = JSON.parse(await readFile(join(directory, 'fixture-config.json'), 'utf8'));\ninterface Tuple { operationId: string; cartId: string; productId: string; price: number }\ninterface CheckoutTuple extends Tuple { cartOperationId: string }\nconst arrivals: Tuple[] = [];\nconst checkoutArrivals: CheckoutTuple[] = [];\nconst carts = new Map<string, { items: { id: string; price: number }[]; lastOperationId: string; orders: { id: string; total: number }[] }>();\nlet releaseBarrier: () => void = () => undefined;\nconst barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });\nlet releaseCheckoutBarrier: () => void = () => undefined;\nconst checkoutBarrier = new Promise<void>(resolve => { releaseCheckoutBarrier = resolve; });\n\n/** Mutates one admitted cart after both requests arrive; the HTTP fixture calls this at the server study stop. @example addProduct({ operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24 }) */\nfunction addProduct(tuple: Tuple) {\n  const state = carts.get(tuple.cartId) ?? { items: [], lastOperationId: '', orders: [] };\n  const admittedCount = arrivals.length;\n  state.items.push({ id: tuple.productId, price: tuple.price }); // CODEBOOK_SERVER_STOP\n  state.lastOperationId = tuple.operationId;\n  carts.set(tuple.cartId, state);\n  return { ...tuple, cartCount: state.items.length, admittedCount };\n}\n\n/** Creates one order from retained cart state after both checkout requests arrive; the checkout route supplies its tuple. @example createOrder({operationId:'run-checkout',cartOperationId:'run',cartId:'selected',productId:'tote-01',price:24}) */\nfunction createOrder(tuple: CheckoutTuple) {\n  const state = carts.get(tuple.cartId);\n  if (!state || state.lastOperationId !== tuple.cartOperationId || state.items.length !== EXPECTED_CART_ITEMS || state.orders.length) throw new Error('Checkout does not match one unpurchased cart');\n  const product = state.items[0]!;\n  if (product.id !== tuple.productId || product.price !== tuple.price) throw new Error('Checkout product differs from retained cart');\n  const admittedCount = checkoutArrivals.length;\n  const orderId = `order-${state.lastOperationId}`;\n  const total = state.items.reduce((sum, item) => sum + item.price, 0);\n  state.orders.push({ id: orderId, total }); // CODEBOOK_ORDER_STOP\n  return { ...tuple, cartCount: state.items.length, admittedCount, orderId, total, orderCount: state.orders.length };\n}\n\nconst server = createServer((request, response) => {\n  void (async () => {\n    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;\n    const prefix = `/runs/${configuration.runId}/`;\n    response.setHeader('cache-control', 'no-store');\n    if (!pathname.startsWith(prefix)) { response.writeHead(404).end(); return; }\n    const route = pathname.slice(prefix.length);\n    if (request.method === 'GET' && ['index.html', 'client.mjs', 'client.mjs.map', 'constants.mjs', 'constants.mjs.map'].includes(route)) {\n      const bytes = await readFile(join(directory, route === 'index.html' ? route : `build/${route}`));\n      response.setHeader('content-type', route === 'index.html' ? 'text/html' : 'text/javascript');\n      response.end(bytes); return;\n    }\n    const checkout = route === 'api/checkout';\n    if (request.method !== 'POST' || !['api/cart', 'api/redirected', 'api/checkout'].includes(route) || checkout && configuration.profile !== 'checkout-demo') { response.writeHead(404).end(); return; }\n    const injectFault = configuration.profile === 'checkout-demo' ? checkout : route === 'api/cart';\n    if (injectFault && configuration.scenario === 'redirect') { response.writeHead(307, { location: `${prefix}api/redirected` }).end(); return; }\n    const chunks: Buffer[] = []; let bytes = 0;\n    for await (const chunk of request) {\n      bytes += chunk.length;\n      if (bytes > BODY_LIMIT_BYTES) { response.writeHead(413).end(); return; }\n      chunks.push(chunk);\n    }\n    const body: unknown = JSON.parse(Buffer.concat(chunks).toString());\n    if (!body || typeof body !== 'object' || !('cartId' in body) || typeof body.cartId !== 'string' || !('productId' in body) || typeof body.productId !== 'string' || !('price' in body) || typeof body.price !== 'number') { response.writeHead(400).end(); return; }\n    const tuple: Tuple = { operationId: String(request.headers['x-codebook-operation'] ?? ''), cartId: body.cartId, productId: body.productId, price: body.price };\n    // Separate admission barriers keep second-action counters independent while retaining the same carts.\n    let result: ReturnType<typeof addProduct> | ReturnType<typeof createOrder>;\n    if (checkout) {\n      if (!('cartOperationId' in body) || typeof body.cartOperationId !== 'string') { response.writeHead(400).end(); return; }\n      const checkoutTuple = { ...tuple, cartOperationId: body.cartOperationId };\n      checkoutArrivals.push(checkoutTuple);\n      if (checkoutArrivals.length === EXPECTED_ADMISSIONS) releaseCheckoutBarrier();\n      await checkoutBarrier;\n      result = createOrder(checkoutTuple);\n    } else {\n      arrivals.push(tuple);\n      if (arrivals.length === EXPECTED_ADMISSIONS) releaseBarrier();\n      await barrier;\n      result = addProduct(tuple);\n    }\n    if (injectFault && tuple.cartId === 'selected') {\n      if (configuration.scenario === 'backend-exit') process.exit(1);\n      if (configuration.scenario === 'absent-response') return;\n      if (configuration.scenario === 'wrong-response-id') result.operationId = 'wrong-operation';\n      if (configuration.scenario === 'wrong-response-value') result.cartCount = 2;\n    }\n    response.setHeader('content-type', 'application/json');\n    response.end(JSON.stringify(result));\n  })().catch(error => { response.writeHead(500).end(String(error)); });\n});\nserver.listen(0, '127.0.0.1', () => {\n  const address = server.address();\n  if (!address || typeof address === 'string') throw new Error('No owned fixture listener');\n  void writeFile(join(directory, 'backend-endpoint.json'), JSON.stringify({ runId: configuration.runId, pid: process.pid, origin: `http://127.0.0.1:${address.port}`, executable: process.execPath, version: process.version }));\n});\n"
+      }
+    ],
+    "durationMs": 1.6541250000009313
+  },
+  {
+    "operation": "codebook_explain",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "key": "order-creation",
+      "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2",
+      "sourceHash": "31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a",
+      "valuePaths": [
+        "cartOperationId",
+        "cartCount",
+        "orderId",
+        "total",
+        "orderCount"
+      ],
+      "interpretation": "The checkout refers to the earlier cart operation. At server.mts line 38, cartCount is 1, the derived total is 24, and orderCount is still 0. Continuing stores the new order; its ID is derived from the retained cart operation."
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"explanationUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/a680c03e-3c6c-456c-8589-31b9477522ba\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "explanationUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/a680c03e-3c6c-456c-8589-31b9477522ba"
+        }
+      }
+    },
+    "durationMs": 4.149082999996608
+  },
+  {
+    "operation": "codebook_reveal",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"revealed\":true,\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\",\"line\":38}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "revealed": true,
+          "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2",
+          "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript",
+          "line": 38
+        }
+      }
+    },
+    "durationMs": 10.167167000006884
+  },
+  {
+    "operation": "codebook_continue",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "participant": "server",
+      "sessionId": "19d4ae5c-c2fb-465f-844d-f73ef8071dfb",
+      "threadId": 0,
+      "generation": 2
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"accepted\":true,\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "accepted": true,
+          "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+        }
+      }
+    },
+    "durationMs": 9.221832999988692
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"runtimeRunId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"profile\":\"checkout-demo\",\"state\":\"paused-browser\",\"runtimeState\":\"paused-browser\",\"createdAt\":\"2026-09-19T01:32:52.895Z\",\"deadlineAt\":\"2026-09-19T01:37:52.895Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"continue-browser\",\"stop\",\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\",\"itemId\":\"checkout-demo/order-creation\",\"actionId\":\"checkout\",\"phase\":\"running\",\"resumable\":false},\"browser\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript\",\"itemId\":\"checkout-demo/purchase-confirmation\",\"actionId\":\"checkout\",\"phase\":\"paused\",\"resumable\":true,\"continueArguments\":{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"participant\":\"browser\",\"sessionId\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177\",\"threadId\":1,\"generation\":2}}},\"operation\":{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},\"operations\":[{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}],\"observed\":{\"cartCount\":1,\"completedClicks\":1},\"links\":[{\"id\":\"intent-request\",\"status\":\"observed\",\"evidence\":[\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"60032.6\"]},{\"id\":\"request-server\",\"status\":\"observed\",\"evidence\":[\"60032.6\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\"]},{\"id\":\"server-response\",\"status\":\"observed\",\"evidence\":[\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\"]},{\"id\":\"response-browser\",\"status\":\"observed\",\"evidence\":[\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\"]},{\"id\":\"browser-screen\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"event:176\"]},{\"id\":\"cart-result-checkout-input\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-intent-request\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-request-server\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-server-response\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-response-browser\",\"status\":\"unknown\",\"evidence\":[]},{\"id\":\"checkout-browser-screen\",\"status\":\"unknown\",\"evidence\":[]}],\"manifestUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest\",\"manifestHash\":\"9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592\",\"observations\":[{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"participant\":\"server\",\"capturePhase\":\"paused-cart-mutation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"itemId\":\"checkout-demo/cart-update\",\"actionId\":\"add-to-cart\",\"participant\":\"browser\",\"capturePhase\":\"paused-cart-update\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\"},{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\",\"itemId\":\"checkout-demo/order-creation\",\"actionId\":\"checkout\",\"participant\":\"server\",\"capturePhase\":\"paused-order-creation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\",\"itemId\":\"checkout-demo/purchase-confirmation\",\"actionId\":\"checkout\",\"participant\":\"browser\",\"capturePhase\":\"paused-purchase-confirmation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript\"}],\"runtimeOutcome\":\"not-demonstrated\",\"captureOutcome\":\"incomplete\",\"finalOutcome\":\"pending-teardown\",\"cleaned\":false,\"resourcesReleased\":false,\"activeSessionIds\":[\"459ef0b7-93ab-4ca4-8607-859a8b7c5a99\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb\",\"41b7dc5c-9125-4b56-bec7-baaea6ab3490\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177\"],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before\"},{\"phase\":\"paused-cart-mutation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation\"},{\"phase\":\"paused-cart-update\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-update\"},{\"phase\":\"after-cart\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-cart\"},{\"phase\":\"paused-order-creation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-order-creation\"},{\"phase\":\"paused-purchase-confirmation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-purchase-confirmation\"}],\"explanations\":[\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f25d06c7-8fb5-45ca-b54d-27f344183a4b\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/a680c03e-3c6c-456c-8589-31b9477522ba\"],\"eventsUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\",\"materialSignature\":\"8ddc5bfc1d82009a7e3ef52db247213208b6c32f8dec8d72aeae2ad8c92e1773\",\"historyOutcome\":{\"status\":\"saved\",\"materialSignature\":\"8ddc5bfc1d82009a7e3ef52db247213208b6c32f8dec8d72aeae2ad8c92e1773\",\"checkpointRevision\":13,\"savedSignature\":\"8ddc5bfc1d82009a7e3ef52db247213208b6c32f8dec8d72aeae2ad8c92e1773\"},\"studyOutcome\":\"pending\"}"
+      }
+    ],
+    "durationMs": 2.3352500000037253
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2",
+        "mimeType": "application/json",
+        "text": "{\"id\": \"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\", \"participant\": \"browser\", \"itemId\": \"checkout-demo/purchase-confirmation\", \"actionId\": \"checkout\", \"capturePhase\": \"paused-purchase-confirmation\", \"pause\": {\"sessionId\": \"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177\", \"threadId\": 1, \"generation\": 2}, \"frame\": {\"id\": 107, \"name\": \"<anonymous>\", \"line\": 54, \"column\": 5, \"source\": {\"name\": \"fixture/client.mts\", \"path\": \"<owned-profile>/User/globalStorage/laststance.codebook/agent/d1d32e79-b57b-4135-ad1b-901079f4421c/d4c47789-f190-46fe-8089-1f96b9044f0d/a83a8756-136d-4bee-b73a-8cb52e19f57f/fixture/client.mts\", \"sourceReference\": 0}, \"presentationHint\": \"normal\", \"canRestart\": false}, \"values\": {\"operationId\": \"a83a8756-136d-4bee-b73a-8cb52e19f57f-checkout\", \"cartId\": \"selected\", \"productId\": \"tote-01\", \"price\": 24, \"cartCount\": 1, \"admittedCount\": 2, \"cartOperationId\": \"a83a8756-136d-4bee-b73a-8cb52e19f57f\", \"orderId\": \"order-a83a8756-136d-4bee-b73a-8cb52e19f57f\", \"total\": 24, \"orderCount\": 1}, \"evaluations\": [{\"expression\": \"result.operationId\", \"value\": {\"type\": \"string\", \"result\": \"'a83a8756-136d-4bee-b73a-8cb52e19f57f-checkout'\", \"variablesReference\": 0}}, {\"expression\": \"result.cartId\", \"value\": {\"type\": \"string\", \"result\": \"'selected'\", \"variablesReference\": 0}}, {\"expression\": \"result.productId\", \"value\": {\"type\": \"string\", \"result\": \"'tote-01'\", \"variablesReference\": 0}}, {\"expression\": \"result.price\", \"value\": {\"type\": \"number\", \"result\": \"24\", \"variablesReference\": 0}}, {\"expression\": \"result.cartCount\", \"value\": {\"type\": \"number\", \"result\": \"1\", \"variablesReference\": 0}}, {\"expression\": \"result.admittedCount\", \"value\": {\"type\": \"number\", \"result\": \"2\", \"variablesReference\": 0}}, {\"expression\": \"result.cartOperationId\", \"value\": {\"type\": \"string\", \"result\": \"'a83a8756-136d-4bee-b73a-8cb52e19f57f'\", \"variablesReference\": 0}}, {\"expression\": \"result.orderId\", \"value\": {\"type\": \"string\", \"result\": \"'order-a83a8756-136d-4bee-b73a-8cb52e19f57f'\", \"variablesReference\": 0}}, {\"expression\": \"result.total\", \"value\": {\"type\": \"number\", \"result\": \"24\", \"variablesReference\": 0}}, {\"expression\": \"result.orderCount\", \"value\": {\"type\": \"number\", \"result\": \"1\", \"variablesReference\": 0}}], \"source\": {\"scriptId\": \"3\", \"scriptLocation\": {\"scriptId\": \"3\", \"lineNumber\": 50, \"columnNumber\": 8}, \"mapping\": {\"generatedLine\": 50, \"generatedColumn\": 8, \"originalSource\": \"../fixture/client.mts\", \"originalLine\": 53, \"originalColumn\": 4}, \"typescriptHash\": \"96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c\", \"javascriptHash\": \"1334865643ba799870cda2d025d59528277de8fee35a2600f2e9dd2168a3038b\", \"sourceMapHash\": \"5f8f85fbfd35305078845594445d1fcb0e493b8822d1acdaa20e1702c58519a1\"}, \"snapshotUri\": \"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2\", \"historical\": true, \"sourceUri\": \"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript\"}"
+      }
+    ],
+    "durationMs": 1.401084000011906
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript",
+        "mimeType": "text/typescript",
+        "text": "import { PRODUCT, BACKGROUND_PRODUCT } from './constants.mjs';\n\nconst runId = document.documentElement.dataset.runId!;\nconst scenario = document.documentElement.dataset.scenario!;\nconst checkoutProfile = document.documentElement.dataset.profile === 'checkout-demo';\nconst count = document.querySelector('#count')!;\nconst clicks = document.querySelector('#clicks')!;\nconst status = document.querySelector('#status')!;\ninterface CartResult { operationId: string; cartId: string; productId: string; price: number; cartCount: number; admittedCount: number }\ninterface OrderResult extends CartResult { cartOperationId: string; orderId: string; total: number; orderCount: number }\nlet selectedCart: CartResult | undefined;\nlet backgroundCart: CartResult | undefined;\nconst checkoutButton = document.querySelector<HTMLButtonElement>('#checkout')!;\ncheckoutButton.hidden = !checkoutProfile;\n\n/** Sends each fixture request once from the click handler; its headers and body are debugger correlation evidence. @example requestCart('selected', 'run', PRODUCT) */\nasync function requestCart(cartId: string, operationId: string, product: typeof PRODUCT): Promise<CartResult> {\n  const response = await fetch('api/cart', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) }, body: JSON.stringify({ cartId, productId: product.id, price: product.price }) });\n  if (!response.ok) throw new Error(`Cart HTTP ${response.status}`);\n  return response.json();\n}\n\ndocument.querySelector('#add')!.addEventListener('click', () => {\n  void (async () => {\n    status.textContent = 'Two requests pending; waiting for the server.';\n    const selected = requestCart('selected', !checkoutProfile && scenario === 'missing-id' ? '' : runId, PRODUCT);\n    const background = requestCart('background', !checkoutProfile && scenario === 'duplicate-id' ? runId : `${runId}-background`, BACKGROUND_PRODUCT);\n    const [result, backgroundResult] = await Promise.all([selected, background]);\n    count.textContent = String(result.cartCount); // CODEBOOK_BROWSER_STOP\n    clicks.textContent = String(Number(clicks.textContent) + 1);\n    selectedCart = result; backgroundCart = backgroundResult;\n    checkoutButton.disabled = false;\n    status.textContent = `Selected cart updated; background cart ${backgroundResult.cartCount}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\n\n/** Carries the observed cart operation into one checkout request; the checkout click supplies its actual cart result. @example await requestCheckout(selectedCart) */\nasync function requestCheckout(cart: CartResult): Promise<OrderResult> {\n  const selected = cart.cartId === 'selected';\n  const operationId = selected && scenario === 'missing-id' ? '' : selected || scenario === 'duplicate-id' ? `${runId}-checkout` : `${runId}-checkout-background`;\n  const response = await fetch('api/checkout', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) },\n    body: JSON.stringify({ cartId: cart.cartId, productId: cart.productId, price: cart.price, cartOperationId: cart.operationId }) });\n  if (!response.ok) throw new Error(`Checkout HTTP ${response.status}`);\n  return response.json();\n}\n\ncheckoutButton.addEventListener('click', () => {\n  if (!checkoutProfile || !selectedCart || !backgroundCart || checkoutButton.disabled) return;\n  const selected = selectedCart, background = backgroundCart;\n  checkoutButton.disabled = true;\n  void (async () => {\n    status.textContent = 'Creating the selected and background orders.';\n    const [result, backgroundResult] = await Promise.all([requestCheckout(selected), requestCheckout(background)]);\n    document.querySelector('#order-id')!.textContent = result.orderId; // CODEBOOK_CONFIRMATION_STOP\n    document.querySelector('#order-total')!.textContent = String(result.total);\n    document.querySelector<HTMLElement>('#confirmation')!.hidden = false;\n    document.querySelector('#checkouts')!.textContent = String(Number(document.querySelector('#checkouts')!.textContent) + 1);\n    document.documentElement.dataset.orderStatus = 'confirmed';\n    status.textContent = `Purchase confirmed; background order ${backgroundResult.orderId}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\ndocument.documentElement.dataset.ready = 'true';\n"
+      }
+    ],
+    "durationMs": 1.413124999991851
+  },
+  {
+    "operation": "codebook_explain",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "key": "purchase-confirmation",
+      "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2",
+      "sourceHash": "96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c",
+      "valuePaths": [
+        "cartOperationId",
+        "orderId",
+        "total",
+        "orderCount"
+      ],
+      "interpretation": "The browser received the order created from the earlier cart: total 24 and orderCount 1. At client.mts line 54, the confirmation DOM has not updated yet. Continuing writes the order ID and total and reveals the confirmation. Its visible outcome must be checked afterwards."
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"explanationUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f6d95989-f4f8-4790-b233-ce4a154b7d26\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "explanationUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f6d95989-f4f8-4790-b233-ce4a154b7d26"
+        }
+      }
+    },
+    "durationMs": 3.278042000019923
+  },
+  {
+    "operation": "codebook_reveal",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"revealed\":true,\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript\",\"line\":54}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "revealed": true,
+          "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2",
+          "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript",
+          "line": 54
+        }
+      }
+    },
+    "durationMs": 5.883042000001296
+  },
+  {
+    "operation": "codebook_continue",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+      "participant": "browser",
+      "sessionId": "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177",
+      "threadId": 1,
+      "generation": 2
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"accepted\":true,\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "accepted": true,
+          "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+        }
+      }
+    },
+    "durationMs": 5.652999999991152
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"runtimeRunId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"profile\":\"checkout-demo\",\"state\":\"stopped\",\"runtimeState\":\"completed\",\"createdAt\":\"2026-09-19T01:32:52.895Z\",\"deadlineAt\":\"2026-09-19T01:37:52.895Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\",\"itemId\":\"checkout-demo/order-creation\",\"actionId\":\"checkout\",\"phase\":\"running\",\"resumable\":false},\"browser\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript\",\"itemId\":\"checkout-demo/purchase-confirmation\",\"actionId\":\"checkout\",\"phase\":\"running\",\"resumable\":false}},\"operation\":{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},\"operations\":[{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}],\"observed\":{\"cartCount\":1,\"completedClicks\":1,\"orderId\":\"order-a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"total\":24,\"status\":\"confirmed\",\"completedCheckouts\":1},\"links\":[{\"id\":\"intent-request\",\"status\":\"observed\",\"evidence\":[\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"60032.6\"]},{\"id\":\"request-server\",\"status\":\"observed\",\"evidence\":[\"60032.6\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\"]},{\"id\":\"server-response\",\"status\":\"observed\",\"evidence\":[\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\"]},{\"id\":\"response-browser\",\"status\":\"observed\",\"evidence\":[\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\"]},{\"id\":\"browser-screen\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"event:176\"]},{\"id\":\"cart-result-checkout-input\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\",\"60032.8\"]},{\"id\":\"checkout-intent-request\",\"status\":\"observed\",\"evidence\":[\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"60032.8\"]},{\"id\":\"checkout-request-server\",\"status\":\"observed\",\"evidence\":[\"60032.8\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\"]},{\"id\":\"checkout-server-response\",\"status\":\"observed\",\"evidence\":[\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\",\"1fc20fb5cf7e836161af606635e324e9fabf0036b10f73b0be43458fcf56a698\"]},{\"id\":\"checkout-response-browser\",\"status\":\"observed\",\"evidence\":[\"1fc20fb5cf7e836161af606635e324e9fabf0036b10f73b0be43458fcf56a698\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\"]},{\"id\":\"checkout-browser-screen\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\",\"event:292\"]}],\"manifestUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest\",\"manifestHash\":\"9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592\",\"observations\":[{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"participant\":\"server\",\"capturePhase\":\"paused-cart-mutation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"itemId\":\"checkout-demo/cart-update\",\"actionId\":\"add-to-cart\",\"participant\":\"browser\",\"capturePhase\":\"paused-cart-update\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\"},{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\",\"itemId\":\"checkout-demo/order-creation\",\"actionId\":\"checkout\",\"participant\":\"server\",\"capturePhase\":\"paused-order-creation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\",\"itemId\":\"checkout-demo/purchase-confirmation\",\"actionId\":\"checkout\",\"participant\":\"browser\",\"capturePhase\":\"paused-purchase-confirmation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript\"}],\"runtimeOutcome\":\"demonstrated\",\"captureOutcome\":\"demonstrated\",\"finalOutcome\":\"demonstrated\",\"cleaned\":true,\"resourcesReleased\":true,\"activeSessionIds\":[],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before\"},{\"phase\":\"paused-cart-mutation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation\"},{\"phase\":\"paused-cart-update\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-update\"},{\"phase\":\"after-cart\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-cart\"},{\"phase\":\"paused-order-creation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-order-creation\"},{\"phase\":\"paused-purchase-confirmation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-purchase-confirmation\"},{\"phase\":\"after-confirmation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-confirmation\"}],\"explanations\":[\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f25d06c7-8fb5-45ca-b54d-27f344183a4b\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/a680c03e-3c6c-456c-8589-31b9477522ba\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f6d95989-f4f8-4790-b233-ce4a154b7d26\"],\"eventsUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\",\"materialSignature\":\"a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245\",\"historyOutcome\":{\"status\":\"saved\",\"materialSignature\":\"a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245\",\"checkpointRevision\":16,\"savedSignature\":\"a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245\"},\"studyOutcome\":\"demonstrated\"}"
+      }
+    ],
+    "durationMs": 2.2961249999934807
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-confirmation"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-confirmation",
+        "mimeType": "image/png",
+        "bytes": 51585,
+        "sha256": "3cb862040ac7cb81305909eb5268108892e16367bf8e0bb512083f1d0288ed1b"
+      }
+    ],
+    "durationMs": 4.172709000005852
+  },
+  {
+    "operation": "codebook_stop",
+    "input": {
+      "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+      "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d"
+    },
+    "output": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"runtimeRunId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"profile\":\"checkout-demo\",\"state\":\"stopped\",\"runtimeState\":\"completed\",\"createdAt\":\"2026-09-19T01:32:52.895Z\",\"deadlineAt\":\"2026-09-19T01:37:52.895Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\",\"itemId\":\"checkout-demo/order-creation\",\"actionId\":\"checkout\",\"phase\":\"running\",\"resumable\":false},\"browser\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript\",\"itemId\":\"checkout-demo/purchase-confirmation\",\"actionId\":\"checkout\",\"phase\":\"running\",\"resumable\":false}},\"operation\":{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},\"operations\":[{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}],\"observed\":{\"cartCount\":1,\"completedClicks\":1,\"orderId\":\"order-a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"total\":24,\"status\":\"confirmed\",\"completedCheckouts\":1},\"links\":[{\"id\":\"intent-request\",\"status\":\"observed\",\"evidence\":[\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"60032.6\"]},{\"id\":\"request-server\",\"status\":\"observed\",\"evidence\":[\"60032.6\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\"]},{\"id\":\"server-response\",\"status\":\"observed\",\"evidence\":[\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\"]},{\"id\":\"response-browser\",\"status\":\"observed\",\"evidence\":[\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\"]},{\"id\":\"browser-screen\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"event:176\"]},{\"id\":\"cart-result-checkout-input\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\",\"60032.8\"]},{\"id\":\"checkout-intent-request\",\"status\":\"observed\",\"evidence\":[\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"60032.8\"]},{\"id\":\"checkout-request-server\",\"status\":\"observed\",\"evidence\":[\"60032.8\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\"]},{\"id\":\"checkout-server-response\",\"status\":\"observed\",\"evidence\":[\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\",\"1fc20fb5cf7e836161af606635e324e9fabf0036b10f73b0be43458fcf56a698\"]},{\"id\":\"checkout-response-browser\",\"status\":\"observed\",\"evidence\":[\"1fc20fb5cf7e836161af606635e324e9fabf0036b10f73b0be43458fcf56a698\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\"]},{\"id\":\"checkout-browser-screen\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\",\"event:292\"]}],\"manifestUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest\",\"manifestHash\":\"9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592\",\"observations\":[{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"participant\":\"server\",\"capturePhase\":\"paused-cart-mutation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"itemId\":\"checkout-demo/cart-update\",\"actionId\":\"add-to-cart\",\"participant\":\"browser\",\"capturePhase\":\"paused-cart-update\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\"},{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\",\"itemId\":\"checkout-demo/order-creation\",\"actionId\":\"checkout\",\"participant\":\"server\",\"capturePhase\":\"paused-order-creation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\",\"itemId\":\"checkout-demo/purchase-confirmation\",\"actionId\":\"checkout\",\"participant\":\"browser\",\"capturePhase\":\"paused-purchase-confirmation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript\"}],\"runtimeOutcome\":\"demonstrated\",\"captureOutcome\":\"demonstrated\",\"finalOutcome\":\"demonstrated\",\"cleaned\":true,\"resourcesReleased\":true,\"activeSessionIds\":[],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before\"},{\"phase\":\"paused-cart-mutation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation\"},{\"phase\":\"paused-cart-update\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-update\"},{\"phase\":\"after-cart\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-cart\"},{\"phase\":\"paused-order-creation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-order-creation\"},{\"phase\":\"paused-purchase-confirmation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-purchase-confirmation\"},{\"phase\":\"after-confirmation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-confirmation\"}],\"explanations\":[\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f25d06c7-8fb5-45ca-b54d-27f344183a4b\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/a680c03e-3c6c-456c-8589-31b9477522ba\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f6d95989-f4f8-4790-b233-ce4a154b7d26\"],\"eventsUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\",\"materialSignature\":\"a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245\",\"historyOutcome\":{\"status\":\"saved\",\"materialSignature\":\"a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245\",\"checkpointRevision\":16,\"savedSignature\":\"a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245\"},\"studyOutcome\":\"demonstrated\"}"
+        }
+      ],
+      "structuredContent": {
+        "ok": true,
+        "data": {
+          "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+          "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+          "runtimeRunId": "a83a8756-136d-4bee-b73a-8cb52e19f57f",
+          "profile": "checkout-demo",
+          "state": "stopped",
+          "runtimeState": "completed",
+          "createdAt": "2026-09-19T01:32:52.895Z",
+          "deadlineAt": "2026-09-19T01:37:52.895Z",
+          "activeTimeoutMs": 20000,
+          "nextActions": [
+            "read-history"
+          ],
+          "participants": {
+            "server": {
+              "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2",
+              "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript",
+              "itemId": "checkout-demo/order-creation",
+              "actionId": "checkout",
+              "phase": "running",
+              "resumable": false
+            },
+            "browser": {
+              "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2",
+              "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript",
+              "itemId": "checkout-demo/purchase-confirmation",
+              "actionId": "checkout",
+              "phase": "running",
+              "resumable": false
+            }
+          },
+          "operation": {
+            "operationId": "2db91379-eb7c-4155-a8da-2e056b5021c1",
+            "key": "checkout-once",
+            "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+          },
+          "operations": [
+            {
+              "operationId": "62c5668e-bb30-46dd-9e2b-01025c3f3bc5",
+              "key": "cart-once",
+              "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+            },
+            {
+              "operationId": "2db91379-eb7c-4155-a8da-2e056b5021c1",
+              "key": "checkout-once",
+              "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+            }
+          ],
+          "observed": {
+            "cartCount": 1,
+            "completedClicks": 1,
+            "orderId": "order-a83a8756-136d-4bee-b73a-8cb52e19f57f",
+            "total": 24,
+            "status": "confirmed",
+            "completedCheckouts": 1
+          },
+          "links": [
+            {
+              "id": "intent-request",
+              "status": "observed",
+              "evidence": [
+                "62c5668e-bb30-46dd-9e2b-01025c3f3bc5",
+                "60032.6"
+              ]
+            },
+            {
+              "id": "request-server",
+              "status": "observed",
+              "evidence": [
+                "60032.6",
+                "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1"
+              ]
+            },
+            {
+              "id": "server-response",
+              "status": "observed",
+              "evidence": [
+                "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1",
+                "1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286"
+              ]
+            },
+            {
+              "id": "response-browser",
+              "status": "observed",
+              "evidence": [
+                "1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286",
+                "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1"
+              ]
+            },
+            {
+              "id": "browser-screen",
+              "status": "observed",
+              "evidence": [
+                "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1",
+                "event:176"
+              ]
+            },
+            {
+              "id": "cart-result-checkout-input",
+              "status": "observed",
+              "evidence": [
+                "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1",
+                "1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286",
+                "60032.8"
+              ]
+            },
+            {
+              "id": "checkout-intent-request",
+              "status": "observed",
+              "evidence": [
+                "2db91379-eb7c-4155-a8da-2e056b5021c1",
+                "60032.8"
+              ]
+            },
+            {
+              "id": "checkout-request-server",
+              "status": "observed",
+              "evidence": [
+                "60032.8",
+                "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2"
+              ]
+            },
+            {
+              "id": "checkout-server-response",
+              "status": "observed",
+              "evidence": [
+                "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2",
+                "1fc20fb5cf7e836161af606635e324e9fabf0036b10f73b0be43458fcf56a698"
+              ]
+            },
+            {
+              "id": "checkout-response-browser",
+              "status": "observed",
+              "evidence": [
+                "1fc20fb5cf7e836161af606635e324e9fabf0036b10f73b0be43458fcf56a698",
+                "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2"
+              ]
+            },
+            {
+              "id": "checkout-browser-screen",
+              "status": "observed",
+              "evidence": [
+                "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2",
+                "event:292"
+              ]
+            }
+          ],
+          "manifestUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest",
+          "manifestHash": "9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592",
+          "observations": [
+            {
+              "id": "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1",
+              "itemId": "checkout-demo/cart-mutation",
+              "actionId": "add-to-cart",
+              "participant": "server",
+              "capturePhase": "paused-cart-mutation",
+              "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1",
+              "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript"
+            },
+            {
+              "id": "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1",
+              "itemId": "checkout-demo/cart-update",
+              "actionId": "add-to-cart",
+              "participant": "browser",
+              "capturePhase": "paused-cart-update",
+              "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1",
+              "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript"
+            },
+            {
+              "id": "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2",
+              "itemId": "checkout-demo/order-creation",
+              "actionId": "checkout",
+              "participant": "server",
+              "capturePhase": "paused-order-creation",
+              "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2",
+              "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript"
+            },
+            {
+              "id": "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2",
+              "itemId": "checkout-demo/purchase-confirmation",
+              "actionId": "checkout",
+              "participant": "browser",
+              "capturePhase": "paused-purchase-confirmation",
+              "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2",
+              "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript"
+            }
+          ],
+          "runtimeOutcome": "demonstrated",
+          "captureOutcome": "demonstrated",
+          "finalOutcome": "demonstrated",
+          "cleaned": true,
+          "resourcesReleased": true,
+          "activeSessionIds": [],
+          "captures": [
+            {
+              "phase": "before",
+              "status": "captured",
+              "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before"
+            },
+            {
+              "phase": "paused-cart-mutation",
+              "status": "captured",
+              "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation"
+            },
+            {
+              "phase": "paused-cart-update",
+              "status": "captured",
+              "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-update"
+            },
+            {
+              "phase": "after-cart",
+              "status": "captured",
+              "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-cart"
+            },
+            {
+              "phase": "paused-order-creation",
+              "status": "captured",
+              "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-order-creation"
+            },
+            {
+              "phase": "paused-purchase-confirmation",
+              "status": "captured",
+              "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-purchase-confirmation"
+            },
+            {
+              "phase": "after-confirmation",
+              "status": "captured",
+              "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-confirmation"
+            }
+          ],
+          "explanations": [
+            "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4",
+            "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f25d06c7-8fb5-45ca-b54d-27f344183a4b",
+            "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/a680c03e-3c6c-456c-8589-31b9477522ba",
+            "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f6d95989-f4f8-4790-b233-ce4a154b7d26"
+          ],
+          "eventsUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0",
+          "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+          "materialSignature": "a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245",
+          "historyOutcome": {
+            "status": "saved",
+            "materialSignature": "a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245",
+            "checkpointRevision": 16,
+            "savedSignature": "a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245"
+          },
+          "studyOutcome": "demonstrated"
+        }
+      }
+    },
+    "durationMs": 2.0574170000036247
+  },
+  {
+    "operation": "read-resource",
+    "input": {
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+    },
+    "output": [
+      {
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+        "mimeType": "application/json",
+        "text": "{\"instanceId\":\"d1d32e79-b57b-4135-ad1b-901079f4421c\",\"runId\":\"d4c47789-f190-46fe-8089-1f96b9044f0d\",\"runtimeRunId\":\"a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"profile\":\"checkout-demo\",\"state\":\"stopped\",\"runtimeState\":\"completed\",\"createdAt\":\"2026-09-19T01:32:52.895Z\",\"deadlineAt\":\"2026-09-19T01:37:52.895Z\",\"activeTimeoutMs\":20000,\"nextActions\":[\"read-history\"],\"participants\":{\"server\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\",\"itemId\":\"checkout-demo/order-creation\",\"actionId\":\"checkout\",\"phase\":\"running\",\"resumable\":false},\"browser\":{\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript\",\"itemId\":\"checkout-demo/purchase-confirmation\",\"actionId\":\"checkout\",\"phase\":\"running\",\"resumable\":false}},\"operation\":{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},\"operations\":[{\"operationId\":\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"key\":\"cart-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"},{\"operationId\":\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"key\":\"checkout-once\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\"}],\"observed\":{\"cartCount\":1,\"completedClicks\":1,\"orderId\":\"order-a83a8756-136d-4bee-b73a-8cb52e19f57f\",\"total\":24,\"status\":\"confirmed\",\"completedCheckouts\":1},\"links\":[{\"id\":\"intent-request\",\"status\":\"observed\",\"evidence\":[\"62c5668e-bb30-46dd-9e2b-01025c3f3bc5\",\"60032.6\"]},{\"id\":\"request-server\",\"status\":\"observed\",\"evidence\":[\"60032.6\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\"]},{\"id\":\"server-response\",\"status\":\"observed\",\"evidence\":[\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\"]},{\"id\":\"response-browser\",\"status\":\"observed\",\"evidence\":[\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\"]},{\"id\":\"browser-screen\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"event:176\"]},{\"id\":\"cart-result-checkout-input\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286\",\"60032.8\"]},{\"id\":\"checkout-intent-request\",\"status\":\"observed\",\"evidence\":[\"2db91379-eb7c-4155-a8da-2e056b5021c1\",\"60032.8\"]},{\"id\":\"checkout-request-server\",\"status\":\"observed\",\"evidence\":[\"60032.8\",\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\"]},{\"id\":\"checkout-server-response\",\"status\":\"observed\",\"evidence\":[\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\",\"1fc20fb5cf7e836161af606635e324e9fabf0036b10f73b0be43458fcf56a698\"]},{\"id\":\"checkout-response-browser\",\"status\":\"observed\",\"evidence\":[\"1fc20fb5cf7e836161af606635e324e9fabf0036b10f73b0be43458fcf56a698\",\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\"]},{\"id\":\"checkout-browser-screen\",\"status\":\"observed\",\"evidence\":[\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\",\"event:292\"]}],\"manifestUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest\",\"manifestHash\":\"9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592\",\"observations\":[{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1\",\"itemId\":\"checkout-demo/cart-mutation\",\"actionId\":\"add-to-cart\",\"participant\":\"server\",\"capturePhase\":\"paused-cart-mutation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1\",\"itemId\":\"checkout-demo/cart-update\",\"actionId\":\"add-to-cart\",\"participant\":\"browser\",\"capturePhase\":\"paused-cart-update\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript\"},{\"id\":\"19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2\",\"itemId\":\"checkout-demo/order-creation\",\"actionId\":\"checkout\",\"participant\":\"server\",\"capturePhase\":\"paused-order-creation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript\"},{\"id\":\"6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2\",\"itemId\":\"checkout-demo/purchase-confirmation\",\"actionId\":\"checkout\",\"participant\":\"browser\",\"capturePhase\":\"paused-purchase-confirmation\",\"snapshotUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2\",\"sourceUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript\"}],\"runtimeOutcome\":\"demonstrated\",\"captureOutcome\":\"demonstrated\",\"finalOutcome\":\"demonstrated\",\"cleaned\":true,\"resourcesReleased\":true,\"activeSessionIds\":[],\"captures\":[{\"phase\":\"before\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before\"},{\"phase\":\"paused-cart-mutation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation\"},{\"phase\":\"paused-cart-update\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-update\"},{\"phase\":\"after-cart\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-cart\"},{\"phase\":\"paused-order-creation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-order-creation\"},{\"phase\":\"paused-purchase-confirmation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-purchase-confirmation\"},{\"phase\":\"after-confirmation\",\"status\":\"captured\",\"uri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-confirmation\"}],\"explanations\":[\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f25d06c7-8fb5-45ca-b54d-27f344183a4b\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/a680c03e-3c6c-456c-8589-31b9477522ba\",\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f6d95989-f4f8-4790-b233-ce4a154b7d26\"],\"eventsUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0\",\"runUri\":\"codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d\",\"materialSignature\":\"a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245\",\"historyOutcome\":{\"status\":\"saved\",\"materialSignature\":\"a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245\",\"checkpointRevision\":16,\"savedSignature\":\"a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245\"},\"studyOutcome\":\"demonstrated\"}"
+      }
+    ],
+    "durationMs": 1.1522499999846332
+  }
+]

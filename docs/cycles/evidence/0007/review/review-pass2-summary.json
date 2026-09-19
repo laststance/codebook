@@ -1,0 +1,50 @@
+{
+  "pass": 2,
+  "reviewStart": "8e2958fd-5675-4af6-8166-1c374d345698",
+  "base": "5abd16a51cc2325407ad4e22bbd304fad3e77094",
+  "head": "2a9137775ee543a69b18fe7ed000323c2c2ca2d2",
+  "sourceEdited": true,
+  "findings": [
+    {
+      "id": "C7-P2-CDP",
+      "severity": "INFORMATIONAL",
+      "action": "fixed",
+      "fingerprint": "experiments/cycle-0004/src/run.ts:229:cross-protocol-generation",
+      "summary": "Pair CDP events with stop ordinal; late resume must not invalidate later DAP pause."
+    },
+    {
+      "id": "C7-P2-STALE-SELECT",
+      "severity": "CRITICAL",
+      "action": "fixed",
+      "fingerprint": "extension/src/studyWorkspace.ts:410:archive-selection-race",
+      "summary": "Publish the latest saved selected archive and qualify displayed outcome by matching signature."
+    },
+    {
+      "id": "C7-P2-READ-ORDER",
+      "severity": "INFORMATIONAL",
+      "action": "fixed",
+      "fingerprint": "extension/src/studyWorkspace.ts:440:verification-read-order",
+      "summary": "Reject obsolete read before mutating history verification or selecting old archive bytes."
+    }
+  ],
+  "uniqueFindings": 3,
+  "authority": "D008; routine fixes inside current cycle",
+  "tests": {
+    "product": 94,
+    "paired": 41,
+    "reader": 31,
+    "newReaderRegressions": 2,
+    "newRuntimeRegressions": 3,
+    "preFixRuntimeRegression": "2 failing defects, 1 passing manual-resume control"
+  },
+  "completed": false,
+  "converged": false,
+  "coverageGaps": [
+    "Grouped reused reviewer contexts; fresh contexts unavailable.",
+    "Maintainability/design/simplification dispatch failed: agent thread limit reached; root inspected these lenses.",
+    "Own-harness guard prevents outside review.",
+    "Independent native pixels and packaged acceptance remain unverified."
+  ],
+  "adversarial": "Pass2 separate context unavailable at observed thread limit; not represented as clean.",
+  "fullNextPass": "required on fixed tree"
+}

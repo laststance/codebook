@@ -94,3 +94,11 @@ Source: [Cycle 0006](docs/cycles/0006-study-workspace.md), clean implementation 
 Decision: keep one shared selection, exact captured source, separate live identity, append-only learner decisions and self-contained historical reading. Next investigate a reusable scenario sequence from cart addition through order confirmation, with the same learning/observation identities available for later recording and layouts.
 Reason: the learner can now inspect and retain the proven two-stop flow. The largest immediate experience gap is the requested complete purchase narrative; another transport-only cycle would not close it.
 Limits: full native usability remains inconclusive while independent editor pixels are unavailable. Three fixing passes repaired 23 findings without certified convergence; fresh-reviewer and outside-provider coverage remain limited. Recording, wiki, all layouts, installation, real repositories and the final ten fresh sequential reviews remain required. No final outcome changed. Status: active route.
+
+
+## D014 — Record and replay the proven connected scenario, 2026-09-19
+
+Source: [Cycle 0007](docs/cycles/0007-checkout-scenario.md), clean `8be0913`, six product-native and ten runtime cases across both hosts, plus actual agent checkout (Cursor complete; VS Code partial images). Agent-selected route under D008.
+Decision: retain the connected four-item checkout and its immutable source/value/explanation records. Next build one synchronized recording/replay increment for this same scenario after the app/debugger exit. Reuse learning identities and evidence timing; represent missing frames and incomplete recording explicitly.
+Reason: the complete fixed purchase narrative now runs, but learners cannot replay its motion and explanation correspondence. G04 is the next missing connection and a shared playback model is also required by both later layouts. Repeated transport/reader polishing would not establish it.
+Limits: native presentation remains inconclusive; one actual VS Code run misses three render ACKs and a bounded diagnostic does not identify a cause. Native pixels, arbitrary repositories, generated wiki, additional layouts, packaging, intended-use acceptance and ten fresh sequential reviews remain required. No capability is removed and no complete product claim is made. Status: active route.

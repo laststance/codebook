@@ -1,0 +1,110 @@
+[
+  {
+    "suite": "artifacts/cycle-0007/product/vscode/checkout-demo/normal-2026-09-18T23-34-54.470Z-f3455c52",
+    "passed": true,
+    "revision": "2a9137775ee543a69b18fe7ed000323c2c2ca2d2",
+    "dirty": false,
+    "sourceHash": "49d9b340ed4b90981c00776c07b1131748ad9d6e40ee0999c36992b672e669cb"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/vscode/checkout-demo/normal-2026-09-19T01-05-02.649Z-70d155a0",
+    "passed": false,
+    "revision": "195028113a8d57b1dba70ff805586dcbd8649d0d",
+    "dirty": false,
+    "sourceHash": "f115fb1b33959fa2f896921d39b700af95e416ec210020ca7bd356aa831c7287"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/vscode/checkout-demo/normal-2026-09-19T01-12-05.249Z-b38af8a7",
+    "passed": true,
+    "revision": "195028113a8d57b1dba70ff805586dcbd8649d0d",
+    "dirty": true,
+    "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/vscode/checkout-demo/normal-2026-09-19T01-13-50.845Z-b868d2e1",
+    "passed": true,
+    "revision": "8be09135bd2df56f54cdd5895af30ec0d8769da8",
+    "dirty": false,
+    "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/vscode/checkout-demo/normal-2026-09-19T01-23-43.949Z-67bd02c1",
+    "diagnosticOnly": true,
+    "excludedFromCandidateEvidence": true
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/vscode/checkout-demo/history-2026-09-18T23-35-54.921Z-35e7103b",
+    "passed": true,
+    "revision": "2a9137775ee543a69b18fe7ed000323c2c2ca2d2",
+    "dirty": false,
+    "sourceHash": "49d9b340ed4b90981c00776c07b1131748ad9d6e40ee0999c36992b672e669cb"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/vscode/checkout-demo/history-2026-09-19T01-16-19.171Z-cd5e4495",
+    "passed": true,
+    "revision": "8be09135bd2df56f54cdd5895af30ec0d8769da8",
+    "dirty": false,
+    "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/vscode/paired-cart-demo/normal-2026-09-18T23-37-56.627Z-b6f0bb61",
+    "passed": true,
+    "revision": "2a9137775ee543a69b18fe7ed000323c2c2ca2d2",
+    "dirty": false,
+    "sourceHash": "49d9b340ed4b90981c00776c07b1131748ad9d6e40ee0999c36992b672e669cb"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/vscode/paired-cart-demo/normal-2026-09-19T01-16-45.144Z-76d1b472",
+    "passed": true,
+    "revision": "8be09135bd2df56f54cdd5895af30ec0d8769da8",
+    "dirty": false,
+    "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/cursor/checkout-demo/normal-2026-09-18T23-35-28.677Z-af9fce06",
+    "passed": true,
+    "revision": "2a9137775ee543a69b18fe7ed000323c2c2ca2d2",
+    "dirty": false,
+    "sourceHash": "49d9b340ed4b90981c00776c07b1131748ad9d6e40ee0999c36992b672e669cb"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/cursor/checkout-demo/normal-2026-09-19T01-14-00.355Z-f6ee5902",
+    "passed": true,
+    "revision": "8be09135bd2df56f54cdd5895af30ec0d8769da8",
+    "dirty": false,
+    "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/cursor/checkout-demo/history-2026-09-18T23-36-28.968Z-f9ab2376",
+    "passed": true,
+    "revision": "2a9137775ee543a69b18fe7ed000323c2c2ca2d2",
+    "dirty": false,
+    "sourceHash": "49d9b340ed4b90981c00776c07b1131748ad9d6e40ee0999c36992b672e669cb"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/cursor/checkout-demo/history-2026-09-19T01-16-27.457Z-4d202b43",
+    "passed": true,
+    "revision": "8be09135bd2df56f54cdd5895af30ec0d8769da8",
+    "dirty": false,
+    "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/cursor/paired-cart-demo/normal-2026-09-18T23-38-32.758Z-92c6c67c",
+    "passed": true,
+    "revision": "2a9137775ee543a69b18fe7ed000323c2c2ca2d2",
+    "dirty": false,
+    "sourceHash": "49d9b340ed4b90981c00776c07b1131748ad9d6e40ee0999c36992b672e669cb"
+  },
+  {
+    "suite": "artifacts/cycle-0007/product/cursor/paired-cart-demo/normal-2026-09-19T01-16-52.927Z-e249b2de",
+    "passed": true,
+    "revision": "8be09135bd2df56f54cdd5895af30ec0d8769da8",
+    "dirty": false,
+    "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea"
+  },
+  {
+    "suite": "artifacts/cycle-0005/cursor/suite-2026-09-19T01-26-45.294Z-65e9a524",
+    "passed": false,
+    "failure": "Agent bootstrap deadline expired before checkout; fresh bootstrap retry starts agent operations immediately."
+  }
+]

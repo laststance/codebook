@@ -1,0 +1,23 @@
+{
+  "date": "2026-09-19",
+  "url": "<loopback-origin>",
+  "commit": "2a9137775ee543a69b18fe7ed000323c2c2ca2d2",
+  "healthScore": 100,
+  "provisional": true,
+  "scope": "bounded webview fixture; not native product",
+  "issues": [],
+  "categoryScores": {
+    "console": 100,
+    "visual": 100,
+    "functional": 100,
+    "ux": 100,
+    "content": 100,
+    "accessibility": 100
+  },
+  "excluded": [
+    "links",
+    "performance"
+  ],
+  "checks": 53,
+  "layoutVariants": 5
+}

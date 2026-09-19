@@ -1,0 +1,34 @@
+### Result
+{"passed":true,"checks":["Observed screen with missing evidence stays partial","Summary names a missing nonselected phase image","Ended purchase names its last observation","Runtime result never checks understanding in ended-partial","Outcome wraps at 360px in ended-partial","Interrupted checkout names the last reached cart item","Interrupted checkout states missing confirmation","Unobserved item distinguishes terminal execution","Ended unobserved order does not borrow cart values","Runtime result never checks understanding in ended-before-checkout","Outcome wraps at 360px in ended-before-checkout","Pre-DOM confirmation pause alone cannot prove purchase screen","Runtime result never checks understanding in confirmation-before-screen","Outcome wraps at 360px in confirmation-before-screen"]}
+### Ran Playwright code
+```js
+await (async page => {
+  const checks = [], origin = '<loopback-origin>';
+  const check = (condition, message) => { if (!condition) throw new Error(message); checks.push(message); };
+  for (const state of ['ended-partial','ended-before-checkout','confirmation-before-screen']) {
+    await page.setViewportSize({width:360,height:768});
+    await page.goto(origin + '/context?state=' + state);
+    await page.locator('#study-state').waitFor();
+    const summary = await page.locator('#study-state').textContent();
+    if (state === 'ended-partial') {
+      check(summary.includes('Purchase observed — partial evidence'), 'Observed screen with missing evidence stays partial');
+      check(summary.includes('Missing images: Order creation.'), 'Summary names a missing nonselected phase image');
+      check(summary.includes('Last observed stop: Purchase confirmation.'), 'Ended purchase names its last observation');
+    } else if (state === 'ended-before-checkout') {
+      check(summary.includes('Last observed stop: Cart update.'), 'Interrupted checkout names the last reached cart item');
+      check(summary.includes('Purchase confirmation screen was not observed.'), 'Interrupted checkout states missing confirmation');
+      check((await page.locator('#observation').textContent()).includes('Not observed before this study ended'), 'Unobserved item distinguishes terminal execution');
+      check(await page.locator('#values tr').count() === 0, 'Ended unobserved order does not borrow cart values');
+    } else {
+      check(!summary.includes('Purchase observed') && !summary.includes('Purchase confirmed'), 'Pre-DOM confirmation pause alone cannot prove purchase screen');
+    }
+    check(!await page.getByRole('checkbox').isChecked(), 'Runtime result never checks understanding in ' + state);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Outcome wraps at 360px in ' + state);
+    await page.screenshot({path:'artifacts/cycle-0007/webview-review-regression/' + state + '.png'});
+  }
+  return {passed:true,checks};
+}
+)(page);
+```
+### Page
+- Page URL: <loopback-origin>/context?state=confirmation-before-screen

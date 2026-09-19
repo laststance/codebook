@@ -1,9 +1,9 @@
 # Cycle 0007 — Drive a connected cart-to-confirmation scenario
 
 Type: product-increment
-Status: validating
-Result: pending
-Delivery: local-only
+Status: closed
+Result: demonstrated (connected checkout); native presentation reliability inconclusive
+Delivery: committed (remote evidence synchronization pending)
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/8
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -89,8 +89,20 @@ Native revalidation exposed a new integration regression on clean `1950281`: raw
 
 ## Result and handoff
 
-Pending final clean native validation. Implementation review is complete with limitations; commit the tested source, then re-run six product-native cases and ten checkout runtime cases across the two hosts. Preserve the historical agent and renderer evidence with their exact revisions.
+Clean implementation **8be0913**, source fingerprint `20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea`, passes **6/6 product-native and 10/10 checkout runtime cases** across VS Code and Cursor. The final clean matrix supersedes earlier stage validation for changed source. Product normal cases demonstrate all four stops, eleven links, seven images, interpretations and reload without runtime. History cases intentionally remain partial. The 40-second order hold/status read measures VS Code 40005.72/3.49 ms and Cursor 40005.37/3.68 ms. All owned runtimes/editors exit; unrelated drafts survive. Unit tests: **96 product / 46 shared / 43 paired**.
 
+Actual driving-agent checkout on the same clean source makes two actions, four explanations/reveals/continues and observes confirmation in both hosts (36 console operations each). Cursor obtains all seven phase images and ends demonstrated/saved/demonstrated. VS Code loses render ACKs for after-cart, paused-order-creation and paused-purchase-confirmation; runtime is demonstrated but final/study remains **partial**. A 25-second-per-stop diagnostic does not reproduce this intermittent failure; `/investigate` ends inconclusive, without changing timeouts. Compiled diagnostic instrumentation is restored and excluded from clean acceptance. A preceding Cursor attempt expires its bootstrap deadline after delayed agent startup; the fresh attempt starts promptly and completes without product changes. These knowledgeable root-agent runs are not fresh/blind-agent or independent native visual acceptance.
+
+[Sanitized evidence, failed attempts, reports and checksums](evidence/0007/README.md) are retained in the repository. Three review fixing passes repaired 14 confirmed findings but did not converge. The later CDP repair has targeted regression/native evidence; no fourth review, CI, PR approval, package or installed-product claim exists.
+
+**Keep** declared sequence/action/item identities, the pre-input manifest, explicit source-matched CDP/DAP binding and qualified runtime/history/study outcomes. **Revise later** the unresolved renderer-ACK path based on an actual new reproduction; never promote missing frames to complete success. Exact captured source, interpretations and personal checks remain independent of current pause ownership.
+
+**Next selected cycle:** synchronized recording and offline replay (G04) of this same fixed checkout. Preserve pause-associated frame receipts and explicit gaps; add moving application frames and a shared playback clock for screen/source/values/explanations. Existing phase history is not motion recording. Ordinary repositories, generated wiki, both later layouts, packaging and all final acceptance remain required. Decision D014 records this route.
+
+No active cycle-owned processes remain. Update PROJECT_STATE.md and issue #8 from this committed evidence, then open only the selected recording/replay cycle. Final review counter remains **0/10, not started**.
+
+
+Remaining unchecked review tasks below retain their broader measurement/native-visual limits; cycle closure does not claim those gaps passed.
 
 ## DX investigation and contract — 2026-09-19
 
@@ -202,9 +214,9 @@ Finding: a deterministic runner can silently substitute its foreknowledge for di
 
 Overall plan specificity: **8/10** (lowest pass), not a score of implemented DX. Measured TTHW unknown; target <5 minutes after development prerequisites. Principles: first-value entry, learn-by-doing, structured recovery, explicit profiles, captured code context and real first pause covered in plan. No new TODO; later distribution/ordinary-repository work remains in PRODUCT_GOAL.md. What already exists: SDK client/server, auth/discovery, pause/source verifier, owned runtime cleanup, failure taxonomy, history library and connected reader.
 
-- [ ] **DX1 (P1, human ~5 h / agent ~45 min)** — Profile/action catalog and immutable multi-observation references. Files: service, schemas, resources, runtime contracts. Verify old-client compatibility and one discoverable checkout sequence.
-- [ ] **DX2 (P1, human ~3 h / agent ~30 min)** — Recover uncertain/wrong-order/stale operations without repeat input. Files: service, errors, MCP tests. Verify actual boundary failures.
-- [ ] **DX3 (P1, human ~4 h / agent ~35 min)** — Normalize stable learning identities and preserve original v1 progress/archive bytes. Files: study model, learning library, fixtures/tests. Verify corruption/failure/restart and no false understanding.
+- [x] **DX1 (P1, human ~5 h / agent ~45 min)** — Profile/action catalog and immutable multi-observation references. Files: service, schemas, resources, runtime contracts. Verify old-client compatibility and one discoverable checkout sequence.
+- [x] **DX2 (P1, human ~3 h / agent ~30 min)** — Recover uncertain/wrong-order/stale operations without repeat input. Files: service, errors, MCP tests. Verify actual boundary failures.
+- [x] **DX3 (P1, human ~4 h / agent ~35 min)** — Normalize stable learning identities and preserve original v1 progress/archive bytes. Files: study model, learning library, fixtures/tests. Verify corruption/failure/restart and no false understanding.
 - [ ] **DX4 (P2, human ~2 h / agent ~20 min)** — Update runnable docs/help and measure real-agent discovery. Files: extension README, protocol/resources, native evidence. Verify transcript and timing with no per-stop private instructions.
 
 Checklist: first value/target/complete example/errors/discovery/typed API/upgrade each has a task; one-command installed onboarding, CI-native execution, publication and real-repository use are explicitly outside this development slice and remain final goals. No payment or credit card exists. Repository text search and current cycle issue provide local documentation/support; community operation is not claimed.
@@ -296,8 +308,8 @@ Agent decisions under D008: D1 business-item identity/profile-scoped outline; D2
 
 What already exists: complete Cycle 0006 reader, theme tokens, storage Retry, source-version understanding, foreign-tab protection and owned viewport lease. Not in scope: other two layouts (later required), playback/video (later required), arbitrary-repo onboarding (later required), new typography/animation (unnecessary here). Native visual coverage remains a verification gap, never an optional removed requirement.
 
-- [ ] **D1 (P1, human ~3 h / agent ~25 min)** — Stable profile/item/observation selection in outline, context and moments. Files: study model, workspace, UI. Verify old and new profile histories plus two server observations.
-- [ ] **D2 (P1, human ~2 h / agent ~20 min)** — Independent live strip and safe next action, intermediate/final/partial copy. Files: workspace, UI, captured application. Verify reading old paired history while checkout is paused; Return and Stop target the active checkout.
+- [x] **D1 (P1, human ~3 h / agent ~25 min)** — Stable profile/item/observation selection in outline, context and moments. Files: study model, workspace, UI. Verify old and new profile histories plus two server observations.
+- [x] **D2 (P1, human ~2 h / agent ~20 min)** — Independent live strip and safe next action, intermediate/final/partial copy. Files: workspace, UI, captured application. Verify reading old paired history while checkout is paused; Return and Stop target the active checkout.
 - [ ] **D3 (P2, human ~2 h / agent ~20 min)** — Four-item keyboard/reflow/state coverage. Files: UI constants/client and webview/native harnesses. Verify width/theme/text matrix, focus, zero automatic understanding, partial captures and exact source acknowledgement.
 
 Plan scores: architecture 9, states 9, journey 9, specificity 9, system 9, accessibility 9; overall **9/10 plan completeness**, with implementation/native proof explicitly outstanding. These scores do not satisfy G07 or final-product reviews.
@@ -423,10 +435,10 @@ Required tests: successful runtime with pending/rejected/oversized library write
 
 Sequential implementation, no parallelization opportunity: runtime identities feed service, persistence and reader contracts, and they share the same modules. Native review can challenge the frozen plan independently; code ownership remains in this task.
 
-- [ ] **E1 (P1, human ~5 h / agent ~45 min)** — Add fixed profile/action/item definitions and adapt current runtime as a behavior-preserving first stage. Files: paired constants/profile, run, inspect/seal/network. Verify old tests before checkout behavior.
-- [ ] **E2 (P1, human ~5 h / agent ~45 min)** — Implement checkout fixture and retained action/observation/source/capture identities with both request sets. Verify exact four-stop table and late/incorrect cross-action evidence.
-- [ ] **E3 (P1, human ~3 h / agent ~30 min)** — Add discovery/next action/idempotent receipts and immutable resources. Files: extension service/runtime/environment/schemas/resources. Verify real MCP order/replay/stale paths.
-- [ ] **E4 (P1, human ~4 h / agent ~40 min)** — Add v1 decoder/v2 normalization and reader selection/progress. Files: library/model/workspace/UI. Verify concurrency, original bytes, history and repeated participants.
+- [x] **E1 (P1, human ~5 h / agent ~45 min)** — Add fixed profile/action/item definitions and adapt current runtime as a behavior-preserving first stage. Files: paired constants/profile, run, inspect/seal/network. Verify old tests before checkout behavior.
+- [x] **E2 (P1, human ~5 h / agent ~45 min)** — Implement checkout fixture and retained action/observation/source/capture identities with both request sets. Verify exact four-stop table and late/incorrect cross-action evidence.
+- [x] **E3 (P1, human ~3 h / agent ~30 min)** — Add discovery/next action/idempotent receipts and immutable resources. Files: extension service/runtime/environment/schemas/resources. Verify real MCP order/replay/stale paths.
+- [x] **E4 (P1, human ~4 h / agent ~40 min)** — Add v1 decoder/v2 normalization and reader selection/progress. Files: library/model/workspace/UI. Verify concurrency, original bytes, history and repeated participants.
 - [ ] **E5 (P1, human ~4 h / agent ~40 min)** — Native checkout/fault/hold/history and actual-agent validation; retain old regressions, webview matrix and current-diff review. Evidence separated by host; failures retain changed hypotheses.
 
 Not in scope: generic workflow engine (unnecessary for two fixed profiles), arbitrary-repo adapter (later required), recordings/other modes/wiki (later required), VSIX publication/installed acceptance/CI-native runner (later required), dependency upgrades (unnecessary). No new TODO beyond the active tasks. Suppressed findings: none promoted without source/plan evidence. Plan remedies cover E1–E6; no implementation success is claimed. The reused engineering challenge completed with the two amendments above; its full response is `artifacts/cycle-0007/eng-native-challenge.md`. No remaining blocker was identified in that bounded review. Four review sections, six primary issues plus two challenge amendments, five build tasks and the QA test-plan artifact are recorded. Lake score: 8/8 remedies retain complete scoped failure handling; implementation/native execution still required. No additional durable learning beyond these contracts is claimed.

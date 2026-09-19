@@ -1,0 +1,777 @@
+{
+  "passed": true,
+  "scenario": "history",
+  "checks": {
+    "environment": {
+      "instanceId": "021d4958-d299-47ce-aa5a-d152b1538b71",
+      "apiVersion": "1.1",
+      "workspace": "<repo>/artifacts/cycle-0007/product/cursor/checkout-demo/history-2026-09-19T01-16-27.457Z-4d202b43/workspace",
+      "host": {
+        "id": "cursor",
+        "productVersion": "3.21.12",
+        "apiVersion": "1.128.0"
+      },
+      "prerequisites": {
+        "ready": true,
+        "missing": []
+      },
+      "build": {
+        "revision": "8be09135bd2df56f54cdd5895af30ec0d8769da8",
+        "dirty": false,
+        "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea"
+      }
+    },
+    "manifest": {
+      "contents": [
+        {
+          "uri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/manifest",
+          "mimeType": "application/json",
+          "text": "{\"profile\":{\"id\":\"checkout-demo\",\"title\":\"Checkout demo\",\"description\":\"Add one local product, then create an order and observe purchase confirmation in the same application. No real payment.\",\"actions\":[{\"id\":\"add-to-cart\",\"title\":\"Add to cart\",\"selector\":\"#add\",\"route\":\"api/cart\",\"afterCapture\":\"after-cart\"},{\"id\":\"checkout\",\"title\":\"Checkout\",\"selector\":\"#checkout\",\"route\":\"api/checkout\",\"afterCapture\":\"after-confirmation\"}],\"items\":[{\"participant\":\"server\",\"action\":\"add-to-cart\",\"title\":\"Cart mutation\",\"file\":\"server.mts\",\"marker\":\"CODEBOOK_SERVER_STOP\",\"overview\":\"The server admits the selected cart request and adds the product to its cart state. The stop is immediately before that mutation. Source structure alone does not establish an observed execution.\",\"id\":\"checkout-demo/cart-mutation\",\"capturePhase\":\"paused-cart-mutation\",\"artifactPrefix\":\"cart-mutation\"},{\"participant\":\"browser\",\"action\":\"add-to-cart\",\"title\":\"Cart update\",\"file\":\"client.mts\",\"marker\":\"CODEBOOK_BROWSER_STOP\",\"overview\":\"The browser awaits the selected cart response and updates the displayed count. The stop is immediately before the DOM update. Request correspondence requires a complete verified observation set.\",\"id\":\"checkout-demo/cart-update\",\"capturePhase\":\"paused-cart-update\",\"artifactPrefix\":\"cart-update\"},{\"id\":\"checkout-demo/order-creation\",\"participant\":\"server\",\"action\":\"checkout\",\"title\":\"Order creation\",\"file\":\"server.mts\",\"marker\":\"CODEBOOK_ORDER_STOP\",\"capturePhase\":\"paused-order-creation\",\"artifactPrefix\":\"order-creation\",\"overview\":\"The server checks the checkout request against the retained cart and derives the order total from its items. The stop is immediately before storing the order; its order count is still zero.\"},{\"id\":\"checkout-demo/purchase-confirmation\",\"participant\":\"browser\",\"action\":\"checkout\",\"title\":\"Purchase confirmation\",\"file\":\"client.mts\",\"marker\":\"CODEBOOK_CONFIRMATION_STOP\",\"capturePhase\":\"paused-purchase-confirmation\",\"artifactPrefix\":\"purchase-confirmation\",\"overview\":\"The browser has received the selected order response. The stop is immediately before displaying its confirmation. Captured order values and the later screen observation establish the result.\"}],\"requiredLinks\":[\"intent-request\",\"request-server\",\"server-response\",\"response-browser\",\"browser-screen\",\"cart-result-checkout-input\",\"checkout-intent-request\",\"checkout-request-server\",\"checkout-server-response\",\"checkout-response-browser\",\"checkout-browser-screen\"],\"capturePhases\":[\"before\",\"paused-cart-mutation\",\"paused-cart-update\",\"after-cart\",\"paused-order-creation\",\"paused-purchase-confirmation\",\"after-confirmation\"],\"limits\":{\"runTimeoutMs\":300000,\"setupTimeoutMs\":20000,\"activeTimeoutMs\":20000,\"activeBudget\":\"per-action\"}},\"expectations\":[{\"selectedRequest\":{\"operationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272\",\"cartId\":\"selected\",\"productId\":\"tote-01\",\"price\":24},\"backgroundRequest\":{\"operationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272-background\",\"cartId\":\"background\",\"productId\":\"background-02\",\"price\":99},\"selectedResponse\":{\"operationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272\",\"cartId\":\"selected\",\"productId\":\"tote-01\",\"price\":24,\"cartCount\":1,\"admittedCount\":2},\"backgroundResponse\":{\"operationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272-background\",\"cartId\":\"background\",\"productId\":\"background-02\",\"price\":99,\"cartCount\":1,\"admittedCount\":2}},{\"selectedRequest\":{\"operationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272-checkout\",\"cartId\":\"selected\",\"productId\":\"tote-01\",\"price\":24,\"cartOperationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272\"},\"backgroundRequest\":{\"operationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272-checkout-background\",\"cartId\":\"background\",\"productId\":\"background-02\",\"price\":99,\"cartOperationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272-background\"},\"selectedResponse\":{\"operationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272-checkout\",\"cartId\":\"selected\",\"productId\":\"tote-01\",\"price\":24,\"cartOperationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272\",\"cartCount\":1,\"admittedCount\":2,\"orderId\":\"order-b88ecbac-1524-48f6-bf8d-ad1d1fb73272\",\"total\":24,\"orderCount\":1},\"backgroundResponse\":{\"operationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272-checkout-background\",\"cartId\":\"background\",\"productId\":\"background-02\",\"price\":99,\"cartOperationId\":\"b88ecbac-1524-48f6-bf8d-ad1d1fb73272-background\",\"cartCount\":1,\"admittedCount\":2,\"orderId\":\"order-b88ecbac-1524-48f6-bf8d-ad1d1fb73272-background\",\"total\":99,\"orderCount\":1}}],\"sources\":[{\"itemId\":\"checkout-demo/cart-mutation\",\"typescriptHash\":\"31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a\",\"javascriptHash\":\"8b826120475300f1044a45f8f3530f344a173df025d6e1a7e4c13fc9089d143e\",\"sourceMapHash\":\"f2cf568c2a6f3edbda9efa3b2da658f9034d014d919d5c34b77710a2d432de61\",\"line\":23},{\"itemId\":\"checkout-demo/order-creation\",\"typescriptHash\":\"31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a\",\"javascriptHash\":\"8b826120475300f1044a45f8f3530f344a173df025d6e1a7e4c13fc9089d143e\",\"sourceMapHash\":\"f2cf568c2a6f3edbda9efa3b2da658f9034d014d919d5c34b77710a2d432de61\",\"line\":38},{\"itemId\":\"checkout-demo/cart-update\",\"typescriptHash\":\"96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c\",\"javascriptHash\":\"1334865643ba799870cda2d025d59528277de8fee35a2600f2e9dd2168a3038b\",\"sourceMapHash\":\"5f8f85fbfd35305078845594445d1fcb0e493b8822d1acdaa20e1702c58519a1\",\"line\":29},{\"itemId\":\"checkout-demo/purchase-confirmation\",\"typescriptHash\":\"96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c\",\"javascriptHash\":\"1334865643ba799870cda2d025d59528277de8fee35a2600f2e9dd2168a3038b\",\"sourceMapHash\":\"5f8f85fbfd35305078845594445d1fcb0e493b8822d1acdaa20e1702c58519a1\",\"line\":54}],\"hash\":\"29e6b1182165d1edef05b880d818efb2bd4719a44a6813c4ee4d2a2e4bc0e140\"}"
+        }
+      ]
+    },
+    "final": {
+      "instanceId": "021d4958-d299-47ce-aa5a-d152b1538b71",
+      "runId": "6a1cb213-f5bf-4aed-9c2b-665a711a997f",
+      "runtimeRunId": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+      "profile": "checkout-demo",
+      "materialSignature": "3437df51db5e3e104d5f3e974f9871029e881fa66f0670401f2cb6954bbd61eb",
+      "historyOutcome": {
+        "status": "saved",
+        "materialSignature": "3437df51db5e3e104d5f3e974f9871029e881fa66f0670401f2cb6954bbd61eb",
+        "checkpointRevision": 22
+      },
+      "studyOutcome": "partial",
+      "state": "stopped",
+      "runtimeState": "completed",
+      "cleaned": true,
+      "nextActions": [
+        "read-history"
+      ],
+      "participants": {
+        "server": {
+          "itemId": "checkout-demo/order-creation",
+          "actionId": "checkout",
+          "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/ef819b99-0750-461f-a941-43ec9dc7cddd%3A2",
+          "sourceUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/ef819b99-0750-461f-a941-43ec9dc7cddd%3A2/source/typescript",
+          "resumable": false
+        },
+        "browser": {
+          "itemId": "checkout-demo/purchase-confirmation",
+          "actionId": "checkout",
+          "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/6aa18f57-d7dd-4050-998f-28171bff90c7%3A2",
+          "sourceUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/6aa18f57-d7dd-4050-998f-28171bff90c7%3A2/source/typescript",
+          "resumable": false
+        }
+      },
+      "observed": {
+        "cartCount": 1,
+        "completedClicks": 1,
+        "orderId": "order-b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+        "total": 24,
+        "status": "confirmed",
+        "completedCheckouts": 1
+      },
+      "finalOutcome": "partial",
+      "manifestUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/manifest",
+      "manifestHash": "29e6b1182165d1edef05b880d818efb2bd4719a44a6813c4ee4d2a2e4bc0e140",
+      "observations": [
+        {
+          "id": "ef819b99-0750-461f-a941-43ec9dc7cddd:1",
+          "itemId": "checkout-demo/cart-mutation",
+          "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/ef819b99-0750-461f-a941-43ec9dc7cddd%3A1",
+          "sourceUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/ef819b99-0750-461f-a941-43ec9dc7cddd%3A1/source/typescript"
+        },
+        {
+          "id": "6aa18f57-d7dd-4050-998f-28171bff90c7:1",
+          "itemId": "checkout-demo/cart-update",
+          "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/6aa18f57-d7dd-4050-998f-28171bff90c7%3A1",
+          "sourceUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/6aa18f57-d7dd-4050-998f-28171bff90c7%3A1/source/typescript"
+        },
+        {
+          "id": "ef819b99-0750-461f-a941-43ec9dc7cddd:2",
+          "itemId": "checkout-demo/order-creation",
+          "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/ef819b99-0750-461f-a941-43ec9dc7cddd%3A2",
+          "sourceUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/ef819b99-0750-461f-a941-43ec9dc7cddd%3A2/source/typescript"
+        },
+        {
+          "id": "6aa18f57-d7dd-4050-998f-28171bff90c7:2",
+          "itemId": "checkout-demo/purchase-confirmation",
+          "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/6aa18f57-d7dd-4050-998f-28171bff90c7%3A2",
+          "sourceUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/6aa18f57-d7dd-4050-998f-28171bff90c7%3A2/source/typescript"
+        }
+      ],
+      "links": [
+        {
+          "id": "intent-request",
+          "status": "observed"
+        },
+        {
+          "id": "request-server",
+          "status": "observed"
+        },
+        {
+          "id": "server-response",
+          "status": "observed"
+        },
+        {
+          "id": "response-browser",
+          "status": "observed"
+        },
+        {
+          "id": "browser-screen",
+          "status": "observed"
+        },
+        {
+          "id": "cart-result-checkout-input",
+          "status": "observed"
+        },
+        {
+          "id": "checkout-intent-request",
+          "status": "observed"
+        },
+        {
+          "id": "checkout-request-server",
+          "status": "observed"
+        },
+        {
+          "id": "checkout-server-response",
+          "status": "observed"
+        },
+        {
+          "id": "checkout-response-browser",
+          "status": "observed"
+        },
+        {
+          "id": "checkout-browser-screen",
+          "status": "observed"
+        }
+      ],
+      "captures": [
+        {
+          "phase": "before",
+          "status": "captured",
+          "uri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/images/before"
+        },
+        {
+          "phase": "paused-cart-mutation",
+          "status": "captured",
+          "uri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/images/paused-cart-mutation"
+        },
+        {
+          "phase": "paused-cart-update",
+          "status": "failed"
+        },
+        {
+          "phase": "after-cart",
+          "status": "failed"
+        },
+        {
+          "phase": "paused-order-creation",
+          "status": "failed"
+        },
+        {
+          "phase": "paused-purchase-confirmation",
+          "status": "captured",
+          "uri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/images/paused-purchase-confirmation"
+        },
+        {
+          "phase": "after-confirmation",
+          "status": "captured",
+          "uri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/images/after-confirmation"
+        }
+      ],
+      "explanations": [
+        "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/explanations/c22799aa-3823-4486-967a-8bce05e47a90",
+        "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/explanations/2d7ba01c-c32e-4aed-a114-3ff861be4588",
+        "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/explanations/0b33c7ee-6d5e-446e-8456-769d650d0b43",
+        "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/explanations/80c3a97d-897d-4e50-bc0c-ee2aa9e458dd"
+      ],
+      "activeSessionIds": [],
+      "eventsUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/events/0",
+      "runUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f"
+    },
+    "exactDeclaredInputs": true,
+    "native": {
+      "host": "Cursor",
+      "apiVersion": "1.128.0",
+      "node": "24.18.1",
+      "independentVisualInspection": false,
+      "mcpFirstLeaseRetained": true,
+      "layout": {
+        "orientation": 0,
+        "groups": [
+          {
+            "size": 330,
+            "groups": [
+              {
+                "size": 238
+              },
+              {
+                "size": 238.33333333333326
+              }
+            ]
+          },
+          {
+            "size": 330
+          }
+        ]
+      },
+      "presentation": {
+        "revision": 11,
+        "selection": {
+          "profile": "checkout-demo",
+          "itemId": "checkout-demo/purchase-confirmation",
+          "follow": true,
+          "tab": "live",
+          "studyId": "021d4958-d299-47ce-aa5a-d152b1538b71_6a1cb213-f5bf-4aed-9c2b-665a711a997f"
+        },
+        "outlineSelection": [
+          "checkout-demo/purchase-confirmation"
+        ],
+        "observation": {
+          "id": "6aa18f57-d7dd-4050-998f-28171bff90c7:2",
+          "itemId": "checkout-demo/purchase-confirmation",
+          "capturePhase": "paused-purchase-confirmation",
+          "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/6aa18f57-d7dd-4050-998f-28171bff90c7%3A2",
+          "participant": "browser",
+          "capturedAt": "2026-09-19T01:16:37.452Z",
+          "elapsedMs": 6701.667333,
+          "pause": {
+            "sessionId": "6aa18f57-d7dd-4050-998f-28171bff90c7",
+            "threadId": 1,
+            "generation": 2
+          },
+          "source": {
+            "text": "import { PRODUCT, BACKGROUND_PRODUCT } from './constants.mjs';\n\nconst runId = document.documentElement.dataset.runId!;\nconst scenario = document.documentElement.dataset.scenario!;\nconst checkoutProfile = document.documentElement.dataset.profile === 'checkout-demo';\nconst count = document.querySelector('#count')!;\nconst clicks = document.querySelector('#clicks')!;\nconst status = document.querySelector('#status')!;\ninterface CartResult { operationId: string; cartId: string; productId: string; price: number; cartCount: number; admittedCount: number }\ninterface OrderResult extends CartResult { cartOperationId: string; orderId: string; total: number; orderCount: number }\nlet selectedCart: CartResult | undefined;\nlet backgroundCart: CartResult | undefined;\nconst checkoutButton = document.querySelector<HTMLButtonElement>('#checkout')!;\ncheckoutButton.hidden = !checkoutProfile;\n\n/** Sends each fixture request once from the click handler; its headers and body are debugger correlation evidence. @example requestCart('selected', 'run', PRODUCT) */\nasync function requestCart(cartId: string, operationId: string, product: typeof PRODUCT): Promise<CartResult> {\n  const response = await fetch('api/cart', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) }, body: JSON.stringify({ cartId, productId: product.id, price: product.price }) });\n  if (!response.ok) throw new Error(`Cart HTTP ${response.status}`);\n  return response.json();\n}\n\ndocument.querySelector('#add')!.addEventListener('click', () => {\n  void (async () => {\n    status.textContent = 'Two requests pending; waiting for the server.';\n    const selected = requestCart('selected', !checkoutProfile && scenario === 'missing-id' ? '' : runId, PRODUCT);\n    const background = requestCart('background', !checkoutProfile && scenario === 'duplicate-id' ? runId : `${runId}-background`, BACKGROUND_PRODUCT);\n    const [result, backgroundResult] = await Promise.all([selected, background]);\n    count.textContent = String(result.cartCount); // CODEBOOK_BROWSER_STOP\n    clicks.textContent = String(Number(clicks.textContent) + 1);\n    selectedCart = result; backgroundCart = backgroundResult;\n    checkoutButton.disabled = false;\n    status.textContent = `Selected cart updated; background cart ${backgroundResult.cartCount}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\n\n/** Carries the observed cart operation into one checkout request; the checkout click supplies its actual cart result. @example await requestCheckout(selectedCart) */\nasync function requestCheckout(cart: CartResult): Promise<OrderResult> {\n  const selected = cart.cartId === 'selected';\n  const operationId = selected && scenario === 'missing-id' ? '' : selected || scenario === 'duplicate-id' ? `${runId}-checkout` : `${runId}-checkout-background`;\n  const response = await fetch('api/checkout', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) },\n    body: JSON.stringify({ cartId: cart.cartId, productId: cart.productId, price: cart.price, cartOperationId: cart.operationId }) });\n  if (!response.ok) throw new Error(`Checkout HTTP ${response.status}`);\n  return response.json();\n}\n\ncheckoutButton.addEventListener('click', () => {\n  if (!checkoutProfile || !selectedCart || !backgroundCart || checkoutButton.disabled) return;\n  const selected = selectedCart, background = backgroundCart;\n  checkoutButton.disabled = true;\n  void (async () => {\n    status.textContent = 'Creating the selected and background orders.';\n    const [result, backgroundResult] = await Promise.all([requestCheckout(selected), requestCheckout(background)]);\n    document.querySelector('#order-id')!.textContent = result.orderId; // CODEBOOK_CONFIRMATION_STOP\n    document.querySelector('#order-total')!.textContent = String(result.total);\n    document.querySelector<HTMLElement>('#confirmation')!.hidden = false;\n    document.querySelector('#checkouts')!.textContent = String(Number(document.querySelector('#checkouts')!.textContent) + 1);\n    document.documentElement.dataset.orderStatus = 'confirmed';\n    status.textContent = `Purchase confirmed; background order ${backgroundResult.orderId}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\ndocument.documentElement.dataset.ready = 'true';\n",
+            "hash": "96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c",
+            "line": 54
+          },
+          "interpretations": [
+            {
+              "id": "80c3a97d-897d-4e50-bc0c-ee2aa9e458dd",
+              "text": "checkout-demo/purchase-confirmation: the selected order total is 24 and its captured order count is 1; this source line is before the selected order mutation or confirmation display.",
+              "createdAt": "2026-09-19T01:16:37.986Z",
+              "facts": [
+                {
+                  "path": "orderId",
+                  "value": "order-b88ecbac-1524-48f6-bf8d-ad1d1fb73272"
+                },
+                {
+                  "path": "total",
+                  "value": 24
+                },
+                {
+                  "path": "orderCount",
+                  "value": 1
+                },
+                {
+                  "path": "cartOperationId",
+                  "value": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272"
+                }
+              ]
+            }
+          ],
+          "actionId": "checkout",
+          "values": {
+            "operationId": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272-checkout",
+            "cartId": "selected",
+            "productId": "tote-01",
+            "price": 24,
+            "cartCount": 1,
+            "admittedCount": 2,
+            "cartOperationId": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+            "orderId": "order-b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+            "total": 24,
+            "orderCount": 1
+          }
+        },
+        "matching": false,
+        "loading": false,
+        "errors": [],
+        "opened": false
+      },
+      "groups": [
+        {
+          "column": 1,
+          "active": "Keep my unrelated learning notes.",
+          "tabs": [
+            {
+              "label": "Keep my unrelated learning notes.",
+              "dirty": true,
+              "active": true,
+              "uri": "untitled:Untitled-1"
+            }
+          ]
+        }
+      ],
+      "explicitLearnerDecision": true,
+      "historyStayedOnServer": true,
+      "historicalContinueRejected": true,
+      "returnedToBrowserPause": true,
+      "nativeCapturedTabActive": true,
+      "learnerContinuedInspectedBrowser": true,
+      "foreignDraftSurvivesClose": true,
+      "finalArchive": {
+        "version": 2,
+        "workspaceKey": "82058f05fdaf4b5e222aaf8e08d0e88029a18df9729a8666a4275d3c9247b154",
+        "id": "021d4958-d299-47ce-aa5a-d152b1538b71_6a1cb213-f5bf-4aed-9c2b-665a711a997f",
+        "instanceId": "021d4958-d299-47ce-aa5a-d152b1538b71",
+        "runId": "6a1cb213-f5bf-4aed-9c2b-665a711a997f",
+        "profile": "checkout-demo",
+        "createdAt": "2026-09-19T01:16:30.585Z",
+        "savedAt": "2026-09-19T01:16:41.779Z",
+        "state": "stopped",
+        "terminal": true,
+        "finalOutcome": "partial",
+        "materialSignature": "3437df51db5e3e104d5f3e974f9871029e881fa66f0670401f2cb6954bbd61eb",
+        "observations": [
+          {
+            "id": "ef819b99-0750-461f-a941-43ec9dc7cddd:1",
+            "itemId": "checkout-demo/cart-mutation",
+            "capturePhase": "paused-cart-mutation",
+            "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/ef819b99-0750-461f-a941-43ec9dc7cddd%3A1",
+            "participant": "server",
+            "capturedAt": "2026-09-19T01:16:32.184Z",
+            "elapsedMs": 1433.366208,
+            "pause": {
+              "sessionId": "ef819b99-0750-461f-a941-43ec9dc7cddd",
+              "threadId": 0,
+              "generation": 1
+            },
+            "source": {
+              "text": "import { createServer } from 'node:http';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { BODY_LIMIT_BYTES, EXPECTED_ADMISSIONS, EXPECTED_CART_ITEMS } from './constants.mjs';\n\nconst directory = dirname(dirname(fileURLToPath(import.meta.url)));\nconst configuration: { runId: string; scenario: string; profile?: string } = JSON.parse(await readFile(join(directory, 'fixture-config.json'), 'utf8'));\ninterface Tuple { operationId: string; cartId: string; productId: string; price: number }\ninterface CheckoutTuple extends Tuple { cartOperationId: string }\nconst arrivals: Tuple[] = [];\nconst checkoutArrivals: CheckoutTuple[] = [];\nconst carts = new Map<string, { items: { id: string; price: number }[]; lastOperationId: string; orders: { id: string; total: number }[] }>();\nlet releaseBarrier: () => void = () => undefined;\nconst barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });\nlet releaseCheckoutBarrier: () => void = () => undefined;\nconst checkoutBarrier = new Promise<void>(resolve => { releaseCheckoutBarrier = resolve; });\n\n/** Mutates one admitted cart after both requests arrive; the HTTP fixture calls this at the server study stop. @example addProduct({ operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24 }) */\nfunction addProduct(tuple: Tuple) {\n  const state = carts.get(tuple.cartId) ?? { items: [], lastOperationId: '', orders: [] };\n  const admittedCount = arrivals.length;\n  state.items.push({ id: tuple.productId, price: tuple.price }); // CODEBOOK_SERVER_STOP\n  state.lastOperationId = tuple.operationId;\n  carts.set(tuple.cartId, state);\n  return { ...tuple, cartCount: state.items.length, admittedCount };\n}\n\n/** Creates one order from retained cart state after both checkout requests arrive; the checkout route supplies its tuple. @example createOrder({operationId:'run-checkout',cartOperationId:'run',cartId:'selected',productId:'tote-01',price:24}) */\nfunction createOrder(tuple: CheckoutTuple) {\n  const state = carts.get(tuple.cartId);\n  if (!state || state.lastOperationId !== tuple.cartOperationId || state.items.length !== EXPECTED_CART_ITEMS || state.orders.length) throw new Error('Checkout does not match one unpurchased cart');\n  const product = state.items[0]!;\n  if (product.id !== tuple.productId || product.price !== tuple.price) throw new Error('Checkout product differs from retained cart');\n  const admittedCount = checkoutArrivals.length;\n  const orderId = `order-${state.lastOperationId}`;\n  const total = state.items.reduce((sum, item) => sum + item.price, 0);\n  state.orders.push({ id: orderId, total }); // CODEBOOK_ORDER_STOP\n  return { ...tuple, cartCount: state.items.length, admittedCount, orderId, total, orderCount: state.orders.length };\n}\n\nconst server = createServer((request, response) => {\n  void (async () => {\n    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;\n    const prefix = `/runs/${configuration.runId}/`;\n    response.setHeader('cache-control', 'no-store');\n    if (!pathname.startsWith(prefix)) { response.writeHead(404).end(); return; }\n    const route = pathname.slice(prefix.length);\n    if (request.method === 'GET' && ['index.html', 'client.mjs', 'client.mjs.map', 'constants.mjs', 'constants.mjs.map'].includes(route)) {\n      const bytes = await readFile(join(directory, route === 'index.html' ? route : `build/${route}`));\n      response.setHeader('content-type', route === 'index.html' ? 'text/html' : 'text/javascript');\n      response.end(bytes); return;\n    }\n    const checkout = route === 'api/checkout';\n    if (request.method !== 'POST' || !['api/cart', 'api/redirected', 'api/checkout'].includes(route) || checkout && configuration.profile !== 'checkout-demo') { response.writeHead(404).end(); return; }\n    const injectFault = configuration.profile === 'checkout-demo' ? checkout : route === 'api/cart';\n    if (injectFault && configuration.scenario === 'redirect') { response.writeHead(307, { location: `${prefix}api/redirected` }).end(); return; }\n    const chunks: Buffer[] = []; let bytes = 0;\n    for await (const chunk of request) {\n      bytes += chunk.length;\n      if (bytes > BODY_LIMIT_BYTES) { response.writeHead(413).end(); return; }\n      chunks.push(chunk);\n    }\n    const body: unknown = JSON.parse(Buffer.concat(chunks).toString());\n    if (!body || typeof body !== 'object' || !('cartId' in body) || typeof body.cartId !== 'string' || !('productId' in body) || typeof body.productId !== 'string' || !('price' in body) || typeof body.price !== 'number') { response.writeHead(400).end(); return; }\n    const tuple: Tuple = { operationId: String(request.headers['x-codebook-operation'] ?? ''), cartId: body.cartId, productId: body.productId, price: body.price };\n    // Separate admission barriers keep second-action counters independent while retaining the same carts.\n    let result: ReturnType<typeof addProduct> | ReturnType<typeof createOrder>;\n    if (checkout) {\n      if (!('cartOperationId' in body) || typeof body.cartOperationId !== 'string') { response.writeHead(400).end(); return; }\n      const checkoutTuple = { ...tuple, cartOperationId: body.cartOperationId };\n      checkoutArrivals.push(checkoutTuple);\n      if (checkoutArrivals.length === EXPECTED_ADMISSIONS) releaseCheckoutBarrier();\n      await checkoutBarrier;\n      result = createOrder(checkoutTuple);\n    } else {\n      arrivals.push(tuple);\n      if (arrivals.length === EXPECTED_ADMISSIONS) releaseBarrier();\n      await barrier;\n      result = addProduct(tuple);\n    }\n    if (injectFault && tuple.cartId === 'selected') {\n      if (configuration.scenario === 'backend-exit') process.exit(1);\n      if (configuration.scenario === 'absent-response') return;\n      if (configuration.scenario === 'wrong-response-id') result.operationId = 'wrong-operation';\n      if (configuration.scenario === 'wrong-response-value') result.cartCount = 2;\n    }\n    response.setHeader('content-type', 'application/json');\n    response.end(JSON.stringify(result));\n  })().catch(error => { response.writeHead(500).end(String(error)); });\n});\nserver.listen(0, '127.0.0.1', () => {\n  const address = server.address();\n  if (!address || typeof address === 'string') throw new Error('No owned fixture listener');\n  void writeFile(join(directory, 'backend-endpoint.json'), JSON.stringify({ runId: configuration.runId, pid: process.pid, origin: `http://127.0.0.1:${address.port}`, executable: process.execPath, version: process.version }));\n});\n",
+              "hash": "31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a",
+              "line": 23
+            },
+            "interpretations": [
+              {
+                "id": "c22799aa-3823-4486-967a-8bce05e47a90",
+                "text": "checkout-demo/cart-mutation: captured tote-01 price 24, cart count 0, immediately before the selected mutation or display update.",
+                "createdAt": "2026-09-19T01:16:35.674Z",
+                "facts": [
+                  {
+                    "path": "productId",
+                    "value": "tote-01"
+                  },
+                  {
+                    "path": "price",
+                    "value": 24
+                  },
+                  {
+                    "path": "cartCount",
+                    "value": 0
+                  }
+                ]
+              }
+            ],
+            "actionId": "add-to-cart",
+            "values": {
+              "operationId": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+              "cartId": "selected",
+              "productId": "tote-01",
+              "price": 24,
+              "cartCount": 0,
+              "admittedCount": 2
+            }
+          },
+          {
+            "id": "6aa18f57-d7dd-4050-998f-28171bff90c7:1",
+            "itemId": "checkout-demo/cart-update",
+            "capturePhase": "paused-cart-update",
+            "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/6aa18f57-d7dd-4050-998f-28171bff90c7%3A1",
+            "participant": "browser",
+            "capturedAt": "2026-09-19T01:16:35.817Z",
+            "elapsedMs": 5066.653208,
+            "pause": {
+              "sessionId": "6aa18f57-d7dd-4050-998f-28171bff90c7",
+              "threadId": 1,
+              "generation": 1
+            },
+            "source": {
+              "text": "import { PRODUCT, BACKGROUND_PRODUCT } from './constants.mjs';\n\nconst runId = document.documentElement.dataset.runId!;\nconst scenario = document.documentElement.dataset.scenario!;\nconst checkoutProfile = document.documentElement.dataset.profile === 'checkout-demo';\nconst count = document.querySelector('#count')!;\nconst clicks = document.querySelector('#clicks')!;\nconst status = document.querySelector('#status')!;\ninterface CartResult { operationId: string; cartId: string; productId: string; price: number; cartCount: number; admittedCount: number }\ninterface OrderResult extends CartResult { cartOperationId: string; orderId: string; total: number; orderCount: number }\nlet selectedCart: CartResult | undefined;\nlet backgroundCart: CartResult | undefined;\nconst checkoutButton = document.querySelector<HTMLButtonElement>('#checkout')!;\ncheckoutButton.hidden = !checkoutProfile;\n\n/** Sends each fixture request once from the click handler; its headers and body are debugger correlation evidence. @example requestCart('selected', 'run', PRODUCT) */\nasync function requestCart(cartId: string, operationId: string, product: typeof PRODUCT): Promise<CartResult> {\n  const response = await fetch('api/cart', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) }, body: JSON.stringify({ cartId, productId: product.id, price: product.price }) });\n  if (!response.ok) throw new Error(`Cart HTTP ${response.status}`);\n  return response.json();\n}\n\ndocument.querySelector('#add')!.addEventListener('click', () => {\n  void (async () => {\n    status.textContent = 'Two requests pending; waiting for the server.';\n    const selected = requestCart('selected', !checkoutProfile && scenario === 'missing-id' ? '' : runId, PRODUCT);\n    const background = requestCart('background', !checkoutProfile && scenario === 'duplicate-id' ? runId : `${runId}-background`, BACKGROUND_PRODUCT);\n    const [result, backgroundResult] = await Promise.all([selected, background]);\n    count.textContent = String(result.cartCount); // CODEBOOK_BROWSER_STOP\n    clicks.textContent = String(Number(clicks.textContent) + 1);\n    selectedCart = result; backgroundCart = backgroundResult;\n    checkoutButton.disabled = false;\n    status.textContent = `Selected cart updated; background cart ${backgroundResult.cartCount}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\n\n/** Carries the observed cart operation into one checkout request; the checkout click supplies its actual cart result. @example await requestCheckout(selectedCart) */\nasync function requestCheckout(cart: CartResult): Promise<OrderResult> {\n  const selected = cart.cartId === 'selected';\n  const operationId = selected && scenario === 'missing-id' ? '' : selected || scenario === 'duplicate-id' ? `${runId}-checkout` : `${runId}-checkout-background`;\n  const response = await fetch('api/checkout', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) },\n    body: JSON.stringify({ cartId: cart.cartId, productId: cart.productId, price: cart.price, cartOperationId: cart.operationId }) });\n  if (!response.ok) throw new Error(`Checkout HTTP ${response.status}`);\n  return response.json();\n}\n\ncheckoutButton.addEventListener('click', () => {\n  if (!checkoutProfile || !selectedCart || !backgroundCart || checkoutButton.disabled) return;\n  const selected = selectedCart, background = backgroundCart;\n  checkoutButton.disabled = true;\n  void (async () => {\n    status.textContent = 'Creating the selected and background orders.';\n    const [result, backgroundResult] = await Promise.all([requestCheckout(selected), requestCheckout(background)]);\n    document.querySelector('#order-id')!.textContent = result.orderId; // CODEBOOK_CONFIRMATION_STOP\n    document.querySelector('#order-total')!.textContent = String(result.total);\n    document.querySelector<HTMLElement>('#confirmation')!.hidden = false;\n    document.querySelector('#checkouts')!.textContent = String(Number(document.querySelector('#checkouts')!.textContent) + 1);\n    document.documentElement.dataset.orderStatus = 'confirmed';\n    status.textContent = `Purchase confirmed; background order ${backgroundResult.orderId}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\ndocument.documentElement.dataset.ready = 'true';\n",
+              "hash": "96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c",
+              "line": 29
+            },
+            "interpretations": [
+              {
+                "id": "2d7ba01c-c32e-4aed-a114-3ff861be4588",
+                "text": "checkout-demo/cart-update: captured tote-01 price 24, cart count 1, immediately before the selected mutation or display update.",
+                "createdAt": "2026-09-19T01:16:35.917Z",
+                "facts": [
+                  {
+                    "path": "productId",
+                    "value": "tote-01"
+                  },
+                  {
+                    "path": "price",
+                    "value": 24
+                  },
+                  {
+                    "path": "cartCount",
+                    "value": 1
+                  }
+                ]
+              }
+            ],
+            "actionId": "add-to-cart",
+            "values": {
+              "operationId": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+              "cartId": "selected",
+              "productId": "tote-01",
+              "price": 24,
+              "cartCount": 1,
+              "admittedCount": 2
+            }
+          },
+          {
+            "id": "ef819b99-0750-461f-a941-43ec9dc7cddd:2",
+            "itemId": "checkout-demo/order-creation",
+            "capturePhase": "paused-order-creation",
+            "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/ef819b99-0750-461f-a941-43ec9dc7cddd%3A2",
+            "participant": "server",
+            "capturedAt": "2026-09-19T01:16:36.323Z",
+            "elapsedMs": 5572.153625,
+            "pause": {
+              "sessionId": "ef819b99-0750-461f-a941-43ec9dc7cddd",
+              "threadId": 0,
+              "generation": 2
+            },
+            "source": {
+              "text": "import { createServer } from 'node:http';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { BODY_LIMIT_BYTES, EXPECTED_ADMISSIONS, EXPECTED_CART_ITEMS } from './constants.mjs';\n\nconst directory = dirname(dirname(fileURLToPath(import.meta.url)));\nconst configuration: { runId: string; scenario: string; profile?: string } = JSON.parse(await readFile(join(directory, 'fixture-config.json'), 'utf8'));\ninterface Tuple { operationId: string; cartId: string; productId: string; price: number }\ninterface CheckoutTuple extends Tuple { cartOperationId: string }\nconst arrivals: Tuple[] = [];\nconst checkoutArrivals: CheckoutTuple[] = [];\nconst carts = new Map<string, { items: { id: string; price: number }[]; lastOperationId: string; orders: { id: string; total: number }[] }>();\nlet releaseBarrier: () => void = () => undefined;\nconst barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });\nlet releaseCheckoutBarrier: () => void = () => undefined;\nconst checkoutBarrier = new Promise<void>(resolve => { releaseCheckoutBarrier = resolve; });\n\n/** Mutates one admitted cart after both requests arrive; the HTTP fixture calls this at the server study stop. @example addProduct({ operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24 }) */\nfunction addProduct(tuple: Tuple) {\n  const state = carts.get(tuple.cartId) ?? { items: [], lastOperationId: '', orders: [] };\n  const admittedCount = arrivals.length;\n  state.items.push({ id: tuple.productId, price: tuple.price }); // CODEBOOK_SERVER_STOP\n  state.lastOperationId = tuple.operationId;\n  carts.set(tuple.cartId, state);\n  return { ...tuple, cartCount: state.items.length, admittedCount };\n}\n\n/** Creates one order from retained cart state after both checkout requests arrive; the checkout route supplies its tuple. @example createOrder({operationId:'run-checkout',cartOperationId:'run',cartId:'selected',productId:'tote-01',price:24}) */\nfunction createOrder(tuple: CheckoutTuple) {\n  const state = carts.get(tuple.cartId);\n  if (!state || state.lastOperationId !== tuple.cartOperationId || state.items.length !== EXPECTED_CART_ITEMS || state.orders.length) throw new Error('Checkout does not match one unpurchased cart');\n  const product = state.items[0]!;\n  if (product.id !== tuple.productId || product.price !== tuple.price) throw new Error('Checkout product differs from retained cart');\n  const admittedCount = checkoutArrivals.length;\n  const orderId = `order-${state.lastOperationId}`;\n  const total = state.items.reduce((sum, item) => sum + item.price, 0);\n  state.orders.push({ id: orderId, total }); // CODEBOOK_ORDER_STOP\n  return { ...tuple, cartCount: state.items.length, admittedCount, orderId, total, orderCount: state.orders.length };\n}\n\nconst server = createServer((request, response) => {\n  void (async () => {\n    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;\n    const prefix = `/runs/${configuration.runId}/`;\n    response.setHeader('cache-control', 'no-store');\n    if (!pathname.startsWith(prefix)) { response.writeHead(404).end(); return; }\n    const route = pathname.slice(prefix.length);\n    if (request.method === 'GET' && ['index.html', 'client.mjs', 'client.mjs.map', 'constants.mjs', 'constants.mjs.map'].includes(route)) {\n      const bytes = await readFile(join(directory, route === 'index.html' ? route : `build/${route}`));\n      response.setHeader('content-type', route === 'index.html' ? 'text/html' : 'text/javascript');\n      response.end(bytes); return;\n    }\n    const checkout = route === 'api/checkout';\n    if (request.method !== 'POST' || !['api/cart', 'api/redirected', 'api/checkout'].includes(route) || checkout && configuration.profile !== 'checkout-demo') { response.writeHead(404).end(); return; }\n    const injectFault = configuration.profile === 'checkout-demo' ? checkout : route === 'api/cart';\n    if (injectFault && configuration.scenario === 'redirect') { response.writeHead(307, { location: `${prefix}api/redirected` }).end(); return; }\n    const chunks: Buffer[] = []; let bytes = 0;\n    for await (const chunk of request) {\n      bytes += chunk.length;\n      if (bytes > BODY_LIMIT_BYTES) { response.writeHead(413).end(); return; }\n      chunks.push(chunk);\n    }\n    const body: unknown = JSON.parse(Buffer.concat(chunks).toString());\n    if (!body || typeof body !== 'object' || !('cartId' in body) || typeof body.cartId !== 'string' || !('productId' in body) || typeof body.productId !== 'string' || !('price' in body) || typeof body.price !== 'number') { response.writeHead(400).end(); return; }\n    const tuple: Tuple = { operationId: String(request.headers['x-codebook-operation'] ?? ''), cartId: body.cartId, productId: body.productId, price: body.price };\n    // Separate admission barriers keep second-action counters independent while retaining the same carts.\n    let result: ReturnType<typeof addProduct> | ReturnType<typeof createOrder>;\n    if (checkout) {\n      if (!('cartOperationId' in body) || typeof body.cartOperationId !== 'string') { response.writeHead(400).end(); return; }\n      const checkoutTuple = { ...tuple, cartOperationId: body.cartOperationId };\n      checkoutArrivals.push(checkoutTuple);\n      if (checkoutArrivals.length === EXPECTED_ADMISSIONS) releaseCheckoutBarrier();\n      await checkoutBarrier;\n      result = createOrder(checkoutTuple);\n    } else {\n      arrivals.push(tuple);\n      if (arrivals.length === EXPECTED_ADMISSIONS) releaseBarrier();\n      await barrier;\n      result = addProduct(tuple);\n    }\n    if (injectFault && tuple.cartId === 'selected') {\n      if (configuration.scenario === 'backend-exit') process.exit(1);\n      if (configuration.scenario === 'absent-response') return;\n      if (configuration.scenario === 'wrong-response-id') result.operationId = 'wrong-operation';\n      if (configuration.scenario === 'wrong-response-value') result.cartCount = 2;\n    }\n    response.setHeader('content-type', 'application/json');\n    response.end(JSON.stringify(result));\n  })().catch(error => { response.writeHead(500).end(String(error)); });\n});\nserver.listen(0, '127.0.0.1', () => {\n  const address = server.address();\n  if (!address || typeof address === 'string') throw new Error('No owned fixture listener');\n  void writeFile(join(directory, 'backend-endpoint.json'), JSON.stringify({ runId: configuration.runId, pid: process.pid, origin: `http://127.0.0.1:${address.port}`, executable: process.execPath, version: process.version }));\n});\n",
+              "hash": "31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a",
+              "line": 38
+            },
+            "interpretations": [
+              {
+                "id": "0b33c7ee-6d5e-446e-8456-769d650d0b43",
+                "text": "checkout-demo/order-creation: the selected order total is 24 and its captured order count is 0; this source line is before the selected order mutation or confirmation display.",
+                "createdAt": "2026-09-19T01:16:36.967Z",
+                "facts": [
+                  {
+                    "path": "orderId",
+                    "value": "order-b88ecbac-1524-48f6-bf8d-ad1d1fb73272"
+                  },
+                  {
+                    "path": "total",
+                    "value": 24
+                  },
+                  {
+                    "path": "orderCount",
+                    "value": 0
+                  },
+                  {
+                    "path": "cartOperationId",
+                    "value": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272"
+                  }
+                ]
+              }
+            ],
+            "actionId": "checkout",
+            "values": {
+              "operationId": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272-checkout",
+              "cartId": "selected",
+              "productId": "tote-01",
+              "price": 24,
+              "cartCount": 1,
+              "admittedCount": 2,
+              "cartOperationId": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+              "orderId": "order-b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+              "total": 24,
+              "orderCount": 0
+            }
+          },
+          {
+            "id": "6aa18f57-d7dd-4050-998f-28171bff90c7:2",
+            "itemId": "checkout-demo/purchase-confirmation",
+            "capturePhase": "paused-purchase-confirmation",
+            "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/6aa18f57-d7dd-4050-998f-28171bff90c7%3A2",
+            "participant": "browser",
+            "capturedAt": "2026-09-19T01:16:37.452Z",
+            "elapsedMs": 6701.667333,
+            "pause": {
+              "sessionId": "6aa18f57-d7dd-4050-998f-28171bff90c7",
+              "threadId": 1,
+              "generation": 2
+            },
+            "source": {
+              "text": "import { PRODUCT, BACKGROUND_PRODUCT } from './constants.mjs';\n\nconst runId = document.documentElement.dataset.runId!;\nconst scenario = document.documentElement.dataset.scenario!;\nconst checkoutProfile = document.documentElement.dataset.profile === 'checkout-demo';\nconst count = document.querySelector('#count')!;\nconst clicks = document.querySelector('#clicks')!;\nconst status = document.querySelector('#status')!;\ninterface CartResult { operationId: string; cartId: string; productId: string; price: number; cartCount: number; admittedCount: number }\ninterface OrderResult extends CartResult { cartOperationId: string; orderId: string; total: number; orderCount: number }\nlet selectedCart: CartResult | undefined;\nlet backgroundCart: CartResult | undefined;\nconst checkoutButton = document.querySelector<HTMLButtonElement>('#checkout')!;\ncheckoutButton.hidden = !checkoutProfile;\n\n/** Sends each fixture request once from the click handler; its headers and body are debugger correlation evidence. @example requestCart('selected', 'run', PRODUCT) */\nasync function requestCart(cartId: string, operationId: string, product: typeof PRODUCT): Promise<CartResult> {\n  const response = await fetch('api/cart', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) }, body: JSON.stringify({ cartId, productId: product.id, price: product.price }) });\n  if (!response.ok) throw new Error(`Cart HTTP ${response.status}`);\n  return response.json();\n}\n\ndocument.querySelector('#add')!.addEventListener('click', () => {\n  void (async () => {\n    status.textContent = 'Two requests pending; waiting for the server.';\n    const selected = requestCart('selected', !checkoutProfile && scenario === 'missing-id' ? '' : runId, PRODUCT);\n    const background = requestCart('background', !checkoutProfile && scenario === 'duplicate-id' ? runId : `${runId}-background`, BACKGROUND_PRODUCT);\n    const [result, backgroundResult] = await Promise.all([selected, background]);\n    count.textContent = String(result.cartCount); // CODEBOOK_BROWSER_STOP\n    clicks.textContent = String(Number(clicks.textContent) + 1);\n    selectedCart = result; backgroundCart = backgroundResult;\n    checkoutButton.disabled = false;\n    status.textContent = `Selected cart updated; background cart ${backgroundResult.cartCount}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\n\n/** Carries the observed cart operation into one checkout request; the checkout click supplies its actual cart result. @example await requestCheckout(selectedCart) */\nasync function requestCheckout(cart: CartResult): Promise<OrderResult> {\n  const selected = cart.cartId === 'selected';\n  const operationId = selected && scenario === 'missing-id' ? '' : selected || scenario === 'duplicate-id' ? `${runId}-checkout` : `${runId}-checkout-background`;\n  const response = await fetch('api/checkout', { method: 'POST', headers: { 'content-type': 'application/json', ...(operationId ? { 'x-codebook-operation': operationId } : {}) },\n    body: JSON.stringify({ cartId: cart.cartId, productId: cart.productId, price: cart.price, cartOperationId: cart.operationId }) });\n  if (!response.ok) throw new Error(`Checkout HTTP ${response.status}`);\n  return response.json();\n}\n\ncheckoutButton.addEventListener('click', () => {\n  if (!checkoutProfile || !selectedCart || !backgroundCart || checkoutButton.disabled) return;\n  const selected = selectedCart, background = backgroundCart;\n  checkoutButton.disabled = true;\n  void (async () => {\n    status.textContent = 'Creating the selected and background orders.';\n    const [result, backgroundResult] = await Promise.all([requestCheckout(selected), requestCheckout(background)]);\n    document.querySelector('#order-id')!.textContent = result.orderId; // CODEBOOK_CONFIRMATION_STOP\n    document.querySelector('#order-total')!.textContent = String(result.total);\n    document.querySelector<HTMLElement>('#confirmation')!.hidden = false;\n    document.querySelector('#checkouts')!.textContent = String(Number(document.querySelector('#checkouts')!.textContent) + 1);\n    document.documentElement.dataset.orderStatus = 'confirmed';\n    status.textContent = `Purchase confirmed; background order ${backgroundResult.orderId}.`;\n  })().catch(error => { status.textContent = String(error); document.documentElement.dataset.error = String(error); });\n});\ndocument.documentElement.dataset.ready = 'true';\n",
+              "hash": "96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c",
+              "line": 54
+            },
+            "interpretations": [
+              {
+                "id": "80c3a97d-897d-4e50-bc0c-ee2aa9e458dd",
+                "text": "checkout-demo/purchase-confirmation: the selected order total is 24 and its captured order count is 1; this source line is before the selected order mutation or confirmation display.",
+                "createdAt": "2026-09-19T01:16:37.986Z",
+                "facts": [
+                  {
+                    "path": "orderId",
+                    "value": "order-b88ecbac-1524-48f6-bf8d-ad1d1fb73272"
+                  },
+                  {
+                    "path": "total",
+                    "value": 24
+                  },
+                  {
+                    "path": "orderCount",
+                    "value": 1
+                  },
+                  {
+                    "path": "cartOperationId",
+                    "value": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272"
+                  }
+                ]
+              }
+            ],
+            "actionId": "checkout",
+            "values": {
+              "operationId": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272-checkout",
+              "cartId": "selected",
+              "productId": "tote-01",
+              "price": 24,
+              "cartCount": 1,
+              "admittedCount": 2,
+              "cartOperationId": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+              "orderId": "order-b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+              "total": 24,
+              "orderCount": 1
+            }
+          }
+        ],
+        "captures": [
+          {
+            "phase": "before",
+            "status": "captured",
+            "imageFile": "images/6c5b6a018294b39aed6c3b77b4f28f3a376268aaab8c287593e6b6fa25221b44.png",
+            "imageBytes": 32297,
+            "hash": "6c5b6a018294b39aed6c3b77b4f28f3a376268aaab8c287593e6b6fa25221b44"
+          },
+          {
+            "phase": "paused-cart-mutation",
+            "status": "captured",
+            "imageFile": "images/dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3.png",
+            "imageBytes": 30709,
+            "hash": "dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3"
+          },
+          {
+            "phase": "paused-cart-update",
+            "status": "failed",
+            "reason": "Error: Learner is viewing history; current capture was not displayed."
+          },
+          {
+            "phase": "after-cart",
+            "status": "failed",
+            "reason": "Error: Learner is viewing history; current capture was not displayed."
+          },
+          {
+            "phase": "paused-order-creation",
+            "status": "failed",
+            "reason": "Error: Learner is viewing history; current capture was not displayed."
+          },
+          {
+            "phase": "paused-purchase-confirmation",
+            "status": "captured",
+            "imageFile": "images/923277c01c5e54cdea8072a73cd87949561f0bac701beeb83610c373586dccd7.png",
+            "imageBytes": 30018,
+            "hash": "923277c01c5e54cdea8072a73cd87949561f0bac701beeb83610c373586dccd7"
+          },
+          {
+            "phase": "after-confirmation",
+            "status": "captured",
+            "imageFile": "images/d1571ffc1b2e1f60c4e61f7d07f73af749a1af9d61545d4e7521606f5819bcc0.png",
+            "imageBytes": 49186,
+            "hash": "d1571ffc1b2e1f60c4e61f7d07f73af749a1af9d61545d4e7521606f5819bcc0"
+          }
+        ],
+        "links": [
+          {
+            "id": "intent-request",
+            "status": "observed"
+          },
+          {
+            "id": "request-server",
+            "status": "observed"
+          },
+          {
+            "id": "server-response",
+            "status": "observed"
+          },
+          {
+            "id": "response-browser",
+            "status": "observed"
+          },
+          {
+            "id": "browser-screen",
+            "status": "observed"
+          },
+          {
+            "id": "cart-result-checkout-input",
+            "status": "observed"
+          },
+          {
+            "id": "checkout-intent-request",
+            "status": "observed"
+          },
+          {
+            "id": "checkout-request-server",
+            "status": "observed"
+          },
+          {
+            "id": "checkout-server-response",
+            "status": "observed"
+          },
+          {
+            "id": "checkout-response-browser",
+            "status": "observed"
+          },
+          {
+            "id": "checkout-browser-screen",
+            "status": "observed"
+          }
+        ]
+      },
+      "finalProgress": {
+        "version": 2,
+        "workspaceKey": "82058f05fdaf4b5e222aaf8e08d0e88029a18df9729a8666a4275d3c9247b154",
+        "decisions": [
+          {
+            "id": "280b4ffd-8c5f-42bc-b1bb-7a793271ccb5",
+            "item": "checkout-demo/cart-mutation",
+            "sourceHash": "31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a",
+            "understood": true,
+            "at": "2026-09-19T01:16:35.653Z"
+          }
+        ],
+        "selection": {
+          "studyId": "021d4958-d299-47ce-aa5a-d152b1538b71_6a1cb213-f5bf-4aed-9c2b-665a711a997f",
+          "profile": "checkout-demo",
+          "itemId": "checkout-demo/cart-mutation",
+          "follow": false,
+          "tab": "live"
+        }
+      },
+      "finalCheckpoint": true
+    },
+    "reload": {
+      "host": "Cursor",
+      "apiVersion": "1.128.0",
+      "node": "24.18.1",
+      "independentVisualInspection": false,
+      "presentation": {
+        "revision": 1,
+        "selection": {
+          "studyId": "021d4958-d299-47ce-aa5a-d152b1538b71_6a1cb213-f5bf-4aed-9c2b-665a711a997f",
+          "profile": "checkout-demo",
+          "itemId": "checkout-demo/cart-mutation",
+          "follow": false,
+          "tab": "live"
+        },
+        "outlineSelection": [
+          "checkout-demo/cart-mutation"
+        ],
+        "observation": {
+          "id": "ef819b99-0750-461f-a941-43ec9dc7cddd:1",
+          "itemId": "checkout-demo/cart-mutation",
+          "capturePhase": "paused-cart-mutation",
+          "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/ef819b99-0750-461f-a941-43ec9dc7cddd%3A1",
+          "participant": "server",
+          "capturedAt": "2026-09-19T01:16:32.184Z",
+          "elapsedMs": 1433.366208,
+          "pause": {
+            "sessionId": "ef819b99-0750-461f-a941-43ec9dc7cddd",
+            "threadId": 0,
+            "generation": 1
+          },
+          "source": {
+            "text": "import { createServer } from 'node:http';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { BODY_LIMIT_BYTES, EXPECTED_ADMISSIONS, EXPECTED_CART_ITEMS } from './constants.mjs';\n\nconst directory = dirname(dirname(fileURLToPath(import.meta.url)));\nconst configuration: { runId: string; scenario: string; profile?: string } = JSON.parse(await readFile(join(directory, 'fixture-config.json'), 'utf8'));\ninterface Tuple { operationId: string; cartId: string; productId: string; price: number }\ninterface CheckoutTuple extends Tuple { cartOperationId: string }\nconst arrivals: Tuple[] = [];\nconst checkoutArrivals: CheckoutTuple[] = [];\nconst carts = new Map<string, { items: { id: string; price: number }[]; lastOperationId: string; orders: { id: string; total: number }[] }>();\nlet releaseBarrier: () => void = () => undefined;\nconst barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });\nlet releaseCheckoutBarrier: () => void = () => undefined;\nconst checkoutBarrier = new Promise<void>(resolve => { releaseCheckoutBarrier = resolve; });\n\n/** Mutates one admitted cart after both requests arrive; the HTTP fixture calls this at the server study stop. @example addProduct({ operationId: 'run', cartId: 'selected', productId: 'tote-01', price: 24 }) */\nfunction addProduct(tuple: Tuple) {\n  const state = carts.get(tuple.cartId) ?? { items: [], lastOperationId: '', orders: [] };\n  const admittedCount = arrivals.length;\n  state.items.push({ id: tuple.productId, price: tuple.price }); // CODEBOOK_SERVER_STOP\n  state.lastOperationId = tuple.operationId;\n  carts.set(tuple.cartId, state);\n  return { ...tuple, cartCount: state.items.length, admittedCount };\n}\n\n/** Creates one order from retained cart state after both checkout requests arrive; the checkout route supplies its tuple. @example createOrder({operationId:'run-checkout',cartOperationId:'run',cartId:'selected',productId:'tote-01',price:24}) */\nfunction createOrder(tuple: CheckoutTuple) {\n  const state = carts.get(tuple.cartId);\n  if (!state || state.lastOperationId !== tuple.cartOperationId || state.items.length !== EXPECTED_CART_ITEMS || state.orders.length) throw new Error('Checkout does not match one unpurchased cart');\n  const product = state.items[0]!;\n  if (product.id !== tuple.productId || product.price !== tuple.price) throw new Error('Checkout product differs from retained cart');\n  const admittedCount = checkoutArrivals.length;\n  const orderId = `order-${state.lastOperationId}`;\n  const total = state.items.reduce((sum, item) => sum + item.price, 0);\n  state.orders.push({ id: orderId, total }); // CODEBOOK_ORDER_STOP\n  return { ...tuple, cartCount: state.items.length, admittedCount, orderId, total, orderCount: state.orders.length };\n}\n\nconst server = createServer((request, response) => {\n  void (async () => {\n    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;\n    const prefix = `/runs/${configuration.runId}/`;\n    response.setHeader('cache-control', 'no-store');\n    if (!pathname.startsWith(prefix)) { response.writeHead(404).end(); return; }\n    const route = pathname.slice(prefix.length);\n    if (request.method === 'GET' && ['index.html', 'client.mjs', 'client.mjs.map', 'constants.mjs', 'constants.mjs.map'].includes(route)) {\n      const bytes = await readFile(join(directory, route === 'index.html' ? route : `build/${route}`));\n      response.setHeader('content-type', route === 'index.html' ? 'text/html' : 'text/javascript');\n      response.end(bytes); return;\n    }\n    const checkout = route === 'api/checkout';\n    if (request.method !== 'POST' || !['api/cart', 'api/redirected', 'api/checkout'].includes(route) || checkout && configuration.profile !== 'checkout-demo') { response.writeHead(404).end(); return; }\n    const injectFault = configuration.profile === 'checkout-demo' ? checkout : route === 'api/cart';\n    if (injectFault && configuration.scenario === 'redirect') { response.writeHead(307, { location: `${prefix}api/redirected` }).end(); return; }\n    const chunks: Buffer[] = []; let bytes = 0;\n    for await (const chunk of request) {\n      bytes += chunk.length;\n      if (bytes > BODY_LIMIT_BYTES) { response.writeHead(413).end(); return; }\n      chunks.push(chunk);\n    }\n    const body: unknown = JSON.parse(Buffer.concat(chunks).toString());\n    if (!body || typeof body !== 'object' || !('cartId' in body) || typeof body.cartId !== 'string' || !('productId' in body) || typeof body.productId !== 'string' || !('price' in body) || typeof body.price !== 'number') { response.writeHead(400).end(); return; }\n    const tuple: Tuple = { operationId: String(request.headers['x-codebook-operation'] ?? ''), cartId: body.cartId, productId: body.productId, price: body.price };\n    // Separate admission barriers keep second-action counters independent while retaining the same carts.\n    let result: ReturnType<typeof addProduct> | ReturnType<typeof createOrder>;\n    if (checkout) {\n      if (!('cartOperationId' in body) || typeof body.cartOperationId !== 'string') { response.writeHead(400).end(); return; }\n      const checkoutTuple = { ...tuple, cartOperationId: body.cartOperationId };\n      checkoutArrivals.push(checkoutTuple);\n      if (checkoutArrivals.length === EXPECTED_ADMISSIONS) releaseCheckoutBarrier();\n      await checkoutBarrier;\n      result = createOrder(checkoutTuple);\n    } else {\n      arrivals.push(tuple);\n      if (arrivals.length === EXPECTED_ADMISSIONS) releaseBarrier();\n      await barrier;\n      result = addProduct(tuple);\n    }\n    if (injectFault && tuple.cartId === 'selected') {\n      if (configuration.scenario === 'backend-exit') process.exit(1);\n      if (configuration.scenario === 'absent-response') return;\n      if (configuration.scenario === 'wrong-response-id') result.operationId = 'wrong-operation';\n      if (configuration.scenario === 'wrong-response-value') result.cartCount = 2;\n    }\n    response.setHeader('content-type', 'application/json');\n    response.end(JSON.stringify(result));\n  })().catch(error => { response.writeHead(500).end(String(error)); });\n});\nserver.listen(0, '127.0.0.1', () => {\n  const address = server.address();\n  if (!address || typeof address === 'string') throw new Error('No owned fixture listener');\n  void writeFile(join(directory, 'backend-endpoint.json'), JSON.stringify({ runId: configuration.runId, pid: process.pid, origin: `http://127.0.0.1:${address.port}`, executable: process.execPath, version: process.version }));\n});\n",
+            "hash": "31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a",
+            "line": 23
+          },
+          "interpretations": [
+            {
+              "id": "c22799aa-3823-4486-967a-8bce05e47a90",
+              "text": "checkout-demo/cart-mutation: captured tote-01 price 24, cart count 0, immediately before the selected mutation or display update.",
+              "createdAt": "2026-09-19T01:16:35.674Z",
+              "facts": [
+                {
+                  "path": "productId",
+                  "value": "tote-01"
+                },
+                {
+                  "path": "price",
+                  "value": 24
+                },
+                {
+                  "path": "cartCount",
+                  "value": 0
+                }
+              ]
+            }
+          ],
+          "actionId": "add-to-cart",
+          "values": {
+            "operationId": "b88ecbac-1524-48f6-bf8d-ad1d1fb73272",
+            "cartId": "selected",
+            "productId": "tote-01",
+            "price": 24,
+            "cartCount": 0,
+            "admittedCount": 2
+          }
+        },
+        "matching": false,
+        "loading": false,
+        "errors": [],
+        "sourceUri": "codebook-source://82058f05fdaf4b5e222aaf8e08d0e88029a18df9729a8666a4275d3c9247b154/021d4958-d299-47ce-aa5a-d152b1538b71_6a1cb213-f5bf-4aed-9c2b-665a711a997f/checkout-demo%252Fcart-mutation/31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a/Captured-cart-mutation.mts",
+        "rendered": {
+          "type": "rendered",
+          "revision": 1,
+          "itemId": "checkout-demo/cart-mutation",
+          "snapshotUri": "codebook://021d4958-d299-47ce-aa5a-d152b1538b71/runs/6a1cb213-f5bf-4aed-9c2b-665a711a997f/snapshots/ef819b99-0750-461f-a941-43ec9dc7cddd%3A1"
+        },
+        "opened": true
+      },
+      "groups": [
+        {
+          "column": 1,
+          "active": "codebook · Application",
+          "tabs": [
+            {
+              "label": "Keep my unrelated learning notes.",
+              "dirty": true,
+              "active": false,
+              "uri": "untitled:Untitled-1"
+            },
+            {
+              "label": "codebook · Application",
+              "dirty": false,
+              "active": true
+            }
+          ]
+        },
+        {
+          "column": 2,
+          "active": "codebook · Study",
+          "tabs": [
+            {
+              "label": "codebook · Study",
+              "dirty": false,
+              "active": true
+            },
+            {
+              "label": "Captured-cart-mutation.mts",
+              "dirty": false,
+              "active": false,
+              "uri": "codebook-source://82058f05fdaf4b5e222aaf8e08d0e88029a18df9729a8666a4275d3c9247b154/021d4958-d299-47ce-aa5a-d152b1538b71_6a1cb213-f5bf-4aed-9c2b-665a711a997f/checkout-demo%252Fcart-mutation/31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a/Captured-cart-mutation.mts"
+            }
+          ]
+        },
+        {
+          "column": 3,
+          "tabs": []
+        }
+      ],
+      "reloadedWithoutExecution": true
+    }
+  }
+}

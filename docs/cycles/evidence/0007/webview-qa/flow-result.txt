@@ -1,0 +1,98 @@
+### Result
+{"passed":true,"checks":["Matching cart pause offers continuation","Checkout flow contains four distinct learning items","Checkout progress has four learner-owned items","Active runtime disables next-scenario selection","Cart values never borrow order facts","Overview identifies source-derived material","ArrowRight activates the accessible Live panel","Only the selected content tab joins Tab navigation","Space emits an explicit understanding intent","Understanding remains unchecked until persistence acknowledgement","Moment keyboard focus survives a state refresh","Moment selection carries the stable learning item","Live strip names the later order stop while reading cart history","Earlier same-server cart history cannot resume the order pause","Historical reading offers an explicit return to the live stop","Historical cart keeps its original zero value","Source-linked flow emits the selected order identity","Loading hides stale selected content","Loading cannot continue stale content","Loading preserves focus on the original flow item","Order creation shows the actual pre-mutation order count","Order total stays associated with its captured observation","Confirmation has its own later order count","Unobserved item clears the previous runtime values","Unobserved item clears the previous interpretation","Failed durable history prevents a complete-study label","Failed storage offers an explicit retry intent","Pending history cannot appear complete","Saved terminal checkout identifies confirmed purchase","Completed history never restores continuation authority","Agent markup stays literal and cannot execute","Unavailable unobserved source cannot be marked understood","Source drift retains an explicit review signal","Paired history retains its two-item progress","Paired history does not rename the separate live checkout item","Cross-profile history cannot continue the live checkout","History choices show profile and qualified outcome before opening","Cart completion is distinct from purchase completion","Next action remains an explicit learner intent","An idle reader permits a next-run profile choice","Scenario picker emits the exact selected fixed profile","Reader run control emits its named intent","Reader connect control emits its named intent","Reader source control emits its named intent","Reader current-file control emits its named intent","Reader focus-app control emits its named intent","Reader focus-context control emits its named intent","Reader outline control emits its named intent","Reader arrange control emits its named intent","Bottom moments preserve historical continuation rules","Historical image names its exact learning item","Unobserved application state never borrows a later image","No page or console errors across tested states"],"errors":[]}
+### Ran Playwright code
+```js
+await (async page => {
+  const errors = [], checks = [], origin = '<loopback-origin>';
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  const check = (condition, message) => { if (!condition) throw new Error(message); checks.push(message); if (errors.length) throw new Error(errors.join('\n')); };
+  const publish = async state => {
+    const before = await page.evaluate(() => window.qaMessages.filter(message => message.type === 'rendered').length);
+    await page.evaluate(state => window.qaPublish(state), state);
+    await page.waitForFunction(before => window.qaMessages.filter(message => message.type === 'rendered').length > before, before);
+  };
+  const intent = () => page.evaluate(() => window.qaMessages.findLast(message => message.type !== 'rendered'));
+  await page.goto(origin + '/context?state=cart');
+  await page.getByRole('heading', {name:'Cart mutation',exact:true}).waitFor();
+  check(await page.getByRole('button',{name:'Continue inspected pause'}).isEnabled(), 'Matching cart pause offers continuation');
+  check(await page.locator('#flow button').count() === 4, 'Checkout flow contains four distinct learning items');
+  check((await page.locator('#progress').textContent()).includes('0 of 4'), 'Checkout progress has four learner-owned items');
+  check(await page.getByRole('combobox',{name:'Study scenario'}).isDisabled(), 'Active runtime disables next-scenario selection');
+  check(await page.locator('#values tr').filter({hasText:'orderCount'}).count() === 0, 'Cart values never borrow order facts');
+  await page.getByRole('tab',{name:'Overview',exact:true}).click();
+  await page.getByRole('tabpanel',{name:'Overview',exact:true}).waitFor();
+  check(await page.getByRole('heading',{name:'Source-derived overview'}).isVisible(), 'Overview identifies source-derived material');
+  await page.getByRole('tab',{name:'Overview',exact:true}).press('ArrowRight');
+  await page.getByRole('tabpanel',{name:'Live',exact:true}).waitFor();
+  check(await page.getByRole('heading',{name:'Captured values'}).isVisible(), 'ArrowRight activates the accessible Live panel');
+  check(await page.getByRole('tab',{name:'Overview',exact:true}).getAttribute('tabindex') === '-1', 'Only the selected content tab joins Tab navigation');
+  await page.getByRole('checkbox').focus(); await page.keyboard.press('Space');
+  check((await intent()).type === 'understanding' && (await intent()).understood === true, 'Space emits an explicit understanding intent');
+  check(!await page.getByRole('checkbox').isChecked(), 'Understanding remains unchecked until persistence acknowledgement');
+  await page.locator('#moments button').first().focus(); await publish('cart');
+  check(await page.evaluate(() => document.activeElement?.parentElement?.id) === 'moments', 'Moment keyboard focus survives a state refresh');
+  await page.keyboard.press('Enter');
+  check((await intent()).itemId === 'checkout-demo/cart-mutation', 'Moment selection carries the stable learning item');
+  await publish('history');
+  check((await page.locator('#runtime').textContent()).includes('Order creation'), 'Live strip names the later order stop while reading cart history');
+  check(await page.getByRole('button',{name:'Continue inspected pause'}).isDisabled(), 'Earlier same-server cart history cannot resume the order pause');
+  check(await page.getByRole('button',{name:'Return to current pause'}).isEnabled(), 'Historical reading offers an explicit return to the live stop');
+  check(await page.locator('#values tr').filter({hasText:'cartCount'}).locator('td').last().textContent() === '0', 'Historical cart keeps its original zero value');
+  await page.locator('#flow button[data-item="checkout-demo/order-creation"]').focus(); await page.keyboard.press('Enter');
+  check((await intent()).itemId === 'checkout-demo/order-creation', 'Source-linked flow emits the selected order identity');
+  await publish('loading'); await page.getByText('Loading the selected observation…').waitFor();
+  check(!await page.locator('#selected').isVisible(), 'Loading hides stale selected content');
+  check(await page.getByRole('button',{name:'Continue inspected pause'}).isDisabled(), 'Loading cannot continue stale content');
+  check(await page.evaluate(() => document.activeElement?.dataset.item) === 'checkout-demo/order-creation', 'Loading preserves focus on the original flow item');
+  await publish('order');
+  check(await page.locator('#values tr').filter({hasText:'orderCount'}).locator('td').last().textContent() === '0', 'Order creation shows the actual pre-mutation order count');
+  check(await page.locator('#values tr').filter({hasText:'total'}).locator('td').last().textContent() === '24', 'Order total stays associated with its captured observation');
+  await publish('confirmation');
+  check(await page.locator('#values tr').filter({hasText:'orderCount'}).locator('td').last().textContent() === '1', 'Confirmation has its own later order count');
+  await publish('unobserved');
+  check(await page.locator('#values tr').count() === 0, 'Unobserved item clears the previous runtime values');
+  check((await page.locator('#interpretations').textContent()).includes('No agent explanation'), 'Unobserved item clears the previous interpretation');
+  await publish('save-failure');
+  check((await page.locator('#study-state').textContent()).includes('history: failed') && !(await page.locator('#study-state').textContent()).includes('evidence complete'), 'Failed durable history prevents a complete-study label');
+  await page.getByRole('button',{name:'Retry storage / refresh'}).click();
+  check((await intent()).action === 'retry', 'Failed storage offers an explicit retry intent');
+  await publish('history-pending');
+  check((await page.locator('#study-state').textContent()).includes('history: pending') && !(await page.locator('#study-state').textContent()).includes('evidence complete'), 'Pending history cannot appear complete');
+  await publish('confirmed');
+  check((await page.locator('#study-state').textContent()).includes('Purchase confirmed — evidence complete'), 'Saved terminal checkout identifies confirmed purchase');
+  check(await page.getByRole('button',{name:'Continue inspected pause'}).isDisabled(), 'Completed history never restores continuation authority');
+  await publish('unsafe');
+  check((await page.locator('#interpretations').textContent()).includes('<img') && await page.locator('#interpretations img').count() === 0 && await page.evaluate(() => window.injection) === undefined, 'Agent markup stays literal and cannot execute');
+  await publish('source-unavailable');
+  check(await page.getByRole('checkbox').isDisabled(), 'Unavailable unobserved source cannot be marked understood');
+  await publish('drift');
+  check((await page.locator('#source-drift').textContent()).includes('Review needed'), 'Source drift retains an explicit review signal');
+  await publish('paired-history');
+  check((await page.locator('#progress').textContent()).includes('0 of 2'), 'Paired history retains its two-item progress');
+  check((await page.locator('#runtime').textContent()).includes('Order creation'), 'Paired history does not rename the separate live checkout item');
+  check(await page.getByRole('button',{name:'Continue inspected pause'}).isDisabled(), 'Cross-profile history cannot continue the live checkout');
+  const labels = await page.locator('#studies option').allTextContents();
+  check(labels[0].startsWith('Checkout demo') && labels[1].startsWith('Paired cart demo (legacy)') && labels[1].includes('unverified'), 'History choices show profile and qualified outcome before opening');
+  await publish('ready');
+  check((await page.locator('#runtime').textContent()).includes('Cart updated — checkout available'), 'Cart completion is distinct from purchase completion');
+  await page.getByRole('button',{name:'Checkout once',exact:true}).click(); check((await intent()).action === 'click', 'Next action remains an explicit learner intent');
+  await publish('empty');
+  check(await page.getByRole('combobox',{name:'Study scenario'}).isEnabled(), 'An idle reader permits a next-run profile choice');
+  await page.getByRole('combobox',{name:'Study scenario'}).selectOption('paired-cart-demo');
+  check((await intent()).profile === 'paired-cart-demo', 'Scenario picker emits the exact selected fixed profile');
+  for (const action of ['run','connect','source','current-file','focus-app','focus-context','outline','arrange']) {
+    await page.locator(`button[data-action="${action}"]:visible`).first().click(); check((await intent()).action === action, `Reader ${action} control emits its named intent`);
+  }
+  await page.goto(origin + '/moments?state=history'); await page.locator('#moments button').first().waitFor();
+  check(await page.getByRole('button',{name:'Continue inspected pause'}).isDisabled(), 'Bottom moments preserve historical continuation rules');
+  await page.goto(origin + '/app?state=history');
+  check(await page.getByRole('img',{name:'Application pixels captured at the selected Cart mutation pause',exact:true}).isVisible(), 'Historical image names its exact learning item');
+  await page.goto(origin + '/app?state=unobserved'); check(await page.getByRole('img').count() === 0, 'Unobserved application state never borrows a later image');
+  check(errors.length === 0, 'No page or console errors across tested states');
+  return {passed:true, checks, errors};
+}
+)(page);
+```
+### Page
+- Page URL: <loopback-origin>/app?state=unobserved

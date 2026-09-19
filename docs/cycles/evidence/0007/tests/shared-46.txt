@@ -1,0 +1,56 @@
+$ pnpm build && node --test dist/tests/*.test.js
+$ tsc -p tsconfig.json && tsc -p fixture/tsconfig.json
+✔ deleting a run releases an inspector waiting for a missing DAP response (0.554083ms)
+✔ a missing DAP response fails by its deadline and a later response cannot become success (15.312375ms)
+✔ revealing a destroyed renderer cannot confirm an image using its old readiness response (64.240708ms)
+✔ historical reading rejects hidden current captures and releases the runtime without closing its reader panel (1.55775ms)
+✔ continuation during renderer reload prevents the retired pause from being displayed or acknowledged (53.198916ms)
+✔ invalidating a displayed pause rejects its late acknowledgement before any newer image can be certified (2.448833ms)
+✔ a screenshot is sent and resolved while the input request has no response (14.812917ms)
+✔ a timed-out screenshot response cannot resolve a newer screenshot (5.555958ms)
+✔ disconnect rejects every outstanding request without sending another input (0.267583ms)
+✔ overlapping event subscribers wait for one wire subscription per event without duplicating pause notifications (0.266375ms)
+✔ an uncertain event subscription closes the proxy and rejects shared consumers without resubscribing (0.155875ms)
+✔ Cursor compatibility exposes only the owned target and preserves real runtime payloads (28.007167ms)
+✔ Cursor compatibility rejects another target and browser shutdown before upstream dispatch (4.324167ms)
+✔ a valid page session cannot send browser-wide commands through the compatibility bridge (3.460792ms)
+✔ an unresponsive live debugging listener cannot be recorded as closed (6.746708ms)
+✔ a refused connection verifies that the owned debugging listener has closed (1.990458ms)
+✔ later input acknowledgements cannot rewrite the recorded observation or diverge from disk history (11.319458ms)
+✔ overlapping manifest writes leave the latest complete state after flushing (5.615417ms)
+✔ immediate cleanup can record evidence before initialization finishes (2.419083ms)
+✔ a bounded recorder stops retaining events at capacity and reports missing evidence instead of growing history (1.463208ms)
+✔ retained bytes and queued bytes have separate limits even before the writer can drain (0.939ms)
+✔ hidden renderers cannot acknowledge or receive evidence until readiness is re-established (5.106416ms)
+✔ a previous renderer epoch or wrong frame cannot confirm the current source image (0.852458ms)
+✔ a slow renderer retains only the newest pending live frame (2.398125ms)
+✔ late live images cannot replace a paused image until continuation invalidates it (5.057584ms)
+✔ a missing paint acknowledgement expires without confirming a later phase (23.935083ms)
+✔ closing a viewport rejects both bounded slots and ignores late post results (0.216833ms)
+✔ a queued evidence frame survives newer live updates (1.654ms)
+✔ Cursor integrated webviews are discoverable without adopting the editor renderer (0.596334ms)
+✔ two browser targets with the same run URL cannot silently select the first (0.167375ms)
+✔ background workers and similar URLs cannot become the controlled page (0.061292ms)
+✔ unknown host selection fails before launching an editor (0.060459ms)
+✔ a timed-out native tab is closed when its handle arrives after cleanup also times out (61.482084ms)
+✔ a debugger acquisition deadline cannot certify cleanup while the native launch is still pending (43.832208ms)
+✔ a pending debugger launch releases the already acquired Cursor tab and bridge before cleanup fails (45.245333ms)
+✔ an alternate editor bundle records its own version and commit, including when the binary is a symlink (163.530709ms)
+✔ only one concurrent continuation claims the same stopped thread (0.642125ms)
+✔ manual resume and another stop invalidate old captures and continuation requests (0.083292ms)
+✔ a foreign session or thread cannot resume the selected pause (0.055792ms)
+✔ a symlinked profile observes its canonical process and excludes a prefix-sharing profile (81.514875ms)
+✔ failed cleanup saves partial evidence and a later DELETE retries after concurrent callers share the first attempt (15.705458ms)
+✔ selected session termination retires pending pause paint while unrelated termination leaves it intact (3.632625ms)
+✔ a missing VS Code CLI exits after closing the fixture server (38.95675ms)
+✔ an unavailable VS Code binary preserves results through controlled teardown (35.388417ms)
+✔ the shared source verifier accepts an exact executed build mapped to its original TypeScript stop (0.724333ms)
+✔ changed executable, local source, map identity and wrong stop cannot pass the shared source verifier (0.262084ms)
+ℹ tests 46
+ℹ suites 0
+ℹ pass 46
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 213.279334

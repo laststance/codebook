@@ -1,0 +1,372 @@
+{
+  "host": "cursor",
+  "passed": true,
+  "runtimeDemonstrated": true,
+  "request": "商品をカートに入れて購入完了までの処理を解説して",
+  "scope": "Root agent selected every MCP action from discovery/state/resources; same knowledgeable harness, not a fresh blind agent. Bootstrap manages only lifecycle.",
+  "implementation": "8be09135bd2df56f54cdd5895af30ec0d8769da8",
+  "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea",
+  "transcriptOperations": 36,
+  "actions": [
+    "add-to-cart",
+    "checkout"
+  ],
+  "observations": [
+    {
+      "itemId": "checkout-demo/cart-mutation",
+      "participant": "server",
+      "line": 23,
+      "values": {
+        "operationId": "a83a8756-136d-4bee-b73a-8cb52e19f57f",
+        "cartId": "selected",
+        "productId": "tote-01",
+        "price": 24,
+        "cartCount": 0,
+        "admittedCount": 2
+      },
+      "sourceHash": "31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a"
+    },
+    {
+      "itemId": "checkout-demo/cart-update",
+      "participant": "browser",
+      "line": 29,
+      "values": {
+        "operationId": "a83a8756-136d-4bee-b73a-8cb52e19f57f",
+        "cartId": "selected",
+        "productId": "tote-01",
+        "price": 24,
+        "cartCount": 1,
+        "admittedCount": 2
+      },
+      "sourceHash": "96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c"
+    },
+    {
+      "itemId": "checkout-demo/order-creation",
+      "participant": "server",
+      "line": 38,
+      "values": {
+        "operationId": "a83a8756-136d-4bee-b73a-8cb52e19f57f-checkout",
+        "cartId": "selected",
+        "productId": "tote-01",
+        "price": 24,
+        "cartCount": 1,
+        "admittedCount": 2,
+        "cartOperationId": "a83a8756-136d-4bee-b73a-8cb52e19f57f",
+        "orderId": "order-a83a8756-136d-4bee-b73a-8cb52e19f57f",
+        "total": 24,
+        "orderCount": 0
+      },
+      "sourceHash": "31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a"
+    },
+    {
+      "itemId": "checkout-demo/purchase-confirmation",
+      "participant": "browser",
+      "line": 54,
+      "values": {
+        "operationId": "a83a8756-136d-4bee-b73a-8cb52e19f57f-checkout",
+        "cartId": "selected",
+        "productId": "tote-01",
+        "price": 24,
+        "cartCount": 1,
+        "admittedCount": 2,
+        "cartOperationId": "a83a8756-136d-4bee-b73a-8cb52e19f57f",
+        "orderId": "order-a83a8756-136d-4bee-b73a-8cb52e19f57f",
+        "total": 24,
+        "orderCount": 1
+      },
+      "sourceHash": "96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c"
+    }
+  ],
+  "explanations": 4,
+  "continueRequests": 4,
+  "revealRequests": 4,
+  "final": {
+    "instanceId": "d1d32e79-b57b-4135-ad1b-901079f4421c",
+    "runId": "d4c47789-f190-46fe-8089-1f96b9044f0d",
+    "runtimeRunId": "a83a8756-136d-4bee-b73a-8cb52e19f57f",
+    "profile": "checkout-demo",
+    "state": "stopped",
+    "runtimeState": "completed",
+    "createdAt": "2026-09-19T01:32:52.895Z",
+    "deadlineAt": "2026-09-19T01:37:52.895Z",
+    "activeTimeoutMs": 20000,
+    "nextActions": [
+      "read-history"
+    ],
+    "participants": {
+      "server": {
+        "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2",
+        "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript",
+        "itemId": "checkout-demo/order-creation",
+        "actionId": "checkout",
+        "phase": "running",
+        "resumable": false
+      },
+      "browser": {
+        "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2",
+        "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript",
+        "itemId": "checkout-demo/purchase-confirmation",
+        "actionId": "checkout",
+        "phase": "running",
+        "resumable": false
+      }
+    },
+    "operation": {
+      "operationId": "2db91379-eb7c-4155-a8da-2e056b5021c1",
+      "key": "checkout-once",
+      "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+    },
+    "operations": [
+      {
+        "operationId": "62c5668e-bb30-46dd-9e2b-01025c3f3bc5",
+        "key": "cart-once",
+        "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+      },
+      {
+        "operationId": "2db91379-eb7c-4155-a8da-2e056b5021c1",
+        "key": "checkout-once",
+        "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d"
+      }
+    ],
+    "observed": {
+      "cartCount": 1,
+      "completedClicks": 1,
+      "orderId": "order-a83a8756-136d-4bee-b73a-8cb52e19f57f",
+      "total": 24,
+      "status": "confirmed",
+      "completedCheckouts": 1
+    },
+    "links": [
+      {
+        "id": "intent-request",
+        "status": "observed",
+        "evidence": [
+          "62c5668e-bb30-46dd-9e2b-01025c3f3bc5",
+          "60032.6"
+        ]
+      },
+      {
+        "id": "request-server",
+        "status": "observed",
+        "evidence": [
+          "60032.6",
+          "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1"
+        ]
+      },
+      {
+        "id": "server-response",
+        "status": "observed",
+        "evidence": [
+          "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1",
+          "1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286"
+        ]
+      },
+      {
+        "id": "response-browser",
+        "status": "observed",
+        "evidence": [
+          "1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286",
+          "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1"
+        ]
+      },
+      {
+        "id": "browser-screen",
+        "status": "observed",
+        "evidence": [
+          "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1",
+          "event:176"
+        ]
+      },
+      {
+        "id": "cart-result-checkout-input",
+        "status": "observed",
+        "evidence": [
+          "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1",
+          "1adcea9a1ed9fb9349487e41938d54bf294f4606137b8db52df341ae98d56286",
+          "60032.8"
+        ]
+      },
+      {
+        "id": "checkout-intent-request",
+        "status": "observed",
+        "evidence": [
+          "2db91379-eb7c-4155-a8da-2e056b5021c1",
+          "60032.8"
+        ]
+      },
+      {
+        "id": "checkout-request-server",
+        "status": "observed",
+        "evidence": [
+          "60032.8",
+          "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2"
+        ]
+      },
+      {
+        "id": "checkout-server-response",
+        "status": "observed",
+        "evidence": [
+          "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2",
+          "1fc20fb5cf7e836161af606635e324e9fabf0036b10f73b0be43458fcf56a698"
+        ]
+      },
+      {
+        "id": "checkout-response-browser",
+        "status": "observed",
+        "evidence": [
+          "1fc20fb5cf7e836161af606635e324e9fabf0036b10f73b0be43458fcf56a698",
+          "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2"
+        ]
+      },
+      {
+        "id": "checkout-browser-screen",
+        "status": "observed",
+        "evidence": [
+          "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2",
+          "event:292"
+        ]
+      }
+    ],
+    "manifestUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/manifest",
+    "manifestHash": "9570482863908dfa37c348640419b85902474fd487e6a0a89ed958a9b2b6c592",
+    "observations": [
+      {
+        "id": "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:1",
+        "itemId": "checkout-demo/cart-mutation",
+        "actionId": "add-to-cart",
+        "participant": "server",
+        "capturePhase": "paused-cart-mutation",
+        "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1",
+        "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A1/source/typescript"
+      },
+      {
+        "id": "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:1",
+        "itemId": "checkout-demo/cart-update",
+        "actionId": "add-to-cart",
+        "participant": "browser",
+        "capturePhase": "paused-cart-update",
+        "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1",
+        "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A1/source/typescript"
+      },
+      {
+        "id": "19d4ae5c-c2fb-465f-844d-f73ef8071dfb:2",
+        "itemId": "checkout-demo/order-creation",
+        "actionId": "checkout",
+        "participant": "server",
+        "capturePhase": "paused-order-creation",
+        "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2",
+        "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/19d4ae5c-c2fb-465f-844d-f73ef8071dfb%3A2/source/typescript"
+      },
+      {
+        "id": "6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177:2",
+        "itemId": "checkout-demo/purchase-confirmation",
+        "actionId": "checkout",
+        "participant": "browser",
+        "capturePhase": "paused-purchase-confirmation",
+        "snapshotUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2",
+        "sourceUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/snapshots/6d8bc252-f7ad-42ba-9a3a-c3bc9ecaf177%3A2/source/typescript"
+      }
+    ],
+    "runtimeOutcome": "demonstrated",
+    "captureOutcome": "demonstrated",
+    "finalOutcome": "demonstrated",
+    "cleaned": true,
+    "resourcesReleased": true,
+    "activeSessionIds": [],
+    "captures": [
+      {
+        "phase": "before",
+        "status": "captured",
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before"
+      },
+      {
+        "phase": "paused-cart-mutation",
+        "status": "captured",
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation"
+      },
+      {
+        "phase": "paused-cart-update",
+        "status": "captured",
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-update"
+      },
+      {
+        "phase": "after-cart",
+        "status": "captured",
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-cart"
+      },
+      {
+        "phase": "paused-order-creation",
+        "status": "captured",
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-order-creation"
+      },
+      {
+        "phase": "paused-purchase-confirmation",
+        "status": "captured",
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-purchase-confirmation"
+      },
+      {
+        "phase": "after-confirmation",
+        "status": "captured",
+        "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-confirmation"
+      }
+    ],
+    "explanations": [
+      "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/e85b5e24-2c01-416d-8ceb-89d41715f9c4",
+      "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f25d06c7-8fb5-45ca-b54d-27f344183a4b",
+      "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/a680c03e-3c6c-456c-8589-31b9477522ba",
+      "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/explanations/f6d95989-f4f8-4790-b233-ce4a154b7d26"
+    ],
+    "eventsUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/events/0",
+    "runUri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d",
+    "materialSignature": "a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245",
+    "historyOutcome": {
+      "status": "saved",
+      "materialSignature": "a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245",
+      "checkpointRevision": 16,
+      "savedSignature": "a2d180f125e88439e27c9cdff318db2b5e023878dccca87ff27c1cc172e7d245"
+    },
+    "studyOutcome": "demonstrated"
+  },
+  "captures": [
+    {
+      "phase": "before",
+      "status": "captured",
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/before"
+    },
+    {
+      "phase": "paused-cart-mutation",
+      "status": "captured",
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-mutation"
+    },
+    {
+      "phase": "paused-cart-update",
+      "status": "captured",
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-cart-update"
+    },
+    {
+      "phase": "after-cart",
+      "status": "captured",
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-cart"
+    },
+    {
+      "phase": "paused-order-creation",
+      "status": "captured",
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-order-creation"
+    },
+    {
+      "phase": "paused-purchase-confirmation",
+      "status": "captured",
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/paused-purchase-confirmation"
+    },
+    {
+      "phase": "after-confirmation",
+      "status": "captured",
+      "uri": "codebook://d1d32e79-b57b-4135-ad1b-901079f4421c/runs/d4c47789-f190-46fe-8089-1f96b9044f0d/images/after-confirmation"
+    }
+  ],
+  "observedLinks": 11,
+  "finalImageInspected": true,
+  "nativePixelsInspected": false,
+  "transcriptSha256": "e5cccb8646a714eaff8e8e1684b05cf3d5895f1f665d7a63334e047baf91c7cf",
+  "limitation": "Fixed checkout profile. Native editor pixels not independently inspected; not fresh agent or final product acceptance."
+}

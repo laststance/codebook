@@ -1,0 +1,372 @@
+{
+  "host": "vscode",
+  "passed": false,
+  "runtimeDemonstrated": true,
+  "request": "商品をカートに入れて購入完了までの処理を解説して",
+  "scope": "Root agent selected every MCP action from discovery/state/resources; same knowledgeable harness, not a fresh blind agent. Bootstrap manages only lifecycle.",
+  "implementation": "8be09135bd2df56f54cdd5895af30ec0d8769da8",
+  "sourceHash": "20ff1ec5d3cf1c29f46488483649e5d1bb860ea316d98ee47ff73fc583aa43ea",
+  "transcriptOperations": 36,
+  "actions": [
+    "add-to-cart",
+    "checkout"
+  ],
+  "observations": [
+    {
+      "itemId": "checkout-demo/cart-mutation",
+      "participant": "server",
+      "line": 23,
+      "values": {
+        "operationId": "9106047f-2e18-4d9b-aba0-8e0bcfe90928",
+        "cartId": "selected",
+        "productId": "tote-01",
+        "price": 24,
+        "cartCount": 0,
+        "admittedCount": 2
+      },
+      "sourceHash": "31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a"
+    },
+    {
+      "itemId": "checkout-demo/cart-update",
+      "participant": "browser",
+      "line": 29,
+      "values": {
+        "operationId": "9106047f-2e18-4d9b-aba0-8e0bcfe90928",
+        "cartId": "selected",
+        "productId": "tote-01",
+        "price": 24,
+        "cartCount": 1,
+        "admittedCount": 2
+      },
+      "sourceHash": "96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c"
+    },
+    {
+      "itemId": "checkout-demo/order-creation",
+      "participant": "server",
+      "line": 38,
+      "values": {
+        "operationId": "9106047f-2e18-4d9b-aba0-8e0bcfe90928-checkout",
+        "cartId": "selected",
+        "productId": "tote-01",
+        "price": 24,
+        "cartCount": 1,
+        "admittedCount": 2,
+        "cartOperationId": "9106047f-2e18-4d9b-aba0-8e0bcfe90928",
+        "orderId": "order-9106047f-2e18-4d9b-aba0-8e0bcfe90928",
+        "total": 24,
+        "orderCount": 0
+      },
+      "sourceHash": "31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a"
+    },
+    {
+      "itemId": "checkout-demo/purchase-confirmation",
+      "participant": "browser",
+      "line": 54,
+      "values": {
+        "operationId": "9106047f-2e18-4d9b-aba0-8e0bcfe90928-checkout",
+        "cartId": "selected",
+        "productId": "tote-01",
+        "price": 24,
+        "cartCount": 1,
+        "admittedCount": 2,
+        "cartOperationId": "9106047f-2e18-4d9b-aba0-8e0bcfe90928",
+        "orderId": "order-9106047f-2e18-4d9b-aba0-8e0bcfe90928",
+        "total": 24,
+        "orderCount": 1
+      },
+      "sourceHash": "96bacab33230e9077687745059463c0ac9b2b49fb6c23d3f4bca8b417a1efb4c"
+    }
+  ],
+  "explanations": 4,
+  "continueRequests": 4,
+  "revealRequests": 4,
+  "final": {
+    "instanceId": "5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4",
+    "runId": "cab8aabf-97de-47ee-92e8-391f28fb7031",
+    "runtimeRunId": "9106047f-2e18-4d9b-aba0-8e0bcfe90928",
+    "profile": "checkout-demo",
+    "state": "stopped",
+    "runtimeState": "completed",
+    "createdAt": "2026-09-19T01:17:56.787Z",
+    "deadlineAt": "2026-09-19T01:22:56.787Z",
+    "activeTimeoutMs": 20000,
+    "nextActions": [
+      "read-history"
+    ],
+    "participants": {
+      "server": {
+        "snapshotUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/9a059454-9738-4522-981e-ad05ce9d4614%3A2",
+        "sourceUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/9a059454-9738-4522-981e-ad05ce9d4614%3A2/source/typescript",
+        "itemId": "checkout-demo/order-creation",
+        "actionId": "checkout",
+        "phase": "running",
+        "resumable": false
+      },
+      "browser": {
+        "snapshotUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/09440535-cee4-42bd-8cd2-f8167ab86451%3A2",
+        "sourceUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/09440535-cee4-42bd-8cd2-f8167ab86451%3A2/source/typescript",
+        "itemId": "checkout-demo/purchase-confirmation",
+        "actionId": "checkout",
+        "phase": "running",
+        "resumable": false
+      }
+    },
+    "operation": {
+      "operationId": "5edb5cf9-65ed-4e7d-be2a-2549785c1c9a",
+      "key": "checkout-once",
+      "runUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031"
+    },
+    "operations": [
+      {
+        "operationId": "5f852339-f6fc-4fd3-a795-30939317efdb",
+        "key": "cart-once",
+        "runUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031"
+      },
+      {
+        "operationId": "5edb5cf9-65ed-4e7d-be2a-2549785c1c9a",
+        "key": "checkout-once",
+        "runUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031"
+      }
+    ],
+    "observed": {
+      "cartCount": 1,
+      "completedClicks": 1,
+      "orderId": "order-9106047f-2e18-4d9b-aba0-8e0bcfe90928",
+      "total": 24,
+      "status": "confirmed",
+      "completedCheckouts": 1
+    },
+    "links": [
+      {
+        "id": "intent-request",
+        "status": "observed",
+        "evidence": [
+          "5f852339-f6fc-4fd3-a795-30939317efdb",
+          "31592.6"
+        ]
+      },
+      {
+        "id": "request-server",
+        "status": "observed",
+        "evidence": [
+          "31592.6",
+          "9a059454-9738-4522-981e-ad05ce9d4614:1"
+        ]
+      },
+      {
+        "id": "server-response",
+        "status": "observed",
+        "evidence": [
+          "9a059454-9738-4522-981e-ad05ce9d4614:1",
+          "6ec354237b33fde27ede26104a0bd89829780e21d8990fe26ebdb8b8f8ef32b3"
+        ]
+      },
+      {
+        "id": "response-browser",
+        "status": "observed",
+        "evidence": [
+          "6ec354237b33fde27ede26104a0bd89829780e21d8990fe26ebdb8b8f8ef32b3",
+          "09440535-cee4-42bd-8cd2-f8167ab86451:1"
+        ]
+      },
+      {
+        "id": "browser-screen",
+        "status": "observed",
+        "evidence": [
+          "09440535-cee4-42bd-8cd2-f8167ab86451:1",
+          "event:173"
+        ]
+      },
+      {
+        "id": "cart-result-checkout-input",
+        "status": "observed",
+        "evidence": [
+          "09440535-cee4-42bd-8cd2-f8167ab86451:1",
+          "6ec354237b33fde27ede26104a0bd89829780e21d8990fe26ebdb8b8f8ef32b3",
+          "31592.8"
+        ]
+      },
+      {
+        "id": "checkout-intent-request",
+        "status": "observed",
+        "evidence": [
+          "5edb5cf9-65ed-4e7d-be2a-2549785c1c9a",
+          "31592.8"
+        ]
+      },
+      {
+        "id": "checkout-request-server",
+        "status": "observed",
+        "evidence": [
+          "31592.8",
+          "9a059454-9738-4522-981e-ad05ce9d4614:2"
+        ]
+      },
+      {
+        "id": "checkout-server-response",
+        "status": "observed",
+        "evidence": [
+          "9a059454-9738-4522-981e-ad05ce9d4614:2",
+          "317175cced9cc13cf37596987dc1b76bdeaddf5bc7b55bb7e8ae14686401a652"
+        ]
+      },
+      {
+        "id": "checkout-response-browser",
+        "status": "observed",
+        "evidence": [
+          "317175cced9cc13cf37596987dc1b76bdeaddf5bc7b55bb7e8ae14686401a652",
+          "09440535-cee4-42bd-8cd2-f8167ab86451:2"
+        ]
+      },
+      {
+        "id": "checkout-browser-screen",
+        "status": "observed",
+        "evidence": [
+          "09440535-cee4-42bd-8cd2-f8167ab86451:2",
+          "event:287"
+        ]
+      }
+    ],
+    "manifestUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/manifest",
+    "manifestHash": "7f13a4e3912d0ae74b0a07907dc4a5e8c325f36f53741c4255e7fcb65cdc454e",
+    "observations": [
+      {
+        "id": "9a059454-9738-4522-981e-ad05ce9d4614:1",
+        "itemId": "checkout-demo/cart-mutation",
+        "actionId": "add-to-cart",
+        "participant": "server",
+        "capturePhase": "paused-cart-mutation",
+        "snapshotUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/9a059454-9738-4522-981e-ad05ce9d4614%3A1",
+        "sourceUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/9a059454-9738-4522-981e-ad05ce9d4614%3A1/source/typescript"
+      },
+      {
+        "id": "09440535-cee4-42bd-8cd2-f8167ab86451:1",
+        "itemId": "checkout-demo/cart-update",
+        "actionId": "add-to-cart",
+        "participant": "browser",
+        "capturePhase": "paused-cart-update",
+        "snapshotUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/09440535-cee4-42bd-8cd2-f8167ab86451%3A1",
+        "sourceUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/09440535-cee4-42bd-8cd2-f8167ab86451%3A1/source/typescript"
+      },
+      {
+        "id": "9a059454-9738-4522-981e-ad05ce9d4614:2",
+        "itemId": "checkout-demo/order-creation",
+        "actionId": "checkout",
+        "participant": "server",
+        "capturePhase": "paused-order-creation",
+        "snapshotUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/9a059454-9738-4522-981e-ad05ce9d4614%3A2",
+        "sourceUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/9a059454-9738-4522-981e-ad05ce9d4614%3A2/source/typescript"
+      },
+      {
+        "id": "09440535-cee4-42bd-8cd2-f8167ab86451:2",
+        "itemId": "checkout-demo/purchase-confirmation",
+        "actionId": "checkout",
+        "participant": "browser",
+        "capturePhase": "paused-purchase-confirmation",
+        "snapshotUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/09440535-cee4-42bd-8cd2-f8167ab86451%3A2",
+        "sourceUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/snapshots/09440535-cee4-42bd-8cd2-f8167ab86451%3A2/source/typescript"
+      }
+    ],
+    "runtimeOutcome": "demonstrated",
+    "captureOutcome": "incomplete",
+    "finalOutcome": "partial",
+    "cleaned": true,
+    "resourcesReleased": true,
+    "activeSessionIds": [],
+    "captures": [
+      {
+        "phase": "before",
+        "status": "captured",
+        "uri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/images/before"
+      },
+      {
+        "phase": "paused-cart-mutation",
+        "status": "captured",
+        "uri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/images/paused-cart-mutation"
+      },
+      {
+        "phase": "paused-cart-update",
+        "status": "captured",
+        "uri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/images/paused-cart-update"
+      },
+      {
+        "phase": "after-cart",
+        "status": "failed",
+        "error": "Error: Viewport frame acknowledgement timed out"
+      },
+      {
+        "phase": "paused-order-creation",
+        "status": "failed",
+        "error": "Error: Viewport frame acknowledgement timed out"
+      },
+      {
+        "phase": "paused-purchase-confirmation",
+        "status": "failed",
+        "error": "Error: Viewport frame acknowledgement timed out"
+      },
+      {
+        "phase": "after-confirmation",
+        "status": "captured",
+        "uri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/images/after-confirmation"
+      }
+    ],
+    "explanations": [
+      "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/explanations/4b671948-fbdd-4b71-9a4f-8ffee5feecaa",
+      "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/explanations/db3018c5-9cef-48d9-9655-81bc57fcf2b8",
+      "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/explanations/c5faac0b-b4b9-49d9-9f84-cb7f47196966",
+      "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/explanations/105d38db-8b6d-4192-af78-5c6d6990f6d3"
+    ],
+    "eventsUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/events/0",
+    "runUri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031",
+    "materialSignature": "99785b346e41e113a9ebec22b75237273c4ef99097431eaddc385e0c8374e72c",
+    "historyOutcome": {
+      "status": "saved",
+      "materialSignature": "99785b346e41e113a9ebec22b75237273c4ef99097431eaddc385e0c8374e72c",
+      "checkpointRevision": 18,
+      "savedSignature": "99785b346e41e113a9ebec22b75237273c4ef99097431eaddc385e0c8374e72c"
+    },
+    "studyOutcome": "partial"
+  },
+  "captures": [
+    {
+      "phase": "before",
+      "status": "captured",
+      "uri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/images/before"
+    },
+    {
+      "phase": "paused-cart-mutation",
+      "status": "captured",
+      "uri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/images/paused-cart-mutation"
+    },
+    {
+      "phase": "paused-cart-update",
+      "status": "captured",
+      "uri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/images/paused-cart-update"
+    },
+    {
+      "phase": "after-cart",
+      "status": "failed",
+      "error": "Error: Viewport frame acknowledgement timed out"
+    },
+    {
+      "phase": "paused-order-creation",
+      "status": "failed",
+      "error": "Error: Viewport frame acknowledgement timed out"
+    },
+    {
+      "phase": "paused-purchase-confirmation",
+      "status": "failed",
+      "error": "Error: Viewport frame acknowledgement timed out"
+    },
+    {
+      "phase": "after-confirmation",
+      "status": "captured",
+      "uri": "codebook://5aaac2ff-7ad1-4fd3-b329-ad0d4299bbf4/runs/cab8aabf-97de-47ee-92e8-391f28fb7031/images/after-confirmation"
+    }
+  ],
+  "observedLinks": 11,
+  "finalImageInspected": true,
+  "nativePixelsInspected": false,
+  "transcriptSha256": "eca97275ad573c3b46fc491d511ee20f865766cfd8a83d995acedafa620f5d8f",
+  "limitation": "Three phase images lacked viewport render acknowledgment; outcome remains partial, never promoted to full PASS."
+}

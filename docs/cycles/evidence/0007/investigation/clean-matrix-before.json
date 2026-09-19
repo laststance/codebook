@@ -1,0 +1,18 @@
+{
+  "revision": "195028113a8d57b1dba70ff805586dcbd8649d0d",
+  "sourceHash": "f115fb1b33959fa2f896921d39b700af95e416ec210020ca7bd356aa831c7287",
+  "startedAt": "2026-09-19T01:05:02.568803+00:00",
+  "jobs": [
+    {
+      "host": "vscode",
+      "profile": "checkout-demo",
+      "command": [
+        "extension/dist/nativeStudyRunner.js",
+        "normal"
+      ],
+      "exitCode": 1,
+      "log": "artifacts/cycle-0007/clean-1-vscode-checkout-demo.txt",
+      "endedAt": "2026-09-19T01:05:11.573833+00:00"
+    }
+  ]
+}
