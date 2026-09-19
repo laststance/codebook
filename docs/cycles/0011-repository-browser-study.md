@@ -196,6 +196,112 @@ These are plan-completeness judgments, not measured product quality. Prior Cycle
 
 Principles covered in the plan: prepared-path friction, learning on own source, actionable errors, bounded defaults/explicit support, code in context and the first useful observation. Competitive rank remains unmeasured; 2–5 minutes is the selected target. No Claude Code skill checklist applies to this extension/MCP product.
 
+## Design review
+
+Scope selected by the driving agent under D008 delegation: current Study presentation of the configured browser path, book/observation/replay navigation and error/partial states. Approved architecture, three-layout destination and D016/D017 reader behavior are carried forward; no user choice is fabricated. No implementation changes occur during this review.
+
+System audit: DESIGN.md is the stable entry and the approved Study concept was inspected directly. Current `studyHtml.ts` offers fixed demo options, a checkout heading, a single-source understanding label and source-linked flow copy; `StudyWorkspace` projects global fixture items and two participant baselines. Existing typed view messages, persistent DOM/focus, native panes, reader-return machinery, timeline and recording status are reusable. This is OPERATE UI with an existing READ destination, not a marketing surface. Brain brand digest is unavailable; approved repository references remain authority. Existing Cycle 0009 design evidence does not validate the changed runtime presentation.
+
+Step 0 impression: 7/10; the API and identity plan is clear, but configured empty/preparing/current/history/partial states, narrow controls and the book-context check need explicit presentation. All seven passes will cover those gaps; a 10 is an implementable state/hierarchy/focus contract without reopening the approved layout.
+
+Visual exploration is retained at `/Users/ryotamurakami/.gstack/projects/codebook/designs/cycle0011-repository-study-20260920/`. Three initial outputs and one corrected single-screen output were generated; every automatic vision check returned pass. Primary visual inspection rejected initial A/C for placing source beside the app and B for missing required controls; all three also generated collages. The corrected `proposed-study.png` (board D) preserves app above source and is selected by the agent as a composition illustration under D008, **not a new owner-approved redesign or runtime evidence**. `approved.json` explicitly records that authority and the remaining illustration limitations: omit invented outline checks/steps and the generated fake-step footer; use an action icon for Continue; include the recording status absent from the drawing; use actual captured source/facts in the product. The original approved composition and exact state contract take priority over incidental generated pixels. Comparison board: `design-board.html`; generator/check reports and original images remain beside it.
+
+### Pass 1 — Information architecture
+
+6 → 10/10. Gap: the current fixed-profile picker and checkout wording cannot explain a configured study, and a saved item can differ from the currently paused item. **D1A selected under D008:** keep one shared Study arrangement and an explicit current-control strip above the selected-item context. Alternative D1B, a separate repository dashboard, would duplicate navigation and learner state without improving this single connected path.
+
+Hierarchy: (1) application plus exact selected source and whether it is live or historical; (2) the selected learning item's facts and interpretation; (3) recording/persistence details and source-derived relationships. The current-control strip names the live pause independently of selected history. Continue is available only for the exact inspected current pause, including after any source pane refresh; `Return to current pause` is the explicit way back. Repository titles and item labels come from the captured book/node descriptor, not a later mutable title or a fixture fallback.
+
+```text
+Learning outline | Application (live or captured, explicitly labelled) | Current pause / Continue / Stop
+                 | Exact selected source below application             | Overview | Live | Recording
+                 | Recorded moments / playback controls                | Item title / observation state
+                 |                                                      | Captured values / interpretation
+                 |                                                      | understand / Return to Wiki
+```
+
+Book → View observation / View recording → same item in Study → Return to Wiki restores the exact book/revision/node/anchor/section/fraction/focus. A title, observation ID or recorded timestamp cannot silently substitute for that return location. **D7A, from the independent design challenge:** if the agent directly opens a configured Study and no reader-return receipt exists, show `Open article` for its immutable book/revision/node instead. This opens the declared article at its normal starting position; it does not invent a past scroll/focus location. A saved return receipt enables `Return to Wiki` only for that actual origin. A browser-only run shows the one declared browser item and no unobserved server/checkout sequence. Source-derived book relations remain labelled as authored interpretation; the empty runtime-link set is not described as failed server correspondence.
+
+### Pass 2 — Interaction state coverage
+
+4 → 10/10. Gap: the DX lifecycle is defined, but the screen could still expose demo-only Run controls, stale facts or premature completion. **D2A selected:** use a configured-study summary with agent setup guidance and preserve the existing demo launcher as a separate explicit choice. D2B, a full configuration form, adds a second authoring surface; D2C, an unconfigured Run button, cannot perform the advertised action. Configured history never becomes an executable rerun merely by selection; a new start needs an explicit fresh agent request and current validation.
+
+**D3A selected:** keep distinct lifecycle/evidence/save messages with state-specific actions. D3B, one success badge for all stages, would hide the missing-frame/persistence cases already observed in prior cycles. State contract:
+
+| Feature/state | What the learner sees | Available action and retained context |
+| --- | --- | --- |
+| No configured study | `Explain an operation in this repository with your agent.` and a useful existing article/library link; no invented source/values | Connect your agent; read books without runtime prerequisites; explicitly choose an existing demo if desired |
+| Preparing | `Preparing <item>` with the current named stage, no percentage guess; prior selected history remains labelled as history | Stop preparation; no action click/continue; failures retain the selected article and its check |
+| Ready | Item title, before application frame, selected source and `Ready to observe <action>`; no observed badge yet | One configured action through agent/current action control, Stop; no generic Add to cart label |
+| Acting before pause | `Waiting for the selected code to pause` and the declared time limit; no fabricated values | Stop; original action receipt remains the only accepted input |
+| Confirmed inspected pause | `Paused at <item>`, captured facts, optional unavailable facts explicitly marked, separately labelled agent interpretation | Continue inspected pause, Stop, explicit understand; no automatic check |
+| Required fact unavailable | `Observation incomplete: <name> was unavailable` with captured facts retained | Stop/read available evidence; never present configured expectations as facts or infer a complete observation |
+| Continue accepted / after pending | `Continuing; waiting for the application result` and the prior capture labelled historical; no live-pause badge | Stop remains available; Continue/action disabled; background updates do not change the selected item or steal focus |
+| Operation observed / saving | `Application result observed; saving study and recording` with independently visible save state | Read the observation; publishing/replay use only their verified available receipts, not this optimistic message |
+| Saved complete | `Observation saved` and `Recording saved` only after their respective receipts; action/after state named precisely | Read linked article, saved observation and recording; no purchase-confirmed text for browser-only operation |
+| Partial / frame ACK missing | `Recording incomplete: <specific missing phase>` plus available captured source/values; no green overall-complete badge | Read captured observation; replay only verified data/range; repair storage/refresh does not re-click the app |
+| Stale/manual/foreign resume or source drift | `This pause is no longer current` or `Source changed; captured revision retained`; clear live authority | Read captured revision/current file; Stop owned work; a deliberate new agent request is separate |
+| Reading another item/history during a live pause | Selected item says `Saved observation`; current-control strip separately says where the live run is paused | Return to current pause; Continue disabled for the selected history; preserve its reader return |
+| Recording load/seek | Existing pending presentation clears mismatched app/source/values as one bundle; `Loading matching recording…` | Pause pending playback, choose another saved study, or Return to Wiki; no live Continue |
+| Recording partial/corrupt/unavailable | Last verified range and precise missing/corrupt reason; no future facts or reused live screenshot | Reload saved recording after repair, read available observation, Return to Wiki; no execution fallback |
+| Article source context changed/unavailable | `Review needed` for any changed citation, or `Current source unverified`; historical check remains inspectable | Existing compact `understand` applies only to the exact full citation context; no primary-source-only inheritance |
+
+Loading/error/empty cases for outline and source follow the selected descriptor: never substitute default fixture items or placeholder hashes as verified context. Large text and optional unavailable values wrap; values are rendered as text, not HTML. Stale webview revisions cannot save a check against a newly selected item. New panes do not appear for every phase; the existing regions update in place.
+
+### Pass 3 — Journey and continuity
+
+7 → 10/10. Gap: first-stop onboarding alone omits the value of returning to a previously understood article. **D4A selected:** preserve the book-first journey and exact returns through the shared stable identity/full-citation context from DX-R1. D4B, separate runtime-only progress, would fragment that experience and contradict D017. Existing `citationLearningState` and reader return machinery are reused; no new progress ledger is introduced.
+
+| Step | Learner does | Intended experience | Required support |
+| --- | --- | --- | --- |
+| 1 | Reads an existing repository article | Oriented within five seconds | Same title, citations, outline and current-source status; source-only use stays available |
+| 2 | Explicitly checks understand, then asks agent to show the operation | Curious, not forced into manual setup | Existing check remains; configured summary describes the selected operation before input |
+| 3 | Sees the actual meaningful pause | Can connect screen and source | App above exact source, actual facts and separate interpretation; one clear current Continue action |
+| 4 | Continues and waits for after evidence/save | Knows what is still pending | Separate continuation, operation, history and recording states; no premature success |
+| 5 | Opens the saved observation/recording from the article | Can revisit the same claim | Exact immutable observation binding; partial state remains explicit |
+| 6 | Returns or restarts later | Reading context survives | Exact article section/fraction/focus restored; same item/citation understanding, offline evidence available |
+| 7 | Source changes later | Knows what needs re-reading | New citation context requires review; old decision/evidence is preserved |
+
+Five-minute behavior is measured by the DX audit; long-term trust is tested through restart, source change and unavailable evidence. No execution or replay step changes understanding. A second run cannot move a reader following an older item unless Follow/current navigation was explicitly selected.
+
+### Pass 4 — Intentional interface and visual checks
+
+8 → 10/10. Mode: OPERATE for Study, READ for the existing Wiki. None of the seven hard-rejection patterns is selected for implementation: no marketing/card grid, decorative hero, busy text background, repeated mood copy, carousel or stacked-card app layout. Initial generated collages and side-by-side source layouts were rejected even though automatic checks passed. The corrected composition is useful only with its recorded exclusions; it does not redefine the approved design.
+
+Litmus: Codebook identity **yes** via native title/outline; strong anchor **yes** via app above source; scannable **yes** via item/state/facts/interpretation labels; one job per region **yes**; decorative cards necessary **no**, use existing divided panes; meaningful motion **yes only for actual application/recording changes**, no invented entrance animation; works without shadows **yes**. These are plan judgments, not live accessibility/motion measurements.
+
+**D5A selected:** keep utility copy and native themes, render only observed/declared items, and label unavailable facts rather than fill gaps. D5B, copying generated decorative/fake-step labels or arbitrary “success” illustrations, would confuse learning with a mockup. No added animation is needed; preserve visible defaults, stable controls and reduced-motion behavior. Actual changes are verified by video plus inspected frames in both hosts. Small source/version detail remains available where it helps the learner distinguish current from captured context; protocol IDs and configuration syntax stay in agent resources.
+
+### Pass 5 — Design system alignment
+
+8 → 10/10. The existing UI already provides `STUDY_STYLES`, 16px body/table text, 20px h1, native theme variables, 44px controls, focus rings, visited links, wrapping rows and high-contrast borders. Reuse those rather than introduce a new component system or bundled typeface. Native `--vscode-font-family` and `--vscode-editor-font-family` deliberately follow this host-integrated product's approved composition; generic marketing-font guidance does not justify changing the editor's typography. Body line-height remains 1.5; spacing uses existing 8/12/16/20px rhythm and thin panel dividers. Accent/foreground/background/error/focus/selection colors come from corresponding VS Code variables. Light/dark/high-contrast follows the user's editor because this is a long-running native workspace.
+
+D1/D3/D5 already decide the hierarchy, statuses and visual restraint; no separate outcome is reopened here. Apply them consistently to dynamic titles, value rows, moments and configured empty state. Add no modal or configuration dashboard. Keep D016's small lowercase `understand` with its 44px labelled hit area for configured full-citation items; preserve legacy meaning for fixed-demo history. New-current-source status is separate from the saved citation check. The new UI uses the existing thin client/view-model pattern and stable DOM; it does not compute authority or learner identity itself.
+
+### Pass 6 — Constrained windows and accessibility
+
+6 → 10/10. Gap: long repository titles, dynamic values and configured status copy were not covered by the existing demo snapshots. **D6A selected:** preserve native pane control and specify narrow behavior inside each webview, retaining required actions without horizontal page scrolling. D6B, shrinking all text/controls to fit desktop columns, would make the reading task unusable.
+
+- Wide actual editor window (at least 1280px): keep approved app-above-source center and secondary context/outline; use the existing arrangement command only on explicit request. Normal run updates do not rearrange unrelated editor groups.
+- Constrained actual window (900–1279px) and context webview near 320–420px: wrap controls into clear rows; use full-width scenario/saved-study selectors; long names wrap; value tables may scroll internally with visible focus. Preserve app/source vertical correspondence and explicit focus controls instead of silently hiding a required pane.
+- At 200% zoom or a very narrow context webview: sticky controls become normal flow when their measured height would obscure content, using the existing `adaptStrip`; keep 16px base text, 44px targets and visible labels. Repository reader retains D016's own one-column breakpoint and relationships below; do not invent a new mobile product.
+- Keyboard: tab order follows Return/current controls → content tabs → selected facts/understand → related evidence/moments; retain arrow-key content-tab behavior, visible focus and live selection indication. A status-only render retains the focused DOM element. Returning to an article restores its saved focus without jumping to the top.
+- Screen readers: labelled regions/tables/controls, polite status announcements only on meaningful phase changes, textual `current`, `historical`, `unavailable` and `review needed` states. Do not announce streaming frames repeatedly or communicate success/checks by color alone.
+- Theme/accessibility acceptance: light, dark and both native high-contrast themes; target body contrast at least 4.5:1, nontext controls/focus at least 3:1. Preserve visited indication, selectable/copyable captured facts and reduced-motion preferences. Test keyboard-only traversal, long title/value, empty and partial states and native 200% reader return in both hosts; capture videos for visible transitions.
+- **D8A, independent challenge acceptance refinement:** freeze a 200% native reader → failed recording load (including an unsupported/corrupt archive) → Return case in each host. Record before/after book/revision/node/anchor/section/fraction/focus, actual reading viewport width/height, and prior sidebar/panel/auxiliary-bar visibility. Restore the recorded layout/reader pose rather than a default arrangement; preserve live operation counts and the complete understanding ledger. Also test direct Study entry with `Open article` and no fabricated return receipt. Videos and inspected frames must show the usable restored reading area, including when those native regions were initially hidden. Failure/cancellation of loading cannot erase the origin receipt.
+
+### Pass 7 — Decision register and remaining work
+
+Unscored. D1A hierarchy, D2A configured entry, D3A state/persistence, D4A continuity, D5A literal/native rendering and D6A constrained accessibility are six primary recommended choices adopted under explicit D008 delegation. The fresh independent challenge confirmed those amendments and added D7A truthful Open-versus-Return entry copy and D8A the explicit failed-replay 200% native return case; both are adopted under that same delegation. D8 refines evidence for existing D016 behavior rather than changing it. No owner answers or new visual approval are invented; D016/D017 remain unchanged.
+
+Reused: approved Study image, D016 reader B, `STUDY_STYLES`, typed `StudyViewMessage`, persistent `studyClient` controls, `adaptStrip`, existing recording presentation barrier, `citationLearningState` and exact reader returns. Not in scope: additional layouts (required later), settings/configuration UI (external agent already authors), marketing/rebranding (unrelated), new device/platform support (separate final matrix). No deferred in-scope accessibility/empty-state verification or new unrelated TODO is selected. No significant new composition was selected after the corrected mockup; state/focus constraints belong to the exact plan rather than another illustration iteration.
+
+### Design completion summary
+
+Six scored dimensions (architecture, interaction, journey, content, visual specificity, accessibility) improve from 6/4/7/8/8/6 to 10/10 each for plan completeness; overall minimum 4 → 10, Step 0 impression 7. Pass 7 records eight delegated decisions and zero unresolved decisions. These scores do not grade an implemented or native-validated product. The native independent litmus result is yes/yes/yes/yes/no unnecessary cards/yes for app-replay motion/yes without shadows; external comparison is unavailable, so there is no cross-model consensus claim. No additional durable learning beyond the existing DX identity finding was selected.
+
+Four mockups and four automated checks were completed. Direct inspection rejected all three initial compositions despite their automated passes. The corrected `proposed-study.png` is an agent-selected composition reference only, SHA-256 `65a2273540a84b779053cb6bfdeb12c69ac6ea5a0b8a8d73a2e56a2b8fc98f03`; no new owner visual approval is claimed. The plan excludes its fabricated preparation checks/footer, incorrect Continue icon and missing recording status. Artifacts, board, selection metadata and inspection notes: `/Users/ryotamurakami/.gstack/projects/codebook/designs/cycle0011-repository-study-20260920/`. The finite comparison server was stopped after review; the static board remains available. The three implementation tasks are also preserved at `/Users/ryotamurakami/.gstack/projects/codebook/tasks-design-review-20260919-171900.jsonl`.
+
 ## Implementation Tasks
 
 Synthesized from DX findings; design/engineering review refines ownership before code changes. Effort is a rough planning estimate, not an execution promise.
@@ -205,6 +311,9 @@ Synthesized from DX findings; design/engineering review refines ownership before
 - [ ] **DX3 (P1, human: ~2 days / agent: ~3 hours)** — Browser adapter — Connect the proven owned browser/source/pause lifecycle to product contracts without target constants or invented server links. Surfaced by Passes 2/3/6. Files: extension runtime adapter, reusable Cycle 0010 helpers and focused tests. Verify: exact source tuple, bounded configuration, one input, stale/foreign authority and cleanup cases in each host.
 - [ ] **DX4 (P2, human: ~3 hours / agent: ~30 minutes)** — Documentation — Update current capability summary, prepared tutorial, supported configuration, errors and migration notes. Surfaced by Passes 1/4/7. Files: README.md, extension/README.md, extension help, changelog. Verify: execute the published example through the actual public surface and inspect sanitized issue record.
 - [ ] **DX5 (P1, human: ~1 day / agent: ~2 hours)** — Acceptance — Measure external-agent first success, connected Study/book/recording and legacy regression in both hosts. Surfaced by Passes 6/8. Files: bounded validation client, cycle evidence/manifest and PROJECT_STATE.md. Verify: frozen expectations, videos with inspected frames, offline replay, per-host timing and `/devex-review` findings.
+- [ ] **D1 (P1, human: ~1 day / agent: ~90 minutes)** — Study presentation — Project configured item descriptors and truthful current/history/pending/partial states into existing panes; distinguish configured entry from demo launch. Surfaced by Design Passes 1/2/4/5. Files: extension/src/{studyWorkspace,studyModel}.ts, extension/src/ui/{studyHtml,constants}.ts and relevant tests. Verify: each state-table row, exact Continue authority, dynamic empty/long/unavailable text and stable keyboard focus.
+- [ ] **D2 (P1, human: ~1 day / agent: ~90 minutes)** — Learning/navigation — Share full-citation understanding and exact book-first returns with configured observation/replay. Surfaced by Design Pass 3 and DX-R1. Files: study projection, learner schemas/library, repository reader and playback projection. Verify: check → observe/link → rerun → restart → source-change sequence, with both directions preserving item and reader position.
+- [ ] **D3 (P1, human: ~1 day / agent: ~90 minutes)** — Native usability — Verify configured states at wide/constrained/200% sizes, keyboard traversal, supported themes and partial offline replay. Surfaced by Design Pass 6. Files: relevant UI/native QA harnesses and sanitized Cycle 0011 evidence. Verify: actual VS Code and Cursor videos/inspected frames, full focus/return sequence; static mockups never count as this result.
 
 ## Attempts and evidence
 
@@ -216,22 +325,23 @@ Result: pending. No new implementation or product capability is verified by sele
 
 ## Handoff
 
-Exact next action: `/plan-design-review`, then `/plan-eng-review` on this file. Preserve branch `codex/cycle-0009-repository-learning-book`. No background task, automation, native runtime or new worktree was created by selecting this cycle. Final sequential reviews remain 0/10.
+Exact next action: `/plan-eng-review` on this file, then implementation after its amendments. DX and design planning are complete with unavailable outside-provider coverage. Preserve branch `codex/cycle-0009-repository-learning-book`. No background task, automation, native runtime or new worktree was created by selecting this cycle. Final sequential reviews remain 0/10.
 
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 | --- | --- | --- | --- | --- | --- |
 | DX review | `/plan-devex-review` | Configured public workflow | 1 | Plan complete | 8 passes; 4.75 → 9.375/10; prepared TTHW target 2–5 minutes, unmeasured |
-| Native plan challenge | In-host subagent `cycle0011_dx_plan_challenge` | Independent contract check | 1 fresh + 1 scoped reused-context check | Findings amended | DX-R1 stable item identity, DX-R2 ready/completion semantics; follow-up confirms both and adds DX-R3 wait-before-stop, corrected by primary |
-| Outside provider | Skill's provider preflight | Outside-model challenge | 0 completed | Unavailable | `under_codex` guard; no outside process started; native work is not outside coverage |
-| Design review | `/plan-design-review` | Current Study/book/replay states | 0 for Cycle 0011 | Pending | Prior Cycle 0009 design remains authority, not coverage of this increment |
-| Engineering review | `/plan-eng-review` | Model/runtime/storage change | 0 for Cycle 0011 | Required | Prior Cycle 0010 implementation review is not clearance for this plan |
+| Native DX challenge | In-host `cycle0011_dx_plan_challenge` | Independent contract check | 1 fresh + 1 scoped reused check | Findings amended | DX-R1 stable identity, DX-R2 completion semantics, DX-R3 wait-before-stop; no fresh final clean pass claimed |
+| Design review | `/plan-design-review` | Study/book/replay states | 1 | Plan complete | 7 passes; minimum 4 → 10/10 for plan specificity; D1–D8 recorded, four mockups inspected |
+| Native design challenge | In-host `cycle0011_design_completeness` | Independent flow/state check | 1 fresh | Findings amended | D7 truthful Open-versus-Return copy; D8 failed replay at native 200%; primary incorporated both, no post-amendment fresh pass claimed |
+| Outside provider | Own-harness preflight | Independent provider challenge | 0 completed | Unavailable | `under_codex`; no outside process started; image checks and native subagents do not provide outside plan coverage |
+| Engineering review | `/plan-eng-review` | Model/runtime/storage change | 0 for Cycle 0011 | Required next | Earlier-cycle reviews do not clear this plan |
 
-DX task artifact: `/Users/ryotamurakami/.gstack/projects/codebook/tasks-devex-review-20260919-170210.jsonl` (5 tasks). Native reviewer performed no edits. No new tests or native product capability are claimed by this planning work.
+DX artifact: `/Users/ryotamurakami/.gstack/projects/codebook/tasks-devex-review-20260919-170210.jsonl` (5 tasks). Design artifact: `/Users/ryotamurakami/.gstack/projects/codebook/tasks-design-review-20260919-171900.jsonl` (3 tasks). Native reviewers made no edits. No new tests, Cycle 0011 runtime or native product success are claimed.
 
-**OUTSIDE COVERAGE:** unavailable for Cycle 0011 DX plan; no claim of model diversity. Fresh subagent creation succeeded in this invocation. Development reviews do not count toward the ten final acceptance reviews.
+**OUTSIDE COVERAGE / CROSS-MODEL:** unavailable. Fresh native subagent creation succeeded for both reviews. Development reviews do not count toward the ten final acceptance reviews.
 
-**VERDICT:** DX PLAN COMPLETE WITH COVERAGE CONCERN; design and engineering reviews required before implementation.
+**VERDICT:** DX AND DESIGN PLANS COMPLETE WITH COVERAGE CONCERN; engineering review required before implementation.
 
 NO UNRESOLVED DECISIONS

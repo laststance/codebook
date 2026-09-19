@@ -2,7 +2,7 @@
 
 Updated: 2026-09-20\
 Product stage: one real-repository browser action demonstrated in both editors; product runtime still fixed-profile, installed usefulness unverified\
-Active cycle: [0011 — Configurable repository browser study](docs/cycles/0011-repository-browser-study.md) — planning; DX review complete with native challenge amendments; design and engineering next\
+Active cycle: [0011 — Configurable repository browser study](docs/cycles/0011-repository-browser-study.md) — planning; DX and design reviews complete with native challenge amendments; engineering next\
 Last cycle: [0010 — Real-repository browser runtime feasibility](docs/cycles/0010-real-repository-runtime.md) — demonstrated, 38 tests and 14 native cases; clean implementation `9bfe1e8`; closure `c91af0e` pushed; validated inventory matches\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#12](https://github.com/laststance/codebook/issues/12) — open\
@@ -60,7 +60,7 @@ Cycle 0009 delivery is synchronized: implementation `1bd10b3` and closure record
 
 [Cycle 0010](docs/cycles/0010-real-repository-runtime.md) is demonstrated against unchanged Laststance.io `43d0399`: 38 tests and the final seven-case matrix in each host pass. Its source fingerprint and final native records are frozen. The original target remains clean; original seven handoff backups match 7/7. No owned native process or Playwright browser session remains.
 
-Next: `/plan-design-review` on [Cycle 0011](docs/cycles/0011-repository-browser-study.md), then engineering review before implementation. The DX plan preserves stable published book/node identity and complete citation context across runs, requires declared before/after DOM conditions, and waits for actual operation completion before sealing. A fresh native subagent found two gaps; its scoped follow-up confirmed the amendments and found one tutorial-order fix, now corrected. Outside-provider coverage remains unavailable. Issue #11 is closed and #12 is open; this is the only active cycle. No Cycle 0011 runtime implementation or native product success is claimed. Preserve the existing checkout/reader, approved design and same branch; final reviews remain 0/10.
+Next: `/plan-eng-review` on [Cycle 0011](docs/cycles/0011-repository-browser-study.md), then implementation after its amendments. DX fixes stable published book/node identity, complete citation context, declared before/after conditions and wait-before-seal ordering. Design fixes the state hierarchy, truthful article entry/return, and an explicit failed-replay 200% native return case in each host. Fresh native reviewers contributed three DX and two design amendments; no outside-provider or post-amendment fresh clean pass is claimed. Four mockups were inspected; one corrected composition is an agent-selected reference, not new owner approval. The finite design-board server has stopped. Issue #11 is closed and #12 is open; this is the only active cycle. No Cycle 0011 implementation or native product success is claimed. Preserve the existing checkout/reader, approved design and same branch; final reviews remain 0/10.
 
 Native phase-ACK reliability remains qualified: retain failed/partial captures and use a changed, evidence-backed hypothesis for any follow-up. G01–G11, both later layouts, recording, three intended uses, packaging, owner acceptance and ten fresh sequential reviews remain required. The branch retains the unmerged Cycle 0008 increment; no PR, merge, package or publication claim follows from this cycle.
 
