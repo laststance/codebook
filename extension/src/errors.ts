@@ -18,6 +18,7 @@ export const ERROR_RECOVERY = {
   UNSUPPORTED_PROFILE: 'Use a profile returned by codebook_status. Arbitrary repository launch is not supported by this adapter.',
   LIMIT_EXCEEDED: 'Read the named capacity limit. Stop active work before deliberately starting a fresh server instance; history files persist.',
   INVALID_REFERENCE: 'Use the exact snapshot URI, source hash and value paths returned by the selected run.',
+  INVALID_CONFIGURATION: 'Correct the named configuration field against the selected immutable article and supported bounds before a new deliberate start. Reuse an accepted key only with identical input.',
 } as const;
 export type ErrorCode = keyof typeof ERROR_RECOVERY;
 

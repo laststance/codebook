@@ -34,8 +34,7 @@ export class RepositoryBookStore {
 
   /** Reads an exact retained revision and verifies each linked checkpoint; current source drift remains separate from copied bytes. @example await books.read('architecture', 1) */
   async read(bookId: string, revision: number) {
-    const book = await this.readStored(bookId), selected = book?.revisions.find(value => value.revision === revision);
-    if (!book || !selected) throw new StudyError('BOOK_UNAVAILABLE', `Book ${bookId} revision ${revision} is unavailable; no other revision was selected.`);
+    const { revision: selected, latestRevision } = await this.readDefinition(bookId, revision);
     const links = [], checkpoints = new Map<string, ReturnType<LearningLibrary['readCheckpoint']>>();
     const recordings = new RecordingStore(this.library.directory, this.library.workspaceKey);
     const recorded = new Map<string, Promise<{ index: Awaited<ReturnType<RecordingStore['read']>>; context: Awaited<ReturnType<RecordingStore['readContext']>> }>>();
@@ -55,7 +54,14 @@ export class RepositoryBookStore {
       }
       catch (error) { links.push({ ...binding, status: 'unavailable' as const, reason: String(error), recording: { status: 'unavailable' as const, reason: 'The linked observation checkpoint is unavailable.' } }); }
     }
-    return { bookId, revision: selected, latestRevision: book.revisions.at(-1)!.revision, links };
+    return { bookId, revision: selected, latestRevision, links };
+  }
+
+  /** Acquires exact immutable article content for reading or runtime binding without loading unrelated recording destinations. @example await books.readDefinition('architecture', 1) */
+  async readDefinition(bookId: string, revision: number) {
+    const book = await this.readStored(bookId), selected = book?.revisions.find(value => value.revision === revision);
+    if (!book || !selected) throw new StudyError('BOOK_UNAVAILABLE', `Book ${bookId} revision ${revision} is unavailable; no other revision was selected.`);
+    return { bookId, revision: selected, latestRevision: book.revisions.at(-1)!.revision };
   }
 
   /** Owns preparation and final write through settlement, so transport loss cannot release a running writer. @example await books.publish(intent, signal) */

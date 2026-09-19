@@ -54,7 +54,9 @@ export const configuredStudyMetadataSchema = configuredStudySchema.pick({ versio
   .extend({ archive: z.strictObject({ byteLength: z.number().int().positive(), modifiedMs: z.number().nonnegative(), hash: repositoryHashSchema }) });
 export const configuredSelectionSchema = z.strictObject({ ...selectionSchema.shape,
   studyId: studyIdSchema, profile: z.literal(REPOSITORY_BROWSER_PROFILE), itemId: repositoryItemSchema });
+export const configuredDefinitionSchema = configuredStudySchema.pick({ configuration: true, configurationHash: true, descriptor: true }).extend({ descriptor: configuredDescriptorSchema });
 export type ConfiguredStudy = z.infer<typeof configuredStudySchema>;
 export type ConfiguredObservation = z.infer<typeof configuredObservationSchema>;
 export type ConfiguredDescriptor = z.infer<typeof configuredDescriptorSchema>;
 export type ConfiguredFactValue = z.infer<typeof configuredFactValueSchema>;
+export type ConfiguredDefinition = z.infer<typeof configuredDefinitionSchema>;

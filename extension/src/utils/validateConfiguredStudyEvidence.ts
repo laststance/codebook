@@ -1,7 +1,7 @@
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { CONFIGURED_OBSERVATION_LIMIT, REPOSITORY_CAPTURED_TYPES, REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants';
+import { CONFIGURED_OBSERVATION_LIMIT, REPOSITORY_CAPTURED_TYPES } from '../constants';
 import type { ConfiguredStudy } from '../configuredStudySchemas';
-import { citationContext } from './citationContext';
+import { assertConfiguredDescriptor } from './assertConfiguredDescriptor';
 
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
 export function validateConfiguredStudyEvidence(study: Omit<ConfiguredStudy, 'captures'>, workspaceKey: string): void {
@@ -11,24 +11,7 @@ export function validateConfiguredStudyEvidence(study: Omit<ConfiguredStudy, 'ca
   const descriptor = study.descriptor;
   // Preparation failures remain representable without inventing a successfully bound article/source.
   if (!descriptor && (study.observations.length || study.operation || study.finalOutcome === 'demonstrated')) throw new Error('Configured evidence has no bound descriptor.');
-  if (descriptor) {
-    if (descriptor.itemId !== `repository/${configuration.book.bookId}/${configuration.book.nodeId}`) throw new Error('Configured learning item changed.');
-    if (JSON.stringify(descriptor.citationContext) !== JSON.stringify(citationContext(descriptor.anchors))) throw new Error('Configured complete citation context changed.');
-    const sources = new Map(descriptor.sources.map(source => [source.path, source])), cited = new Set<string>();
-    if (sources.size !== descriptor.sources.length) throw new Error('Configured descriptor has duplicate source paths.');
-    for (const source of sources.values()) {
-      if (Buffer.byteLength(source.text) > REPOSITORY_SOURCE_LIMIT_BYTES || sha256(source.text) !== source.hash || source.text.split(/\r\n|\r|\n/).length !== source.lineCount) throw new Error('Configured descriptor source bytes changed.');
-    }
-    for (const anchor of descriptor.anchors) {
-      const source = sources.get(anchor.path);
-      if (!source || source.hash !== anchor.hash || anchor.endLine > source.lineCount) throw new Error('Configured citation has no exact retained source.');
-      cited.add(anchor.path);
-    }
-    if (cited.size !== sources.size) throw new Error('Configured descriptor has uncited sources.');
-    const anchor = descriptor.anchors[configuration.book.anchorIndex], source = sources.get(configuration.source.path);
-    const selectedLine = source?.text.split(/\r\n|\r|\n/)[configuration.source.line - 1];
-    if (!anchor || !source || source.hash !== configuration.source.hash || anchor.path !== configuration.source.path || anchor.hash !== configuration.source.hash || configuration.source.line < anchor.startLine || configuration.source.line > anchor.endLine || selectedLine === undefined || configuration.source.column > selectedLine.length + 1) throw new Error('Configured position differs from its selected citation.');
-  }
+  if (descriptor) assertConfiguredDescriptor(configuration, descriptor);
   for (const observation of study.observations) {
     if (!study.operation?.inputDispatched) throw new Error('Configured observation has no dispatched operation.');
     if (observation.itemId !== descriptor?.itemId || observation.id !== `${observation.pause.sessionId}:${observation.pause.generation}` || observation.snapshotUri !== `codebook://${study.instanceId}/runs/${study.runId}/snapshots/${encodeURIComponent(observation.id)}`) throw new Error('Configured observation identity changed.');
