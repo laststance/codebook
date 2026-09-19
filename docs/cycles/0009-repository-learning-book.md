@@ -1,7 +1,8 @@
 # Cycle 0009 — Source-grounded repository learning content
 
 Type: product-increment
-Status: planning
+Status: blocked
+Blocker: owner answer to design-review D4; resume the existing review on that answer
 Result: pending
 Delivery: planning records committed; source draft tested locally, implementation paused for formal reviews
 Goal version: 3
@@ -168,6 +169,8 @@ Return restores the original book / revision / node; no application input.
 
 Initial score: 8/10. D4 pending: an article may cite multiple sources, while the primary implementation draft binds understanding to its primary anchor. The plan does not clearly say whether changes to secondary citations also place the article in Review needed. Option A (recommended) retains historical understanding and shows article-level Review needed when any cited source changes; option B uses that article-level status only for the primary source and labels other changed citations locally. Neither remedy is accepted yet. Keep the approved compact checkbox in both alternatives.
 
+Blocked audit, 2026-09-19: the same unanswered D4 condition persists across the original question turn and two automatic goal continuations. The preceding continuation produced no new implementation evidence and was not a verified wait on a running job. Rechecking the conversation, cycle and feedback artifacts yields no D4 answer. The invoked review explicitly requires an individual decision before editing or advancing; later design passes, engineering and further implementation cannot proceed through this gate. No equivalent question is reissued and no elapsed-time default is applied. Resume this review on the actual D4 answer; keep approved B, the full product goal and final 0/10 review count unchanged.
+
 ## Selected implementation contract
 
 These were primary-agent engineering and UX decisions under D008, not formal `/plan-eng-review` or `/plan-design-review` results. Both skill definitions require an explicit owner-named target outside Plan mode: “only if the user EXPLICITLY names the target.” Raphtalia answered the scope question, “Cycle 0009 の計画を対象にする（推奨）.” The target gate is now resolved. The formal design checkpoint records all seven passes selected, B with compact checkbox approved and D4 source-change presentation pending. No other remedy is approved by the scope/focus answers. Further implementation is paused during these plan reviews; the source/schema draft below remains unvalidated at runtime.
@@ -254,7 +257,7 @@ Pending. No capability state advances merely because this plan/issue exists. Kee
 
 ## Handoff
 
-Next: finish the now explicitly scoped formal design review, then engineering; resume source/store/reader implementation after the reviewed amendments. DX review is recorded. No new durable GStack learning emerged in that planning review. Branch `codex/cycle-0009-repository-learning-book` starts at `7330a3a`, preserving the unmerged Cycle 0008 increment; no separate task or background automation created. Temporary Cycle 0008 native/QA processes are closed. Product final gate remains 0/10 and owner acceptance outstanding.
+Next: receive D4's actual answer, resume the existing formal design review at Pass 2, then complete the remaining passes and engineering; resume source/store/reader implementation after the reviewed amendments. Do not restart scope or visual selection. DX review is recorded. No new durable GStack learning emerged in that planning review. Branch `codex/cycle-0009-repository-learning-book` starts at `7330a3a`, preserving the unmerged Cycle 0008 increment; no separate task or background automation created. Temporary Cycle 0008 native/QA processes are closed. Product final gate remains 0/10 and owner acceptance outstanding.
 
 ## GSTACK REVIEW REPORT
 
@@ -262,13 +265,13 @@ Next: finish the now explicitly scoped formal design review, then engineering; r
 | --- | --- | --- | --- | --- | --- |
 | DX Review | `/plan-devex-review` | Agent source/content contract | 1 primary | DONE_WITH_CONCERNS | Eight passes, four implementation tasks; planning specificity 4.4 → 9.8, actual DX unmeasured |
 | Outside Review | Installed skill preflight / known provider and thread limits | Independent challenge | 0 completed | unavailable | Own-harness nested Codex is excluded; native thread limit and prior external timeout remain unchanged |
-| Design Review | `/plan-design-review` | Reader UX | 1 started | in progress | B with compact checkbox approved; Pass 1 8 → 10, Pass 2 8 with D4 pending; later passes not run |
+| Design Review | `/plan-design-review` | Reader UX | 1 started | blocked on D4 | B with compact checkbox approved; Pass 1 8 → 10, Pass 2 8 with D4 pending; later passes not run |
 | Eng Review | `/plan-eng-review` | Storage, identity, source scope | 0 | target selected, not started | Await design amendments; earlier primary contract is not a skill result |
 | CEO Review | Existing goal/design | Product scope unchanged | 0 this cycle | not requested | Existing product direction retained |
 
 OUTSIDE COVERAGE: unavailable; no independent result or cross-model agreement inferred. Prior Cycle 0008 reviews do not cover this increment.
 
-VERDICT: DX plan recorded with concerns; formal design in progress and eng review still required. Source draft passes typecheck and 11 filesystem/schema tests only; no product acceptance follows from this report.
+VERDICT: DX plan recorded with concerns; formal design is blocked on unanswered D4 and eng review is still required. Source draft passes typecheck and 11 filesystem/schema tests only; no product acceptance follows from this report.
 
 **UNRESOLVED DECISIONS:**
 - D4 pending: whether any changed citation places its article in Review needed, or only the primary citation does. No remedy is accepted yet; later design passes and engineering remain pending.

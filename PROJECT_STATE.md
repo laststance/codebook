@@ -2,7 +2,7 @@
 
 Updated: 2026-09-19\
 Product stage: connected checkout, durable learning and offline replay demonstrated on fixed profiles; native reliability/usefulness unverified\
-Active cycle: [0009 — Repository learning book](docs/cycles/0009-repository-learning-book.md) — planning\
+Active cycle: [0009 — Repository learning book](docs/cycles/0009-repository-learning-book.md) — blocked on design-review D4\
 Last cycle: [0008 — Recording and offline replay](docs/cycles/0008-recording-replay.md) — mechanisms demonstrated; native reliability inconclusive\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#10](https://github.com/laststance/codebook/issues/10) — open\
@@ -45,6 +45,8 @@ A fixture proves mechanisms, not the integrated final product.
 | G11 | partial | Both actual editors pass runtime fixtures; full packaged experience and native UX remain unverified. |
 
 ## Exact resume action
+
+Input blocker: D4 remains unanswered across three consecutive goal turns, including the original question and two automatic continuations. The formal design skill requires the individual decision before advancing. Resume at Pass 2 when the actual answer arrives; do not repeat visual selection, infer A from elapsed time, or claim a running-job wait. This preserves the destination and stops redundant automatic continuations; it is not product completion.
 
 Cycle 0008 evidence is pushed and [reported on Issue #9](https://github.com/laststance/codebook/issues/9#issuecomment-5740396725), which is closed. Advance only Cycle 0009: an agent-authored repository learning document/wiki and source-linked codemap. DX review and a primary implementation contract are recorded; an uncommitted source/schema/test draft passes typecheck and 11 real-filesystem/schema tests but has no runtime evidence. Raphtalia explicitly selected this plan for formal `/plan-design-review` and `/plan-eng-review`, then all seven design passes. The local comparison board is `http://127.0.0.1:55031/boards/b-20260919-084919-rzgkcn/` (HTTP 200 and embedded image hashes verified). D3 confirms B with a small `understand` checkbox; the actual answer/image hash are saved in `approved.json`. Pass 1 is complete with no additional finding. D4 is pending in Pass 2: should a change to any cited source place its article in Review needed, or only a change to the primary source? Keep both remedies pending until answered, then continue Passes 2–7 and engineering before further implementation. Do not re-ask the chosen variant/checkbox. The cycle records durable feedback/artifact paths. Earlier primary assessment is not a completed skill or independent review. The first repository is this codebase, read-only source study, alongside links to already captured demo learning items. Do not imply ordinary-workspace execution from source reading. This removes the hard-coded macro-content bottleneck toward G02/G10; it is not a new final requirement.
 
