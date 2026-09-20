@@ -1,11 +1,29 @@
 # Changelog
 
-## Unreleased — development extension 0.2.0 / API 1.4
+## [0.2.0.0] - 2026-09-21
 
-- Add the bounded `repository-browser` profile for one browser operation in a trusted local Next development application using webpack at its root route. Agents bind current source and an immutable cited article before starting; discovery describes the schema, limits and profile-specific prerequisites.
-- Share the existing Study, captured-source, recording and Wiki return interfaces. Configured history remains read-only execution context; another run requires a fresh agent request. Understanding remains an explicit learner decision over the full citation set.
-- Preserve old readers while adding configured Study v3, book v2, progress v4 and configured recording v2. Preferred corrupt files fail explicitly; existing evidence and decisions are not silently replaced or discarded.
-- Keep accepted input, dispatch, acknowledgement, observed result, history persistence and recording persistence distinct. Runtime tools declare that the selected application can mutate data or contact external services.
-- Recover learner-moved Study panes through explicit Arrange while retaining later manual source placement, immutable source highlights and unrelated dirty tabs. Interrupted source placement reports a retryable error instead of claiming layout success.
+Development extension 0.2.0 / MCP API 1.5. This integrates the recording, repository learning, configured execution and shared presentation increments since 0.1.0; it is not a packaged or published release.
 
-This development version remains under native validation. Separate actual-agent core, saved recording and offline-reader checks have passed in VS Code and Cursor; the latest reader fixes pass all 476 product tests and both native theme/geometry matrices. Keyboard focus survives understanding saves; tall captured-value tables reveal their header on keyboard entry. First Study entry and Return handle native minimum pane sizes without overwriting learner layouts. Final cycle evidence reconciliation remains open, and earlier partial/failed attempts remain recorded. No packaged, published or installed-extension release is claimed. See [PROJECT_STATE.md](PROJECT_STATE.md) for versioned evidence and [extension/README.md](extension/README.md) for development setup and current usage.
+### Added
+
+- Replay captured application frames together with their original source, actual values and explanations after the application exits or the editor restarts. Seek observed moments, distinguish later annotations, and inspect partial recordings without inventing a complete run.
+- Ask an external agent to read tracked repository source and publish a cited learning book with a source-linked map. Navigate between an article, immutable source, an observed moment and its recording while retaining reading position and explicit understanding.
+- Run one declared browser operation in a trusted local Next development application using webpack at its root route. The agent binds the current source and an immutable article before execution; discovery explains the adapter, limits, prerequisites and allowed input.
+- Select Study workspace, Living book or Guided walkthrough through the reader, Command Palette or MCP while preserving the learning item, live pause, understanding and confirmed replay position. Use the executable SDK example to discover and select a presentation.
+
+### Changed
+
+- Keep accepted input, dispatch, acknowledgement, observed result, observation storage and recording storage separate. Missing pixels, values, source identity or required correspondence remain explicit evidence gaps.
+- Retain earlier readers while adding configured Study v3, book v2, progress v4 and configured recording v2. Corrupt preferred files fail visibly instead of discarding history or silently falling back.
+- Save presentation preferences per workspace independently from native layout confirmation. Unknown preferences remain untouched until an explicit choice; a failed save supports a save-only retry.
+- Document the supported macOS development environments, including Cursor with Open Chat as Editor Tabs disabled, and preserve host-specific validation and review limitations.
+
+### Fixed
+
+- Preserve learner-owned pane positions, later focus changes, source selection and unrelated dirty tabs during asynchronous presentation work. Reject late foreign previews and insufficient layout space without reporting a successful transfer.
+- Ignore obsolete outline requests and queued checkbox events after the selected study changes. A later successful selection clears its own diagnostic without hiding unrelated failures.
+- Keep recording failures visible, preserve keyboard focus while controls are busy, and retain independent interpretation/value reading at constrained pane sizes.
+- Retain exact recorded context and current control identities across delayed frames, response loss and storage recovery; recovery does not repeat application input or mark understanding automatically.
+- Wait for a complete development-server port before connecting. Release diagnostic listeners and owned validation editors even when final diagnostics or launch metadata fail.
+
+The [Cycle 0014 evidence](docs/cycles/evidence/0014/README.md) distinguishes implementation, test, native, review and delivery stages. Actual VS Code and Cursor development hosts separately demonstrate three live/replay mode transfers and 15 theme/zoom cells each. Source-cut differences, cropped 200% screencast limits, missing outside-model coverage and remaining acceptance checks remain recorded. See [PROJECT_STATE.md](PROJECT_STATE.md) and [extension/README.md](extension/README.md) for setup and current support.

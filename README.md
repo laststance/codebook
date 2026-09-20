@@ -2,7 +2,7 @@
 
 Learn an unfamiliar codebase by connecting what an application does on screen with its source, runtime values, and explanations.
 
-The destination is a chat-driven, recorded walkthrough from adding a product to the cart through checkout, linked to a wiki, codemap, and personal learning progress. Study workspace is the default; Living book and Guided walkthrough are required later display modes.
+The destination is a chat-driven, recorded walkthrough from adding a product to the cart through checkout, linked to a wiki, codemap, and personal learning progress. Study workspace is the default; Living book and Guided walkthrough provide alternative presentations of the same learning state.
 
 The complete product must work in **both VS Code and Cursor**. Final acceptance includes packaged-extension installation and the full experience in each editor. Both hosts have real synchronous and browser/server fixture evidence. Full packaged-product compatibility remains unverified.
 
@@ -58,6 +58,8 @@ Product design and three visual directions are approved. [Cycle 0001](docs/cycle
 
 [Cycle 0011](docs/cycles/0011-repository-browser-study.md) connects that mechanism to API 1.4 / development extension 0.2.0 as `repository-browser`: an agent declares one bounded operation for an existing cited article, then uses the shared Study, history and recording readers. Actual-agent core execution, retained recordings and offline reading now have separate native evidence in both editors. The latest bounded reader fixes pass 476 tests; both editors have measured four-theme/three-geometry native flows, stable keyboard understanding and exact historical image/source correspondence. Final cycle evidence reconciliation remains in progress. GStack's three implementation review passes ended non-converged; the separately requested CodeRabbit/OCR reviews and subsequent scoped fixes retain their own revision and coverage limits. Follow the [configured-study tutorial](extension/README.md#run-one-configured-repository-action) for the supported Next root-route scope and evidence distinctions.
 
-Real-repository checkout, integrated installed recording acceptance, general natural-language orchestration, Living book and Guided walkthrough, packaged installation and three intended real-repository uses remain open. Native API assertions and webview checks do not replace independent editor UX acceptance.
+[Cycle 0014](docs/cycles/0014-shared-presentation-controls.md) implements shared Study workspace, Living book and Guided walkthrough controls in API 1.5. Both supported development hosts demonstrate the same live pause and paused recording across all three modes, retained source/reading focus, and 15 theme/zoom checks each. The final suite passes **505 extension / 39 experiment tests**. [Evidence and limitations](docs/cycles/evidence/0014/README.md) distinguish source cuts, strict error-free Study receipts, review non-convergence, unavailable outside review and cropped 200% motion capture.
+
+Real-repository checkout, integrated installed recording acceptance, general natural-language orchestration, packaged installation and three intended real-repository uses remain open. Native API assertions and webview checks do not replace complete installed-editor UX acceptance.
 
 Repository files are the portable project record. GStack's local cache, chat history, and optional GitHub issues are supporting views of that record. Commits are also stored in the private GitHub repository. Ignored private recordings still require an explicit durable evidence location.

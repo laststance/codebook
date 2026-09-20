@@ -2,7 +2,7 @@
 
 Type: product-increment\
 Status: validating\
-Result: pending\
+Result: demonstrated with qualified native motion and review coverage\
 Delivery: committed\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/15\
@@ -63,7 +63,7 @@ Baseline is Cycle 0013's unchanged v29 source and 476/476 extension tests. Cycle
 
 Owner D021 arrived during implementation. The current cycle now has its own branch; create its reviewed PR with `@coderabbitai ignore` and `Closes #15`, merge only after validation/review, and close Issue #15 at merge. Main remains `6840178`; the first PR includes the existing unmerged baseline as well as this cycle, so review and describe the integration range explicitly.
 
-## Latest verified source
+## Earlier native source checkpoint
 
 Current implementation: `bec06d4`; preceding diagnostic recovery fix `add23c5`. Full extension suite passes 494/494 (52.586 s), zero failed/skipped/cancelled. Cursor native motion inspection exposed a stale generic error after a successful restore; presentation errors now have an independent slot, preserving unrelated failures. A compiled-only diagnostic probe then proved native pane relocation can flatten a nested grid, losing its measured height. Retaining the pre-move grid prevents the relative fallback from creating subpixel panes. Red tests and original failures are preserved in `artifacts/cycle-0014/presentation-error-investigation.md`.
 
@@ -71,6 +71,28 @@ Fresh actual Cursor proof at `artifacts/cycle-0014/native/cursor/2026-09-20T14-0
 
 Ordinary Cursor restart at `artifacts/cycle-0014/native/cursor/2026-09-20T14-08-19.745Z-e442041a` retains Guided walkthrough and opens the finalized 34-frame recording at 4500ms. Close rejects the retired reader identity; explicit current-identity restore succeeds. Cursor Settings → Open Chat as Editor Tabs must be off in this support configuration: its embedded auxiliary editor appears in tabGroups but outside the current native layout. Hiding Agents is insufficient. This was reproduced, diagnosed against the installed host code, changed through the visible settings UI in the isolated QA profile, and verified on restart. It is a declared compatibility limit, not support for the extra editor part. All listed Cursor sessions closed their owned windows, restored settings.json bytes, then terminated only the idle owned macOS process and exited 0.
 
+## Review repair candidate — 2026-09-21
+
+HEAD is `fc3d1b5` plus recorded review repairs. Full extension tests pass **505/505** (53.644 s); the Cycle 0010 experiment passes **39/39**, and the unchanged shared/paired suites retain 55/55 and 45/45. The final candidate inventory and hashes are in `artifacts/cycle-0014/review/final-source-cut.json` (`c522c385f5f22a646a254b2802d11422e6749ed747bc817e1c9b1260fc491855`).
+
+Repairs preserve the initial live pause across all awaits, reject learner pane/focus changes during passive layout reads, and recheck foreign previews before each native relocation. Stale TreeView item rendering, delayed reveal rejection and queued checkboxes no longer affect a newer profile. Actual runtime failures still remain visible; successful current outline selection clears its recovered error. Maintained native QA now uses API 1.5 and 13 tools / 17 templates. Development-listener parsing waits for a complete port, native launchers attach exit ownership before metadata I/O, and drained decoy listeners are released even when a final diagnostic assertion fails. Behavioral red-before and green-after evidence remains in `artifacts/cycle-0014/review/`.
+
+VS Code `2026-09-20T15-17-29.505Z-43584699` passes configured real-source execution, three live and three offline mode transfers, three source-focus and three reading-pose checks, plus 15 strict theme/zoom cells. It recorded 12 frames through 11471.459333ms and saved matching history/context. The host exited 0 with original settings bytes restored. Root inspected its native video contact sheets, including final dark recorded pixels, source line 19 and 200% transfers. Earlier reused-profile title/obsolete-outline errors were real failures and are preserved; strict empty-error assertions were added before the final run. A private-driver 4500ms expectation mismatch is qualified separately. With the secondary sidebar consuming width at 200%, an unachievable grid failed truthfully; closing it and explicitly restoring produced the 15/15 result.
+
+Final Cursor `2026-09-20T15-31-08.970Z-4c9a221b` passes supported ordinary restart, configured execution, three live and three offline transfers, three source-focus and reading-pose transfers, and 15 strict theme/zoom cells. It finalized 13 frames through 12707.833875ms; its owned host exited 0 with settings restored. The preceding `15-25-34.121Z-58907e49` attempt found Open Chat as Editor Tabs enabled; turning that visible setting off and ordinarily restarting restored the standard editor configuration. A separate private focus check failed while the whole native window was inactive. Actual native clicking and explicit outer/inner focus preconditions produced the later pass without a product edit. The original failures remain. Root inspected recorded frame sequences; final Cursor 200% frames are cropped/padded and are not complete full-window motion proof.
+
+The [reconciled evidence index](evidence/0014/README.md), [native report](evidence/0014/native-validation-20260921.md), [review report](evidence/0014/implementation-review-20260921.md), [design report](evidence/0014/design-review-20260921.md) and [46-artifact manifest](evidence/0014/manifest.json) preserve exact hashes and limitations. VS Code's final run precedes only the final obsolete-checkbox product guard and launcher/test changes; Cursor contains all repairs. Do not label both runs byte-identical.
+
+Design review repaired the collapsed recording-status disclosure and busy selector focus in `c7cb14c` / `fc3d1b5`; compiled adapter checks remain 118/118 across 24 cells. The DOM detector reports 36 unchanged fallback-token contrast hits; actual adapter/native theme colors invalidate those hits. Independent design source feedback is resolved; the outside Claude Code pass timed out and is not a clean review.
+
+Implementation review ran three fixing passes with exact frozen ledgers. All definite findings are repaired; convergence is not certified after the third fixing pass. Outside whole-integration reviews hit the 10 MiB input limit; bounded retries also timed out. CodeRabbit reviewed 29 original bounded files, then 138 extension and 39 experiment files in scoped integration passes, then the expanded 38-file bounded cut. Its last document-link finding is false: `docs/cycles/0012-shared-study-presentations.md` exists and is tracked. OCR accounts for the preview ranges and explicitly qualifies historical evidence and test summaries. A modeled concurrent Wiki source-display race remains INVESTIGATE: the source/API queue ordering needs an actual-host experiment before calling it a native defect.
+
 ## Handoff
 
-Continue at bec06d4, source fingerprint in extension/dist/build.json. Current actual VS Code ordinary host is active under artifacts/cycle-0014/native/vscode/2026-09-20T14-10-24.412Z-7c916de0. Finish its final-cut native evidence and configured-repository transfers in both editors, then /design-review, /review, coderabbit-cli/OCR and PR/merge. Bounded browser adapter remains on port 62814. Branch codex/cycle-0014-shared-presentations; Issues #1 and #15 remain open. No packaged or final-product claim.
+Validation and review evidence are reconciled. Run /ship and /land-and-deploy for the authorized cycle PR, preserving its explicit coverage limits. No PR or merge yet. Branch `codex/cycle-0014-shared-presentations`; Issues #1 and #15 remain open. Preserve the explicit larger integration range from remote main `6840178`. The next bounded candidate is verifying and, if reproduced, fixing native Wiki source-navigation ordering before packaged integrated acceptance. Final product and ten sequential reviews remain unstarted, 0/10.
+
+## Ship reconciliation (2026-09-21)
+
+[The ship supplement](evidence/0014/ship-verification-20260921.md) records 647/647 fresh combined tests, the post-spawn launcher cleanup repair, its independent modeled verification, the unchanged SDK example executed five times per host and deterministic stale-revision recovery. Cursor's failed cold-reader foreign-focus attempt remains separate from its explicit Open Study / Focus explanation recovery. Current CodeRabbit supplement: 30 files, zero findings.
+
+The plan audit's remaining partial obligations are listed explicitly in that supplement. They remain required product work, including D2 state copy/retry, full interleaving/service coverage, all-mode Wiki and native input matrix, uncropped/reduced-motion evidence, and internal stage timing. Delivering this demonstrated bounded increment does not drop those obligations or satisfy full-product acceptance. New VERSION 0.2.0.0 tracks the unchanged extension semver 0.2.0. Published WIP/evidence ancestry is preserved; the delivery PR will use a squash merge.
