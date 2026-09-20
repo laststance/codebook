@@ -2,15 +2,17 @@
 
 Updated: 2026-09-20\
 Product stage: configured core execution, offline replay and restart demonstrated separately in both editors; complete cross-host and installed usefulness unverified\
-Active cycle: [0013 — Native webview retention](docs/cycles/0013-native-webview-retention.md) — causal placement investigation\
-Last cycle: [0012 — Shared Study presentations](docs/cycles/0012-shared-study-presentations.md) — falsified placement prerequisite; no product edits\
+Active cycle: none during Cycle 0013 closure; next selected increment implements the reviewed shared presentations\
+Last cycle: [0013 — Native webview retention](docs/cycles/0013-native-webview-retention.md) — bounded mechanism demonstrated in both hosts; no product edits\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: [#14](https://github.com/laststance/codebook/issues/14) — open\
-Last cycle issue: [#13](https://github.com/laststance/codebook/issues/13) — [closed with falsified evidence](https://github.com/laststance/codebook/issues/13#issuecomment-5749572738)\
+Active cycle issue: none during closure\
+Last cycle issue: [#14](https://github.com/laststance/codebook/issues/14) — closure sync pending\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
 ## Verified facts
+
+- [Cycle 0013 retention mechanism](docs/cycles/evidence/0013/native-retention-20260920.md): native preview replacement reproduced, then owned Keep Editor + final-grid placement retains panels/source/selection/learner state/draft across all three geometries in VS Code 1.138.0 and Cursor 3.21.16. Fresh frozen-suite 476/476 pass. Product mode controls are not implemented; active-tab/focus and live/replay integration remain. Cursor 200% motion evidence is qualified. All diagnostic hosts exited 0 with settings restored.
 
 - [Cycle 0012 native prerequisite](docs/cycles/evidence/0012/placement-investigation-20260920.md) is **falsified**, not a product pass: two VS Code reveal/grid sequences disposed a retained context panel. Existing product source remains frozen. All planning reviews completed; their constraints remain useful. Cursor, live/replay switching, complete native motion and new modes remain unverified.
 
@@ -60,7 +62,7 @@ D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answer
 
 The checkpoint was restored in this same checkout and branch `codex/cycle-0009-repository-learning-book` at `6f22f12`. All seven draft hashes matched; their original bytes remain in ignored `artifacts/cycle-0009/handoff-20260919-190104/`. No reset, stash, clean or new worktree was used. Fresh reviewer creation succeeded, and both independent plan amendments now have regressions: committed-key recovery before mutable preparation and a bounded 1 MiB + 64 KiB HTTP envelope. The same reviewer subsequently completed bounded implementation/design rereviews; thread capacity later prevented another fresh reviewer. This does not count toward outside-model or final-product reviews.
 
-Cycle 0009 delivery is synchronized: implementation `1bd10b3` and closure records `0313c33` are pushed, the clean source fingerprint matches the validated 238-test native cut, and Issue #10 is [closed with evidence](https://github.com/laststance/codebook/issues/10#issuecomment-5742534461). Cycle 0010 and Issue #11 are closed. Cycle 0011 implementation `58f08cd` and closure `f594ec7` are pushed; Issue #12 is closed with evidence. Cycle 0012 / Issue #13 is closed with a falsified native placement prerequisite. Cycle 0013 / Issue #14 is the sole active investigation. Keep Issue #1 open. Both isolated native sessions have ended with exit 0 and restored settings; the root browser adapter on port 57743 has also stopped. No native QA process needs resuming. Private recordings/transcripts must be copied to an accessible durable location before this workspace is moved or deleted; the manifest identifies hashes and availability.
+Cycle 0009 delivery is synchronized: implementation `1bd10b3` and closure records `0313c33` are pushed, the clean source fingerprint matches the validated 238-test native cut, and Issue #10 is [closed with evidence](https://github.com/laststance/codebook/issues/10#issuecomment-5742534461). Cycle 0010 and Issue #11 are closed. Cycle 0011 implementation `58f08cd` and closure `f594ec7` are pushed; Issue #12 is closed with evidence. Cycle 0012 / Issue #13 is closed with a falsified native placement prerequisite. Cycle 0013 is closed with a demonstrated retention mechanism; Issue #14 closure sync is pending. Keep Issue #1 open. Both isolated native sessions have ended with exit 0 and restored settings; the root browser adapter on port 57743 has also stopped. No native QA process needs resuming. Private recordings/transcripts must be copied to an accessible durable location before this workspace is moved or deleted; the manifest identifies hashes and availability.
 
 [Cycle 0010](docs/cycles/0010-real-repository-runtime.md) is demonstrated against unchanged Laststance.io `43d0399`: 38 tests and the final seven-case matrix in each host pass. Its source fingerprint and final native records are frozen. The original target remains clean; original seven handoff backups match 7/7. No owned native process or Playwright browser session remains.
 
@@ -72,7 +74,7 @@ Current [native integration evidence](docs/cycles/evidence/0011/native-validatio
 
 Earlier [Arrange investigation](docs/cycles/evidence/0011/native-layout-investigation-20260920.md): explicit recovery separates moved Codebook panes, preserves actual source placement across replay-induced render cancellation, follows later manual moves and reports interrupted placement before claiming success. **399/399 product tests pass**, zero failed/skipped/cancelled (16.760s). Final v14 inventory `fb597267fc8ac348ddff5460b8d5c47cf86f13cd231585fa6ea38aeb20a049e2` has 231 entries on dirty `a3fba6f`. Both actual hosts pass the complete Arrange/manual-move sequence, with inspected video, highlighted exact source and unchanged dirty draft. Cursor additionally passes visible 200% observation/recording Return with exact pose and learner ledger. The report qualifies its cramped retained manual layout and child-frame automation failures; this is not complete 200% usability acceptance. All intermediate hypotheses, a retracted host API inference and a simultaneous-host recording ACK timeout remain recorded.
 
-Exact next action: investigate native context-panel disposal during a Living → Guided transfer. Cycle 0012 completed all three plan reviews, but both disposable VS Code mechanisms failed retention. The second showed correct Living geometry before disposal. No new product code/build or Cursor verification followed. Both test hosts exited 1 with settings restored and PIDs absent. The preview-tab replacement hypothesis needs causal instrumentation; approved three-mode outcomes and the shared-model contract remain unchanged. Final reviews 0/10.
+Exact next action: implement the reviewed shared presentation contract using Cycle 0013's demonstrated native retention mechanism. Before each cross-group reveal, guard the exact owned active tab and keep it out of preview; restore initiating focus and apply final topology after relocation. Carry Cycle 0012 renderer/revision/persistence/test requirements forward. All diagnostic hosts are stopped; no runtime/build/product change occurred; final reviews 0/10.
 
 Native phase-ACK reliability remains qualified: retain failed/partial captures and use a changed, evidence-backed hypothesis for any follow-up. G01–G11, both later layouts, recording, three intended uses, packaging, owner acceptance and ten fresh sequential reviews remain required. The branch retains the unmerged Cycle 0008 increment; no PR, merge, package or publication claim follows from this cycle.
 

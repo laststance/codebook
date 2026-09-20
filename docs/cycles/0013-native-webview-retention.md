@@ -1,9 +1,9 @@
 # Cycle 0013 — Native webview retention
 
 Type: experiment\
-Status: validating\
-Result: pending\
-Delivery: local-only\
+Status: closed\
+Result: demonstrated\
+Delivery: committed\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/14\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -41,12 +41,12 @@ Apply /investigate to this cycle only: read source/recent changes and native fai
 
 ## Attempts and evidence
 
-Cycle 0012 supplies two failed VS Code attempts. Its second reached Living geometry 631/421 before context disposal; no finalized video survived the harness's fatal report getter. The new diagnostic must retain the host and record disposed flags without reading disposed panel properties. No new observation yet.
+Cycle 0012 supplies two failed VS Code attempts. Its second reached Living geometry 631/421 before context disposal; no finalized video survived the harness's fatal report getter. The new diagnostic must retain the host and record disposed flags without reading disposed panel properties. [Native investigation](evidence/0013/native-retention-20260920.md) now records a causal preview-state/disposal reproduction and the kept-panel remedy in both hosts; [manifest](evidence/0013/manifest.json) hashes all private evidence.
 
 ## Result and decision
 
-Pending. No G08/G09 capability verified. Up to three distinct investigation hypotheses; no repeated blind placement attempts. No product implementation until a causal supported mechanism is demonstrated.
+Demonstrated for the bounded mechanism: a preview context is replaced by a cross-group application reveal; keeping owned panels before relocation prevents disposal in VS Code and Cursor. Root inspected recorded frames; native state/geometry and 476 baseline tests pass. No product code changed and G08/G09 are not implemented. Cursor 200% motion recording is qualified; temporary focus/active-tab ownership must be addressed during product integration. Keep the shared-model plan from Cycle 0012 and implement it with this validated native mechanism next.
 
 ## Handoff
 
-Instrument preview state and exact disposal events before applying a remedy. Branch `codex/cycle-0009-repository-learning-book`; unchanged product; final reviews 0/10. Issue #1 remains open.
+Next selected candidate: implement shared Study presentations from the reviewed Cycle 0012 contract, substituting the validated kept-panel movement and active-tab/focus guards. Branch `codex/cycle-0009-repository-learning-book`; all diagnostic hosts stopped, settings restored; unchanged product; final reviews 0/10. Issue #1 remains open.
