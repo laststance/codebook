@@ -146,7 +146,7 @@ knowledge_base:
       - "DECISIONS.md"
       - "DESIGN.md"
       # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
-      - files: "docs/cycles/0014-shared-presentation-controls.md"
+      - files: "docs/cycles/0015-wiki-navigation-ordering.md"
         applyTo: "**/*"
       - files: "docs/designs/codebook.md"
         applyTo: "extension/src/**"

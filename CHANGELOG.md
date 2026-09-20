@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.0.1] - 2026-09-21
+
+Documentation checkpoint; development extension remains 0.2.0 / MCP API 1.5.
+
+### Changed
+
+- Document native Wiki navigation ordering in both supported editors: 30 source-navigation cases and five Close cases per host match their distinct expected outcomes, with an explicit limitation that the modeled reverse completion order was not observed. No runtime repair or general ordering guarantee is claimed.
+- Provide source identities, reproducible diagnostic instructions and private artifact checksums, and record the previous shared-presentation delivery. Packaged installation and complete product acceptance remain open.
+
 ## [0.2.0.0] - 2026-09-21
 
 Development extension 0.2.0 / MCP API 1.5. This integrates the recording, repository learning, configured execution and shared presentation increments since 0.1.0; it is not a packaged or published release.
