@@ -47,6 +47,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
   let current: StudyViewMessage | undefined;
   let scrubbing = false;
   let readingPose: { presentationId: string; revision: number; anchorId?: string; fraction: number; leadingOffsetPx: number; scrollY: number; focused?: HTMLElement } | undefined;
+  // A learner can keep tabbing during native placement; retain their latest focus instead of the initiating control.
+  document.addEventListener('focusin', event => { if (readingPose && event.target instanceof HTMLElement) readingPose.focused = event.target; });
   const element = (id: string) => { const found = document.getElementById(id); if (!found) throw new Error(`Missing reader element ${id}`); return found; };
   const send = (message: object) => api.postMessage({ ...message, revision: current?.revision });
   const button = (action: string) => document.querySelector<HTMLButtonElement>(`button[data-action="${action}"]`);
@@ -141,7 +143,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     if (mode) {
       document.body.dataset.presentation = mode.mode;
       const descriptor = options.presentations.find(descriptor => descriptor.mode === mode.mode);
-      if (modeSelector instanceof HTMLSelectElement) { modeSelector.value = mode.mode; modeSelector.disabled = applying; }
+      // Keep the busy selector focusable; the presentation request guard rejects repeated input until placement settles.
+      if (modeSelector instanceof HTMLSelectElement) { modeSelector.value = mode.mode; modeSelector.setAttribute('aria-disabled', String(applying)); modeSelector.setAttribute('aria-busy', String(applying)); }
       text('presentation-caption', descriptor?.description ?? '');
       text('presentation-status', mode.preference.status === 'saving' ? 'Layout applied · saving preference…' : applying ? 'Changing presentation…' : mode.reason ?? mode.preference.reason ?? (!mode.layoutConfirmed ? 'Layout not confirmed. Restore it or focus a pane below.' : ''));
       for (const control of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-presentation]'))) { control.disabled = applying; if (control.dataset.presentation === 'save-preference') control.hidden = mode.preference.status !== 'failed' || !mode.layoutConfirmed; }
@@ -255,7 +258,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
         if (current?.presentation?.presentationId !== pose.presentationId || current.presentation.presentationControlRevision !== pose.revision) return;
         const anchor = pose.anchorId ? document.getElementById(pose.anchorId) : null;
         window.scrollTo({ top: pose.scrollY === 0 ? 0 : anchor ? window.scrollY + anchor.getBoundingClientRect().top + pose.fraction * anchor.offsetHeight - pose.leadingOffsetPx : pose.scrollY, behavior: 'instant' });
-        if (document.hasFocus() && pose.focused?.isConnected) pose.focused.focus({ preventScroll: true });
+        // Do not replace a newer focus choice made between the settled message and this animation frame.
+        if (document.hasFocus() && pose.focused?.isConnected && (document.activeElement === pose.focused || document.activeElement === document.body)) pose.focused.focus({ preventScroll: true });
       });
     }
     api.postMessage({ type: 'rendered', revision: message.revision, itemId: model.selection.itemId, snapshotUri: model.observation?.snapshotUri, ...(recording ? { presentationRevision: recording.presentationRevision } : {}), ...(message.presentation ? { presentationControlRevision: message.presentation.presentationControlRevision, presentationMode: message.presentation.mode } : {}) });
