@@ -374,10 +374,22 @@ export class StudyWorkspace {
       if (!app || !context || !sourceUri || vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) throw new Error('The three retained Study panes are unavailable.');
       const source = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === sourceUri.toString() && editor.viewColumn === this.studyPanePositions().sourceColumn);
       const selections = source?.selections, range = source?.visibleRanges[0];
-      // A move could replace a foreign preview; reject it instead of pinning or closing the learner's editor.
+      // Only demo-owned prepared sources may be kept; workspace files and dirty drafts remain learner-owned.
       const ownedKinds = ['codebook.scopedBrowser', 'codebook.studyContext'];
+      const preparedPreviews: { uri: vscode.Uri; group: vscode.TabGroup; tab: vscode.Tab }[] = [];
       for (const group of vscode.window.tabGroups.all) {
-        if (group.tabs.some(tab => tab.isPreview && !(tab.input instanceof vscode.TabInputWebview && ownedKinds.some(kind => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType))))) throw new Error('A destination group contains a foreign preview. Keep or move that editor explicitly before switching.');
+        for (const tab of group.tabs.filter(tab => tab.isPreview)) {
+          if (tab.input instanceof vscode.TabInputWebview && ownedKinds.some(kind => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType))) continue;
+          if (tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === 'file' && this.runtimeSourcePaths.has(tab.input.uri.fsPath) && !tab.isDirty) preparedPreviews.push({ uri: tab.input.uri, group, tab });
+          else throw new Error('A destination group contains a foreign preview. Keep or move that editor explicitly before switching.');
+        }
+      }
+      // Native debugger stops open prepared fixture files as previews even while the captured reader is active.
+      for (const prepared of preparedPreviews) {
+        const sourceDocument = await vscode.workspace.openTextDocument(prepared.uri); assertPlacement();
+        if (sourceDocument.isDirty || !vscode.window.tabGroups.all.includes(prepared.group) || !prepared.group.tabs.includes(prepared.tab) || prepared.tab.isDirty) throw new Error('The prepared preview changed before it could be retained.');
+        await vscode.window.showTextDocument(sourceDocument, { viewColumn: prepared.group.viewColumn, preserveFocus: true, preview: false }); assertPlacement();
+        await waitUntil(() => prepared.group.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === prepared.uri.toString() && !tab.isPreview), 'prepared source preview retained', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
       }
       await this.keepPresentationPanel(app, signal); assertPlacement(); await this.keepPresentationPanel(context, signal); assertPlacement();
       this.layoutReceipt = undefined;
@@ -1320,7 +1332,7 @@ export class StudyWorkspace {
     } }, { webviewOptions: { retainContextWhenHidden: true } }));
     this.disposables.push(vscode.window.onDidChangeActiveTextEditor(editor => {
       if (editor?.document.uri.scheme === STUDY_SOURCE_SCHEME) this.lastActiveRegion = 'source';
-      if (!this.opened || !editor || !this.runtimeSourcePaths.has(editor.document.uri.fsPath) || this.restoringSource || !this.sourceUri) return;
+      if (!this.opened || !editor || !this.runtimeSourcePaths.has(editor.document.uri.fsPath) || this.restoringSource || this.presentationTransition || !this.sourceUri) return;
       const region = this.lastActiveRegion; this.restoringSource = true;
       void this.renderSelection(true, true).then(() => { if (region === 'context') this.contextPanel?.reveal(undefined, false); if (region === 'app') this.app?.reveal(undefined, false); }).finally(() => { this.restoringSource = false; });
     }));

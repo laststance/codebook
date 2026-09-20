@@ -44,7 +44,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   }
   class TabInputText { constructor(readonly uri: Uri) {} }
   class TabInputWebview { constructor(readonly viewType: string) {} }
-  type Tab = { input: TabInputText | TabInputWebview; label?: string; isPreview?: boolean };
+  type Tab = { input: TabInputText | TabInputWebview; label?: string; isPreview?: boolean; isDirty?: boolean };
   const groups: { viewColumn: number; tabs: Tab[]; activeTab?: Tab }[] = [{ viewColumn: 2, tabs: [] }];
   let activeTabGroup = groups[0]!;
   type SourceEditor = { document: { uri: Uri; getText(): string }; readonly viewColumn: number; setDecorations(): void; selections: string[]; visibleRanges: string[]; revealRange(range: unknown): void };
@@ -172,10 +172,11 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       } },
       window: { get activeTextEditor() { return visibleSourceEditors.find(editor => activeTabGroup === editor.group && activeTabGroup.activeTab?.input instanceof TabInputText && activeTabGroup.activeTab.input.uri.toString() === editor.document.uri.toString()); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeTextEditorChanged = callback; return disposable(); }, createWebviewPanel: panel,
         get visibleTextEditors() { return visibleSourceEditors.filter(editor => editor.group.activeTab?.input instanceof TabInputText && editor.group.activeTab.input.uri.toString() === editor.document.uri.toString()); },
-        showTextDocument: async (document: { uri: Uri; getText(): string }, options?: { viewColumn: number; preserveFocus?: boolean }) => {
+        showTextDocument: async (document: { uri: Uri; getText(): string }, options?: { viewColumn: number; preserveFocus?: boolean; preview?: boolean }) => {
           sourceColumn = options?.viewColumn ?? sourceColumn;
           const group = groups.find(candidate => candidate.viewColumn === sourceColumn) ?? groups[0]!, tab = group.tabs.find(tab => tab.input instanceof TabInputText && tab.input.uri.toString() === document.uri.toString()) ?? { input: new TabInputText(document.uri) };
           if (!group.tabs.includes(tab)) group.tabs.push(tab); group.activeTab = tab; if (!options?.preserveFocus) activeTabGroup = group;
+          if (options?.preview !== undefined) tab.isPreview = options.preview;
           visibleSourceEditors.push({ group, document, get viewColumn() { return group.viewColumn; }, setDecorations() { decoratedColumns.push(group.viewColumn); }, selections: ['original selection'], visibleRanges: ['original range'], revealRange() {} });
           const displayed = nextSourceDisplay; nextSourceDisplay = undefined; displayed?.();
           return lastSourceEditor = { document, get viewColumn() { return reportedSourceColumn ?? group.viewColumn; }, setDecorations() { decoratedColumns.push(reportedSourceColumn ?? group.viewColumn); }, selections: ['original selection'], visibleRanges: ['original range'], revealRange() {} };
@@ -238,6 +239,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     showTransientNativeSizes() { transientLayout = true; },
     failNextCommand(name: string) { failingCommand = name; },
     addForeignDraft(column = groups[0]!.viewColumn) { const tab = { input: new TabInputText(Uri.file(join(harness.directory, 'notes.txt'))), isDirty: true }; groups.find(group => group.viewColumn === column)!.tabs.push(tab); return tab; },
+    addTextPreview(path: string, column: number, dirty = false) { const tab = { input: new TabInputText(Uri.file(path)), isPreview: true, isDirty: dirty }; groups.find(group => group.viewColumn === column)!.tabs.push(tab); return tab; },
     resyncEditorGroups(change?: 'move' | 'replace' | 'append' | 'unannounced' | 'remove' | 'reorder' | 'empty') {
       // Give each fake group a distinct stable input, like the actual singleton panels/native source tabs.
       for (const group of groups) if (!group.tabs.length && change !== 'empty') group.tabs.push({ input: new TabInputText(Uri.file(`/group-${group.viewColumn}`)) });
@@ -2889,4 +2891,28 @@ test('mode transfer during a late replay image preserves the last confirmed time
     await harness.reader.changePresentation({ presentationId: next.presentationId, expectedRevision: next.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
     assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.reader.inspect().sourceUri, source);
   } finally { release(); await harness.close(); }
+});
+
+for (const dirty of [false, true]) test(`a ${dirty ? 'learner-edited' : 'clean'} prepared debugger preview ${dirty ? 'rejects switching without keeping tabs' : 'survives all three presentations'}`, async () => {
+  // Arrange: native debugger stops open an owned fixture preview behind the application.
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); const path = join(harness.fixture, 'server.mts');
+    await harness.reader.presentation.prepareSource(path);
+    const preview = harness.addTextPreview(path, 1, dirty), commands = [...harness.commands], panels = harness.counts().panels;
+    const library = await harness.reader.learningStorage(), decisions = (await library.readProgress()).decisions;
+    // Act: the same public workspace coordinator handles the debugger preview and all entry points.
+    const select = (mode: 'living-book' | 'guided-walkthrough' | 'study-workspace') => {
+      const state = harness.reader.presentationState();
+      return harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' });
+    };
+    if (dirty) await assert.rejects(select('living-book'), /not confirmed/);
+    else for (const mode of ['living-book', 'guided-walkthrough', 'study-workspace'] as const) await select(mode);
+    // Assert: no source tab is discarded, dirty previews stay untouched, and learner progress is not inferred.
+    assert.equal(harness.groups.some(group => group.tabs.includes(preview)), true);
+    assert.equal(preview.isPreview, dirty); assert.equal(harness.counts().panels, panels);
+    assert.deepEqual((await library.readProgress()).decisions, decisions);
+    if (dirty) assert.deepEqual(harness.commands, commands);
+    else { assert.equal(harness.reader.presentationState().mode, 'study-workspace'); assert.equal(harness.reader.presentationState().layoutConfirmed, true); }
+  } finally { await harness.close(); }
 });

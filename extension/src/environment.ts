@@ -20,6 +20,7 @@ import { checkDemoFiles } from './utils/checkDemoFiles';
 
 export interface StudyPresentation {
   createViewport: BrowserViewportFactory;
+  /** Registers a demo-owned temporary source before its debugger starts; configured workspace files are never passed here. @example await presentation.prepareSource(fixturePath) */
   prepareSource(path: string): Promise<void>;
   revealSource(snapshot: RuntimeSnapshot, path: string): Promise<boolean>;
 }
