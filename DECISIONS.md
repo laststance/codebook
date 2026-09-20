@@ -140,3 +140,14 @@ Source: [Cycle 0010](docs/cycles/0010-real-repository-runtime.md), 38 experiment
 Decision: keep bounded emitted-source verification, normalized full script identity, explicit selected session/thread/generation, independent input/control and owned cleanup. Require usable development maps for this demonstrated Next webpack path; do not pretend the frozen production build retained maps. Next connect a configurable ordinary-repository browser action to the existing MCP, Study observations, book evidence and recording model. The selected target is acceptance evidence, not a new hard-coded runtime profile. Preserve current fixed checkout and D016/D017 reader behavior.
 Reason: the real-repository experiment removes the immediate source/debugger uncertainty, while the product environment still constructs only PairedRun and exposes prepared profiles. A bounded public integration now advances G01/G03/G04/G06/G10 more directly than another experiment or reader refinement.
 Limits: the original native after-frame ACK failure remains unexplained; successful later runs do not establish general reliability. Review stopped non-converged at three fixing passes, outside coverage is missing, and the experiment is neither packaged nor installed. All three intended uses, both later layouts, integrated two-host acceptance, owner acceptance and ten consecutive fresh final reviews remain required. No product outcome or accepted design choice changes. Status: selected route.
+
+
+## D020 — Advance the configured path to shared presentations, 2026-09-20
+
+Source: [Cycle 0011 final reconciliation](docs/cycles/evidence/0011/final-reconciliation-20260920.md), source-equivalent implementation `58f08cd`, 476 tests, actual VS Code/Cursor configured runs, offline/partial replay and native UX evidence. Agent-selected route within D008.
+
+Decision: keep the bounded configured browser adapter and shared immutable study/recording/learner identities. Select one shared presentation-mode increment next, after reading Issue #1 purpose and inspecting the approved images again. Switching must preserve the same run, item, understanding and playhead; it must not create another runtime or reinterpret recorded evidence as live.
+
+Reason: the configured path now answers its finite cycle question; G08 and G09 remain wholly unimplemented. Further repetition of unchanged runtime checks would not close that product gap.
+
+Limits: full implementation review remains non-converged; supported adapter bounds, prior partial captures and local evidence availability remain qualified. Packaging, three intended uses, owner acceptance and the final ten sequential reviews remain required. No product outcome changes. Status: active route.

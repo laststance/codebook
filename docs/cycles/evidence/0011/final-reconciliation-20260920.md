@@ -4,6 +4,8 @@ Result: **demonstrated**, with the limitations below. The configured browser-onl
 
 The final product cut is v29: `d6979cd45081ddaf4d5390ab625a7a8100cde78b4dd9f6a58f4b4e5f2502dbd6`, 236 source/build-input entries, compiled on dirty `2c55545697d7970a1c165e9cc2b0b7adebe6f935`. Build succeeds; **476/476 tests** pass, zero failed/cancelled/skipped/todo, 29,455.375916 ms. The compiled-HTML browser regressions pass eight saving-focus checks and two tall-table geometries. Browser bridges do not substitute for the actual editor results below.
 
+Implementation commit **`58f08cd`** is source-equivalent to this validated cut: all 236 committed Git blobs match the build inventory, and the working tree was clean at verification. Build metadata deliberately retains its original dirty-base provenance. The [final bounded review](final-bounded-review-20260920.md) records CodeRabbit and OCR coverage.
+
 ## Frozen N01–N14 results
 
 Each earlier source cut retains its own evidence. Later bounded presentation repairs do not alter the runtime adapter/ownership/recording contracts; unaffected runtime evidence is retained with that qualification. The current-cut checks cover the affected presentation behavior and a new authentic public run in each host. There is no claim that every historical negative case was rerun on v29.
@@ -43,6 +45,6 @@ The [initial-layout investigation](native-initial-layout-20260920.md) records IS
 
 ## Decision and next gap
 
-Keep the configured browser adapter, explicit source/pause identity, shared descriptors, immutable correspondence and learner-owned progress. Close this finite cycle as demonstrated once its records are committed and pushed. Preserve full-review non-convergence, earlier phase-ACK failures, local-only recordings, prepared setup limitations and all unsupported environments.
+Keep the configured browser adapter, explicit source/pause identity, shared descriptors, immutable correspondence and learner-owned progress. This finite cycle closes as demonstrated with committed evidence and remote tracking synchronization. Preserve full-review non-convergence, earlier phase-ACK failures, local-only recordings, prepared setup limitations and all unsupported environments.
 
 The largest wholly missing product behavior is switching the same study between Study workspace, Living book and Guided walkthrough. Select one bounded shared-presentation cycle next, first re-inspecting Issue #1's approved images and linked purpose. Its proof must preserve run/item/progress/playback identity in both hosts; do not start another runtime-polish cycle without a new failure. Packaging, ordinary-repository checkout, three intended uses, owner acceptance and the ten fresh sequential final reviews remain required. Final reviews: **0/10, not started**.

@@ -1,9 +1,9 @@
 # Cycle 0011 — Configurable repository browser study
 
 Type: product-increment
-Status: validating
+Status: closed
 Result: demonstrated
-Delivery: local-only
+Delivery: committed; remote closure sync follows push
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/12
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -512,11 +512,11 @@ Implementation checkpoint 19: explicit Arrange now separates learner-moved panes
 
 ## Result and decision
 
-Result: demonstrated within the declared configured browser scope. [Final reconciliation](evidence/0011/final-reconciliation-20260920.md) records N01–N14, 476 tests, both-host native evidence, retained failures and exact source identity; [live DX](evidence/0011/dx-live-20260920.md) records actual prepared timing and recovery. Keep the adapter/shared evidence model. Complete commit/issue synchronization, then select the missing shared presentation modes. Full review non-convergence, packaging, all intended uses, owner acceptance and final reviews remain open.
+Result: demonstrated within the declared configured browser scope. [Final reconciliation](evidence/0011/final-reconciliation-20260920.md) records N01–N14, 476 tests, both-host native evidence, retained failures and exact source identity; [live DX](evidence/0011/dx-live-20260920.md) records actual prepared timing and recovery. Keep the adapter/shared evidence model. Implementation `58f08cd` matches all 236 validated build inputs. Synchronize the committed closure on Issue #12, then select the missing shared presentation modes. Full review non-convergence, packaging, all intended uses, owner acceptance and final reviews remain open.
 
 ## Handoff
 
-Exact next action: v29 affected native and live DX verification are complete in both editors; no owned host remains active. The 236-entry inventory `d6979cd45081ddaf4d5390ab625a7a8100cde78b4dd9f6a58f4b4e5f2502dbd6` matches disk, 476 tests pass, and N01–N14 are reconciled with unchanged earlier-runtime evidence qualified. Complete the bounded OCR diff accounting, commit/push the cycle records, close Issue #12 with evidence, then select the shared presentation-mode cycle after inspecting Issue #1 images and purpose again. The final reconciliation and DX report contain exact local artifact paths and remaining limitations. Full review is non-converged; final reviews remain 0/10.
+Exact next action: Cycle 0011 is demonstrated and closed in repository records. Push the closure and close Issue #12 with its commit/evidence links; then begin the one selected next candidate, shared presentation modes, by reading Issue #1 purpose and visually inspecting its three design images. Plan a bounded shared-state switch between Study workspace, Living book and Guided walkthrough that preserves run/item/understanding/playback identity in both hosts. No owned QA host remains active. The full G01–G11 goal, packaged acceptance, intended uses and owner feedback remain open; final reviews 0/10.
 
 
 ### Recording-fault evidence amendment (2026-09-20, before the native probes)
