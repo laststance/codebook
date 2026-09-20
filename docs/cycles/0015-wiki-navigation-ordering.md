@@ -1,9 +1,9 @@
 # Cycle 0015 — Native Wiki navigation ordering
 
 Type: experiment\
-Status: validating\
+Status: closed\
 Result: inconclusive\
-Delivery: committed\
+Delivery: merged\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/17\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -63,7 +63,9 @@ Keep the approved shared ownership model. The modeled late effect was not reprod
 
 The investigation records were committed and pushed as `29ac1d2`. GStack `/review` ended non-converged after its third documentation fixing round. The second outside structured pass completed with no P1 findings; the parallel outside adversarial pass timed out after 540 seconds. A separate independent `/ship` documentation check verified the exact eight-path `29ac1d2` candidate and all 43 artifact entries with no actionable findings. The third CodeRabbit CLI pass completed those eight paths with one minor date comment: the retained September 21 date is correct in JST, as the report's timezone declaration and UTC session timestamps show. These bounded documentation checks do not resolve historical implementation-review gaps or count toward final-product reviews; later doc-sync amendments require separate verification.
 
-PR creation and merge with Closes #17 remain pending. Both owned hosts exited 0, settings match their original bytes, and owned profile processes are absent. The next candidate is packaged installation and integrated acceptance. Final reviews remain 0/10.
+[PR #18](https://github.com/laststance/codebook/pull/18) merged on 2026-09-20 at 17:38:33 UTC as `3149e75f9952cb172f0f400d49c4ad064493ddaf`; Issue #17 closed two seconds later. The merged tree exactly matches reviewed/delivery head `65a78b34b2d2aba0cb90c05c33d675c457b9dbaa`, whose three-file doc-sync amendment was separately inspected after the bounded eight-path reviews. Socket checks succeeded; hosted CodeRabbit was explicitly ignored and is not review completion. Formal approval is absent. No project build/deploy workflow or marketplace publication was performed. Main was synchronized and the cycle branch removed.
+
+Both owned hosts exited 0, settings match their original bytes, and owned profile processes are absent. [Cycle 0016](0016-packaged-installation.md) advances packaged installation and integrated acceptance. Final reviews remain 0/10.
 
 ## Frozen native schedule v1 (before execution)
 

@@ -2,15 +2,17 @@
 
 Updated: 2026-09-21\
 Product stage: configured core execution, offline replay and restart demonstrated separately in both editors; complete cross-host and installed usefulness unverified\
-Active cycle: [0015 — Native Wiki navigation ordering](docs/cycles/0015-wiki-navigation-ordering.md) — validating; native investigation inconclusive\
-Last cycle: [0014 — Shared presentation controls](docs/cycles/0014-shared-presentation-controls.md) — demonstrated with explicit remaining obligations; merged\
+Active cycle: [0016 — Packaged installation](docs/cycles/0016-packaged-installation.md) — planning\
+Last cycle: [0015 — Native Wiki navigation ordering](docs/cycles/0015-wiki-navigation-ordering.md) — inconclusive; merged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: [#17](https://github.com/laststance/codebook/issues/17) — open\
-Last cycle issue: [#15](https://github.com/laststance/codebook/issues/15) — closed by PR #16\
+Active cycle issue: [#19](https://github.com/laststance/codebook/issues/19) — open\
+Last cycle issue: [#17](https://github.com/laststance/codebook/issues/17) — closed by PR #18\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
 ## Verified facts
+
+- [PR #18](https://github.com/laststance/codebook/pull/18) merged Cycle 0015 into main at `3149e75`, exactly matching delivery head `65a78b3`; Issue #17 closed at merge. Root VERSION 0.2.0.1 is a documentation checkpoint, while the extension remains 0.2.0 / API 1.5. The fresh 647-test suite passes unchanged product sources. Bounded documentation checks, non-converged GStack review, qualified outside coverage, CodeRabbit CLI results, ignored hosted CodeRabbit status and absent formal approval remain separate. No package/publication claim follows.
 
 - [Cycle 0015 native ordering](docs/cycles/evidence/0015/native-ordering-20260921.md) is **inconclusive** for the modeled late-effect race. 35 instrumented development-host diagnostic cases per host produced zero observed mismatches, using in-memory test storage; all 30 range snapshots at the last native promise fulfillment matched (the later drained per-case result records URI/article identity separately). Actual native display calls overlapped in 10 VS Code / 13 Cursor reader pairs plus ten direct API pairs per host; immutable A/B reader calls overlapped in 0/10 VS Code cases. None settled in the modeled reverse order. Already accepted source tabs can remain after Wiki Close. No product repair or general ordering guarantee is claimed. Both hosts exited 0 with restored settings and no remaining owned profile process.
 
@@ -82,7 +84,7 @@ Current [native integration evidence](docs/cycles/evidence/0011/native-validatio
 
 Earlier [Arrange investigation](docs/cycles/evidence/0011/native-layout-investigation-20260920.md): explicit recovery separates moved Codebook panes, preserves actual source placement across replay-induced render cancellation, follows later manual moves and reports interrupted placement before claiming success. **399/399 product tests pass**, zero failed/skipped/cancelled (16.760s). Final v14 inventory `fb597267fc8ac348ddff5460b8d5c47cf86f13cd231585fa6ea38aeb20a049e2` has 231 entries on dirty `a3fba6f`. Both actual hosts pass the complete Arrange/manual-move sequence, with inspected video, highlighted exact source and unchanged dirty draft. Cursor additionally passes visible 200% observation/recording Return with exact pose and learner ledger. The report qualifies its cramped retained manual layout and child-frame automation failures; this is not complete 200% usability acceptance. All intermediate hypotheses, a retracted host API inference and a simultaneous-host recording ACK timeout remain recorded.
 
-Exact next action: complete bounded review and delivery of [Cycle 0015](docs/cycles/0015-wiki-navigation-ordering.md) on `codex/cycle-0015-wiki-navigation-ordering`. The native experiment is inconclusive for the modeled late-effect race; no product repair was made. Preserve its limitations and deliver through a PR closing Issue #17. Next candidate: packaged installation and integrated acceptance. No owned native session remains.
+Exact next action: complete `/plan-eng-review` of [Cycle 0016](docs/cycles/0016-packaged-installation.md) on `codex/cycle-0016-packaged-installation`, then make the extension assets and runtime self-contained in a VSIX and verify ordinary installation in both editors. Cycle 0015 is delivered through PR #18; its native experiment remains inconclusive for the modeled late-effect race and made no product repair. No owned native session remains.
 
 Cycle 0014 delivery is complete through [PR #16](https://github.com/laststance/codebook/pull/16), with Issue #15 closed and its branch removed. The [ship source inventory](docs/cycles/evidence/0014/ship-source-cut.json) binds 245 source/test/script files to `55ce23cfb156a0491976a3a1b295912de7ef41031c73ffc0b20674ff380eafee`. All bytes match the merged tree; 647 tests and both-host SDK proof are identified in [the ship supplement](docs/cycles/evidence/0014/ship-verification-20260921.md). Prior native cuts and failures remain historical, including the Cursor cold-reader foreign-focus rejection and cropped 200% motion.
 
