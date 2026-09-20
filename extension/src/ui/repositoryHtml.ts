@@ -11,6 +11,7 @@ export function repositoryHtml(): string {
   const nonce = randomUUID();
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Repository Wiki · codebook</title><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'"><style nonce="${nonce}">${STUDY_STYLES}
 body{padding:20px 24px;font-size:16px;line-height:1.5}button,select{font:inherit}button{min-height:44px}h1{font-size:20px;line-height:1.3;margin:12px 0}h2{font-size:16px}.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-bottom:1px solid var(--vscode-panel-border);padding-bottom:12px}.toolbar select{max-width:100%;min-height:44px}.layout{display:grid;grid-template-columns:minmax(0,72ch) minmax(210px,30ch);gap:24px}.article{min-width:0}.article section{border-top:1px solid var(--vscode-panel-border);padding:16px 0;margin:0}.article p{white-space:pre-wrap;overflow-wrap:anywhere}.badges{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.badge{font-size:13px;padding:2px 6px;border:1px solid var(--vscode-panel-border);border-radius:3px}.interpretation{border-left:3px solid var(--vscode-textLink-foreground);padding-left:12px}.context{min-width:0;border-left:1px solid var(--vscode-panel-border);padding-left:16px}.context button{display:block;text-align:left;width:100%;margin-bottom:4px;overflow-wrap:anywhere}.context h2{margin-top:20px}.context p,.context li{font-size:14px;overflow-wrap:anywhere}.context ol{padding-left:20px}.understanding{display:flex;align-items:center;min-height:44px;gap:10px}.understanding input{width:16px;height:16px;margin:0}.history{font-size:13px;overflow-wrap:anywhere}.source-link{max-width:100%;text-align:left;overflow-wrap:anywhere}.contents-compact{display:none}#state{min-height:24px}#errors:empty{display:none}#latest{margin:12px 0}#article-title:focus{outline:1px solid var(--vscode-focusBorder)}
+#observations button[aria-disabled="true"]{opacity:.6;cursor:default}#observations button[aria-disabled="true"]:hover{filter:none}
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media(max-width:${REPOSITORY_NARROW_WIDTH_PX - 1}px){body{padding:16px}.layout{display:block}.context{border-left:0;border-top:1px solid var(--vscode-panel-border);padding:0}.contents-wide{display:none}.contents-compact{display:block}.toolbar{align-items:stretch}.toolbar select{width:100%}}
 </style></head><body><header class="toolbar"><strong>Repository Wiki</strong><label for="books">Book</label><select id="books"></select><label for="versions">Revision</label><select id="versions"></select><button id="refresh" data-action="refresh">Refresh</button><button id="connect" data-action="connect">Connect agent</button></header>
@@ -40,8 +41,11 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     let sectionIndex = 0;
     sections.forEach((section, index) => { if (section.getBoundingClientRect().top <= 1) sectionIndex = index; });
     const section = sections[sectionIndex], top = section?.getBoundingClientRect().top ?? 0;
-    const active = document.activeElement instanceof HTMLElement ? document.activeElement.id : '';
-    return { sectionIndex, fraction: section ? Math.min(1, Math.max(0, -top / Math.max(1, section.offsetHeight))) : 0, focusId: active || location?.focusId || 'article-title' };
+    const focused = document.activeElement instanceof HTMLElement ? document.activeElement : undefined, bounds = focused?.getBoundingClientRect();
+    // A visible article control is a stable return anchor even when adjacent recovery text changes the section height.
+    const visibleFocus = focused?.id && focused.closest('[data-section]') && bounds && bounds.height > 0 && bounds.width > 0 && bounds.top >= 0 && bounds.bottom <= innerHeight && bounds.left >= 0 && bounds.right <= innerWidth;
+    return { sectionIndex, fraction: section ? Math.min(1, Math.max(0, -top / Math.max(1, section.offsetHeight))) : 0, focusId: focused?.id || location?.focusId || 'article-title',
+      ...(visibleFocus ? { focusViewportFraction: bounds.top / innerHeight } : {}) };
   };
   const persist = () => {
     if (restoring || !current?.selection || current.loading) return;
@@ -53,7 +57,13 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     restoring = true;
     const section = document.querySelector<HTMLElement>(`[data-section="${location.sectionIndex}"]`);
     if (section) window.scrollTo(0, window.scrollY + section.getBoundingClientRect().top + section.offsetHeight * location.fraction);
-    if (focus) element(location.focusId)?.focus({ preventScroll: true });
+    const focused = element(location.focusId), bounds = focused?.getBoundingClientRect();
+    // Restore only an existing article anchor; old positions and hidden/missing targets keep the section-relative fallback.
+    if (location.focusViewportFraction !== undefined && focused?.closest('[data-section]') && bounds && bounds.height > 0 && bounds.width > 0) {
+      const offset = Math.min(innerHeight * location.focusViewportFraction, Math.max(0, innerHeight - bounds.height));
+      window.scrollTo(0, window.scrollY + bounds.top - offset);
+    }
+    if (focus) focused?.focus({ preventScroll: true });
     requestAnimationFrame(() => { restoring = false; });
   };
   const select = (selection: RepositorySelection) => { persist(); send({ type: 'select', selection }); };
@@ -115,7 +125,27 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     if (element('observations').dataset.key !== evidenceKey) {
       element('observations').dataset.key = evidenceKey;
       const focusedId = element('observations').contains(document.activeElement) && document.activeElement instanceof HTMLElement ? document.activeElement.id : undefined;
-      element('observations').replaceChildren(...links.map(link => { const container = document.createElement('div'), caption = document.createElement('p'); caption.textContent = `${link.outcome} saved study · ${link.studyId} · ${(link.elapsedMs / 1000).toFixed(2)} s${link.status === 'unavailable' ? ` · ${link.reason}` : ''}`; container.append(caption); for (const recording of [false, true]) { const control = button(recording ? 'View recording' : 'View observation', `evidence-${link.linkIndex}-${recording ? 'recording' : 'observation'}`, () => { persist(); send({ type: 'evidence', linkIndex: link.linkIndex, recording, selection: { ...current?.selection, location } }); }); control.disabled = link.status !== 'available' || recording && link.recording.status !== 'available'; container.append(control); } if (link.recording.status !== 'available') { const reason = document.createElement('p'); reason.className = 'muted'; reason.textContent = link.recording.reason ?? 'No verified recording for this observation.'; container.append(reason); } return container; }));
+      element('observations').replaceChildren(...links.map(link => {
+        const container = document.createElement('div'), caption = document.createElement('p');
+        caption.textContent = `${link.outcome} saved study · ${link.studyId} · ${(link.elapsedMs / 1000).toFixed(2)} s${link.status === 'unavailable' ? ` · ${link.reason}` : ''}`;
+        container.append(caption);
+        for (const recording of [false, true]) {
+          const control = button(recording ? 'View recording' : 'View observation', `evidence-${link.linkIndex}-${recording ? 'recording' : 'observation'}`, () => {
+            // ARIA-disabled controls retain Return focus; reject keyboard and pointer activation here.
+            if (current?.loading || link.status !== 'available' || recording && link.recording.status !== 'available') return;
+            persist(); send({ type: 'evidence', linkIndex: link.linkIndex, recording, selection: { ...current?.selection, location } });
+          });
+          container.append(control);
+        }
+        // Keep recovery readable while preserving the unavailable recording's exact diagnostic on demand.
+        if (link.recording.status !== 'available') {
+          const recovery = document.createElement('p'), details = document.createElement('details'), summary = document.createElement('summary'), reason = document.createElement('p');
+          recovery.className = 'muted'; recovery.textContent = 'Recording unavailable. Refresh the article or ask your agent to check it.';
+          summary.textContent = 'Recording details'; reason.textContent = link.recording.reason ?? 'No verified recording for this observation.';
+          details.append(summary, reason); container.append(recovery, details);
+        }
+        return container;
+      }));
       if (!element('observations').childElementCount) text('observations', 'No runtime observation linked. This article explains source-derived behavior.');
       if (focusedId) element(focusedId)?.focus({ preventScroll: true });
     }
@@ -124,7 +154,8 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     text('save-state', message.saving ? 'Saving…' : '');
     // Keep old article actions inert until the selected article/source has finished loading.
     document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>('#reader button, #reader select, #books, #versions, #load-latest').forEach(control => { control.disabled = message.loading; });
-    for (const link of links) for (const recording of [false, true]) { const control = element(`evidence-${link.linkIndex}-${recording ? 'recording' : 'observation'}`); if (control instanceof HTMLButtonElement) control.disabled = message.loading || link.status !== 'available' || recording && link.recording.status !== 'available'; }
+    // Unavailable evidence remains focusable for exact Return; its handler blocks activation independently.
+    for (const link of links) for (const recording of [false, true]) { const control = element(`evidence-${link.linkIndex}-${recording ? 'recording' : 'observation'}`); if (control instanceof HTMLButtonElement) control.setAttribute('aria-disabled', String(message.loading || link.status !== 'available' || recording && link.recording.status !== 'available')); }
     const selectedAnchor = node.anchors[selection.anchorIndex], currentFile = element('current-file');
     if (currentFile instanceof HTMLButtonElement) currentFile.disabled = message.loading || !message.sources.some(source => source.path === selectedAnchor?.path && source.hash === selectedAnchor.hash && source.status === 'current');
     const checkbox = element('understand'); if (checkbox instanceof HTMLInputElement) { checkbox.checked = understanding?.understood ?? false; checkbox.disabled = message.saving || message.loading || !understanding?.known; }

@@ -45,6 +45,37 @@ test('configured selection upgrades progress only on explicit write and preserve
   assert.equal(await readFile(legacyPath, 'utf8'), legacyBytes); assert.equal(JSON.parse(await readFile(path, 'utf8')).version, 4);
 });
 
+test('recording Return keeps the visible focused control position through restart without rewriting understanding', async context => {
+  // Arrange
+  const { directory, study, library, legacy } = await progressHarness(context);
+  const article = { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 1,
+    location: { sectionIndex: 2, fraction: 0.698, focusId: 'evidence-0-recording', focusViewportFraction: 0.0625 } };
+  // Act
+  await library.selectRepository(article);
+  await library.rememberRepositoryReturn({ studyId: study.id, selection: article });
+  const restarted = await new LearningLibrary(directory, study.workspaceKey).readProgress();
+  // Assert
+  assert.deepEqual(restarted.repositorySelection, { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 1,
+    location: { sectionIndex: 2, fraction: 0.698, focusId: 'evidence-0-recording', focusViewportFraction: 0.0625 } });
+  assert.deepEqual(restarted.repositoryReturn?.selection.location, { sectionIndex: 2, fraction: 0.698, focusId: 'evidence-0-recording', focusViewportFraction: 0.0625 });
+  assert.deepEqual(restarted.decisions, legacy.decisions);
+});
+
+test('invalid focused control positions cannot overwrite the saved article or learner history', async context => {
+  // Arrange
+  const { library, path, legacy } = await progressHarness(context);
+  await library.selectRepository(legacy.repositorySelection!);
+  const before = await readFile(path, 'utf8');
+  // Act / Assert
+  for (const focusViewportFraction of [-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const invalid = { ...legacy.repositorySelection!, location: {
+      sectionIndex: 2, fraction: 0.698, focusId: 'evidence-0-recording', focusViewportFraction,
+    } };
+    await assert.rejects(async () => library.selectRepository(invalid));
+    assert.equal(await readFile(path, 'utf8'), before);
+  }
+});
+
 test('a cancelled return receipt cannot erase another window\'s later article position and its own receipt can be cleared', async context => {
   // Arrange
   const { directory, study, library, legacy } = await progressHarness(context), other = new LearningLibrary(directory, study.workspaceKey);

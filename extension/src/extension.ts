@@ -20,8 +20,8 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
   let starting: Promise<Running> | undefined, running: Running | undefined, stopping: Promise<void> | undefined;
   let reader: StudyWorkspace | undefined;
   let repositoryReader: RepositoryReader | undefined;
-  const workspace = (): StudyWorkspace => reader ??= new StudyWorkspace(context, { start: async () => { await start(); if (!running) throw new Error('Study server did not start.'); return running.service; }, connect, returnToRepository: selection => repository().open(selection), openArticle: selection => repository().open(selection) });
-  const repository = (): RepositoryReader => repositoryReader ??= new RepositoryReader({ storage: () => workspace().learningStorage(), connect, arrange: signal => workspace().arrangeRepository(signal), evidence: (binding, recording, signal, origin) => workspace().openRepositoryEvidence(binding, recording, signal, origin) });
+  const workspace = (): StudyWorkspace => reader ??= new StudyWorkspace(context, { start: async () => { await start(); if (!running) throw new Error('Study server did not start.'); return running.service; }, connect, returnToRepository: selection => repository().open(selection, undefined, true), openArticle: selection => repository().open(selection) });
+  const repository = (): RepositoryReader => repositoryReader ??= new RepositoryReader({ storage: () => workspace().learningStorage(), connect, arrange: (signal, returnSelection) => workspace().arrangeRepository(signal, returnSelection), evidence: (binding, recording, signal, origin) => workspace().openRepositoryEvidence(binding, recording, signal, origin) });
   const start = async () => {
     requireWorkspace();
     if (stopping) throw new Error('Codebook server is stopping; wait for cleanup before starting.');

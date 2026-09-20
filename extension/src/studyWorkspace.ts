@@ -102,7 +102,9 @@ export class StudyWorkspace {
   private closing = false;
   private closingPromise?: Promise<void>;
   private arranging?: Promise<void>;
-  private layoutReceipt?: { mode: 'study' | 'repository'; signature: string; groups: { group: vscode.TabGroup; column: vscode.ViewColumn }[] };
+  private layoutReceipt?: { mode: 'study' | 'repository' | 'study-reentry'; signature: string; groups: { group: vscode.TabGroup; column: vscode.ViewColumn }[]; panes: ReturnType<StudyWorkspace['studyPanePositions']>; sourceTargetColumn?: vscode.ViewColumn };
+  private repositoryLayoutOrigin?: { origin: NonNullable<StudyWorkspace['repositoryOrigin']>; navigation?: number; layout: unknown; groups: NonNullable<StudyWorkspace['layoutReceipt']>['groups'] };
+  private repositoryLayoutRestored?: { signature: string; studyLayout: unknown; groups: NonNullable<StudyWorkspace['layoutReceipt']>['groups']; before: ReturnType<StudyWorkspace['studyPanePositions']>; after: ReturnType<StudyWorkspace['studyPanePositions']> };
   private readonly editorGroupIdentities = new WeakMap<vscode.TabGroup, symbol>();
   private observedEditorGroups: { group: vscode.TabGroup; column: vscode.ViewColumn }[] = [];
   private disposed = false;
@@ -135,8 +137,11 @@ export class StudyWorkspace {
   /** Shares the existing workspace ledger with the repository reader without creating runtime prerequisites. @example await workspace.learningStorage() */
   async learningStorage(): Promise<LearningLibrary> { await this.initialize(); return this.library!; }
 
-  /** Restores side-by-side reading for {@link RepositoryReader} only while the last Codebook arrangement remains owned. @example await workspace.arrangeRepository(signal) */
-  async arrangeRepository(signal: AbortSignal): Promise<void> { await this.arrange(signal, 'repository', true); }
+  /** Restores the actual article's native layout on Return; ordinary {@link RepositoryReader.open} keeps the existing owned-entry policy. @example await workspace.arrangeRepository(signal, selection) */
+  async arrangeRepository(signal: AbortSignal, returnSelection?: RepositorySelection): Promise<void> {
+    if (returnSelection && this.repositoryLayoutOrigin) { await this.restoreRepositoryLayout(returnSelection, signal); return; }
+    await this.arrange(signal, 'repository', true);
+  }
 
   /** Opens exact validated book evidence and its recorded time without dispatching input or borrowing a live pause. @example await workspace.openRepositoryEvidence(binding, true) */
   async openRepositoryEvidence(binding: BookObservationBinding, recording: boolean, signal?: AbortSignal, origin?: RepositorySelection): Promise<void> {
@@ -150,7 +155,7 @@ export class StudyWorkspace {
     this.progress = await this.library!.readProgress(); assertCurrent();
     if (request !== this.historyRequest) throw new Error('Evidence navigation was superseded.');
     const previousSelection = this.selection, previousArchive = this.selectedArchive, previousSelectionKey = this.lastSelectionKey, previousSourceUri = this.sourceUri, previousSourceReady = this.sourceReady();
-    const previousOrigin = this.repositoryOrigin, previousReturn = this.progress.repositoryReturn;
+    const previousOrigin = this.repositoryOrigin, previousReturn = this.progress.repositoryReturn, previousLayoutOrigin = this.repositoryLayoutOrigin, previousLayoutRestored = this.repositoryLayoutRestored;
     // Shared refresh may finish checkpoint I/O, but only this signal-bound navigation may render its new selection.
     this.repositoryNavigation = request; this.revision++; this.lastSelectionKey = undefined;
     const returnSelection = origin ?? this.progress?.repositorySelection;
@@ -191,6 +196,8 @@ export class StudyWorkspace {
       if (this.repositoryNavigation === request && this.historyRequest === request) {
         this.selection = previousSelection; this.selectedArchive = previousArchive; this.lastSelectionKey = previousSelectionKey;
         this.repositoryOrigin = previousOrigin; this.progress = { ...this.progress, repositoryReturn: previousReturn };
+        // Only this failed visit may roll back its native origin; Close and newer visits retain their own lifetimes.
+        if (lifetime === this.lifetime && !this.closing && this.repositoryLayoutOrigin?.navigation === request) { this.repositoryLayoutOrigin = previousLayoutOrigin; this.repositoryLayoutRestored = previousLayoutRestored; }
         this.revision++; this.loading = false; this.lastRendered = undefined;
         // Retain verified native readiness only when the cancelled navigation never replaced the prior source.
         this.sourceRevision = previousSourceReady && this.sourceUri === previousSourceUri ? this.revision : undefined;
@@ -247,7 +254,7 @@ export class StudyWorkspace {
   /** Opens the shared reader without runtime input; explicit Study entry also reveals its outline/timeline. @example await workspace.open() */
   async open(signal?: AbortSignal, origin: 'study' | 'repository' = 'study'): Promise<void> {
     signal?.throwIfAborted(); const lifetime = this.lifetime; this.assertLifetime(lifetime); signal?.throwIfAborted();
-    const request = ++this.openRequest;
+    const request = ++this.openRequest, historyRequest = this.historyRequest;
     await this.initialize(); this.assertLifetime(lifetime); signal?.throwIfAborted();
     await this.refreshProgress(); this.assertLifetime(lifetime); signal?.throwIfAborted();
     const firstOpen = !this.opened; this.opened = true; this.closing = false;
@@ -257,9 +264,11 @@ export class StudyWorkspace {
     };
     signal?.addEventListener('abort', cancel, { once: true });
     try {
+      const reentry = origin === 'repository' ? await this.captureRepositoryLayout(signal) : undefined;
+      this.assertLifetime(lifetime); signal?.throwIfAborted();
       this.installReaders(); this.ensureApp(); this.ensureContext();
       if (firstOpen && this.currentRecord() && this.selection.follow) this.selection = { ...this.selection, follow: true, tab: 'live' };
-      await this.refresh(signal); signal?.throwIfAborted(); await this.renderSelection(true, false, signal);
+      await this.refresh(signal); signal?.throwIfAborted(); await this.renderSelection(true, reentry?.sourceTargetColumn !== undefined, signal, reentry ? { kind: 'reentry', receipt: reentry } : undefined);
       this.assertLifetime(lifetime); signal?.throwIfAborted();
       // Wiki evidence keeps the learner's navigation chrome unchanged; explicit Study still reveals its outline/timeline.
       if (origin === 'study') {
@@ -268,6 +277,8 @@ export class StudyWorkspace {
         await vscode.commands.executeCommand('codebook.observedMoments.focus');
       }
       this.assertLifetime(lifetime); signal?.throwIfAborted();
+      // Only the current explicit observation entry fronts the app; learner columns and final context focus stay intact.
+      if (origin === 'repository' && !this.recordingActive && request === this.openRequest && historyRequest === this.historyRequest) this.app?.reveal(undefined, true);
       this.contextPanel?.reveal(undefined, false);
       if (this.recordingActive && (firstOpen || !this.replayViewport)) this.playback?.reveal();
       // Capture ownership after explicit view reveals finish resizing the native workbench.
@@ -468,7 +479,7 @@ export class StudyWorkspace {
       this.opened = false; this.contextPanel?.dispose(); this.contextPanel = undefined; this.app?.dispose(); this.app = undefined;
       clearTimeout(this.citationRefreshTimer); this.citationRevision++; this.citationKey = undefined;
       for (const watcher of this.citationWatchers.splice(0)) watcher.dispose();
-      this.layoutReceipt = undefined;
+      this.layoutReceipt = undefined; this.repositoryLayoutOrigin = undefined; this.repositoryLayoutRestored = undefined;
       this.sourceUri = undefined; this.sourceGroup = undefined; this.sourceRevision = undefined; this.lastSelectionKey = undefined; this.documents.clear();
     })();
     try { await pending; } finally { if (this.closingPromise === pending) { this.closingPromise = undefined; this.closing = false; } }
@@ -862,7 +873,7 @@ export class StudyWorkspace {
   }
 
   /** Serializes source opens and invalidates obsolete selection work before it can qualify context/app correspondence. @example await this.renderSelection() */
-  private async renderSelection(preserveFocus = true, forceSource = false, signal?: AbortSignal, sourceColumn?: vscode.ViewColumn): Promise<void> {
+  private async renderSelection(preserveFocus = true, forceSource = false, signal?: AbortSignal, placement?: { kind: 'arrange'; column: vscode.ViewColumn } | { kind: 'reentry'; receipt: NonNullable<StudyWorkspace['layoutReceipt']> }): Promise<void> {
     signal?.throwIfAborted();
     if (!this.opened || this.closing || !this.baselines || this.pendingHistory !== undefined) return Promise.resolve();
     const lifetime = this.lifetime;
@@ -890,6 +901,15 @@ export class StudyWorkspace {
       const document = await vscode.workspace.openTextDocument(uri);
       signal?.throwIfAborted();
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
+      let sourceColumn = placement?.kind === 'arrange' ? placement.column : undefined;
+      // Reentry cannot overwrite a learner move during source I/O; only explicit Arrange retains an unconditional target.
+      if (placement?.kind === 'reentry') {
+        const receipt = placement.receipt, layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout');
+        signal?.throwIfAborted();
+        if (revision !== this.revision || this.closing || lifetime !== this.lifetime || this.pendingHistory !== undefined) return;
+        if (receipt === this.layoutReceipt && JSON.stringify(layout) === receipt.signature && this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) && this.sameStudyPanePositions(receipt.panes, receipt.sourceTargetColumn)) sourceColumn = receipt.sourceTargetColumn;
+        else if (receipt === this.layoutReceipt) this.layoutReceipt = undefined;
+      }
       const sourceGroups = vscode.window.tabGroups.all.filter(group => group.tabs.some(tab => tab.input instanceof vscode.TabInputText && [uri.toString(), this.sourceUri?.toString()].includes(tab.input.uri.toString())));
       // Retain the last rendered source group through wrapper resync without adopting an older duplicate.
       const sourceGroupIdentity = this.sourceGroup && this.editorGroupIdentities.get(this.sourceGroup);
@@ -898,10 +918,10 @@ export class StudyWorkspace {
       const targetColumn = sourceColumn ?? group?.viewColumn ?? vscode.ViewColumn.Two;
       const position = new vscode.Position(source.line - 1, 0);
       const editor = await vscode.window.showTextDocument(document, { viewColumn: targetColumn, preserveFocus, preview: false, selection: new vscode.Range(position, position) });
-      signal?.throwIfAborted();
       if (this.closing || lifetime !== this.lifetime) return;
-      // Placement is an accepted native effect even when replay visibility supersedes this observation render.
+      // Retain accepted placement before cancellation, while observation/source/value commits still require the current intent.
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === targetColumn && group.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString())) ?? this.sourceGroup;
+      signal?.throwIfAborted();
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
       if (normalizeNativeSourceText(editor.document.getText()) !== normalizeNativeSourceText(source.text)) throw new Error('Displayed captured source does not match the selected observation.');
       const previousUri = this.sourceUri;
@@ -1037,27 +1057,111 @@ export class StudyWorkspace {
     if (!source || source.hash !== hash) throw new Error('This captured source revision is unavailable.'); return source.text;
   }
 
-  /** Switches explicit reader entry between owned layouts without merging groups or replacing manual arrangements. @example await this.arrange(signal, 'repository', true) */
-  private async arrange(signal?: AbortSignal, mode: 'study' | 'repository' = 'study', ownedOnly = false, restoreRegions = false): Promise<void> {
+  /** Serializes native layout ownership across entry, Return and Close; accepted host effects drain before newer intents. @example await this.withLayout(signal, async () => {}) */
+  private async withLayout(signal: AbortSignal | undefined, operation: (lifetime: number, assertCurrent: () => void) => Promise<void>): Promise<void> {
     const lifetime = this.lifetime, assertCurrent = () => { this.assertLifetime(lifetime); signal?.throwIfAborted(); };
     assertCurrent();
     // A later explicit navigation must drain an accepted host command before applying its own target.
     while (this.arranging) { await this.arranging.catch(() => undefined); assertCurrent(); }
-    const pending = this.arranging = (async () => {
+    const pending = this.arranging = operation(lifetime, assertCurrent);
+    try { await pending; } finally { if (this.arranging === pending) this.arranging = undefined; }
+  }
+
+  /** Records real pane positions so {@link restoreRepositoryLayout} distinguishes learner moves from its own group contraction. @example this.studyPanePositions().contextColumn */
+  private studyPanePositions() {
+    const sourceGroups = vscode.window.tabGroups.all.filter(group => group.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === this.sourceUri?.toString()));
+    const identity = this.sourceGroup && this.editorGroupIdentities.get(this.sourceGroup);
+    const sourceGroup = sourceGroups.find(group => group === this.sourceGroup || identity && this.editorGroupIdentities.get(group) === identity)
+      ?? sourceGroups.find(group => group === vscode.window.tabGroups.activeTabGroup) ?? sourceGroups[0];
+    return { app: this.app, appColumn: this.app?.viewColumn, context: this.contextPanel, contextColumn: this.contextPanel?.viewColumn, sourceGroup, sourceColumn: sourceGroup?.viewColumn };
+  }
+
+  /** Rejects learner pane moves while allowing wrapper resync and the explicit source relocation owned by a reentry receipt. @example this.sameStudyPanePositions(receipt.panes, receipt.sourceTargetColumn) */
+  private sameStudyPanePositions(previous: ReturnType<StudyWorkspace['studyPanePositions']>, sourceTargetColumn?: vscode.ViewColumn): boolean {
+    const current = this.studyPanePositions(), sourceIdentity = previous.sourceGroup && this.editorGroupIdentities.get(previous.sourceGroup);
+    const sourceRetained = previous.sourceColumn === current.sourceColumn && (previous.sourceGroup === current.sourceGroup || Boolean(sourceIdentity && current.sourceGroup && sourceIdentity === this.editorGroupIdentities.get(current.sourceGroup)));
+    const sourceRestored = sourceTargetColumn !== undefined && current.sourceColumn === sourceTargetColumn;
+    return previous.app === current.app && previous.appColumn === current.appColumn && previous.context === current.context && previous.contextColumn === current.contextColumn
+      && (sourceRetained || sourceRestored);
+  }
+
+  /** Captures the article before {@link open} acquires panes, reversing only unchanged placements caused by its prior Return. @example await this.captureRepositoryLayout(signal) */
+  private async captureRepositoryLayout(signal?: AbortSignal): Promise<StudyWorkspace['layoutReceipt']> {
+    let reentry: StudyWorkspace['layoutReceipt'];
+    await this.withLayout(signal, async (lifetime, assertCurrent) => {
+      const origin = this.repositoryOrigin, navigation = this.repositoryNavigation;
+      if (!origin) return;
+      const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent();
+      if (navigation !== this.repositoryNavigation || JSON.stringify(origin) !== JSON.stringify(this.repositoryOrigin) || !layout) return;
+      const pending = this.layoutReceipt, saved = this.repositoryLayoutOrigin;
+      // Retrying cancelled reentry retains its article origin, rather than adopting our partially expanded grid as learner layout.
+      if (pending?.mode === 'study-reentry' && saved && JSON.stringify(layout) === pending.signature && this.sameEditorGroups(pending.groups, vscode.window.tabGroups.all) && this.sameStudyPanePositions(pending.panes, pending.sourceTargetColumn)) {
+        this.repositoryLayoutOrigin = { ...saved, origin, navigation }; this.repositoryLayoutRestored = undefined; reentry = pending; return;
+      }
+      const groups = vscode.window.tabGroups.all.map(group => ({ group, column: group.viewColumn })), restored = this.repositoryLayoutRestored;
+      this.repositoryLayoutOrigin = { origin, navigation, layout, groups }; this.repositoryLayoutRestored = undefined;
+      // A manual resize, group change or pane move releases the placement effects of the last Return.
+      if (!restored || JSON.stringify(layout) !== restored.signature || !this.sameEditorGroups(restored.groups, vscode.window.tabGroups.all) || !this.sameStudyPanePositions(restored.after)) return;
+      if (restored.before.appColumn !== restored.after.appColumn) this.app?.reveal(restored.before.appColumn, true);
+      if (restored.before.contextColumn !== restored.after.contextColumn) this.contextPanel?.reveal(restored.before.contextColumn, true);
+      // Restore a previously verified grid; arbitrary post-reveal geometry cannot establish Codebook ownership.
+      await vscode.commands.executeCommand('vscode.setEditorLayout', restored.studyLayout); this.assertLifetime(lifetime);
+      const preparedGroups = vscode.window.tabGroups.all.map(group => ({ group, column: group.viewColumn }));
+      const panes = { ...restored.before, sourceGroup: restored.after.sourceGroup, sourceColumn: restored.after.sourceColumn };
+      const preparedLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); this.assertLifetime(lifetime);
+      // Cancellation ends the intent after its accepted pane effects are recorded; Close or manual changes cannot acquire them.
+      if (JSON.stringify(preparedLayout) === JSON.stringify(restored.studyLayout) && this.sameEditorGroups(preparedGroups, vscode.window.tabGroups.all) && this.sameStudyPanePositions(panes)) {
+        this.layoutReceipt = reentry = { mode: 'study-reentry', signature: JSON.stringify(preparedLayout), groups: preparedGroups, panes, sourceTargetColumn: restored.before.sourceColumn !== restored.after.sourceColumn ? restored.before.sourceColumn : undefined };
+      }
+      assertCurrent();
+      if (navigation !== this.repositoryNavigation) throw new Error('Evidence navigation was superseded.');
+    });
+    return reentry;
+  }
+
+  /** Restores an exact article-origin grid on actual Return while preserving foreign tabs and later manual arrangements. @example await this.restoreRepositoryLayout(selection, signal) */
+  private async restoreRepositoryLayout(selection: RepositorySelection, signal: AbortSignal): Promise<void> {
+    await this.withLayout(signal, async (lifetime, assertCurrent) => {
+      const saved = this.repositoryLayoutOrigin, receipt = this.layoutReceipt;
+      if (!saved || JSON.stringify(saved.origin) !== JSON.stringify(this.repositoryOrigin) || JSON.stringify(saved.origin.selection) !== JSON.stringify(selection) || !receipt || receipt.mode === 'repository') return;
+      const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent();
+      const groups = vscode.window.tabGroups.all, retained = groups.filter(group => saved.groups.some(entry => entry.column === group.viewColumn));
+      // Only Codebook-created groups may contract; an added learner tab must keep its current group.
+      const extraGroups = groups.filter(group => !retained.includes(group));
+      const ownsExtraTabs = extraGroups.every(group => group.tabs.every(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === STUDY_SOURCE_SCHEME && tab.input.uri.authority === this.library?.workspaceKey
+        || tab.input instanceof vscode.TabInputWebview && ['codebook.scopedBrowser', 'codebook.studyContext'].some(kind => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType))));
+      if (saved !== this.repositoryLayoutOrigin || receipt !== this.layoutReceipt || JSON.stringify(layout) !== receipt.signature || !this.sameEditorGroups(receipt.groups, groups) || !this.sameEditorGroups(saved.groups, retained) || !this.sameStudyPanePositions(receipt.panes, receipt.sourceTargetColumn) || !ownsExtraTabs) { this.layoutReceipt = undefined; return; }
+      const before = this.studyPanePositions(); this.layoutReceipt = undefined;
+      await vscode.commands.executeCommand('vscode.setEditorLayout', saved.layout);
+      // Retain accepted placement effects even after cancellation, so a newer evidence visit can reverse them safely.
+      const after = this.studyPanePositions();
+      const restoredLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); this.assertLifetime(lifetime);
+      if (JSON.stringify(restoredLayout) !== JSON.stringify(saved.layout) || !this.sameEditorGroups(saved.groups, vscode.window.tabGroups.all) || !this.sameStudyPanePositions(after)) { this.report('layout', new Error('The editor could not restore the saved reading layout. Arrange the reading panes manually.')); assertCurrent(); return; }
+      this.repositoryLayoutRestored = { signature: JSON.stringify(restoredLayout), studyLayout: layout, groups: vscode.window.tabGroups.all.map(group => ({ group, column: group.viewColumn })), before, after };
+      this.sourceGroup = this.repositoryLayoutRestored.after.sourceGroup; this.errors.delete('layout'); this.publish(); assertCurrent();
+    });
+  }
+
+  /** Switches explicit reader entry between owned layouts without merging groups or replacing manual arrangements. @example await this.arrange(signal, 'repository', true) */
+  private async arrange(signal?: AbortSignal, mode: 'study' | 'repository' = 'study', ownedOnly = false, restoreRegions = false): Promise<void> {
+    await this.withLayout(signal, async (lifetime, assertCurrent) => {
       if (ownedOnly) {
         const receipt = this.layoutReceipt;
         if (!receipt || receipt.mode === mode) return;
         const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent();
         // Structure, sizes and native group identities must all still match our last completed arrangement.
         const groups = vscode.window.tabGroups.all;
-        if (receipt !== this.layoutReceipt || JSON.stringify(layout) !== receipt.signature || !this.sameEditorGroups(receipt.groups, groups)) { this.layoutReceipt = undefined; return; }
+        if (receipt !== this.layoutReceipt || JSON.stringify(layout) !== receipt.signature || !this.sameEditorGroups(receipt.groups, groups)
+          || receipt.mode === 'study-reentry' && !this.sameStudyPanePositions(receipt.panes, receipt.sourceTargetColumn)) { this.layoutReceipt = undefined; return; }
+        // Reentry already restored its known Study grid; promote its validated receipt without overwriting geometry again.
+        if (mode === 'study' && receipt.mode === 'study-reentry') { this.layoutReceipt = { ...receipt, mode, panes: this.studyPanePositions(), sourceTargetColumn: undefined }; this.errors.delete('layout'); this.publish(); return; }
       }
       if (vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) { this.layoutReceipt = undefined; this.report('layout', new Error('Existing editor groups were preserved. Use the focus commands or arrange the Codebook panes manually.')); return; }
       this.layoutReceipt = undefined;
       // Explicit Arrange separates learner-moved Codebook panes; ordinary entry still preserves manual placement.
       if (restoreRegions) {
         this.app?.reveal(vscode.ViewColumn.One, true); this.contextPanel?.reveal(vscode.ViewColumn.Three, true);
-        await this.renderSelection(true, true, signal, vscode.ViewColumn.Two); assertCurrent();
+        await this.renderSelection(true, true, signal, { kind: 'arrange', column: vscode.ViewColumn.Two }); assertCurrent();
         // An observation refresh can cancel source I/O before placement; do not certify a partially arranged reader.
         if (!vscode.window.tabGroups.all.some(group => group.viewColumn === vscode.ViewColumn.Two && group.activeTab?.input instanceof vscode.TabInputText && group.activeTab.input.uri.toString() === this.sourceUri?.toString())) {
           this.report('layout', new Error('The selected source changed before it could be arranged. Select Arrange again.')); return;
@@ -1074,8 +1178,7 @@ export class StudyWorkspace {
       // runCommands reports child failures through host notifications, so only the actual layout can certify success.
       if (!receipt) { this.report('layout', new Error('The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.')); return; }
       this.errors.delete('layout'); this.publish();
-    })();
-    try { await pending; } finally { if (this.arranging === pending) this.arranging = undefined; }
+    });
   }
 
   /** Retains actual accepted layout effects for newer navigation while {@link close} invalidates the owner. @example await this.rememberLayout('study', lifetime, groups) */
@@ -1087,28 +1190,42 @@ export class StudyWorkspace {
     const current = vscode.window.tabGroups.all;
     return this.layoutReceipt = layout && groups.length === STUDY_EDITOR_GROUP_COUNT && retainedGroups.every(group => current.some(candidate => this.editorGroupIdentities.get(group) && this.editorGroupIdentities.get(candidate) === this.editorGroupIdentities.get(group))) && this.sameEditorGroups(groups, current)
       && isBalancedEditorLayout(layout, mode)
-      ? { mode, signature: JSON.stringify(layout), groups } : undefined;
+      ? { mode, signature: JSON.stringify(layout), groups, panes: this.studyPanePositions() } : undefined;
   }
 
   /** Retains logical ownership across Cursor's wrapper-only tab-model resync, never across moved or replaced groups. @example this.observeEditorGroups(event) */
   private observeEditorGroups(event?: vscode.TabGroupChangeEvent): void {
     const current = vscode.window.tabGroups.all, previous = this.observedEditorGroups;
-    const resync = event && !event.opened.length && !event.closed.length && event.changed.length === current.length && current.length === previous.length;
+    // Opened/closed groups never inherit identity; only changed replacement wrappers may represent survivors.
+    const survivors = event ? previous.filter(entry => !event.closed.includes(entry.group) && !current.includes(entry.group)) : [];
+    const replacements = event ? current.filter(group => !this.editorGroupIdentities.has(group) && !event.opened.includes(group) && event.changed.includes(group))
+      .map(group => ({ group, matches: survivors.filter(entry => this.retainsEditorTabs(entry.group, group)) })) : [];
+    // Exact survivors precede copied contraction tabs; ambiguous exact candidates cannot fall back to a weaker match.
+    const exactReplacements = replacements.map(({ group, matches }) => ({ group, matches: matches.filter(entry => entry.group.tabs.length === group.tabs.length) }));
+    const expandedReplacements = replacements.map(({ group, matches }) => ({ group, matches: exactReplacements.some(replacement => replacement.group === group && replacement.matches.length)
+      ? [] : matches.filter(entry => !exactReplacements.some(replacement => replacement.matches.includes(entry))) }));
     for (const group of current) {
+      if (event?.opened.includes(group)) { this.editorGroupIdentities.set(group, Symbol()); continue; }
       if (this.editorGroupIdentities.has(group)) continue;
-      const matches = resync ? previous.filter(entry => entry.column === group.viewColumn && this.sameEditorTabs(entry.group, group)) : [];
-      this.editorGroupIdentities.set(group, matches.length === 1 ? this.editorGroupIdentities.get(matches[0]!.group) ?? Symbol() : Symbol());
+      const candidates = exactReplacements.some(replacement => replacement.group === group && replacement.matches.length) ? exactReplacements : expandedReplacements;
+      const matches = candidates.find(replacement => replacement.group === group)?.matches ?? [], match = matches.length === 1 ? matches[0] : undefined;
+      // Content must identify one survivor in both directions before column equality can reject a manual move.
+      const retained = match && candidates.filter(replacement => replacement.matches.includes(match)).length === 1 && match.column === group.viewColumn;
+      this.editorGroupIdentities.set(group, retained ? this.editorGroupIdentities.get(match.group) ?? Symbol() : Symbol());
     }
     this.observedEditorGroups = current.map(group => ({ group, column: group.viewColumn }));
   }
 
-  /** Rejects ambiguous inputs during host resync while title/activity changes keep the same singleton Codebook tab identity. @example this.sameEditorTabs(before, after) */
-  private sameEditorTabs(before: vscode.TabGroup, after: vscode.TabGroup): boolean {
+  /** Recognizes surviving tab order during wrapper replacement, allowing additions from group contraction but rejecting ambiguous inputs. @example this.retainsEditorTabs(before, after) */
+  private retainsEditorTabs(before: vscode.TabGroup, after: vscode.TabGroup): boolean {
     const key = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputText ? `text:${tab.input.uri.toString()}`
       : tab.input instanceof vscode.TabInputWebview && ['codebook.scopedBrowser', 'codebook.studyContext', 'codebook.repositoryWiki'].some(kind => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType)) ? `webview:${tab.input.viewType}` : undefined;
     const previous = before.tabs.map(key), current = after.tabs.map(key);
-    return previous.length > 0 && previous.length === current.length && new Set(previous).size === previous.length
-      && previous.every((value, index) => value !== undefined && value === current[index]);
+    if (!previous.length || previous.includes(undefined) || current.includes(undefined) || new Set(previous).size !== previous.length || new Set(current).size !== current.length) return false;
+    let retained = 0;
+    // Added tabs may interleave, but deleting or reordering any prior tab releases the old group identity.
+    for (const value of current) if (value === previous[retained]) retained++;
+    return retained === previous.length;
   }
 
   /** Checks stable group identity and grid position before {@link arrange} changes an owned layout. @example this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) */

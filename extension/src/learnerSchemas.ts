@@ -16,7 +16,8 @@ export const learnerDecisionV3Schema = z.union([singleSourceDecisionSchema, cita
 export const learnerIntentSchema = z.union([learnerDecisionV3Schema, legacyDecisionSchema.transform(decision => ({ ...decision, context: { kind: 'source' as const } }))]);
 export const repositorySelectionSchema = z.strictObject({ bookId: bookIdSchema, revision: z.number().int().positive(), nodeId: bookIdSchema,
   anchorIndex: z.number().int().nonnegative().max(BOOK_MAX_ANCHORS - 1),
-  location: z.strictObject({ sectionIndex: z.number().int().nonnegative().max(BOOK_MAX_SECTIONS + REPOSITORY_FIXED_READING_SECTIONS - 1), fraction: z.number().min(0).max(1), focusId: z.string().max(KEY_LENGTH_LIMIT).regex(/^[a-z0-9-]*$/) }).optional() });
+  // Optional visual anchor survives error-content reflow; legacy section/fraction positions remain readable.
+  location: z.strictObject({ sectionIndex: z.number().int().nonnegative().max(BOOK_MAX_SECTIONS + REPOSITORY_FIXED_READING_SECTIONS - 1), fraction: z.number().min(0).max(1), focusId: z.string().max(KEY_LENGTH_LIMIT).regex(/^[a-z0-9-]*$/), focusViewportFraction: z.number().min(0).max(1).optional() }).optional() });
 export const progressV3Schema = z.strictObject({ version: z.literal(LEARNING_SCHEMA_VERSION_V3), workspaceKey: repositoryHashSchema,
   decisions: z.array(learnerDecisionV3Schema).max(MAX_LEARNER_DECISIONS), selection: selectionSchema.optional(), repositorySelection: repositorySelectionSchema.optional() });
 export const repositoryReturnSchema = z.strictObject({ studyId: studyIdSchema, selection: repositorySelectionSchema });

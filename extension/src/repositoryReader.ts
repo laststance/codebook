@@ -19,7 +19,7 @@ import type { z } from 'zod';
 interface RepositoryControls {
   storage(): Promise<LearningLibrary>;
   connect(): Promise<void>;
-  arrange(signal: AbortSignal): Promise<void>;
+  arrange(signal: AbortSignal, returnSelection?: RepositorySelection): Promise<void>;
   evidence(binding: BookObservationBinding, recording: boolean, signal: AbortSignal, origin: RepositorySelection): Promise<void>;
 }
 
@@ -72,8 +72,8 @@ export class RepositoryReader {
     catch (error) { if (!this.store) this.initializing = undefined; throw error; }
   }
 
-  /** Opens the explicitly requested article or exact saved context; missing history never silently switches revisions. @example await reader.open(selection) */
-  async open(input?: RepositorySelection, signal?: AbortSignal): Promise<void> {
+  /** Opens the exact article revision; only actual Study Return asks {@link StudyWorkspace} to restore its captured native layout. @example await reader.open(selection) */
+  async open(input?: RepositorySelection, signal?: AbortSignal, restoreReadingLayout = false): Promise<void> {
     signal?.throwIfAborted();
     this.navigation.abort(); this.navigation = new AbortController();
     const navigation = this.navigation, cancel = () => navigation.abort(signal?.reason);
@@ -81,7 +81,7 @@ export class RepositoryReader {
     const generation = ++this.generation; this.loading = true; this.error = undefined;
     try {
       const store = await this.storage(); this.assertCurrent(generation);
-      await this.controls.arrange(navigation.signal); this.assertCurrent(generation);
+      await this.controls.arrange(navigation.signal, restoreReadingLayout ? input : undefined); this.assertCurrent(generation);
       this.ensurePanel(); this.publish();
       const [catalog, learner] = await Promise.all([store.list(), store.library.readProgress().then(progress => ({ progress, error: undefined }), error => ({ progress: undefined, error: `Learning storage unavailable: ${String(error)}` }))]);
       this.assertCurrent(generation); const { progress } = learner; this.catalog = catalog; this.progress = progress; this.error = learner.error; this.changes.fire();
