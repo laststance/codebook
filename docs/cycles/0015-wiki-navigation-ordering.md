@@ -3,7 +3,7 @@
 Type: experiment\
 Status: validating\
 Result: inconclusive\
-Delivery: local-only\
+Delivery: committed\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/17\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -61,7 +61,9 @@ Keep the approved shared ownership model. The modeled late effect was not reprod
 
 ## Handoff
 
-Complete bounded review, coderabbit-cli and PR delivery with Closes #17. Both owned hosts exited 0, settings match their original bytes, and owned profile processes are absent. The next candidate is packaged installation and integrated acceptance. Final reviews remain 0/10.
+The investigation records were committed and pushed as `29ac1d2`. GStack `/review` ended non-converged after its third documentation fixing round. The second outside structured pass completed with no P1 findings; the parallel outside adversarial pass timed out after 540 seconds. A separate independent `/ship` documentation check verified the exact eight-path `29ac1d2` candidate and all 43 artifact entries with no actionable findings. The third CodeRabbit CLI pass completed those eight paths with one minor date comment: the retained September 21 date is correct in JST, as the report's timezone declaration and UTC session timestamps show. These bounded documentation checks do not resolve historical implementation-review gaps or count toward final-product reviews; later doc-sync amendments require separate verification.
+
+PR creation and merge with Closes #17 remain pending. Both owned hosts exited 0, settings match their original bytes, and owned profile processes are absent. The next candidate is packaged installation and integrated acceptance. Final reviews remain 0/10.
 
 ## Frozen native schedule v1 (before execution)
 
