@@ -20,4 +20,4 @@ Private transcripts and pass receipts are under `artifacts/cycle-0016/review/`; 
 
 ## Delivery follow-up
 
-[The later ship review](ship-review-fixes.md) records a reproduced custom-output packaging failure, completed Claude Code structured/documentation findings and their selected fixes, fresh negative tests and the different final artifact. The initial no-new-code-finding result above is historical. Outside review timeouts continue in five-minute increments, and clean final-tree convergence remains a separate delivery gate.
+[The later ship review](ship-review-fixes.md) records the reproduced custom-output packaging failure, completed Claude Code structured/adversarial/documentation reviews of `24e5467`, their individual triage and selected fixes, and fresh negative tests. The [final artifact supplement](installed-final-validation.md) separately passes in both ordinary hosts. The initial no-new-code-finding result and unavailable outside passes above are historical. Fresh delivery-tree reviews retain the owner's five-minute timeout escalation policy; their convergence and CI/merge remain separate delivery gates.
