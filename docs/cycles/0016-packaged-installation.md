@@ -209,8 +209,9 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 
 ## Handoff
 
-- Exact next action: install the frozen clean v2 VSIX, verify the native focus repair in Cursor, then execute schedule v2 in both hosts. Full tests pass 704/704. Preserve v1 and diagnostic failures; original tab timeout, Cursor T4, teardown SIGPIPE attribution, full review/coderabbit-cli and PR merge remain pending.
-- Active processes: owned Cursor profile `~/.cbqa/c16-cursor-e9677ff5`, ordinary diagnostic launch port 63576; all diagnostic runtimes are stopped/released. Replace diagnostic package 3 with the frozen clean v2 candidate before acceptance. VS Code's owned profile processes are all stopped. Branch: codex/cycle-0016-packaged-installation.
+- Clean installed repair check: six transfers after a 32.5-second current pause pass with unchanged run/snapshot and restored Application/source focus. The earlier cold-reader check remains qualified because it displayed old history. Native dimensions and inspected frames are recorded in the investigation.
+- Exact next action: execute schedule v2 in both hosts with the recorded reader setup prerequisite. Full tests pass 704/704. Preserve v1 and diagnostic failures; original tab timeout, Cursor T4, teardown SIGPIPE attribution, full review/coderabbit-cli and PR merge remain pending.
+- Active processes: owned Cursor profile `~/.cbqa/c16-cursor-e9677ff5`, ordinary clean v2 launch port 64789 after successful bounded repair verification. Earlier diagnostic processes/descriptors are retired and the unrelated draft survives. Both profiles install/reinstall the identical clean v2 package with all 29 installed entries verified. VS Code's owned profile processes are all stopped. Branch: codex/cycle-0016-packaged-installation.
 - PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
 - Select a single next cycle only after this cycle's evidence identifies the next uncertainty.
 
