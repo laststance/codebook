@@ -1,11 +1,11 @@
-import { lstat, readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join, relative } from 'node:path';
 import { BUILD_PACKAGES } from './packageConstants.mjs';
 
-/** Binds build metadata and package snapshots to every source/configuration input before and after compilation. @example await readBuildIdentity(repository) // { revision, dirty, sourceHash, sourceHashes } */
-export async function readBuildIdentity(repository) {
+/** Captures source provenance for metadata and {@link buildPackage}; the final check excludes only its owned untracked scratch. @example await readBuildIdentity(repository) // { revision, dirty, sourceHash, sourceHashes } */
+export async function readBuildIdentity(repository, ownedScratchDirectory) {
   const sourceHashes = [];
   for (const name of BUILD_PACKAGES) {
     const directory = join(repository, name);
@@ -24,9 +24,13 @@ export async function readBuildIdentity(repository) {
       sourceHashes.push(`${name}/${file.split('\\').join('/')}:${createHash('sha256').update(await readFile(input)).digest('hex')}`);
     }
   }
+  // Ignore only this publication's untracked scratch; tracked changes and other untracked files still count.
+  const scratchPrefix = ownedScratchDirectory === undefined ? undefined : `?? ${relative(await realpath(repository), await realpath(ownedScratchDirectory)).split('\\').join('/')}/`;
+  const status = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { cwd: repository, encoding: 'utf8' });
+  const dirty = status.split('\0').some(entry => entry && !(scratchPrefix && entry.startsWith(scratchPrefix)));
   return {
     revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim(),
-    dirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: repository, encoding: 'utf8' }).trim()),
+    dirty,
     sourceHash: createHash('sha256').update(sourceHashes.join('\n')).digest('hex'), sourceHashes,
   };
 }

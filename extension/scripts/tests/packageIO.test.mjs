@@ -11,6 +11,7 @@ import { resolvePackageDestination } from '../utils/resolvePackageDestination.mj
 import { cleanPackageOutputs } from '../utils/cleanPackageOutputs.mjs';
 import { runPackageCommand } from '../utils/runPackageCommand.mjs';
 import { inspectBundle } from '../utils/inspectBundle.mjs';
+import { readBuildIdentity } from '../utils/readBuildIdentity.mjs';
 
 /** Gives publication failures an owned directory and previous artifact whose bytes must survive. @example const fixture = await outputFixture(context) */
 async function outputFixture(context) {
@@ -156,3 +157,48 @@ test('every known compilation directory is removed while sources and output arti
   assert.equal(await readFile(join(fixture.repository, 'extension/src/main.ts'), 'utf8'), 'export const source = 1;');
   assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact');
 });
+
+
+test('a clean repository can stage its own custom VSIX without falsely reporting changed source', async context => {
+  // Arrange
+  const fixture = await sourceFixture(context), before = await readBuildIdentity(fixture.repository);
+  const output = join(fixture.repository, 'custom $() `literal`.vsix');
+  assert.equal(before.dirty, false);
+  // Act
+  await withPackageOutput(output, async ({ candidate, directory, stage }) => {
+    await writeFile(join(stage, 'package.json'), '{}'); await writeFile(candidate, 'validated candidate');
+    assert.deepEqual(await readBuildIdentity(fixture.repository, directory), before);
+  });
+  // Assert
+  assert.equal(await readFile(output, 'utf8'), 'validated candidate');
+  assert.deepEqual((await readdir(fixture.repository)).filter(name => name.startsWith('.codebook-package-')), []);
+});
+
+test('excluding owned package scratch still detects unrelated files and changed source', async context => {
+  // Arrange
+  const fixture = await sourceFixture(context), before = await readBuildIdentity(fixture.repository);
+  const output = join(fixture.repository, 'custom.vsix');
+  // Act / Assert
+  await withPackageOutput(output, async ({ candidate, directory, stage }) => {
+    await writeFile(join(stage, 'package.json'), '{}'); await writeFile(candidate, 'validated candidate');
+    const unrelated = join(fixture.repository, '.codebook-package-unrelated');
+    await mkdir(unrelated); await writeFile(join(unrelated, 'keep.txt'), 'unrelated');
+    assert.equal((await readBuildIdentity(fixture.repository, directory)).dirty, true);
+    await writeFile(join(fixture.repository, 'extension/src/main.ts'), 'export const source = 2;');
+    const changed = await readBuildIdentity(fixture.repository, directory);
+    assert.equal(changed.dirty, true); assert.notEqual(changed.sourceHash, before.sourceHash);
+  });
+  assert.equal(await readFile(join(fixture.repository, '.codebook-package-unrelated/keep.txt'), 'utf8'), 'unrelated');
+});
+
+// Each accidental development entry must be rejected before the dependency inventory can accept it.
+for (const path of ['extension/dist/tests/leaked.test.js', 'extension/dist/client.js', 'extension/dist/nativeRunner.js']) {
+  test(`an accidental import of ${path} cannot enter the installed runtime bundle`, async context => {
+    // Arrange
+    const fixture = await sourceFixture(context), input = join(fixture.repository, path), content = Buffer.from('module.exports = 1;');
+    await mkdir(join(input, '..'), { recursive: true }); await writeFile(input, content);
+    const metafile = { inputs: { [path]: { bytes: content.length } }, outputs: { bundle: { imports: [] } } };
+    // Act / Assert
+    await assert.rejects(inspectBundle(metafile, fixture.repository, new Map([[await realpath(input), content]])), /Development-only bundle source/);
+  });
+}

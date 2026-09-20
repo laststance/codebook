@@ -20,7 +20,7 @@ import { PACKAGE_MANIFEST_PATH } from './packageConstants.mjs';
 export async function buildPackage(repository, output, runCommand = runPackageCommand) {
   const started = performance.now(), extensionRoot = join(repository, 'extension');
   const destination = await resolvePackageDestination(repository, output), before = await readBuildIdentity(repository);
-  return withPackageOutput(destination, async ({ candidate, stage }) => {
+  return withPackageOutput(destination, async ({ directory, candidate, stage }) => {
     // Source snapshot -> clean compilation -> closed stage -> real archive -> isolated load -> atomic publication.
     await cleanPackageOutputs(repository);
     await runCommand('pnpm', ['--dir', extensionRoot, 'build'], repository);
@@ -62,7 +62,7 @@ export async function buildPackage(repository, output, runCommand = runPackageCo
     await runCommand(process.execPath, [vsce, 'package', '--out', candidate, '--no-dependencies', '--skip-license', '--no-rewrite-relative-links', '--no-gitHubIssueLinking', '--no-gitLabIssueLinking'], stage);
     const entries = await readVsixEntries(candidate), checked = await verifyPackageContent(entries, files);
     const loaded = await loadBuiltExtension(entries);
-    assert.deepEqual(await readBuildIdentity(repository), before, 'Source inputs changed during packaging. Retry from a stable checkout.');
+    assert.deepEqual(await readBuildIdentity(repository, directory), before, 'Source inputs changed during packaging. Retry from a stable checkout.');
     const archiveBytes = await readFile(candidate);
     return { output: destination, sha256: createHash('sha256').update(archiveBytes).digest('hex'), bytes: archiveBytes.length,
       ...checked, ...loaded, dependencies: inventory.dependencies.map(value => `${value.name}@${value.version}`), durationMs: Math.round(performance.now() - started) };

@@ -59,6 +59,7 @@ test('a real VSIX loads outside the checkout and preserves exact fixture maps, p
   }
   const inventory = JSON.parse(original.get('extension/package-manifest.json'));
   assert.ok(inventory.inputs.every(input => !input.path.includes('obsolete-package-probe')));
+  assert.deepEqual(inventory.inputs.filter(input => input.path.startsWith('extension/dist/tests/') || ['extension/dist/client.js', 'extension/dist/nativeRunner.js'].includes(input.path)).map(input => input.path), []);
   assert.ok(inventory.inputs.some(input => input.path.startsWith('dependency:@modelcontextprotocol/sdk@1.30.0/')));
   assert.ok(checked.build.sourceHashes.some(input => input.startsWith('extension/patches/@modelcontextprotocol__sdk@1.30.0.patch:')));
   assert.deepEqual(original.get('extension/src/assets/book.svg'), await readFile(join(repository, 'extension/src/assets/book.svg')));

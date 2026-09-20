@@ -41,7 +41,11 @@ export async function inspectBundle(metafile, repository, capturedInputs) {
         packages.set(identity, { name: manifest.name, version: manifest.version, license, notices });
       }
       path = `dependency:${identity}/${relative(owner, absolute).split(sep).join('/')}`;
-    } else if (!COMPILED_DIRECTORIES.some(directory => local.startsWith(`${directory}/`))) throw new Error(`Unexpected bundle source: ${input}`);
+    } else {
+      if (!COMPILED_DIRECTORIES.some(directory => local.startsWith(`${directory}/`))) throw new Error(`Unexpected bundle source: ${input}`);
+      // A transitive development import must not enter the single shipped runtime bundle.
+      if (local.split('/').includes('tests') || ['extension/dist/client.js', 'extension/dist/nativeRunner.js'].includes(local)) throw new Error(`Development-only bundle source: ${input}`);
+    }
     inputs.push({ path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
   }
   const dependencies = [...packages.values()].sort((left, right) => `${left.name}@${left.version}`.localeCompare(`${right.name}@${right.version}`));

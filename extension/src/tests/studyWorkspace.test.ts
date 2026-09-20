@@ -2943,6 +2943,76 @@ test('switching presentation waits for restored application focus before confirm
   } finally { await harness.close(); }
 });
 
+test('a missing final application-focus receipt rejects presentation without saving or losing retained evidence', async context => {
+  // Arrange
+  const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    await harness.reader.understand(true); await harness.reader.action('focus-app');
+    const source = harness.reader.inspect().sourceUri, bundle = harness.controller.bundle(), library = await harness.reader.learningStorage();
+    const decisions = (await library.readProgress()).decisions, draft = harness.addForeignDraft();
+    const app = harness.reader['app']; assert.ok(app);
+    const reveal = app.reveal.bind(app); let focusRequests = 0, placedLayout: unknown;
+    context.mock.method(app, 'reveal', (...args: Parameters<typeof reveal>) => {
+      // Keep both earlier owned-tab receipts; the final focus receipt and its recovery retry never arrive.
+      if (!args[1] && ++focusRequests >= 3) { placedLayout ??= harness.editorLayout(); return; }
+      reveal(...args);
+    });
+    const state = harness.reader.presentationState();
+    // Act
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), {
+      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Timed out waiting for restored presentation pane focus',
+    });
+    // Assert: an applied grid remains unconfirmed; failure cannot claim the new mode or rewrite learner evidence.
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().state, 'open');
+    assert.equal(harness.reader.presentationState().reason, 'Error: Timed out waiting for restored presentation pane focus');
+    assert.equal(harness.presentationPreferences.size, 0); assert.deepEqual(harness.editorLayout(), placedLayout);
+    assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 100);
+    assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.reader.inspect().sourceUri, source);
+    assert.equal(harness.displayedImage(), harness.png.toString('base64')); assert.deepEqual((await library.readProgress()).decisions, decisions);
+    assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true);
+    assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
+  } finally { context.mock.restoreAll(); await harness.close(); }
+});
+
+test('a retained source hidden after replay refresh rejects presentation without replacing the foreign draft', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let releaseLayout = () => {}, releaseImage = () => {};
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    await harness.reader.understand(true); await harness.reader.action('focus-context'); harness.retainReadingRange(40, 52);
+    const source = harness.reader.inspect().sourceUri, bundle = harness.controller.bundle(), library = await harness.reader.learningStorage();
+    const decisions = (await library.readProgress()).decisions, layout = harness.holdNextCommand('vscode.setEditorLayout'); releaseLayout = layout.release;
+    const state = harness.reader.presentationState();
+    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const rejected = assert.rejects(transfer, {
+      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: The retained source is no longer visible after replay restoration.',
+    });
+    await layout.started;
+    // Hold the second replay paint, after its source reveal, without changing global Context focus.
+    const image = harness.holdNextImage(); releaseImage = image.release; layout.release(); await image.started;
+    const sourceGroup = harness.groups.find(group => group.viewColumn === harness.sourceColumn()); assert.ok(sourceGroup);
+    const draft = harness.addForeignDraft(sourceGroup.viewColumn), placedLayout = harness.editorLayout();
+    // Act: a learner-owned tab hides the retained source while the replay paint is pending.
+    sourceGroup.activeTab = draft; image.release(); await rejected;
+    // Assert
+    assert.equal(sourceGroup.activeTab, draft); assert.equal(sourceGroup.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
+    assert.deepEqual(harness.editorLayout(), placedLayout); assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().state, 'open');
+    assert.equal(harness.reader.presentationState().reason, 'Error: The retained source is no longer visible after replay restoration.');
+    assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 100);
+    assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.reader.inspect().sourceUri, source);
+    assert.equal(harness.displayedImage(), harness.png.toString('base64')); assert.deepEqual((await library.readProgress()).decisions, decisions);
+    assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
+  } finally { releaseLayout(); releaseImage(); await harness.close(); }
+});
+
 test('moving a presentation retains both measured axes when native tab relocation flattens the grid', async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
