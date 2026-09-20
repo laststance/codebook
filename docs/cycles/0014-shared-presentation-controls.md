@@ -1,9 +1,9 @@
 # Cycle 0014 — Shared presentation controls
 
 Type: product-increment\
-Status: validating\
+Status: closed\
 Result: demonstrated with qualified native motion and review coverage\
-Delivery: committed\
+Delivery: merged\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/15\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -96,3 +96,9 @@ Validation and review evidence are reconciled, with the later ship supplement be
 [The ship supplement](evidence/0014/ship-verification-20260921.md) records 647/647 fresh combined tests, the post-spawn launcher cleanup repair, its independent modeled verification, the unchanged SDK example executed five times per host and deterministic stale-revision recovery. Cursor's failed cold-reader foreign-focus attempt remains separate from its explicit Open Study / Focus explanation recovery. Current CodeRabbit supplement: 30 files, zero findings.
 
 The plan audit's remaining partial obligations are listed explicitly in that supplement. They remain required product work, including D2 state copy/retry, full interleaving/service coverage, all-mode Wiki and native input matrix, uncropped/reduced-motion evidence, and internal stage timing. Delivering this demonstrated bounded increment does not drop those obligations or satisfy full-product acceptance. New VERSION 0.2.0.0 tracks the unchanged extension semver 0.2.0. Published WIP/evidence ancestry is preserved; the delivery PR will use a squash merge.
+
+## Delivery closure (2026-09-21)
+
+[PR #16](https://github.com/laststance/codebook/pull/16) squash-merged at 2026-09-20T16:33:31Z as `11c2b050d61b7bb3041cc4f61352a75f13c4b82b`; Issue #15 closed two seconds later. The merged tree equals PR head `0264e42`, all 245 source hashes match, and 647/647 test evidence remains fresh. Socket's two checks and the CodeRabbit status succeeded; hosted CodeRabbit was explicitly ignored, no formal GitHub approval exists, and no unresolved review thread exists. No project CI or deploy workflow is configured. The feature branch was removed; main was synchronized cleanly.
+
+Keep the implemented shared controls. Broad review remains non-converged, and every partial plan item in the ship supplement remains required product work. Merge is not packaging, publication or installed acceptance. Goal #1 stays open; final reviews 0/10. The next selected [Cycle 0015](0015-wiki-navigation-ordering.md) investigates actual native Wiki source ordering, because a source/selected-item mismatch would weaken integrated learning evidence. G10 installed usefulness remains furthest from proof and follows this bounded correctness question, not indefinite layout polishing. Earlier handoff paragraphs are historical pre-merge checkpoints.
