@@ -2720,6 +2720,45 @@ test('all three presentation modes retain the exact panels, source, learning ite
   } finally { await harness.close(); }
 });
 
+test('restoring a presentation clears its previous failure while retaining an unrelated control error', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open();
+    harness.receive({ type: 'select', revision: harness.reader.inspect().view!.revision + 1, itemId: 'checkout-demo/cart-mutation' });
+    await waitUntil(() => harness.reader.inspect().view!.errors.some(error => error.includes('displayed study changed')), 'unrelated control diagnostic', 1_000);
+    harness.failNextCommand('vscode.setEditorLayout');
+    let state = harness.reader.presentationState();
+    harness.receive({ type: 'presentation', revision: harness.reader.inspect().view!.revision, presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await waitUntil(() => harness.reader.inspect().view!.errors.some(error => error.includes('presentation was not confirmed')), 'presentation failure diagnostic', 1_000);
+    state = harness.reader.presentationState();
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'restore' });
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.reader.presentationState().reason, undefined);
+    assert.deepEqual([...harness.reader.inspect().view!.errors], ['Error: The displayed study changed. Inspect the current view before acting.']);
+  } finally { await harness.close(); }
+});
+
+test('reselecting a confirmed presentation clears a stale control warning and keeps the selector usable', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); let state = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    state = harness.reader.presentationState();
+    harness.receive({ type: 'presentation', revision: harness.reader.inspect().view!.revision, presentationId: state.presentationId, expectedRevision: state.presentationControlRevision + 1, mode: 'living-book', action: 'select' });
+    await waitUntil(() => harness.reader.inspect().view!.errors.some(error => error.includes('control revision changed')), 'stale presentation diagnostic', 1_000);
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    // Assert
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    assert.equal(harness.reader.presentationState().presentationControlRevision, 1);
+    assert.equal(harness.postedMessages().at(-1)!.presentation!.state, 'open');
+  } finally { await harness.close(); }
+});
+
 test('same-mode selection keeps its revision only while the actual native layout is still confirmed', async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });

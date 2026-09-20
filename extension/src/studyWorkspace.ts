@@ -217,11 +217,15 @@ export class StudyWorkspace {
       try {
         const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout');
         this.assertLifetime(lifetime); transition.cancellation.signal.throwIfAborted();
-        if (this.presentationState().layoutConfirmed && isProportionalEditorLayout(STUDY_PRESENTATIONS[input.mode].layout, layout)) return { ...this.presentationState(), state: 'open' as const };
+        if (this.presentationState().layoutConfirmed && isProportionalEditorLayout(STUDY_PRESENTATIONS[input.mode].layout, layout)) {
+          // A verified selection recovers only presentation diagnostics, preserving unrelated failed controls.
+          this.errors.delete('presentation'); this.presentationReason = undefined; this.requestedPresentation = undefined;
+          return { ...this.presentationState(), state: 'open' as const };
+        }
         this.presentationTransition = undefined; this.presentationConfirmed = false;
         return await this.changePresentation(input);
       } finally {
-        if (this.presentationTransition === transition) this.presentationTransition = undefined;
+        if (this.presentationTransition === transition) { this.presentationTransition = undefined; this.publish(); }
         if (this.presentationOperation === checking) this.presentationOperation = undefined;
       }
     })();
@@ -334,6 +338,7 @@ export class StudyWorkspace {
         this.presentationConfirmed = true; this.requestedPresentation = undefined; this.presentationReason = undefined;
       }
       await this.savePresentationPreference(input.mode, transition.id); assertCurrent();
+      this.errors.delete('presentation');
       return { ...this.presentationState(), state: this.opened ? 'open' : 'closed' };
     } catch (error) {
       // Restore only while focus still belongs to our move; a manual foreign focus is never taken back.
@@ -1559,7 +1564,11 @@ export class StudyWorkspace {
         && (!this.recordingActive || message.presentationRevision === this.playback?.state().presentationRevision)) this.lastRendered = message;
       return;
     }
-    if (message.type === 'presentation') { await this.changePresentation(message); return; }
+    if (message.type === 'presentation') {
+      // Layout recovery owns its diagnostic; generic controls keep their separate failure receipt.
+      try { await this.changePresentation(message); } catch (error) { this.report('presentation', error); }
+      return;
+    }
     if (!(message.type === 'action' && message.action === 'stop')) this.assertPresentationIdle();
     if (message.revision !== this.revision) throw new Error('The displayed study changed. Inspect the current view before acting.');
     if (message.type === 'action') await this.action(message.action);
