@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ACTION_IDS, CAPTURE_PHASES, PROFILE_IDS, STUDY_ITEM_IDS } from 'codebook-cycle-0004/dist/constants';
 import { CAPTURED_VALUE_PATHS, IMAGE_BASE64_LIMIT_CHARS, KEY_LENGTH_LIMIT, LEARNING_SCHEMA_VERSION_V2, MAX_EXPLANATIONS, MAX_LEARNER_DECISIONS, MAX_STUDY_CAPTURES_V2, MAX_STUDY_LINKS_V2, MAX_STUDY_OBSERVATIONS_V2, MAX_UI_TEXT_CHARS, REFERENCE_LENGTH_LIMIT } from './constants';
 import { participantSchema, sourceSchema, studyIdSchema } from './legacyStudySchemas';
+import type { ConfiguredStudy } from './configuredStudySchemas';
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const shortText = z.string().min(1).max(REFERENCE_LENGTH_LIMIT);
@@ -38,7 +39,7 @@ export const progressSchema = z.strictObject({ version: z.literal(LEARNING_SCHEM
 export const studyMetadataSchema = studyArchiveSchema.pick({ version: true, workspaceKey: true, id: true, profile: true, createdAt: true, savedAt: true, state: true, terminal: true, finalOutcome: true, materialSignature: true })
   .extend({ archive: z.strictObject({ byteLength: z.number().int().positive(), modifiedMs: z.number().nonnegative(), hash }) });
 export interface StudyCatalogEntry {
-  id: string; savedAt: string; profile?: z.infer<typeof profileSchema>; format: 'legacy-v1' | 'v2';
+  id: string; savedAt: string; profile?: z.infer<typeof profileSchema> | ConfiguredStudy['profile']; format: 'legacy-v1' | 'v2' | 'v3';
   outcome: string; metadata: 'legacy-unverified' | 'validated' | 'unavailable'; reason?: string;
 }
 export type StudyArchive = z.infer<typeof studyArchiveSchema>;

@@ -10,6 +10,7 @@ import { learningState, projectStudy, type LearnerDecision, type LiveStudy, type
 import { validateStudy } from '../utils/validateStudy';
 import { loadModule } from './utils/loadModule';
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite';
+import { decodeLearnerProgress } from '../utils/decodeLearnerProgress';
 
 const workspaceKey = sha256('workspace-a'), source = 'const cartCount = 0;\n', sourceHash = sha256(source);
 const baselines: SourceBaselines = { server: { text: source, hash: sourceHash, line: 1, path: '/fixture/server.mts' }, browser: { text: source, hash: sourceHash, line: 1, path: '/fixture/client.mts' } };
@@ -120,7 +121,7 @@ test('ended checkout distinguishes an unobserved purchase from captured confirma
 
 test('understanding is scoped to the learning item even when another item uses identical source bytes', () => {
   // Arrange
-  const progress = { version: 2 as const, workspaceKey, decisions: [{ ...decision(true), item: 'checkout-demo/cart-mutation' as const }] };
+  const progress = decodeLearnerProgress({ version: 2, workspaceKey, decisions: [{ ...decision(true), item: 'checkout-demo/cart-mutation' }] }, workspaceKey);
   // Act
   const view = projectStudy({ selection: { profile: 'checkout-demo', itemId: 'checkout-demo/order-creation', follow: false, tab: 'overview' }, progress, baselines });
   // Assert
@@ -145,7 +146,7 @@ test('another writer or corrupt progress fails visibly without replacing persist
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-')); context.after(() => rm(directory, { recursive: true, force: true }));
   const library = new LearningLibrary(directory, workspaceKey); await library.decide(decision(true));
-  const path = join(directory, 'progress.v2.json'), prior = await readFile(path, 'utf8'); await writeFile(join(directory, 'writer.lock'), 'another writer');
+  const path = join(directory, 'progress.v4.json'), prior = await readFile(path, 'utf8'); await writeFile(join(directory, 'writer.lock'), 'another writer');
   // Act / Assert
   await assert.rejects(library.decide(decision(false)), /locked/); assert.equal(await readFile(path, 'utf8'), prior);
   await rm(join(directory, 'writer.lock')); await writeFile(path, '{broken');

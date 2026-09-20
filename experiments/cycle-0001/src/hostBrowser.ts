@@ -141,6 +141,9 @@ export class HostBrowser {
     return this.viewport?.present(data, phase);
   }
 
+  /** Forwards actual phase response pixels to optional recording before reveal/storage can delay them. @example browser.recordCapture(data, 'before') */
+  recordCapture(data: string, phase: string): void { this.viewport?.recordCapture(data, phase); }
+
   /** Retires only viewport pause presentation; debugger control remains in {@link ExperimentRun}. @example browser.resumeViewport() */
   resumeViewport(): void { this.viewport?.resume(); }
 

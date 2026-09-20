@@ -1,0 +1,116 @@
+{
+  "result": "demonstrated",
+  "scope": "Actual root-agent offline replay of the clean partial archive; the original native recording remains partial, not upgraded by successful replay.",
+  "host": {
+    "id": "cursor",
+    "productVersion": "3.21.13",
+    "apiVersion": "1.128.0",
+    "commit": "e44a49c17e334d442e58bbde931d791200f014a0",
+    "browserBackend": "managed"
+  },
+  "build": {
+    "revision": "1740e346464510e668446e82156478134b5c4144",
+    "dirty": false,
+    "sourceHash": "b5916781756a16c01d5912ffa392b3fe0a87c70d1593e1dbca3428a382639820"
+  },
+  "operations": 24,
+  "controls": [
+    {
+      "instanceId": "5d9abaf3-5079-40d5-9baa-db70ba5bd9bf",
+      "studyId": "4f00b126-d3c1-430c-b54a-2646ec648cd1_8c4512cb-fa7c-4571-9e2a-f2920e295eaa",
+      "expectedRevision": 0,
+      "action": "open"
+    },
+    {
+      "instanceId": "5d9abaf3-5079-40d5-9baa-db70ba5bd9bf",
+      "studyId": "4f00b126-d3c1-430c-b54a-2646ec648cd1_8c4512cb-fa7c-4571-9e2a-f2920e295eaa",
+      "expectedRevision": 1,
+      "action": "seek",
+      "positionMs": 51171.380875
+    },
+    {
+      "instanceId": "5d9abaf3-5079-40d5-9baa-db70ba5bd9bf",
+      "studyId": "4f00b126-d3c1-430c-b54a-2646ec648cd1_8c4512cb-fa7c-4571-9e2a-f2920e295eaa",
+      "expectedRevision": 2,
+      "action": "seek",
+      "positionMs": 54366.612792
+    },
+    {
+      "instanceId": "5d9abaf3-5079-40d5-9baa-db70ba5bd9bf",
+      "studyId": "4f00b126-d3c1-430c-b54a-2646ec648cd1_8c4512cb-fa7c-4571-9e2a-f2920e295eaa",
+      "expectedRevision": 3,
+      "action": "play"
+    },
+    {
+      "instanceId": "5d9abaf3-5079-40d5-9baa-db70ba5bd9bf",
+      "studyId": "4f00b126-d3c1-430c-b54a-2646ec648cd1_8c4512cb-fa7c-4571-9e2a-f2920e295eaa",
+      "expectedRevision": 1,
+      "action": "seek",
+      "positionMs": 1454.586958
+    },
+    {
+      "instanceId": "5d9abaf3-5079-40d5-9baa-db70ba5bd9bf",
+      "studyId": "4f00b126-d3c1-430c-b54a-2646ec648cd1_8c4512cb-fa7c-4571-9e2a-f2920e295eaa",
+      "expectedRevision": 4,
+      "action": "seek",
+      "positionMs": 1454.586958
+    },
+    {
+      "instanceId": "5d9abaf3-5079-40d5-9baa-db70ba5bd9bf",
+      "studyId": "4f00b126-d3c1-430c-b54a-2646ec648cd1_8c4512cb-fa7c-4571-9e2a-f2920e295eaa",
+      "expectedRevision": 5,
+      "action": "play"
+    },
+    {
+      "instanceId": "5d9abaf3-5079-40d5-9baa-db70ba5bd9bf",
+      "studyId": "4f00b126-d3c1-430c-b54a-2646ec648cd1_8c4512cb-fa7c-4571-9e2a-f2920e295eaa",
+      "expectedRevision": 6,
+      "action": "pause"
+    }
+  ],
+  "applicationMutationCalls": 0,
+  "runsBefore": [],
+  "runsAfter": [],
+  "playbackDiscoveryFields": [
+    "instanceId",
+    "studyId",
+    "expectedRevision",
+    "action",
+    "positionMs"
+  ],
+  "staleRevisionRejected": true,
+  "knownEndReached": true,
+  "originalPartialOutcomePreserved": true,
+  "originalMissingPhaseAcknowledgements": 5,
+  "finalPlayback": {
+    "instanceId": "5d9abaf3-5079-40d5-9baa-db70ba5bd9bf",
+    "revision": 7,
+    "presentationRevision": 316,
+    "studyId": "4f00b126-d3c1-430c-b54a-2646ec648cd1_8c4512cb-fa7c-4571-9e2a-f2920e295eaa",
+    "mode": "paused",
+    "readiness": "ready",
+    "requestedMs": 10182.798707999988,
+    "presentedMs": 10182.798707999988,
+    "range": {
+      "startMs": 0.037625,
+      "endMs": 61941.646292,
+      "endKnown": true
+    },
+    "recordingStatus": "finalized",
+    "cleared": false,
+    "contextHash": "05a5eb05ceeb043d7577c99f743df092b163c3d9ec413759055574d28fe73ab5",
+    "frame": {
+      "sequence": 5,
+      "hash": "dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3",
+      "receivedMs": 1393.586917
+    },
+    "observationId": "3ce49603-16d4-46f3-96bb-3a94aea7b258:1",
+    "available": true,
+    "uri": "codebook://5d9abaf3-5079-40d5-9baa-db70ba5bd9bf/playback",
+    "libraryUri": "codebook://5d9abaf3-5079-40d5-9baa-db70ba5bd9bf/library"
+  },
+  "imageInspected": "agent-receipts/66985a6b77a681b82b0a9632a9a4e7452533a444e6dfc8215b7d30110194c25d.png",
+  "imageObservation": "Saved purchase confirmation, cart 1 and one checkout; this is not independent native editor pixels.",
+  "independentNativePixels": false,
+  "finalProductAcceptance": false
+}

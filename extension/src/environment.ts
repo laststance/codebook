@@ -10,16 +10,19 @@ import type { HostConfiguration } from 'codebook-cycle-0001/dist/hostBrowser';
 import { z } from 'zod';
 import { MAX_EVENTS, MAX_QUEUED_EVIDENCE_BYTES, MAX_RETAINED_EVENT_BYTES, MIN_NODE_MAJOR_VERSION, PREREQUISITE_TIMEOUT_MS, SOURCE_LIMIT_BYTES } from './constants';
 import { StudyError } from './errors';
-import type { StudyEnvironment, StudyRuntime } from './runtime';
+import type { RuntimeControl, RuntimeDefinition, RuntimeSnapshot, StudyEnvironment, StudyRuntime } from './runtime';
+import { ConfiguredBrowserRun } from './configuredBrowserRun';
+import { REPOSITORY_BROWSER_ACTION } from './constants';
 import { readBoundedFile } from './utils/readBoundedFile';
 import type { BrowserViewportFactory } from 'codebook-cycle-0001/dist/browserViewport';
-import type { ParticipantSnapshot } from 'codebook-cycle-0004/dist/inspectParticipant';
-import type { ProfileId } from 'codebook-cycle-0004/dist/constants';
+import { assertDevelopmentWorkspace } from './utils/assertDevelopmentWorkspace';
+import { checkDemoFiles } from './utils/checkDemoFiles';
 
 export interface StudyPresentation {
   createViewport: BrowserViewportFactory;
+  /** Registers a demo-owned temporary source before its debugger starts; configured workspace files are never passed here. @example await presentation.prepareSource(fixturePath) */
   prepareSource(path: string): Promise<void>;
-  revealSource(snapshot: ParticipantSnapshot, path: string): Promise<boolean>;
+  revealSource(snapshot: RuntimeSnapshot, path: string): Promise<boolean>;
 }
 
 const executeFile = promisify(execFile);
@@ -37,7 +40,7 @@ export function requireWorkspace(): string {
 
 /** Installs tracking before creating any runtime; commands retain these observers until owned teardown completes. @example const environment = await createEnvironment(context) */
 export async function createEnvironment(context: Pick<vscode.ExtensionContext, 'extensionPath'>, presentation?: StudyPresentation): Promise<StudyEnvironment & { dispose(): void }> {
-  const workspace = requireWorkspace(), runs = new Map<string, PairedRun>();
+  const workspace = requireWorkspace(), runs = new Map<string, PairedRun | ConfiguredBrowserRun>();
   const product = productSchema.parse(JSON.parse(await readFile(join(vscode.env.appRoot, 'product.json'), 'utf8')));
   const host: HostConfiguration = { id: vscode.env.appName.toLowerCase().includes('cursor') ? 'cursor' : 'vscode', productVersion: product.version, apiVersion: vscode.version, commit: product.commit, browserBackend: 'managed' };
   const build = buildSchema.parse(JSON.parse(await readFile(join(context.extensionPath, 'dist/build.json'), 'utf8')));
@@ -48,7 +51,10 @@ export async function createEnvironment(context: Pick<vscode.ExtensionContext, '
       if (!run) return;
       run.addSession(session);
       return { onWillReceiveMessage: message => { if (message.type === 'request') run.onRequest(session, message); },
-        onDidSendMessage: message => { if (message.type === 'event') run.onEvent(session, message); }, onError: error => run.fail(`Debug adapter error: ${error.message}`) };
+        onDidSendMessage: message => {
+          if (message.type === 'event') run.onEvent(session, message);
+          if (message.type === 'response' && 'onResponse' in run) run.onResponse(session, message);
+        }, onError: error => run.fail(`Debug adapter error: ${error.message}`) };
     },
   });
   const termination = vscode.debug.onDidTerminateDebugSession(session => { for (const run of runs.values()) if (run.owner(session)) run.terminated(session); });
@@ -56,7 +62,7 @@ export async function createEnvironment(context: Pick<vscode.ExtensionContext, '
     // Closed history must not grow with unrelated future editor activity.
     for (const run of runs.values()) if (!run.view().cleaned && run.activeSessions.size) run.evidence.record('focus.changed', { sessionId: session?.id });
   });
-  const resolvePrerequisites = async () => {
+  const resolvePrerequisites = async (demo = false) => {
     const missing: string[] = []; let nodeExecutable: string | undefined; let chrome: HostConfiguration['chrome'];
     try { if (requireWorkspace() !== workspace) missing.push('Workspace identity changed; restart the agent server.'); } catch (error) { missing.push(String(error)); }
     if (!vscode.extensions.getExtension('ms-vscode.js-debug')) missing.push('Enable the bundled JavaScript Debugger (ms-vscode.js-debug).');
@@ -73,35 +79,60 @@ export async function createEnvironment(context: Pick<vscode.ExtensionContext, '
       const version = (await executeFile(binary, ['--version'], { timeout: PREREQUISITE_TIMEOUT_MS })).stdout.trim();
       if (!version) throw new Error('Missing Chrome version'); chrome = { binary, version };
     } catch { missing.push('codebook.chromeExecutable: configure an installed executable Chrome.'); }
-    try { await Promise.all(['server', 'client', 'constants'].flatMap(name => [`fixture/${name}.mts`, `build/${name}.mjs`, `build/${name}.mjs.map`]).map(file => access(join(templateRoot, file)))); }
-    catch { missing.push('Build the extension and paired-cart-demo packages with pnpm build.'); }
+    // Demo package availability is unrelated to source-only authoring or configured repository execution.
+    if (demo) missing.push(...await checkDemoFiles(templateRoot));
     return { ready: missing.length === 0, missing, nodeExecutable, chrome };
   };
-  return { workspace, host, build, prerequisites: async () => { const { ready, missing } = await resolvePrerequisites(); return { ready, missing }; },
-    async createRuntime(directory: string, profile: ProfileId = 'paired-cart-demo'): Promise<StudyRuntime> {
-      const prerequisites = await resolvePrerequisites();
+  return { workspace, host, build,
+    assertWorkspace() { if (requireWorkspace() !== workspace) throw new StudyError('STALE_INSTANCE', 'Workspace identity changed; reconnect before reading or publishing repository content.'); },
+    prerequisites: async () => {
+      const [{ ready, missing }, demo, configured] = await Promise.all([resolvePrerequisites(), checkDemoFiles(templateRoot),
+        assertDevelopmentWorkspace(workspace, new AbortController().signal).then(() => [], error => [String(error)])]);
+      const check = (specific: string[]) => ({ ready: ready && specific.length === 0, missing: [...missing, ...specific] });
+      return { ready, missing, profiles: { 'paired-cart-demo': check(demo), 'checkout-demo': check(demo), 'repository-browser': check(configured) } };
+    },
+    async createRuntime(directory: string, profile: RuntimeDefinition = 'paired-cart-demo', control?: RuntimeControl): Promise<StudyRuntime> {
+      const prerequisites = await resolvePrerequisites(typeof profile === 'string');
       if (!prerequisites.ready || !prerequisites.nodeExecutable || !prerequisites.chrome) throw new StudyError('PREREQUISITE_MISSING', prerequisites.missing.join('; '));
+      if (typeof profile !== 'string') {
+        control?.signal.throwIfAborted();
+        const run = new ConfiguredBrowserRun({ directory, workspace, definition: profile, control, node: prerequisites.nodeExecutable, host: { ...host, chrome: prerequisites.chrome },
+          assertWorkspace() { if (requireWorkspace() !== workspace) throw new StudyError('STALE_INSTANCE', 'Workspace identity changed during the configured study.'); },
+          createViewport: presentation?.createViewport, revealSource: async snapshot => {
+            if (!await presentation?.revealSource(snapshot, join(workspace, profile.configuration.source.path))) throw new StudyError('EVIDENCE_UNAVAILABLE', 'Open the Study reader to inspect this immutable captured source.');
+          } });
+        runs.set(run.id, run); return run;
+      }
       const run = new PairedRun({ ...build, artifactRoot: directory, templateRoot, descriptorPath: '', nodeExecutable: prerequisites.nodeExecutable,
         createViewport: presentation?.createViewport, prepareSource: presentation?.prepareSource, profile,
         host: { ...host, chrome: prerequisites.chrome }, evidenceLimits: { maxEvents: MAX_EVENTS, retainedBytes: MAX_RETAINED_EVENT_BYTES, queuedBytes: MAX_QUEUED_EVIDENCE_BYTES } }, 'normal');
       runs.set(run.id, run);
-      return { id: run.id, evidence: run.evidence, prepare: () => run.prepare(), view: () => run.view(), action: (key, action) => run.acceptAction(key, action),
-        continue: (name, identity) => run.continue(name, identity), stop: () => run.cleanup(), fail: reason => run.fail(reason), source: item => item === 'server' || item === 'browser' ? run.participants[item].source : run.sources.get(item),
-        reveal: snapshot => run.ownSourceReveal(async check => {
-          const source = run.sources.get(snapshot.itemId);
-          if (!source || sha256(await readBoundedFile(source.sourcePath, SOURCE_LIMIT_BYTES)) !== snapshot.source.typescriptHash) throw new StudyError('SOURCE_CHANGED', 'The current source file differs from the captured TypeScript.');
-          check(); const document = await vscode.workspace.openTextDocument(vscode.Uri.file(source.sourcePath)); check();
-          if (sha256(document.getText()) !== snapshot.source.typescriptHash) throw new StudyError('SOURCE_CHANGED', 'The current editor document differs from the capture.');
-          if (await presentation?.revealSource(snapshot, source.sourcePath)) {
-            check(); run.evidence.record('agent.source-revealed', { snapshotId: snapshot.id, line: snapshot.frame.line, sourceHash: snapshot.source.typescriptHash, capturedReader: true }); return;
-          }
-          const location = new vscode.Position(snapshot.frame.line - 1, 0);
-          const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true, selection: new vscode.Range(location, location) });
-          check();
-          if (sha256(editor.document.getText()) !== snapshot.source.typescriptHash || sha256(await readBoundedFile(source.sourcePath, SOURCE_LIMIT_BYTES)) !== snapshot.source.typescriptHash) throw new StudyError('SOURCE_CHANGED', 'Source changed while revealing the capture.');
-          check();
-          run.evidence.record('agent.source-revealed', { snapshotId: snapshot.id, line: snapshot.frame.line, sourceHash: snapshot.source.typescriptHash });
-        }),
+      return { id: run.id, evidence: run.evidence, prepare: () => run.prepare(), view: () => run.view(), action: (key, action) => {
+        if (action === REPOSITORY_BROWSER_ACTION) throw new StudyError('INVALID_REFERENCE', 'Repository input does not belong to this demo.');
+        return run.acceptAction(key, action);
+      },
+        continue: (name, identity) => run.continue(name, identity), stop: () => run.cleanup(), fail: reason => run.fail(reason), source: item => {
+          if (item === 'server' || item === 'browser') return run.participants[item].source;
+          const selected = run.profile.items.find(candidate => candidate.id === item); return selected && run.sources.get(selected.id);
+        },
+        reveal: async snapshot => {
+          if (snapshot.actionId === REPOSITORY_BROWSER_ACTION) throw new StudyError('INVALID_REFERENCE', 'Repository evidence does not belong to this demo.');
+          await run.ownSourceReveal(async check => {
+            const source = run.sources.get(snapshot.itemId);
+            if (!source || sha256(await readBoundedFile(source.sourcePath, SOURCE_LIMIT_BYTES)) !== snapshot.source.typescriptHash) throw new StudyError('SOURCE_CHANGED', 'The current source file differs from the captured TypeScript.');
+            check(); const document = await vscode.workspace.openTextDocument(vscode.Uri.file(source.sourcePath)); check();
+            if (sha256(document.getText()) !== snapshot.source.typescriptHash) throw new StudyError('SOURCE_CHANGED', 'The current editor document differs from the capture.');
+            if (await presentation?.revealSource(snapshot, source.sourcePath)) {
+              check(); run.evidence.record('agent.source-revealed', { snapshotId: snapshot.id, line: snapshot.frame.line, sourceHash: snapshot.source.typescriptHash, capturedReader: true }); return;
+            }
+            const location = new vscode.Position(snapshot.frame.line - 1, 0);
+            const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true, selection: new vscode.Range(location, location) });
+            check();
+            if (sha256(editor.document.getText()) !== snapshot.source.typescriptHash || sha256(await readBoundedFile(source.sourcePath, SOURCE_LIMIT_BYTES)) !== snapshot.source.typescriptHash) throw new StudyError('SOURCE_CHANGED', 'Source changed while revealing the capture.');
+            check();
+            run.evidence.record('agent.source-revealed', { snapshotId: snapshot.id, line: snapshot.frame.line, sourceHash: snapshot.source.typescriptHash });
+          });
+        },
       };
     },
     dispose() { tracker.dispose(); termination.dispose(); focus.dispose(); },

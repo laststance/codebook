@@ -1,0 +1,765 @@
+[
+  {
+    "sequence": 86,
+    "elapsedMs": 1332.514208,
+    "wallTime": "2026-09-19T07:57:40.192Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 5,
+      "hash": "6c5b6a018294b39aed6c3b77b4f28f3a376268aaab8c287593e6b6fa25221b44",
+      "phase": "before"
+    }
+  },
+  {
+    "sequence": 87,
+    "elapsedMs": 1333.121875,
+    "wallTime": "2026-09-19T07:57:40.192Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 5,
+      "phase": "before",
+      "stage": "received",
+      "visibility": "visible",
+      "focused": false,
+      "at": 645.6999999992549,
+      "renderRevision": 5
+    }
+  },
+  {
+    "sequence": 88,
+    "elapsedMs": 1333.796125,
+    "wallTime": "2026-09-19T07:57:40.193Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 5,
+      "phase": "before",
+      "stage": "decoded",
+      "visibility": "visible",
+      "focused": false,
+      "at": 646.3999999985099,
+      "renderRevision": 5
+    }
+  },
+  {
+    "sequence": 89,
+    "elapsedMs": 1333.883833,
+    "wallTime": "2026-09-19T07:57:40.193Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 5,
+      "phase": "before",
+      "stage": "dom-updated",
+      "visibility": "visible",
+      "focused": false,
+      "at": 646.3999999985099,
+      "renderRevision": 5
+    }
+  },
+  {
+    "sequence": 90,
+    "elapsedMs": 1340.763916,
+    "wallTime": "2026-09-19T07:57:40.200Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 5,
+      "phase": "before",
+      "stage": "raf-one",
+      "visibility": "visible",
+      "focused": false,
+      "at": 653.2999999970198,
+      "renderRevision": 5
+    }
+  },
+  {
+    "sequence": 91,
+    "elapsedMs": 1348.650875,
+    "wallTime": "2026-09-19T07:57:40.208Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 5,
+      "phase": "before",
+      "stage": "raf-two",
+      "visibility": "visible",
+      "focused": false,
+      "at": 661.0999999977648,
+      "renderRevision": 5
+    }
+  },
+  {
+    "sequence": 92,
+    "elapsedMs": 1348.803833,
+    "wallTime": "2026-09-19T07:57:40.208Z",
+    "type": "viewport.acknowledged",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 5,
+      "hash": "6c5b6a018294b39aed6c3b77b4f28f3a376268aaab8c287593e6b6fa25221b44",
+      "phase": "before"
+    }
+  },
+  {
+    "sequence": 124,
+    "elapsedMs": 1466.194125,
+    "wallTime": "2026-09-19T07:57:40.325Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 8,
+      "hash": "dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3",
+      "phase": "paused-cart-mutation"
+    }
+  },
+  {
+    "sequence": 126,
+    "elapsedMs": 1469.946125,
+    "wallTime": "2026-09-19T07:57:40.329Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 8,
+      "phase": "paused-cart-mutation",
+      "stage": "received",
+      "visibility": "visible",
+      "focused": false,
+      "at": 782.0999999977648,
+      "renderRevision": 9
+    }
+  },
+  {
+    "sequence": 127,
+    "elapsedMs": 1470.157166,
+    "wallTime": "2026-09-19T07:57:40.329Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 8,
+      "phase": "paused-cart-mutation",
+      "stage": "decoded",
+      "visibility": "visible",
+      "focused": false,
+      "at": 782.6999999992549,
+      "renderRevision": 9
+    }
+  },
+  {
+    "sequence": 128,
+    "elapsedMs": 1470.2245,
+    "wallTime": "2026-09-19T07:57:40.329Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 8,
+      "phase": "paused-cart-mutation",
+      "stage": "dom-updated",
+      "visibility": "visible",
+      "focused": false,
+      "at": 782.7999999970198,
+      "renderRevision": 9
+    }
+  },
+  {
+    "sequence": 132,
+    "elapsedMs": 1475.386583,
+    "wallTime": "2026-09-19T07:57:40.335Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 8,
+      "phase": "paused-cart-mutation",
+      "stage": "raf-one",
+      "visibility": "visible",
+      "focused": false,
+      "at": 786.1999999992549,
+      "renderRevision": 9
+    }
+  },
+  {
+    "sequence": 134,
+    "elapsedMs": 1482.713125,
+    "wallTime": "2026-09-19T07:57:40.342Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 8,
+      "phase": "paused-cart-mutation",
+      "stage": "raf-two",
+      "visibility": "visible",
+      "focused": false,
+      "at": 795,
+      "renderRevision": 9
+    }
+  },
+  {
+    "sequence": 135,
+    "elapsedMs": 1483.569333,
+    "wallTime": "2026-09-19T07:57:40.343Z",
+    "type": "viewport.acknowledged",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 8,
+      "hash": "dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3",
+      "phase": "paused-cart-mutation"
+    }
+  },
+  {
+    "sequence": 182,
+    "elapsedMs": 44884.890208,
+    "wallTime": "2026-09-19T07:58:23.744Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 12,
+      "hash": "dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3",
+      "phase": "paused-cart-update"
+    }
+  },
+  {
+    "sequence": 183,
+    "elapsedMs": 44938.3525,
+    "wallTime": "2026-09-19T07:58:23.798Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 12,
+      "phase": "paused-cart-update",
+      "stage": "received",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44233.199999999255,
+      "renderRevision": 15
+    }
+  },
+  {
+    "sequence": 184,
+    "elapsedMs": 44941.333666,
+    "wallTime": "2026-09-19T07:58:23.801Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 12,
+      "phase": "paused-cart-update",
+      "stage": "decoded",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44233.599999997765,
+      "renderRevision": 15
+    }
+  },
+  {
+    "sequence": 185,
+    "elapsedMs": 44941.420208,
+    "wallTime": "2026-09-19T07:58:23.801Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 12,
+      "phase": "paused-cart-update",
+      "stage": "dom-updated",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44233.599999997765,
+      "renderRevision": 15
+    }
+  },
+  {
+    "sequence": 186,
+    "elapsedMs": 44941.474666,
+    "wallTime": "2026-09-19T07:58:23.801Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 12,
+      "phase": "paused-cart-update",
+      "stage": "raf-one",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44242.89999999851,
+      "renderRevision": 15
+    }
+  },
+  {
+    "sequence": 187,
+    "elapsedMs": 44941.523083,
+    "wallTime": "2026-09-19T07:58:23.801Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 12,
+      "phase": "paused-cart-update",
+      "stage": "raf-two",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44250.5,
+      "renderRevision": 15
+    }
+  },
+  {
+    "sequence": 188,
+    "elapsedMs": 44941.586041,
+    "wallTime": "2026-09-19T07:58:23.801Z",
+    "type": "viewport.acknowledged",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 12,
+      "hash": "dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3",
+      "phase": "paused-cart-update"
+    }
+  },
+  {
+    "sequence": 231,
+    "elapsedMs": 45215.721041,
+    "wallTime": "2026-09-19T07:58:24.075Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 18,
+      "hash": "f0f4b4bc831afa57058507329844364cc882e76206b56ecd49b69087af0621f3",
+      "phase": "after-cart"
+    }
+  },
+  {
+    "sequence": 232,
+    "elapsedMs": 45216.434375,
+    "wallTime": "2026-09-19T07:58:24.076Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 18,
+      "phase": "after-cart",
+      "stage": "received",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44529,
+      "renderRevision": 22
+    }
+  },
+  {
+    "sequence": 233,
+    "elapsedMs": 45217.286333,
+    "wallTime": "2026-09-19T07:58:24.077Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 18,
+      "phase": "after-cart",
+      "stage": "decoded",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44529.79999999702,
+      "renderRevision": 22
+    }
+  },
+  {
+    "sequence": 234,
+    "elapsedMs": 45217.389125,
+    "wallTime": "2026-09-19T07:58:24.077Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 18,
+      "phase": "after-cart",
+      "stage": "dom-updated",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44529.89999999851,
+      "renderRevision": 22
+    }
+  },
+  {
+    "sequence": 235,
+    "elapsedMs": 45223.495291,
+    "wallTime": "2026-09-19T07:58:24.083Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 18,
+      "phase": "after-cart",
+      "stage": "raf-one",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44535.79999999702,
+      "renderRevision": 22
+    }
+  },
+  {
+    "sequence": 236,
+    "elapsedMs": 45232.331458,
+    "wallTime": "2026-09-19T07:58:24.092Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 18,
+      "phase": "after-cart",
+      "stage": "raf-two",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44544.79999999702,
+      "renderRevision": 22
+    }
+  },
+  {
+    "sequence": 237,
+    "elapsedMs": 45232.494083,
+    "wallTime": "2026-09-19T07:58:24.092Z",
+    "type": "viewport.acknowledged",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 18,
+      "hash": "f0f4b4bc831afa57058507329844364cc882e76206b56ecd49b69087af0621f3",
+      "phase": "after-cart"
+    }
+  },
+  {
+    "sequence": 278,
+    "elapsedMs": 45387.61375,
+    "wallTime": "2026-09-19T07:58:24.247Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 22,
+      "hash": "923277c01c5e54cdea8072a73cd87949561f0bac701beeb83610c373586dccd7",
+      "phase": "paused-order-creation"
+    }
+  },
+  {
+    "sequence": 279,
+    "elapsedMs": 45413.162166,
+    "wallTime": "2026-09-19T07:58:24.273Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 22,
+      "phase": "paused-order-creation",
+      "stage": "received",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44715.79999999702,
+      "renderRevision": 27
+    }
+  },
+  {
+    "sequence": 280,
+    "elapsedMs": 45415.298875,
+    "wallTime": "2026-09-19T07:58:24.275Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 22,
+      "phase": "paused-order-creation",
+      "stage": "decoded",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44716.599999997765,
+      "renderRevision": 27
+    }
+  },
+  {
+    "sequence": 281,
+    "elapsedMs": 45415.401875,
+    "wallTime": "2026-09-19T07:58:24.275Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 22,
+      "phase": "paused-order-creation",
+      "stage": "dom-updated",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44716.599999997765,
+      "renderRevision": 27
+    }
+  },
+  {
+    "sequence": 282,
+    "elapsedMs": 45415.463333,
+    "wallTime": "2026-09-19T07:58:24.275Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 22,
+      "phase": "paused-order-creation",
+      "stage": "raf-one",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44720.099999997765,
+      "renderRevision": 27
+    }
+  },
+  {
+    "sequence": 283,
+    "elapsedMs": 45415.815166,
+    "wallTime": "2026-09-19T07:58:24.275Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 22,
+      "phase": "paused-order-creation",
+      "stage": "raf-two",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44728.39999999851,
+      "renderRevision": 27
+    }
+  },
+  {
+    "sequence": 284,
+    "elapsedMs": 45415.898,
+    "wallTime": "2026-09-19T07:58:24.275Z",
+    "type": "viewport.acknowledged",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 22,
+      "hash": "923277c01c5e54cdea8072a73cd87949561f0bac701beeb83610c373586dccd7",
+      "phase": "paused-order-creation"
+    }
+  },
+  {
+    "sequence": 329,
+    "elapsedMs": 45581.569208,
+    "wallTime": "2026-09-19T07:58:24.441Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 26,
+      "hash": "923277c01c5e54cdea8072a73cd87949561f0bac701beeb83610c373586dccd7",
+      "phase": "paused-purchase-confirmation"
+    }
+  },
+  {
+    "sequence": 330,
+    "elapsedMs": 45582.251166,
+    "wallTime": "2026-09-19T07:58:24.442Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 26,
+      "phase": "paused-purchase-confirmation",
+      "stage": "received",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44894.79999999702,
+      "renderRevision": 33
+    }
+  },
+  {
+    "sequence": 331,
+    "elapsedMs": 45582.443333,
+    "wallTime": "2026-09-19T07:58:24.442Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 26,
+      "phase": "paused-purchase-confirmation",
+      "stage": "decoded",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44895,
+      "renderRevision": 33
+    }
+  },
+  {
+    "sequence": 332,
+    "elapsedMs": 45582.516458,
+    "wallTime": "2026-09-19T07:58:24.442Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 26,
+      "phase": "paused-purchase-confirmation",
+      "stage": "dom-updated",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44895.099999997765,
+      "renderRevision": 33
+    }
+  },
+  {
+    "sequence": 333,
+    "elapsedMs": 45591.021166,
+    "wallTime": "2026-09-19T07:58:24.451Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 26,
+      "phase": "paused-purchase-confirmation",
+      "stage": "raf-one",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44903.5,
+      "renderRevision": 33
+    }
+  },
+  {
+    "sequence": 334,
+    "elapsedMs": 45599.346708,
+    "wallTime": "2026-09-19T07:58:24.459Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 26,
+      "phase": "paused-purchase-confirmation",
+      "stage": "raf-two",
+      "visibility": "visible",
+      "focused": false,
+      "at": 44911.699999999255,
+      "renderRevision": 33
+    }
+  },
+  {
+    "sequence": 335,
+    "elapsedMs": 45599.485916,
+    "wallTime": "2026-09-19T07:58:24.459Z",
+    "type": "viewport.acknowledged",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 26,
+      "hash": "923277c01c5e54cdea8072a73cd87949561f0bac701beeb83610c373586dccd7",
+      "phase": "paused-purchase-confirmation"
+    }
+  },
+  {
+    "sequence": 746,
+    "elapsedMs": 46888.346708,
+    "wallTime": "2026-09-19T07:58:25.748Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 93,
+      "hash": "19fadb101810f3bfd35aee20ad7a15c27068fd66370cfd9dc31486820da15478",
+      "phase": "after-confirmation"
+    }
+  },
+  {
+    "sequence": 747,
+    "elapsedMs": 46888.974875,
+    "wallTime": "2026-09-19T07:58:25.748Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 93,
+      "phase": "after-confirmation",
+      "stage": "received",
+      "visibility": "visible",
+      "focused": false,
+      "at": 46201.599999997765,
+      "renderRevision": 101
+    }
+  },
+  {
+    "sequence": 748,
+    "elapsedMs": 46889.928416,
+    "wallTime": "2026-09-19T07:58:25.749Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 93,
+      "phase": "after-confirmation",
+      "stage": "decoded",
+      "visibility": "visible",
+      "focused": false,
+      "at": 46202.5,
+      "renderRevision": 101
+    }
+  },
+  {
+    "sequence": 749,
+    "elapsedMs": 46890.048041,
+    "wallTime": "2026-09-19T07:58:25.750Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 93,
+      "phase": "after-confirmation",
+      "stage": "dom-updated",
+      "visibility": "visible",
+      "focused": false,
+      "at": 46202.599999997765,
+      "renderRevision": 101
+    }
+  },
+  {
+    "sequence": 750,
+    "elapsedMs": 46895.284041,
+    "wallTime": "2026-09-19T07:58:25.755Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 93,
+      "phase": "after-confirmation",
+      "stage": "raf-one",
+      "visibility": "visible",
+      "focused": false,
+      "at": 46203.29999999702,
+      "renderRevision": 101
+    }
+  },
+  {
+    "sequence": 751,
+    "elapsedMs": 46899.206291,
+    "wallTime": "2026-09-19T07:58:25.759Z",
+    "type": "viewport.diagnostic",
+    "detail": {
+      "type": "diagnostic",
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 93,
+      "phase": "after-confirmation",
+      "stage": "raf-two",
+      "visibility": "visible",
+      "focused": false,
+      "at": 46211.599999997765,
+      "renderRevision": 101
+    }
+  },
+  {
+    "sequence": 752,
+    "elapsedMs": 46899.417416,
+    "wallTime": "2026-09-19T07:58:25.759Z",
+    "type": "viewport.acknowledged",
+    "detail": {
+      "epoch": "0afe0672-3beb-4fdd-8bf4-c6b24484ef5d",
+      "id": 93,
+      "hash": "19fadb101810f3bfd35aee20ad7a15c27068fd66370cfd9dc31486820da15478",
+      "phase": "after-confirmation"
+    }
+  }
+]

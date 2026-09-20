@@ -1,0 +1,17 @@
+{
+  "recovered": true,
+  "executionAttempts": 0,
+  "errors": [],
+  "understood": 0,
+  "image": {
+    "naturalWidth": 720,
+    "naturalHeight": 640,
+    "width": 998,
+    "height": 389,
+    "bottom": 438,
+    "viewportHeight": 438,
+    "scrollHeight": 438,
+    "hidden": false
+  },
+  "scope": "Real product webviews and recorded PNG; simulated native API"
+}

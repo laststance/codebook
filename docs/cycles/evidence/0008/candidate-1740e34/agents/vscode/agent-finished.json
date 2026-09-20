@@ -1,0 +1,107 @@
+{
+  "result": "demonstrated",
+  "scope": "Driving agent discovered and controlled offline replay through actual MCP; recording was prepared by the separate scripted native harness.",
+  "host": {
+    "id": "vscode",
+    "productVersion": "1.138.0",
+    "apiVersion": "1.138.0",
+    "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+    "browserBackend": "managed"
+  },
+  "build": {
+    "revision": "1740e346464510e668446e82156478134b5c4144",
+    "dirty": false,
+    "sourceHash": "b5916781756a16c01d5912ffa392b3fe0a87c70d1593e1dbca3428a382639820"
+  },
+  "operations": 22,
+  "controls": [
+    {
+      "instanceId": "2e01cbdf-0043-4df2-ad2c-5d2d01abe07e",
+      "studyId": "692660bf-1a81-4b68-ae59-4887e0eda85e_12c28542-d2e1-4d0e-a2fe-ea3eec736e61",
+      "action": "open",
+      "expectedRevision": 0
+    },
+    {
+      "instanceId": "2e01cbdf-0043-4df2-ad2c-5d2d01abe07e",
+      "studyId": "692660bf-1a81-4b68-ae59-4887e0eda85e_12c28542-d2e1-4d0e-a2fe-ea3eec736e61",
+      "action": "seek",
+      "expectedRevision": 1,
+      "positionMs": 42552.685542
+    },
+    {
+      "instanceId": "2e01cbdf-0043-4df2-ad2c-5d2d01abe07e",
+      "studyId": "692660bf-1a81-4b68-ae59-4887e0eda85e_12c28542-d2e1-4d0e-a2fe-ea3eec736e61",
+      "expectedRevision": 2,
+      "action": "seek",
+      "positionMs": 42815.409208
+    },
+    {
+      "instanceId": "2e01cbdf-0043-4df2-ad2c-5d2d01abe07e",
+      "studyId": "692660bf-1a81-4b68-ae59-4887e0eda85e_12c28542-d2e1-4d0e-a2fe-ea3eec736e61",
+      "expectedRevision": 1,
+      "action": "seek",
+      "positionMs": 1365.857917
+    },
+    {
+      "instanceId": "2e01cbdf-0043-4df2-ad2c-5d2d01abe07e",
+      "studyId": "692660bf-1a81-4b68-ae59-4887e0eda85e_12c28542-d2e1-4d0e-a2fe-ea3eec736e61",
+      "expectedRevision": 3,
+      "action": "seek",
+      "positionMs": 1365.857917
+    },
+    {
+      "instanceId": "2e01cbdf-0043-4df2-ad2c-5d2d01abe07e",
+      "studyId": "692660bf-1a81-4b68-ae59-4887e0eda85e_12c28542-d2e1-4d0e-a2fe-ea3eec736e61",
+      "expectedRevision": 4,
+      "action": "play"
+    },
+    {
+      "instanceId": "2e01cbdf-0043-4df2-ad2c-5d2d01abe07e",
+      "studyId": "692660bf-1a81-4b68-ae59-4887e0eda85e_12c28542-d2e1-4d0e-a2fe-ea3eec736e61",
+      "expectedRevision": 5,
+      "action": "pause"
+    }
+  ],
+  "applicationMutationCalls": 0,
+  "runsBefore": [],
+  "runsAfter": [],
+  "playbackDiscoveryFields": [
+    "instanceId",
+    "studyId",
+    "expectedRevision",
+    "action",
+    "positionMs"
+  ],
+  "staleRevisionRejected": true,
+  "finalPlayback": {
+    "instanceId": "2e01cbdf-0043-4df2-ad2c-5d2d01abe07e",
+    "revision": 6,
+    "presentationRevision": 240,
+    "studyId": "692660bf-1a81-4b68-ae59-4887e0eda85e_12c28542-d2e1-4d0e-a2fe-ea3eec736e61",
+    "mode": "paused",
+    "readiness": "ready",
+    "requestedMs": 13302.53208399999,
+    "presentedMs": 13302.53208399999,
+    "range": {
+      "startMs": 0.038458,
+      "endMs": 44615.608708,
+      "endKnown": true
+    },
+    "recordingStatus": "finalized",
+    "cleared": false,
+    "contextHash": "39d9dc98cde9d3c5d6fcddd1634f24f403262d7b7b1af7438886537215360270",
+    "frame": {
+      "sequence": 5,
+      "hash": "dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3",
+      "receivedMs": 1326.517708
+    },
+    "observationId": "e0364fdf-4896-416f-845b-05cb01707779:1",
+    "available": true,
+    "uri": "codebook://2e01cbdf-0043-4df2-ad2c-5d2d01abe07e/playback",
+    "libraryUri": "codebook://2e01cbdf-0043-4df2-ad2c-5d2d01abe07e/library"
+  },
+  "imageInspected": "agent-receipts/a3c83bdb166e6999025ecb8a8da23939f394b8d92bdc9df69aae050c515e83d0.png",
+  "imageObservation": "Purchase confirmed, cart 1, one completed cart click and checkout; saved application image, not independent native editor pixels.",
+  "independentNativePixels": false,
+  "finalProductAcceptance": false
+}

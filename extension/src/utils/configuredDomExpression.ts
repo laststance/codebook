@@ -1,0 +1,26 @@
+import type { RepositoryConfiguration } from '../repositoryConfigSchemas';
+
+/** Serializes declared DOM conditions as data for owned runtime evaluation; callers receive no executable expression slot. @example configuredDomExpression(configuration.action.before, configuration.action.selector) */
+export function configuredDomExpression(conditions: RepositoryConfiguration['action']['before'], selector?: string): string {
+  return `(${inspectDom.toString()})(${JSON.stringify(conditions)},${JSON.stringify(selector) ?? 'undefined'})`;
+}
+
+/** Evaluates exact unique-node conditions and an optional hittable click center inside the owned page. @example inspectDom([{kind:'visible',selector:'button'}], 'button').ready */
+function inspectDom(conditions: RepositoryConfiguration['action']['before'], selector?: string) {
+  const visible = (element: Element) => {
+    const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
+    return element.isConnected && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse' && style.opacity !== '0';
+  };
+  for (const condition of conditions) {
+    const elements = document.querySelectorAll(condition.selector), element = elements[0];
+    if (elements.length !== 1 || !element) return { ready: false };
+    if (condition.kind === 'visible' && !visible(element)) return { ready: false };
+    if (condition.kind === 'text' && element.textContent !== condition.equals) return { ready: false };
+    if (condition.kind === 'attribute' && element.getAttribute(condition.attribute) !== condition.equals) return { ready: false };
+  }
+  if (selector === undefined) return { ready: true };
+  const elements = document.querySelectorAll(selector), element = elements[0];
+  if (elements.length !== 1 || !element || !visible(element) || element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return { ready: false };
+  const rect = element.getBoundingClientRect(), x = rect.x + rect.width / 2, y = rect.y + rect.height / 2, hit = document.elementFromPoint(x, y);
+  return hit && (hit === element || element.contains(hit)) ? { ready: true, x, y } : { ready: false };
+}

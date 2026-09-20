@@ -6,16 +6,22 @@ import { StudyService } from './service';
 import { startServer } from './server';
 import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './constants';
 import { StudyWorkspace } from './studyWorkspace';
-import { itemSchema, profileSchema } from './studySchemas';
+import { profileSchema } from './studySchemas';
+import { learningItemSchema } from './identitySchemas';
+import { RepositoryReader } from './repositoryReader';
+import { repositorySelectionSchema } from './learnerSchemas';
+import { repositoryActionSchema } from './repositoryView';
 
 let stopExtension: (() => Promise<void>) | undefined;
 
 /** Registers explicit trusted commands without reading auto-run instructions from repository files. @example VS Code calls activate(context) */
-export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & { globalStorageUri: Pick<vscode.Uri, 'fsPath'> }) {
+export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & { globalStorageUri: Pick<vscode.Uri, 'fsPath'>; workspaceState: Pick<vscode.Memento, 'get' | 'update'> }) {
   type Running = { endpoint: Awaited<ReturnType<typeof startServer>>; environment: Awaited<ReturnType<typeof createEnvironment>>; descriptorPath: string; service: StudyService };
   let starting: Promise<Running> | undefined, running: Running | undefined, stopping: Promise<void> | undefined;
   let reader: StudyWorkspace | undefined;
-  const workspace = () => reader ??= new StudyWorkspace(context, { start: async () => { await start(); if (!running) throw new Error('Study server did not start.'); return running.service; }, connect });
+  let repositoryReader: RepositoryReader | undefined;
+  const workspace = (): StudyWorkspace => reader ??= new StudyWorkspace(context, { start: async () => { await start(); if (!running) throw new Error('Study server did not start.'); return running.service; }, connect, returnToRepository: selection => repository().open(selection, undefined, true), openArticle: selection => repository().open(selection) });
+  const repository = (): RepositoryReader => repositoryReader ??= new RepositoryReader({ storage: () => workspace().learningStorage(), connect, arrange: (signal, returnSelection) => workspace().arrangeRepository(signal, returnSelection), evidence: (binding, recording, signal, origin) => workspace().openRepositoryEvidence(binding, recording, signal, origin) });
   const start = async () => {
     requireWorkspace();
     if (stopping) throw new Error('Codebook server is stopping; wait for cleanup before starting.');
@@ -32,7 +38,9 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
         await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE }); await chmod(directory, PRIVATE_DIRECTORY_MODE);
         // js-debug canonicalizes executed paths; source-map allowlists and seals must use the same identity.
         const storageRoot = await realpath(directory);
-        service = new StudyService(environment, storageRoot); await workspace().attach(service); endpoint = await startServer(service);
+        service = new StudyService(environment, storageRoot); await workspace().attach(service);
+        service.repository = await repository().storage(); service.repositoryReader = (input, signal) => repository().openFromAgent(input, signal); service.repositoryPublished = () => repository().published();
+        endpoint = await startServer(service);
         const descriptorPath = join(storageRoot, `${service.instanceId}.connection.json`);
         await writeFile(descriptorPath, JSON.stringify(endpoint.descriptor), { mode: PRIVATE_FILE_MODE, flag: 'wx' });
         return { endpoint, environment, descriptorPath, service };
@@ -70,20 +78,25 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     await vscode.env.clipboard.writeText(JSON.stringify({ mcpServers: { codebook: { type: 'http', url: descriptor.url, headers: { Authorization: `Bearer ${descriptor.token}` } } } }, null, 2));
     void vscode.window.showInformationMessage('Codebook connection copied. This credential grants access to the selected workspace; recopy after restart.');
   };
-  stopExtension = async () => { await stop(); await reader?.dispose(); };
+  stopExtension = async () => { await stop(); await repositoryReader?.dispose(); await reader?.dispose(); };
   context.subscriptions.push(vscode.commands.registerCommand('codebook.startAgentServer', start),
     vscode.commands.registerCommand('codebook.stopAgentServer', stop),
     vscode.commands.registerCommand('codebook.copyAgentConnection', connect),
     vscode.commands.registerCommand('codebook.openStudyWorkspace', () => workspace().open()),
+    vscode.commands.registerCommand('codebook.selectPresentation', () => workspace().selectPresentation()),
     vscode.commands.registerCommand('codebook.closeStudyWorkspace', () => reader?.close()),
-    vscode.commands.registerCommand('codebook.selectLearningItem', itemId => workspace().select(itemSchema.parse(itemId))),
+    vscode.commands.registerCommand('codebook.openRepositoryWiki', (input?: unknown) => repository().open(input === undefined ? undefined : repositorySelectionSchema.parse(input))),
+    vscode.commands.registerCommand('codebook.closeRepositoryWiki', () => repositoryReader?.close()),
+    vscode.commands.registerCommand('codebook.repository.action', (action: unknown) => repository().action(repositoryActionSchema.parse(action))),
+    vscode.commands.registerCommand('codebook.repository.understand', (understood: unknown) => { if (typeof understood !== 'boolean') throw new Error('Understanding requires a boolean learner choice.'); return repository().understand(understood); }),
+    vscode.commands.registerCommand('codebook.selectLearningItem', itemId => workspace().select(learningItemSchema.parse(itemId))),
     vscode.commands.registerCommand('codebook.selectStudyProfile', profile => workspace().selectProfile(profileSchema.parse(profile))),
     vscode.commands.registerCommand('codebook.markUnderstanding', understood => { if (understood !== undefined && typeof understood !== 'boolean') throw new Error('Understanding requires a boolean learner choice.'); return workspace().understand(understood); }),
-    ...(['run', 'click', 'continue', 'stop', 'return-current', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry'] as const).map(action => vscode.commands.registerCommand(`codebook.study.${action}`, () => workspace().action(action))),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => { void stop().then(async () => { await reader?.dispose(); reader = undefined; }).catch(error => vscode.window.showErrorMessage(`Codebook cleanup incomplete: ${String(error)}`)); }));
+    ...(['run', 'click', 'continue', 'stop', 'return-current', 'return-wiki', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry'] as const).map(action => vscode.commands.registerCommand(`codebook.study.${action}`, () => workspace().action(action))),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => { void stop().then(async () => { await repositoryReader?.dispose(); repositoryReader = undefined; await reader?.dispose(); reader = undefined; repository(); }).catch(error => vscode.window.showErrorMessage(`Codebook cleanup incomplete: ${String(error)}`)); }));
   // Register lazy readers before restored captured documents or contributed views request their providers.
-  workspace();
-  return { inspectStudy: () => reader?.inspect() };
+  workspace(); repository();
+  return { inspectStudy: () => reader?.inspect(), inspectRepository: () => repositoryReader?.inspect() };
 }
 
 /** Lets the editor await owned cleanup instead of fire-and-forget disposal during extension shutdown. @example await deactivate() */

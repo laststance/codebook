@@ -362,7 +362,9 @@ function feedNetwork(network: NetworkEvidence, requestId: string, facts: Partici
   network.finished(requestId, 3); network.body(requestId, { body: JSON.stringify(facts), base64Encoded: false });
 }
 
-test('checkout keeps four observations in one session pair and never redispatches a retained action key', async () => {
+for (const confirmationCase of ['immediate', 'delayed', 'wrong-order'] as const) test(confirmationCase === 'immediate' ? 'checkout keeps four observations in one session pair and never redispatches a retained action key'
+  : confirmationCase === 'delayed' ? 'checkout waits through confirmation motion before certifying its final screen'
+  : 'checkout rejects a different order during confirmation motion instead of waiting or certifying it', async () => {
   // Arrange: real coordinator/reducer/writer; only editor, CDP and inspector effects are synthetic.
   let runtimeId = '';
   const { run, directory } = await harness('checkout-demo', async (name, _session, _cdp, pause, _paused, _seal, check, _signal, _evidence, item) => {
@@ -373,14 +375,15 @@ test('checkout keeps four observations in one session pair and never redispatche
     return { ...snapshot(pause), id: `${pause.sessionId}:${pause.generation}`, participant: name, itemId: item.id, actionId: item.action, capturePhase: item.capturePhase, values };
   });
   runtimeId = run.id;
+  let confirming = confirmationCase !== 'immediate';
   const inputs: string[] = [];
   const cdp = { close() {}, async request(method: string, parameters?: { expression?: string; type?: string }) {
     if (method === 'Input.dispatchMouseEvent') { inputs.push(parameters?.type ?? ''); return {}; }
     if (method === 'Page.captureScreenshot') return { data: Buffer.from('synthetic png bytes').toString('base64') };
     if (parameters?.expression?.includes('getBoundingClientRect')) return { result: { value: '{"x":10,"y":10}' } };
-    return { result: { value: JSON.stringify(run.operation?.actionId === 'checkout' ? { cartCount: 1, completedClicks: 1, orderId: `order-${run.id}`, total: 24, status: 'confirmed', completedCheckouts: 1 } : { cartCount: 1, completedClicks: 1 }) } };
+    return { result: { value: JSON.stringify(run.operation?.actionId === 'checkout' ? { cartCount: 1, completedClicks: 1, orderId: confirmationCase === 'wrong-order' ? 'wrong-order' : `order-${run.id}`, total: 24, status: confirming ? 'confirming' : 'confirmed', completedCheckouts: confirming ? 0 : 1 } : { cartCount: 1, completedClicks: 1 }) } };
   } };
-  Reflect.set(run, 'browser', { resumeViewport() {}, async reveal() {}, async drainAcquisitions() {}, async close() {}, async presentCapture() { return { epoch: 'test', id: 1, hash: 'test' }; } });
+  Reflect.set(run, 'browser', { resumeViewport() {}, recordCapture() {}, async reveal() {}, async drainAcquisitions() {}, async close() {}, async presentCapture() { return { epoch: 'test', id: 1, hash: 'test' }; } });
   for (const name of ['server', 'browser'] as const) {
     const session = { id: `${name}-session`, name, type: 'test', configuration: { name, type: 'test', request: 'launch' }, workspaceFolder: undefined,
       async customRequest(command: string, arguments_: { threadId: number }) { run.onRequest(session, { seq: 1, type: 'request', command }); run.onEvent(session, { seq: 2, type: 'event', event: 'continued', body: arguments_ }); }, getDebugProtocolBreakpoint: async () => undefined };
@@ -425,6 +428,16 @@ test('checkout keeps four observations in one session pair and never redispatche
       else await assert.rejects(run.continue(item.participant, oldPauses[item.participant]!), /conflict/);
       assert.equal(pause.generation, index < 2 ? 1 : 2);
       await run.continue(item.participant, pause);
+    }
+    if (confirmationCase === 'wrong-order') {
+      await waitUntil(() => run.status === 'failed', 'rejected different order', 1_000);
+      assert.match(run.failures.join('\n'), /Visible result differs/); assert.equal(run.networks.get('checkout')!.closed, false); return;
+    }
+    if (confirmationCase === 'delayed') {
+      await waitUntil(() => run.status === 'failed' || run.evidence.events.some(event => event.type === 'screen.pending-confirmation'), 'pending confirmation screen', 1_000);
+      assert.notEqual(run.status, 'failed', run.failures.join('\n')); assert.equal(run.operation?.completed, false);
+      assert.equal(run.captures['after-confirmation'], undefined); assert.equal(run.links.find(link => link.id === 'checkout-browser-screen')?.status, 'unknown');
+      confirming = false;
     }
     await waitUntil(() => run.status === 'completed', 'checkout candidate', 1_000);
     assert.equal(run.snapshots.length, 4); assert.equal(run.operations.length, 2);

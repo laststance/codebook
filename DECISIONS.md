@@ -102,3 +102,60 @@ Source: [Cycle 0007](docs/cycles/0007-checkout-scenario.md), clean `8be0913`, si
 Decision: retain the connected four-item checkout and its immutable source/value/explanation records. Next build one synchronized recording/replay increment for this same scenario after the app/debugger exit. Reuse learning identities and evidence timing; represent missing frames and incomplete recording explicitly.
 Reason: the complete fixed purchase narrative now runs, but learners cannot replay its motion and explanation correspondence. G04 is the next missing connection and a shared playback model is also required by both later layouts. Repeated transport/reader polishing would not establish it.
 Limits: native presentation remains inconclusive; one actual VS Code run misses three render ACKs and a bounded diagnostic does not identify a cause. Native pixels, arbitrary repositories, generated wiki, additional layouts, packaging, intended-use acceptance and ten fresh sequential reviews remain required. No capability is removed and no complete product claim is made. Status: active route.
+
+
+## D015 — Connect repository learning content to retained observations, 2026-09-19
+
+Source: [Cycle 0008](docs/cycles/0008-recording-replay.md), clean `1740e34`, 238 tests, native VS Code recording/restart, actual-agent replay in both required hosts, browser motion/error/layout evidence; current Cursor phase presentation remains partial. Agent-selected route under D008.
+Decision: retain bounded immutable recording, as-of source/value/interpretation context and shared revision-checked playback. Next build one source-grounded repository learning-document/wiki and codemap increment through the existing agent/learner boundary. Start with actual source in this repository and navigation to established observed learning items; source-derived content must never imply runtime proof.
+Reason: macro learning content remains hard-coded to demonstration profiles. Establishing an agent-authored source-backed document is the next connection toward unfamiliar real repositories and can later supply both required alternate layouts. Repeating unchanged transport or renderer trials would not resolve their intermittent native condition or this missing macro capability.
+Limits: keep native phase-presentation reliability unresolved and require a measured failing-stage/owner-driven reproduction before claiming a repair. No ordinary-repository runtime, independent native pixels, packaging, final layout/host acceptance or fresh sequential review pass follows. No final requirement changes. Status: selected route.
+
+## D016 — Preserve the approved repository reader experience, 2026-09-19
+
+Source: Raphtalia's actual Cycle 0009 design-review answers D3–D6 and the [recorded seven-pass review](docs/cycles/0009-repository-learning-book.md#formal-design-review-checkpoint).
+Decision: retain B's article/source/context composition with a small lowercase `understand` checkbox. Any changed citation makes the article Review needed while preserving historical learner decisions. Narrow readers use one article column, a small contents disclosure and source relationships below; wide readers retain B. Return from an observation or recording restores the same book/revision/node, section and reading position, including saved-reader restart, without execution or understanding changes.
+Reason: preserve reading context while the learner moves between macro explanations, exact source and recorded evidence. The small check remains a learner action; source validation and observed execution remain separate facts.
+Limits: these are approved behavior and layout requirements, not native UX or runtime evidence. Source-context identity, position persistence and storage mechanics remain engineering-review work. Living book and Guided walkthrough remain required later modes. Approved image: `/Users/ryotamurakami/.gstack/projects/codebook/designs/cycle0009-repository-wiki-20260919/variant-B-compact.png`, SHA-256 `9fe687a6ff72923d70f55db20065f00e6d7a9518368af70361679996b6d41e8a`. Status: approved by owner.
+
+
+## D017 — Preserve complete citation context and short publication ownership, 2026-09-19
+
+Source: Raphtalia's actual Cycle 0009 engineering-review answers D1 B, D2 A and D3 A, recorded in the [engineering plan review](docs/cycles/0009-repository-learning-book.md#engineering-review--architecture).
+Decision: keep a dedicated small book validation/persistence module with the existing shared storage primitives. Bind explicit understanding to the stable learning item and canonical complete citation set (path, full-byte hash and inclusive range), preserving legacy single-source meaning. Prepare bounded source/link data outside the shared writer queue; under the queue revalidate expected revision, source identity/hash and checkpoint facts before atomic publication.
+Reason: unrelated prose edits should not clear understanding, secondary source edits must not inherit it, and source preparation should not hold up existing learner/recording saves. Conflicts or failed validation preserve prior content; identical intent recovers the original committed receipt after response loss.
+Limits: this is an approved implementation contract, not a working implementation or an atomic whole-workspace snapshot guarantee. Primary plan reviews completed; independent review and new integration/native evidence remain outstanding. Status: approved by owner.
+
+## D018 — Retain source-grounded books; investigate a non-fixture runtime, 2026-09-19
+
+Source: [Cycle 0009](docs/cycles/0009-repository-learning-book.md), 238 passing extension tests, actual-agent repository publication in both editors and independently inspected normal/200% native evidence returns. Agent-selected route under D008.
+Decision: retain bounded tracked-source acquisition, immutable book revisions, complete-citation learner history and exact observation/replay return. Native layout transitions require an unchanged owned receipt; accepted workbench work is drained and its observed result is checked. Wiki evidence navigation preserves hidden navigation panes, while explicit Study opening remains explicit. Next investigate one non-fixture TypeScript runtime contract before expanding the reader further.
+Reason: actual Codebook-source authoring establishes useful macro reading and its connection to existing evidence. The remaining fixed-runtime boundary is a higher-impact constraint on unfamiliar repository learning than another reader refinement. A bounded experiment can expose launch/debug/source assumptions before choosing a general integration API.
+Limits: existing runtime evidence still comes from prepared profiles; VS Code's original Cycle 0009 study remains partial. This decision does not claim general phase-capture reliability, full review-skill convergence, packaging, final native usability, three intended uses, both later layouts, owner acceptance or final sequential reviews. No goal outcome or accepted D016/D017 behavior changes. Status: selected route.
+
+
+## D019 — Keep real-source browser control; connect it to the product contract, 2026-09-20
+
+Source: [Cycle 0010](docs/cycles/0010-real-repository-runtime.md), 38 experiment tests, 14 final native cases, exact JS/map/TSX and closure values, and inspected 70-second-hold videos in VS Code and Cursor. Agent-selected route under D008.
+Decision: keep bounded emitted-source verification, normalized full script identity, explicit selected session/thread/generation, independent input/control and owned cleanup. Require usable development maps for this demonstrated Next webpack path; do not pretend the frozen production build retained maps. Next connect a configurable ordinary-repository browser action to the existing MCP, Study observations, book evidence and recording model. The selected target is acceptance evidence, not a new hard-coded runtime profile. Preserve current fixed checkout and D016/D017 reader behavior.
+Reason: the real-repository experiment removes the immediate source/debugger uncertainty, while the product environment still constructs only PairedRun and exposes prepared profiles. A bounded public integration now advances G01/G03/G04/G06/G10 more directly than another experiment or reader refinement.
+Limits: the original native after-frame ACK failure remains unexplained; successful later runs do not establish general reliability. Review stopped non-converged at three fixing passes, outside coverage is missing, and the experiment is neither packaged nor installed. All three intended uses, both later layouts, integrated two-host acceptance, owner acceptance and ten consecutive fresh final reviews remain required. No product outcome or accepted design choice changes. Status: selected route.
+
+
+## D020 — Advance the configured path to shared presentations, 2026-09-20
+
+Source: [Cycle 0011 final reconciliation](docs/cycles/evidence/0011/final-reconciliation-20260920.md), source-equivalent implementation `58f08cd`, 476 tests, actual VS Code/Cursor configured runs, offline/partial replay and native UX evidence. Agent-selected route within D008.
+
+Decision: keep the bounded configured browser adapter and shared immutable study/recording/learner identities. Select one shared presentation-mode increment next, after reading Issue #1 purpose and inspecting the approved images again. Switching must preserve the same run, item, understanding and playhead; it must not create another runtime or reinterpret recorded evidence as live.
+
+Reason: the configured path now answers its finite cycle question; G08 and G09 remain wholly unimplemented. Further repetition of unchanged runtime checks would not close that product gap.
+
+Limits: full implementation review remains non-converged; supported adapter bounds, prior partial captures and local evidence availability remain qualified. Packaging, three intended uses, owner acceptance and the final ten sequential reviews remain required. No product outcome changes. Status: active route.
+
+## D021 — Deliver every new cycle through its own branch and merged PR, 2026-09-20
+
+Source: Raphtalia's explicit active-goal update during Cycle 0014.
+
+Decision: at each new cycle, freshly read Issue #1 and its linked purpose prose and visually inspect its approved design images; create that cycle's work branch; implement, validate and review including coderabbit-cli; create a PR whose description contains `@coderabbitai ignore`; close the cycle issue at merge, using the PR's closing reference. Keep Issue #1 open until complete integrated acceptance and ten consecutive fresh sequential PASS reviews. Owner delegates recommended skill choices and waives user-named-target/question-wait gates as already recorded in the active goal.
+
+Application: Cycle 0014 was already in progress when this instruction arrived. Its changes are now on `codex/cycle-0014-shared-presentations`, based on `1e80750`. Issue #15 stays open through review and PR delivery. Earlier closed cycles retain their historical delivery state. Remote main is still `6840178`; the first PR to main will also integrate the existing unmerged recording/repository/configured-runtime baseline. Its review must disclose and cover that larger integration diff separately from Cycle 0014's implementation range. Subsequent cycles branch from the integrated result. No requirement or evidence claim changes.

@@ -15,11 +15,12 @@ test('a released study with failed evidence can retire its dead connection and e
   let environments = 0, disposed = 0;
   const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
     vscode: { commands: { registerCommand(name: string, action: () => Promise<string | void>) { commands.set(name, action); return { dispose() {} }; } }, workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) } },
+    './repositoryReader': { RepositoryReader: class { async storage() { return undefined; } async dispose() {} } },
     './studyWorkspace': { StudyWorkspace: class { presentation = undefined; async attach() {} async retire() {} async dispose() {} } },
     './environment': { requireWorkspace: () => harness.directory, createEnvironment: async () => { environments += 1; return { ...harness.service.environment, dispose() { disposed += 1; } }; } },
     './server': { startServer: async (service: StudyService) => { services.push(service); return startServer(service); } },
   });
-  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: harness.directory }, subscriptions: [] });
+  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: harness.directory }, subscriptions: [], workspaceState: { get: () => undefined, update: async () => {} } });
   try {
     const firstPath = await commands.get('codebook.startAgentServer')!(); assert.equal(typeof firstPath, 'string'); assert.ok(firstPath);
     const first = connectionSchema.parse(JSON.parse(await readFile(firstPath, 'utf8'))), service = services[0]!;
@@ -45,11 +46,12 @@ test('a failed physical release keeps its owner and rejects starting or copying 
   let disposed = 0, copied = 0;
   const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
     vscode: { commands: { registerCommand(name: string, action: () => Promise<string | void>) { commands.set(name, action); return { dispose() {} }; } }, workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) }, env: { clipboard: { writeText: async () => { copied += 1; } } } },
+    './repositoryReader': { RepositoryReader: class { async storage() { return undefined; } async dispose() {} } },
     './studyWorkspace': { StudyWorkspace: class { presentation = undefined; async attach() {} async retire() {} async dispose() {} } },
     './environment': { requireWorkspace: () => harness.directory, createEnvironment: async () => ({ ...harness.service.environment, dispose() { disposed += 1; } }) },
     './server': { startServer: async (service: StudyService) => { services.push(service); return startServer(service); } },
   });
-  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: harness.directory }, subscriptions: [] });
+  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: harness.directory }, subscriptions: [], workspaceState: { get: () => undefined, update: async () => {} } });
   let restore: (() => Promise<void>) | undefined;
   try {
     const firstPath = await commands.get('codebook.startAgentServer')!(); assert.ok(firstPath);

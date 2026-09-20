@@ -1,4 +1,4 @@
-import { PRODUCT, BACKGROUND_PRODUCT } from './constants.mjs';
+import { PRODUCT, BACKGROUND_PRODUCT, CONFIRMATION_ANIMATION_DURATION_MS, CONFIRMATION_ENTRY_OFFSET_PX } from './constants.mjs';
 
 const runId = document.documentElement.dataset.runId!;
 const scenario = document.documentElement.dataset.scenario!;
@@ -53,7 +53,13 @@ checkoutButton.addEventListener('click', () => {
     const [result, backgroundResult] = await Promise.all([requestCheckout(selected), requestCheckout(background)]);
     document.querySelector('#order-id')!.textContent = result.orderId; // CODEBOOK_CONFIRMATION_STOP
     document.querySelector('#order-total')!.textContent = String(result.total);
-    document.querySelector<HTMLElement>('#confirmation')!.hidden = false;
+    const confirmation = document.querySelector<HTMLElement>('#confirmation')!;
+    confirmation.hidden = false;
+    document.documentElement.dataset.orderStatus = 'confirming';
+    // Completion waits for actual page motion so recording cannot seal before its final visible state.
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      await confirmation.animate([{ transform: `translateY(${CONFIRMATION_ENTRY_OFFSET_PX}px)`, opacity: 0 }, { transform: 'translateY(0)', opacity: 1 }], { duration: CONFIRMATION_ANIMATION_DURATION_MS, easing: 'ease-out' }).finished;
+    }
     document.querySelector('#checkouts')!.textContent = String(Number(document.querySelector('#checkouts')!.textContent) + 1);
     document.documentElement.dataset.orderStatus = 'confirmed';
     status.textContent = `Purchase confirmed; background order ${backgroundResult.orderId}.`;

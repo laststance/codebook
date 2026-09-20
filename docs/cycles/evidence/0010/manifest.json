@@ -1,0 +1,2376 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-19T16:40:15.067946+00:00",
+  "scope": "Cycle 0010 one unchanged real-repository browser action; private experiment, not integrated product acceptance",
+  "candidate": {
+    "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+    "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+    "sourceCount": 60,
+    "sources": [
+      {
+        "path": "experiments/cycle-0001/src/browserViewport.ts",
+        "hash": "ccebd3632de7ede4a07459c38342f4496a48b252df2296a5bfc48937a3b6e87d"
+      },
+      {
+        "path": "experiments/cycle-0001/src/cdp.ts",
+        "hash": "7aca13df8b981d1de63c1ac5bef79768a23adc086504d2b9980fcf2373a387df"
+      },
+      {
+        "path": "experiments/cycle-0001/src/constants.ts",
+        "hash": "8f2d17eb580cdad31e98bc08f49178c0a4216caa87e5886544db08e24ea6d252"
+      },
+      {
+        "path": "experiments/cycle-0001/src/cursorCdpBridge.ts",
+        "hash": "d72541dd075a4fb3446928b0e65a724e8305788349175cfa2f6e08978f30aa0f"
+      },
+      {
+        "path": "experiments/cycle-0001/src/evidence.ts",
+        "hash": "08ccf64425b8cc35f839f7c065b70c7055a5fb78547b0e5e48a770f9eafff456"
+      },
+      {
+        "path": "experiments/cycle-0001/src/extension.ts",
+        "hash": "cbbe956d08867a6736cbd41315cb4e5180b23f8592e9ba4a9910325efed53c44"
+      },
+      {
+        "path": "experiments/cycle-0001/src/frameDelivery.ts",
+        "hash": "0d4a073082cd6bd49696337ae31cce3882efa00d337990ea0b3e62bb69285acd"
+      },
+      {
+        "path": "experiments/cycle-0001/src/hostBrowser.ts",
+        "hash": "a669fcfe1d6670164d04ce060bde182ca36dd1abcd85fa88c8504cfb70e0185b"
+      },
+      {
+        "path": "experiments/cycle-0001/src/inspect.ts",
+        "hash": "a7dbba2697ebcbb1827637f3810ad87b6bd0595060790081aa66aaf3813ed2c5"
+      },
+      {
+        "path": "experiments/cycle-0001/src/pauseGate.ts",
+        "hash": "72c87e952895d73cdd4a8695a4a554d3c7699a4fb112c208d83a4aca18251567"
+      },
+      {
+        "path": "experiments/cycle-0001/src/run.ts",
+        "hash": "49d79a2bacf59c7554291fb66910ba8c800d87b13e3bc22dac0ec83e93e8330a"
+      },
+      {
+        "path": "experiments/cycle-0001/src/runner.ts",
+        "hash": "ee9c5c12c03af488d3cf0574832049b8b2b18025c8d8221a4a6823a7ee734dfe"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/awaitResponse.test.ts",
+        "hash": "e4b0243a487065b095561fac5f3e983b8c1a98de62b9df08324ac8240f369ae6"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/browserViewport.test.ts",
+        "hash": "58e9bd0e1c2031e02a38e5208a93fa47064b8d5b4f295c01e3bd4f21c644cd9d"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/cdp.test.ts",
+        "hash": "757c4e4f8a00ee2ec15f6346bc1214d6a4fe49d57d6305f6ff0b9b5aa691eb52"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/cursorCdpBridge.test.ts",
+        "hash": "ef68a052d8f3efdb63e418a05a89477775e85ca5d6e35f25bae632f2c5ff5b7c"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/endpoint.test.ts",
+        "hash": "ffc9666680732513dba379c9f0ad12854beb94688a4db5d365738ec1568d6e82"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/evidence.test.ts",
+        "hash": "0079778ff9087fb142ad8d74aae764d965e96b4e930acdaf7aaf5e0410c4a18d"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/frameDelivery.test.ts",
+        "hash": "f10a65c5a901d155f6bdf592b5e8495741348beb1332fbda0adf715f079f1dca"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/host.test.ts",
+        "hash": "8640835cad73898469031aa92f008fc237403c6da7c1e4facfbf3866c8fdb5e9"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/hostCleanup.test.ts",
+        "hash": "398d905baa937fe756a9d97d51c5f29465cff84e4ba1df06e72425ecd2ef2d31"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/hostInstallation.test.ts",
+        "hash": "e65e5b93a7b55cafd818743b63c706869a2c0c303a2b14e65f285af6b2e77ce9"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/pauseGate.test.ts",
+        "hash": "279cdfa1853f63de8afa92904d59d8f62b78aa9d70a72d31f08426fadbffe3c5"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/profileProcesses.test.ts",
+        "hash": "ae73eb414674294008f3425deadb4612c9a102836cf040b4e76c330b8ee05519"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/runCleanup.test.ts",
+        "hash": "6ddbeaa934b741a5bad99ebd097e23680866fe67aa26822f32a3f1bf72d0871d"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/runner.test.ts",
+        "hash": "7ba7734f57607d32a59ba45df63274a7ed67cd76f48fdb2854791239c247399d"
+      },
+      {
+        "path": "experiments/cycle-0001/src/tests/verifySource.test.ts",
+        "hash": "d52f1bcdd57e961569d1bc33ae9a9fb1444ccb5561798d6901454d113b759a54"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/awaitResponse.ts",
+        "hash": "e6f1e686aecbf5185607e56b3cb12aad730296906331b3891c25d4401ffe97a0"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/isEndpointClosed.ts",
+        "hash": "5dda64855ae2c6366a4df2de99d452c42ac7ba357bf8e797501181a9b37b9789"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/profileProcesses.ts",
+        "hash": "0cef3fdec0aa602690a3f52355997e12e15eb7a2a8e1ab55cb9f9a56c17b33b0"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/readHostInstallation.ts",
+        "hash": "484c53e3508eb1ac5f5384df3912de9d54023e7fe86d34069801d03d712b31cc"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/selectBrowser.ts",
+        "hash": "95112c844bb528617ddc30d1b90ab95225fa4b30529e42eaf35628a4df48f1b5"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/selectHost.ts",
+        "hash": "42bdfed7c801af10bbd5d2ae19758384c4a6905e9a02552f1acea60771ae4396"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/selectPageTarget.ts",
+        "hash": "0f11a2380e0efc56c89ede2eb133c9cdee3ebbe6b01c05705c0c98763194fe99"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/settleCleanup.ts",
+        "hash": "b8cdbca132d81927c03c8dbbb55e0c32191e3a774e2c54084ae28c9bbcd961df"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/sha256.ts",
+        "hash": "b9817247469c6ebea02b7a5ecacf05718b762080a237448213820d785130fa2d"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/viewportHtml.ts",
+        "hash": "a981c1b74be1efae08f64a5ee8a98e7cbeb056c4f50ffad72857d7aa8463e889"
+      },
+      {
+        "path": "experiments/cycle-0001/src/utils/waitUntil.ts",
+        "hash": "a3b2254f867f30d35516d5df2fa503a4f2f925e554f6b79bd5a1dcd0c9fcd902"
+      },
+      {
+        "path": "experiments/cycle-0001/src/verifySource.ts",
+        "hash": "27081b0e379a785d8bbefc3452448e8c3a601bfa9548eb7d23048ebf7e55acfe"
+      },
+      {
+        "path": "experiments/cycle-0010/src/bundleSource.ts",
+        "hash": "9ddb864e013511590b85278f0c4370d4a8bfe62b5878ba3d238a23e35f723725"
+      },
+      {
+        "path": "experiments/cycle-0010/src/config.ts",
+        "hash": "e1c57e31620db2b07ae9ea6d9263bb30e929e46208bc1be9675d961930a6f51c"
+      },
+      {
+        "path": "experiments/cycle-0010/src/constants.ts",
+        "hash": "b48a739e51b461afa7bada1d1294de70d58e96ebe14b4cf93fa43f941da7d627"
+      },
+      {
+        "path": "experiments/cycle-0010/src/extension.ts",
+        "hash": "e66ff58e7e3bea00e66efc6e18c318da9463988f66f4395a6b6a94f2eeb564ae"
+      },
+      {
+        "path": "experiments/cycle-0010/src/nativeBootstrap.ts",
+        "hash": "d9766acca2654e9123ed2ec049f5c7baac79274cf42b856f9ad300b8e5c37c20"
+      },
+      {
+        "path": "experiments/cycle-0010/src/run.ts",
+        "hash": "ea7b7d79a468e9de6011007378d3f67012e8ef2c9431027c884440307e454428"
+      },
+      {
+        "path": "experiments/cycle-0010/src/tests/boundedText.test.ts",
+        "hash": "f0885c3b76981d364961b6831ccac2d7af395470a18d90afcf346a301d9446a0"
+      },
+      {
+        "path": "experiments/cycle-0010/src/tests/bundleSource.test.ts",
+        "hash": "9cb71dae785667fbf80499cd2583f36bab1bb83c9ab102ea4b53f0967febbbea"
+      },
+      {
+        "path": "experiments/cycle-0010/src/tests/developmentServer.test.ts",
+        "hash": "00f27cfe32fdf2dd4e7d9863767982e7ec7a4eacaa2dc34b5d6a7cdcb2a0168b"
+      },
+      {
+        "path": "experiments/cycle-0010/src/tests/discovery.test.ts",
+        "hash": "284033ba5c7844c23c681cf11c4c8c80e8e63189bef78352e10f1632a80fc1cd"
+      },
+      {
+        "path": "experiments/cycle-0010/src/tests/nativeDecoy.test.ts",
+        "hash": "e760608881fe58f92260dba9c9553a47ff720d506ef6457e39285e66b971ecfc"
+      },
+      {
+        "path": "experiments/cycle-0010/src/tests/nativeLauncher.test.ts",
+        "hash": "0a5ae0cf10b8ce6b1f59a47bae86496d8ba58c44e6d85cfc7f31f2d2b8c1775e"
+      },
+      {
+        "path": "experiments/cycle-0010/src/tests/run.test.ts",
+        "hash": "6a2e2bbd4702b0b748aec29a57590f5c75eade241d4621b4c24661c508dc599d"
+      },
+      {
+        "path": "experiments/cycle-0010/src/utils/createBundleVerifier.ts",
+        "hash": "d7583d7e8cd41c4794030f7a21992c62402264673af13de223ab44beca60bc67"
+      },
+      {
+        "path": "experiments/cycle-0010/src/utils/createNativeDecoy.ts",
+        "hash": "8c0403dbb208c921756e611812d6bfae9930a1470c067f4f1e50d0da710fb6cf"
+      },
+      {
+        "path": "experiments/cycle-0010/src/utils/extractDevelopmentModule.ts",
+        "hash": "3241807615cde4f4f2afdf22d28908ed9a73b2c94f322ed51f359dfce8b2206f"
+      },
+      {
+        "path": "experiments/cycle-0010/src/utils/isSourcePosition.ts",
+        "hash": "419f1afa96b5d3c2744cbb06bb300b8c21af3bf777ca2fad0c56e8cb929b9e90"
+      },
+      {
+        "path": "experiments/cycle-0010/src/utils/launchDevelopmentServer.ts",
+        "hash": "b9ad19ab0af78dc5e93dd01e35a5f541e72659e5347a6d56b95adfc6314b0aa0"
+      },
+      {
+        "path": "experiments/cycle-0010/src/utils/readBoundedText.ts",
+        "hash": "42a5e3e456e81fb1b3344597ff14065278e57734583b1b3dda34ee5cb1bceb78"
+      },
+      {
+        "path": "experiments/cycle-0010/src/utils/readDevelopmentBundle.ts",
+        "hash": "20febeb351504ab1a04fdd2e0d56be0c21644935fd5bbc56252603cec63f03f4"
+      },
+      {
+        "path": "experiments/cycle-0010/src/utils/sameScriptUrl.ts",
+        "hash": "99dd51a6f06a5c5c5aacdab3fc56e4c8d594b792e463acbc8543b9716acb26ed"
+      }
+    ],
+    "launcherHash": "39276bf1c878e88f966734a93c7b72755393534c8dec2eff2747929916c9e2c7",
+    "controllerHash": "b0cb8122bc0d4a9614491ea2a20b8c6ff3606263bf0941bfd28d4e31db72950f",
+    "expectationHash": "d4083f326a55d91aa56e1578e9f43487cfd98e006c03682d25400481aaef9e9f",
+    "status": "38 tests and final 14 native cases passed; both normal videos inspected; review non-converged"
+  },
+  "targetRevision": "43d039938287ed494a66f4fad198da2464a9e7b0",
+  "expectationVersion": 3,
+  "availability": "Artifacts remain ignored and local in this retained checkout. Copy them to an accessible durable store before deleting or moving the workspace. Missing artifacts invalidate affected claims.",
+  "tests": {
+    "passed": 38,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "review": {
+    "fixingPasses": 3,
+    "converged": false,
+    "remainingConfirmedFindings": 0,
+    "outsideCoverage": "unavailable",
+    "finalSequentialReviews": 0
+  },
+  "native": [
+    {
+      "host": "vscode",
+      "case": "normal",
+      "result": "passed",
+      "holdMs": 70050.79102516174,
+      "stateLatencyMs": 43.48108300473541,
+      "continueLatencyMs": 61.15512499673059,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 1,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "observed",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "allCaptureHashesMatch": true,
+      "duplicateInputRejected": true,
+      "foreignPauseRejected": true,
+      "duplicateContinueRejected": true,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-34-08.971Z-75f9210d",
+      "runId": "da16cc27-667f-4ad6-ba3e-972d3f6b0ec5",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+          "renderer": {
+            "epoch": "7b8a86ae-a458-4e25-8335-fd9b21bc36d9",
+            "id": 12,
+            "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "622a4c7057b6e6aa1b0f1ab135fbd2d1f83b0f7513f9be3e7039f0c1ed40c1c2",
+          "renderer": {
+            "epoch": "7b8a86ae-a458-4e25-8335-fd9b21bc36d9",
+            "id": 21,
+            "hash": "622a4c7057b6e6aa1b0f1ab135fbd2d1f83b0f7513f9be3e7039f0c1ed40c1c2"
+          }
+        },
+        "after": {
+          "file": "after.png",
+          "hash": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d",
+          "renderer": {
+            "epoch": "7b8a86ae-a458-4e25-8335-fd9b21bc36d9",
+            "id": 25,
+            "hash": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d"
+          }
+        }
+      },
+      "nativeVideo": {
+        "durationSeconds": 81.76,
+        "frames": [
+          {
+            "file": "native-before.png",
+            "timeSeconds": 8
+          },
+          {
+            "file": "native-paused.png",
+            "timeSeconds": 20
+          },
+          {
+            "file": "native-continued.png",
+            "timeSeconds": 79.76
+          }
+        ],
+        "inspectedBy": "primary agent",
+        "observed": "Light live app, light paused app with source line 19 highlighted, then dark app after continuation; actual editor renderer video."
+      },
+      "artifactHashes": {
+        "checks.json": "7c376ca22558b0fa950a2ccee1d2a1092c839e4d896741ca9a6060bd02ea7817",
+        "da16cc27-667f-4ad6-ba3e-972d3f6b0ec5/after.png": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d",
+        "da16cc27-667f-4ad6-ba3e-972d3f6b0ec5/before.png": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+        "da16cc27-667f-4ad6-ba3e-972d3f6b0ec5/events.jsonl": "a84e2052082d036f6fa19ac68741d2be53623d599e62b6277266fa9714c691ce",
+        "da16cc27-667f-4ad6-ba3e-972d3f6b0ec5/manifest.json": "2e4cac04aaed52b88f20f9eee531d1a3400d251a6f812cc5686254dc9aa42709",
+        "da16cc27-667f-4ad6-ba3e-972d3f6b0ec5/paused-1.png": "622a4c7057b6e6aa1b0f1ab135fbd2d1f83b0f7513f9be3e7039f0c1ed40c1c2",
+        "da16cc27-667f-4ad6-ba3e-972d3f6b0ec5/snapshot.json": "8f3c3cf54d93b784754158b354510a83ae974e70d0199af40c0c9b052e469bd2",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "frame-extraction.json": "f6552bfedfd8aaf9d1b32a4062b98eb8acef38b846b963e8ab0b749339e51b35",
+        "native-after.png": "951fdd2ca1681641794ff7a9038bce069012b66b8c17321b6fdfe65d8eaa637c",
+        "native-before.png": "28d639ce3a6c9a9dc6310825f3319e45a2d07f26a25f2a8f595fb83cd501a7c1",
+        "native-continued.png": "d163ca61b4015a37719e4a7df089344b55ff55f9aab52d5b38443981383ca19e",
+        "native-normal.webm": "f60549711d97806cd6c71f8e9a27c69c4429886b5ae30f46d30dede800819589",
+        "native-paused.png": "2683c5d25cb798eb31fb66cf074246286abecd848406d040d9baca2d0d386f40",
+        "receipt.json": "8f00618f93caf460a3cb623cc1a15448b956bdc83f105ee0fc7ac1783cce6626",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "manual-resume",
+      "result": "passed",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Manual or competing resume invalidated live pause"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "staleContinueRejected": true,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-35-32.232Z-530da525",
+      "runId": "e7c82c26-6bbe-4d22-ad2c-13cf3c651ff9",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [
+        "Manual or competing resume invalidated live pause"
+      ],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "d3e077692db447be18888f8be58e305dd0c7113e047ca73ef1eb1ca68503e5b4",
+          "renderer": {
+            "epoch": "802baf2b-4017-47d4-84a3-31f1eded6938",
+            "id": 11,
+            "hash": "d3e077692db447be18888f8be58e305dd0c7113e047ca73ef1eb1ca68503e5b4"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "ae5fd567793bddbcf0080e859f36867c306fb81c451e0f51d041aa3fae5b7946",
+          "renderer": {
+            "epoch": "802baf2b-4017-47d4-84a3-31f1eded6938",
+            "id": 16,
+            "hash": "ae5fd567793bddbcf0080e859f36867c306fb81c451e0f51d041aa3fae5b7946"
+          }
+        }
+      },
+      "artifactHashes": {
+        "checks.json": "7188fec06c75ce86b226978650d3cc27bb0c6502b59cdb9abf258e95c78c9684",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "e7c82c26-6bbe-4d22-ad2c-13cf3c651ff9/before.png": "d3e077692db447be18888f8be58e305dd0c7113e047ca73ef1eb1ca68503e5b4",
+        "e7c82c26-6bbe-4d22-ad2c-13cf3c651ff9/events.jsonl": "abd2c11bb42c08c8ea2a1514d9a6a85d5a9d1774725e5548fede8e1020acc86f",
+        "e7c82c26-6bbe-4d22-ad2c-13cf3c651ff9/manifest.json": "fd10a2b99e6d0b3b5f91fbe8e4703c0e521941ed9bea365854f980cf189d8996",
+        "e7c82c26-6bbe-4d22-ad2c-13cf3c651ff9/paused-1.png": "ae5fd567793bddbcf0080e859f36867c306fb81c451e0f51d041aa3fae5b7946",
+        "e7c82c26-6bbe-4d22-ad2c-13cf3c651ff9/snapshot.json": "98375c4b853ceac7963cbd71a8538aac6a50483d98b74e1fde50b325cc6d030a",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "0e2db6d521ac09a06e208cc5038488d835afdbb7329d970b326fbd5049d5d814",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "cdp-resume",
+      "result": "passed",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Unowned continuation invalidated live pause"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "staleContinueRejected": true,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-35-42.977Z-c5faa965",
+      "runId": "a49ebce9-3a88-46ff-90ef-cabd78867fcc",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [
+        "Unowned continuation invalidated live pause"
+      ],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+          "renderer": {
+            "epoch": "1b03bc75-3453-4946-8d77-7fe661e55092",
+            "id": 11,
+            "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "de34787a242ec29cc5e22d814b6adda9170e3f8e9361b2193cdacc56d90fbbc7",
+          "renderer": {
+            "epoch": "1b03bc75-3453-4946-8d77-7fe661e55092",
+            "id": 16,
+            "hash": "de34787a242ec29cc5e22d814b6adda9170e3f8e9361b2193cdacc56d90fbbc7"
+          }
+        }
+      },
+      "artifactHashes": {
+        "a49ebce9-3a88-46ff-90ef-cabd78867fcc/before.png": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+        "a49ebce9-3a88-46ff-90ef-cabd78867fcc/events.jsonl": "bd78735b7ea1e2c10ffd7e1bd54a724aee542126cd93f20dc34c1377a5cea7b2",
+        "a49ebce9-3a88-46ff-90ef-cabd78867fcc/manifest.json": "d5fd2b6581d5b570c993b8d18245c67dc33d974eef37b25f31e543c664e538ac",
+        "a49ebce9-3a88-46ff-90ef-cabd78867fcc/paused-1.png": "de34787a242ec29cc5e22d814b6adda9170e3f8e9361b2193cdacc56d90fbbc7",
+        "a49ebce9-3a88-46ff-90ef-cabd78867fcc/snapshot.json": "b423b9b0a1be16fb7ad7efdb3527cd40598bd38294b52d24a21d2d98062f255d",
+        "checks.json": "05a29a4ba01ec85fc8a661fecd8779b957433b2e42c6576b16c51440bb8f1b9d",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "32efc573f09fdb90859f2d172f47b64aaee8d87a978fe2fe333914eaebadd3d0",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "source-drift",
+      "result": "passed",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Continue uncertain: Error: conflict: Source or pause changed before continue"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "staleContinueRejected": true,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-35-53.562Z-9bfc3292",
+      "runId": "ac763ad7-b50f-432d-909c-7079fce2e4cb",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [
+        "Continue uncertain: Error: conflict: Source or pause changed before continue"
+      ],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+          "renderer": {
+            "epoch": "93df07af-8b2a-44eb-abb0-aef1a2347f39",
+            "id": 13,
+            "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158",
+          "renderer": {
+            "epoch": "93df07af-8b2a-44eb-abb0-aef1a2347f39",
+            "id": 19,
+            "hash": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158"
+          }
+        }
+      },
+      "artifactHashes": {
+        "ac763ad7-b50f-432d-909c-7079fce2e4cb/before.png": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+        "ac763ad7-b50f-432d-909c-7079fce2e4cb/events.jsonl": "30bc916f527046216543af6bb13e90e9a74b7754cdd2fa8df6e72ffb91534ee3",
+        "ac763ad7-b50f-432d-909c-7079fce2e4cb/manifest.json": "35a26ee78f484d65a74f186ee5cbf99ec5c24c82ff779001476074e0bcb9970a",
+        "ac763ad7-b50f-432d-909c-7079fce2e4cb/paused-1.png": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158",
+        "ac763ad7-b50f-432d-909c-7079fce2e4cb/snapshot.json": "957314b5eb0c1a42daec6ba98247a1bb8387320f02c1bb3ffd093936383f7fa5",
+        "checks.json": "0a8a7e1de0d9deda02b957b4e9a9e077f40b33f04903c69f7a194c1d0604bc66",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "753cde62371f8ae82828547334e7e366906dffb5b398b28c4b672235081bcc7a",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "held-cancel",
+      "result": "passed",
+      "heldCancelMs": 230.05437500250991,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "cancelled",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "staleContinueRejected": true,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-36-04.351Z-f34f41e8",
+      "runId": "76ceefcb-86e6-49d3-ba56-a286bc00f178",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+          "renderer": {
+            "epoch": "3a2fe3d5-715d-45ae-962c-2a33c10c62bf",
+            "id": 12,
+            "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "de34787a242ec29cc5e22d814b6adda9170e3f8e9361b2193cdacc56d90fbbc7",
+          "renderer": {
+            "epoch": "3a2fe3d5-715d-45ae-962c-2a33c10c62bf",
+            "id": 17,
+            "hash": "de34787a242ec29cc5e22d814b6adda9170e3f8e9361b2193cdacc56d90fbbc7"
+          }
+        }
+      },
+      "artifactHashes": {
+        "76ceefcb-86e6-49d3-ba56-a286bc00f178/before.png": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+        "76ceefcb-86e6-49d3-ba56-a286bc00f178/events.jsonl": "667c2d61e2b3d232d64d986ad6e64ab6094433ac5fda567422c4c82bb7322c98",
+        "76ceefcb-86e6-49d3-ba56-a286bc00f178/manifest.json": "02e923c26e54b96c23e4e27f6de7f2a22bd6e98574df36450775d4824f75bf97",
+        "76ceefcb-86e6-49d3-ba56-a286bc00f178/paused-1.png": "de34787a242ec29cc5e22d814b6adda9170e3f8e9361b2193cdacc56d90fbbc7",
+        "76ceefcb-86e6-49d3-ba56-a286bc00f178/snapshot.json": "6b8cd4bbd4d754c922c24162eff49855717f230e27d2807f4151e09d380faf0b",
+        "checks.json": "1b5dd2cbae23c82d2d655a891e0a9a08d557b463d64b2ca3be4a7453e3d67703",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "c94a15829e41fd631e8d30e2313032b1047e62dc5d2cdd2114e380c0b3fd4f18",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "decoy",
+      "result": "passed",
+      "holdMs": 612.4520301818848,
+      "stateLatencyMs": 43.61537499789847,
+      "continueLatencyMs": 42.473749999771826,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 1,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "observed",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "allCaptureHashesMatch": true,
+      "duplicateInputRejected": true,
+      "foreignPauseRejected": true,
+      "duplicateContinueRejected": true,
+      "actualDecoyPauseRejected": true,
+      "decoySurvivedPrimaryCleanup": true,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-36-15.586Z-2d300515",
+      "runId": "a612a41c-c32c-462f-a24e-abc719a9e410",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+          "renderer": {
+            "epoch": "cb76543b-d9c3-4254-b09d-4e9f4a5c3f27",
+            "id": 10,
+            "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158",
+          "renderer": {
+            "epoch": "cb76543b-d9c3-4254-b09d-4e9f4a5c3f27",
+            "id": 17,
+            "hash": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158"
+          }
+        },
+        "after": {
+          "file": "after.png",
+          "hash": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d",
+          "renderer": {
+            "epoch": "cb76543b-d9c3-4254-b09d-4e9f4a5c3f27",
+            "id": 21,
+            "hash": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d"
+          }
+        }
+      },
+      "decoy": {
+        "sessionId": "0282c6e4-1568-4975-a8b2-adc3a2346d3c",
+        "threadId": 1,
+        "focused": true,
+        "focusedSessionId": "2576bf65-8a12-4ac5-8eab-498d22f8e71c",
+        "continuedCount": 0,
+        "stackUnchangedAfterPrimaryCleanup": true,
+        "cleanup": {
+          "sessionId": "0282c6e4-1568-4975-a8b2-adc3a2346d3c",
+          "stoppedCount": 1,
+          "continuedCount": 0,
+          "activeSessionIds": [],
+          "focused": false,
+          "failures": []
+        }
+      },
+      "artifactHashes": {
+        "a612a41c-c32c-462f-a24e-abc719a9e410/after.png": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d",
+        "a612a41c-c32c-462f-a24e-abc719a9e410/before.png": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+        "a612a41c-c32c-462f-a24e-abc719a9e410/events.jsonl": "02149d7db32473ca91a2f68ba636b24982ed2ab04b3cd455dae9d57b023fd86e",
+        "a612a41c-c32c-462f-a24e-abc719a9e410/manifest.json": "fde4597b5e14f3a79b1f85a47b45493fecf8baa0cdd0b09218ad2e79e07a77be",
+        "a612a41c-c32c-462f-a24e-abc719a9e410/paused-1.png": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158",
+        "a612a41c-c32c-462f-a24e-abc719a9e410/snapshot.json": "9645ba008645392e37a9394b51d5a35d971a3b8384ac8d28ecb4259b57c3959e",
+        "checks.json": "72dc6e5816adb654571cdde8b8d47f3607de2dd75c229d81f3ebe5fe64bc9a22",
+        "decoy-cleanup.json": "072a83772bcfcf65735a61f591d24d39ab1db3cfe99afd21534817a2b172ba90",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "6804250459e1c7e1d0ffaa837e300599c7652dcce4d0588dba55f3cb342dccaf",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "cancel-prepare",
+      "result": "passed",
+      "cancelPreparationMs": 55.286333001276944,
+      "counts": {
+        "input.dispatched": 0,
+        "dap.stopped": 0,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "cancelled",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-36-27.144Z-538839ce",
+      "runId": "79e6c4bc-dfd2-4b29-bdc7-e09d078765fa",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": null,
+      "failures": [],
+      "ownedPidsVerifiedAbsent": 2,
+      "captures": {},
+      "artifactHashes": {
+        "79e6c4bc-dfd2-4b29-bdc7-e09d078765fa/events.jsonl": "8fb34b2b5e481335b49cb4ca31e307f6ab63c6345905119fa7a848493a36541e",
+        "79e6c4bc-dfd2-4b29-bdc7-e09d078765fa/manifest.json": "80e9fd4716dcee66d8867132118bb3fd49ebb48db69e901972d59750a43b31b0",
+        "checks.json": "0b156ce4a2206d42942ff054614c0f2f69e781928432cce557eb5f0d9f171e8a",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "0d7b557cb2b18bf3720e7a5c644308b5b1314af0808bee0eb96c44b6ab7f3a9f",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "cursor",
+      "case": "normal",
+      "result": "passed",
+      "holdMs": 70072.21412658691,
+      "stateLatencyMs": 61.38695800473215,
+      "continueLatencyMs": 59.28945800405927,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 1,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "observed",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "allCaptureHashesMatch": true,
+      "duplicateInputRejected": true,
+      "foreignPauseRejected": true,
+      "duplicateContinueRejected": true,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T16-36-29.044Z-a60efc14",
+      "runId": "d1dbcb12-38d8-44b1-8ec9-e17522d1cee6",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+          "renderer": {
+            "epoch": "6dce877b-140f-41e0-980e-a0c2f0dc25cf",
+            "id": 10,
+            "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158",
+          "renderer": {
+            "epoch": "6dce877b-140f-41e0-980e-a0c2f0dc25cf",
+            "id": 16,
+            "hash": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158"
+          }
+        },
+        "after": {
+          "file": "after.png",
+          "hash": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d",
+          "renderer": {
+            "epoch": "6dce877b-140f-41e0-980e-a0c2f0dc25cf",
+            "id": 20,
+            "hash": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d"
+          }
+        }
+      },
+      "nativeVideo": {
+        "durationSeconds": 84.64,
+        "frames": [
+          {
+            "file": "native-before.png",
+            "timeSeconds": 11
+          },
+          {
+            "file": "native-paused.png",
+            "timeSeconds": 20
+          },
+          {
+            "file": "native-continued.png",
+            "timeSeconds": 82.64
+          }
+        ],
+        "inspectedBy": "primary agent",
+        "observed": "Light live app, light paused app with source line 19 highlighted, then dark app after continuation; actual editor renderer video.",
+        "additionalInspectedFrames": [
+          {
+            "file": "native-connecting.png",
+            "timeSeconds": 8,
+            "observation": "Connecting; excluded from before-app evidence"
+          },
+          {
+            "file": "native-at-10s.png",
+            "timeSeconds": 10,
+            "observation": "Connecting"
+          },
+          {
+            "file": "native-at-11s.png",
+            "timeSeconds": 11,
+            "observation": "Live light app before pause"
+          },
+          {
+            "file": "native-at-12s.png",
+            "timeSeconds": 12,
+            "observation": "Paused light app and highlighted source"
+          }
+        ]
+      },
+      "artifactHashes": {
+        "checks.json": "df89cab28d4c955fd88401154e55158dd5bef2bdc846fcecf7f10e0c9900f4e1",
+        "d1dbcb12-38d8-44b1-8ec9-e17522d1cee6/after.png": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d",
+        "d1dbcb12-38d8-44b1-8ec9-e17522d1cee6/before.png": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+        "d1dbcb12-38d8-44b1-8ec9-e17522d1cee6/events.jsonl": "7b55164b1533ed2863e04cc84f7ce5be7135290cf5fa3554d1b421a22802ba75",
+        "d1dbcb12-38d8-44b1-8ec9-e17522d1cee6/manifest.json": "9639e9facf38c3915a31969b15f55ee862837b78b16647a3eaffac9d6199302b",
+        "d1dbcb12-38d8-44b1-8ec9-e17522d1cee6/paused-1.png": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158",
+        "d1dbcb12-38d8-44b1-8ec9-e17522d1cee6/snapshot.json": "1bac1a8f2632ba5491b7e342c1bfb609708c9211fe0630334b1cdee19b0f67e8",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "frame-extraction.json": "107942105525de3596442f3285ed3abaa89eee9f087479d4c990860d5b179c1f",
+        "native-after.png": "ae53ec765f1d8c51adff2f2188dc476e951fc6e8f643ef700f5ef9a344dbd7f0",
+        "native-at-10s.png": "9b014f3c51cc20a46191957e83fc627e47b143a75ef48b04942ba8e8dca722db",
+        "native-at-11s.png": "2c90e46d9e739915c2e4e228dbe3e5aa0c2da3e75e3e861db3b2d79b3ff18841",
+        "native-at-12s.png": "3fe42f96477206c43dd3954f6f9c4eb5d7bce9d230bf853c41d1aef5bb4b4c89",
+        "native-before.png": "2c90e46d9e739915c2e4e228dbe3e5aa0c2da3e75e3e861db3b2d79b3ff18841",
+        "native-connecting.png": "c0c45d73c3e3699f40be526a3806eca0c8a2131758b8164ddeaf178c9f1bac1a",
+        "native-continued.png": "4a8ad4e48f3101355aa77088820fa31ba6c08d674193cb991e921ca2da28e8e4",
+        "native-normal.webm": "a711f803467d373f888f75f7a9ce5ec28bcf5b7c02e18db8fd032f5b3c34189d",
+        "native-paused.png": "3bb229b9013860a217df516a5d5bb88906182d5596587dfd176ecff0b180f9c9",
+        "receipt.json": "50dd1d504948b4d63316f01585e1c2b997265fcee281df8f2d0f15baa1c46299",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "cursor",
+      "case": "manual-resume",
+      "result": "passed",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Manual or competing resume invalidated live pause"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "staleContinueRejected": true,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T16-37-56.703Z-93b498fc",
+      "runId": "b27dc91e-a4c3-4bde-bc59-d0bb7ff174bc",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [
+        "Manual or competing resume invalidated live pause"
+      ],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+          "renderer": {
+            "epoch": "7fb15e62-bd15-463d-b413-4b8eeb585d3d",
+            "id": 9,
+            "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "e0924d56b8af56b475d5761b3d95c600657709fb8398c3bb17553b3c66b6d722",
+          "renderer": {
+            "epoch": "7fb15e62-bd15-463d-b413-4b8eeb585d3d",
+            "id": 17,
+            "hash": "e0924d56b8af56b475d5761b3d95c600657709fb8398c3bb17553b3c66b6d722"
+          }
+        }
+      },
+      "artifactHashes": {
+        "b27dc91e-a4c3-4bde-bc59-d0bb7ff174bc/before.png": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+        "b27dc91e-a4c3-4bde-bc59-d0bb7ff174bc/events.jsonl": "be23ac772e808b771912c1784c366a963a9ab2a1e10a9e56c06f6ba501d7bd3a",
+        "b27dc91e-a4c3-4bde-bc59-d0bb7ff174bc/manifest.json": "f5dc8e21d32cf592e12d370fb7eedc4aee34b59e9d9d23eb8f73c3d8dd70c10d",
+        "b27dc91e-a4c3-4bde-bc59-d0bb7ff174bc/paused-1.png": "e0924d56b8af56b475d5761b3d95c600657709fb8398c3bb17553b3c66b6d722",
+        "b27dc91e-a4c3-4bde-bc59-d0bb7ff174bc/snapshot.json": "2b8d86bc29e04aed5bf5695ebf943149cb6b4f0a406b51f15578bc39dbfba791",
+        "checks.json": "da38420c668324e63817c85d5f22d0ac3dbf0fc60a70ec48eb9eda59276da67c",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "4268d62b22a5d8d642dce62bc645f3a241b15cbc000586a80e450c56c3f433d8",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "cursor",
+      "case": "cdp-resume",
+      "result": "passed",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Unowned continuation invalidated live pause"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "staleContinueRejected": true,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T16-38-11.592Z-1c5d5b14",
+      "runId": "af22967f-efb4-447f-aa36-a8c95698f244",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [
+        "Unowned continuation invalidated live pause"
+      ],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "3bfb308366a9cfa8efc6c84d6ea22d5e3b474720cd87b07026a70fd890f5e049",
+          "renderer": {
+            "epoch": "abeac2a1-efbe-47d4-8c2f-a08e05a6d033",
+            "id": 9,
+            "hash": "3bfb308366a9cfa8efc6c84d6ea22d5e3b474720cd87b07026a70fd890f5e049"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "4a2af19c25fa5c4659d3187fcb36bcbd6f76ba9442c1dac234199a3536963a7e",
+          "renderer": {
+            "epoch": "abeac2a1-efbe-47d4-8c2f-a08e05a6d033",
+            "id": 19,
+            "hash": "4a2af19c25fa5c4659d3187fcb36bcbd6f76ba9442c1dac234199a3536963a7e"
+          }
+        }
+      },
+      "artifactHashes": {
+        "af22967f-efb4-447f-aa36-a8c95698f244/before.png": "3bfb308366a9cfa8efc6c84d6ea22d5e3b474720cd87b07026a70fd890f5e049",
+        "af22967f-efb4-447f-aa36-a8c95698f244/events.jsonl": "03c5e8af14ca3344fd4ef19cc335d060cfde5024c23fd15b92c3389e59078c8e",
+        "af22967f-efb4-447f-aa36-a8c95698f244/manifest.json": "ffc9cd1ffe8548d216845ee25023e96dcd9664e8ab31859ec50ad897c4ffd226",
+        "af22967f-efb4-447f-aa36-a8c95698f244/paused-1.png": "4a2af19c25fa5c4659d3187fcb36bcbd6f76ba9442c1dac234199a3536963a7e",
+        "af22967f-efb4-447f-aa36-a8c95698f244/snapshot.json": "39cbc38dc287aafc9af3497d5b07ae0c71ba18cc722901830d2bcfc48be2f013",
+        "checks.json": "48347040e12cda6b6344650dabd2924ed1a0dcc5f92b68e5c11736323a6c7092",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "36477d793d7c3304e8fd0ba649535b5297d193912fc2c176a51bea65747475ce",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "cursor",
+      "case": "source-drift",
+      "result": "passed",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Continue uncertain: Error: conflict: Source or pause changed before continue"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "staleContinueRejected": true,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T16-38-26.256Z-9c2d8e09",
+      "runId": "f6fad19e-b625-47cd-9a24-cfb185235362",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [
+        "Continue uncertain: Error: conflict: Source or pause changed before continue"
+      ],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+          "renderer": {
+            "epoch": "5a4fef32-c100-4a7b-9067-eb786401e449",
+            "id": 10,
+            "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158",
+          "renderer": {
+            "epoch": "5a4fef32-c100-4a7b-9067-eb786401e449",
+            "id": 17,
+            "hash": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158"
+          }
+        }
+      },
+      "artifactHashes": {
+        "checks.json": "ce5a43601cdb9d91fb5684380cbfefcfadf3fa6609746f571ca20b101a1bd92f",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "f6fad19e-b625-47cd-9a24-cfb185235362/before.png": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+        "f6fad19e-b625-47cd-9a24-cfb185235362/events.jsonl": "a4395da9cac81910ff239257e01545621580434b807507c11e39e6853df5eccb",
+        "f6fad19e-b625-47cd-9a24-cfb185235362/manifest.json": "3a1b5d41095456d53838bf30bf7d1b325aec5a8d765a38b8fa276a023f5980f8",
+        "f6fad19e-b625-47cd-9a24-cfb185235362/paused-1.png": "747c3775ae68206a980a6fb8cacd7a32463c7c665c235f3a7899c6749bdd7158",
+        "f6fad19e-b625-47cd-9a24-cfb185235362/snapshot.json": "1fc515cc3f116b7f752614c2725c8cf2d2834a64cce17446e23f03e7010873d6",
+        "receipt.json": "8960b937677623ba95f714055247bb5adba303c1ca8dca51ec30d006cfb71d5f",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "cursor",
+      "case": "held-cancel",
+      "result": "passed",
+      "heldCancelMs": 303.06895800458733,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "cancelled",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "staleContinueRejected": true,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T16-38-41.149Z-9ebf072a",
+      "runId": "91660ec8-53c4-4002-bd92-4371c501a88b",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+          "renderer": {
+            "epoch": "1ef0ee06-c2de-4e83-8f62-813f00287184",
+            "id": 9,
+            "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "622a4c7057b6e6aa1b0f1ab135fbd2d1f83b0f7513f9be3e7039f0c1ed40c1c2",
+          "renderer": {
+            "epoch": "1ef0ee06-c2de-4e83-8f62-813f00287184",
+            "id": 19,
+            "hash": "622a4c7057b6e6aa1b0f1ab135fbd2d1f83b0f7513f9be3e7039f0c1ed40c1c2"
+          }
+        }
+      },
+      "artifactHashes": {
+        "91660ec8-53c4-4002-bd92-4371c501a88b/before.png": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+        "91660ec8-53c4-4002-bd92-4371c501a88b/events.jsonl": "c4f1087936f544ec15930cdc17a2737ea703697e74dbeeee6567e77e7b2c447e",
+        "91660ec8-53c4-4002-bd92-4371c501a88b/manifest.json": "40d9bee922241c0427c075e57d2369e2dc4ac01f339af50ffd75691a8f6e87b3",
+        "91660ec8-53c4-4002-bd92-4371c501a88b/paused-1.png": "622a4c7057b6e6aa1b0f1ab135fbd2d1f83b0f7513f9be3e7039f0c1ed40c1c2",
+        "91660ec8-53c4-4002-bd92-4371c501a88b/snapshot.json": "331375703dc690db651278d800ceab2ba9ebb26d53156ecd2ce5248eb402ba9b",
+        "checks.json": "55055d20afabdc0c1a662d936ec00faf752029272c6dbd2552b858865f4d9ec0",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "389c946076cb43da2186abdf1e098987403303992c5439a6315422ff720d26fd",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "cursor",
+      "case": "decoy",
+      "result": "passed",
+      "holdMs": 729.1948795318604,
+      "stateLatencyMs": 56.12491600186331,
+      "continueLatencyMs": 82.26145899971016,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 1,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "observed",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "allCaptureHashesMatch": true,
+      "duplicateInputRejected": true,
+      "foreignPauseRejected": true,
+      "duplicateContinueRejected": true,
+      "actualDecoyPauseRejected": true,
+      "decoySurvivedPrimaryCleanup": true,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T16-38-56.424Z-7fe943d3",
+      "runId": "1738847c-90e0-4afc-ab88-b2e500874977",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [],
+      "ownedPidsVerifiedAbsent": 11,
+      "captures": {
+        "before": {
+          "file": "before.png",
+          "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+          "renderer": {
+            "epoch": "3e67eb9b-5acd-43c9-8f51-2f594013805a",
+            "id": 11,
+            "hash": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d"
+          }
+        },
+        "paused-1": {
+          "file": "paused-1.png",
+          "hash": "622a4c7057b6e6aa1b0f1ab135fbd2d1f83b0f7513f9be3e7039f0c1ed40c1c2",
+          "renderer": {
+            "epoch": "3e67eb9b-5acd-43c9-8f51-2f594013805a",
+            "id": 21,
+            "hash": "622a4c7057b6e6aa1b0f1ab135fbd2d1f83b0f7513f9be3e7039f0c1ed40c1c2"
+          }
+        },
+        "after": {
+          "file": "after.png",
+          "hash": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d",
+          "renderer": {
+            "epoch": "3e67eb9b-5acd-43c9-8f51-2f594013805a",
+            "id": 25,
+            "hash": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d"
+          }
+        }
+      },
+      "decoy": {
+        "sessionId": "4d819215-1c81-4798-837b-19e2c9d8b325",
+        "threadId": 1,
+        "focused": true,
+        "focusedSessionId": "c6e84e33-33f9-47bf-bfd2-b8808edc1806",
+        "continuedCount": 0,
+        "stackUnchangedAfterPrimaryCleanup": true,
+        "cleanup": {
+          "sessionId": "4d819215-1c81-4798-837b-19e2c9d8b325",
+          "stoppedCount": 1,
+          "continuedCount": 1,
+          "activeSessionIds": [],
+          "focused": false,
+          "failures": []
+        }
+      },
+      "artifactHashes": {
+        "1738847c-90e0-4afc-ab88-b2e500874977/after.png": "77a1d9f971beac1dbb50f14993399e9d6673c783f7a4941c264a0e2adc5c291d",
+        "1738847c-90e0-4afc-ab88-b2e500874977/before.png": "f1135c00a22f66e55b3ca22dbc0de2c48b3801007b642c30208bfe2b838bdf3d",
+        "1738847c-90e0-4afc-ab88-b2e500874977/events.jsonl": "b2d83636e320db746a14f929a3d67b168e4d8363aa739551026f7d532e2cb6f0",
+        "1738847c-90e0-4afc-ab88-b2e500874977/manifest.json": "ca8c2f2ebeaa011af0a410d73721142254198deb35f614fb4a8c3815041f3767",
+        "1738847c-90e0-4afc-ab88-b2e500874977/paused-1.png": "622a4c7057b6e6aa1b0f1ab135fbd2d1f83b0f7513f9be3e7039f0c1ed40c1c2",
+        "1738847c-90e0-4afc-ab88-b2e500874977/snapshot.json": "2a519e46c24fa0c4bb3a7a1ff66af4dfd1722bb167c4e246dec667fa50acb016",
+        "checks.json": "69e0fa6f15b6e5588e05a6466b9d8da612b388ab37fd7454cedd9849085fdf9d",
+        "decoy-cleanup.json": "2c0e2b0adb88340d5f66101ed1b4b3278bfc626b8151f297987d5d59fab1a741",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "cd8581ecfe92daa3e15564106a8c499c85b9e34aed75722e4e32c2692edf61ee",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    },
+    {
+      "host": "cursor",
+      "case": "cancel-prepare",
+      "result": "passed",
+      "cancelPreparationMs": 102.76158299529925,
+      "counts": {
+        "input.dispatched": 0,
+        "dap.stopped": 0,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "cancelled",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T16-39-12.091Z-bf1fd89e",
+      "runId": "7aab6189-0a2e-43f1-b253-99d88ffff5ea",
+      "sourceFingerprint": "1856f0d6ec52086aa2df9ad06deefa320c8dd3ba50b3810817717ac9fa27b5fb",
+      "hostVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "chrome": "Google Chrome 153.0.8010.53",
+      "sourceHashes": null,
+      "failures": [],
+      "ownedPidsVerifiedAbsent": 2,
+      "captures": {},
+      "artifactHashes": {
+        "7aab6189-0a2e-43f1-b253-99d88ffff5ea/events.jsonl": "1f1a058d594bc09b7a2a42f8f8f172abeab107e030c276aaf6f694364e4554a0",
+        "7aab6189-0a2e-43f1-b253-99d88ffff5ea/manifest.json": "3226ca19ab26c7e760c89b1ed62e8ff8fdcd1c6fb44b894214c573bbe97c12bb",
+        "checks.json": "1bcb5ed0f3ad9eab40891331be22c6b5406986c629a91beff12fd1a4f2a3f926",
+        "decoy-cleanup.json": "1c54bc136c574f6e9c644d1a88a7fe4bd403d4c3306861de7bce81ebade94555",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "receipt.json": "38c9c547c513d14111eb700c297abca55ca7e7d31f8d0ee03bf2edbb08cfd87a",
+        "sources.json": "244d79d9273cb6e5c2c032d131374b7aa20ed89601d6eeef5a3a9bce72c131ca"
+      }
+    }
+  ],
+  "postRunProcessCheck": {
+    "checkedCount": 136,
+    "allAbsent": true
+  },
+  "logs": {
+    "artifacts/cycle-0010/review-final-tests.log": "2aa0ce0ea447ec838840ace1799209de752ed0e85fee2427f91160858a366352",
+    "artifacts/cycle-0010/decoy-focus-red.log": "1f7b493ddd88d1293b30979f4e98f9275a151f114859d541619d5f00618f9ec3",
+    "artifacts/cycle-0010/decoy-focus-green.log": "abf24542f2aef96470e4a65d93f6cfb65deaccc65f9f55aa9e273c00759ac759",
+    "artifacts/cycle-0010/launcher-exit-red.log": "ada8996851ba09531b36162945ba739d5aa3799853761a4130e469781667fdc1",
+    "artifacts/cycle-0010/launcher-exit-green.log": "1c653332521be6d48f2682e9f89819e66b858544baaffe4a70beab1f35ef72d8",
+    "artifacts/cycle-0010/native-final-matrix.log": "b41dde95a8071829260d442dad5a914f1774a15a7d59b0fc6aa9ea8deca4aa57"
+  },
+  "historical": [
+    {
+      "host": "cursor",
+      "case": "normal",
+      "result": "passed",
+      "diagnosticOnly": false,
+      "holdMs": 70055.11903762817,
+      "stateLatencyMs": 52.22404200321762,
+      "continueLatencyMs": 49.936416995478794,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 1,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "observed",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T15-23-51.134Z-ba145222",
+      "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+      "sourceFingerprint": "29f217d51e5ddfae6ec7f7818db96628893b73896b7b1bc999ebdb47ad254378",
+      "hostVersions": {
+        "id": "cursor",
+        "productVersion": "3.21.13",
+        "apiVersion": "1.128.0",
+        "commit": "e44a49c17e334d442e58bbde931d791200f014a0",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "harnessHash": "22bf35bbab84f08fcd975f5f2f8fe50e216ff1191546a09762ad221dd5108927",
+      "artifactHashes": {
+        "native-normal.webm": "b6c93ec7f2768735bb917c18c4ae86d872c729f1e895ac955e092a3503484438",
+        "native-after.png": "5af42fe4bd55a760180b7e7ff5e4fee55cf833183f5455512ef4a52e01f9d048",
+        "native-before.png": "6c4dde927b59ae8ce03e017cbd9ce4b02c4ffb725aef7d455eaa6bcb6fdda35b",
+        "native-continued.png": "79d39552b08076462d015008b11d0a10cfd4963973e01509b9a39c7000b52202",
+        "native-paused.png": "ee5dc0a70ff7f505606fb15f19ce3fa73cf417db44eafa459d2874cde9617f3a",
+        "checks.json": "74c49db62beae0802688c145716d762b26c126c5b42cb3e7a58aa69c989bc6de",
+        "sources.json": "9ee36cac7b9d45bd864f463b51a3fb9cb6f007ce3c32fac5ad9b4684ab2276bd",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0"
+      },
+      "runtimeVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": []
+    },
+    {
+      "host": "cursor",
+      "case": "manual-resume",
+      "result": "passed",
+      "diagnosticOnly": false,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Manual or competing resume invalidated live pause"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T15-28-06.927Z-de445c4b",
+      "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+      "sourceFingerprint": "29f217d51e5ddfae6ec7f7818db96628893b73896b7b1bc999ebdb47ad254378",
+      "hostVersions": {
+        "id": "cursor",
+        "productVersion": "3.21.13",
+        "apiVersion": "1.128.0",
+        "commit": "e44a49c17e334d442e58bbde931d791200f014a0",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "harnessHash": "22bf35bbab84f08fcd975f5f2f8fe50e216ff1191546a09762ad221dd5108927",
+      "artifactHashes": {
+        "checks.json": "5bfabcf806463b2d03ad12fe89a32f3510d58db4c3629a97fc6589e8c6f47e24",
+        "sources.json": "9ee36cac7b9d45bd864f463b51a3fb9cb6f007ce3c32fac5ad9b4684ab2276bd",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0"
+      },
+      "runtimeVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [
+        "Manual or competing resume invalidated live pause"
+      ]
+    },
+    {
+      "host": "cursor",
+      "case": "source-drift",
+      "result": "passed",
+      "diagnosticOnly": false,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Source or pause changed before continue"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T15-28-21.137Z-7db1c139",
+      "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+      "sourceFingerprint": "29f217d51e5ddfae6ec7f7818db96628893b73896b7b1bc999ebdb47ad254378",
+      "hostVersions": {
+        "id": "cursor",
+        "productVersion": "3.21.13",
+        "apiVersion": "1.128.0",
+        "commit": "e44a49c17e334d442e58bbde931d791200f014a0",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "harnessHash": "22bf35bbab84f08fcd975f5f2f8fe50e216ff1191546a09762ad221dd5108927",
+      "artifactHashes": {
+        "checks.json": "37c4ebdb5cac6115ead0fd0a7d31c36e3445b0be8976acfd391641a428c62bcb",
+        "sources.json": "9ee36cac7b9d45bd864f463b51a3fb9cb6f007ce3c32fac5ad9b4684ab2276bd",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0"
+      },
+      "runtimeVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [
+        "Source or pause changed before continue"
+      ]
+    },
+    {
+      "host": "cursor",
+      "case": "held-cancel",
+      "result": "passed",
+      "diagnosticOnly": false,
+      "heldCancelMs": 263.1855830040877,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "cancelled",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/cursor/2026-09-19T15-28-35.529Z-4cbac421",
+      "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+      "sourceFingerprint": "29f217d51e5ddfae6ec7f7818db96628893b73896b7b1bc999ebdb47ad254378",
+      "hostVersions": {
+        "id": "cursor",
+        "productVersion": "3.21.13",
+        "apiVersion": "1.128.0",
+        "commit": "e44a49c17e334d442e58bbde931d791200f014a0",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "harnessHash": "22bf35bbab84f08fcd975f5f2f8fe50e216ff1191546a09762ad221dd5108927",
+      "artifactHashes": {
+        "checks.json": "1aab8d18ad600491fa4b233840d0bf0e4c055e2bb19422fa4ad23acd0ce8f8d8",
+        "sources.json": "9ee36cac7b9d45bd864f463b51a3fb9cb6f007ce3c32fac5ad9b4684ab2276bd",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0"
+      },
+      "runtimeVersions": {
+        "appName": "Cursor",
+        "apiVersion": "1.128.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.93.0"
+      },
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": []
+    },
+    {
+      "host": "vscode",
+      "case": "normal",
+      "result": "passed",
+      "diagnosticOnly": false,
+      "holdMs": 70057.8670501709,
+      "stateLatencyMs": 52.30450000090059,
+      "continueLatencyMs": 52.44712500280002,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 1,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "observed",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T15-21-45.311Z-98e40b22",
+      "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+      "sourceFingerprint": "29f217d51e5ddfae6ec7f7818db96628893b73896b7b1bc999ebdb47ad254378",
+      "hostVersions": {
+        "id": "vscode",
+        "productVersion": "1.138.0",
+        "apiVersion": "1.138.0",
+        "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "harnessHash": "22bf35bbab84f08fcd975f5f2f8fe50e216ff1191546a09762ad221dd5108927",
+      "artifactHashes": {
+        "native-normal.webm": "0e1bd92e71d263a7e5f917ae48f5089e4e7a46b1520cdd84647903fcbd06f458",
+        "native-after.png": "4e98b652628a753801c4497b9607ce018c2555686372c5840eb6ec5345843aef",
+        "native-before.png": "c56a19a2aa3079c4e3c23e713e9ab1178875196dac2e320e4ad207bac1dc2b0d",
+        "native-continued.png": "5964f5892042a1b5256d555c89993773bc18d8fee011d7dc02f0dcce830216ff",
+        "native-paused.png": "04e89000549f8aaba9e35f8c2d327f2629c1d8e7419bd0ea7eebf90884de9491",
+        "checks.json": "c09631292a36b9c1efb0d6d8c10239f8f064fab4de00e400560c23d78d25f449",
+        "sources.json": "9ee36cac7b9d45bd864f463b51a3fb9cb6f007ce3c32fac5ad9b4684ab2276bd",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0"
+      },
+      "runtimeVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": []
+    },
+    {
+      "host": "vscode",
+      "case": "manual-resume",
+      "result": "passed",
+      "diagnosticOnly": false,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Manual or competing resume invalidated live pause"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T15-27-34.177Z-c217e141",
+      "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+      "sourceFingerprint": "29f217d51e5ddfae6ec7f7818db96628893b73896b7b1bc999ebdb47ad254378",
+      "hostVersions": {
+        "id": "vscode",
+        "productVersion": "1.138.0",
+        "apiVersion": "1.138.0",
+        "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "harnessHash": "22bf35bbab84f08fcd975f5f2f8fe50e216ff1191546a09762ad221dd5108927",
+      "artifactHashes": {
+        "checks.json": "3450b23f20d645809d503a7f405c91b432504aab0ea1d5f466a461bba681d086",
+        "sources.json": "9ee36cac7b9d45bd864f463b51a3fb9cb6f007ce3c32fac5ad9b4684ab2276bd",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0"
+      },
+      "runtimeVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [
+        "Manual or competing resume invalidated live pause"
+      ]
+    },
+    {
+      "host": "vscode",
+      "case": "source-drift",
+      "result": "passed",
+      "diagnosticOnly": false,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Source or pause changed before continue"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T15-27-44.924Z-be2e0af9",
+      "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+      "sourceFingerprint": "29f217d51e5ddfae6ec7f7818db96628893b73896b7b1bc999ebdb47ad254378",
+      "hostVersions": {
+        "id": "vscode",
+        "productVersion": "1.138.0",
+        "apiVersion": "1.138.0",
+        "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "harnessHash": "22bf35bbab84f08fcd975f5f2f8fe50e216ff1191546a09762ad221dd5108927",
+      "artifactHashes": {
+        "checks.json": "ea0c713a4ee71f4f54dba0ad31e13a73d940baebeade66e0845f7a9e8fd722d7",
+        "sources.json": "9ee36cac7b9d45bd864f463b51a3fb9cb6f007ce3c32fac5ad9b4684ab2276bd",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0"
+      },
+      "runtimeVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": [
+        "Source or pause changed before continue"
+      ]
+    },
+    {
+      "host": "vscode",
+      "case": "held-cancel",
+      "result": "passed",
+      "diagnosticOnly": false,
+      "heldCancelMs": 262.6386670017382,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "cancelled",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T15-27-55.477Z-936b5c6b",
+      "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+      "sourceFingerprint": "29f217d51e5ddfae6ec7f7818db96628893b73896b7b1bc999ebdb47ad254378",
+      "hostVersions": {
+        "id": "vscode",
+        "productVersion": "1.138.0",
+        "apiVersion": "1.138.0",
+        "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "harnessHash": "22bf35bbab84f08fcd975f5f2f8fe50e216ff1191546a09762ad221dd5108927",
+      "artifactHashes": {
+        "checks.json": "0611b360a990101e42a76a6c816853a8c0d45055b4d15fcf7a315a9e52979710",
+        "sources.json": "9ee36cac7b9d45bd864f463b51a3fb9cb6f007ce3c32fac5ad9b4684ab2276bd",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0"
+      },
+      "runtimeVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "failures": []
+    },
+    {
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T15-00-05.874Z-833244ef",
+      "host": "vscode",
+      "classification": "failed before input",
+      "runtimeStatus": "failed",
+      "cleaned": true,
+      "failures": [
+        "Error: Timed out waiting for selected repository module"
+      ],
+      "revision": "33a2413f58d8e719b96438836f367fa1c91793ed",
+      "sourceFingerprint": "e88b69db7ba0886e125bc978ff0d7832d38cd5c8a6a352c290cb76926a54a188",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "hostVersions": {
+        "id": "vscode",
+        "productVersion": "1.138.0",
+        "apiVersion": "1.138.0",
+        "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "runtimeVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "counts": {
+        "input.dispatched": 0,
+        "dap.stopped": 0,
+        "continue.accepted": 0
+      },
+      "artifactHashes": {
+        "93c6704f-4a85-427a-8328-69f9cc45eb52/manifest.json": "e5f6184cd577298f9b18e27e3c3109524828f0cd54eb51b3afc9b61c54c1babf",
+        "93c6704f-4a85-427a-8328-69f9cc45eb52/events.jsonl": "f14cce0977b79ed076b0cff574c35689f46cd1b2ab71c7696572564dc9321a84",
+        "sources.json": "cc625f891f8e5746ea02afacf7fbc45f57bdb7a3391d74af127de365fde76cb1",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "native-normal.webm": "6109f8cbf98f327bc97ec8834b4500b8d3fd0f3a80e7c62b3b38815d0c67b94a"
+      },
+      "exit": {
+        "exitCode": 0
+      }
+    },
+    {
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T15-03-14.760Z-8171dd91",
+      "host": "vscode",
+      "classification": "URL diagnostic only",
+      "runtimeStatus": "failed",
+      "cleaned": true,
+      "failures": [
+        "Error: Timed out waiting for selected repository module"
+      ],
+      "revision": "33a2413f58d8e719b96438836f367fa1c91793ed",
+      "sourceFingerprint": "da966cdea89d1700eda4b8d4750b35d1d06fa7a68eaaef4663ed957dc5525623",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "hostVersions": {
+        "id": "vscode",
+        "productVersion": "1.138.0",
+        "apiVersion": "1.138.0",
+        "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "runtimeVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "counts": {
+        "input.dispatched": 0,
+        "dap.stopped": 0,
+        "continue.accepted": 0
+      },
+      "artifactHashes": {
+        "09f191cc-6007-47a3-ac6d-343d918c734d/manifest.json": "7cd9bb7a9fb6b97a3d60c1d222f1e25476cc13762f4ce2f39a50b8f7f9cbb86a",
+        "09f191cc-6007-47a3-ac6d-343d918c734d/events.jsonl": "a6cfef34c21c287b7b1394b42e1d72acc7a53a8968e60a9f80ce05ce6280ac42",
+        "sources.json": "9ba4cb7267b5a3e383aa2b0ee14f5120a5fa647c7433cca30ac94c6a87b7a24a",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0"
+      },
+      "exit": {
+        "exitCode": 0
+      }
+    },
+    {
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T15-05-50.796Z-21a918b3",
+      "host": "vscode",
+      "classification": "partial native after-frame ACK failure",
+      "runtimeStatus": "failed",
+      "cleaned": true,
+      "failures": [
+        "Error: Viewport frame acknowledgement timed out"
+      ],
+      "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+      "sourceFingerprint": "29f217d51e5ddfae6ec7f7818db96628893b73896b7b1bc999ebdb47ad254378",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "hostVersions": {
+        "id": "vscode",
+        "productVersion": "1.138.0",
+        "apiVersion": "1.138.0",
+        "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "runtimeVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 1
+      },
+      "artifactHashes": {
+        "b0979e0b-ed63-4667-a64f-7c2004a70e20/manifest.json": "722d27685e08fa182f33561b72c974da5952c2fdbc899d550fcc822af0b440db",
+        "b0979e0b-ed63-4667-a64f-7c2004a70e20/events.jsonl": "4c5f74e9d0e3dfa28954b6aa537f76eeb66d68d85ed3aada2209f902dd7a2d45",
+        "sources.json": "9ee36cac7b9d45bd864f463b51a3fb9cb6f007ce3c32fac5ad9b4684ab2276bd",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "native-normal.webm": "03f8f92f528abd9d66bd8a92f1d125ac0a401d8fa649fd516be390794a69bbd0",
+        "paused-video.png": "4fe314d2009df69a152b6ee0ea8c3697950117bc37f5ab6812aee2d7d753573f",
+        "continued-video.png": "2ceddec7bda6953e7749ead11822bca296eb800331e49549215705458440da27"
+      },
+      "exit": {
+        "exitCode": 0
+      }
+    },
+    {
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T15-16-55.924Z-58c23fd7",
+      "host": "vscode",
+      "classification": "instrumented renderer diagnostic only",
+      "runtimeStatus": "observed",
+      "cleaned": true,
+      "failures": [],
+      "revision": "621a63f9399be579de1c806dc15e331522adbf02",
+      "sourceFingerprint": "29f217d51e5ddfae6ec7f7818db96628893b73896b7b1bc999ebdb47ad254378",
+      "sourceHashes": {
+        "typescript": "3699d15e3fe8d763dabf615e75d40d014003495df4b9c510d5c6da64d2a1e012",
+        "javascript": "496aecf54e63ca8b350ba846c68a1fd8bc9d004235a5b0f89b54bbef22001b94",
+        "sourceMap": "db1dee78cff9c3a19bcc46f6e9a7b359ddafdfa82cc2b4b992b8858b146a4717"
+      },
+      "hostVersions": {
+        "id": "vscode",
+        "productVersion": "1.138.0",
+        "apiVersion": "1.138.0",
+        "commit": "7debcd0e2acdea1c52de81bf9ee1620444407dda",
+        "browserBackend": "managed",
+        "chrome": {
+          "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "version": "Google Chrome 153.0.8010.53"
+        }
+      },
+      "runtimeVersions": {
+        "appName": "Visual Studio Code",
+        "apiVersion": "1.138.0",
+        "node": "24.18.1",
+        "electron": "42.10.0",
+        "debugger": "1.117.0"
+      },
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 1
+      },
+      "artifactHashes": {
+        "163b7254-f1e8-4ace-8595-3e2c843964fa/manifest.json": "3c4df8c28ecdd103abde96feb231ada450014930d0626301c22a2a823c6ec8ee",
+        "163b7254-f1e8-4ace-8595-3e2c843964fa/events.jsonl": "4c683547e28b36d39d2ec4c165682b4d1d19301b7a443a163412be0b2aeff223",
+        "sources.json": "9ee36cac7b9d45bd864f463b51a3fb9cb6f007ce3c32fac5ad9b4684ab2276bd",
+        "exit.json": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+        "native-diagnostic.webm": "bc250b8bfcb470ccedcbca15ed40e5d5d33ce00b7ad849f2f89030f156af3935",
+        "diagnostic-checks.json": "3637114d6be9f6e1c93c7a84d6393fb2b534e9632839ba0c19c4e4027331c26a"
+      },
+      "exit": {
+        "exitCode": 0
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "normal",
+      "result": "passed",
+      "holdMs": 70043.12014579773,
+      "stateLatencyMs": 40.26254099881044,
+      "continueLatencyMs": 56.95045800530352,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 1,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "observed",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-19-06.905Z-77d8dd81",
+      "classification": "superseded review candidate or focused decoy reproduction; not final acceptance",
+      "sourceFingerprint": "4aef7db5b04ea3b789072d8e86dae456c4b25f978de9796392adf62e697b8f1a",
+      "controllerHash": "9a16aca437883a04cf94ee68aa4f7c1c65c2a0b39bb58d19296bd161b0448a79",
+      "artifactHashes": {
+        "checks.json": "85c8de06bf18336b10d9611f9ee49328d8e67c4b2f3950b3387288d90e4fca4b",
+        "sources.json": "1ff8bba534a99869888fde805c477e5014293038c440b801d311241243f9f959"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "manual-resume",
+      "result": "passed",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Manual or competing resume invalidated live pause"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-20-30.219Z-c9a58d10",
+      "classification": "superseded review candidate or focused decoy reproduction; not final acceptance",
+      "sourceFingerprint": "4aef7db5b04ea3b789072d8e86dae456c4b25f978de9796392adf62e697b8f1a",
+      "controllerHash": "9a16aca437883a04cf94ee68aa4f7c1c65c2a0b39bb58d19296bd161b0448a79",
+      "artifactHashes": {
+        "checks.json": "cc7bc8cf39035ef2699ad35d23de2cf96bbc894b57ca147d4254e51f05b39ac3",
+        "sources.json": "1ff8bba534a99869888fde805c477e5014293038c440b801d311241243f9f959"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "cdp-resume",
+      "result": "passed",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Unowned continuation invalidated live pause"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-20-40.876Z-351689ea",
+      "classification": "superseded review candidate or focused decoy reproduction; not final acceptance",
+      "sourceFingerprint": "4aef7db5b04ea3b789072d8e86dae456c4b25f978de9796392adf62e697b8f1a",
+      "controllerHash": "9a16aca437883a04cf94ee68aa4f7c1c65c2a0b39bb58d19296bd161b0448a79",
+      "artifactHashes": {
+        "checks.json": "22df414984a25d7e8d41aecd2ced176df662a4d0a6cb295cc1df1d7c2db28374",
+        "sources.json": "1ff8bba534a99869888fde805c477e5014293038c440b801d311241243f9f959"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "source-drift",
+      "result": "passed",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "failed",
+        "cleaned": true,
+        "failures": [
+          "Continue uncertain: Error: conflict: Source or pause changed before continue"
+        ],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-20-51.547Z-6b2ecc3d",
+      "classification": "superseded review candidate or focused decoy reproduction; not final acceptance",
+      "sourceFingerprint": "4aef7db5b04ea3b789072d8e86dae456c4b25f978de9796392adf62e697b8f1a",
+      "controllerHash": "9a16aca437883a04cf94ee68aa4f7c1c65c2a0b39bb58d19296bd161b0448a79",
+      "artifactHashes": {
+        "checks.json": "d1bbaa8d41d940ec6d1695321de759a1c1eb375cbc3e19a70481f238c34db165",
+        "sources.json": "1ff8bba534a99869888fde805c477e5014293038c440b801d311241243f9f959"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "held-cancel",
+      "result": "passed",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "cancelled",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-21-02.248Z-4748e51f",
+      "classification": "superseded review candidate or focused decoy reproduction; not final acceptance",
+      "sourceFingerprint": "4aef7db5b04ea3b789072d8e86dae456c4b25f978de9796392adf62e697b8f1a",
+      "controllerHash": "9a16aca437883a04cf94ee68aa4f7c1c65c2a0b39bb58d19296bd161b0448a79",
+      "artifactHashes": {
+        "checks.json": "d53dae65967f834b5c0c6dddaadd9eebffa3455193af1a1871200204963309cb",
+        "sources.json": "1ff8bba534a99869888fde805c477e5014293038c440b801d311241243f9f959"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "decoy",
+      "result": "failed",
+      "error": "",
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 0,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "cancelled",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-21-13.329Z-d2ba5747",
+      "classification": "superseded review candidate or focused decoy reproduction; not final acceptance",
+      "sourceFingerprint": "4aef7db5b04ea3b789072d8e86dae456c4b25f978de9796392adf62e697b8f1a",
+      "controllerHash": "9a16aca437883a04cf94ee68aa4f7c1c65c2a0b39bb58d19296bd161b0448a79",
+      "artifactHashes": {
+        "checks.json": "f4888e0a40253f6d84ff88a19a820a6f33d4980a1c044091fe09a4c919015f01",
+        "sources.json": "1ff8bba534a99869888fde805c477e5014293038c440b801d311241243f9f959"
+      }
+    },
+    {
+      "host": "vscode",
+      "case": "decoy",
+      "result": "passed",
+      "holdMs": 627.4809837341309,
+      "stateLatencyMs": 53.27187500370201,
+      "continueLatencyMs": 55.63024999719346,
+      "counts": {
+        "input.dispatched": 1,
+        "dap.stopped": 1,
+        "continue.accepted": 1,
+        "cleanup.completed": 1
+      },
+      "cleanup": {
+        "status": "observed",
+        "cleaned": true,
+        "failures": [],
+        "resources": {
+          "activeSessionIds": [],
+          "cdpOpen": false
+        }
+      },
+      "draftPreserved": true,
+      "editorExitCode": 0,
+      "path": "artifacts/cycle-0010/native/vscode/2026-09-19T16-28-22.658Z-0afa2229",
+      "classification": "superseded review candidate or focused decoy reproduction; not final acceptance",
+      "sourceFingerprint": "d3a7638147deabbe1b7b3150bf64d181d0a7426d5353269481dcfacc2a9bb35f",
+      "controllerHash": "9a16aca437883a04cf94ee68aa4f7c1c65c2a0b39bb58d19296bd161b0448a79",
+      "artifactHashes": {
+        "checks.json": "10e42b32a8c2ee904116395903623d5d6d1f87018c88e9b23491ea58f376f66d",
+        "sources.json": "f4abf7ac59593dc39cbe679cead44cfa3c0f32595dcd79d95d235a8fb80aacad"
+      }
+    }
+  ],
+  "cleanImplementation": {
+    "commit": "9bfe1e8d91eef28a8a889ad1fba8f316af0089d0",
+    "sourceInventoryMatches": true,
+    "launcherMatches": true,
+    "workingTreeCleanAtVerification": true
+  },
+  "originalHandoffBackups": {
+    "manifest": "artifacts/cycle-0009/handoff-20260919-190104/manifest.json",
+    "matched": 7,
+    "total": 7
+  }
+}

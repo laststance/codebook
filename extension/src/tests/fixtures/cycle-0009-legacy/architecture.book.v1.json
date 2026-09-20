@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "workspaceKey": "1111111111111111111111111111111111111111111111111111111111111111",
+  "bookId": "architecture",
+  "revisions": [
+    {
+      "revision": 1,
+      "key": "first",
+      "inputDigest": "46c306d3050b3e64b99b3eea0435478693a040345c9c3a3f13581f0e4c34bc1b",
+      "expectedRevision": 0,
+      "publishedAt": "2026-09-19T00:00:02.000Z",
+      "document": {
+        "title": "Cart architecture",
+        "summary": "Source-derived cart state.",
+        "nodes": [
+          {
+            "id": "cart",
+            "title": "Cart",
+            "sections": [
+              {
+                "title": "Price",
+                "text": "The module exports price 24."
+              }
+            ],
+            "anchors": [
+              {
+                "path": "src/cart.ts",
+                "hash": "5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b",
+                "startLine": 1,
+                "endLine": 2
+              }
+            ],
+            "observations": []
+          }
+        ],
+        "edges": []
+      },
+      "sources": [
+        {
+          "path": "src/cart.ts",
+          "hash": "5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b",
+          "text": "export const price = 24;\n",
+          "lineCount": 2
+        }
+      ],
+      "sourceChecks": [
+        {
+          "path": "src/cart.ts",
+          "hash": "5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b",
+          "acquiredAt": "2026-09-19T00:00:00.000Z",
+          "checkedAt": "2026-09-19T00:00:01.000Z"
+        }
+      ],
+      "observations": [],
+      "hash": "31886758b5000328fb26c2431817b589d008c61ba2c3a048ded20625d8fcba80"
+    }
+  ]
+}

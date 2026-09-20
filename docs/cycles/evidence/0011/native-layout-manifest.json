@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "source": {
+    "base": "a3fba6f63cf64933a8e458cd0de623b286c144d6",
+    "dirty": true,
+    "inventoryEntries": 231,
+    "sha256": "fb597267fc8ac348ddff5460b8d5c47cf86f13cd231585fa6ea38aeb20a049e2"
+  },
+  "scope": "Explicit Arrange recovery and qualified Cursor 200% reader return; not full cycle acceptance.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0011/native-build-v14.json",
+      "bytes": 26692,
+      "sha256": "6e07d53b24f85031c33d838cbdb83b15c6d07c1e3b0e932a1e8c35efee092e81",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-layout-investigation/final-tests-corrected.log",
+      "bytes": 48141,
+      "sha256": "586ac121fcb14255844da4123b78b45331142d46b86d07d41f5e99b94f3a1b71",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/reload-launch.json",
+      "bytes": 28739,
+      "sha256": "3ed6193d5561c58f78d146a032b621ee78fea29080a06a62b69023ff127e4356",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T00-45-29.874Z-76159edd/reload-launch.json",
+      "bytes": 28724,
+      "sha256": "7ec390a4df3feb05bdf3c38c417e71a9bbfa6d23531633ee3da36b80ed64f0a2",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/replay-open.json",
+      "bytes": 61913,
+      "sha256": "ec931422e2b00fd141121767def067fe808528f5910e215efbffa91956a88df1",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T00-45-29.874Z-76159edd/replay-open.json",
+      "bytes": 61141,
+      "sha256": "89ba2bd6666be545835a5266413c7b7797b1ce969619d6df737fff870c49b225",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/arrange-final.json",
+      "bytes": 267157,
+      "sha256": "4bfe391246ce99a5f54a3e9414fc77140073cae28572696dec7fb7127fe629d8",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T00-45-29.874Z-76159edd/arrange-final.json",
+      "bytes": 250156,
+      "sha256": "56133b2e7bde8d8eb53a12772901d89f5c0d112b77643865f08d8af84fe70ab0",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/arrange-final.webm",
+      "bytes": 157094,
+      "sha256": "7eac01efc148fbc23aed34bb8d30bd11b84f417c9cd85c6979610f145d248f63",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T00-45-29.874Z-76159edd/arrange-final.webm",
+      "bytes": 146987,
+      "sha256": "40abd026adf4e3dcbe51ea73514daf502ec64cb7b5e27dc33ec2118d86da5f48",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/arrange-final-contact.png",
+      "bytes": 556942,
+      "sha256": "86278d1820ac7e7d60eeae6b081a5693147dd693306b92117a9b50e01cc3b732",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T00-45-29.874Z-76159edd/arrange-final-contact.png",
+      "bytes": 631493,
+      "sha256": "58a75a977fbb7d2144c61947939bac8657db79b9c894de9eb44e577d9aace159",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/arrange-final.png",
+      "bytes": 174548,
+      "sha256": "85f1cc422900c1c4d300ca61227594b8520f4cd00881fd72ff279f22ded923e3",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T00-45-29.874Z-76159edd/arrange-final.png",
+      "bytes": 177559,
+      "sha256": "551c86f28085f31848abd78d0ab532a1f5d32140e6af9c64e97634f6cb0983c4",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/exit.json",
+      "bytes": 14,
+      "sha256": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T00-45-29.874Z-76159edd/exit.json",
+      "bytes": 14,
+      "sha256": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/reader-200-observation-return-audit.json",
+      "bytes": 526,
+      "sha256": "3b7fd254e4f7b014498ae7427e32742eb0c0f0efb3ed6b28b1241e7fc5eb8731",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/reader-200-recording-return-audit.json",
+      "bytes": 524,
+      "sha256": "b4378179f1e35cb0880c3042655657a6113f2574273d6358c729e81a2832c345",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/reader-200-visible-return.webm",
+      "bytes": 85009,
+      "sha256": "ffdec1a1eafe577a28f972c1aff72fe0139ef8d055ad2b9721499223e4a193be",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/reader-200-recording-return.webm",
+      "bytes": 1202962,
+      "sha256": "099cc3566e8a3d3ef464eafd7e085d08ad8508a8d3bc0109ff485a9c4fb98753",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/reader-200-recording-end.png",
+      "bytes": 216085,
+      "sha256": "751a190b340ae940b1bc77878dfdf5dc8607f33d0380b708ea2bef65a6a16ff8",
+      "availability": "local-private"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T00-33-45.856Z-776725ee/reader-200-returned.png",
+      "bytes": 111261,
+      "sha256": "46f694213ab11fb849d6e9a49359e9c0795a50420fc1bf6ca5a7a2af87c6ee8a",
+      "availability": "local-private"
+    }
+  ]
+}

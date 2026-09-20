@@ -1,16 +1,18 @@
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { LEARNING_SCHEMA_VERSION_V2 } from '../constants';
-import { STUDY_PROFILES } from 'codebook-cycle-0004/dist/profiles';
+import { CONFIGURED_STUDY_VERSION, LEARNING_SCHEMA_VERSION_V2, REPOSITORY_BROWSER_ACTION, REPOSITORY_BROWSER_PROFILE } from '../constants';
 import { readResource } from '../resources';
 import type { StudyRecord, StudyService } from '../service';
-import { observationSchema, type StudyArchive } from '../studyModel';
-import { validateStudy } from './validateStudy';
+import { observationSchema } from '../studyModel';
+import { configuredObservationSchema } from '../configuredStudySchemas';
+import type { RetainedStudy } from '../retainedStudySchemas';
+import { decodeRetainedStudy } from './decodeRetainedStudy';
+import { describeStudy } from './describeStudy';
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
-export async function captureStudy(service: StudyService, record: StudyRecord, workspaceKey: string): Promise<StudyArchive | undefined> {
+export async function captureStudy(service: StudyService, record: StudyRecord, workspaceKey: string): Promise<RetainedStudy | undefined> {
   const state = service.state(record), signature = state.materialSignature, runtime = record.runtime?.view();
-  const observations: StudyArchive['observations'] = [];
-  const captures: StudyArchive['captures'] = [];
+  const observations: RetainedStudy['observations'][number][] = [];
+  const captures: RetainedStudy['captures'][number][] = [];
   for (const reference of state.observations) {
     const snapshotUri = reference.snapshotUri;
     const snapshot = service.snapshot(record, snapshotUri);
@@ -18,11 +20,16 @@ export async function captureStudy(service: StudyService, record: StudyRecord, w
     if (!('text' in source)) throw new Error('Captured TypeScript is unavailable.');
     const committed = runtime?.events.find(event => event.type === 'snapshot.committed' && event.detail && typeof event.detail === 'object' && 'snapshotId' in event.detail && event.detail.snapshotId === snapshot.id);
     if (!committed) throw new Error('The snapshot has no committed receipt time.');
-    observations.push(observationSchema.parse({ id: snapshot.id, snapshotUri, participant: snapshot.participant, itemId: snapshot.itemId, actionId: snapshot.actionId, capturePhase: snapshot.capturePhase, capturedAt: committed.wallTime, elapsedMs: committed.elapsedMs,
-      pause: snapshot.pause, source: { text: source.text, hash: snapshot.source.typescriptHash, line: snapshot.frame.line }, values: snapshot.values,
-      interpretations: [...record.explanations.values()].filter(value => value.snapshotUri === snapshotUri).map(value => ({ id: value.id, text: value.agentInterpretation, createdAt: value.createdAt, facts: value.capturedFacts })) }));
+    const interpretations = [...record.explanations.values()].filter(value => value.snapshotUri === snapshotUri).map(value => ({ id: value.id, text: value.agentInterpretation, createdAt: value.createdAt, facts: value.capturedFacts }));
+    // Versioned validators reject mixed evidence before any history or recording writer can accept it.
+    if (snapshot.actionId === REPOSITORY_BROWSER_ACTION) {
+      if (record.profile !== REPOSITORY_BROWSER_PROFILE || source.text !== snapshot.source.text || committed.elapsedMs !== snapshot.elapsedMs || committed.wallTime !== snapshot.capturedAt) throw new Error('Configured snapshot differs from its committed source/receipt.');
+      observations.push(configuredObservationSchema.parse({ ...snapshot, snapshotUri, interpretations }));
+    } else observations.push(observationSchema.parse({ id: snapshot.id, snapshotUri, participant: snapshot.participant, itemId: snapshot.itemId, actionId: snapshot.actionId, capturePhase: snapshot.capturePhase, capturedAt: committed.wallTime, elapsedMs: committed.elapsedMs,
+      pause: snapshot.pause, source: { text: source.text, hash: snapshot.source.typescriptHash, line: snapshot.frame.line }, values: snapshot.values, interpretations }));
   }
-  for (const phase of STUDY_PROFILES[record.profile].capturePhases) {
+  const descriptor = describeStudy(record.profile === REPOSITORY_BROWSER_PROFILE ? { ...record, descriptor: record.definition?.descriptor } : record);
+  for (const phase of record.profile === REPOSITORY_BROWSER_PROFILE && !record.definition ? [] : descriptor.capturePhases) {
     const capture = state.captures.find(value => value.phase === phase);
     if (capture?.status === 'captured') {
       if (!capture.uri) throw new Error('Confirmed image has no canonical resource.');
@@ -33,7 +40,9 @@ export async function captureStudy(service: StudyService, record: StudyRecord, w
   }
   // Never combine a completed control state with evidence gathered across a different transition.
   if (service.state(record).materialSignature !== signature) return undefined;
-  return validateStudy({ version: LEARNING_SCHEMA_VERSION_V2, workspaceKey, id: `${service.instanceId}_${record.id}`, instanceId: service.instanceId, runId: record.id, profile: record.profile,
+  const configured = record.profile === REPOSITORY_BROWSER_PROFILE ? { version: CONFIGURED_STUDY_VERSION, configuration: record.configuration, configurationHash: sha256(JSON.stringify(record.configuration)),
+    descriptor: record.definition?.descriptor, operation: runtime?.profile === REPOSITORY_BROWSER_PROFILE ? runtime.operation : undefined } : { version: LEARNING_SCHEMA_VERSION_V2 };
+  return decodeRetainedStudy({ ...configured, workspaceKey, id: `${service.instanceId}_${record.id}`, instanceId: service.instanceId, runId: record.id, profile: record.profile,
     createdAt: state.createdAt, savedAt: new Date().toISOString(), state: state.state, terminal: record.stopped || state.resourcesReleased, finalOutcome: state.finalOutcome,
     materialSignature: signature, reason: state.terminalReason ?? state.cleanupError?.message, observations, captures, links: (state.links ?? []).map(link => ({ id: link.id, status: link.status })) }, workspaceKey);
 }

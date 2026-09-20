@@ -92,3 +92,22 @@ test('an uncertain event subscription closes the proxy and rejects shared consum
   await assert.rejects(cdp.subscribe(['Debugger.paused']), /CDP disconnected/);
   assert.equal(socket.messages.length, 1);
 });
+
+test('recording telemetry summarizes frame acknowledgements without hiding input responses or failed acknowledgements', async () => {
+  // Arrange
+  const socket = new TestSocket(), events: { type: string; detail: unknown }[] = [];
+  const cdp = new Cdp(socket, (type, detail) => events.push({ type, detail }));
+  cdp.aggregateScreencastTelemetry(() => 100);
+  // Act
+  for (let index = 0; index < 100; index++) { const acknowledged = cdp.request('Page.screencastFrameAck', { sessionId: index }); socket.reply(index + 1, {}); await acknowledged; }
+  const input = cdp.request('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 1, y: 1 }); socket.reply(101, {}); await input;
+  const failed = cdp.request('Page.screencastFrameAck', { sessionId: 102 });
+  socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id: 102, error: { message: 'deliberate ACK error' } }) }));
+  await assert.rejects(failed, /deliberate ACK error/); cdp.close();
+  // Assert
+  assert.equal(socket.messages.length, 102);
+  assert.equal(events.length, 4);
+  assert.deepEqual(events[0], { type: 'cdp.sent', detail: { id: 101, method: 'Input.dispatchMouseEvent' } });
+  assert.deepEqual(events[2], { type: 'cdp.response', detail: { id: 102, method: 'Page.screencastFrameAck', failed: true } });
+  assert.deepEqual(events[3], { type: 'cdp.screencast-summary', detail: { sinceMs: 100, untilMs: 100, sent: 101, responses: 100 } });
+});

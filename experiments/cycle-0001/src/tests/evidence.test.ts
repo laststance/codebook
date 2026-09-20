@@ -5,6 +5,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Evidence } from '../evidence';
 
+test('recording and debug events share the same monotonic receipt clock', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-')), evidence = new Evidence(directory);
+  try {
+    // Act
+    const before = evidence.elapsedMs(), stopped = evidence.record('dap.stopped'), after = evidence.elapsedMs();
+    // Assert
+    assert.ok(before <= stopped.elapsedMs); assert.ok(stopped.elapsedMs <= after);
+    assert.ok(after >= 0); await evidence.flush();
+    assert.equal(JSON.parse(await readFile(join(directory, 'events.jsonl'), 'utf8')).elapsedMs, stopped.elapsedMs);
+  } finally { await rm(directory, { recursive: true }); }
+});
+
 test('later input acknowledgements cannot rewrite the recorded observation or diverge from disk history', async () => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-')), evidence = new Evidence(directory);

@@ -3,14 +3,16 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
     "node": ">=24"
   },
   "main": "./dist/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "extensionKind": [
     "workspace"
   ],
@@ -42,6 +44,10 @@
       {
         "command": "codebook.closeStudyWorkspace",
         "title": "Codebook: Close Study Workspace"
+      },
+      {
+        "command": "codebook.selectPresentation",
+        "title": "Codebook: Select Presentation"
       },
       {
         "command": "codebook.markUnderstanding",
@@ -94,6 +100,18 @@
       {
         "command": "codebook.study.retry",
         "title": "Codebook: Retry Study Storage"
+      },
+      {
+        "command": "codebook.openRepositoryWiki",
+        "title": "Codebook: Open Repository Wiki"
+      },
+      {
+        "command": "codebook.closeRepositoryWiki",
+        "title": "Codebook: Close Repository Wiki"
+      },
+      {
+        "command": "codebook.study.return-wiki",
+        "title": "Codebook: Return to Wiki"
       }
     ],
     "configuration": {
@@ -109,7 +127,7 @@
           "type": "string",
           "default": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
           "scope": "machine",
-          "description": "Chrome executable for the explicitly selected local demo profile."
+          "description": "Chrome executable for the explicitly selected local demo or configured repository profile."
         }
       }
     },
@@ -131,6 +149,10 @@
     },
     "views": {
       "codebook": [
+        {
+          "id": "codebook.repositoryWiki",
+          "name": "Repository Wiki"
+        },
         {
           "id": "codebook.learningOutline",
           "name": "Learning outline"
@@ -159,13 +181,15 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "zod": "4.6.5",
     "codebook-cycle-0001": "link:../experiments/cycle-0001",
-    "codebook-cycle-0004": "link:../experiments/cycle-0004"
+    "codebook-cycle-0004": "link:../experiments/cycle-0004",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "24.13.5",
     "@types/vscode": "1.120.0",
+    "@vscode/debugprotocol": "1.68.0",
+    "devtools-protocol": "0.0.1698617",
     "typescript": "5.9.3"
   }
 }

@@ -15,7 +15,7 @@ import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { settleCleanup } from 'codebook-cycle-0001/dist/utils/settleCleanup';
 import { isEndpointClosed } from 'codebook-cycle-0001/dist/utils/isEndpointClosed';
-import { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, WATCHDOG_INTERVAL_MS, MAX_BODY_BYTES, MAX_NETWORK_BUFFER_BYTES, FAULT_DELAY_MS, RESUME_COMMANDS, PARTICIPANTS, CART_LINK_IDS, COMPLETED_CART_COUNT, COMPLETED_ORDER_COUNT, type ActionId, type ProfileId, type StudyItemId, type ParticipantName, type Scenario } from './constants';
+import { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, WATCHDOG_INTERVAL_MS, MAX_BODY_BYTES, MAX_NETWORK_BUFFER_BYTES, FAULT_DELAY_MS, RESUME_COMMANDS, PARTICIPANTS, CART_LINK_IDS, COMPLETED_CART_COUNT, COMPLETED_ORDER_COUNT, PENDING_ORDER_COUNT, type ActionId, type ProfileId, type StudyItemId, type ParticipantName, type Scenario } from './constants';
 import { VIEWPORT_WIDTH_PX, VIEWPORT_HEIGHT_PX, FOCUS_ATTEMPT_LIMIT, INJECTED_DELAY_MS } from 'codebook-cycle-0001/dist/constants';
 import { PauseBudget } from './pauseBudget';
 import { NetworkEvidence } from './networkEvidence';
@@ -436,12 +436,20 @@ export class PairedRun {
       const expression = checkout
         ? 'JSON.stringify({cartCount:Number(document.querySelector("#count").textContent),completedClicks:Number(document.querySelector("#clicks").textContent),orderId:document.querySelector("#order-id").textContent,total:Number(document.querySelector("#order-total").textContent),status:document.documentElement.dataset.orderStatus,completedCheckouts:Number(document.querySelector("#checkouts").textContent)})'
         : 'JSON.stringify({cartCount:Number(document.querySelector("#count").textContent),completedClicks:Number(document.querySelector("#clicks").textContent)})';
-      const result = await this.requireCdp('browser').request('Runtime.evaluate', { expression, returnByValue: true });
-      this.assertAlive(); const observed: NonNullable<PairedRun['observed']> = JSON.parse(result.result.value);
-      if (observed.cartCount !== COMPLETED_CART_COUNT || observed.completedClicks !== COMPLETED_CART_COUNT) throw new Error('Visible result differs from one completed cart click');
+      const observed = await waitUntil(async () => {
+        const result = await this.requireCdp('browser').request('Runtime.evaluate', { expression, returnByValue: true });
+        this.assertAlive(); const visible: NonNullable<PairedRun['observed']> = JSON.parse(result.result.value);
+        if (visible.cartCount !== COMPLETED_CART_COUNT || visible.completedClicks !== COMPLETED_CART_COUNT) throw new Error('Visible result differs from one completed cart click');
+        if (checkout) {
+          const expectedOrder = observer!.expectation.selectedResponse;
+          if (!('orderId' in expectedOrder) || visible.orderId !== expectedOrder.orderId || visible.total !== expectedOrder.total) throw new Error('Visible result differs from one completed purchase');
+          // Poll only this declared intermediate state; it still spends the active budget and earns no final receipt.
+          if (visible.status === 'confirming' && visible.completedCheckouts === PENDING_ORDER_COUNT) { this.evidence.record('screen.pending-confirmation', { actionId: operation.actionId, observed: visible }); return undefined; }
+          if (visible.status !== 'confirmed' || visible.completedCheckouts !== COMPLETED_ORDER_COUNT) throw new Error('Visible result differs from one completed purchase');
+        }
+        return visible;
+      }, 'declared screen completion', ACTIVE_TIMEOUT_MS, this.abort.signal);
       if (checkout) {
-        const expectedOrder = observer!.expectation.selectedResponse;
-        if (!('orderId' in expectedOrder) || observed.orderId !== expectedOrder.orderId || observed.total !== expectedOrder.total || observed.status !== 'confirmed' || observed.completedCheckouts !== COMPLETED_ORDER_COUNT) throw new Error('Visible result differs from one completed purchase');
         const cart = this.networks.get('add-to-cart');
         const cartResult = cart?.settled()?.selected;
         const cartSnapshot = this.snapshots.find(snapshot => snapshot.actionId === 'add-to-cart' && snapshot.participant === 'browser');
@@ -471,7 +479,9 @@ export class PairedRun {
     this.evidence.record('capture.requested', { phase, pause });
     try {
       const result = await this.requireCdp('browser').request('Page.captureScreenshot', { format: 'png' }, CAPTURE_TIMEOUT_MS, this.scenario === 'capture-timeout' && phase === this.profile.items[0]!.capturePhase ? INJECTED_DELAY_MS : 0);
-      assertCurrent(); await this.evidence.save(`${phase}.png`, Buffer.from(result.data, 'base64')); assertCurrent();
+      assertCurrent(); this.evidence.record('capture.response-received', { phase, pause, hash: sha256(Buffer.from(result.data, 'base64')) });
+      this.browser?.recordCapture(result.data, phase);
+      await this.evidence.save(`${phase}.png`, Buffer.from(result.data, 'base64')); assertCurrent();
       capture.file = `${phase}.png`; this.evidence.record('capture.pixels-saved', { phase, pause, file: capture.file });
       await this.browser?.reveal(this.abort.signal); assertCurrent();
       capture.renderer = await this.browser?.presentCapture(result.data, phase); assertCurrent();

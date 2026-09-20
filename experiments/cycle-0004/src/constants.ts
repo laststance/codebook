@@ -8,6 +8,7 @@ export const SELECTED_CART_TUPLE = { cartId: 'selected', productId: 'tote-01', p
 export const BACKGROUND_CART_TUPLE = { cartId: 'background', productId: 'background-02', price: 99 } as const;
 export const COMPLETED_CART_COUNT = 1;
 export const COMPLETED_ORDER_COUNT = 1;
+export const PENDING_ORDER_COUNT = 0;
 export const FAULT_DELAY_MS = 500;
 export const STACK_FRAME_LIMIT = 10;
 export const KEY_LENGTH_LIMIT = 128;

@@ -1,0 +1,165 @@
+[
+  {
+    "sequence": 66,
+    "elapsedMs": 1329.942667,
+    "wallTime": "2026-09-19T07:53:58.367Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "9298a08a-353e-423d-9c55-287b76d73a3c",
+      "id": 6,
+      "hash": "6c5b6a018294b39aed6c3b77b4f28f3a376268aaab8c287593e6b6fa25221b44",
+      "phase": "before"
+    }
+  },
+  {
+    "sequence": 67,
+    "elapsedMs": 1340.876375,
+    "wallTime": "2026-09-19T07:53:58.378Z",
+    "type": "viewport.acknowledged",
+    "detail": {
+      "epoch": "9298a08a-353e-423d-9c55-287b76d73a3c",
+      "id": 6,
+      "hash": "6c5b6a018294b39aed6c3b77b4f28f3a376268aaab8c287593e6b6fa25221b44",
+      "phase": "before"
+    }
+  },
+  {
+    "sequence": 92,
+    "elapsedMs": 1448.106167,
+    "wallTime": "2026-09-19T07:53:58.485Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "9298a08a-353e-423d-9c55-287b76d73a3c",
+      "id": 9,
+      "hash": "dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3",
+      "phase": "paused-cart-mutation"
+    }
+  },
+  {
+    "sequence": 95,
+    "elapsedMs": 1465.808958,
+    "wallTime": "2026-09-19T07:53:58.503Z",
+    "type": "viewport.acknowledged",
+    "detail": {
+      "epoch": "9298a08a-353e-423d-9c55-287b76d73a3c",
+      "id": 9,
+      "hash": "dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3",
+      "phase": "paused-cart-mutation"
+    }
+  },
+  {
+    "sequence": 124,
+    "elapsedMs": 44802.551583,
+    "wallTime": "2026-09-19T07:54:41.840Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "9298a08a-353e-423d-9c55-287b76d73a3c",
+      "id": 13,
+      "hash": "dfee369e08bfb27c361ac0bf071920e10403fdd731b2894cfbae9c918c3a57c3",
+      "phase": "paused-cart-update"
+    }
+  },
+  {
+    "sequence": 129,
+    "elapsedMs": 47803.8365,
+    "wallTime": "2026-09-19T07:54:44.841Z",
+    "type": "viewport.delivery-rejected",
+    "detail": {
+      "id": 13,
+      "phase": "paused-cart-update",
+      "reason": "Viewport frame acknowledgement timed out"
+    }
+  },
+  {
+    "sequence": 150,
+    "elapsedMs": 51045.883292,
+    "wallTime": "2026-09-19T07:54:48.083Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "9298a08a-353e-423d-9c55-287b76d73a3c",
+      "id": 19,
+      "hash": "f0f4b4bc831afa57058507329844364cc882e76206b56ecd49b69087af0621f3",
+      "phase": "after-cart"
+    }
+  },
+  {
+    "sequence": 151,
+    "elapsedMs": 51096.124708,
+    "wallTime": "2026-09-19T07:54:48.133Z",
+    "type": "viewport.delivery-rejected",
+    "detail": {
+      "id": 19,
+      "phase": "after-cart",
+      "reason": "Viewport frame acknowledgement timed out"
+    }
+  },
+  {
+    "sequence": 179,
+    "elapsedMs": 51209.463625,
+    "wallTime": "2026-09-19T07:54:48.246Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "9298a08a-353e-423d-9c55-287b76d73a3c",
+      "id": 22,
+      "hash": "923277c01c5e54cdea8072a73cd87949561f0bac701beeb83610c373586dccd7",
+      "phase": "paused-order-creation"
+    }
+  },
+  {
+    "sequence": 180,
+    "elapsedMs": 54210.193958,
+    "wallTime": "2026-09-19T07:54:51.247Z",
+    "type": "viewport.delivery-rejected",
+    "detail": {
+      "id": 22,
+      "phase": "paused-order-creation",
+      "reason": "Viewport frame acknowledgement timed out"
+    }
+  },
+  {
+    "sequence": 212,
+    "elapsedMs": 54377.133625,
+    "wallTime": "2026-09-19T07:54:51.414Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "9298a08a-353e-423d-9c55-287b76d73a3c",
+      "id": 26,
+      "hash": "923277c01c5e54cdea8072a73cd87949561f0bac701beeb83610c373586dccd7",
+      "phase": "paused-purchase-confirmation"
+    }
+  },
+  {
+    "sequence": 214,
+    "elapsedMs": 57377.810833,
+    "wallTime": "2026-09-19T07:54:54.415Z",
+    "type": "viewport.delivery-rejected",
+    "detail": {
+      "id": 26,
+      "phase": "paused-purchase-confirmation",
+      "reason": "Viewport frame acknowledgement timed out"
+    }
+  },
+  {
+    "sequence": 297,
+    "elapsedMs": 61582.06525,
+    "wallTime": "2026-09-19T07:54:58.619Z",
+    "type": "viewport.sent",
+    "detail": {
+      "epoch": "9298a08a-353e-423d-9c55-287b76d73a3c",
+      "id": 93,
+      "hash": "66985a6b77a681b82b0a9632a9a4e7452533a444e6dfc8215b7d30110194c25d",
+      "phase": "after-confirmation"
+    }
+  },
+  {
+    "sequence": 298,
+    "elapsedMs": 61629.658125,
+    "wallTime": "2026-09-19T07:54:58.667Z",
+    "type": "viewport.delivery-rejected",
+    "detail": {
+      "id": 93,
+      "phase": "after-confirmation",
+      "reason": "Viewport frame acknowledgement timed out"
+    }
+  }
+]

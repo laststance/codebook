@@ -7,9 +7,9 @@ import { PauseGate } from 'codebook-cycle-0001/dist/pauseGate';
 import { verifySource } from 'codebook-cycle-0001/dist/verifySource';
 import type { SealedSource } from 'codebook-cycle-0001/dist/inspect';
 import type { ParticipantSnapshot } from 'codebook-cycle-0004/dist/inspectParticipant';
-import type { ProfileId, ActionId } from 'codebook-cycle-0004/dist/constants';
+import type { ProfileId } from 'codebook-cycle-0004/dist/constants';
 import { StudyService } from '../service';
-import type { StudyEnvironment, StudyRuntime, RuntimeView } from '../runtime';
+import type { StudyEnvironment, StudyRuntime, DemoRuntimeView, RuntimeAction } from '../runtime';
 
 /** Models only editor effects while protocol tests use real SDK/Evidence boundaries. @example const runtime = new ControlledRuntime(directory) */
 export class ControlledRuntime implements StudyRuntime {
@@ -20,7 +20,7 @@ export class ControlledRuntime implements StudyRuntime {
   status = 'preparing'; stopped = false; resourcesReleased = false; dispatches = 0; releases = 0;
   snapshot?: ParticipantSnapshot;
   readonly snapshots: ParticipantSnapshot[] = [];
-  operation?: RuntimeView['operation'];
+  operation?: DemoRuntimeView['operation'];
   preparationWait?: Promise<void>;
   constructor(directory: string, readonly profile: ProfileId = 'paired-cart-demo') {
     this.evidence = new Evidence(directory);
@@ -31,7 +31,8 @@ export class ControlledRuntime implements StudyRuntime {
   /** Makes a deterministic ready boundary for service tests. @example await runtime.prepare() */
   async prepare(): Promise<void> { await this.evidence.initialize(); await this.preparationWait; this.status = 'ready'; }
   /** Counts admitted input and captures a synthetic pause, never native runtime proof. @example runtime.action('cart').key */
-  action(key: string, actionId: ActionId = 'add-to-cart') {
+  action(key: string, actionId: RuntimeAction = 'add-to-cart') {
+    if (actionId === 'repository-click') throw new Error('This harness models demo input only.');
     this.dispatches += 1; this.operation = { id: randomUUID(), key, actionId, completed: false, inputAcknowledged: true }; this.status = 'paused-server';
     const pause = this.gate.stop('server-session', 1);
     this.snapshot = { id: `server-session:${pause.generation}`, participant: 'server', itemId: this.profile === 'paired-cart-demo' ? 'paired-cart-demo/server' : actionId === 'checkout' ? 'checkout-demo/order-creation' : 'checkout-demo/cart-mutation', actionId, capturePhase: this.profile === 'paired-cart-demo' ? 'paused-server' : actionId === 'checkout' ? 'paused-order-creation' : 'paused-cart-mutation', pause, frame: { id: 1, name: 'update', source: { path: this.seal.sourcePath }, line: 1, column: 1 },
@@ -46,7 +47,7 @@ export class ControlledRuntime implements StudyRuntime {
     if (!this.gate.reserve(pause)) throw new Error('conflict: stale pause'); this.gate.invalidate(); this.status = 'running';
   }
   /** Exposes the existing runtime projection shape for typed adapter tests. @example runtime.view().cleaned */
-  view(): RuntimeView {
+  view(): DemoRuntimeView {
     return { runId: this.id, profile: this.profile, manifest: undefined, scenario: 'normal', status: this.status, cleaned: this.stopped, resourcesReleased: this.resourcesReleased, runtimeOutcome: 'not-demonstrated', captureOutcome: 'incomplete', finalOutcome: this.stopped ? 'not-demonstrated' : 'pending-teardown',
       participants: { server: { sessionId: 'server-session', pause: this.gate.current, phase: this.gate.phase, snapshot: this.snapshot, continued: undefined, conflict: this.gate.conflict },
         browser: { sessionId: undefined, pause: undefined, phase: 'running', snapshot: undefined, continued: undefined, conflict: false } },
@@ -68,7 +69,7 @@ export async function createHarness(options: { now?: () => number; prerequisites
   const directory = await mkdtemp(join(tmpdir(), 'codebook-mcp-test-')); const runtimes: ControlledRuntime[] = [];
   const environment: StudyEnvironment = { workspace: directory, host: { id: 'vscode', productVersion: 'test', apiVersion: 'test', commit: 'test' }, build: { revision: 'test', dirty: true, sourceHash: 'test' },
     prerequisites: options.prerequisites ?? (async () => ({ ready: true, missing: [] })),
-    createRuntime: async (root, profile) => { const runtime = options.create ? await options.create(root, profile) : new ControlledRuntime(root, profile); runtimes.push(runtime); return runtime; } };
+    createRuntime: async (root, profile) => { if (typeof profile === 'object') throw new Error('This harness models demos only.'); const runtime = options.create ? await options.create(root, profile) : new ControlledRuntime(root, profile); runtimes.push(runtime); return runtime; } };
   const service = new StudyService(environment, directory, options.now);
   return { directory, service, runtimes, async close() { try { await service.shutdown(); } finally { await rm(directory, { recursive: true, force: true }); } } };
 }

@@ -3,40 +3,59 @@ import { STUDY_PROFILES } from 'codebook-cycle-0004/dist/profiles';
 import type { StudyItemId } from 'codebook-cycle-0004/dist/constants';
 import type { StudyService } from './service';
 import { participantSchema, sourceSchema } from './legacyStudySchemas';
-import { studyArchiveSchema, selectionSchema, progressSchema, learnerDecisionSchema } from './studySchemas';
+import { studyArchiveSchema, selectionSchema } from './studySchemas';
+import type { LearnerProgress, SavedLearnerDecision } from './learnerSchemas';
+import type { RetainedStudy, RetainedStudySelection } from './retainedStudySchemas';
+import type { RepositorySourceService } from './repositorySource';
+import type { StudyDescriptor } from './utils/describeStudy';
+import type { citationContext } from './utils/citationContext';
+import { projectConfiguredStudy } from './utils/projectConfiguredStudy';
 export { participantSchema, studyIdSchema, sourceSchema } from './legacyStudySchemas';
-export { capturedImageSchema, observationSchema, studyArchiveSchema, selectionSchema, progressSchema, learnerDecisionSchema } from './studySchemas';
+export { capturedImageSchema, observationSchema, studyArchiveSchema, selectionSchema } from './studySchemas';
 
 export type StudyArchive = z.infer<typeof studyArchiveSchema>;
 export type StudySelection = z.infer<typeof selectionSchema>;
-export type LearnerProgress = z.infer<typeof progressSchema>;
-export type LearnerDecision = z.infer<typeof learnerDecisionSchema>;
+export type { LearnerProgress, LearnerDecision } from './learnerSchemas';
+export { progressV4Schema as progressSchema, learnerDecisionV3Schema as learnerDecisionSchema } from './learnerSchemas';
 export type StudyParticipant = z.infer<typeof participantSchema>;
 export type SourceBaseline = z.infer<typeof sourceSchema> & { path: string };
 export type SourceBaselines = Record<StudyParticipant, SourceBaseline>;
 export type LiveStudy = ReturnType<StudyService['state']>;
+export type CitationSourceStates = Awaited<ReturnType<RepositorySourceService['inspect']>>;
+export type StudyProjectionInput = { selection: RetainedStudySelection; study?: RetainedStudy; live?: Pick<LiveStudy, 'instanceId' | 'runId' | 'participants'>;
+  liveDescriptor?: StudyDescriptor; progress?: LearnerProgress; baselines: SourceBaselines; currentSourceAvailable?: boolean; citationSources?: CitationSourceStates };
+export type StudyProjection = {
+  selection: RetainedStudySelection; selectedItem: StudyDescriptor['items'][number]; observation?: RetainedStudy['observations'][number]; source: z.infer<typeof sourceSchema>;
+  currentSourceAvailable: boolean; currentParticipant?: StudyParticipant; currentItemId?: string; currentItemTitle?: string; currentSnapshotUri?: string; matching: boolean;
+  continueArguments?: NonNullable<LiveStudy['participants']['browser']>['continueArguments']; image?: RetainedStudy['captures'][number]; sourceChanged: boolean;
+  selectedUnderstanding: ReturnType<typeof learningState> & { context?: ReturnType<typeof citationContext> };
+  progressByItem: (StudyDescriptor['items'][number] & ReturnType<typeof learningState>)[]; understoodCount: number; reviewCount: number;
+  scenarioProgress?: { lastObservedTitle?: string; purchaseObserved?: boolean; missingImageTitles: string[]; unverifiedLinkCount: number };
+};
 
 export const LEARNING_ITEMS = Object.values(STUDY_PROFILES).flatMap(profile => profile.items);
 
 /** Separates current-source understanding from retained historical decisions for {@link projectStudy}. @example learningState(progress, 'paired-cart-demo/server', hash).reviewNeeded */
 export function learningState(progress: LearnerProgress | undefined, item: StudyItemId, currentHash: string | undefined) {
-  const latest = new Map<string, LearnerDecision>();
+  const latest = new Map<string, SavedLearnerDecision>();
   // A later uncheck supersedes only that source revision, never another historical decision.
-  for (const decision of progress?.decisions ?? []) if (decision.item === item) latest.set(decision.sourceHash, decision);
+  for (const decision of progress?.decisions ?? []) if (decision.item === item && decision.context.kind === 'source') latest.set(decision.sourceHash, decision);
   const current = currentHash ? latest.get(currentHash) : undefined;
   return { known: Boolean(progress) && Boolean(currentHash), understood: current?.understood === true, at: current?.at,
     reviewNeeded: current?.understood !== true && [...latest.values()].some(decision => decision.sourceHash !== currentHash && decision.understood), history: [...latest.values()] };
 }
 
 /** Joins one selected observation without letting live control or old progress redefine its identity. @example projectStudy({selection, study, live, progress, baselines}).continueArguments */
-export function projectStudy(input: { selection: StudySelection; study?: StudyArchive; live?: Pick<LiveStudy, 'instanceId' | 'runId' | 'participants'>; progress?: LearnerProgress; baselines: SourceBaselines; currentSourceAvailable?: boolean }) {
-  const { selection, study, live, progress, baselines, currentSourceAvailable = true } = input;
+export function projectStudy(input: StudyProjectionInput): StudyProjection {
+  if (input.selection.profile === 'repository-browser') return projectConfiguredStudy(input);
+  const { selection, live, progress, baselines, currentSourceAvailable = true } = input;
+  const study = input.study?.version === 2 ? input.study : undefined;
   const profile = STUDY_PROFILES[selection.profile], selectedItem = profile.items.find(item => item.id === selection.itemId);
   if (!selectedItem) throw new Error('Selected item belongs to another profile.');
   const observation = study && study.id === selection.studyId && study.profile === selection.profile ? study.observations.find(value => value.itemId === selection.itemId) : undefined;
-  const currentParticipant = Object.values(participantSchema.enum).find(participant => live?.participants[participant].resumable);
+  const currentParticipant = Object.values(participantSchema.enum).find(participant => live?.participants[participant]?.resumable);
   const current = currentParticipant && live?.participants[currentParticipant];
-  const currentItemId = current?.itemId, currentItem = LEARNING_ITEMS.find(item => item.id === currentItemId);
+  const currentItemId = current?.itemId, currentItem = (input.liveDescriptor?.items ?? LEARNING_ITEMS).find(item => item.id === currentItemId);
   const matching = Boolean(observation && live && study?.runId === live.runId && study.instanceId === live.instanceId && current && observation.snapshotUri === current.snapshotUri && observation.itemId === currentItemId);
   const baseline = baselines[selectedItem.participant];
   const source = observation?.source ?? { ...baseline, line: Math.max(1, baseline.text.split('\n').findIndex(line => line.includes(selectedItem.marker)) + 1) };
