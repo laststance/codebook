@@ -89,7 +89,7 @@ Implementation review ran three fixing passes with exact frozen ledgers. All def
 
 ## Handoff
 
-Validation and review evidence are reconciled. Run /ship and /land-and-deploy for the authorized cycle PR, preserving its explicit coverage limits. No PR or merge yet. Branch `codex/cycle-0014-shared-presentations`; Issues #1 and #15 remain open. Preserve the explicit larger integration range from remote main `6840178`. The next bounded candidate is verifying and, if reproduced, fixing native Wiki source-navigation ordering before packaged integrated acceptance. Final product and ten sequential reviews remain unstarted, 0/10.
+Validation and review evidence are reconciled, with the later ship supplement below preserving the current tested source and SDK results. Finish /ship PR delivery, then /land-and-deploy for the authorized cycle PR, preserving its explicit coverage limits. No PR or merge yet. Branch `codex/cycle-0014-shared-presentations`; Issues #1 and #15 remain open. Preserve the explicit larger integration range from remote main `6840178`. The next bounded candidate is verifying and, if reproduced, fixing native Wiki source-navigation ordering before packaged integrated acceptance. Final product and ten sequential reviews remain unstarted, 0/10.
 
 ## Ship reconciliation (2026-09-21)
 
