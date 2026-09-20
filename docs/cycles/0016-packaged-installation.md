@@ -212,8 +212,8 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 ## Handoff
 
 - Clean installed repair check: six transfers after a 32.5-second current pause pass with unchanged run/snapshot and restored Application/source focus. The earlier cold-reader check remains qualified because it displayed old history. Native dimensions and inspected frames are recorded in the investigation.
-- Exact next action: isolate SIGPIPE with the Codebook-free debugger probe, then freeze and validate the source-viewport repair in both ordinary hosts before full review/coderabbit-cli and PR merge. Both installed schedule-v2 workflows are complete through restart and cleanup. Full tests pass 704/704; v1 and diagnostic failures remain historical evidence.
-- Active processes: none owned by Cycle 0016. Both ordinary profiles and every connection descriptor are retired after zero window exits; exact unrelated unsaved drafts survive. Both profiles installed/reinstalled identical clean v2 bytes with all 29 installed entries verified. Branch: codex/cycle-0016-packaged-installation.
+- Exact next action: freeze clean v4 with the playback-refresh reading repair, then validate the full workflow and manual paused-replay context in both ordinary hosts before full review/coderabbit-cli and PR #20 merge. Current suites pass 672/672 + 39/39; all historical attempts remain recorded.
+- Active processes: none owned by Cycle 0016. Both ordinary profiles are closed, all descriptors retired and exact unsaved drafts retained. Both install/reinstall v3; VS Code runtime/restart passes selected-stop checks but fails manual paused-replay context retention twice; Cursor v3 runtime is not run. Branch: codex/cycle-0016-packaged-installation.
 - PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
 - Select a single next cycle only after this cycle's evidence identifies the next uncertainty.
 
@@ -237,4 +237,6 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 
 NO UNRESOLVED DECISIONS
 
-[Source viewport investigation](evidence/0016/source-viewport-investigation.md) reproduces native five-line drift from whole-range AtTop restoration. The anchor-based repair passes four red-before regressions and fresh 669/669 + 39/39 suites. Diagnostic video verifies visible-statement and manually scrolled context retention; both-host clean package validation and SIGPIPE attribution remain pending. All owned diagnostic processes are stopped and the installed v2 bytes are restored.
+[Installed v3](evidence/0016/installed-validation-v3.md) verifies twelve selected-source-line transfers, checkout/replay, progress and fresh restart in ordinary VS Code on clean `c4ecb10` (669/669 + 39/39 tests). Supplemental manual-scroll replay checks fail independently before and after restart: a confirmed mode transfer returns source to the selected stop (C16-QA-004). Cursor v3 is installed but runtime validation is not run on this failing candidate. All owned processes/descriptors are stopped and exact unsaved drafts survive. [SIGPIPE isolation](evidence/0016/sigpipe-investigation.md) reproduces that separate teardown message without Codebook.
+
+[Paused replay reading investigation](evidence/0016/replay-reading-investigation.md) confirms C16-QA-004 and implements guarded context restoration after playback refresh. Two focus-specific regressions fail before repair; all three pass afterward. Focused 11/11, full 672/672 and package 39/39 pass. Clean both-host v4 verification remains pending.

@@ -325,7 +325,10 @@ export class StudyWorkspace {
         assertRetainedPlacement ??= this.retainPresentationPlacement();
         this.presentationPoseRevision = undefined; this.lastPublished = undefined; this.publish();
         await waitUntil(() => this.presentationPoseRevision === this.presentationControlRevision, 'retained reading position', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertRetainedPlacement();
-        // Retire pending B and fully restore confirmed A before capturing selection/source for native movement.
+        const retainedSource = this.sourceReady() ? vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === this.sourceUri?.toString() && editor.viewColumn === this.studyPanePositions().sourceColumn) : undefined;
+        const retainedObservation = this.message(true).model.observation?.id, retainedSelections = retainedSource?.selections;
+        const restoreSourceReading = retainEditorReadingPosition(retainedSource);
+        // Retire pending B and fully restore confirmed A before moving panes or adopting its evidence.
         if (this.recordingActive) {
           if (!this.playback!.bundle()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Wait for the first confirmed replay position before selecting a presentation.');
           this.playback!.hide(); await this.playback!.settle(); assertCurrent();
@@ -346,6 +349,13 @@ export class StudyWorkspace {
         else await viewport?.restorePlacement(signal);
         assertCurrent(); assertRetainedPlacement();
         if (selection !== JSON.stringify(this.selection) || bundle && this.playback?.bundle() !== bundle) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The run, selected item or confirmed replay changed during placement. Inspect the current state before restoring.');
+        // Replay rehydration reveals the stop twice; restore the original reading context only for that same source/observation.
+        if (retainedSource && retainedSource.document.uri.toString() === this.sourceUri?.toString() && retainedObservation === this.message(true).model.observation?.id) {
+          const restoredSource = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === this.sourceUri?.toString() && editor.viewColumn === this.studyPanePositions().sourceColumn);
+          if (!restoredSource) throw new Error('The retained source is no longer visible after replay restoration.');
+          if (retainedSelections) restoredSource.selections = retainedSelections;
+          await restoreSourceReading(restoredSource, signal); assertCurrent(); assertRetainedPlacement();
+        }
         await restoreFocus?.(signal); assertCurrent();
         assertRetainedPlacement = this.retainPresentationPlacement();
         const receipt = this.layoutReceipt, actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent();

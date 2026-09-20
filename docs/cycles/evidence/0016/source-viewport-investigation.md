@@ -27,3 +27,16 @@ Private evidence under `artifacts/cycle-0016/investigation/` includes `viewport-
 All three diagnostic windows exit zero, all owned profile processes/descriptors are retired, and the unrelated saved/unsaved draft remains exact. The first cleanup needed a separately verified SIGTERM to its remaining owned Crashpad helper; that failure and follow-up are preserved. The installed bundle is restored byte-for-byte to v2 SHA-256 `a463cffaf9187aca7b6b16009d0e5f4d1c704a96fc2a5a9586caa540aeb7f1ff`, recorded in `viewport-diagnostic-restoration.json`.
 
 VS Code SIGPIPE recurs on each fresh diagnostic host at live-run teardown. That repeatability strengthens C16-QA-003's reproduction but does not yet identify its initiating component. No upstream or product attribution follows from the generic bootstrap stack alone.
+
+## Debug report
+
+- Symptom: a confirmed presentation can lose the visible current statement while retaining its selection.
+- Root cause: whole-range AtTop restoration applies native scroll padding repeatedly and precedes final pane geometry.
+- Fix: `extension/src/utils/retainEditorReadingPosition.ts`, called by both source placement and focus restoration in `extension/src/studyWorkspace.ts`.
+- Evidence: native baseline/failing omission/control videos and range receipts; four red-before behavior regressions; 669/669 product/shared and 39/39 package tests.
+- Related: Cycle 0014 native placement/reading-pose contract; C16-QA-003 is separately reproduced without Codebook.
+- Status: **DONE_WITH_CONCERNS** — root cause and diagnostic repair verified, clean v3 both-host workflow/viewport acceptance follows under [schedule v3](installed-schedule-v3.md).
+
+## Subsequent clean-package qualification
+
+[Installed v3](installed-validation-v3.md) confirms selected-stop visibility in twelve VS Code live/paused-replay transfers. It separately exposes C16-QA-004 twice: manual reading context away from the selected stop is lost during active paused replay. The diagnostic manual-scroll success above covered stopped live history, not active playback. Both-host clean acceptance remains pending; this distinction narrows the verified scope without erasing the original five-line-drift evidence.

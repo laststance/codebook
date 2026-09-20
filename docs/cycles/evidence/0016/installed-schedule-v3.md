@@ -1,0 +1,14 @@
+# Ordinary installed schedule — v3 source viewport repair
+
+Frozen before installation/revalidation on 2026-09-21 JST. This is an agent-selected continuation within the owner's authorized Cycle 0016 scope. It retains [schedule v2](installed-schedule-v2.md) I01–I17 and the [current-reader setup prerequisite](installed-v2-focus-setup.md), with the evidence changes below. No failed/partial v1/v2 attempt is erased or relabeled.
+
+- Clean implementation: `c4ecb10abb1d937d9cb144bceec405c393a66825`; extension 0.2.1 / API 1.5.
+- Source fingerprint: `789a3bac45a3bb35abd9de1be7a53424abcf9243ec0c57a1b2775c02842e8af1`.
+- Package: `artifacts/packages/codebook-0.2.1-installed-candidate-v3.vsix`, 587,565 bytes, 31 entries; SHA-256 `81843c5bf3367c2c296a0f471783b9cb8401c7bcaf48c12fbecca8e5d511b612`.
+- Build receipt: `artifacts/cycle-0016/installed-candidate-v3.json`, `dirty: false`. Tests: 669/669 product/shared plus 39/39 packaging. Diagnostic strings must be absent from both installed bundles.
+- Both owned ordinary profiles remain the v2 profiles, preserving real disk state and exact unsaved drafts. Install/reinstall v3 and compare all installed entries before launch. Keep the existing single understanding decision; I08 verifies that retained explicit action and no extra toggles, rather than fabricating a new click on an already checked control.
+- Re-execute the complete four-stop public checkout, eleven required links, seven phase images, offline seeks, six live/six paused transfers, native motion, fresh-process restart and cleanup independently in both hosts. Hold the current cart stop for at least 32 seconds before transfers. Preserve initiating application/source focus and current observation identity.
+- For every live transfer, verify captured source line 23 is actually visible; for every replay transfer at confirmation, verify line 54 is visible. Record public DOM geometry plus native screenshots/video; inspect extracted frames. Keep source/value/recording identity checks alongside visibility.
+- Preserve visible Wiki readiness waits, paint-wait receipts, the distinct recorded application title and actual video dimensions: VS Code 1440×900, Cursor 1280×800, 12 fps. A screenshot before content paints never counts as content proof.
+- The [SIGPIPE isolation](sigpipe-investigation.md) establishes an independently reproducible host/debugger teardown message. Continue recording native console output; neither hide this message nor treat its known recurrence alone as a newly introduced Codebook functional regression.
+- Manually scrolled offscreen-selection retention has diagnostic and behavior-test evidence; clean both-host targeted checks remain separate from the normal complete workflow. This cycle does not certify final real-repository usefulness, every presentation/negative case, owner acceptance or final sequential reviews.

@@ -213,14 +213,17 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       } },
       window: { get activeTextEditor() { return visibleSourceEditors.find(editor => activeTabGroup === editor.group && activeTabGroup.activeTab?.input instanceof TabInputText && activeTabGroup.activeTab.input.uri.toString() === editor.document.uri.toString()); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeTextEditorChanged = callback; return disposable(); }, createWebviewPanel: panel,
         get visibleTextEditors() { return visibleSourceEditors.filter(editor => editor.group.activeTab?.input instanceof TabInputText && editor.group.activeTab.input.uri.toString() === editor.document.uri.toString()); },
-        showTextDocument: async (document: { uri: Uri; getText(): string }, options?: { viewColumn: number; preserveFocus?: boolean; preview?: boolean }) => {
+        showTextDocument: async (document: { uri: Uri; getText(): string }, options?: { viewColumn: number; preserveFocus?: boolean; preview?: boolean; selection?: Range }) => {
           sourceColumn = options?.viewColumn ?? sourceColumn;
           const group = groups.find(candidate => candidate.viewColumn === sourceColumn) ?? groups[0]!, tab = group.tabs.find(tab => tab.input instanceof TabInputText && tab.input.uri.toString() === document.uri.toString()) ?? { input: new TabInputText(document.uri) };
           if (!group.tabs.includes(tab)) group.tabs.push(tab); group.activeTab = tab; if (!options?.preserveFocus) activeTabGroup = group;
           if (options?.preview !== undefined) tab.isPreview = options.preview;
-          visibleSourceEditors.push(Object.assign(sourceEditor(document, group), { group }));
+          const editor = sourceEditor(document, group, reportedSourceColumn);
+          // An explicit native selection reveals its statement even when playback reopens the same document.
+          if (options?.selection) { editor.selections = [{ active: options.selection.start }]; editor.revealRange(options.selection); }
+          visibleSourceEditors.push(Object.assign(sourceEditor(document, group), { group, selections: editor.selections }));
           const displayed = nextSourceDisplay; nextSourceDisplay = undefined; displayed?.();
-          return lastSourceEditor = sourceEditor(document, group, reportedSourceColumn);
+          return lastSourceEditor = editor;
         },
         tabGroups: { all: groups, get activeTabGroup() { return activeTabGroup; }, onDidChangeTabGroups: (callback: typeof changedGroups) => { changedGroups = callback; return disposable(); }, close: async (tabs: Tab[]) => { for (const group of groups) group.tabs = group.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
       workspace: { textDocuments, registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
@@ -2896,6 +2899,29 @@ for (const focus of ['application', 'source'] as const) for (const reading of ['
     assert.equal(harness.isReadingLineVisible(reading === 'selected statement' ? 22 : 46), true);
     assert.equal(harness.reader.presentationState().layoutConfirmed, true);
     assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+for (const focus of ['application', 'source', 'explanation'] as const) test(`paused replay preserves manually scrolled source context through all ${focus}-focused mode transfers`, async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    await harness.reader.action(focus === 'application' ? 'focus-app' : focus === 'source' ? 'source' : 'focus-context');
+    harness.retainReadingRange(40, 52);
+    const bundle = harness.controller.bundle(), source = harness.reader.inspect().sourceUri;
+    // Act
+    for (const mode of ['living-book', 'guided-walkthrough', 'study-workspace'] as const) {
+      const state = harness.reader.presentationState();
+      await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' });
+      // Assert: every transfer keeps the off-selection context, not merely the last transfer in the sequence.
+      assert.equal(harness.isReadingLineVisible(46), true);
+      assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+      assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 100);
+      assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.reader.inspect().sourceUri, source);
+      assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
+    }
   } finally { await harness.close(); }
 });
 
