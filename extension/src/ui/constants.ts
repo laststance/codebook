@@ -1,5 +1,6 @@
 import { PLAYBACK_PAGE_STEP_MS, PLAYBACK_SECOND_MS } from '../constants';
-export const STUDY_UI_OPTIONS = { maxStickyFraction: 0.35, secondMs: PLAYBACK_SECOND_MS, pageStepMs: PLAYBACK_PAGE_STEP_MS };
+export const STUDY_UI_OPTIONS = { maxStickyFraction: 0.35, secondMs: PLAYBACK_SECOND_MS, pageStepMs: PLAYBACK_PAGE_STEP_MS,
+  playbackFailureRecovery: 'Reload the saved recording to try again. If it still fails, ask your agent for a new recording.' };
 export const STUDY_STYLES = `
 #playhead{width:100%;min-height:44px;accent-color:var(--vscode-focusBorder,#007fd4)}#recording-transport{padding:12px 0}#playback-position{font-variant-numeric:tabular-nums}button,select,summary{min-height:44px}summary{cursor:pointer;padding:10px 0}summary:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4)}details[open]{padding-bottom:12px}.table-scroll table{font-size:16px}
 :root{color-scheme:light dark;font-family:var(--vscode-font-family,system-ui);color:var(--vscode-foreground,#d4d4d4);background:var(--vscode-editor-background,#181818);font-size:16px;line-height:1.5}
