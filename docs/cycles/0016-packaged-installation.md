@@ -32,7 +32,7 @@ On 2026-09-21 JST the driving agent freshly read Issue #1, PRODUCT_GOAL.md, DEVE
 
 1. `/plan-eng-review` this bounded cycle before product edits. Target and recommended choices are agent-selected under the owner's explicit delegation; no user reply is invented. Reuse the existing public MCP client/protocol and native evidence contracts. If the package requires a lasting integration interface change, run `/plan-devex-review` on that amendment before implementing it.
 2. Add one extension-owned demo asset root, used by environment checks, Study baseline/fallback and file watching. Copy only the existing TypeScript, executable JavaScript, maps and HTML that the runtime seals. Validate every consumed asset, including HTML.
-3. Preserve the current TypeScript/test build. Add a pinned esbuild/vsce packaging command: build, stage an explicit allowlist in a fresh owned directory, bundle existing extension/client entry points, inspect dependencies and assets, create/validate a VSIX, and atomically publish only a successful artifact. Preserve a previous good artifact on failure.
+3. Preserve the current TypeScript/test build. Add a pinned esbuild/vsce packaging command: build, stage an explicit allowlist in a fresh owned directory, bundle the existing extension entry point, inspect dependencies and assets, create/validate a VSIX, and atomically publish only a successful artifact. Preserve a previous good artifact on failure. Existing standard MCP clients remain external; do not introduce a second shipped CLI/API to make installed verification possible.
 4. Add meaningful asset/package regression tests and a reproducible CI build/check path. CI produces a private downloadable VSIX; it does not publish a marketplace release. Record source revision/dirty state, bundle inputs and package SHA-256.
 5. Freeze the exact package and installed acceptance schedule before running it. Install the same bytes with each actual editor CLI into owned isolated extension/profile directories. Do not use extensionDevelopmentPath, product extensionTestsPath, repository dist imports in the host, or a test-only in-memory storage replacement.
 6. Drive the visible installed commands and public MCP service. Verify source reading/publication, a declared checkout walkthrough, recording after runtime exit, ordinary editor restart, learner decisions and all three shared layouts. Record native video and inspect frames for motion. Keep each host's result and any partial/failed attempts separate.
@@ -66,6 +66,122 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 - Keep the shared runtime, recording, reader and presentation ownership. Do not widen the configured repository-browser adapter to disguise packaging work as arbitrary-repository support.
 - All eleven carried Cycle 0014 obligations remain active, including native Wiki ordering (Cycle 0015 inconclusive), all-mode Wiki Return, complete service/SDK/interleaving coverage, full native focus/keyboard/geometry and uncropped/reduced-motion checks, actual-agent evaluation/timing, broad review convergence and integrated final acceptance.
 - Delivery: planning branch only. Package, installed proof, review, PR and merge remain pending. Final reviews: 0/10.
+
+## Engineering review — Step 0 and architecture
+
+Reviewed draft: 3e128ea. All following choices are agent-selected under the owner's explicit skill-decision delegation, not simulated owner replies. Brain cache is unavailable; canonical repository records supply the product/decision context. No TODOS.md exists. Preserve the existing decision to track remaining obligations in the cycle and PROJECT_STATE.md instead of creating a competing backlog.
+
+Step 0 complexity challenge: this touches more than eight files because asset consumers, package scripts, tests, lockfiles, CI and installation documentation cross separate boundaries. Select the minimum complete pipeline: one packaged extension entry, one shared asset root, one archive checker and one build/test/package CI workflow. No new runtime service, artifact registry, package manager migration or replacement agent client. Omitting CI or isolated extraction would leave the new artifact unusable or unverified elsewhere. [Layer 1] Use esbuild and vsce, with Node filesystem/process APIs for owned staging and final rename. Official references: [VS Code bundling](https://code.visualstudio.com/api/working-with-extensions/bundling-extension), [VSIX packaging/install](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) and [esbuild Node bundling](https://esbuild.github.io/getting-started/#bundling-for-node). Aside is unavailable; Context7 returned its monthly quota error, so primary documentation supplies the fallback.
+
+### What already exists
+
+- `createEnvironment`, `checkDemoFiles`, `StudyWorkspace.readBaselines` and its watcher already own discovery/source behavior. Repoint all four paths through one utility; preserve source-only/configured discovery independence and dirty-buffer priority.
+- `sealFixture` already seals three source/JS/map triplets plus HTML into each run. Ship those original bytes without bundling/translating the fixture executable or maps.
+- `scripts/build-metadata.mjs` already records source revision, dirty state and input hashes. Extend evidence with actual bundle/asset inputs; do not replace provenance with a version string.
+- `StudyClient`, Copy Agent Connection and the MCP service already provide external integration. Native launcher helpers are development-host diagnostics; reuse their evidence requirements, not their injection mechanism.
+- Existing Node test suites cover source drift/deletion/recovery, configured runtime independence, persistence and presentation transfers. Keep those regressions and add package boundary tests rather than duplicate the product model.
+
+### Architecture decisions
+
+1. **A1 [P1, confidence 10/10] — one owned asset contract.** Draft line 34 requires an extension-owned root; `environment.ts:47` instead resolves `../experiments/cycle-0004`, while Study baseline/fallback/watcher separately repeat that assumption. Choose a shared `dist/demo` root and exact ten-path asset list, copied after fixture compilation and used by every consumer. No checkout fallback. Alternative: copy sibling experiments beside an installed extension; rejected because installation owns only the extension directory and can silently read unrelated bytes. Verify extracted assets and every existing reader path, including missing/changed files.
+2. **A2 [P1, confidence 9/10] — closed staged artifact with verifiable input identity.** Draft line 35 says “inspect dependencies and assets” without defining permitted externals, source mutation handling or output publication. Bundle CommonJS for Node 24, permit only native `vscode` plus Node built-ins, retain pure-JS WebSocket behavior, and reject other emitted imports. Snapshot source inputs before/after the build, inspect actual bundle inputs including the patched SDK, preserve fixture bytes/maps and include runtime dependency notices. Stage only explicit files, validate archive entries/bytes and isolated load, then rename a completed temporary VSIX on the same filesystem. Do not claim atomicity for two independent output files; the VSIX is the single publication unit. Failed build/copy/bundle/vsce/validation/rename leaves the prior artifact intact and removes only owned scratch paths. Alternative: package the checkout recursively; rejected because local links and private evidence can leak or remain unresolved.
+3. **A3 [P2, confidence 9/10] — reproducible private distribution.** Draft line 36 requires CI but no pipeline exists. Use one build/test/package workflow with pinned action SHAs, read-only token, concurrency, pnpm integrity/version, frozen installs and store-only caching. Follow the github-actions-pnpm-ci skill while adapting its default split jobs to this repository's actual scripts. Upload only the verified VSIX and checksum/manifest, never native artifacts or connection descriptors. Runtime support is the actually tested macOS arm64 host matrix; a platform-neutral JavaScript archive does not verify all engines-compatible versions. Marketplace/Open VSX remains deferred under the approved first-delivery decision.
+
+```text
+pinned sources + lock/patch inputs -- snapshot --> existing tsc/fixture build
+                                                       |
+                                      ten exact files + runtime bundle
+                                                       |
+                                owned stage + notices + metadata
+                                                       |
+                           vsce --no-dependencies -> archive checker
+                                                       |
+                                    isolated extraction/load check
+                                                       |
+                                      atomic single-VSIX rename
+                                                       |
+                            ordinary VS Code / Cursor CLI install
+                                                       |
+                            visible commands -> public MCP -> saved state
+```
+
+## Engineering review — code quality
+
+4. **Q1 [P2, confidence 10/10] — prerequisites must validate the files actually consumed.** `checkDemoFiles.ts:6` checks nine paths using `access`; `sealFixture.ts` also reads `fixture/index.html`. An accessible directory can pass the existing check, and the current error at line 7 tells installed users to build checkout packages. Use the shared ten-path contract, require readable regular files and report a missing/unreadable bundled-demo prerequisite with reinstall recovery. Preserve the independent source-only/configured capability path; a missing demo must not block repository reading or execution. Alternative: leave the check and catch a late filesystem error; rejected because discovery would claim a runnable profile that cannot launch. The standard build must copy/validate assets before writing successful metadata; a failed refresh must not mix old and new files.
+
+No separate runtime abstractions or storage-schema changes are needed. The existing source-derived selection, watcher and immutable snapshot diagrams retain their meaning; place a concise pipeline comment in the packaging script, not in each unchanged runtime caller.
+
+## Engineering review — tests
+
+Node's built-in `node:test` is the existing framework. Product tests are TypeScript compiled by the normal build; packaging-script tests can use native `.test.mjs` without adding a test runner. The previous full suite has 647 tests, not a coverage percentage. No LLM prompt/tool-definition change is planned; actual external-agent installed workflow remains required evidence, not a prompt benchmark substitute.
+
+5. **TST1 [P1, confidence 10/10] — asset behavior regressions.** Draft P01 and the new root affect discovery, baselines, fallback and watchers. Add an isolated extension-root fixture with no sibling experiments: all ten files succeeds; remove each file, replace HTML with a directory, and simulate unreadability to get a clear missing-demo result. Verify sealed fixture bytes/maps and markers. Adapt the existing Study harness to the installed asset layout and retain current-source drift/deletion/recovery and dirty-buffer priority. Keep the existing environment test proving missing demo assets do not touch the configured-repository path. These are mandatory regression requirements for the changed callers.
+6. **TST2 [P1, confidence 9/10] — real package and publication failure tests.** Draft P02/P03 need an executable boundary, not assertions about a file list constant. Build a real VSIX; extract outside the repository; compare actual entries and bytes to the stage; load the bundled extension with only a vscode boundary and Node built-ins available. Reject missing/extra entries, traversal/symlink entries, modified assets/bundle, non-native external imports, missing dependency notice and metadata/version inconsistency. Exercise failure before publication and at the final rename with an existing artifact: prior bytes survive, scratch paths are cleaned, and a clear command failure is returned. Test paths with spaces/literal shell characters using executable-plus-argument arrays. A source change during build is rejected. Required archive/library helpers are pinned development dependencies; no handwritten ZIP parser.
+7. **TST3 [P1, confidence 9/10] — installed lifecycle evidence.** Draft P04–P07 require native execution because mocks cannot establish normal activation, writable storage or real debugger/browser integration. Freeze exact artifact/host versions and a finite schedule before launching: CLI install/reinstall, trusted local workspace, visible Start Agent Server, fresh descriptor and public MCP discovery; source publication; checkout actions/four pauses/required causal links; one explicit learner decision; live and paused-replay transfers through all three layouts; stop runtime; offline playback; normal editor exit/restart; reconnect with a new descriptor; read saved content/progress; close all owned processes. Preserve a pre-existing unrelated dirty draft exactly. An old descriptor after restart must not be reused as current authority. A failed phase capture stays partial and triggers a changed hypothesis. No synthetic storage or extension test bootstrap supplies this acceptance.
+
+```text
+CHANGED CODE / BRANCHES                        TEST REQUIREMENT
+asset list -> extension dist/demo root         TST1: no sibling checkout [integration]
+  copy -> missing/read failure                 TST1: each file, HTML directory, unreadable
+  prerequisite -> success/failure               TST1: ten files / clear recovery
+  baseline -> open dirty buffer / disk          existing Study drift/dirty tests, moved root
+  baseline -> missing / restored                existing deletion/recovery and watcher tests
+  configured profile -> ignores demo            existing environment regression
+package entry -> snapshot/build/compare         TST2: build failure, input mutation [integration]
+  bundle -> built-ins/vscode or reject          TST2: real bundle + deliberate bad external
+  stage -> exact entries/notices/identity       TST2: missing, extra, modified, unsafe entry
+  archive -> extract / reject                   TST2: real ZIP, corrupt archive [integration]
+  verify -> isolated load / missing import      TST2: no node_modules / no checkout
+  publish -> rename success / failure           TST2: old artifact preserved + owned cleanup
+CI -> frozen install/build/test/package         actual workflow run, private artifact hash
+
+USER FLOW                                     NATIVE EVIDENCE
+install -> visible command -> MCP               TST3 [E2E] both hosts, ordinary flags
+read -> checkout -> continue -> confirmation     TST3 [E2E/agent] bound source/value/causal links
+live/replay -> three layouts -> same item        TST3 [E2E] inspect native video frames
+stop -> replay -> restart -> saved progress      TST3 [E2E] no application execution on replay
+failure -> honest partial state -> recovery      existing regressions + preserve native attempts
+```
+
+These three test groups are planned gaps, not tests already passed. Existing regression coverage is reused without claiming numerical branch coverage. All listed new branches receive tests in this cycle; broader historical coverage obligations remain explicit.
+
+## Engineering review — performance
+
+No additional performance issue found. Asset copy/hash, dependency inspection and ZIP extraction run at build time, not on each pause. Runtime adds one HTML prerequisite check over a fixed ten-file set and replaces repeated path construction with a shared root; it does not add unbounded history scans, database calls or caches. Bundling reduces module-file loading, but improvement is not assumed: record archive/unpacked bytes, build duration and each host's activation-to-discovery duration. Keep media streamed through the established runtime/recording limits. A package-only pass cannot establish long-session performance or internal-stage timing; those remain carried acceptance obligations.
+
+## Failure modes
+
+| New boundary | Real failure | Test and handling | Visible outcome |
+| --- | --- | --- | --- |
+| Asset preparation | Missing HTML, partial compiler output or unreadable file | TST1, prepare a complete owned temporary asset set before replacing it | Build fails; demo discovery reports reinstall recovery |
+| Shared asset consumer | Reader still looks beside the extension or loses dirty-buffer priority | TST1 plus existing reader/environment regressions | Explicit source-unavailable state; immutable saved evidence stays readable |
+| Bundle | Dynamic/native optional dependency survives bundling | TST2 metafile/import checks and isolated extraction/load | Packaging fails before output publication |
+| Provenance | Inputs change while TypeScript compiles | TST2 before/after snapshot and byte manifest | Packaging fails; no mislabeled artifact |
+| Archive | Missing/extra/modified entry, corrupt ZIP, unsafe path or symlink | TST2 safe library extraction plus exact inventory comparison | Check command fails; no installable-output claim |
+| Publication | Final rename fails or process exits before completion | TST2 seeded prior artifact and owned temporary output | Old VSIX remains; failure is explicit |
+| CI | Lock/patch mismatch or bad action configuration | Frozen install and actionlint plus actual CI run | Failed check; no passing artifact advertised |
+| Installed host | Activation error, missing Chrome/Node, stale descriptor or capture timeout | TST3 actual versions/public interface, existing error recovery, exact failed attempt retained | Actionable prerequisite/error or qualified partial evidence |
+
+No silent failure without a planned test/handler remains in the new packaging boundary. This is a plan statement, not implementation evidence.
+
+## NOT in scope
+
+- A new agent CLI/SDK or MCP contract: existing Copy Agent Connection and standard MCP clients already supply integration; no new lasting interface is needed.
+- Marketplace/Open VSX publishing: the approved first delivery is private VSIX installation; publishing is a separate product decision.
+- New framework/OS adapters and three intended-use evaluations: require their own real-repository evidence after installation works.
+- Solving the unreproduced native Wiki late-effect model by speculative serialization: Cycle 0015 remains inconclusive and its reopening conditions remain active.
+- Replacing all existing diagnostics or adding a parallel artifact service: neither is required for a verifiable installed extension.
+
+## Implementation Tasks
+
+Synthesized from this review. The owner delegated recommended choices; each listed remedy is agent-selected. No new TODOS.md items: existing out-of-cycle obligations stay in their canonical records.
+
+- [ ] **T1 (P1, human: ~3h / agent: ~25min)** — Assets: introduce one owned demo root/list, copy and validate all ten files, update all four consumers and the reader/environment test fixtures. Findings A1/Q1/TST1. Verify focused asset tests plus existing source/reader regressions.
+- [ ] **T2 (P1, human: ~1 day / agent: ~1h)** — Packaging: pin tools, build into an allowlisted stage, include notices/input identity, validate a real extracted VSIX and atomically replace the output. Findings A2/TST2. Verify positive and failure paths without repository runtime imports.
+- [ ] **T3 (P2, human: ~3h / agent: ~25min)** — Distribution: add the adapted pinned CI pipeline and private installation/update documentation. Finding A3. Verify actionlint, frozen install/build/tests/package and actual CI artifact identity.
+- [ ] **T4 (P1, human: ~1 day / agent: ~2h)** — Installed acceptance: freeze versions/source/package/schedule and drive both ordinary hosts with the external agent, persistent storage, recording/restart and native motion evidence. Finding TST3. Preserve failures and unrelated drafts/processes.
+
+Sequential implementation, no parallelization opportunity: asset layout feeds packaging; the package/check commands feed CI and installed acceptance. Tests travel with each boundary. Review work remains independent after the complete candidate exists. No additional service, worker or worktree is required.
 
 ## Handoff
 
