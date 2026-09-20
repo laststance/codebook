@@ -12,6 +12,7 @@ The complete product must work in **both VS Code and Cursor**. Final acceptance 
 | --- | --- |
 | What product are we trying to reach? | [PRODUCT_GOAL.md](PRODUCT_GOAL.md) |
 | What is actually proven, and what is next? | [PROJECT_STATE.md](PROJECT_STATE.md) |
+| How do I use the current development extension? | [Setup and MCP tutorial](extension/README.md), [unreleased changes](CHANGELOG.md) |
 | How do we use GStack and choose the next cycle? | [DEVELOPMENT.md](DEVELOPMENT.md) |
 | What decisions must survive new sessions? | [DECISIONS.md](DECISIONS.md) |
 | What was approved in office hours? | [Product design](docs/designs/codebook.md) and [visual concepts](docs/designs/README.md) |
@@ -51,6 +52,12 @@ Product design and three visual directions are approved. [Cycle 0001](docs/cycle
 
 [Cycle 0008](docs/cycles/0008-recording-replay.md) adds bounded application-frame recording and offline replay with matching captured code, values and explanations. **238 tests and actual-agent offline replay in both hosts** pass; recorded motion and partial-state recovery have browser evidence. Current VS Code recording/restart passes; the latest Cursor recording retains five missing phase-renderer acknowledgements and remains partial despite successful later replay. [Closure evidence](docs/cycles/evidence/0008/candidate-1740e34/README.md) preserves the failure, prior Cursor pass, non-converged review and native visual limits. The [current state](PROJECT_STATE.md) identifies the next bounded increment.
 
-These remain fixed fixtures. Real-repository checkout, integrated installed recording acceptance, general natural-language orchestration, a repository wiki/codemap, Living book and Guided walkthrough, packaged installation and real-repository usefulness remain open. Native API assertions and webview checks do not replace independent editor UX acceptance.
+[Cycle 0009](docs/cycles/0009-repository-learning-book.md) connects real tracked repository sources to immutable cited articles, source-derived relationships, complete-citation learning decisions and exact Wiki/observation/recording returns. Native reading and return flows passed in both editors at normal and 200% zoom, including restart and an unrelated dirty draft. These results establish source reading and retained evidence navigation; fixed-checkout phase captures retain the qualified outcomes in [current state](PROJECT_STATE.md).
+
+[Cycle 0010](docs/cycles/0010-real-repository-runtime.md) demonstrates one unchanged Next repository browser action in both editors: exact source/map/value pause, a 70-second hold, one continuation and the resulting screen. Its 38 tests and seven native cases per host belong to the bounded experiment.
+
+[Cycle 0011](docs/cycles/0011-repository-browser-study.md) connects that mechanism to API 1.4 / development extension 0.2.0 as `repository-browser`: an agent declares one bounded operation for an existing cited article, then uses the shared Study, history and recording readers. Actual-agent core execution, retained recordings and offline reading now have separate native evidence in both editors. The latest bounded layout fix passes 399 tests and both-editor Arrange reproductions; complete latest-cut failure/layout validation remains in progress. GStack's three implementation review passes ended non-converged; the separately requested CodeRabbit/OCR reviews and subsequent scoped fixes retain their own revision and coverage limits. Follow the [configured-study tutorial](extension/README.md#run-one-configured-repository-action) for the supported Next root-route scope and evidence distinctions.
+
+Real-repository checkout, integrated installed recording acceptance, general natural-language orchestration, Living book and Guided walkthrough, packaged installation and three intended real-repository uses remain open. Native API assertions and webview checks do not replace independent editor UX acceptance.
 
 Repository files are the portable project record. GStack's local cache, chat history, and optional GitHub issues are supporting views of that record. Commits are also stored in the private GitHub repository. Ignored private recordings still require an explicit durable evidence location.
