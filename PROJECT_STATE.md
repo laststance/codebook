@@ -2,11 +2,11 @@
 
 Updated: 2026-09-20\
 Product stage: configured core execution, offline replay and restart demonstrated separately in both editors; complete cross-host and installed usefulness unverified\
-Active cycle: none during Cycle 0012 closure; next selected candidate is native webview retention investigation\
+Active cycle: [0013 — Native webview retention](docs/cycles/0013-native-webview-retention.md) — causal placement investigation\
 Last cycle: [0012 — Shared Study presentations](docs/cycles/0012-shared-study-presentations.md) — falsified placement prerequisite; no product edits\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: none during closure\
-Last cycle issue: [#13](https://github.com/laststance/codebook/issues/13) — closure sync pending\
+Active cycle issue: [#14](https://github.com/laststance/codebook/issues/14) — open\
+Last cycle issue: [#13](https://github.com/laststance/codebook/issues/13) — [closed with falsified evidence](https://github.com/laststance/codebook/issues/13#issuecomment-5749572738)\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
@@ -60,7 +60,7 @@ D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answer
 
 The checkpoint was restored in this same checkout and branch `codex/cycle-0009-repository-learning-book` at `6f22f12`. All seven draft hashes matched; their original bytes remain in ignored `artifacts/cycle-0009/handoff-20260919-190104/`. No reset, stash, clean or new worktree was used. Fresh reviewer creation succeeded, and both independent plan amendments now have regressions: committed-key recovery before mutable preparation and a bounded 1 MiB + 64 KiB HTTP envelope. The same reviewer subsequently completed bounded implementation/design rereviews; thread capacity later prevented another fresh reviewer. This does not count toward outside-model or final-product reviews.
 
-Cycle 0009 delivery is synchronized: implementation `1bd10b3` and closure records `0313c33` are pushed, the clean source fingerprint matches the validated 238-test native cut, and Issue #10 is [closed with evidence](https://github.com/laststance/codebook/issues/10#issuecomment-5742534461). Cycle 0010 and Issue #11 are closed. Cycle 0011 implementation `58f08cd` and closure `f594ec7` are pushed; Issue #12 is closed with evidence. Cycle 0012 is closed with a falsified native placement prerequisite; Issue #13 closure sync is pending. Keep Issue #1 open. Both isolated native sessions have ended with exit 0 and restored settings; the root browser adapter on port 57743 has also stopped. No native QA process needs resuming. Private recordings/transcripts must be copied to an accessible durable location before this workspace is moved or deleted; the manifest identifies hashes and availability.
+Cycle 0009 delivery is synchronized: implementation `1bd10b3` and closure records `0313c33` are pushed, the clean source fingerprint matches the validated 238-test native cut, and Issue #10 is [closed with evidence](https://github.com/laststance/codebook/issues/10#issuecomment-5742534461). Cycle 0010 and Issue #11 are closed. Cycle 0011 implementation `58f08cd` and closure `f594ec7` are pushed; Issue #12 is closed with evidence. Cycle 0012 / Issue #13 is closed with a falsified native placement prerequisite. Cycle 0013 / Issue #14 is the sole active investigation. Keep Issue #1 open. Both isolated native sessions have ended with exit 0 and restored settings; the root browser adapter on port 57743 has also stopped. No native QA process needs resuming. Private recordings/transcripts must be copied to an accessible durable location before this workspace is moved or deleted; the manifest identifies hashes and availability.
 
 [Cycle 0010](docs/cycles/0010-real-repository-runtime.md) is demonstrated against unchanged Laststance.io `43d0399`: 38 tests and the final seven-case matrix in each host pass. Its source fingerprint and final native records are frozen. The original target remains clean; original seven handoff backups match 7/7. No owned native process or Playwright browser session remains.
 
