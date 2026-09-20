@@ -144,7 +144,7 @@ export class StudyWorkspace {
   private presentationConfirmed = false;
   private presentationReason?: string;
   private presentationPreference: PresentationState['preference'] = { status: 'default' };
-  private presentationTransition?: { id: string; cancellation: AbortController };
+  private presentationTransition?: { id: string; cancellation: AbortController; runtimeIdentity?: string };
   private presentationOperation?: Promise<PresentationState>;
   private presentationWrite?: Promise<void>;
   private placingPresentation = false;
@@ -195,10 +195,10 @@ export class StudyWorkspace {
     const state = this.presentationState();
     if (input.action === 'select' && input.mode === state.mode && state.layoutConfirmed && state.preference.status !== 'unknown') return this.confirmPresentationNoop(input);
     if (input.action === 'save-preference' && (input.mode !== state.mode || !state.layoutConfirmed)) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Only the current confirmed layout can save its preference. Restore the layout first.');
-    if (input.action !== 'save-preference') this.assertPresentationAdmission();
+    const runtimeIdentity = input.action === 'save-preference' ? undefined : this.assertPresentationAdmission();
     if (input.action !== 'save-preference' && vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) throw new StudyError('PRESENTATION_UNAVAILABLE', 'More than three editor groups are open. Keep your tabs and consolidate groups, or use Focus application/source/explanation.');
     const restoreFocus = input.action === 'save-preference' ? undefined : this.capturePresentationFocus();
-    const transition = { id: this.presentationId, cancellation: new AbortController() };
+    const transition = { id: this.presentationId, cancellation: new AbortController(), runtimeIdentity };
     this.presentationTransition = transition; this.presentationControlRevision++; this.requestedPresentation = input.mode; this.presentationReason = undefined;
     const pending = this.performPresentation(input, transition, restoreFocus).finally(() => {
       if (this.presentationTransition === transition) this.presentationTransition = undefined;
@@ -299,15 +299,23 @@ export class StudyWorkspace {
   private async performPresentation(input: PresentationIntent, transition: NonNullable<StudyWorkspace['presentationTransition']>, restoreFocus?: () => Promise<void>): Promise<PresentationState> {
     const signal = transition.cancellation.signal, lifetime = this.lifetime;
     const previousMode = this.presentationMode;
+    let evidenceConfirmed = false;
+    let assertRetainedPlacement = this.opened ? this.retainPresentationPlacement() : undefined;
     this.presentationMovedFocus = false;
-    const assertCurrent = () => { signal.throwIfAborted(); this.assertLifetime(lifetime); if (transition.id !== this.presentationId) throw new StudyError('PRESENTATION_INSTANCE_GONE', 'The reader was closed during placement.'); };
+    const assertCurrent = () => {
+      signal.throwIfAborted(); this.assertLifetime(lifetime);
+      if (transition.id !== this.presentationId) throw new StudyError('PRESENTATION_INSTANCE_GONE', 'The reader was closed during placement.');
+      // Admission belongs to the original request; a later ready state or pause cannot become its new baseline.
+      if (!evidenceConfirmed && transition.runtimeIdentity !== undefined && transition.runtimeIdentity !== this.assertPresentationAdmission()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The live pause changed during presentation placement.');
+    };
     let releaseViewport: (() => void) | undefined;
     try {
       if (input.action !== 'save-preference') {
-        await this.initialize(); assertCurrent();
+        await this.initialize(); assertCurrent(); assertRetainedPlacement?.();
         if (!this.opened) await this.open(signal, 'presentation'); assertCurrent();
+        assertRetainedPlacement ??= this.retainPresentationPlacement();
         this.presentationPoseRevision = undefined; this.lastPublished = undefined; this.publish();
-        await waitUntil(() => this.presentationPoseRevision === this.presentationControlRevision, 'retained reading position', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent();
+        await waitUntil(() => this.presentationPoseRevision === this.presentationControlRevision, 'retained reading position', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertRetainedPlacement();
         // Retire pending B and fully restore confirmed A before capturing selection/source for native movement.
         if (this.recordingActive) {
           if (!this.playback!.bundle()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Wait for the first confirmed replay position before selecting a presentation.');
@@ -316,25 +324,29 @@ export class StudyWorkspace {
           if (this.playback!.state().readiness !== 'ready' || !this.playback!.bundle()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'No confirmed replay position is available for transfer.');
         }
         await this.refreshing; await this.rendering; assertCurrent();
-        const runtimeIdentity = this.assertPresentationAdmission(), selection = JSON.stringify(this.selection), bundle = this.recordingActive ? this.playback?.bundle() : undefined;
+        const selection = JSON.stringify(this.selection), bundle = this.recordingActive ? this.playback?.bundle() : undefined;
         const viewport = this.recordingActive ? this.replayViewport : this.viewport;
         releaseViewport = await viewport?.holdPlacement(signal); assertCurrent();
-        if (runtimeIdentity !== this.assertPresentationAdmission()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The live pause changed before placement.');
+        assertRetainedPlacement();
         this.placingPresentation = true; this.presentationConfirmed = false;
-        await this.placePresentation(input.mode, signal); assertCurrent();
+        await this.placePresentation(input.mode, signal, assertCurrent); assertCurrent();
+        assertRetainedPlacement = this.retainPresentationPlacement();
         releaseViewport?.(); releaseViewport = undefined;
         // Native movement may recreate the renderer; it must acknowledge the same evidence after the lock is released.
         if (this.recordingActive) { this.replayNeedsReveal = true; this.playback!.reveal(); await this.playback!.settle(); }
         else await viewport?.restorePlacement(signal);
-        assertCurrent();
-        if (runtimeIdentity !== this.assertPresentationAdmission() || selection !== JSON.stringify(this.selection) || bundle && this.playback?.bundle() !== bundle) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The run, selected item or confirmed replay changed during placement. Inspect the current state before restoring.');
+        assertCurrent(); assertRetainedPlacement();
+        if (selection !== JSON.stringify(this.selection) || bundle && this.playback?.bundle() !== bundle) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The run, selected item or confirmed replay changed during placement. Inspect the current state before restoring.');
         await restoreFocus?.(); assertCurrent();
+        assertRetainedPlacement = this.retainPresentationPlacement();
         const receipt = this.layoutReceipt, actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent();
+        assertRetainedPlacement();
         if (!receipt || receipt !== this.layoutReceipt || JSON.stringify(actual) !== receipt.signature || !this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) || !this.sameStudyPanePositions(receipt.panes)) throw new Error('Native layout changed during presentation confirmation; the manual arrangement was preserved.');
         this.presentationMode = input.mode;
         this.lastRendered = undefined; this.lastPublished = undefined; this.publish();
         await waitUntil(() => this.lastRendered?.revision === this.revision && this.lastRendered.presentationControlRevision === this.presentationControlRevision && this.lastRendered.presentationMode === input.mode,
-          'matching presentation context', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent();
+          'matching presentation context', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertRetainedPlacement();
+        evidenceConfirmed = true;
         this.presentationConfirmed = true; this.requestedPresentation = undefined; this.presentationReason = undefined;
       }
       await this.savePresentationPreference(input.mode, transition.id); assertCurrent();
@@ -349,6 +361,21 @@ export class StudyWorkspace {
     } finally { releaseViewport?.(); this.placingPresentation = false; this.presentationMovedFocus = false; }
   }
 
+  /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @example const assertRetained = this.retainPresentationPlacement(); */
+  private retainPresentationPlacement(retainFocus = true): () => void {
+    const panes = this.studyPanePositions(), groups = vscode.window.tabGroups.all.map(group => ({ group, column: group.viewColumn }));
+    const focusedGroup = this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup);
+    const focusedSource = vscode.window.activeTextEditor?.document.uri.toString(), appActive = this.app?.active, contextActive = this.contextPanel?.active;
+    return () => {
+      const sameFocus = !retainFocus || focusedGroup === this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup)
+        && focusedSource === vscode.window.activeTextEditor?.document.uri.toString() && appActive === this.app?.active && contextActive === this.contextPanel?.active;
+      if (this.sameEditorGroups(groups, vscode.window.tabGroups.all) && this.sameStudyPanePositions(panes) && sameFocus) return;
+      // Learner changes end our focus ownership too; failure recovery must not reveal the previous focused pane.
+      this.presentationMovedFocus = false;
+      throw new Error('Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.');
+    };
+  }
+
   /** Keeps only the exact owned active webview out of preview, preventing native replacement during cross-group moves. @example await this.keepPresentationPanel(panel, signal) */
   private async keepPresentationPanel(panel: vscode.WebviewPanel, signal: AbortSignal): Promise<void> {
     const kind = panel === this.app ? 'codebook.scopedBrowser' : panel === this.contextPanel ? 'codebook.studyContext' : undefined;
@@ -361,61 +388,84 @@ export class StudyWorkspace {
     };
     const destination = vscode.window.tabGroups.all.find(group => group.viewColumn === panel.viewColumn);
     if (destination?.tabs.some(tab => tab.isPreview && !matches(tab))) throw new Error('A foreign preview occupies the panel group; it was preserved.');
+    const assertRetained = this.retainPresentationPlacement(false);
     this.presentationMovedFocus = true; panel.reveal(undefined, false);
-    await waitUntil(owned, 'owned presentation tab active', PRESENTATION_READY_TIMEOUT_MS, signal);
+    await waitUntil(owned, 'owned presentation tab active', PRESENTATION_READY_TIMEOUT_MS, signal).catch(error => { this.presentationMovedFocus = false; throw error; });
+    assertRetained();
     signal.throwIfAborted(); if (!owned()) throw new Error('Active tab changed before Keep Editor; no foreign tab was kept.');
+    const assertKept = this.retainPresentationPlacement();
     await vscode.commands.executeCommand('workbench.action.keepEditor'); signal.throwIfAborted();
+    assertKept();
     await waitUntil(() => { const tab = owned(); if (!tab) throw new Error('Active tab changed during Keep Editor.'); return !tab.isPreview; }, 'owned presentation tab kept', PRESENTATION_READY_TIMEOUT_MS, signal);
+    assertKept();
   }
 
   /** Relocates retained native panels/source and certifies the final descriptor after movement; no renderer ACK runs under this lock. @example await this.placePresentation('living-book', signal) */
-  private async placePresentation(mode: PresentationMode, signal: AbortSignal): Promise<void> {
+  private async placePresentation(mode: PresentationMode, signal: AbortSignal, assertEvidence: () => void): Promise<void> {
     const sourceUri = this.sourceUri, revision = this.revision;
     if (!sourceUri) throw new Error('No selected immutable source is available.');
-    const document = await vscode.workspace.openTextDocument(sourceUri); signal.throwIfAborted();
+    const assertSourcePlacement = this.retainPresentationPlacement();
+    const document = await vscode.workspace.openTextDocument(sourceUri); signal.throwIfAborted(); assertEvidence(); assertSourcePlacement();
     if (sourceUri !== this.sourceUri || revision !== this.revision) throw new Error('The selected source changed before it could be arranged.');
     await this.withLayout(signal, async (_lifetime, assertCurrent) => {
-      const assertPlacement = () => { assertCurrent(); if (vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) throw new Error('An editor group was added during placement; it was preserved.'); };
+      const assertPlacement = () => { assertCurrent(); assertEvidence(); if (vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) throw new Error('An editor group was added during placement; it was preserved.'); };
+      assertSourcePlacement();
       const app = this.app, context = this.contextPanel, descriptor = STUDY_PRESENTATIONS[mode];
       if (!app || !context || !sourceUri || vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) throw new Error('The three retained Study panes are unavailable.');
       const source = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === sourceUri.toString() && editor.viewColumn === this.studyPanePositions().sourceColumn);
       const selections = source?.selections, range = source?.visibleRanges[0];
       // Only demo-owned prepared sources may be kept; workspace files and dirty drafts remain learner-owned.
       const ownedKinds = ['codebook.scopedBrowser', 'codebook.studyContext'];
+      const isOwnedPreview = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputWebview && ownedKinds.some(kind => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType));
+      const assertPreviewOwnership = () => {
+        if (!vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tab.isPreview && !isOwnedPreview(tab)))) return;
+        // A preview opened during a passive await belongs to the learner, including its current focus.
+        this.presentationMovedFocus = false;
+        throw new Error('A destination group contains a foreign preview. Keep or move that editor explicitly before switching.');
+      };
       const preparedPreviews: { uri: vscode.Uri; group: vscode.TabGroup; tab: vscode.Tab }[] = [];
       for (const group of vscode.window.tabGroups.all) {
         for (const tab of group.tabs.filter(tab => tab.isPreview)) {
-          if (tab.input instanceof vscode.TabInputWebview && ownedKinds.some(kind => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType))) continue;
+          if (isOwnedPreview(tab)) continue;
           if (tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === 'file' && this.runtimeSourcePaths.has(tab.input.uri.fsPath) && !tab.isDirty) preparedPreviews.push({ uri: tab.input.uri, group, tab });
           else throw new Error('A destination group contains a foreign preview. Keep or move that editor explicitly before switching.');
         }
       }
       // Native debugger stops open prepared fixture files as previews even while the captured reader is active.
       for (const prepared of preparedPreviews) {
-        const sourceDocument = await vscode.workspace.openTextDocument(prepared.uri); assertPlacement();
+        const assertPreparedPlacement = this.retainPresentationPlacement();
+        const sourceDocument = await vscode.workspace.openTextDocument(prepared.uri); assertPlacement(); assertPreparedPlacement();
         if (sourceDocument.isDirty || !vscode.window.tabGroups.all.includes(prepared.group) || !prepared.group.tabs.includes(prepared.tab) || prepared.tab.isDirty) throw new Error('The prepared preview changed before it could be retained.');
         await vscode.window.showTextDocument(sourceDocument, { viewColumn: prepared.group.viewColumn, preserveFocus: true, preview: false }); assertPlacement();
         await waitUntil(() => prepared.group.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === prepared.uri.toString() && !tab.isPreview), 'prepared source preview retained', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
       }
       await this.keepPresentationPanel(app, signal); assertPlacement(); await this.keepPresentationPanel(context, signal); assertPlacement();
       // Native relocation can flatten the nested grid and omit its height; retain both axes before moving panes.
-      const retainedLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement();
+      const assertBeforeMove = this.retainPresentationPlacement();
+      const retainedLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertBeforeMove();
+      assertPreviewOwnership();
       this.layoutReceipt = undefined;
       for (const [panel, column] of [[app, descriptor.appColumn], [context, descriptor.contextColumn]] as const) {
+        // Native movement yields between panes; recheck previews immediately before each destination reveal.
+        assertPreviewOwnership();
         panel.reveal(column, true);
         await waitUntil(() => panel.viewColumn === column && panel.visible, 'presentation pane placement', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
         if (this.app !== app || this.contextPanel !== context) throw new Error('A retained presentation panel was disposed.');
       }
+      assertPreviewOwnership();
       const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: true, preview: false }); assertPlacement();
       if (selections) editor.selections = selections; if (range) editor.revealRange(range, vscode.TextEditorRevealType.AtTop);
       if (this.highlight) for (const visible of vscode.window.visibleTextEditors) if (visible.document.uri.toString() === sourceUri.toString()) visible.setDecorations(this.highlight, [new vscode.Range(new vscode.Position(this.message().model.source.line - 1, 0), new vscode.Position(this.message().model.source.line - 1, 0))]);
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
-      const measuredLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement();
+      const assertAfterMove = this.retainPresentationPlacement();
+      const measuredLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertAfterMove();
       // Minimum-size native groups may opt out of proportional expansion; supply actual pixels when both axes are measured.
       await vscode.commands.executeCommand('vscode.setEditorLayout', toPixelEditorLayout(descriptor.layout, measuredLayout) ?? toPixelEditorLayout(descriptor.layout, retainedLayout) ?? descriptor.layout); assertPlacement();
-      await waitUntil(async () => { const actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); return isProportionalEditorLayout(descriptor.layout, actual); }, 'presentation grid proportions', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
+      const assertSettling = this.retainPresentationPlacement();
+      await waitUntil(async () => { const actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertSettling(); return isProportionalEditorLayout(descriptor.layout, actual); }, 'presentation grid proportions', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
       await this.keepPresentationPanel(app, signal); assertPlacement(); await this.keepPresentationPanel(context, signal); assertPlacement();
-      const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement();
+      const assertConfirmed = this.retainPresentationPlacement();
+      const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertConfirmed();
       if (!isProportionalEditorLayout(descriptor.layout, layout)) throw new Error('Native layout changed while retaining presentation panels.');
       const panes = this.studyPanePositions();
       if (panes.app !== app || panes.context !== context || panes.appColumn !== descriptor.appColumn || panes.contextColumn !== descriptor.contextColumn || panes.sourceColumn !== descriptor.sourceColumn || this.sourceUri !== sourceUri) throw new Error('Native panes changed before layout confirmation.');
@@ -1178,13 +1228,18 @@ export class StudyWorkspace {
   /** Aligns visible native selection without opening a hidden outline or stealing keyboard focus. @example this.syncOutline() */
   private syncOutline(): void {
     if (!this.outline?.visible || !this.baselines || this.closing || this.disposed) return;
-    const itemId = this.selection.itemId;
+    const itemId = this.selection.itemId, lifetime = this.lifetime;
     if (this.lastOutlineSelection === itemId) return;
     this.lastOutlineSelection = itemId;
+    const isCurrent = () => !this.closing && !this.disposed && lifetime === this.lifetime && itemId === this.selection.itemId;
     this.outlineRendering = this.outlineRendering.then(async () => {
-      if (!this.outline?.visible || this.closing || this.disposed || itemId !== this.selection.itemId) return;
+      if (!this.outline?.visible || !isCurrent()) return;
       await this.outline.reveal(itemId, { select: true, focus: false });
-    }).catch(error => this.report('outline', error));
+      if (isCurrent() && this.errors.delete('outline')) this.publish();
+    }).catch(error => {
+      // Native TreeView resolution can reject an old item after another profile or reader has replaced it.
+      if (isCurrent()) this.report('outline', error);
+    });
   }
 
   /** Serializes source opens and invalidates obsolete selection work before it can qualify context/app correspondence. @example await this.renderSelection() */
@@ -1323,8 +1378,10 @@ export class StudyWorkspace {
       getChildren: async () => { await this.initialize(); return this.message().model.progressByItem.map(item => item.id); },
       getParent: () => undefined,
       getTreeItem: itemId => {
-        const model = this.message().model, value = model.progressByItem.find(item => item.id === itemId)!;
-        const item = new vscode.TreeItem(value.title, vscode.TreeItemCollapsibleState.None); item.id = value.id;
+        const model = this.message().model, value = model.progressByItem.find(item => item.id === itemId);
+        const item = new vscode.TreeItem(value?.title ?? 'Learning item unavailable', vscode.TreeItemCollapsibleState.None); item.id = itemId;
+        // Native TreeView can finish an older children request after the selected profile changes.
+        if (!value) { item.description = 'No longer in the selected study'; return item; }
         item.description = !value.known ? 'Current source unavailable' : value.reviewNeeded ? 'Review needed' : value.understood ? 'Learner understood' : 'Not marked';
         item.command = { command: 'codebook.selectLearningItem', title: 'Read learning item', arguments: [itemId] };
         // Current progress stays visible after drift, but only the displayed captured context is editable in Study.
@@ -1334,7 +1391,11 @@ export class StudyWorkspace {
       },
     } });
     this.disposables.push(this.outline, this.outline.onDidChangeVisibility(() => { this.lastOutlineSelection = undefined; this.syncOutline(); }), this.outline.onDidChangeCheckboxState(event => {
-      for (const [itemId, state] of event.items) void this.understand(state === vscode.TreeItemCheckboxState.Checked, itemId, this.selection.profile === REPOSITORY_BROWSER_PROFILE ? undefined : this.baselines![LEARNING_ITEMS.find(item => item.id === itemId)!.participant].hash, 'current').catch(error => this.report('progress', error));
+      for (const [itemId, state] of event.items) {
+        // A queued checkbox from the previous profile has no authority over the current learning items.
+        if (!this.message().model.progressByItem.some(item => item.id === itemId)) continue;
+        void this.understand(state === vscode.TreeItemCheckboxState.Checked, itemId, this.selection.profile === REPOSITORY_BROWSER_PROFILE ? undefined : this.baselines![LEARNING_ITEMS.find(item => item.id === itemId)!.participant].hash, 'current').catch(error => this.report('progress', error));
+      }
     }));
     this.disposables.push(vscode.window.registerWebviewViewProvider('codebook.observedMoments', { resolveWebviewView: view => {
       this.moments = view; view.webview.options = { enableScripts: true, localResourceRoots: [] }; view.webview.html = studyHtml('moments');

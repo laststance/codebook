@@ -66,6 +66,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const panels = new Set<ReturnType<typeof panel>>();
   const panelReveals: { kind: string; column?: number; preserveFocus?: boolean }[] = [];
   const postedMessages: StudyViewMessage[] = [];
+  let heldPresentationMessage: { mode?: 'living-book'; wait: Promise<void>; entered(): void } | undefined;
   const receivers = new Map<string, (message: unknown) => void>();
   let automaticContextReceipt = false, contextCoversSource = false, displayedImage: string | undefined, sourceColumn = 2;
   let nextImage: { wait: Promise<void>; entered(): void } | undefined;
@@ -91,6 +92,11 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     const viewColumn = nativeLayout && options?.viewColumn ? Math.min(options.viewColumn, groups.length + 1) : options?.viewColumn;
     const value = { webview: { html: '', postMessage: async (message: StudyViewMessage) => {
       postedMessages.push(message);
+      const held = heldPresentationMessage;
+      if (held && kind === 'codebook.studyContext' && message.presentation?.state === 'applying' && (!held.mode || message.presentation.mode === held.mode)) {
+        held.entered(); await held.wait;
+        if (heldPresentationMessage === held) heldPresentationMessage = undefined;
+      }
       if (kind === 'codebook.studyContext' && message.presentation?.state === 'applying') receivers.get(kind)?.({ type: 'presentation-pose', presentationId: message.presentation.presentationId, expectedRevision: message.presentation.presentationControlRevision });
       if ((automaticContextReceipt || message.presentation?.state === 'applying') && kind === 'codebook.studyContext' && message.type === 'study' && !message.loading) {
         receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, presentationControlRevision: message.presentation?.presentationControlRevision, presentationMode: message.presentation?.mode, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
@@ -117,7 +123,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   }
   const initialSelection: string[] = [];
   let outlineCheckbox = (_event: { items: [string, number][] }) => {};
-  let outlineItem = (_itemId: string): { checkboxState?: number; description?: string } => ({});
+  let outlineItem = (_itemId: string): { checkboxState?: number; description?: string; command?: unknown } => ({});
   const outline = { ...disposable(), visible: true, selection: initialSelection, onDidChangeCheckboxState: (callback: typeof outlineCheckbox) => { outlineCheckbox = callback; return disposable(); }, onDidChangeVisibility: disposable,
     reveal: async (participant: string, options: { select: boolean; focus: boolean }) => { assert.equal(options.focus, false); if (options.select) outline.selection = [participant]; } };
   const watcher = { onDidChange(callback: () => void) { changed = callback; return disposable(); }, onDidCreate: disposable, onDidDelete: disposable, dispose() {} };
@@ -207,6 +213,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, articleOpens, articleReturns, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
     outlineItem: (itemId: string) => outlineItem(itemId), changeOutlineCheckbox: (itemId: string, checked: boolean) => outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
     postedMessages: () => postedMessages, presentationPreferences,
+    holdPresentationMessage(mode?: 'living-book') { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); heldPresentationMessage = { mode, wait, entered }; return { started, release }; },
     failPresentationPreference(value: boolean) { preferenceFailure = value; },
     holdPresentationPreference() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); nextPreference = { wait, entered }; return { started, release }; },
     clock(value: number) { clock = value; }, acknowledgeContext() { automaticContextReceipt = true; }, displayedImage: () => displayedImage,
@@ -1378,6 +1385,51 @@ test('a cold reader keeps the newer selected study and its observation when an o
   } finally { release(); await retry?.catch(() => undefined); context.mock.restoreAll(); await cold?.dispose(); await harness.close(); context.mock.timers.reset(); }
 });
 
+test('a queued checkbox from a previous configured profile cannot change demo understanding or raise an error', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    await harness.reader.open();
+    const library = await harness.reader.learningStorage(), decisions = (await library.readProgress()).decisions;
+    const selection = harness.reader.inspect().view!.model.selection;
+    // Act: native TreeView can deliver a checkbox event from its previous children list.
+    assert.doesNotThrow(() => harness.changeOutlineCheckbox('repository/interface/theme', true));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Assert
+    assert.deepEqual((await library.readProgress()).decisions, decisions);
+    assert.deepEqual(harness.reader.inspect().view!.model.selection, selection);
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+  } finally { await harness.close(); }
+});
+
+for (const obsolete of [true, false]) test(`a delayed ${obsolete ? 'obsolete' : 'current'} outline failure ${obsolete ? 'cannot poison the selected study' : 'remains visible until a successful selection'}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  let rejectReveal = (_error: Error) => {};
+  try {
+    await harness.reader.open();
+    await harness.reader['outlineRendering'];
+    const original = harness.outline.reveal;
+    harness.outline.reveal = async (itemId, options) => {
+      if (itemId === 'paired-cart-demo/browser') await new Promise<void>((_resolve, reject) => { rejectReveal = reject; });
+      else await original(itemId, options);
+    };
+    await harness.reader.select('paired-cart-demo/browser');
+    // Act: a native reveal settles after a newer profile may already have replaced its tree.
+    if (obsolete) await harness.reader.selectProfile('checkout-demo');
+    rejectReveal(new Error('Cannot resolve obsolete native tree item'));
+    await harness.reader['outlineRendering'];
+    // Assert
+    assert.equal(harness.reader.inspect().view?.errors.length, obsolete ? 0 : 1);
+    if (!obsolete) {
+      assert.match(harness.reader.inspect().view!.errors[0]!, /Cannot resolve obsolete native tree item/);
+      await harness.reader.select('paired-cart-demo/server');
+      await harness.reader['outlineRendering'];
+      assert.equal(harness.reader.inspect().view?.errors.length, 0);
+    }
+  } finally { rejectReveal(new Error('Test cleanup')); await harness.close(); }
+});
+
 test('selecting a browser moment updates the native outline without requesting keyboard focus', async () => {
   // Arrange
   const harness = await workspaceHarness();
@@ -1702,7 +1754,7 @@ async function configuredWorkspaceHarness(sourceText?: string) {
     await harness.reader.open(); await harness.reader.action('return-current'); return record;
   };
   return { ...harness, directory, library, books, study, configuredRuntimes, start, configuredClock(value: number) { clock = value; },
-    async close() { books.dispose(); await harness.close(); } };
+    async close() { await books.dispose(); await harness.close(); } };
 }
 
 test('configured Study sends captured facts without copying retained source bodies into its webviews', async () => {
@@ -1719,6 +1771,24 @@ test('configured Study sends captured facts without copying retained source bodi
     assert.equal(posted.model.observation.values['value:enabled'], false);
     assert.equal(harness.reader.inspect().view!.model.source.text, 'const nextTheme = "dark";\n');
     assert.equal(harness.reader.inspect().view!.model.observation!.source.text, 'const nextTheme = "dark";\n');
+  } finally { await harness.close(); }
+});
+
+test('a delayed outline render from the previous profile stays inert after selecting a configured study', async () => {
+  // Arrange
+  const harness = await configuredWorkspaceHarness();
+  try {
+    await harness.start();
+    const current = harness.reader.inspect();
+    // Act: native TreeView may still request an item from the previous children list.
+    const stale = harness.outlineItem('checkout-demo/cart-mutation');
+    // Assert
+    assert.equal(stale.description, 'No longer in the selected study');
+    assert.equal(stale.command, undefined);
+    assert.equal(stale.checkboxState, undefined);
+    assert.deepEqual(harness.reader.inspect().view?.model.selection, current.view?.model.selection);
+    assert.equal(harness.reader.inspect().view?.errors.length, 0);
+    assert.equal(harness.outlineItem('repository/interface/theme').description, 'Not marked');
   } finally { await harness.close(); }
 });
 
@@ -2924,6 +2994,85 @@ test('a live pause with an uncommitted image or reserved resume rejects mode swi
     assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), /continue request/);
     assert.deepEqual(harness.commands, commands); assert.equal(harness.reader.presentationState().presentationControlRevision, 0); assert.equal(runtime.dispatches, 1);
   } finally { await harness.close(); }
+});
+
+for (const boundary of ['reading pose', 'rendered context'] as const) test(`manual resume during presentation ${boundary} cannot certify or save a different live state`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.open(); await harness.reader.action('run');
+    await [...harness.service.records.values()][0]!.preparation;
+    const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime);
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=', 'base64');
+    await writeFile(join(runtime.evidence.directory, 'paused-server.png'), png);
+    runtime.view = () => ({ ...view(), captures: { 'paused-server': { status: 'captured', file: 'paused-server.png', renderer: { epoch: 'test', id: 1, hash: sha256(png) } } } });
+    await harness.reader.action('click');
+    const state = harness.reader.presentationState(), reveals = harness.panelReveals();
+    const held = harness.holdPresentationMessage(boundary === 'rendered context' ? 'living-book' : undefined); release = held.release;
+    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const rejected = assert.rejects(transfer, /live pause changed/);
+    await held.started;
+    // Act: a native debugger action changes the pause while the webview acknowledgement is pending.
+    runtime.gate.invalidate(); runtime.status = 'ready'; held.release();
+    await rejected;
+    // Assert
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(runtime.dispatches, 1);
+    if (boundary === 'reading pose') assert.deepEqual(harness.panelReveals(), reveals);
+  } finally { release(); await harness.close(); }
+});
+
+for (const learnerChange of ['pane movement', 'focus change'] as const) test(`presentation layout read preserves a later learner ${learnerChange} without saving the mode`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    const held = harness.holdNextCommand('vscode.getEditorLayout'); release = held.release;
+    const state = harness.reader.presentationState();
+    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const rejected = assert.rejects(transfer, /not confirmed/);
+    await held.started;
+    // Act: the reader still has three groups, but the learner now owns the changed pane or focus.
+    harness.movePanel(learnerChange === 'pane movement' ? 'codebook.studyContext' : 'codebook.scopedBrowser', learnerChange === 'pane movement' ? 2 : 1);
+    const reveals = harness.panelReveals(), commands = [...harness.commands];
+    held.release(); await rejected;
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), learnerChange === 'pane movement' ? 2 : 3);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.equal(harness.presentationPreferences.size, 0);
+    assert.deepEqual(harness.panelReveals(), reveals);
+    assert.deepEqual(harness.commands, commands);
+  } finally { release(); await harness.close(); }
+});
+
+test('a foreign preview opened during the layout read survives without relocation or a saved presentation', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    const held = harness.holdNextCommand('vscode.getEditorLayout'); release = held.release;
+    const state = harness.reader.presentationState();
+    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const rejected = assert.rejects(transfer, /not confirmed/);
+    await held.started;
+    // Act: preserve global Context focus while a learner preview opens in the later destination.
+    const preview = harness.addTextPreview(join(harness.directory, 'learner-preview.txt'), 1);
+    harness.groups.find(group => group.viewColumn === 1)!.activeTab = preview;
+    const reveals = harness.panelReveals(), commands = [...harness.commands];
+    held.release(); await rejected;
+    // Assert
+    assert.equal(harness.groups.find(group => group.viewColumn === 1)!.activeTab, preview);
+    assert.equal(preview.isPreview, true);
+    assert.deepEqual(harness.panelReveals(), reveals);
+    assert.deepEqual(harness.commands, commands);
+    assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.match(harness.reader.presentationState().reason ?? '', /foreign preview/);
+  } finally { release(); await harness.close(); }
 });
 
 test('mode transfer during a late replay image preserves the last confirmed time, source and explicit understanding', async () => {
