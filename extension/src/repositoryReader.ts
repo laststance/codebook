@@ -245,7 +245,20 @@ export class RepositoryReader {
     if (this.panel) return;
     const panel = vscode.window.createWebviewPanel('codebook.repositoryWiki', 'codebook · Repository Wiki', vscode.ViewColumn.Two, { enableScripts: true, localResourceRoots: [] });
     this.panel = panel;
-    panel.webview.onDidReceiveMessage(value => { const revision = this.revision; void this.receive(value).catch(error => { if (this.panel === panel && revision === this.revision) { this.error = String(error); this.publish(); } }); });
+    panel.webview.onDidReceiveMessage(value => {
+      const revision = this.revision, generation = this.generation;
+      void this.receive(value).catch(error => {
+        // A failed click must remain perceivable without moving the article's saved reading position.
+        if (this.panel !== panel || revision !== this.revision || generation !== this.generation) return;
+        const request = repositoryMessageSchema.safeParse(value);
+        const evidence = request.success && request.data.type === 'evidence' && request.data.revision === revision ? request.data : undefined;
+        this.error = evidence
+          ? evidence.recording ? 'Recording could not be opened. Refresh the article or ask your agent for a new recording.' : 'Observation could not be opened. Refresh the article or ask your agent for a new study.'
+          : String(error);
+        if (evidence) void vscode.window.showErrorMessage(this.error);
+        this.publish();
+      });
+    });
     panel.onDidDispose(() => { if (this.panel === panel) { this.navigation.abort(); this.panel = undefined; this.generation++; this.statusGeneration++; this.clearWatchers(); clearTimeout(this.refreshTimer); } });
     panel.webview.html = repositoryHtml();
   }
