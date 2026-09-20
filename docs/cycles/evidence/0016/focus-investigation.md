@@ -1,6 +1,6 @@
 # Installed presentation focus investigation
 
-Date: 2026-09-21 JST. Scope: Cycle 0016, C16-QA-001. Status: root cause confirmed for the retained-focus rejection; repair implemented, full regression and fresh installed verification pending. The original owned-tab timeout remains separately retained until revalidation. No final-product acceptance is claimed.
+Date: 2026-09-21 JST. Scope: Cycle 0016, C16-QA-001. Status: root cause confirmed for the retained-focus rejection; repair implemented, full regression passed; fresh installed verification pending. The original owned-tab timeout remains separately retained until revalidation. No final-product acceptance is claimed.
 
 ## Confirmed cause
 
@@ -24,12 +24,12 @@ Temporary logging was packaged separately from the clean installed candidate; it
 | Diagnostic 5 | New diagnostic package adds origin/failure stacks to the placement guard. Fresh reader plus the same hold passes all three transfers. |
 | Diagnostic 6 | Reused live reader, explicit Focus Application before the same held transfer. The native guard reproduces the exact delayed application-focus change and call stacks above. |
 
-Some intermediate diagnostic video sessions used the CLI's 800×600 viewport after reload. Diagnostic 6 restores the original 1280×800 capture viewport before its recorded focus experiment. These are diagnostic observations, not geometry acceptance.
+Diagnostic videos use the CLI default scaled 800×600 output. Diagnostic 6 restores the 1280×800 DOM viewport, but its video is still scaled; viewport and output size are distinct. V2 must set `video-start --size` explicitly and verify actual dimensions. These are diagnostic observations, not full-size geometry acceptance.
 
 ## Regression and repair
 
 The new behavior test delays the native application focus notification until after `reveal` returns. Before the repair it fails with `PRESENTATION_UNAVAILABLE` and the exact changed-placement cause. After the repair it passes, with Application focused, Living book confirmed and its preference saved. Two existing tests still reject later learner pane movement and focus changes. Focused result: 3/3, no skips/cancellations.
 
-Full product/package tests and clean installed revalidation remain required. In particular, successful short diagnostic transfers do not erase the original timeout, establish general native ordering, or complete Cursor schedule I08–I16.
+Fresh full suites pass 665/665 product/shared tests (54.360 seconds) and 39/39 package tests (9.787 seconds), with zero failures/skips/cancellations. Clean installed revalidation remains required. In particular, successful short diagnostic transfers do not erase the original timeout, establish general native ordering, or complete Cursor schedule I08–I16.
 
 Private evidence: `artifacts/cycle-0016/investigation/`. Reproduction receipts are `diagnostic-2-reproduction.json`, `diagnostic-3-held-reproduction.json`, `diagnostic-4-held-live-reproduction.json`, `diagnostic-5-placement-reproduction.json`, and `diagnostic-6-warm-reproduction.json`. `diagnostic-6-events.ndjson` preserves the decisive mismatch stacks. Original and instrumented TypeScript snapshots, three diagnostic VSIX build receipts, native WebM recordings, extracted frames and `restored-focus-red.log` / `restored-focus-green.log` are retained there. Original installed v1 evidence remains under `native/cursor/`.

@@ -203,10 +203,14 @@ Additional implementation constraint from the parent's CI probe: pnpm/action-set
 
 This is native fallback evidence only. No cross-model agreement or final acceptance review is claimed. All ten plan findings have concrete selected remedies; the implementation and installed evidence are still pending.
 
+## Installed focus repair checkpoint
+
+[The focus investigation](evidence/0016/focus-investigation.md) confirms that void native `reveal` was mistaken for completed focus restoration. A real Cursor trace and a red regression reproduce the false learner-change rejection. Clean repair `9dd4260` awaits the owned focus receipt while preserving pane/group and cancellation guards. Fresh full suites pass **665/665 + 39/39**. [Schedule v2](evidence/0016/installed-schedule-v2.md) freezes the clean repair package, explicit Application/source focus cases, 32-second hold and actual video dimensions before revalidation. The original owned-tab timeout remains historical and needs this full-schedule recheck; diagnostic successes do not replace v1 failures.
+
 ## Handoff
 
-- Exact next action: investigate C16-QA-001 from the ordinary installed Cursor failure, including native owned-tab activation/focus and the stopped-state mismatch; root cause precedes repair. Preserve v1 evidence, then freeze a revised candidate/schedule before revalidation. T1–T3 and 703 tests/CI pass; VS Code has bounded installed proof, Cursor T4 is incomplete. Full diff review/coderabbit-cli and PR merge remain pending.
-- Active processes: owned Cursor profile `~/.cbqa/c16-cursor-e9677ff5`, ordinary launch port 61049; runtime is stopped/released, editor/MCP retained for diagnosis. VS Code's owned profile processes are all stopped. Branch: codex/cycle-0016-packaged-installation.
+- Exact next action: install the frozen clean v2 VSIX, verify the native focus repair in Cursor, then execute schedule v2 in both hosts. Full tests pass 704/704. Preserve v1 and diagnostic failures; original tab timeout, Cursor T4, teardown SIGPIPE attribution, full review/coderabbit-cli and PR merge remain pending.
+- Active processes: owned Cursor profile `~/.cbqa/c16-cursor-e9677ff5`, ordinary diagnostic launch port 63576; all diagnostic runtimes are stopped/released. Replace diagnostic package 3 with the frozen clean v2 candidate before acceptance. VS Code's owned profile processes are all stopped. Branch: codex/cycle-0016-packaged-installation.
 - PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
 - Select a single next cycle only after this cycle's evidence identifies the next uncertainty.
 
