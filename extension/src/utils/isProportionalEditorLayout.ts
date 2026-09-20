@@ -5,11 +5,11 @@ const groupSchema = z.strictObject({
   size: z.number().finite().positive(),
   get groups(): z.ZodOptional<z.ZodArray<typeof groupSchema>> { return z.array(groupSchema).min(1).optional(); },
 });
-const layoutSchema = z.strictObject({ orientation: z.union([z.literal(0), z.literal(1)]), groups: z.array(groupSchema).min(1) });
+export const editorLayoutSchema = z.strictObject({ orientation: z.union([z.literal(0), z.literal(1)]), groups: z.array(groupSchema).min(1) });
 
 /** Certifies host-resized splits after {@link StudyWorkspace} applies a saved grid; ownership checks still require exact receipts. @example isProportionalEditorLayout({ orientation: 0, groups: [{ size: 326 }, { size: 326 }] }, { orientation: 0, groups: [{ size: 330 }, { size: 330 }] }) // true */
 export function isProportionalEditorLayout(expected: unknown, actual: unknown): boolean {
-  const requested = layoutSchema.safeParse(expected), received = layoutSchema.safeParse(actual);
+  const requested = editorLayoutSchema.safeParse(expected), received = editorLayoutSchema.safeParse(actual);
   if (!requested.success || !received.success || requested.data.orientation !== received.data.orientation) return false;
   const pending = [{ expected: requested.data.groups, actual: received.data.groups }];
   // Each nested split has its own available axis; absolute host pixel sizes may change while its proportions remain intact.

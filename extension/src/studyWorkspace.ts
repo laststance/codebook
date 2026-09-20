@@ -28,6 +28,7 @@ import type { BookObservationBinding } from './repositorySchemas';
 import { bookObservationHash } from './utils/bookObservationHash';
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout';
 import { isProportionalEditorLayout } from './utils/isProportionalEditorLayout';
+import { toPixelEditorLayout } from './utils/toPixelEditorLayout';
 import { retainedStudySelectionSchema, type RetainedStudy, type RetainedStudySelection } from './retainedStudySchemas';
 import { learningItemSchema } from './identitySchemas';
 import { repositorySelectionSchema, type RepositorySelection } from './learnerSchemas';
@@ -402,7 +403,9 @@ export class StudyWorkspace {
       if (selections) editor.selections = selections; if (range) editor.revealRange(range, vscode.TextEditorRevealType.AtTop);
       if (this.highlight) for (const visible of vscode.window.visibleTextEditors) if (visible.document.uri.toString() === sourceUri.toString()) visible.setDecorations(this.highlight, [new vscode.Range(new vscode.Position(this.message().model.source.line - 1, 0), new vscode.Position(this.message().model.source.line - 1, 0))]);
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
-      assertPlacement(); await vscode.commands.executeCommand('vscode.setEditorLayout', descriptor.layout); assertPlacement();
+      const measuredLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement();
+      // Minimum-size native groups may opt out of proportional expansion; supply actual pixels when both axes are measured.
+      await vscode.commands.executeCommand('vscode.setEditorLayout', toPixelEditorLayout(descriptor.layout, measuredLayout) ?? descriptor.layout); assertPlacement();
       await waitUntil(async () => { const actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); return isProportionalEditorLayout(descriptor.layout, actual); }, 'presentation grid proportions', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
       await this.keepPresentationPanel(app, signal); assertPlacement(); await this.keepPresentationPanel(context, signal); assertPlacement();
       const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement();
@@ -1465,9 +1468,11 @@ export class StudyWorkspace {
       if (vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) { this.layoutReceipt = undefined; this.report('layout', new Error('Existing editor groups were preserved. Use the focus commands or arrange the Codebook panes manually.')); return; }
       this.layoutReceipt = undefined;
       const retainedGroups = [...vscode.window.tabGroups.all];
+      const measuredLayout = mode === 'study' && retainedGroups.length === STUDY_EDITOR_GROUP_COUNT ? await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout') : undefined; assertCurrent();
+      const studyLayout = toPixelEditorLayout(STUDY_PRESENTATIONS[this.presentationMode].layout, measuredLayout) ?? STUDY_PRESENTATIONS[this.presentationMode].layout;
       // The workbench accepts both native effects together; its interim split sizes are not a receipt.
       await vscode.commands.executeCommand('runCommands', { commands: [
-        { command: 'vscode.setEditorLayout', args: mode === 'study' ? STUDY_PRESENTATIONS[this.presentationMode].layout : { orientation: HORIZONTAL_EDITOR_ORIENTATION, groups: Array.from({ length: vscode.window.tabGroups.all.length }, () => ({})) } },
+        { command: 'vscode.setEditorLayout', args: mode === 'study' ? studyLayout : { orientation: HORIZONTAL_EDITOR_ORIENTATION, groups: Array.from({ length: vscode.window.tabGroups.all.length }, () => ({})) } },
         ...(mode === 'repository' ? ['workbench.action.evenEditorWidths'] : []),
       ] });
       // Drain the accepted batch after navigation abort, then let only a newer intent change the layout again.

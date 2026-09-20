@@ -510,9 +510,11 @@ for (const change of ['shape', 'size']) test(`a manual ${change} change during t
   const harness = await workspaceHarness(false), manual = change === 'shape' ? { orientation: 1, groups: [{}, {}, {}] } : { orientation: 0, groups: [{ size: 0.7, groups: [{ size: 0.3 }, { size: 0.7 }] }, { size: 0.3 }] };
   let release = () => {};
   try {
-    await harness.reader.open(); const held = harness.holdNextCommand('vscode.getEditorLayout'); release = held.release;
+    await harness.reader.open(); const placement = harness.holdNextCommand('vscode.setEditorLayout'); release = placement.release;
     // Act
-    const arranging = harness.reader.action('arrange'); await held.started;
+    const arranging = harness.reader.action('arrange'); await placement.started;
+    // Measure the receipt after the accepted mutation, rather than the new pre-placement geometry read.
+    const held = harness.holdNextCommand('vscode.getEditorLayout'); release = () => { placement.release(); held.release(); }; placement.release(); await held.started;
     harness.changeEditorLayout(manual); held.release(); await arranging;
     await harness.reader.arrangeRepository(new AbortController().signal);
     // Assert
