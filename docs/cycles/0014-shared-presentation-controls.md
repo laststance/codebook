@@ -1,9 +1,9 @@
 # Cycle 0014 — Shared presentation controls
 
 Type: product-increment\
-Status: implementing\
+Status: validating\
 Result: pending\
-Delivery: local-only\
+Delivery: committed\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/15\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -50,12 +50,27 @@ Cycle 0013 proves preview replacement, not a product mode switch. Before cross-g
 
 ## Attempts and evidence
 
-The shared descriptor, reader identity/revision, workspace preference, command/UI/MCP entry points, renderer placement barrier and native retention are implemented locally. Latest focused workspace suite: 164/164, including real SDK presentation discovery, stale/gone identity, no-op repair, unknown/saving/failed preference, pending Close, foreign preview and live admission cases. Existing protocol suite: 10/10; viewport suite: 11/11 including held paint/Close/resume regressions. Private outputs are under `artifacts/cycle-0014`. These are unit/adapter checks, not native product validation. Fresh full suites pass: extension 485/485 (52.456 s), shared 55/55 and paired 45/45, all with zero failed/skipped/cancelled. Latest copy-only refinement distinguishes preference saving from mode placement. Live/replay native mode transfers, UX/visual QA and implementation reviews remain.
+The shared descriptor, reader identity/revision, workspace preference, command/UI/MCP entry points, renderer placement barrier and native retention are committed. The native debugger opens temporary fixture source previews; 0bc070a retains only clean prepared sources owned by the demo before cross-group moves, preserving foreign/dirty preview rejection. The earlier e4786f2 extension suite passed 491/491 (53.222 s), shared 55/55 and paired 45/45, with zero failed/skipped/cancelled. Four new pixel-layout regressions and the existing layout suite pass 11/11. Original test failures and intermediate cuts remain in private artifacts.
 
+/qa completed its bounded compiled-webview adapter with concerns: 118/118 checks in 24 mode/theme/geometry cells. One medium hierarchy issue was fixed in a3a9331/c6e7143: the selected subject/reading content now precede secondary controls in short panes. Provisional adapter health 99 -> 100 excludes untested links/performance; it is not native or full-product acceptance. Report: `artifacts/cycle-0014/qa/qa-report-codebook-cycle0014-2026-09-20.md` and matching `.gstack/qa-reports` copy.
+
+VS Code c6e7143 demonstrates all three live-pause transfers and the full checkout with four observed pauses, eleven observed causal links, confirmed purchase, zero remaining debug sessions, saved history and 34 finalized recording frames. The driver's terminal polling stopped before asynchronous persistence; an independent final resource read verifies the saved result and retains the original harness failure. Offline all-mode transfers preserve paused 4500ms position, exact source/item, learner progress, owned panels and an unrelated dirty draft. Twelve native normal-size mode/theme cells pass.
+
+A 200% failure exposed a host constraint: minimum-size VS Code groups opt out of proportional expansion, leaving fractional layout input at subpixel sizes. /investigate tied actual native/API/DOM geometry to the exact host source. e4786f2 converts requested ratios from both measured native axes before placement, retaining strict ownership/proportion checks. Fresh native VS Code evidence shows bounded positive minimum panes at impossible sizes and all three successful 200% transfers after the learner hides sidebar/panel; position/source/progress remain fixed. Ordinary screenshot captures were cropped at 200%; the actual CUA native image and full native video are separate proof. Source cuts and incomplete attempts remain qualified in `artifacts/cycle-0014/native-layout-investigation.md`.
+
+The extension test runner intentionally gives VS Code in-memory storage, so its restarts cannot verify Memento disk persistence. Current native work uses an ordinary private driver extension without `--extensionTestsPath`. Cursor 3.21.16 / API 1.128.0 / js-debug 1.93.0 is validated separately in the newer evidence below. Remaining checks are recorded in the handoff.
 Baseline is Cycle 0013's unchanged v29 source and 476/476 extension tests. Cycle 0012 placement failures and Cycle 0013's qualified Cursor 200% recording are retained; product validation must replace those gaps, not relabel them.
 
 Owner D021 arrived during implementation. The current cycle now has its own branch; create its reviewed PR with `@coderabbitai ignore` and `Closes #15`, merge only after validation/review, and close Issue #15 at merge. Main remains `6840178`; the first PR includes the existing unmerged baseline as well as this cycle, so review and describe the integration range explicitly.
 
+## Latest verified source
+
+Current implementation: `bec06d4`; preceding diagnostic recovery fix `add23c5`. Full extension suite passes 494/494 (52.586 s), zero failed/skipped/cancelled. Cursor native motion inspection exposed a stale generic error after a successful restore; presentation errors now have an independent slot, preserving unrelated failures. A compiled-only diagnostic probe then proved native pane relocation can flatten a nested grid, losing its measured height. Retaining the pre-move grid prevents the relative fallback from creating subpixel panes. Red tests and original failures are preserved in `artifacts/cycle-0014/presentation-error-investigation.md`.
+
+Fresh actual Cursor proof at `artifacts/cycle-0014/native/cursor/2026-09-20T14-03-57.849Z-f79deb6f`: 15 native cells pass all four themes at normal scale and all three modes at 200%, including empty error/status, 44px targets, no horizontal overflow, same source/item/progress/panels and paused ready 4500ms replay. Impossible constrained sizes retain positive 220px-by-70px panes and that frame while rejecting unachievable ratios; normal restore succeeds and clears the stale error. Three source-focus transfers and three reading-anchor transfers pass. Root inspected the recorded native frames; screenshots alone at 200% remain cropped and are not used as full-window proof.
+
+Ordinary Cursor restart at `artifacts/cycle-0014/native/cursor/2026-09-20T14-08-19.745Z-e442041a` retains Guided walkthrough and opens the finalized 34-frame recording at 4500ms. Close rejects the retired reader identity; explicit current-identity restore succeeds. Cursor Settings → Open Chat as Editor Tabs must be off in this support configuration: its embedded auxiliary editor appears in tabGroups but outside the current native layout. Hiding Agents is insufficient. This was reproduced, diagnosed against the installed host code, changed through the visible settings UI in the isolated QA profile, and verified on restart. It is a declared compatibility limit, not support for the extra editor part. All listed Cursor sessions closed their owned windows, restored settings.json bytes, then terminated only the idle owned macOS process and exited 0.
+
 ## Handoff
 
-Freeze the rebuilt native candidate, then validate live/offline transfers, focus, pane ownership and constrained UX in each actual host. All diagnostic native hosts and the temporary design preview are stopped. Branch `codex/cycle-0014-shared-presentations`; Issues #1 and #15 remain open. No packaged or final-product claim.
+Continue at bec06d4, source fingerprint in extension/dist/build.json. Current actual VS Code ordinary host is active under artifacts/cycle-0014/native/vscode/2026-09-20T14-10-24.412Z-7c916de0. Finish its final-cut native evidence and configured-repository transfers in both editors, then /design-review, /review, coderabbit-cli/OCR and PR/merge. Bounded browser adapter remains on port 62814. Branch codex/cycle-0014-shared-presentations; Issues #1 and #15 remain open. No packaged or final-product claim.
