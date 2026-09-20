@@ -20,6 +20,10 @@ import { RepositoryBookStore } from '../repositoryBook';
 import { RepositorySourceService } from '../repositorySource';
 import { createConfiguredStudy } from './utils/createConfiguredStudy';
 import { ControlledConfiguredRuntime } from './utils/configuredServiceHarness';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { z } from 'zod';
+import { startServer } from '../server';
 
 /** Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions. @example const reader = await workspaceHarness() */
 async function workspaceHarness(attach = true, deterministicClock = false) {
@@ -40,10 +44,10 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   }
   class TabInputText { constructor(readonly uri: Uri) {} }
   class TabInputWebview { constructor(readonly viewType: string) {} }
-  type Tab = { input: TabInputText | TabInputWebview; label?: string };
+  type Tab = { input: TabInputText | TabInputWebview; label?: string; isPreview?: boolean };
   const groups: { viewColumn: number; tabs: Tab[]; activeTab?: Tab }[] = [{ viewColumn: 2, tabs: [] }];
   let activeTabGroup = groups[0]!;
-  type SourceEditor = { document: { uri: Uri; getText(): string }; readonly viewColumn: number; setDecorations(): void };
+  type SourceEditor = { document: { uri: Uri; getText(): string }; readonly viewColumn: number; setDecorations(): void; selections: string[]; visibleRanges: string[]; revealRange(range: unknown): void };
   let activeTextEditorChanged = (_editor: SourceEditor | undefined) => {};
   let lastSourceEditor: SourceEditor | undefined;
   let sourceFocusOnArrange: SourceEditor | undefined;
@@ -57,7 +61,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const commands: string[] = [];
   let editorLayout: unknown = { orientation: 0, groups: [{}] };
   let nativeLayout = false, cursorGroupWrappers = false, cursorTwoEventContraction = false;
-  let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined;
+  let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined, settlementPending = false;
   const panels = new Set<ReturnType<typeof panel>>();
   const panelReveals: { kind: string; column?: number; preserveFocus?: boolean }[] = [];
   const postedMessages: StudyViewMessage[] = [];
@@ -71,7 +75,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     // Cursor replaces surviving wrappers in the same event that announces an opened group.
     const retained = cursorGroupWrappers ? groups.map(previous => ({ ...previous, tabs: [...previous.tabs] })) : [];
     if (cursorGroupWrappers) groups.splice(0, groups.length, ...retained);
-    groups.push(group); groups.sort((left, right) => left.viewColumn - right.viewColumn);
+    groups.push(group); if (nativeLayout) groups.sort((left, right) => left.viewColumn - right.viewColumn);
     changedGroups({ opened: [group], closed: [], changed: retained }); return group;
   }
   /** Counts native layout leaves so shrinking a grid merges only its removed groups in these tests. @example nativeGroupCount({ groups: [{}, {}] }) // 2 */
@@ -80,25 +84,33 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     return Array.isArray(children) ? children.reduce((total: number, child: unknown) => total + nativeGroupCount(child), 0) : 1;
   }
   function panel(kind: string, _title?: string, options?: { viewColumn: number }) {
-    const nativeTab = { input: new TabInputWebview(kind) };
+    const nativeTab = { input: new TabInputWebview(kind), isPreview: false };
+    const disposed: (() => void)[] = [], viewChanged: (() => void)[] = [];
     // Native webviews create only one missing group, even when a later column was requested.
     const viewColumn = nativeLayout && options?.viewColumn ? Math.min(options.viewColumn, groups.length + 1) : options?.viewColumn;
     const value = { webview: { html: '', postMessage: async (message: StudyViewMessage) => {
       postedMessages.push(message);
-      if (automaticContextReceipt && kind === 'codebook.studyContext' && message.type === 'study' && !message.loading) {
-        receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
+      if (kind === 'codebook.studyContext' && message.presentation?.state === 'applying') receivers.get(kind)?.({ type: 'presentation-pose', presentationId: message.presentation.presentationId, expectedRevision: message.presentation.presentationControlRevision });
+      if ((automaticContextReceipt || message.presentation?.state === 'applying') && kind === 'codebook.studyContext' && message.type === 'study' && !message.loading) {
+        receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, presentationControlRevision: message.presentation?.presentationControlRevision, presentationMode: message.presentation?.mode, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
       }
       return true;
-    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, kind, nativeTab, viewColumn, title: '', reveal(column?: number, preserveFocus?: boolean) {
+    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, kind, nativeTab, viewColumn, title: '', get active() { return activeTabGroup.activeTab === nativeTab; }, get visible() { return groups.some(group => group.activeTab === nativeTab); }, reveal(column?: number, preserveFocus?: boolean) {
       panelReveals.push({ kind, column, preserveFocus });
+      const previousColumn = value.viewColumn;
       if (column !== undefined) value.viewColumn = column;
-      if (nativeLayout) {
+      {
         for (const group of groups) { group.tabs = group.tabs.filter(tab => tab !== nativeTab); if (group.activeTab === nativeTab) group.activeTab = undefined; }
-        const group = nativeGroup(value.viewColumn ?? 1); group.tabs.push(nativeTab); group.activeTab = nativeTab;
+        const group = nativeGroup(value.viewColumn ?? 1);
+        if (nativeLayout && previousColumn !== value.viewColumn && group.activeTab?.isPreview) { const replaced = [...panels].find(panel => panel.nativeTab === group.activeTab); replaced?.dispose(); }
+        group.tabs.push(nativeTab); group.activeTab = nativeTab;
+        if (column !== undefined && previousColumn !== column) nativeTab.isPreview = true;
+        if (!preserveFocus) activeTabGroup = group;
+        for (const listener of viewChanged) listener();
       }
       if (contextCoversSource && kind === 'codebook.studyContext') groups[0]!.activeTab = undefined;
-    }, onDidDispose: disposable, onDidChangeViewState: disposable, dispose() { panels.delete(value); if (nativeLayout) for (const group of groups) group.tabs = group.tabs.filter(tab => tab !== nativeTab); } };
-    if (nativeLayout) { const group = nativeGroup(value.viewColumn ?? 1); group.tabs.push(nativeTab); group.activeTab = nativeTab; }
+    }, onDidDispose(callback: () => void) { disposed.push(callback); return disposable(); }, onDidChangeViewState(callback: () => void) { viewChanged.push(callback); return disposable(); }, dispose() { panels.delete(value); for (const group of groups) { group.tabs = group.tabs.filter(tab => tab !== nativeTab); if (group.activeTab === nativeTab) group.activeTab = undefined; } for (const listener of disposed) listener(); } };
+    { const group = nativeGroup(value.viewColumn ?? 1); group.tabs.push(nativeTab); group.activeTab = nativeTab; }
     panels.add(value); return value;
   }
   const initialSelection: string[] = [];
@@ -108,7 +120,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     reveal: async (participant: string, options: { select: boolean; focus: boolean }) => { assert.equal(options.focus, false); if (options.select) outline.selection = [participant]; } };
   const watcher = { onDidChange(callback: () => void) { changed = callback; return disposable(); }, onDidCreate: disposable, onDidDelete: disposable, dispose() {} };
   const boundary = await loadModule<typeof import('../studyWorkspace')>(resolve(__dirname, '../studyWorkspace.js'), {
-    vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position: class {}, Range: class {}, ViewColumn: { One: 1, Two: 2, Three: 3 }, ThemeColor: class {}, RelativePattern: class {},
+    vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position: class {}, Range: class {}, ViewColumn: { One: 1, Two: 2, Three: 3 }, TextEditorRevealType: { AtTop: 0 }, ThemeColor: class {}, RelativePattern: class {},
       commands: { async executeCommand(name: string, layout?: unknown): Promise<unknown> {
         commands.push(name); const held = nextCommand; if (held?.name === name) { nextCommand = undefined; held.entered(); await held.wait; }
         if (name === failingCommand) { failingCommand = undefined; throw new Error('Native layout command failed'); }
@@ -119,10 +131,17 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           if (sourceFocusOnArrange) activeTextEditorChanged(sourceFocusOnArrange);
           return;
         }
-        if (name === 'vscode.getEditorLayout') return JSON.parse(JSON.stringify(editorLayout, (key, value) => key === 'groups' && Array.isArray(value) ? value.map(group => ({ size: 1, ...group })) : value));
+        if (name === 'workbench.action.keepEditor' && activeTabGroup.activeTab) activeTabGroup.activeTab.isPreview = false;
+        if (name === 'vscode.getEditorLayout') {
+          const layout = JSON.parse(JSON.stringify(editorLayout, (key, value) => key === 'groups' && Array.isArray(value) ? value.map(group => ({ size: 1, ...group })) : value));
+          // The accepted grid settles without a second mutation; its first read can still contain native transient pixels.
+          if (settlementPending) { editorLayout = structuredClone(settledLayout); settlementPending = false; }
+          return layout;
+        }
         if (name === 'vscode.setEditorLayout') {
           settledLayout = structuredClone(layout);
           editorLayout = transientLayout ? { orientation: 0, groups: [{ size: 0.5, groups: [{ size: 0.5 }, { size: 475.83333333333326 }] }, { size: 659.5 }] } : structuredClone(layout);
+          settlementPending = transientLayout;
           if (nativeLayout) {
             const count = nativeGroupCount(layout);
             for (let column = 1; column <= count; column++) nativeGroup(column);
@@ -151,22 +170,22 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         }
         if (name === 'workbench.action.evenEditorWidths') editorLayout = structuredClone(settledLayout);
       } },
-      window: { createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeTextEditorChanged = callback; return disposable(); }, createWebviewPanel: panel,
+      window: { get activeTextEditor() { return visibleSourceEditors.find(editor => activeTabGroup === editor.group && activeTabGroup.activeTab?.input instanceof TabInputText && activeTabGroup.activeTab.input.uri.toString() === editor.document.uri.toString()); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeTextEditorChanged = callback; return disposable(); }, createWebviewPanel: panel,
         get visibleTextEditors() { return visibleSourceEditors.filter(editor => editor.group.activeTab?.input instanceof TabInputText && editor.group.activeTab.input.uri.toString() === editor.document.uri.toString()); },
-        showTextDocument: async (document: { uri: Uri; getText(): string }, options?: { viewColumn: number }) => {
+        showTextDocument: async (document: { uri: Uri; getText(): string }, options?: { viewColumn: number; preserveFocus?: boolean }) => {
           sourceColumn = options?.viewColumn ?? sourceColumn;
           const group = groups.find(candidate => candidate.viewColumn === sourceColumn) ?? groups[0]!, tab = group.tabs.find(tab => tab.input instanceof TabInputText && tab.input.uri.toString() === document.uri.toString()) ?? { input: new TabInputText(document.uri) };
-          if (!group.tabs.includes(tab)) group.tabs.push(tab); group.activeTab = tab;
-          visibleSourceEditors.push({ group, document, get viewColumn() { return group.viewColumn; }, setDecorations() { decoratedColumns.push(group.viewColumn); } });
+          if (!group.tabs.includes(tab)) group.tabs.push(tab); group.activeTab = tab; if (!options?.preserveFocus) activeTabGroup = group;
+          visibleSourceEditors.push({ group, document, get viewColumn() { return group.viewColumn; }, setDecorations() { decoratedColumns.push(group.viewColumn); }, selections: ['original selection'], visibleRanges: ['original range'], revealRange() {} });
           const displayed = nextSourceDisplay; nextSourceDisplay = undefined; displayed?.();
-          return lastSourceEditor = { document, get viewColumn() { return reportedSourceColumn ?? group.viewColumn; }, setDecorations() { decoratedColumns.push(reportedSourceColumn ?? group.viewColumn); } };
+          return lastSourceEditor = { document, get viewColumn() { return reportedSourceColumn ?? group.viewColumn; }, setDecorations() { decoratedColumns.push(reportedSourceColumn ?? group.viewColumn); }, selections: ['original selection'], visibleRanges: ['original range'], revealRange() {} };
         },
         tabGroups: { all: groups, get activeTabGroup() { return activeTabGroup; }, onDidChangeTabGroups: (callback: typeof changedGroups) => { changedGroups = callback; return disposable(); }, close: async (tabs: Tab[]) => { for (const group of groups) group.tabs = group.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
       workspace: { textDocuments: [], registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
         openTextDocument: async (uri: Uri) => { const held = nextOpen; nextOpen = undefined; if (held) { held.entered(); await held.wait; } const text = uri.scheme === 'file' ? await readFile(uri.fsPath, 'utf8') : await sourceProvider(uri); return { uri, getText: () => text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n') }; },
         onDidChangeTextDocument: disposable, createFileSystemWatcher: () => watcher } },
     './environment': { requireWorkspace: () => harness.directory }, 'codebook-cycle-0001/dist/browserViewport': { BrowserViewport: class {
-      async reveal() {} async showLive() {} showHistory() {} close() {}
+      async reveal() {} async showLive() {} showHistory() {} close() {} async holdPlacement() { return () => {}; } async restorePlacement() {}
       clearRecorded() { displayedImage = undefined; }
       async present(image: string) { const held = nextImage; nextImage = undefined; if (held) { held.entered(); await held.wait; } displayedImage = image; }
       async presentMissing() { displayedImage = undefined; }
@@ -174,17 +193,24 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   });
   const articleOpens: RepositorySelection[] = [], articleReturns: RepositorySelection[] = [];
   const controls = { start: async () => harness.service, connect: async () => {}, returnToRepository: async (selection: RepositorySelection) => { articleReturns.push(selection); }, openArticle: async (selection: RepositorySelection) => { articleOpens.push(selection); } };
-  const createReader = () => new boundary.StudyWorkspace({ extensionPath: join(harness.directory, 'extension'), globalStorageUri: { fsPath: join(harness.directory, 'storage') }, subscriptions: [] }, controls);
+  const presentationPreferences = new Map<string, unknown>();
+  let preferenceFailure = false;
+  let nextPreference: { wait: Promise<void>; entered(): void } | undefined;
+  const workspaceState = { get: <Value>(key: string) => presentationPreferences.get(key) as Value | undefined,
+    update: async (key: string, value: unknown) => { const held = nextPreference; nextPreference = undefined; held?.entered(); await held?.wait; if (preferenceFailure) throw new Error('Injected preference failure'); presentationPreferences.set(key, structuredClone(value)); } };
+  const createReader = () => new boundary.StudyWorkspace({ extensionPath: join(harness.directory, 'extension'), globalStorageUri: { fsPath: join(harness.directory, 'storage') }, subscriptions: [], workspaceState }, controls);
   const reader = createReader();
   if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
   return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, articleOpens, articleReturns, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
     outlineItem: (itemId: string) => outlineItem(itemId), changeOutlineCheckbox: (itemId: string, checked: boolean) => outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
-    postedMessages: () => postedMessages,
+    postedMessages: () => postedMessages, presentationPreferences,
+    failPresentationPreference(value: boolean) { preferenceFailure = value; },
+    holdPresentationPreference() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); nextPreference = { wait, entered }; return { started, release }; },
     clock(value: number) { clock = value; }, acknowledgeContext() { automaticContextReceipt = true; }, displayedImage: () => displayedImage,
     coverSourceWhenContextFocused() { contextCoversSource = true; },
     panelColumn: (kind: string) => [...panels].find(panel => panel.kind === kind)?.viewColumn,
     panelReveals: () => [...panelReveals],
-    movePanel(kind: string, column: number) { const panel = [...panels].find(panel => panel.kind === kind); assert.ok(panel); if (nativeLayout) panel.reveal(column); else panel.viewColumn = column; },
+    movePanel(kind: string, column: number) { const panel = [...panels].find(panel => panel.kind === kind); assert.ok(panel); panel.reveal(column); },
     sourceColumn: () => sourceColumn,
     restoreSourceFocusOnArrange() { sourceFocusOnArrange = lastSourceEditor; },
     reportSourceEditorInColumn(column: number) { reportedSourceColumn = column; },
@@ -392,7 +418,7 @@ test('cancelling a first reader entry drains its accepted workbench layout batch
     const opening = harness.reader.open(cancellation.signal), rejected = assert.rejects(opening, /abort/i);
     await layout.started; const commands = [...harness.commands]; cancellation.abort(); layout.release(); await rejected;
     // Assert
-    assert.deepEqual(harness.commands, [...commands, 'vscode.setEditorLayout', 'workbench.action.evenEditorWidths', 'vscode.getEditorLayout']); assert.equal(harness.reader.inspect().opened, false);
+    assert.deepEqual(harness.commands, [...commands, 'vscode.setEditorLayout', 'vscode.getEditorLayout']); assert.equal(harness.reader.inspect().opened, false);
     await harness.reader.open(); assert.equal(harness.reader.inspect().opened, true);
   } finally { layout.release(); await harness.close(); }
 });
@@ -407,7 +433,7 @@ test('returning to Wiki places source beside article without merging tabs and th
     await harness.reader.open();
     // Assert
     assert.deepEqual(readingLayout, { orientation: 0, groups: [{}, {}, {}] });
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.deepEqual(harness.groups, groups); assert.equal(harness.groups[0]!.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
     assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 3); assert.equal(harness.runtimes.length, 0);
   } finally { await harness.close(); }
@@ -453,7 +479,7 @@ test('cancelling Wiki navigation while checking native layout ownership cannot r
     const navigation = harness.reader.arrangeRepository(cancellation.signal), rejected = assert.rejects(navigation, /abort/i);
     await held.started; cancellation.abort(); held.release(); await rejected;
     // Assert
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 1);
   } finally { release(); await harness.close(); }
 });
@@ -472,7 +498,7 @@ test('returning to Wiki during a cancelled Study layout waits for the accepted h
     // Assert
     assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{}, {}, {}] });
     assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 4);
-    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, 4);
+    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, 2);
     assert.equal(harness.runtimes.length, 0);
   } finally { release(); await harness.close(); }
 });
@@ -489,7 +515,7 @@ for (const change of ['shape', 'size']) test(`a manual ${change} change during t
     await harness.reader.arrangeRepository(new AbortController().signal);
     // Assert
     assert.deepEqual(harness.editorLayout(), manual); assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 2);
-    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, 2);
+    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, 0);
   } finally { release(); await harness.close(); }
 });
 
@@ -505,7 +531,7 @@ test('Cursor wrapper-only tab resync preserves Wiki and Study layout switching d
     harness.resyncEditorGroups(); await harness.reader.open();
     // Assert
     assert.deepEqual(wiki, { orientation: 0, groups: [{}, {}, {}] });
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 3);
   } finally { release(); await harness.close(); }
 });
@@ -520,7 +546,7 @@ for (const change of ['move', 'replace', 'remove', 'reorder', 'unannounced'] as 
     // Act
     await harness.reader.arrangeRepository(new AbortController().signal);
     // Assert
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 1);
   } finally { await harness.close(); }
 });
@@ -533,7 +559,7 @@ for (const kind of ['known', 'unknown', 'duplicate', 'ambiguous', 'empty'] as co
     // Act
     harness.resyncEditorGroups(kind === 'empty' ? 'empty' : undefined); await harness.reader.arrangeRepository(new AbortController().signal);
     // Assert
-    assert.deepEqual(harness.editorLayout(), kind === 'known' ? { orientation: 0, groups: [{}, {}, {}] } : { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.deepEqual(harness.editorLayout(), kind === 'known' ? { orientation: 0, groups: [{}, {}, {}] } : { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, kind === 'known' ? 2 : 1);
   } finally { await harness.close(); }
 });
@@ -631,7 +657,7 @@ test('explicit Arrange separates moved application, source and context while pre
     assert.equal(harness.panelColumn('codebook.studyContext'), 3);
     assert.equal(harness.decoratedColumns().includes(2), true);
     assert.equal(sourceGroup.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     // A later Source action must retain Arrange's reader instead of reopening the older duplicate.
     await harness.reader.action('source');
     assert.equal(harness.sourceColumn(), 2);
@@ -716,7 +742,7 @@ test('first Study entry from one editor group keeps empty Context separate from 
     // Assert
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
     assert.equal(harness.panelColumn('codebook.studyContext'), 3);
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.groups[0]!.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
     assert.equal(harness.reader.inspect().view!.errors.length, 0);
     assert.equal(harness.runtimes.length, 0);
@@ -1520,7 +1546,7 @@ test('Close drains an accepted workbench arrangement batch without dispatching a
   try {
     await harness.reader.open();
     const widthsBefore = harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length;
-    const held = harness.holdNextCommand('runCommands'); release = held.release;
+    const held = harness.holdNextCommand('vscode.setEditorLayout'); release = held.release;
     const arranging = harness.reader.action('arrange'); await held.started;
     let closed = false;
     // Act
@@ -1530,7 +1556,7 @@ test('Close drains an accepted workbench arrangement batch without dispatching a
     held.release(); await arranging.catch(() => undefined); await closing;
     // Assert
     assert.equal(closedWhileArrangementPending, false);
-    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, widthsBefore + 1);
+    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, widthsBefore);
     assert.equal(harness.reader.inspect().opened, false);
   } finally { release(); await harness.close(); }
 });
@@ -1544,11 +1570,11 @@ test('native transient half-pixel layout sizes are finalized in the workbench be
     // Assert
     assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{}, {}, {}] });
     assert.equal(harness.commands.filter(name => name === 'runCommands').length, 2);
-    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, 2);
+    assert.equal(harness.commands.filter(name => name === 'workbench.action.evenEditorWidths').length, 1);
   } finally { await harness.close(); }
 });
 
-for (const command of ['vscode.setEditorLayout', 'workbench.action.evenEditorWidths']) test(`a host-suppressed ${command} failure warns the learner and cannot claim the incomplete layout for a later Wiki return`, async () => {
+for (const command of ['vscode.setEditorLayout']) test(`a host-suppressed ${command} failure warns the learner and cannot claim the incomplete layout for a later Wiki return`, async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.showTransientNativeSizes(); harness.failNextCommand(command);
   try {
@@ -2057,7 +2083,7 @@ test('actual Return cannot consume another article origin when its native layout
     // Act
     await harness.reader.arrangeRepository(new AbortController().signal, { ...harness.origin, nodeId: 'another-article' });
     // Assert
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     await harness.reader.action('return-wiki');
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
   } finally { await harness.close(); }
@@ -2074,7 +2100,7 @@ test('cancelling actual Return during its ownership read preserves Study and per
     const returning = harness.reader.arrangeRepository(cancellation.signal, harness.origin), rejected = assert.rejects(returning, /abort/i);
     await held.started; cancellation.abort(); held.release(); await rejected;
     // Assert
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     await harness.reader.action('return-wiki');
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
   } finally { release(); await harness.close(); }
@@ -2094,7 +2120,7 @@ test('a new evidence visit drains a cancelled Return layout before restoring its
     held.release(); await rejected; await opening; await harness.controller.settle();
     // Assert
     assert.equal(harness.controller.state().readiness, 'ready');
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 1, groups: [{ size: 1 }, { size: 1 }] }, { size: 1 }] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
   } finally { release(); await harness.close(); }
 });
@@ -2242,7 +2268,7 @@ for (const cursor of [false, true]) test(`${cursor ? 'Cursor: ' : ''}reentry can
     await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
     // Assert
     assert.equal(harness.sourceColumn(), 3); assert.equal(harness.groups.length, 3);
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 1, groups: [{ size: 1 }, { size: 1 }] }, { size: 1 }] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
   } finally { release(); await harness.close(); }
 });
 
@@ -2456,7 +2482,7 @@ test('reentry restores the verified Study grid once without evening its saved sp
     // Act
     await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
     // Assert
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 1, groups: [{ size: 1 }, { size: 1 }] }, { size: 1 }] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length - mutations, 1);
     assert.equal(harness.commands.filter(command => command === 'workbench.action.evenEditorWidths').length, equalizations);
   } finally { await harness.close(); }
@@ -2491,7 +2517,7 @@ test('Cursor group contraction preserves pre-merge identities so the next eviden
     await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
     // Assert
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 1, groups: [{ size: 1 }, { size: 1 }] }, { size: 1 }] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.reader.inspect().view?.errors.length, 0);
   } finally { await harness.close(); }
 });
@@ -2511,7 +2537,7 @@ for (const recording of [false, true]) test(`Cursor two-event contraction preser
     // Assert
     assert.deepEqual({ returnErrorCount, appColumn: harness.panelColumn('codebook.scopedBrowser'), sourceColumn: harness.sourceColumn(), contextColumn: harness.panelColumn('codebook.studyContext') },
       { returnErrorCount: 0, appColumn: 1, sourceColumn: 2, contextColumn: 3 });
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 1, groups: [{ size: 1 }, { size: 1 }] }, { size: 1 }] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.reader.inspect().view!.errors.length, 0);
     const application = harness.groups.find(group => group.viewColumn === 1)!.activeTab?.input, source = harness.groups.find(group => group.viewColumn === 2)!.activeTab?.input, context = harness.groups.find(group => group.viewColumn === 3)!.activeTab?.input;
     assert.ok(application && 'viewType' in application); assert.equal(application.viewType, 'codebook.scopedBrowser');
@@ -2658,5 +2684,209 @@ for (const newer of ['selection', 'Open'] as const) test(`a newer ${newer} preve
     assert.equal(harness.panelReveals().filter(reveal => reveal.kind === 'codebook.scopedBrowser').length, reveals);
     const visible = harness.groups.find(group => group.viewColumn === 1)!.activeTab?.input;
     assert.ok(visible && 'uri' in visible); assert.equal(visible.uri.path.endsWith('/article-source.ts'), true);
+  } finally { release(); await harness.close(); }
+});
+
+test('all three presentation modes retain the exact panels, source, learning item and learner decisions', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); await harness.reader.understand(true);
+    const initial = harness.reader.inspect(), library = await harness.reader.learningStorage(), progress = await library.readProgress();
+    const app = harness.reader['app'], context = harness.reader['contextPanel'];
+    const draft = harness.addForeignDraft(1);
+    // Act
+    let state = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 1); assert.equal(harness.sourceColumn(), 3);
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.6 }, { size: 0.4, groups: [{ size: 0.5 }, { size: 0.5 }] }] });
+    state = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+    state = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'select' });
+    assert.equal(harness.reader['app'], app); assert.equal(harness.reader['contextPanel'], context);
+    assert.equal(harness.reader.inspect().sourceUri, initial.sourceUri); assert.deepEqual(harness.reader.inspect().view!.model.selection, initial.view!.model.selection);
+    assert.deepEqual(await library.readProgress(), progress); assert.equal(harness.runtimes.length, 0);
+    assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true);
+    assert.equal(harness.reader.presentationState().presentationControlRevision, 3); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'study-workspace' });
+  } finally { await harness.close(); }
+});
+
+test('same-mode selection keeps its revision only while the actual native layout is still confirmed', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); let state = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    state = harness.reader.presentationState(); const commands = [...harness.commands];
+    // Act / Assert
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    assert.equal(harness.reader.presentationState().presentationControlRevision, 1);
+    assert.deepEqual(harness.commands, [...commands, 'vscode.getEditorLayout']);
+    harness.changeEditorLayout({ orientation: 0, groups: [{ size: 0.5, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.5 }] });
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    assert.equal(harness.reader.presentationState().presentationControlRevision, 2);
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.6 }, { size: 0.4, groups: [{ size: 0.5 }, { size: 0.5 }] }] });
+  } finally { await harness.close(); }
+});
+
+test('a failed mode preference keeps the applied layout and save-only recovery does not move any editor', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); harness.failPresentationPreference(true); let state = harness.reader.presentationState();
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    // Assert
+    state = harness.reader.presentationState(); assert.equal(state.mode, 'living-book'); assert.equal(state.layoutConfirmed, true); assert.equal(state.preference.status, 'failed');
+    const commands = [...harness.commands], reveals = harness.panelReveals(); harness.failPresentationPreference(false);
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'save-preference' });
+    assert.equal(harness.reader.presentationState().preference.status, 'saved'); assert.deepEqual(harness.commands, commands); assert.deepEqual(harness.panelReveals(), reveals);
+    assert.equal(harness.reader.presentationState().presentationControlRevision, 2);
+  } finally { await harness.close(); }
+});
+
+test('pending presentation placement rejects stale and competing controls before dispatching any runtime input', async () => {
+  // Arrange
+  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const held = harness.holdNextCommand('workbench.action.keepEditor');
+  try {
+    await harness.reader.open(); const state = harness.reader.presentationState();
+    const pending = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await held.started;
+    // Act / Assert
+    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' }), /revision changed/);
+    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision + 1, mode: 'guided-walkthrough', action: 'select' }), /pending/);
+    assert.throws(() => harness.service.start({ instanceId: harness.service.instanceId, profile: 'paired-cart-demo', key: 'during-move' }), /pending/);
+    assert.equal(harness.runtimes.length, 0); assert.equal(harness.service.records.size, 0);
+    held.release(); await pending;
+    assert.equal(harness.reader.presentationState().mode, 'living-book');
+  } finally { held.release(); await harness.close(); }
+});
+
+test('Close retires the reader identity immediately and waits for an already accepted presentation preference write', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const held = harness.holdPresentationPreference();
+  try {
+    await harness.reader.open(); const state = harness.reader.presentationState();
+    const pending = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const rejected = assert.rejects(pending, /not confirmed/); await held.started;
+    // Act
+    let closed = false; const closing = harness.reader.close().then(() => { closed = true; });
+    // Assert
+    assert.notEqual(harness.reader.presentationState().presentationId, state.presentationId); assert.equal(harness.reader.presentationState().presentationControlRevision, 0); assert.equal(closed, false);
+    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: 1, mode: 'living-book', action: 'select' }), /lifetime has ended/);
+    held.release(); await rejected; await closing;
+    assert.equal(closed, true); assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
+    assert.equal(harness.reader.presentationState().mode, 'living-book'); assert.equal(harness.reader.presentationState().state, 'closed');
+  } finally { held.release(); await harness.close(); }
+});
+
+test('real MCP presentation discovery and control preserve identities across response loss and reject stale clients', async () => {
+  // Arrange
+  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] }); await harness.reader.open();
+  const endpoint = await startServer(harness.service);
+  const transport = new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } } });
+  const client = new Client({ name: 'presentation-contract-test', version: '1.0' }); await client.connect(transport);
+  try {
+    // Act
+    const tools = await client.listTools(), discovery = await client.callTool({ name: 'codebook_status', arguments: {} });
+    const selected = z.object({ data: z.object({ instanceId: z.string(), presentation: z.object({ presentationId: z.string(), presentationControlRevision: z.number(), uri: z.string() }) }) }).parse(discovery.structuredContent).data;
+    const input = { instanceId: selected.instanceId, presentationId: selected.presentation.presentationId, expectedRevision: selected.presentation.presentationControlRevision, mode: 'living-book' };
+    const before = [...harness.commands];
+    const wrong = await client.callTool({ name: 'codebook_presentation', arguments: { ...input, instanceId: randomUUID() } });
+    // Assert
+    assert.match(JSON.stringify(wrong.structuredContent), /STALE_INSTANCE/); assert.deepEqual(harness.commands, before);
+    const tool = tools.tools.find(tool => tool.name === 'codebook_presentation')!;
+    assert.equal(tool.annotations?.destructiveHint, false); assert.equal(tool.annotations?.openWorldHint, false);
+    assert.deepEqual(tool.inputSchema.properties?.mode, { type: 'string', enum: ['study-workspace', 'living-book', 'guided-walkthrough'] });
+    assert.equal(tool.inputSchema.required?.includes('action'), false);
+    const applied = await client.callTool({ name: tool.name, arguments: input }); assert.equal(applied.isError, undefined);
+    const resource = await client.readResource({ uri: selected.presentation.uri }); const contents = resource.contents[0]; assert.ok(contents && 'text' in contents);
+    const receipt = z.object({ instanceId: z.string(), presentationId: z.string(), presentationControlRevision: z.number(), mode: z.string(), preference: z.object({ status: z.string() }) }).parse(JSON.parse(contents.text));
+    assert.equal(receipt.presentationId, selected.presentation.presentationId); assert.equal(receipt.presentationControlRevision, 1); assert.equal(receipt.mode, 'living-book'); assert.equal(receipt.preference.status, 'saved');
+    const commands = [...harness.commands];
+    const stale = await client.callTool({ name: tool.name, arguments: input }); assert.match(JSON.stringify(stale.structuredContent), /STALE_PRESENTATION/); assert.deepEqual(harness.commands, commands);
+    await harness.reader.close();
+    const retired = await client.callTool({ name: tool.name, arguments: { ...input, expectedRevision: 1 } }); assert.match(JSON.stringify(retired.structuredContent), /PRESENTATION_INSTANCE_GONE/);
+    assert.equal(harness.runtimes.length, 0); assert.equal(harness.service.records.size, 0);
+  } finally { await client.close(); await endpoint.close(); await harness.close(); }
+});
+
+test('an unknown presentation preference survives opening and a cancelled picker until an explicit replacement', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); const stored = { version: 91, mode: 'future-mode', foreign: 'retained' };
+  harness.presentationPreferences.set('codebook.presentation.v1', stored); harness.presentationPreferences.set('unrelated', { value: 'retained' });
+  await harness.reader.close(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    // Act
+    await harness.reader.open(); await harness.reader.selectPresentation();
+    // Assert
+    let state = harness.reader.presentationState(); assert.equal(state.mode, 'study-workspace'); assert.equal(state.preference.status, 'unknown'); assert.equal(state.presentationControlRevision, 0);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), stored);
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'select' });
+    state = harness.reader.presentationState(); assert.equal(state.preference.status, 'saved'); assert.equal(state.presentationControlRevision, 1);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'study-workspace' }); assert.deepEqual(harness.presentationPreferences.get('unrelated'), { value: 'retained' });
+  } finally { await harness.close(); }
+});
+
+test('a foreign preview is preserved without Keep Editor or relocation when selecting another presentation', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); const draft = harness.addForeignDraft(1); Reflect.set(draft, 'isPreview', true);
+    const state = harness.reader.presentationState(), commands = [...harness.commands], reveals = harness.panelReveals();
+    // Act / Assert
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), /not confirmed/);
+    assert.deepEqual(harness.commands, commands); assert.deepEqual(harness.panelReveals(), reveals); assert.equal(Reflect.get(draft, 'isPreview'), true); assert.equal(draft.isDirty, true);
+    assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(harness.presentationPreferences.size, 0);
+    assert.match(harness.reader.presentationState().reason ?? '', /foreign preview/);
+  } finally { await harness.close(); }
+});
+
+test('a live pause with an uncommitted image or reserved resume rejects mode switching without native effects', async () => {
+  // Arrange
+  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: 'paired-cart-demo', key: 'capture-gate' }); await harness.service.record(receipt).preparation;
+    harness.service.action({ instanceId: harness.service.instanceId, runId: receipt.runId, key: 'click', action: 'add-to-cart' });
+    const state = harness.reader.presentationState(), commands = [...harness.commands];
+    // Act / Assert
+    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), /committed inspected pause/);
+    const runtime = harness.runtimes[0]!; assert.ok(runtime.gate.current); runtime.gate.reserve(runtime.gate.current);
+    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), /continue request/);
+    assert.deepEqual(harness.commands, commands); assert.equal(harness.reader.presentationState().presentationControlRevision, 0); assert.equal(runtime.dispatches, 1);
+  } finally { await harness.close(); }
+});
+
+test('mode transfer during a late replay image preserves the last confirmed time, source and explicit understanding', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    await harness.reader.understand(true);
+    const source = harness.reader.inspect().sourceUri, library = await harness.reader.learningStorage(), decisions = (await library.readProgress()).decisions;
+    const retained = harness.controller.bundle(), pendingImage = harness.holdNextImage(); release = pendingImage.release;
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 150 }); await pendingImage.started;
+    const state = harness.reader.presentationState();
+    // Act
+    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await new Promise<void>(resolve => setImmediate(resolve)); release(); await transfer;
+    // Assert
+    assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.controller.state().requestedMs, 100);
+    assert.equal(harness.controller.bundle(), retained); assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.reader.inspect().sourceUri, source);
+    assert.equal(harness.reader.inspect().view?.contentTab, 'recording'); assert.equal(harness.displayedImage(), harness.png.toString('base64'));
+    assert.deepEqual((await library.readProgress()).decisions, decisions); assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
+    assert.equal((await harness.store.readPreference())?.positionMs, 100); assert.equal(harness.reader.presentationState().mode, 'living-book');
+    const next = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: next.presentationId, expectedRevision: next.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
+    assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.reader.inspect().sourceUri, source);
   } finally { release(); await harness.close(); }
 });

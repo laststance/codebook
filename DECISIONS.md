@@ -151,3 +151,11 @@ Decision: keep the bounded configured browser adapter and shared immutable study
 Reason: the configured path now answers its finite cycle question; G08 and G09 remain wholly unimplemented. Further repetition of unchanged runtime checks would not close that product gap.
 
 Limits: full implementation review remains non-converged; supported adapter bounds, prior partial captures and local evidence availability remain qualified. Packaging, three intended uses, owner acceptance and the final ten sequential reviews remain required. No product outcome changes. Status: active route.
+
+## D021 — Deliver every new cycle through its own branch and merged PR, 2026-09-20
+
+Source: Raphtalia's explicit active-goal update during Cycle 0014.
+
+Decision: at each new cycle, freshly read Issue #1 and its linked purpose prose and visually inspect its approved design images; create that cycle's work branch; implement, validate and review including coderabbit-cli; create a PR whose description contains `@coderabbitai ignore`; close the cycle issue at merge, using the PR's closing reference. Keep Issue #1 open until complete integrated acceptance and ten consecutive fresh sequential PASS reviews. Owner delegates recommended skill choices and waives user-named-target/question-wait gates as already recorded in the active goal.
+
+Application: Cycle 0014 was already in progress when this instruction arrived. Its changes are now on `codex/cycle-0014-shared-presentations`, based on `1e80750`. Issue #15 stays open through review and PR delivery. Earlier closed cycles retain their historical delivery state. Remote main is still `6840178`; the first PR to main will also integrate the existing unmerged recording/repository/configured-runtime baseline. Its review must disclose and cover that larger integration diff separately from Cycle 0014's implementation range. Subsequent cycles branch from the integrated result. No requirement or evidence claim changes.

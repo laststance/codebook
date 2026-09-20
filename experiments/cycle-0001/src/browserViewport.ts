@@ -33,6 +33,8 @@ export class BrowserViewport {
   private summaryAt = 0;
   private readonly liveCounts = new Map<string, number>();
   private missingReceipt?: { epoch: string; id: string };
+  private readonly rendererOperations = new Set<Promise<unknown>>();
+  private placement?: { released: Promise<void>; release(): void };
 
   constructor(runId: string, private readonly record: (type: string, detail?: unknown) => unknown, private readonly fail: (reason: string) => void, private readonly scenario: Scenario, private readonly lease?: ViewportLease, private readonly observer?: ViewportRecordingObserver, private readonly mode: 'live' | 'recording' = 'live') {
     this.panel = lease?.panel ?? vscode.window.createWebviewPanel('codebook.scopedBrowser', `codebook ${runId.slice(0, 8)}`, vscode.ViewColumn.One, { enableScripts: true, localResourceRoots: [] });
@@ -59,7 +61,7 @@ export class BrowserViewport {
         this.delivery.begin(message.epoch);
         this.record('viewport.ready', { epoch: this.epoch });
         const latest = this.pinnedPause ?? this.latestLive;
-        if (latest) this.offerLiveOrRestored(latest);
+        if (latest && !this.placement) this.offerLiveOrRestored(latest);
       } else if (message.type === 'painted' && 'id' in message && typeof message.id === 'number') this.delivery.acknowledge(message.epoch, message.id);
       else if (message.type === 'missing-painted' && 'id' in message && typeof message.id === 'string' && this.mode === 'recording' && message.epoch === this.epoch) this.missingReceipt = { epoch: message.epoch, id: message.id };
     }));
@@ -76,7 +78,7 @@ export class BrowserViewport {
       this.latestLive = { data: frame.data, hash: sha256(Buffer.from(frame.data, 'base64')), phase: 'live', required: false, delayAck: false };
       if (this.observer) this.aggregateLive('viewport.stream-received');
       else this.record('viewport.stream-received', { hash: this.latestLive.hash, metadata: frame.metadata, sessionId: frame.sessionId, withheld: Boolean(this.pinnedPause) });
-      if (this.epoch && !this.pinnedPause) this.offerLiveOrRestored(this.latestLive);
+      if (this.epoch && !this.pinnedPause && !this.placement) this.offerLiveOrRestored(this.latestLive);
     });
     await cdp.subscribe(['Debugger.paused', 'Debugger.resumed', 'Page.screencastFrame']);
     signal.throwIfAborted();
@@ -90,7 +92,43 @@ export class BrowserViewport {
   recordCapture(data: string, phase: string): void { this.observe(() => this.observer!.frame({ data, phase, kind: 'phase', elapsedMs: this.observer!.elapsedMs() })); }
 
   /** Brings the owned viewport into view and awaits its renderer, called by preparation/completion. @example await viewport.reveal(signal) */
-  async reveal(signal: AbortSignal): Promise<void> {
+  reveal(signal: AbortSignal): Promise<void> { return this.withRenderer(() => this.revealNow(signal)); }
+
+  /** Reserves placement before draining required paints; {@link StudyWorkspace} releases it before post-move verification. @example const release = await viewport.holdPlacement(signal) */
+  async holdPlacement(signal: AbortSignal): Promise<() => void> {
+    signal.throwIfAborted();
+    if (this.closed || this.placement) throw new Error('Viewport placement is unavailable.');
+    let release!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const placement = { released, release: () => { if (this.placement === placement) this.placement = undefined; release(); } };
+    this.placement = placement;
+    try {
+      // New required operations wait outside this set; already accepted paints drain before any native move.
+      await Promise.all([...this.rendererOperations]); signal.throwIfAborted();
+      if (this.closed) throw new Error('Viewport closed before placement.');
+      return placement.release;
+    } catch (error) { placement.release(); throw error; }
+  }
+
+  /** Reconfirms retained pixels after native relocation without recapturing the application; called outside the placement lock. @example await viewport.restorePlacement(signal) */
+  async restorePlacement(signal: AbortSignal): Promise<void> {
+    if (this.historical) return;
+    await this.reveal(signal); signal.throwIfAborted();
+    const retained = this.pinnedPause ?? this.latestLive;
+    if (retained) await this.withRenderer(() => this.delivery.offer({ ...retained, required: true }));
+    signal.throwIfAborted();
+  }
+
+  /** Serializes admission against an owned move without holding the native layout lock during renderer ACKs. @example this.withRenderer(() => this.presentNow(data, phase)) */
+  private withRenderer<Value>(operation: () => Promise<Value>): Promise<Value> {
+    if (this.closed) return Promise.reject(new Error('Owned viewport is closed'));
+    if (this.placement) return this.placement.released.then(() => this.withRenderer(operation));
+    const pending = operation(); this.rendererOperations.add(pending);
+    return pending.finally(() => this.rendererOperations.delete(pending));
+  }
+
+  /** Performs an admitted reveal after {@link withRenderer} has excluded native placement. @example await this.revealNow(signal) */
+  private async revealNow(signal: AbortSignal): Promise<void> {
     if (this.closed) throw new Error('Owned viewport is closed');
     if (this.historical) return;
     this.suspendRenderer();
@@ -100,7 +138,10 @@ export class BrowserViewport {
   }
 
   /** Pins and confirms the exact evidence PNG; required images bypass live coalescing. @example await viewport.present(png, 'paused-1') */
-  async present(data: string, phase: string): Promise<{ epoch: string; id: number; hash: string }> {
+  present(data: string, phase: string): Promise<{ epoch: string; id: number; hash: string }> { return this.withRenderer(() => this.presentNow(data, phase)); }
+
+  /** Offers one admitted evidence image while {@link holdPlacement} drains its exact receipt. @example await this.presentNow(png, 'paused-1') */
+  private async presentNow(data: string, phase: string): Promise<{ epoch: string; id: number; hash: string }> {
     if (this.historical) throw new Error('Learner is viewing history; current capture was not displayed.');
     const revision = this.presentationRevision;
     if (phase.startsWith('paused') && this.scenario === 'viewport-close') { this.panel.dispose(); throw new Error('Owned viewport closed by injected fault'); }
@@ -137,6 +178,7 @@ export class BrowserViewport {
   close(): void {
     if (this.closing && this.closed) return;
     this.closing = true;
+    this.placement?.release();
     this.closeObserver(true);
     if (this.lease) {
       this.closed = true; this.delivery.dispose();
@@ -169,7 +211,10 @@ export class BrowserViewport {
   }
 
   /** Displays an explicit recorded gap with no substituted PNG or fabricated frame receipt. @example await viewport.presentMissing('Missing recorded interval') */
-  async presentMissing(reason: string, signal?: AbortSignal): Promise<void> {
+  presentMissing(reason: string, signal?: AbortSignal): Promise<void> { return this.withRenderer(() => this.presentMissingNow(reason, signal)); }
+
+  /** Confirms a recorded gap within an admitted renderer operation, so placement cannot interrupt its ACK. @example await this.presentMissingNow('Missing interval', signal) */
+  private async presentMissingNow(reason: string, signal?: AbortSignal): Promise<void> {
     if (this.mode !== 'recording' || this.closed || !this.epoch) throw new Error('Recorded viewport is not ready.');
     this.clearRecorded();
     const epoch = this.epoch, id = randomUUID(), revision = this.presentationRevision;

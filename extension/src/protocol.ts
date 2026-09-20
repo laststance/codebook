@@ -8,6 +8,7 @@ import { actionSchema, continueSchema, explainSchema, revealSchema, runSchema, s
 import type { StudyService } from './service';
 import { playbackCommandSchema, playbackToolSchema } from './playbackSchemas';
 import { sourceListSchema, sourceReadSchema, publishBookSchema, openBookSchema } from './repositorySchemas';
+import { presentationCommandSchema } from './presentationSchemas';
 
 /** Encodes domain outcomes as MCP tool results without turning a failure into successful text. @example await toolResult(() => service.status()) */
 async function toolResult(action: () => object | Promise<object>): Promise<CallToolResult> {
@@ -23,6 +24,7 @@ export function createProtocol(service: StudyService): McpServer {
   // A trusted repository application may mutate its data or contact external services when started or resumed.
   const execution = { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
   server.registerTool('codebook_status', { description: 'Discover this exact workspace/instance, prerequisites, supported profiles and configured-runtime help, limits and existing run resources.', inputSchema: z.strictObject({}), annotations: readOnly }, () => toolResult(() => service.status()));
+  server.registerTool('codebook_presentation', { description: 'Select Study workspace, Living book or Guided walkthrough in the same reader without starting or continuing execution. Copy instanceId, presentationId and presentationControlRevision (as expectedRevision) from discovery/presentation. Mode and content tab are independent. Selection pauses replay at the confirmed position. Default action select; restore repairs the selected mode; save-preference retries only its confirmed preference with no layout effect. Busy, stale and closed-reader identities require a fresh read. Read state after response loss; applied layout and saved preference are separate outcomes.', inputSchema: presentationCommandSchema, annotations: mutation }, input => toolResult(() => service.selectPresentation(input)));
   server.registerTool('codebook_sources', { description: 'List eligible tracked source names in the selected trusted Git root. Follow nextCursor; changed tracked sets require explicit rediscovery. Source-only use needs no debugger or Chrome.', inputSchema: sourceListSchema, annotations: readOnly }, input => toolResult(() => service.sources(input)));
   server.registerTool('codebook_source', { description: 'Read exact UTF-8 source with a full-byte hash and line count. Use that path/hash and inclusive line ranges as article citations. Does not execute or navigate.', inputSchema: sourceReadSchema, annotations: readOnly }, input => toolResult(() => service.source(input)));
   server.registerTool('codebook_publish_book', { description: 'Atomically publish one complete source-backed Wiki/codemap revision. expectedRevision=0 creates it. Reuse identical key/input to recover the committed receipt even after source drift. All citations and optional retained observations are validated. Never navigates or marks understanding.', inputSchema: publishBookSchema, annotations: { ...mutation, idempotentHint: true } }, (input, extra) => toolResult(() => service.publishBook(input, extra.signal)));
@@ -43,6 +45,7 @@ export function createProtocol(service: StudyService): McpServer {
   server.registerResource('repository-browser-help', 'codebook://help/repository-browser', { description: 'Configured browser adapter, exact configuration schema, evidence sequence, limits and recovery.', mimeType: 'application/json' }, read);
   server.registerResource('repository-help', 'codebook://help/repository', { description: 'Source-only repository authoring, limits, migration and recoverable publication.', mimeType: 'application/json' }, read);
   const templates = [
+    ['presentation', 'codebook://{instance}/presentation', 'Current reader identity/control revision, applied/requested mode, layout confirmation and independent preference receipt. Reading never opens a view or performs runtime input.'],
     ['repository', 'codebook://{instance}/repository', 'Retained books/revisions and validation failures in the selected workspace.'],
     ['book', 'codebook://{instance}/books/{book}/{revision}', 'Exact source-derived article graph and verified/unavailable retained observation links.'],
     ['book-source', 'codebook://{instance}/books/{book}/{revision}/sources/{index}', 'Immutable cited source bytes bound to the selected retained revision.'],

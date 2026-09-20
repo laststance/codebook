@@ -20,7 +20,7 @@ test('a released study with failed evidence can retire its dead connection and e
     './environment': { requireWorkspace: () => harness.directory, createEnvironment: async () => { environments += 1; return { ...harness.service.environment, dispose() { disposed += 1; } }; } },
     './server': { startServer: async (service: StudyService) => { services.push(service); return startServer(service); } },
   });
-  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: harness.directory }, subscriptions: [] });
+  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: harness.directory }, subscriptions: [], workspaceState: { get: () => undefined, update: async () => {} } });
   try {
     const firstPath = await commands.get('codebook.startAgentServer')!(); assert.equal(typeof firstPath, 'string'); assert.ok(firstPath);
     const first = connectionSchema.parse(JSON.parse(await readFile(firstPath, 'utf8'))), service = services[0]!;
@@ -51,7 +51,7 @@ test('a failed physical release keeps its owner and rejects starting or copying 
     './environment': { requireWorkspace: () => harness.directory, createEnvironment: async () => ({ ...harness.service.environment, dispose() { disposed += 1; } }) },
     './server': { startServer: async (service: StudyService) => { services.push(service); return startServer(service); } },
   });
-  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: harness.directory }, subscriptions: [] });
+  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: harness.directory }, subscriptions: [], workspaceState: { get: () => undefined, update: async () => {} } });
   let restore: (() => Promise<void>) | undefined;
   try {
     const firstPath = await commands.get('codebook.startAgentServer')!(); assert.ok(firstPath);

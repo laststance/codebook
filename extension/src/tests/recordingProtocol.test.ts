@@ -45,7 +45,7 @@ test('new server credentials discover and replay a stored recording with no live
     const opened = await client.json(discovery.recording.playbackUri, stateSchema);
     await client.tool('codebook_playback', { instanceId: restarted.instanceId, studyId: entry.studyId, action: 'seek', positionMs: 100, expectedRevision: opened.revision }, stateSchema); await controller.settle();
     // Assert
-    assert.equal(discovery.apiVersion, '1.4'); assert.equal(discovery.runs.length, 0); assert.equal(entry.studyId, studyId);
+    assert.equal(discovery.apiVersion, '1.5'); assert.equal(discovery.runs.length, 0); assert.equal(entry.studyId, studyId);
     assert.equal(recording.status, 'finalized'); assert.equal(recording.endMs, 100); assert.match(recording.contextReason, /context\.json/);
     assert.equal((await client.json(discovery.recording.playbackUri, stateSchema)).presentedMs, 100);
     assert.equal((await store.readPreference())?.positionMs, 100); assert.equal(harness.runtimes.length, 0);

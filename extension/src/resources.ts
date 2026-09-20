@@ -56,6 +56,7 @@ export async function readResource(service: StudyService, uri: string): Promise<
   });
   const url = new URL(uri);
   if (url.protocol !== 'codebook:' || url.search || url.hash || url.username || url.password || url.port) throw new StudyError('INVALID_REFERENCE', 'Use a canonical resource URI.');
+  if (url.pathname === '/presentation') return json(await service.presentationState(url.hostname));
   if (url.pathname === '/repository' || url.pathname.startsWith('/books/')) return readRepositoryResource(service, uri);
   if (url.pathname === '/library' || url.pathname === '/playback' || url.pathname.startsWith('/studies/')) return readRecordingResource(service, uri);
   const match = /^\/runs\/([a-f0-9-]+)(?:\/(.*))?$/.exec(url.pathname);

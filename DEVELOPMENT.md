@@ -47,6 +47,8 @@ Keep one current plan and a short list of possible follow-ups. Do not create a c
 
 ## 2. Create or refine one cycle
 
+Per owner decision D021, freshly read Issue #1, the linked purpose/design prose and visually inspect all three approved images at every new cycle. Record that inspection, then create a `codex/` branch for the selected cycle. Starting with Cycle 0014, each cycle is delivered through a PR; include the literal `@coderabbitai ignore` in its description and a closing reference for its cycle issue. Merge and issue closure occur together. The goal issue remains open until final acceptance.
+
 Use [the cycle template](docs/cycles/TEMPLATE.md). Record a small scope, linked goal IDs, one primary question, expected observations, non-goals, and a decision after success/failure. A goal ID link means relevance, not completion.
 
 A cycle may be an experiment, a product increment, or hardening. An experiment can legitimately end with a falsified approach. It cannot mark an unsupported capability verified. Product increments should preserve previously established behavior through appropriate regression checks.
@@ -130,7 +132,7 @@ The private repository is [laststance/codebook](https://github.com/laststance/co
 - Use the goal label for final-product tracking and the cycle label for a bounded cycle. Keep at most one active cycle; other ideas stay as short candidates in PROJECT_STATE.md until selected.
 - A selected cycle gets one document and one issue linked to each other and the goal issue. Link PRs and evidence to that cycle when they exist. Do not invent future implementation issues to fill a roadmap.
 - Repository records own requirements and observations. Issue bodies link those records and summarize the current task; avoid maintaining another full goal checklist that can drift.
-- At cycle closure, commit/push the updated cycle and state, then report the result with the commit/evidence links on its issue and close it. Clearly say demonstrated, falsified, or inconclusive; closed never implies the final goal succeeded. If external updates are unavailable or outside the authorized task, record the pending sync in PROJECT_STATE.md and keep that distinction visible.
+- At cycle closure, commit/push the updated cycle and state, complete the cycle PR's review and required checks, then merge it with its closing reference so the cycle issue closes at merge. Include `@coderabbitai ignore` in the PR description; coderabbit-cli review is still required. Report the actual result and commit/evidence links. Clearly say demonstrated, falsified, or inconclusive; closed never implies the final goal succeeded. If delivery is unavailable, keep the issue open and record the pending step in PROJECT_STATE.md. Cycles closed before D021 retain their historical delivery records.
 - Open the next cycle issue only after selecting the next question from evidence. The goal issue remains open until PRODUCT_GOAL.md's final acceptance is demonstrated and accepted.
 - On resume, compare issue status with the actual cycle record and code. An issue closed without evidence does not verify a capability; a stale issue summary does not override newer committed observations. Resolve a mismatch and record it before making a completion claim.
 

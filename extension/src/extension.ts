@@ -15,7 +15,7 @@ import { repositoryActionSchema } from './repositoryView';
 let stopExtension: (() => Promise<void>) | undefined;
 
 /** Registers explicit trusted commands without reading auto-run instructions from repository files. @example VS Code calls activate(context) */
-export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & { globalStorageUri: Pick<vscode.Uri, 'fsPath'> }) {
+export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & { globalStorageUri: Pick<vscode.Uri, 'fsPath'>; workspaceState: Pick<vscode.Memento, 'get' | 'update'> }) {
   type Running = { endpoint: Awaited<ReturnType<typeof startServer>>; environment: Awaited<ReturnType<typeof createEnvironment>>; descriptorPath: string; service: StudyService };
   let starting: Promise<Running> | undefined, running: Running | undefined, stopping: Promise<void> | undefined;
   let reader: StudyWorkspace | undefined;
@@ -83,6 +83,7 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     vscode.commands.registerCommand('codebook.stopAgentServer', stop),
     vscode.commands.registerCommand('codebook.copyAgentConnection', connect),
     vscode.commands.registerCommand('codebook.openStudyWorkspace', () => workspace().open()),
+    vscode.commands.registerCommand('codebook.selectPresentation', () => workspace().selectPresentation()),
     vscode.commands.registerCommand('codebook.closeStudyWorkspace', () => reader?.close()),
     vscode.commands.registerCommand('codebook.openRepositoryWiki', (input?: unknown) => repository().open(input === undefined ? undefined : repositorySelectionSchema.parse(input))),
     vscode.commands.registerCommand('codebook.closeRepositoryWiki', () => repositoryReader?.close()),

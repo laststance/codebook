@@ -5,6 +5,7 @@ import type { RetainedStudy } from '../retainedStudySchemas';
 import type { StudyDescriptor } from '../utils/describeStudy';
 import type { PlaybackState, PlaybackBundle } from '../playbackController';
 import { STUDY_STYLES, STUDY_UI_OPTIONS } from './constants';
+import type { PresentationState } from '../presentationSchemas';
 
 export interface StudyViewMessage {
   type: 'study'; revision: number; model: ReturnType<typeof projectStudy>; study?: Pick<RetainedStudy, 'id' | 'state' | 'terminal' | 'createdAt' | 'reason' | 'profile' | 'finalOutcome' | 'links'> & { historyOutcome: string; studyOutcome: string; recordingSave?: Pick<LiveStudy['recording'], 'status' | 'contextStatus' | 'reason' | 'contextReason'> };
@@ -12,6 +13,7 @@ export interface StudyViewMessage {
   nextAction?: StudyDescriptor['actions'][number]; liveProfile?: RetainedStudy['profile']; liveTitle?: string; profiles: Pick<StudyDescriptor, 'id' | 'title' | 'description'>[];
   moments: { id: string; itemId: string; title: string; at: string; elapsedMs?: number }[]; studies: StudyCatalogEntry[];
   contentTab?: 'overview' | 'live' | 'recording';
+  presentation?: PresentationState;
   repositoryReturnAvailable?: boolean;
   repositoryArticleAvailable?: boolean;
   recording?: PlaybackState & Pick<PlaybackBundle['projection'], 'pauseConfirmed' | 'rendererConfirmed' | 'laterInterpretations'>;
@@ -22,11 +24,12 @@ declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getS
 export function studyHtml(kind: 'context' | 'moments'): string {
   const nonce = randomUUID();
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${kind === 'moments' ? 'moments-only' : ''}">
+<header class="presentation-header" ${kind === 'moments' ? 'hidden' : ''}><label for="presentation-mode">Presentation <select id="presentation-mode" aria-label="Presentation mode"></select></label><p id="presentation-caption" class="muted mode-caption"></p><p id="presentation-status" class="presentation-status" role="status" aria-live="polite"></p><div class="row presentation-tools"><button data-presentation="restore">Restore layout</button><button data-action="enlarge-context">Enlarge explanation</button><button data-presentation="save-preference" hidden>Save preference</button></div><h1 id="title">Study the checkout flow</h1></header>
 <button data-action="return-wiki" hidden>← Return to Wiki</button><button data-action="open-article" hidden>Open article</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite">No running study</div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
 <p id="study-state" class="status" hidden></p><p id="recording-save-state" class="status" role="status" aria-live="polite" hidden></p>
 <p id="errors" class="error" role="status" aria-live="polite"></p><button data-action="retry" hidden>Retry storage / refresh</button>
 <section id="recording-transport" aria-label="Recorded playback" hidden><h2>Recorded walkthrough</h2><p id="recording-status" role="status" aria-live="polite"></p><div class="row"><button class="primary" id="playback-toggle" data-playback="play">Play recording</button><button data-playback="start">Replay from start</button><button data-action="reload-recording">Reload saved recording</button></div><label for="playhead">Recorded position</label><input id="playhead" type="range" min="0" max="0" step="1" value="0"><p id="playback-position"></p><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details><p class="muted">Playback changes this reader only. It does not run application code or mark understanding.</p></section>
-<div ${kind === 'moments' ? 'hidden' : ''}><h1 id="title">Study the checkout flow</h1><div id="next-scenario"><label for="profiles">Scenario for the next run</label><select id="profiles" aria-label="Study scenario"><option value="checkout-demo">Checkout demo</option><option value="paired-cart-demo">Paired cart demo</option></select><div class="row"><button class="primary" data-action="run">Run selected scenario</button><button data-action="click">Add to cart once</button><button data-action="connect">Connect your agent</button></div><p class="muted" id="profile-description">Choose a local demo to connect the screen with its actual source and values.</p></div>
+<div ${kind === 'moments' ? 'hidden' : ''}><details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><label for="profiles">Scenario for the next run</label><select id="profiles" aria-label="Study scenario"><option value="checkout-demo">Checkout demo</option><option value="paired-cart-demo">Paired cart demo</option></select><div class="row"><button class="primary" data-action="run">Run selected scenario</button><button data-action="click">Add to cart once</button><button data-action="connect">Connect your agent</button></div><p class="muted" id="profile-description">Choose a local demo to connect the screen with its actual source and values.</p></div></details>
 <div role="tablist" aria-label="Study content"><button id="overview-tab" role="tab" data-tab="overview" aria-controls="overview" aria-selected="true">Overview</button><button id="live-tab" role="tab" data-tab="live" aria-controls="live-content" aria-selected="false" tabindex="-1">Live</button><button id="recording-tab" role="tab" data-tab="recording" aria-controls="live-content" aria-selected="false" tabindex="-1">Recording</button></div>
 <div id="loading" class="status" hidden>Loading the selected observation…</div><div id="selected"><div class="status" id="observation"></div><div id="overview" role="tabpanel" aria-labelledby="overview-tab"><h2>Source-derived overview</h2><p id="overview-text"></p><button class="link" data-action="source">Read the linked source</button></div><div id="live-content" role="tabpanel" aria-labelledby="live-tab"><section><h2>Agent interpretation</h2><div id="interpretations"></div></section><section><h2 id="captured-values-heading">Captured values</h2><p class="muted" id="value-caption"></p><div class="table-scroll"><table aria-labelledby="captured-values-heading" aria-describedby="value-caption"><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody id="values"></tbody></table></div></section></div>
 <details id="later-annotations" hidden><summary>Later annotations — not available at this recorded time</summary><p class="muted">These explanations were added later. They do not change what was observed in the recording.</p><div id="later-interpretations"></div></details>
@@ -42,6 +45,7 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
   const api = acquireVsCodeApi(), visited = new Set(api.getState()?.visited ?? []);
   let current: StudyViewMessage | undefined;
   let scrubbing = false;
+  let readingPose: { presentationId: string; revision: number; anchorId?: string; fraction: number; leadingOffsetPx: number; scrollY: number; focused?: HTMLElement } | undefined;
   const element = (id: string) => { const found = document.getElementById(id); if (!found) throw new Error(`Missing reader element ${id}`); return found; };
   const send = (message: object) => api.postMessage({ ...message, revision: current?.revision });
   const button = (action: string) => document.querySelector<HTMLButtonElement>(`button[data-action="${action}"]`);
@@ -50,6 +54,15 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
   const replace = (id: string, data: unknown, children: () => Node[]) => { const key = JSON.stringify(data); if (renderKeys.get(id) !== key) { renderKeys.set(id, key); element(id).replaceChildren(...children()); } };
   const seconds = (elapsed: number) => `${(elapsed / options.secondMs).toFixed(2)} s`;
   const playback = (action: 'play' | 'pause' | 'seek', positionMs?: number) => { if (current?.recording) send({ type: 'playback', action, expectedRevision: current.recording.revision, ...(positionMs === undefined ? {} : { positionMs }) }); };
+  const presentation = (mode: string, action: 'select' | 'restore' | 'save-preference') => {
+    const state = current?.presentation;
+    if (state && state.state !== 'applying') send({ type: 'presentation', mode, action, presentationId: state.presentationId, expectedRevision: state.presentationControlRevision });
+  };
+  const modeSelector = element('presentation-mode');
+  if (modeSelector instanceof HTMLSelectElement) {
+    for (const descriptor of options.presentations) { const option = document.createElement('option'); option.value = descriptor.mode; option.textContent = descriptor.title; modeSelector.append(option); }
+    modeSelector.addEventListener('change', () => { const requested = modeSelector.value; modeSelector.value = current?.presentation?.mode ?? 'study-workspace'; presentation(requested, 'select'); });
+  }
   const strip = document.querySelector<HTMLElement>('.live-strip');
   // Oversized sticky controls must not hide keyboard focus at narrow widths or enlarged text.
   const adaptStrip = () => {
@@ -72,7 +85,9 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
   document.addEventListener('click', event => {
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>('button') : null;
     if (!target || target instanceof HTMLButtonElement && target.disabled) return;
-    if (target.dataset.action) {
+    if (target.dataset.presentation === 'restore' || target.dataset.presentation === 'save-preference') {
+      if (current?.presentation) presentation(current.presentation.mode, target.dataset.presentation);
+    } else if (target.dataset.action) {
       if (target.classList.contains('link')) { visited.add(target.dataset.action); target.classList.add('visited'); api.setState({ visited: [...visited] }); }
       send({ type: 'action', action: target.dataset.action });
     } else if (target.dataset.playback) {
@@ -109,12 +124,34 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
   window.addEventListener('message', event => {
     const message: StudyViewMessage = event.data;
     if (message?.type !== 'study') return;
+    const incoming = message.presentation;
+    if (incoming?.state === 'applying') {
+      if (!readingPose || readingPose.presentationId !== incoming.presentationId || readingPose.revision !== incoming.presentationControlRevision) {
+        const anchor = ['title', 'observation', 'overview', 'live-content', 'source-version', 'flow', 'moments'].map(element)
+          .find(candidate => candidate.offsetHeight > 0 && candidate.getBoundingClientRect().bottom > 0);
+        readingPose = { presentationId: incoming.presentationId, revision: incoming.presentationControlRevision, anchorId: anchor?.id,
+          fraction: anchor ? Math.max(0, -anchor.getBoundingClientRect().top) / anchor.offsetHeight : 0, leadingOffsetPx: anchor ? Math.max(0, anchor.getBoundingClientRect().top) : 0, scrollY: window.scrollY,
+          focused: document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined };
+      }
+      api.postMessage({ type: 'presentation-pose', presentationId: incoming.presentationId, expectedRevision: incoming.presentationControlRevision });
+    }
     current = message; const { model, recording } = message, contentTab = message.contentTab ?? model.selection.tab;
+    const mode = message.presentation, applying = mode?.state === 'applying';
+    if (mode) {
+      document.body.dataset.presentation = mode.mode;
+      const descriptor = options.presentations.find(descriptor => descriptor.mode === mode.mode);
+      if (modeSelector instanceof HTMLSelectElement) { modeSelector.value = mode.mode; modeSelector.disabled = applying; }
+      text('presentation-caption', descriptor?.description ?? '');
+      text('presentation-status', mode.preference.status === 'saving' ? 'Layout applied · saving preference…' : applying ? 'Changing presentation…' : mode.reason ?? mode.preference.reason ?? (!mode.layoutConfirmed ? 'Layout not confirmed. Restore it or focus a pane below.' : ''));
+      for (const control of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-presentation]'))) { control.disabled = applying; if (control.dataset.presentation === 'save-preference') control.hidden = mode.preference.status !== 'failed' || !mode.layoutConfirmed; }
+      button('arrange')!.textContent = `Restore ${descriptor?.title ?? 'presentation'} layout`;
+    }
     button('return-wiki')!.hidden = !message.repositoryReturnAvailable;
     button('open-article')!.hidden = !message.repositoryArticleAvailable || Boolean(message.repositoryReturnAvailable);
     // Offline replay prioritizes its own controls; an independently active runtime keeps its explicit stop/return strip.
     if (strip) strip.hidden = Boolean(recording && (!message.liveState || message.liveState === 'stopped'));
     element('next-scenario').hidden = Boolean(recording);
+    element('study-controls').hidden = Boolean(recording);
     element('recording-transport').hidden = !recording;
     if (recording) {
       const range = recording.range, pending = recording.cleared && recording.readiness === 'loading';
@@ -161,10 +198,10 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
       : savedRecording.status === 'finalized' ? 'Recording frames saved; matching source and explanation context is pending.' : 'Recording unavailable for this study.';
     text('recording-save-state', message.study ? recordingLabel : ''); element('recording-save-state').hidden = !message.study;
     text('errors', message.errors.join('\n')); button('retry')!.hidden = !message.errors.length && savedRecording?.contextStatus !== 'failed' && savedRecording?.status !== 'failed' && savedRecording?.status !== 'partial';
-    button('continue')!.disabled = message.busy || message.loading || !model.continueArguments;
+    button('continue')!.disabled = applying || message.busy || message.loading || !model.continueArguments;
     button('return-current')!.disabled = !model.currentParticipant || model.matching && model.selection.follow;
     button('stop')!.disabled = message.busy || !message.liveState || message.liveState === 'stopped';
-    button('run')!.hidden = model.selection.profile === 'repository-browser'; button('run')!.disabled = message.busy || !message.canRun; button('click')!.disabled = message.busy || !message.canClick;
+    button('run')!.hidden = model.selection.profile === 'repository-browser'; button('run')!.disabled = applying || message.busy || !message.canRun; button('click')!.disabled = applying || message.busy || !message.canClick;
     button('run')!.textContent = `Run ${selectedProfile?.title ?? 'selected scenario'}`;
     button('click')!.textContent = message.nextAction ? `${message.nextAction.title} once` : 'No action available';
     button('stop')!.textContent = liveProfile ? `Stop ${message.liveTitle ?? liveProfile.title}` : 'Stop';
@@ -209,7 +246,17 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
       studies.value = model.selection.studyId ?? previous;
     }
     for (const link of Array.from(document.querySelectorAll<HTMLButtonElement>('.link[data-action]'))) link.classList.toggle('visited', visited.has(link.dataset.action ?? ''));
-    api.postMessage({ type: 'rendered', revision: message.revision, itemId: model.selection.itemId, snapshotUri: model.observation?.snapshotUri, ...(recording ? { presentationRevision: recording.presentationRevision } : {}) });
+    if (readingPose && incoming?.state !== 'applying' && incoming?.presentationId === readingPose.presentationId && incoming.presentationControlRevision === readingPose.revision) {
+      const pose = readingPose; readingPose = undefined;
+      requestAnimationFrame(() => {
+        // A later selection owns its own pose; restoring scroll never takes focus from another native pane.
+        if (current?.presentation?.presentationId !== pose.presentationId || current.presentation.presentationControlRevision !== pose.revision) return;
+        const anchor = pose.anchorId ? document.getElementById(pose.anchorId) : null;
+        window.scrollTo({ top: pose.scrollY === 0 ? 0 : anchor ? window.scrollY + anchor.getBoundingClientRect().top + pose.fraction * anchor.offsetHeight - pose.leadingOffsetPx : pose.scrollY, behavior: 'instant' });
+        if (document.hasFocus() && pose.focused?.isConnected) pose.focused.focus({ preventScroll: true });
+      });
+    }
+    api.postMessage({ type: 'rendered', revision: message.revision, itemId: model.selection.itemId, snapshotUri: model.observation?.snapshotUri, ...(recording ? { presentationRevision: recording.presentationRevision } : {}), ...(message.presentation ? { presentationControlRevision: message.presentation.presentationControlRevision, presentationMode: message.presentation.mode } : {}) });
   });
   api.postMessage({ type: 'ready' });
 }

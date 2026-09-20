@@ -46,6 +46,10 @@
         "title": "Codebook: Close Study Workspace"
       },
       {
+        "command": "codebook.selectPresentation",
+        "title": "Codebook: Select Presentation"
+      },
+      {
         "command": "codebook.markUnderstanding",
         "title": "Codebook: Toggle Understanding for Selected Source"
       },

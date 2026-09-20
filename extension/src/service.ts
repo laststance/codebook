@@ -23,6 +23,9 @@ import type { ConfiguredDefinition, ConfiguredFactValue } from './configuredStud
 import { CONFIGURED_PROFILE } from './configuredProfile';
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy';
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes';
+import type { StudyWorkspace } from './studyWorkspace';
+import type { PresentationCommand } from './presentationSchemas';
+import { PRESENTATION_MODE_IDS, STUDY_PRESENTATIONS } from './constants';
 
 export interface Explanation {
   id: string; instanceId: string; runId: string; snapshotUri: string; sourceHash: string;
@@ -53,6 +56,7 @@ export class StudyService {
   readonly records = new Map<string, StudyRecord>();
   recordings?: RecordingStore;
   playbackController?: PlaybackController;
+  presentationController?: Pick<StudyWorkspace, 'readPresentationState' | 'changePresentation' | 'assertPresentationIdle'>;
   repository?: RepositoryBookStore;
   repositoryPublished?: () => Promise<void>;
   repositoryReader?: (input: OpenBookInput, signal: AbortSignal) => Promise<{ bookId: string; revision: number; nodeId: string; anchorIndex: number; sourceUri: string }>;
@@ -92,6 +96,7 @@ export class StudyService {
       runs: [...this.records.values()].map(record => ({ runId: record.id, uri: this.uri(record.id), state: this.state(record).state })),
       recording: this.recordings ? { libraryUri: `codebook://${this.instanceId}/library`, playbackUri: `codebook://${this.instanceId}/playback`, playbackAvailable: Boolean(this.playbackController), limits: this.recordings.limits,
         instructions: 'Saved recordings survive server/runtime exit. Discover their study IDs using libraryUri; current-instance URIs and playback revisions must be copied, not guessed. Playback never starts, clicks or continues a run.' } : undefined,
+      presentation: this.presentationController ? { ...await this.presentationState(this.instanceId), instructions: 'Select the same learner workspace in three modes. Copy presentationId and presentationControlRevision as expectedRevision. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.' } : undefined,
       repository: { ...repository, catalogUri: `codebook://${this.instanceId}/repository`, helpUri: 'codebook://help/repository', readerAvailable: Boolean(this.repositoryReader),
         scope: 'Trusted local selected workspace at its Git working-tree root; tracked eligible UTF-8 text only. No runtime adapter or Chrome/debugger is required for source authoring.',
         limits: { documentBytes: BOOK_INPUT_LIMIT_BYTES, httpEnvelopeBytes: HTTP_BODY_LIMIT_BYTES, sourceBytes: REPOSITORY_SOURCE_LIMIT_BYTES, sourcesPerRevision: BOOK_MAX_SOURCES },
@@ -130,6 +135,7 @@ export class StudyService {
   /** Opens only the explicitly named article/citation through the native reader without understanding or runtime input. @example await service.openBook(input) */
   async openBook(input: OpenBookInput, signal?: AbortSignal) {
     this.repositoryStore(input.instanceId);
+    this.presentationController?.assertPresentationIdle();
     if (!this.repositoryReader) throw new StudyError('BOOK_UNAVAILABLE', 'The repository reader is not available in this host.');
     const cancellation = AbortSignal.any([this.repositoryRetirement.signal, ...(signal ? [signal] : [])]); cancellation.throwIfAborted();
     const opening = this.repositoryReader(input, cancellation); this.repositoryOpens.add(opening);
@@ -142,9 +148,26 @@ export class StudyService {
   /** Routes a typed historical control to the workspace's shared controller, never to a live runtime operation. @example service.playback({...identity,action:'pause',expectedRevision:2}) */
   playback(input: PlaybackCommand) {
     this.assertMutable(input.instanceId);
+    this.presentationController?.assertPresentationIdle();
     if (!this.playbackController) throw new StudyError('PREREQUISITE_MISSING', 'The playback workspace is unavailable.');
     try { return { ...this.playbackController.command(input), uri: `codebook://${this.instanceId}/playback` }; }
     catch (error) { throw new StudyError(String(error).includes('Stale playback revision') ? 'STALE_PLAYBACK' : 'PLAYBACK_UNAVAILABLE', String(error), `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`); }
+  }
+
+  /** Discovers the reader lifetime separately from the server without opening a view; called by MCP resources. @example (await service.presentationState(instanceId)).presentationId */
+  async presentationState(instanceId: string) {
+    this.assertInstance(instanceId);
+    if (!this.presentationController) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The Study reader is unavailable in this host.');
+    return { instanceId: this.instanceId, ...await this.presentationController.readPresentationState(), uri: `codebook://${this.instanceId}/presentation`,
+      modes: PRESENTATION_MODE_IDS.map(mode => ({ mode, title: STUDY_PRESENTATIONS[mode].title, description: STUDY_PRESENTATIONS[mode].description })) };
+  }
+
+  /** Routes explicit mode intent to the shared reader after checking server identity, without runtime input. @example await service.selectPresentation(input) */
+  async selectPresentation(input: PresentationCommand) {
+    this.assertMutable(input.instanceId); this.environment.assertWorkspace?.();
+    if (!this.presentationController) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The Study reader is unavailable in this host.');
+    await this.presentationController.changePresentation(input);
+    return this.presentationState(input.instanceId);
   }
 
   /** Reserves intent before prerequisite I/O so duplicate starts cannot create two runtimes. @example service.start(input).runUri */
@@ -160,6 +183,7 @@ export class StudyService {
       if (previous.signature !== signature) throw new StudyError('IDEMPOTENCY_CONFLICT', 'Start key already names different arguments.');
       return this.receipt(previous);
     }
+    this.presentationController?.assertPresentationIdle();
     if ([...this.records.values()].some(record => !record.stopped)) throw new StudyError('BUSY', 'Another run still owns resources.');
     if (this.records.size >= MAX_RUNS) throw new StudyError('LIMIT_EXCEEDED', `This instance retains at most ${MAX_RUNS} runs; no history was evicted.`);
     const createdAt = this.now();
@@ -180,6 +204,7 @@ export class StudyService {
       if (previous.signature === signature) return previous.receipt;
       throw new StudyError('IDEMPOTENCY_CONFLICT', 'Action key already names different arguments.', `Read ${this.uri(record.id)} for retained receipts.`);
     }
+    this.presentationController?.assertPresentationIdle();
     if (!record.prepared || record.stopping || record.stopped || record.error || record.runtime?.evidence.failure || this.now() >= record.deadlineAt || record.runtime?.view().status !== 'ready') throw new StudyError('BUSY', 'The run is not ready for input. Read its nextActions.');
     const nextAction = record.runtime.view().nextAction;
     if (nextAction !== input.action) throw new StudyError('BUSY', `Expected ${nextAction ?? 'no further action'}, received ${input.action}.`, `Read ${this.uri(record.id)} for current nextActions; nothing was dispatched.`);
@@ -193,6 +218,7 @@ export class StudyService {
   /** Uses the existing atomic pause reservation, never a focused debug session. @example await service.continue(runState.participants.server.continueArguments) */
   async continue(input: ContinueInput) {
     this.assertMutable(input.instanceId); const record = this.record(input);
+    this.presentationController?.assertPresentationIdle();
     if (!record.runtime || record.stopping || record.stopped || record.error || record.runtime.evidence.failure || this.now() >= record.deadlineAt) throw new StudyError('STALE_PAUSE', 'The run cannot resume this historical pause.');
     try { await record.runtime.continue(input.participant, { sessionId: input.sessionId, threadId: input.threadId, generation: input.generation }); }
     catch (error) { if (error instanceof StudyError) throw error; throw new StudyError(String(error).includes('conflict:') ? 'STALE_PAUSE' : 'RUNTIME_FAILED', 'Continue was not confirmed.', String(error)); }
@@ -242,6 +268,7 @@ export class StudyService {
   /** Reveals only the source bound to a committed snapshot; the editor adapter checks file/document hashes. @example await service.reveal({...run, snapshotUri}) */
   async reveal(input: RevealInput) {
     this.assertMutable(input.instanceId); const record = this.record(input); const snapshot = this.snapshot(record, input.snapshotUri);
+    this.presentationController?.assertPresentationIdle();
     if (record.stopping || record.stopped || record.error || record.runtime!.evidence.failure || ['failed', 'cancelled', 'completed'].includes(record.runtime!.view().status)) throw new StudyError('BUSY', 'Source reveal requires an active run. Read the captured source resource after cleanup.');
     // Reserve before editor I/O; stop must not finish while a source tab can still be acquired.
     const pending = Promise.resolve().then(() => record.runtime!.reveal(snapshot));

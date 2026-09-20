@@ -201,7 +201,7 @@ test('API 1.4 discovery exposes the bounded configured profile and its executabl
   // Act
   const status = await service.status(), profile = status.profiles.find(profile => profile.id === 'repository-browser'), help = await readResource(service, 'codebook://help/repository-browser');
   // Assert
-  assert.equal(status.apiVersion, '1.4'); assert.ok(profile && 'requiresConfiguration' in profile);
+  assert.equal(status.apiVersion, '1.5'); assert.ok(profile && 'requiresConfiguration' in profile);
   assert.equal(profile.requiresConfiguration, true); assert.equal(profile.minimumExtensionVersion, '0.2.0');
   assert.equal(profile.helpUri, 'codebook://help/repository-browser'); assert.equal(profile.limits.runTimeoutMs, 600000); assert.equal(profile.limits.pauseHoldTimeoutMs, 300000);
   assert.deepEqual(JSON.parse(JSON.stringify(profile.limits)).sourceBytes, { typescript: 262144, javascript: 8388608, map: 16777216 });

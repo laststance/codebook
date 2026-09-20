@@ -1,4 +1,4 @@
-export const API_VERSION = '1.4';
+export const API_VERSION = '1.5';
 export const EXTENSION_VERSION = '0.2.0';
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0';
 export const PROFILE_ID = 'paired-cart-demo';
@@ -64,6 +64,18 @@ export const MAX_SOURCE_DOCUMENTS = 34;
 export const STUDY_REFRESH_INTERVAL_MS = 250;
 export const STUDY_EDITOR_GROUP_COUNT = 3;
 export const HORIZONTAL_EDITOR_ORIENTATION = 0;
+export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1';
+export const PRESENTATION_PREFERENCE_VERSION = 1;
+export const PRESENTATION_READY_TIMEOUT_MS = 5_000;
+export const PRESENTATION_MODE_IDS = ['study-workspace', 'living-book', 'guided-walkthrough'] as const;
+export const STUDY_PRESENTATIONS = {
+  'study-workspace': { title: 'Study workspace', description: 'Application above source, with explanation alongside.', appColumn: 1, sourceColumn: 2, contextColumn: 3,
+    layout: { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] } },
+  'living-book': { title: 'Living book', description: 'Read the explanation with application and source beside it.', appColumn: 2, sourceColumn: 3, contextColumn: 1,
+    layout: { orientation: 0, groups: [{ size: 0.6 }, { size: 0.4, groups: [{ size: 0.5 }, { size: 0.5 }] }] } },
+  'guided-walkthrough': { title: 'Guided walkthrough', description: 'Follow application and source side by side, with explanation below.', appColumn: 1, sourceColumn: 2, contextColumn: 3,
+    layout: { orientation: 1, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] } },
+} as const;
 // Allow native pixel rounding, not learner-selected split ratios.
 export const EDITOR_LAYOUT_ROUNDING_FRACTION = 0.005;
 export const MAX_UI_TEXT_CHARS = 8_192;

@@ -197,3 +197,50 @@ test('invalidating a displayed pause rejects its late acknowledgement before any
   assert.equal(harness.messages.at(-1)?.type, 'reset');
   harness.viewport.close();
 });
+
+test('native placement drains the current required image and holds newer image delivery until release', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true), epoch = '11111111-1111-1111-1111-111111111111';
+  harness.ready(epoch);
+  const first = harness.viewport.present('Zmlyc3Q=', 'paused-1'); await delay(0);
+  const firstFrame = harness.messages.findLast(message => message.type === 'frame');
+  let acquired = false;
+  // Act
+  const placement = harness.viewport.holdPlacement(new AbortController().signal).then(release => { acquired = true; return release; });
+  const next = harness.viewport.present('bmV4dA==', 'paused-2'); await delay(0);
+  // Assert
+  assert.equal(acquired, false); assert.equal(harness.messages.filter(message => message.type === 'frame').length, 1);
+  harness.receive({ type: 'painted', epoch, id: firstFrame?.id }); await first;
+  const release = await placement; await delay(0);
+  assert.equal(acquired, true); assert.equal(harness.messages.filter(message => message.type === 'frame').length, 1);
+  release(); await delay(0);
+  const nextFrame = harness.messages.findLast(message => message.type === 'frame');
+  assert.equal(harness.messages.filter(message => message.type === 'frame').length, 2); assert.equal(nextFrame?.data, 'bmV4dA==');
+  harness.receive({ type: 'painted', epoch, id: nextFrame?.id }); await next;
+  harness.viewport.close();
+});
+
+test('closing a viewport releases held placement without delivering a queued historical image', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true); harness.ready('11111111-1111-1111-1111-111111111111');
+  const release = await harness.viewport.holdPlacement(new AbortController().signal);
+  const queued = harness.viewport.present('cXVldWVk', 'paused-1'), rejected = assert.rejects(queued, /closed/);
+  // Act
+  harness.viewport.close(); release(); await rejected;
+  // Assert
+  assert.equal(harness.messages.filter(message => message.type === 'frame').length, 0);
+  assert.deepEqual(harness.counts(), { panelDisposals: 0, leaseReleases: 1 });
+});
+
+test('manual continuation while placement drains invalidates the old paint and releases waiting work', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true), epoch = '11111111-1111-1111-1111-111111111111'; harness.ready(epoch);
+  const first = harness.viewport.present('cGF1c2U=', 'paused-1'), rejected = assert.rejects(first, /invalidated/); await delay(0);
+  const placement = harness.viewport.holdPlacement(new AbortController().signal), placementRejected = assert.rejects(placement, /invalidated/);
+  // Act
+  harness.viewport.resume(); await rejected; await placementRejected;
+  const next = harness.viewport.present('YWZ0ZXI=', 'after'); await delay(0);
+  const frame = harness.messages.findLast(message => message.type === 'frame'); harness.receive({ type: 'painted', epoch, id: frame?.id });
+  // Assert
+  assert.equal((await next).epoch, epoch); harness.viewport.close();
+});
