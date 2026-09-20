@@ -1,0 +1,1377 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-20T05:01:33.936565+00:00",
+  "cycle": "0011",
+  "source": {
+    "revision": "cabded4c5e5c871b7283b2cb83d63d80d3fcb098",
+    "dirty": true,
+    "sourceHash": "469572e547b7adfe16bbdce4a06394e5010427458aaa8ccd0acaff4eb3bb548a",
+    "sourceHashes": 232,
+    "implementationRevision": "e74f03587313683ca2b0fa86373133d82aa0a536",
+    "implementationSourceEquivalent": true
+  },
+  "automated": {
+    "tests": 464,
+    "passed": 464,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "todo": 0,
+    "durationMs": 29924.775583
+  },
+  "native": {
+    "cursor": "v23 Cursor3.21.13/API1.128.0: fault3 and healthy automatic reentry plus N08 actual Space/history/recovery verified with native video. Corrupt pointer toast-qualified; captured Study Light/HC coverage limited. Cleanup exact, exit0/PID10826 absent.",
+    "vscode": "v23 VS Code1.138.0/API1.138.0: fault3 with pointer/keyboard and empty Return errors, healthy automatic reentry, N08 actual Space/history/recovery verified with native video. Cleanup exact, exit0/PID53728 absent.",
+    "limits": "Bounded findings002/003/004 closed by independent pixels review. Full N12 themes/contrast/keyboard/constrained matrix, paused-frame correspondence, packaging and final acceptance remain open."
+  },
+  "finalReviews": {
+    "consecutiveFreshPasses": 0,
+    "required": 10
+  },
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/exit.json",
+      "bytes": 14,
+      "sha256": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/native-inspection-v19.json",
+      "bytes": 593,
+      "sha256": "0fb46447c6098a1ee47d1e0a9c71bb107978193da0438cf8c69c70f0c89741ac",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/qa-settings-restored.json",
+      "bytes": 168,
+      "sha256": "e0d0cfb10ea815a782569c3cbcdb6b9a3e0e0003639112c1c42d9a0972ab72d7",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/recording-after-open-error-v4-corrupt-2026-09-20T03-00-51.924Z-97bcd85e/native-flow.webm",
+      "bytes": 138109,
+      "sha256": "d3684ddbd5c0c9c48a9f7d97e2d9a4127bdef15dcd2c7cd5b59a4e8f78d0ec07",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/recording-after-open-error-v4-corrupt-2026-09-20T03-00-51.924Z-97bcd85e/result.json",
+      "bytes": 243145,
+      "sha256": "5295737883ad381deb42bf69165fa5f00b28cd72fc2e62db3f99f3ed53d04a5d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/recording-after-open-error-v4-corrupt-2026-09-20T03-02-29.971Z-2fbba41a/native-flow.webm",
+      "bytes": 255572,
+      "sha256": "966ca6ca6f957216c201f9e1a82f10344494d847cdb7dcf788f8fcc4f78668fc",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/recording-after-open-error-v4-corrupt-2026-09-20T03-02-29.971Z-2fbba41a/result.json",
+      "bytes": 154266,
+      "sha256": "30f11ce831ef7304cdcf37f11dab574d54ffea59a7dcd3a78bd808ffd7dfde47",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/recording-after-open-error-v4-corrupt-2026-09-20T03-04-34.557Z-0fb630a2/native-flow.webm",
+      "bytes": 825592,
+      "sha256": "2cefa981ab91338950e2003de64bf5b648445d6b2b66f1bdbca15b064ae54855",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/recording-after-open-error-v4-corrupt-2026-09-20T03-04-34.557Z-0fb630a2/result.json",
+      "bytes": 711238,
+      "sha256": "fd11ef49cf1d88eb040dc69a95626910650ac38adb25ba50815a6ee43e9149df",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/recording-after-open-error-v4-corrupt-2026-09-20T03-04-34.557Z-0fb630a2/video-contact.png",
+      "bytes": 689046,
+      "sha256": "7619b49e67a26e7f16b5428588dd3e32833c5d772e9fa5a0e7efa5593a25f930",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T02-59-40.789Z-c57b7a21/retry2-expectations.json",
+      "bytes": 1591,
+      "sha256": "d933b340272b652e84a6332c28a0cace03cccbe0f88c173f91660f32c8ebb6eb",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/exit.json",
+      "bytes": 14,
+      "sha256": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/native-inspection-v22.json",
+      "bytes": 2881,
+      "sha256": "7de64ed793c9ef6f3551a21376f3980c843456733870b834b40702c378622813",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/observation-app-v22-arranged-pixels.log",
+      "bytes": 1512,
+      "sha256": "419045549a2f34dfa8252854785fff485e11b91b282082d973f2db8d3ae4929a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/observation-app-v22-contact.png",
+      "bytes": 699935,
+      "sha256": "341528eb7a0b4a3254efa54d94510a897eb12ca305e6b00f148da4c33bca2bfa",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/observation-app-v22-full-duration-contact.png",
+      "bytes": 748165,
+      "sha256": "11d71c0853a23d72af322df9faef9a1b60c30be243ced31daceb10d0ca6f0153",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/observation-app-v22.webm",
+      "bytes": 982087,
+      "sha256": "cf17c4817669c7a499fe59b6798af4bd01a54485f449f9c1082247759beb34d2",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-after-open-error-v4-corrupt-2026-09-20T03-52-25.198Z-d4278dc9/native-flow.webm",
+      "bytes": 1124746,
+      "sha256": "f374a42db94d5f6ff0606c536ca8ea01bdb80b724277d7aeae462061be70e5a3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-after-open-error-v4-corrupt-2026-09-20T03-52-25.198Z-d4278dc9/result.json",
+      "bytes": 1621268,
+      "sha256": "3785abfeed4841f46d4a77279d3af458085eb1141d2bd5f912a91bb5da576b96",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-after-open-error-v4-corrupt-2026-09-20T03-52-25.198Z-d4278dc9/video-contact.png",
+      "bytes": 984891,
+      "sha256": "147bb2073aa828f883f81e98e4ac637579b80b342d52f09ddffc1f0e5b0d498f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-after-open-error-v4-future-2026-09-20T03-54-37.712Z-c9194d5d/native-flow.webm",
+      "bytes": 1111010,
+      "sha256": "3e6f4ba2ef98ab22cf838a70dfc0142511592523184585b424f6e68bbee3016a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-after-open-error-v4-future-2026-09-20T03-54-37.712Z-c9194d5d/result.json",
+      "bytes": 1722870,
+      "sha256": "37ea83da56e2b308a899d0aaa62750f812cf334947496ea19bb3978b99fddc80",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-after-open-error-v4-future-2026-09-20T03-54-37.712Z-c9194d5d/video-contact.png",
+      "bytes": 1085570,
+      "sha256": "92cd9eff9941ac819746a8e51a7bf60f67977d38ebd9022508f79e6f8e7c59bd",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-after-open-error-v4-missing-2026-09-20T03-55-00.344Z-9b1b3a39/native-flow.webm",
+      "bytes": 1153341,
+      "sha256": "bfc56edcfb89616054dcdf2b93a918fec2ab3cb60d94d607d63400325d6f8655",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-after-open-error-v4-missing-2026-09-20T03-55-00.344Z-9b1b3a39/result.json",
+      "bytes": 1672971,
+      "sha256": "b2f87b8e8276cd234b9533a217f6793ae930b4b5e734e4e691d2ffef307e7416",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-after-open-error-v4-missing-2026-09-20T03-55-00.344Z-9b1b3a39/video-contact.png",
+      "bytes": 1102075,
+      "sha256": "f23b9f817a8d562cff4d813b3bf4925f78c67534d147ddd407c85d467f38ec61",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-error-corrupt-2026-09-20T04-00-56.000Z-58629038/native-flow.webm",
+      "bytes": 224846,
+      "sha256": "4eccb9e78532828fec5075167dd5b23ea38c7ed5b5c6c03db30c3c5f7a48a3dc",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-error-corrupt-2026-09-20T04-00-56.000Z-58629038/result.json",
+      "bytes": 241283,
+      "sha256": "67d7d72bf509a9956c3b4525dd8f4cfa5e86a230c0d26d885da68fea17529314",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-error-corrupt-2026-09-20T04-00-56.000Z-58629038/video-contact.png",
+      "bytes": 270774,
+      "sha256": "f49dedecd10789a31952743fb4bf4a9f23c0b5486064f00030bd4ed4ec688dbf",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-error-future-2026-09-20T04-01-00.278Z-69adec69/native-flow.webm",
+      "bytes": 131617,
+      "sha256": "30f5b576259747d9d291694151acb06a46e7d0f54f0611b9a4a7969bdb6cab82",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-error-future-2026-09-20T04-01-00.278Z-69adec69/result.json",
+      "bytes": 240900,
+      "sha256": "91df780d227e20fc60486142417874c26a90304a800b8e4c27a6d9833dc87f72",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-error-future-2026-09-20T04-01-00.278Z-69adec69/video-contact.png",
+      "bytes": 283643,
+      "sha256": "545e731e44642054d1e4e7a17539e8329ad80c95b97e884beb3165db2269b0c5",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-error-missing-2026-09-20T04-01-04.107Z-40c06b58/native-flow.webm",
+      "bytes": 160106,
+      "sha256": "85efb786ea329e078121dad8c90115d3e4d2a6871c92e1ad0f81aa909c432244",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-error-missing-2026-09-20T04-01-04.107Z-40c06b58/result.json",
+      "bytes": 240916,
+      "sha256": "e2ed3da5b239a838d1b632f405c4b3ac44010d70f993c498de5a188b688da844",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/recording-error-missing-2026-09-20T04-01-04.107Z-40c06b58/video-contact.png",
+      "bytes": 285586,
+      "sha256": "a9e5168a7f12ba27d6354c7d521da3491a7c840e60c207ad09094bebe0083d28",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/reload-105.json",
+      "bytes": 34840,
+      "sha256": "cd08110bed6e0867e577b9a8a872effa578fb8ef164e2930d50a60208f354bbe",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/return-layout-v22-healthy-reentry-retry-contact.png",
+      "bytes": 850924,
+      "sha256": "981181d18284976da93c0e4e821b8ee79ac872929e8a4558019da0c1eeb8b20c",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/return-layout-v22-healthy-reentry-retry.json",
+      "bytes": 9509,
+      "sha256": "dc62942a7e002ca7e3d9bff3dcba962d734135ad13cb34924267637f7a54bc16",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/return-layout-v22-healthy-reentry-retry.webm",
+      "bytes": 728803,
+      "sha256": "fb5b2d74eb80adc1cc1cc0d102103bf1da910bd6c22991471f2050eb5c19d611",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/stale-outline-v1-2026-09-20T04-08-36.621Z-ef20af65/binding.json",
+      "bytes": 1114,
+      "sha256": "4ba324eac2dd39e32a5e396f55a34d4f0c69f77596b78107176b6838ec8c85a2",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/stale-outline-v1-2026-09-20T04-08-36.621Z-ef20af65/native-flow.webm",
+      "bytes": 295590,
+      "sha256": "81762f4cd25f95db3656d0bdf64507a8fbeb3f1520d8aad96d90988777197932",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/stale-outline-v1-2026-09-20T04-08-36.621Z-ef20af65/result.json",
+      "bytes": 476106,
+      "sha256": "e2247bcf161d38f772be56974f1926d9031287664de93e73f8c9e66ea4411032",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T03-51-19.136Z-eb180cff/stale-outline-v1-2026-09-20T04-08-36.621Z-ef20af65/video-contact.png",
+      "bytes": 643450,
+      "sha256": "3aa222806dc820f2e7c6b4b63562d5e3bd82f9b3d28b81546fa4861e5956f8b7",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/exit.json",
+      "bytes": 14,
+      "sha256": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/n08-binding.json",
+      "bytes": 1114,
+      "sha256": "06bdd53be65e26fc9032cf24f6a64c31db7c16ba564608419ce21a393836cd59",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/native-inspection-v23.json",
+      "bytes": 3953,
+      "sha256": "19cf3532db06a21e3ae08210843d01558082e7e62e4afc6fe2c9a5c81c6ac292",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/native-theme-keyboard-contact.png",
+      "bytes": 1953856,
+      "sha256": "e61144d1f16efaec7ba29d10071391e64629fa3f984b19a644056b6e21d6f532",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/native-theme-keyboard-v23.webm",
+      "bytes": 3932280,
+      "sha256": "6670d454735d5ec3ced0c6eb11c458c42c84fc24dffcd1b4a2da50b606d9e6cf",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/qa-settings-restored.json",
+      "bytes": 119,
+      "sha256": "6ad2f8d7fb3e1c4d69d99e16fc39e8176418eaab09c38224f94d8a6e28576a62",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-corrupt-2026-09-20T04-18-40.075Z-45a0f69d/native-flow.webm",
+      "bytes": 1099065,
+      "sha256": "909c75e6438f2e31866666c920db82d77e9e8e424b78f05b4e6c7ad23f1502fe",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-corrupt-2026-09-20T04-18-40.075Z-45a0f69d/recording-details.png",
+      "bytes": 138153,
+      "sha256": "7b04db6832f6aae2ef6920fac66cd75164ea49a74da1a7de6cf81b6c7c3795c6",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-corrupt-2026-09-20T04-18-40.075Z-45a0f69d/recording-error.png",
+      "bytes": 108681,
+      "sha256": "085948d0ef73e7b72c81e8a825a7660c0de08e5dd5d537192d349fb2cef8ba9a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-corrupt-2026-09-20T04-18-40.075Z-45a0f69d/recording-ready.png",
+      "bytes": 113978,
+      "sha256": "fb7288de0c2a24a0dad16cbc61c537be7cd28015701f62a0d60e53f71f06ab54",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-corrupt-2026-09-20T04-18-40.075Z-45a0f69d/result.json",
+      "bytes": 1491534,
+      "sha256": "f00a43e8668c14b1a7f89bb30f94ed19ba3acd0ed5180547879e0062c81171c6",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-corrupt-2026-09-20T04-18-40.075Z-45a0f69d/unavailable-control-before.png",
+      "bytes": 123949,
+      "sha256": "f293ee51fa6485600726c7712953fcbb8a02d007e109467b4ccab62ed5ac397f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-corrupt-2026-09-20T04-18-40.075Z-45a0f69d/unavailable-enter-after.png",
+      "bytes": 123949,
+      "sha256": "f293ee51fa6485600726c7712953fcbb8a02d007e109467b4ccab62ed5ac397f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-corrupt-2026-09-20T04-18-40.075Z-45a0f69d/unavailable-space-after.png",
+      "bytes": 123949,
+      "sha256": "f293ee51fa6485600726c7712953fcbb8a02d007e109467b4ccab62ed5ac397f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-corrupt-2026-09-20T04-18-40.075Z-45a0f69d/video-contact.png",
+      "bytes": 1041199,
+      "sha256": "c4d52642b01d0b69b417e0df22f67a320f0d8e97fb208aab7e5c4561a2a3e01d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-corrupt-2026-09-20T04-18-40.075Z-45a0f69d/wiki-result.png",
+      "bytes": 123949,
+      "sha256": "f293ee51fa6485600726c7712953fcbb8a02d007e109467b4ccab62ed5ac397f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/native-flow.webm",
+      "bytes": 987388,
+      "sha256": "8c54f8f9381b189279b7b622fe1b37d3ba0e249bd38d362d6c21a3cb5b2bfa57",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/recording-details.png",
+      "bytes": 120154,
+      "sha256": "49d079a01b3cb8b2055673c5590f3c6257a2d0489bf894607bd74f01e3d6b16a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/recording-error.png",
+      "bytes": 99398,
+      "sha256": "cbb724e62bfd1f99dff6741bf8a0f2588911f7a3d7628d68e3fa76778741645a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/recording-ready.png",
+      "bytes": 107733,
+      "sha256": "19c39e5ca160c1b7e67222c6c0f19c26f62e7b4b7e6fc8be867ae40a2326769f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/result.json",
+      "bytes": 1727869,
+      "sha256": "6984ce961e00bac3d1e0b1b5203d7df2fac1293bfc532f93a4bf27150a96d91a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/unavailable-control-before.png",
+      "bytes": 120329,
+      "sha256": "0d529feec5f3f50978be213684c5e832d10e80421fc26aac07f33aacfa10ca08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/unavailable-enter-after.png",
+      "bytes": 120329,
+      "sha256": "0d529feec5f3f50978be213684c5e832d10e80421fc26aac07f33aacfa10ca08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/unavailable-pointer-after.png",
+      "bytes": 120329,
+      "sha256": "0d529feec5f3f50978be213684c5e832d10e80421fc26aac07f33aacfa10ca08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/unavailable-space-after.png",
+      "bytes": 120329,
+      "sha256": "0d529feec5f3f50978be213684c5e832d10e80421fc26aac07f33aacfa10ca08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/video-contact.png",
+      "bytes": 987328,
+      "sha256": "95f476ffa8f2260e9d1593f8d7754ae3cbf08daa15bc70cfc53b5cd191e38533",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-future-2026-09-20T04-20-28.887Z-a9a630b8/wiki-result.png",
+      "bytes": 120329,
+      "sha256": "0d529feec5f3f50978be213684c5e832d10e80421fc26aac07f33aacfa10ca08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/native-flow.webm",
+      "bytes": 1050743,
+      "sha256": "fc29dcb3767240dd9353f0061ef97e9051ed9260da6d501368c788a7253a22a6",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/recording-details.png",
+      "bytes": 145726,
+      "sha256": "3e7f8b7f4f7c70a7462182b08e5de99c781b9aab394064171c145372e1800456",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/recording-error.png",
+      "bytes": 99398,
+      "sha256": "cbb724e62bfd1f99dff6741bf8a0f2588911f7a3d7628d68e3fa76778741645a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/recording-ready.png",
+      "bytes": 107733,
+      "sha256": "19c39e5ca160c1b7e67222c6c0f19c26f62e7b4b7e6fc8be867ae40a2326769f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/result.json",
+      "bytes": 1671791,
+      "sha256": "f2456b45e74be0a886ac24f88b07845453b0cb8a2c4f48165f77ded53a43a9e2",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/unavailable-control-before.png",
+      "bytes": 120329,
+      "sha256": "0d529feec5f3f50978be213684c5e832d10e80421fc26aac07f33aacfa10ca08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/unavailable-enter-after.png",
+      "bytes": 120329,
+      "sha256": "0d529feec5f3f50978be213684c5e832d10e80421fc26aac07f33aacfa10ca08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/unavailable-pointer-after.png",
+      "bytes": 120329,
+      "sha256": "0d529feec5f3f50978be213684c5e832d10e80421fc26aac07f33aacfa10ca08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/unavailable-space-after.png",
+      "bytes": 120329,
+      "sha256": "0d529feec5f3f50978be213684c5e832d10e80421fc26aac07f33aacfa10ca08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/video-contact.png",
+      "bytes": 1046791,
+      "sha256": "d55f25d39ccb3599c9a5dcca0e2d8abc676f246445bbaf7aaaee0ddaf9c2b48f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/recording-after-open-error-v4-missing-2026-09-20T04-21-33.711Z-bd22f92a/wiki-result.png",
+      "bytes": 120329,
+      "sha256": "0d529feec5f3f50978be213684c5e832d10e80421fc26aac07f33aacfa10ca08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/return-layout-v23-healthy-reentry-contact.png",
+      "bytes": 1018550,
+      "sha256": "0c78122a33777ca2f698043962f787146a79fad794db054d8b4c31d73d868e14",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/return-layout-v23-healthy-reentry.json",
+      "bytes": 23197,
+      "sha256": "be71ab372dbd5eb14ee5891419ca25e758dc8db5ecf7e68cb5b9152ac9700948",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/return-layout-v23-healthy-reentry.png",
+      "bytes": 118898,
+      "sha256": "232144151137555021eb99a4103efcb1e11d9881ad87e586ce03b80dd64c75d3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/return-layout-v23-healthy-reentry.webm",
+      "bytes": 623415,
+      "sha256": "03b663eb41e8f0be6344820bdb051b8c38c7e78d0b64eee78ef32287438e603c",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v2-2026-09-20T04-23-32.494Z-8f08581b/failure-after-restoration.png",
+      "bytes": 452457,
+      "sha256": "0f27d0276eb90533b08c0015948de59ce3914e90c3bec7288a001c5e4aa076d2",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v2-2026-09-20T04-23-32.494Z-8f08581b/native-flow-contact.png",
+      "bytes": 487430,
+      "sha256": "ad23c51a4c778e57fc197fd212c9b067421565af17064170aa387fc0d3d9e8c4",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v2-2026-09-20T04-23-32.494Z-8f08581b/native-flow.webm",
+      "bytes": 98156,
+      "sha256": "7229932d0a37e1930e4c5c4856803198c680c7ab6c1228d0dfc34ea76592075d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v2-2026-09-20T04-23-32.494Z-8f08581b/result.json",
+      "bytes": 132188,
+      "sha256": "135d886c4c860a8ebf8cb0d3b2ee2fb7de0721261ef24ad73ae9e44bcdb9fc38",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v3-2026-09-20T04-37-05.503Z-2f906c64/failure-after-restoration.png",
+      "bytes": 415117,
+      "sha256": "1ae686370e82bee6486309f249c4770c9eacfe110436aa286b9b7c01c5189077",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v3-2026-09-20T04-37-05.503Z-2f906c64/native-flow-contact.png",
+      "bytes": 379302,
+      "sha256": "ad28968c0d9bc379c8f645608240638e5cf7e6421d4bcaffce25a6027a2c6528",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v3-2026-09-20T04-37-05.503Z-2f906c64/native-flow.webm",
+      "bytes": 70321,
+      "sha256": "76d3fd98704282d22c1d033570706c0f2bebee3ffa1dc72c87398f997728e8c7",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v3-2026-09-20T04-37-05.503Z-2f906c64/result.json",
+      "bytes": 228854,
+      "sha256": "0a9babd4c0085824d8c692c206a3264d236b3d2fdd45af10b3bce33873973ce0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v4-2026-09-20T04-41-20.284Z-9c1a51da/failure-after-restoration.png",
+      "bytes": 415117,
+      "sha256": "1ae686370e82bee6486309f249c4770c9eacfe110436aa286b9b7c01c5189077",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v4-2026-09-20T04-41-20.284Z-9c1a51da/native-flow-contact.png",
+      "bytes": 963463,
+      "sha256": "a64aa2094c0d30224eedf639d3bd192feba126f2bbb95fe8824a8aa435dc595f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v4-2026-09-20T04-41-20.284Z-9c1a51da/native-flow.webm",
+      "bytes": 216802,
+      "sha256": "324ede83b98d0e16c5b361005763badd7aa9c105b9176a0e3a8847d2f205adc3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v4-2026-09-20T04-41-20.284Z-9c1a51da/result.json",
+      "bytes": 2745044,
+      "sha256": "6c473bcb32f64eaea3fb52f447d9ef2b648ea7d001e668b8edcb81a0940e6556",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v5-2026-09-20T04-43-54.082Z-7531281d/baseline.png",
+      "bytes": 415203,
+      "sha256": "f489fa09d6a9a335dccaef51015f4ca264a7dde1b10360f8b93c75cdc064a629",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v5-2026-09-20T04-43-54.082Z-7531281d/native-flow-contact.png",
+      "bytes": 1155145,
+      "sha256": "f2ba0b139e7edc9a897b3c2414644319ea8144bc6f1f85216279552bf6956e4f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v5-2026-09-20T04-43-54.082Z-7531281d/native-flow.webm",
+      "bytes": 362621,
+      "sha256": "0ed45b5c587fd4f7008dead2800f00fa3253c83be345f022747d35334309b8ab",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v5-2026-09-20T04-43-54.082Z-7531281d/restored.png",
+      "bytes": 415203,
+      "sha256": "f489fa09d6a9a335dccaef51015f4ca264a7dde1b10360f8b93c75cdc064a629",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v5-2026-09-20T04-43-54.082Z-7531281d/result.json",
+      "bytes": 9175827,
+      "sha256": "2698b858e6877bda26c1bffb0be3644a410a31a809dae177aade88c96a4d759c",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v5-2026-09-20T04-43-54.082Z-7531281d/stale-after-space.png",
+      "bytes": 421903,
+      "sha256": "e87d501b6696715cc97b3bafc90f2eacb0805a8ced9767ee53751ef0da34ff95",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/stale-outline-v5-2026-09-20T04-43-54.082Z-7531281d/stale-focused-before-space.png",
+      "bytes": 421903,
+      "sha256": "e87d501b6696715cc97b3bafc90f2eacb0805a8ced9767ee53751ef0da34ff95",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/theme-hc-keyboard.png",
+      "bytes": 464144,
+      "sha256": "b59239e922f7605681f10e841f939ff3e1a62965efb991991201ac6570d57152",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T04-17-41.554Z-73a2608f/theme-light-keyboard.png",
+      "bytes": 460829,
+      "sha256": "08b5c1ee1c25b8124f7b4f791e5ce02bd05059d39315bdd957620585641312a6",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/exit.json",
+      "bytes": 14,
+      "sha256": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/native-inspection-v19.json",
+      "bytes": 4188,
+      "sha256": "fb904a5bd633cbd4cde4b662692210ae885787d52cd90b9e81efa82d9352f8e6",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/observation-after-failed-replay-v19.png",
+      "bytes": 136139,
+      "sha256": "729162d77cc4b4c7fe94995e04d234542dbf96b921a2b09ca2e604f7fe9860c6",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/observation-after-failed-replay-v19.webm",
+      "bytes": 885586,
+      "sha256": "9d8770fceec3a9fbe452a17800b51817f46746d2e593734ceea8ee785e6d7025",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/qa-settings-restored.json",
+      "bytes": 168,
+      "sha256": "dd396d670dcc38efebacdc53bb3fc4822d2f798c8b8ff8894fdb2216a85e4af3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/recording-after-open-error-v4-corrupt-2026-09-20T02-55-00.636Z-7ce40e46/native-flow.webm",
+      "bytes": 890347,
+      "sha256": "7fce950f22e25801c30443b8c3b11d1b04efa60cdfb97ca687ca7ea6ab4eddac",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/recording-after-open-error-v4-corrupt-2026-09-20T02-55-00.636Z-7ce40e46/result.json",
+      "bytes": 1625646,
+      "sha256": "ba9b3c3dd3db1a5cad439376bdd412b2da9a14d7d17216ad24239da894d12162",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/recording-after-open-error-v4-corrupt-2026-09-20T02-55-00.636Z-7ce40e46/video-contact.png",
+      "bytes": 1043286,
+      "sha256": "6f2cd1105a6802da0b51d424abebb36983f5f31ff65d54984dfcab61bed5f4d4",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/recording-after-open-error-v4-future-2026-09-20T02-57-06.051Z-50e59a7f/native-flow.webm",
+      "bytes": 976230,
+      "sha256": "347075045604e7bff0186e18bb62fd675cf91b5be3f0f1dd44f80271718b7cb6",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/recording-after-open-error-v4-future-2026-09-20T02-57-06.051Z-50e59a7f/result.json",
+      "bytes": 1737790,
+      "sha256": "d992f57fa13da1c51500476f9d392163daba243c86f0fd5da132c1aa0a6f500f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/recording-after-open-error-v4-future-2026-09-20T02-57-06.051Z-50e59a7f/video-contact.png",
+      "bytes": 1084446,
+      "sha256": "bc9e71282d6f64c4edcea75c518cc7c757b11b135425aa94c62b02755d6dd9ab",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/recording-after-open-error-v4-missing-2026-09-20T02-57-27.427Z-1ef4a196/native-flow.webm",
+      "bytes": 992858,
+      "sha256": "1f34a7bb6e732e5c24fa6e64c33017217b75750b2b7f122e4a71be270b2edfaf",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/recording-after-open-error-v4-missing-2026-09-20T02-57-27.427Z-1ef4a196/result.json",
+      "bytes": 1679596,
+      "sha256": "6ba06dc7c7c3ebdd0f18989880ec58b8cdec15fc51a62cc47e1b5199bfd61783",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/recording-after-open-error-v4-missing-2026-09-20T02-57-27.427Z-1ef4a196/video-contact.png",
+      "bytes": 1119552,
+      "sha256": "d8fe507b753f0b313caa893b494269c369a8d0acc48eef4fe5d117aa30675ec9",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/return-layout-v19-healthy-reentry-contact.png",
+      "bytes": 1264965,
+      "sha256": "a4c4e4994aee15b8fbb56effbab5d912971638c0305c2ab4a468717fbd268260",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T02-53-35.633Z-f0b92170/return-layout-v19-healthy-reentry.json",
+      "bytes": 14554,
+      "sha256": "26b39da05e1e9bfb9ebcc359bf003f28ff55582f6e86e3092c9616428d775bce",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/exit.json",
+      "bytes": 14,
+      "sha256": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/n08-binding.json",
+      "bytes": 1142,
+      "sha256": "617f079e51b62fa90b3805d6b75f064a7fe0e327f864edff94d0ea8a47f6fbc8",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/native-inspection-v23.json",
+      "bytes": 2950,
+      "sha256": "83d62651791813348e65cd9702595059e3a9ef3077203db7942695464cb46c14",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/qa-settings-restored.json",
+      "bytes": 119,
+      "sha256": "2715ed5347e6bf3d88d6892a56be4a49d923994ba1c649c6b3c9eb0dc17a26aa",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/native-flow-contact.png",
+      "bytes": 1217983,
+      "sha256": "49940c305725a5d07c167a709794badae16e96516cd57a0e398db725813ce8d8",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/native-flow.webm",
+      "bytes": 851120,
+      "sha256": "b85d0fbf9cb738d1f79c5c191684c45f5ba645760aadb09fb0fadab894b826fb",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/recording-details.png",
+      "bytes": 155191,
+      "sha256": "e099da028836e3eedfe78b7ba48c0554d02ccb46d6429d88f8e7da0d052733ad",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/recording-error.png",
+      "bytes": 119524,
+      "sha256": "2cd75783a27c7e1a8d0fc5b99ac107638b88fc7d90b96b5666d936222c96b3d7",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/recording-ready.png",
+      "bytes": 134117,
+      "sha256": "97d3d26a2657ab883d06b4b5fa92aa2f7e0c3664ff574225c4f648d95a743b58",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/result.json",
+      "bytes": 1630269,
+      "sha256": "177c0ed701bab387f81759efec01d7f00c1cecc1d3386efbdee8c4d77ec2a2cb",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/unavailable-control-before.png",
+      "bytes": 158727,
+      "sha256": "1a5dfb8d89ec85d5485a64a9bc9154ca570f743a06bf2707ba5c5cc128fc5f2b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/unavailable-enter-after.png",
+      "bytes": 158709,
+      "sha256": "d4629a8d23d66f7db03c0496673c0203deed9eff5bdc59caa0cecaa362dd6f5b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/unavailable-pointer-after.png",
+      "bytes": 158709,
+      "sha256": "d4629a8d23d66f7db03c0496673c0203deed9eff5bdc59caa0cecaa362dd6f5b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/unavailable-space-after.png",
+      "bytes": 158727,
+      "sha256": "1a5dfb8d89ec85d5485a64a9bc9154ca570f743a06bf2707ba5c5cc128fc5f2b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-corrupt-2026-09-20T04-47-45.995Z-17d63afc/wiki-result.png",
+      "bytes": 158727,
+      "sha256": "1a5dfb8d89ec85d5485a64a9bc9154ca570f743a06bf2707ba5c5cc128fc5f2b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/native-flow-contact.png",
+      "bytes": 1289193,
+      "sha256": "8e2e40bb236b90d1962e672635daf96fa246ab709d09bb7fe74ece7afb3a43d9",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/native-flow.webm",
+      "bytes": 909456,
+      "sha256": "ccbcab62c7de683f5444a4f59db1df447e557a12a7692c1e99913970a1d1b1ef",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/recording-details.png",
+      "bytes": 143496,
+      "sha256": "58bec689cae87b0cade1c1e48bf8c7cb9f352586e35c2e9d750d4180352a6ebb",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/recording-error.png",
+      "bytes": 123153,
+      "sha256": "a3d4b67a59d7e1bc8143779b763dc1f38bf365469f9a54b445087a784aa56ef8",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/recording-ready.png",
+      "bytes": 134117,
+      "sha256": "97d3d26a2657ab883d06b4b5fa92aa2f7e0c3664ff574225c4f648d95a743b58",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/result.json",
+      "bytes": 1735786,
+      "sha256": "bdf596c9fa4bfa344906d2168205f40f71bd3a02e20c66f0c69a004cd1d68a5e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/unavailable-control-before.png",
+      "bytes": 158739,
+      "sha256": "e3338429836d7abc41f2ad64ed495e73d08e1822b049ad771a7c6f34bf464e74",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/unavailable-enter-after.png",
+      "bytes": 158713,
+      "sha256": "e10806fb86332fd528f88e6d31f7701a9d1012f53632dc7e8aa445cd7cccb77e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/unavailable-pointer-after.png",
+      "bytes": 158713,
+      "sha256": "e10806fb86332fd528f88e6d31f7701a9d1012f53632dc7e8aa445cd7cccb77e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/unavailable-space-after.png",
+      "bytes": 158739,
+      "sha256": "e3338429836d7abc41f2ad64ed495e73d08e1822b049ad771a7c6f34bf464e74",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-future-2026-09-20T04-50-05.486Z-83796b7c/wiki-result.png",
+      "bytes": 158739,
+      "sha256": "e3338429836d7abc41f2ad64ed495e73d08e1822b049ad771a7c6f34bf464e74",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/native-flow-contact.png",
+      "bytes": 1135991,
+      "sha256": "d226c9d2a673fa12fabbcb03d112d3d504a985b8149678bfbe5c8aaf2daae323",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/native-flow.webm",
+      "bytes": 1055243,
+      "sha256": "744e6c5cdfb78190473e1de1fff8164aedc7807e7b6dcf8e0c407bbe20a5e23b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/recording-details.png",
+      "bytes": 169137,
+      "sha256": "f31ee5fc67f83eccd4fada881c0d7fb298d24ca4729713f78eb00b069b71fb20",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/recording-error.png",
+      "bytes": 123153,
+      "sha256": "a3d4b67a59d7e1bc8143779b763dc1f38bf365469f9a54b445087a784aa56ef8",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/recording-ready.png",
+      "bytes": 134117,
+      "sha256": "97d3d26a2657ab883d06b4b5fa92aa2f7e0c3664ff574225c4f648d95a743b58",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/result.json",
+      "bytes": 1684496,
+      "sha256": "7e578f6bd6b9bc80d06d24d0dd429a772968d29cdbab609feeac2b39b687f5be",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/unavailable-control-before.png",
+      "bytes": 158739,
+      "sha256": "e3338429836d7abc41f2ad64ed495e73d08e1822b049ad771a7c6f34bf464e74",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/unavailable-enter-after.png",
+      "bytes": 158713,
+      "sha256": "e10806fb86332fd528f88e6d31f7701a9d1012f53632dc7e8aa445cd7cccb77e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/unavailable-pointer-after.png",
+      "bytes": 158713,
+      "sha256": "e10806fb86332fd528f88e6d31f7701a9d1012f53632dc7e8aa445cd7cccb77e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/unavailable-space-after.png",
+      "bytes": 158739,
+      "sha256": "e3338429836d7abc41f2ad64ed495e73d08e1822b049ad771a7c6f34bf464e74",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/recording-after-open-error-v4-missing-2026-09-20T04-50-26.912Z-0d9a66be/wiki-result.png",
+      "bytes": 158739,
+      "sha256": "e3338429836d7abc41f2ad64ed495e73d08e1822b049ad771a7c6f34bf464e74",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/return-layout-v23-healthy-reentry-contact.png",
+      "bytes": 1208201,
+      "sha256": "3863589c5657851d784d9b5535a0074cf2497deae9eb15092413aaf6b0190c74",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/return-layout-v23-healthy-reentry.json",
+      "bytes": 23277,
+      "sha256": "2bfd55801e7c2142b099dcc97859ea946a6bf147446ed1f3f1fc59bfde98ef12",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/return-layout-v23-healthy-reentry.png",
+      "bytes": 146090,
+      "sha256": "14fa327a6c664c476b013a990a14525ca6863e88ab645151a79d9028b55a766e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/return-layout-v23-healthy-reentry.webm",
+      "bytes": 652755,
+      "sha256": "9f861e1e38dd3ab398046ab91aa5c73f83d1f8c7ca607a8dc86f837e9a9e3839",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/stale-outline-v5-2026-09-20T04-54-27.129Z-8517c0da/baseline.png",
+      "bytes": 449805,
+      "sha256": "f134331b4edd59c2a9ee73a3851924c58f0bc34ab55af6d1005cacace3d17d8f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/stale-outline-v5-2026-09-20T04-54-27.129Z-8517c0da/native-flow-contact.png",
+      "bytes": 1417741,
+      "sha256": "1064be15f2495d316e175de24934032643244e6c6af9db9344d65bcd862e4ca3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/stale-outline-v5-2026-09-20T04-54-27.129Z-8517c0da/native-flow.webm",
+      "bytes": 460638,
+      "sha256": "86d8cd84767016edde21293b0e8c93c50c46247fcbd15c84a60254feaf5ccc6d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/stale-outline-v5-2026-09-20T04-54-27.129Z-8517c0da/restored.png",
+      "bytes": 449805,
+      "sha256": "f134331b4edd59c2a9ee73a3851924c58f0bc34ab55af6d1005cacace3d17d8f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/stale-outline-v5-2026-09-20T04-54-27.129Z-8517c0da/result.json",
+      "bytes": 9645225,
+      "sha256": "6442f4097596bdaaa4eab38abe1632febc9cdd347ecc5f54f0c8c53d2ce59322",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/stale-outline-v5-2026-09-20T04-54-27.129Z-8517c0da/stale-after-space.png",
+      "bytes": 456185,
+      "sha256": "d2a42490b5d8b080341c54f077eae28b99f7b01c6c2d5bc3897aeb507b9bc5fa",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T04-45-35.176Z-beb24431/stale-outline-v5-2026-09-20T04-54-27.129Z-8517c0da/stale-focused-before-space.png",
+      "bytes": 454988,
+      "sha256": "f91fc7072967053989c62c7dd36a1b7bc511cf31941f772cd72ef2faf4a276fc",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-build-v19.json",
+      "bytes": 26820,
+      "sha256": "032f1f18144310dde9f30483d16ad84951c0293fcfb9d87a3c64f3140758a7ff",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-build-v20.json",
+      "bytes": 26820,
+      "sha256": "fcd78f05d0f9ecc766d0c94ef72d748ae32757103b446915e20a0b129244ba15",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-build-v21.json",
+      "bytes": 26819,
+      "sha256": "786edfa292c8428384408ac7d6a3bc41a8cb15f7c48b2b8b2aa69fa732ed9b87",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-build-v22.json",
+      "bytes": 26819,
+      "sha256": "f2d072631ae23f01f44927570c20de22e2b67a9709414de13062547755189a3d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-build-v23.json",
+      "bytes": 26820,
+      "sha256": "dcffef152dadbd8e68393a331bdcdb26a76663258fc59a43b610eeae2d2c80d5",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-expectations-v19.md",
+      "bytes": 1891,
+      "sha256": "536296388f42738a5faf907b278cb84d7f29b91a5fd79b4eeb8351cf9ddb1616",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-expectations-v22.md",
+      "bytes": 2150,
+      "sha256": "12a34b977d3d2f8b840a92e89d41d9ae5cc465f4cefac265ee5886ac0bf9871d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-expectations-v23.md",
+      "bytes": 2165,
+      "sha256": "7b369f8e09da2417891078ccc52ab7b2eb71a7017acc3d3da21b1ac2aa77fab1",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-stale-outline-v1.mjs",
+      "bytes": 38692,
+      "sha256": "1e101742e5ec054ce9d042a7d787ceeac5f7d351dd5d5c56c771045799bdab54",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-stale-outline-v2.md",
+      "bytes": 15208,
+      "sha256": "42c60727e5e0e6e3b352b178d7b5fd921ea48297ed94ba9ab56649b0d735de7b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-stale-outline-v2.mjs",
+      "bytes": 50132,
+      "sha256": "4db607aed4109e7677f106a54b63107d049648cd1048e9da7dad1cec54ae73de",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-stale-outline-v3.md",
+      "bytes": 17249,
+      "sha256": "4e9b16fb543203c1b926b6aefd118a0dbdf583a2eecaca5d47a3e679f722597a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-stale-outline-v3.mjs",
+      "bytes": 54246,
+      "sha256": "160169a6fa1e3c64f7f8fa16752b41167056cde26bdd18522f8f849ad6510035",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-stale-outline-v4.md",
+      "bytes": 19260,
+      "sha256": "65930c15df4a28695fcad9ed7bedb20f5c2520381d4c497967a735a91c63a6b3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-stale-outline-v4.mjs",
+      "bytes": 54517,
+      "sha256": "a18d43e2bb26085607af86e582684a602c32c8ba8e5bfc0499c3d43fe6f9409c",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-stale-outline-v5.md",
+      "bytes": 1068,
+      "sha256": "b1312cc7eecc881130d6e8f0d932172e5112adfc93f0cff124082750c2d4a1a5",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-stale-outline-v5.mjs",
+      "bytes": 55110,
+      "sha256": "49059c2a7e7071db92e2e9ee9aa2b40583e1491f3cd588d69befb4cea3731c93",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/product-tests-return-layout-v19-20260920.log",
+      "bytes": 52658,
+      "sha256": "6fc15ab63bfeea0e98760728311adf968d641a8bfc4144bcb1d2a47e636d8f08",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/product-tests-return-layout-v22-20260920.log",
+      "bytes": 55395,
+      "sha256": "a527cd7a0d3a5f3868dbea3853f80ac2e203fc965521fa172fb62dfa1181b325",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/product-tests-return-layout-v23-20260920.log",
+      "bytes": 55668,
+      "sha256": "55dfbe26b29a015ce1e468eb4f7de346cfe1fb132d5fc9c95f0b746f6d137ee2",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/reader-inactive-focus-regression-v3/result.json",
+      "bytes": 2098,
+      "sha256": "718af2cfa3877041fb97fc4ac935b20b80ce462fb9ba1ef8c9784fac84f03704",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/reader-inactive-narrow-geometry-v1/result.json",
+      "bytes": 1634,
+      "sha256": "2248b455d456a405af93083b0d69c40a393b9d8c50eaaa23f23da890c506566f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/repository-layout-return-final-boundaries-red.log",
+      "bytes": 1759,
+      "sha256": "d446fb3d5240ec8a6d17c9dacc52b8546ee568055e5ea94210dcdb579cebd2b3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/repository-layout-return-known-grid-red.log",
+      "bytes": 2139,
+      "sha256": "7d2e305c20d2fa68560ae75bb17df880a2a27dc6344860880fcd1b4365d7e991",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/repository-layout-return-known-grid-tests.log",
+      "bytes": 15160,
+      "sha256": "7d349b88abd634c801604290b497c72455af522a6a3c2cff49b6fa340029b1ce",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/repository-layout-return-red.log",
+      "bytes": 2427,
+      "sha256": "7cd42aff5d80c38e1fc7531fcc41c26d71d3a6d35ede0776e3a6559c252616aa",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/repository-layout-return-reentry-red.log",
+      "bytes": 1336,
+      "sha256": "dd599b4662e9c656f104d477b509ff5df7be778554fa646cc517efdc08c027d2",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/repository-layout-return-reentry-review-red.log",
+      "bytes": 2130,
+      "sha256": "1bb11c810195c8171ce8217ad54379abca479c16ed25dca42bde7da051922e33",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/repository-layout-return-supersession-red.log",
+      "bytes": 978,
+      "sha256": "58ce48d822796d0e65fdbf651aa047b732d9757e642031601da5d11caae9b66d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-cursor-two-events-focused-green.log",
+      "bytes": 1398,
+      "sha256": "f4a1f32e7fae65ff2276aa2579b7e32f167a141f8cbf7676c64caa9ba932230b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-cursor-two-events-green-compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-cursor-two-events-red-compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-cursor-two-events-red.log",
+      "bytes": 2487,
+      "sha256": "fa1400de9f938dce5a51b956ddbab17d6646f3ad62b074cd84a10a7ba7189fc3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-cursor-two-events-scoped-tests.log",
+      "bytes": 17961,
+      "sha256": "fdd64f561749f5a55a0bb8b61372f62de3ea77590cb132c5208f5f27de5e33bb",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v19.patch",
+      "bytes": 83512,
+      "sha256": "8fde8c30296c685424daae27ce0938670cf1c6d87049aaa4a6211a89929150c7",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-coderabbit.log",
+      "bytes": 3944,
+      "sha256": "51d90e609e11f5db4abe5309e3ffc7be60cdce431c1295a160f7fc8c77ef9a65",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-cursor-finish.log",
+      "bytes": 695,
+      "sha256": "47b47054f90faf9d0960add309e8324225e05484011cf847ae38050e31115e25",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-cursor-healthy.log",
+      "bytes": 343,
+      "sha256": "61bd3e5d58f1e5af5dd9e796d44233c7ad8137d74341ab9bc8a2506a5f38be69",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-cursor-n08-v4.log",
+      "bytes": 585,
+      "sha256": "f04c2ead77bdc46b1c88e4dddc4ad3522e3b71834986675a3df4f73ae7bee7b9",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-cursor-n08-v5.log",
+      "bytes": 488,
+      "sha256": "5e228963a287f2b5521cfa4b08db3867b9a0a2fc28119c136e6d3bf51477229a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-cursor-n08.log",
+      "bytes": 601,
+      "sha256": "6e6450dd1ce19f81b6565420525d72431f6e4d3d65a424a4f9d184df8c9cd45d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-cursor-settings-before.json",
+      "bytes": 340,
+      "sha256": "1ca5ab4ceea8a48960f3803916a0b11769f7bee034ff3f1933ab91592a9c4962",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-implementation-equivalence.json",
+      "bytes": 347,
+      "sha256": "6b2214ec3afea2cbfe2811569e9275e8b396c88b1ce62e56df937656b45b9416",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-ocr-preview.json",
+      "bytes": 2284,
+      "sha256": "b6dee7787539f9215d488afdfcfc748b5f90187ab7ab1f8aad797e733e40ff3b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-ocr-review.json",
+      "bytes": 4653,
+      "sha256": "329b4c6ec7534d9c95a04dd0fb2d7e06e4baa8266c7072b7c154001522402ae4",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-ocr-rules.json",
+      "bytes": 4013,
+      "sha256": "bee2cf9490ed4ea29454d5add01c7921e06efa05c0877f75c6c2261cbf9815ec",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-source-verification.json",
+      "bytes": 226,
+      "sha256": "51d6b64151ae25915679630451d87c5eab6059078f1b9209c9615b4128c3381d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-vscode-corrupt.log",
+      "bytes": 567,
+      "sha256": "d9866670ffff66677456ba5fd266e9dcdb62cc7d021c1cecba1dc2d29765a729",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-vscode-finish.log",
+      "bytes": 708,
+      "sha256": "737bae2523e37b9c50433a14719c992bb2c14d04e55ee8f19324b013e2b47584",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-vscode-future.log",
+      "bytes": 565,
+      "sha256": "0bc21b2f14b655e8729b69b836245e6dd9616c4d268396d01a551c5dfb9db7fe",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-vscode-healthy.log",
+      "bytes": 343,
+      "sha256": "ee80927f700282192df11df90301e96fe827d6d2a15d40ae0e7981605b0a6646",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-vscode-missing.log",
+      "bytes": 567,
+      "sha256": "4914afdeef491d50e00e8937419eb93bfe3e67190f518cb84705c9463d8dab5e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-vscode-n08-v5.log",
+      "bytes": 488,
+      "sha256": "51480b0ed6c399fb97885b719166916268e6e915604b1dc2d46fd20bf1cd4e0f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/return-layout-v23-vscode-settings-before.json",
+      "bytes": 300,
+      "sha256": "727e878681895ef423e6e7ce99958430c8029d2d4775a7f8a343b4f5e31c104a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    }
+  ]
+}
