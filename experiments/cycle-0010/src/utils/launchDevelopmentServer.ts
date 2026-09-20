@@ -23,7 +23,8 @@ export function launchDevelopmentServer(target: string, node: string, record: (t
     async ready(signal: AbortSignal) {
       origin = await waitUntil(() => {
         if (error || child.exitCode !== null) throw error ?? new Error(`Application exited: ${child.exitCode}: ${log}`);
-        return /http:\/\/127\.0\.0\.1:\d+/.exec(log)?.[0];
+        // Process chunks may split a port; only a received delimiter proves its complete value.
+        return /http:\/\/127\.0\.0\.1:\d+(?=\D)/.exec(log)?.[0];
       }, 'owned Next listener', SETUP_TIMEOUT_MS, signal);
       const response = await fetch(origin, { signal: AbortSignal.any([signal, AbortSignal.timeout(SETUP_TIMEOUT_MS)]) });
       await response.body?.cancel();

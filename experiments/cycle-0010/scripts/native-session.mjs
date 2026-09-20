@@ -25,11 +25,22 @@ await writeFile(join(directory, 'sources.json'), JSON.stringify(sources, null, 2
 await writeFile(join(directory, 'command.json'), JSON.stringify({ sequence: 0, action: 'inspect' }), { mode: 0o600 });
 const arguments_ = ['--new-window', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', ...(installation.host.id === 'cursor' ? ['--skip-onboarding'] : []), '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', '--user-data-dir', profile, '--extensions-dir', join(directory, 'extensions'), '--extensionDevelopmentPath', packageRoot, '--extensionTestsPath', join(packageRoot, 'dist/nativeBootstrap.js'), workspace];
 const output = openSync(join(directory, 'native.log'), 'w', 0o600);
-const child = spawn(installation.binaryPath, arguments_, { env: { ...process.env, VSCODE_CLI: '1', CODEBOOK_REAL_REPOSITORY_SESSION: directory }, stdio: ['ignore', output, output] }); closeSync(output);
+let child;
+try { child = spawn(installation.binaryPath, arguments_, { env: { ...process.env, VSCODE_CLI: '1', CODEBOOK_REAL_REPOSITORY_SESSION: directory }, stdio: ['ignore', output, output] }); }
+finally { closeSync(output); }
 // Observe startup failure before metadata I/O yields; attach rejection handling immediately as well.
 const exited = new Promise((resolveExit, reject) => { child.once('exit', resolveExit); child.once('error', reject); });
 void exited.catch(() => undefined);
-await writeFile(join(directory, 'launch.json'), JSON.stringify({ ...config, profile, pid: child.pid, executable: installation.binaryPath, arguments: arguments_, cliVersion: installation.cliVersion }, null, 2), { mode: 0o600 });
+try {
+  await writeFile(join(directory, 'launch.json'), JSON.stringify({ ...config, profile, pid: child.pid, executable: installation.binaryPath, arguments: arguments_, cliVersion: installation.cliVersion }, null, 2), { mode: 0o600 });
+} catch (error) {
+  // Retain the original metadata error after draining this launcher's isolated editor.
+  const NATIVE_SHUTDOWN_GRACE_MS = 5_000;
+  child.kill('SIGTERM');
+  const escalation = setTimeout(() => child.kill('SIGKILL'), NATIVE_SHUTDOWN_GRACE_MS);
+  try { await exited.catch(() => undefined); } finally { clearTimeout(escalation); }
+  throw error;
+}
 console.log(JSON.stringify({ directory, profile, pid: child.pid, host: config.host }));
 const exitCode = await exited;
 await writeFile(join(directory, 'exit.json'), JSON.stringify({ exitCode })); console.log(JSON.stringify({ directory, exitCode })); process.exitCode = exitCode ?? 1;

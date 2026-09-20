@@ -70,8 +70,9 @@ export function createNativeDecoy(directory: string, node: string) {
       await awaitResponse(preparation?.catch(() => undefined) ?? Promise.resolve(), 'unrelated QA preparation settlement');
       if (launching) await awaitResponse(launching.catch(() => undefined), 'unrelated QA launch settlement');
       await waitUntil(() => sessions.size === 0, 'unrelated QA sessions exit');
-      assert.equal(failures.length, 0);
-      tracker.dispose(); termination.dispose(); startup.dispose();
+      // Once launch and sessions drain, assertion failures no longer need late-session adoption.
+      try { assert.equal(failures.length, 0); }
+      finally { tracker.dispose(); termination.dispose(); startup.dispose(); }
     },
   };
 }
