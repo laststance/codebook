@@ -68,6 +68,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined, settlementPending = false;
   const panels = new Set<ReturnType<typeof panel>>();
   const panelReveals: { kind: string; column?: number; preserveFocus?: boolean }[] = [];
+  let deferredPanelFocus: { kind: string; remaining: number } | undefined;
   const postedMessages: StudyViewMessage[] = [];
   let heldPresentationMessage: { mode?: 'living-book'; wait: Promise<void>; entered(): void } | undefined;
   const receivers = new Map<string, (message: unknown) => void>();
@@ -116,7 +117,13 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         if (nativeLayout && previousColumn !== value.viewColumn && group.activeTab?.isPreview) { const replaced = [...panels].find(panel => panel.nativeTab === group.activeTab); replaced?.dispose(); }
         group.tabs.push(nativeTab); group.activeTab = nativeTab;
         if (column !== undefined && previousColumn !== column) nativeTab.isPreview = true;
-        if (!preserveFocus) activeTabGroup = group;
+        if (!preserveFocus) {
+          // Native webview reveal returns before its focus notification reaches the extension host.
+          if (deferredPanelFocus?.kind === kind && --deferredPanelFocus.remaining === 0) {
+            deferredPanelFocus = undefined;
+            setImmediate(() => { activeTabGroup = group; for (const listener of viewChanged) listener(); });
+          } else activeTabGroup = group;
+        }
         for (const listener of viewChanged) listener();
       }
       if (contextCoversSource && kind === 'codebook.studyContext') groups[0]!.activeTab = undefined;
@@ -224,6 +231,8 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     coverSourceWhenContextFocused() { contextCoversSource = true; },
     panelColumn: (kind: string) => [...panels].find(panel => panel.kind === kind)?.viewColumn,
     panelReveals: () => [...panelReveals],
+    deferPanelFocus(kind: string, reveal: number) { deferredPanelFocus = { kind, remaining: reveal }; },
+    focusedPanel: () => activeTabGroup.activeTab?.input instanceof TabInputWebview ? activeTabGroup.activeTab.input.viewType : undefined,
     movePanel(kind: string, column: number) { const panel = [...panels].find(panel => panel.kind === kind); assert.ok(panel); panel.reveal(column); },
     sourceColumn: () => sourceColumn,
     restoreSourceFocusOnArrange() { sourceFocusOnArrange = lastSourceEditor; },
@@ -2844,6 +2853,24 @@ test('all three presentation modes retain the exact panels, source, learning ite
     assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true);
     assert.equal(harness.reader.presentationState().presentationControlRevision, 3); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
     assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'study-workspace' });
+  } finally { await harness.close(); }
+});
+
+test('switching presentation waits for restored application focus before confirming the new mode', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); await harness.reader.action('focus-app');
+    const state = harness.reader.presentationState();
+    // Two earlier requests keep the owned panel; the third restores the initiating application focus.
+    harness.deferPanelFocus('codebook.scopedBrowser', 3);
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    // Assert
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser');
+    assert.equal(harness.reader.presentationState().mode, 'living-book');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
   } finally { await harness.close(); }
 });
 

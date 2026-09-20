@@ -274,10 +274,17 @@ export class StudyWorkspace {
   }
 
   /** Retains exact native focus before owned keep/move operations; unsupported foreign editors fail before any effect. @example const restore = this.capturePresentationFocus() */
-  private capturePresentationFocus(): () => Promise<void> {
+  private capturePresentationFocus(): (signal?: AbortSignal) => Promise<void> {
     if (this.app?.active || this.contextPanel?.active) {
       const panel = this.app?.active ? this.app : this.contextPanel!;
-      return async () => { if (!this.app?.active && !this.contextPanel?.active) throw new Error('Focus changed outside Codebook during placement; it was preserved.'); if (panel !== this.app && panel !== this.contextPanel) throw new Error('The focused Codebook panel was closed.'); panel.reveal(undefined, false); };
+      return async signal => {
+        if (!this.app?.active && !this.contextPanel?.active) throw new Error('Focus changed outside Codebook during placement; it was preserved.');
+        if (panel !== this.app && panel !== this.contextPanel) throw new Error('The focused Codebook panel was closed.');
+        const assertRetained = this.retainPresentationPlacement(false);
+        panel.reveal(undefined, false);
+        // Native reveal is void; wait for its focus receipt before treating later focus changes as learner actions.
+        await waitUntil(() => { assertRetained(); return panel.active && panel.visible && vscode.window.tabGroups.activeTabGroup.viewColumn === panel.viewColumn; }, 'restored presentation pane focus', PRESENTATION_READY_TIMEOUT_MS, signal);
+      };
     }
     const editor = vscode.window.activeTextEditor;
     if (editor) {
@@ -297,7 +304,7 @@ export class StudyWorkspace {
   }
 
   /** Transfers only stable shared state, with renderer waits outside {@link withLayout} and preference persistence after confirmation. @example await this.performPresentation(input, transition, restoreFocus) */
-  private async performPresentation(input: PresentationIntent, transition: NonNullable<StudyWorkspace['presentationTransition']>, restoreFocus?: () => Promise<void>): Promise<PresentationState> {
+  private async performPresentation(input: PresentationIntent, transition: NonNullable<StudyWorkspace['presentationTransition']>, restoreFocus?: ReturnType<StudyWorkspace['capturePresentationFocus']>): Promise<PresentationState> {
     const signal = transition.cancellation.signal, lifetime = this.lifetime;
     const previousMode = this.presentationMode;
     let evidenceConfirmed = false;
@@ -338,7 +345,7 @@ export class StudyWorkspace {
         else await viewport?.restorePlacement(signal);
         assertCurrent(); assertRetainedPlacement();
         if (selection !== JSON.stringify(this.selection) || bundle && this.playback?.bundle() !== bundle) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The run, selected item or confirmed replay changed during placement. Inspect the current state before restoring.');
-        await restoreFocus?.(); assertCurrent();
+        await restoreFocus?.(signal); assertCurrent();
         assertRetainedPlacement = this.retainPresentationPlacement();
         const receipt = this.layoutReceipt, actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent();
         assertRetainedPlacement();
