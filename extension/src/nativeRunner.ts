@@ -64,7 +64,7 @@ async function exercise(descriptorPath: string, scenario: Scenario): Promise<{ r
   let receipt: z.infer<typeof receiptSchema> | undefined;
   const directory = join(suiteDirectory, scenario); await mkdir(directory, { recursive: true });
   try {
-    const discovery = await agent.discover(); assert.equal(discovery.tools.tools.length, 12); assert.equal(discovery.resources.resourceTemplates.length, 16);
+    const discovery = await agent.discover(); assert.equal(discovery.tools.tools.length, 13); assert.equal(discovery.resources.resourceTemplates.length, 17);
     const status = await agent.tool('codebook_status', {}, statusSchema);
     assert.equal(status.host.id, hostId); assert.equal(status.prerequisites.ready, true, status.prerequisites.missing.join('; '));
     await writeFile(join(directory, 'environment.json'), JSON.stringify(status, null, 2));

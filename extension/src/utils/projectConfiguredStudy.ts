@@ -1,5 +1,6 @@
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import type { StudyProjection, StudyProjectionInput } from '../studyModel';
+import { CONFIGURED_STUDY_VERSION } from '../constants';
 import { citationLearningState } from './citationLearningState';
 import { describeStudy } from './describeStudy';
 
@@ -7,7 +8,7 @@ import { describeStudy } from './describeStudy';
 export function projectConfiguredStudy(input: StudyProjectionInput): StudyProjection {
   const { selection, progress, live } = input;
   if (selection.profile !== 'repository-browser') throw new Error('Configured selection is required.');
-  const study = input.study?.version === 3 && input.study.id === selection.studyId ? input.study : undefined;
+  const study = input.study?.version === CONFIGURED_STUDY_VERSION && input.study.id === selection.studyId ? input.study : undefined;
   const descriptor = describeStudy(study ?? selection), selectedItem = descriptor.items[0]!;
   if (selection.itemId !== selectedItem.id) throw new Error('Selected item belongs to another configured article.');
   const observation = study?.observations.find(value => value.itemId === selection.itemId);

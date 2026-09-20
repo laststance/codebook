@@ -6,7 +6,7 @@ import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import type { StudyClient } from '../client';
 import type { StudyItemId } from 'codebook-cycle-0004/dist/constants';
-import { NATIVE_OBSERVATION_TIMEOUT_MS } from '../constants';
+import { API_VERSION, NATIVE_OBSERVATION_TIMEOUT_MS } from '../constants';
 import { recordingContextSchema, recordingEntrySchema, type RecordingEntry } from '../recordingSchemas';
 import type { NativeStudyAction } from '../nativeStudySchemas';
 
@@ -17,7 +17,7 @@ const framePage = z.object({ entries: z.array(z.record(z.string(), z.unknown()))
 /** Exercises public recording discovery, exact bytes and shared native playback after execution; a fresh instance proves offline restore. @example await exerciseNativeRecording(agent, studyId, directory, bridge) */
 export async function exerciseNativeRecording(agent: StudyClient, studyId: string, directory: string, bridge: (action: NativeStudyAction, itemId?: StudyItemId) => Promise<unknown>, restored = false) {
   await mkdir(directory, { recursive: true });
-  const status = await agent.tool('codebook_status', {}, z.object({ instanceId: z.uuid(), apiVersion: z.literal('1.4'), runs: z.array(z.unknown()), recording: z.object({ libraryUri: z.string(), playbackUri: z.string(), playbackAvailable: z.literal(true) }) }));
+  const status = await agent.tool('codebook_status', {}, z.object({ instanceId: z.uuid(), apiVersion: z.literal(API_VERSION), runs: z.array(z.unknown()), recording: z.object({ libraryUri: z.string(), playbackUri: z.string(), playbackAvailable: z.literal(true) }) }));
   if (restored) assert.equal(status.runs.length, 0, 'Reload must not start any live run.');
   const catalog = await agent.json(status.recording.libraryUri, z.object({ entries: z.array(z.object({ studyId: z.string(), recordingUri: z.string() })) }));
   const selected = catalog.entries.find(entry => entry.studyId === studyId); assert.ok(selected);

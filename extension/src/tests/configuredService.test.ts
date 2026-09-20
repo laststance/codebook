@@ -195,7 +195,7 @@ test('real SDK accepts the bounded configured object and reconnects to the origi
   } finally { await first.close(); await second?.close(); await endpoint.close(); }
 });
 
-test('API 1.4 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async context => {
+test('API 1.5 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async context => {
   // Arrange
   const { service, runtimes } = await configuredServiceHarness(context);
   // Act

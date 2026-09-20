@@ -2,11 +2,12 @@ import { retainedRecordingContextSchema, type RecordingContext } from '../record
 import { decodeStudyArchive } from './decodeStudyArchive';
 import { validateConfiguredStudyEvidence } from './validateConfiguredStudyEvidence';
 import { recordingPhases } from './recordingPhases';
+import { CONFIGURED_STUDY_VERSION } from '../constants';
 
 /** Rejects mismatched identities, source hashes and impossible availability before recording context reaches playback. @example validateRecordingContext(value, key).studyId */
 export function validateRecordingContext(value: unknown, workspaceKey: string): RecordingContext {
   const context = retainedRecordingContextSchema.parse(value), study = context.study;
-  if (study.version === 3) validateConfiguredStudyEvidence(study, workspaceKey);
+  if (study.version === CONFIGURED_STUDY_VERSION) validateConfiguredStudyEvidence(study, workspaceKey);
   else decodeStudyArchive({ ...study, captures: [] }, workspaceKey);
   if (context.workspaceKey !== workspaceKey || context.studyId !== study.id || context.materialSignature !== study.materialSignature) throw new Error('Recording context belongs to another checkpoint.');
   const interpretations = study.observations.flatMap(observation => observation.interpretations.map(interpretation => ({ observation, interpretation })));

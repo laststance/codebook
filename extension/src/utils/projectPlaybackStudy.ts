@@ -1,13 +1,14 @@
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { learningState, projectStudy } from '../studyModel';
 import type { PlaybackBundle } from '../playbackController';
+import { CONFIGURED_STUDY_VERSION, REPOSITORY_BROWSER_ACTION } from '../constants';
 
 /** Projects the existing learner model at confirmed playback time; no future source, causal claim or live continuation is borrowed. @example projectPlaybackStudy(input, bundle).continueArguments // undefined */
 export function projectPlaybackStudy(input: Parameters<typeof projectStudy>[0], bundle?: PlaybackBundle): ReturnType<typeof projectStudy> {
   const observation = bundle?.projection.observation, context = bundle?.context?.study ?? input.study;
   // Project only the matching version and receipt-time observation; later context never leaks future facts.
-  const study = context?.version === 3 ? { ...context, observations: observation?.actionId === 'repository-click' ? [observation] : [], captures: [], links: [] }
-    : context && { ...context, observations: observation && observation.actionId !== 'repository-click' ? [observation] : [], captures: [], links: [] };
+  const study = context?.version === CONFIGURED_STUDY_VERSION ? { ...context, observations: observation?.actionId === REPOSITORY_BROWSER_ACTION ? [observation] : [], captures: [], links: [] }
+    : context && { ...context, observations: observation && observation.actionId !== REPOSITORY_BROWSER_ACTION ? [observation] : [], captures: [], links: [] };
   const model = projectStudy({ ...input, study, selection: { ...input.selection, follow: false, tab: 'live' } });
   const text = '// No source was observed by this recorded position.\n';
   return { ...model, matching: false, continueArguments: undefined, image: undefined, scenarioProgress: undefined,

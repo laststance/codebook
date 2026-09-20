@@ -63,7 +63,7 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
 /** Combines real Git/book/storage/service boundaries with explicitly synthetic editor effects. @example const { service, configuration } = await configuredServiceHarness(context) */
 export async function configuredServiceHarness(context: TestContext) {
   let ownedService: StudyService | undefined, ownedBooks: RepositoryBookStore | undefined;
-  context.after(async () => { await ownedService?.shutdown(); ownedBooks?.dispose(); });
+  context.after(async () => { await ownedService?.shutdown(); await ownedBooks?.dispose(); });
   const repository = await repositoryHarness(context), reference = createConfiguredStudy();
   for (const source of reference.descriptor!.sources) await repository.track(source.path, source.text);
   const library = new LearningLibrary(join(repository.directory, '.learning'), reference.workspaceKey), books = new RepositoryBookStore(repository.sources, library);
