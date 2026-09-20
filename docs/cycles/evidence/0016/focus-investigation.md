@@ -48,8 +48,8 @@ The second check (`v2-current-focus-reproduction.json`, 20:04:54–20:05:56 UTC)
 | --- | --- |
 | Symptom | Owned presentation rejected as learner pane/group/focus interference after a native focus request |
 | Root cause | A void native reveal returned before its focus notification, so the next retained-placement baseline recorded the wrong active pane |
-| Fix | `extension/src/studyWorkspace.ts:277` awaits owned panel visibility, activity and group focus; its normal caller at line 348 propagates cancellation |
-| Regression | `extension/src/tests/studyWorkspace.test.ts:2859`; fails with the exact placement cause before the fix, passes afterward; genuine interference tests still pass |
+| Fix | `capturePresentationFocus` in `extension/src/studyWorkspace.ts` awaits owned panel visibility, activity and group focus; `performPresentation` propagates cancellation |
+| Regression | `extension/src/tests/studyWorkspace.test.ts`; fails with the exact placement cause before the fix, passes afterward; genuine interference tests still pass |
 | Evidence | 665/665 product/shared and 39/39 package tests; six clean installed current-pause transfers above |
 | Related | Prior native-reading-pose/retained-panel learnings; the independent historical-selection setup prerequisite; original timeout and broader native ordering remain qualified |
 | Status | DONE_WITH_CONCERNS — bounded focus defect repaired; full two-host acceptance and timeout recheck continue in qa-only |

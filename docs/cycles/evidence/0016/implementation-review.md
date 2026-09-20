@@ -1,6 +1,6 @@
 # Cycle 0016 implementation review
 
-Date: 2026-09-21 JST. Base: `3149e75f9952cb172f0f400d49c4ad064493ddaf`. Product head: `bcc7b7fdcbaaf86b7432b68f3e5ec51f2010b842`, plus the then-current v4 evidence documentation. Scope: the complete packaging branch, including three native presentation repairs. This development review does not count toward final acceptance (0/10).
+Initial pass: 2026-09-21 JST. Base: `3149e75f9952cb172f0f400d49c4ad064493ddaf`. Product head: `bcc7b7fdcbaaf86b7432b68f3e5ec51f2010b842`, plus the then-current v4 evidence documentation. Scope: the complete packaging branch, including three native presentation repairs. This development review does not count toward final acceptance (0/10).
 
 | Source | Actual coverage | Result |
 | --- | --- | --- |
@@ -17,3 +17,7 @@ Initial review records explicitly retain `completed:false` and `converged:false`
 Plan steps 1–6 and tasks T1–T4 are demonstrated within the frozen scope. Step 7 documentation/review/delivery remains in progress. The 672 product/shared and 39 package tests, CI run 35540033782, and [v4 native evidence](installed-validation-v4.md) identify their own revisions. Context7 exhausted its monthly quota, Serena and Aside are unavailable, Greptile returned zero comments, and no slop-diff command is installed. Official library documentation supplies the bounded fallback; these limitations are not clean specialist results.
 
 Private transcripts and pass receipts are under `artifacts/cycle-0016/review/`; each dispatched phase has its own start token and outcome. The consolidated manifest identifies retained inputs/results by hash. Prompt files are deleted after their attempt; usage and model identity are retained only when actually reported. Native model identity and timed-out provider model identity are not inferred.
+
+## Delivery follow-up
+
+[The later ship review](ship-review-fixes.md) records a reproduced custom-output packaging failure, completed Claude Code structured/documentation findings and their selected fixes, fresh negative tests and the different final artifact. The initial no-new-code-finding result above is historical. Outside review timeouts continue in five-minute increments, and clean final-tree convergence remains a separate delivery gate.
