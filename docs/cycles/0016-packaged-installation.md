@@ -3,7 +3,7 @@
 Type: product-increment\
 Status: implementing\
 Result: pending\
-Delivery: committed\
+Delivery: PR-open\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/19\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -63,6 +63,8 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 
 - T2 package checkpoint: extension 0.2.1 / API 1.5 uses esbuild 0.28.2, vsce 4.0.0, yauzl 3.4.0, yazl 3.3.1 and xml2js 0.6.2 as pinned build tools. The first accepted VSIX has 31 entries, 12 bundled dependencies and exact fixture bytes, with isolated module loading outside the checkout. Its private receipt is `artifacts/cycle-0016/package-initial-receipt.json`; it is an intermediate artifact, not the installed candidate. Two earlier attempts failed closed on vsce README name normalization and an uncaptured `.cjs` input; both were corrected before publication.
 - Fresh current checkpoint: **664/664 product/shared tests** (53.672 seconds) plus **39/39 package/asset-script tests** (9.096 seconds), zero failures/skips/cancellations. Real ZIP negatives cover missing/extra/modified files, dependency notice, metadata, manifest references, symlink/case collision/traversal, truncation and unresolved imports. Real compiler proof shows stale declarations can conceal missing source before cleaning and cannot afterward. Build/source-change/final-rename failure tests preserve previous artifact bytes and unrelated files. Logs: `artifacts/cycle-0016/package-product-tests.log`, `package-tests-2.log`, `package-final-build.log`, `package-frozen-install.log`.
+- [Draft PR #20](https://github.com/laststance/codebook/pull/20) is open with the required ignore marker and Closes #19. Initial CI run 35529938105 is in progress; publication/merge and installed evidence are not inferred from the draft.
+- [Installed schedule v1](evidence/0016/installed-schedule.md) freezes the ordinary two-host procedure before execution. GStack qa-only uses an explicit native Playwright CLI adaptation under project rules; private reports preserve host-specific results.
 - T3 pipeline/docs checkpoint: the one pinned workflow, store-only cache, read-only token, integrity-pinned pnpm and frozen installs are implemented; actionlint and diff checks pass. README describes private ordinary installation/update and distinguishes development helpers from shipped bytes. Actual CI and installed runs are pending.
 
 ## Result and decision
