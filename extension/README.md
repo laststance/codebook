@@ -30,6 +30,8 @@ code --new-window --extensionDevelopmentPath="$PWD/extension" "$PWD"
 
 Use `cursor` in place of `code` for Cursor. This development host uses local linked runtime packages; it is not a VSIX installation. Keep the existing editor profile separate if running automated native validation.
 
+For Cursor 3.21.16, turn off **Cursor Settings → General → Layout → Open Chat as Editor Tabs** before opening Codebook. That setting adds a separate native editor part whose groups appear in the extension API but not in the active editor layout. The supported development configuration uses the standard editor area with up to three groups. Hiding the Agents sidebar alone does not remove its additional editor part. This requirement was reproduced on restart; the selected Codebook presentation and paused recording position persist with the setting off.
+
 Set the machine settings `codebook.nodeExecutable` to an external Node 24+ executable and `codebook.chromeExecutable` to Chrome's executable when defaults do not resolve in the editor environment. Electron's executable is not Node. Run **Codebook: Start Agent Server**, then **Codebook: Copy Agent Connection**. The copied MCP configuration contains a local URL and bearer header for clients supporting Streamable HTTP.
 
 All clients with this bearer have workspace-owner authority. The server binds only a random loopback port and checks bearer, Host, and Origin. Connection files are private (directory 0700/file 0600), instance-specific, and removed by **Codebook: Stop Agent Server**. Keep credentials out of chats, issues, screenshots, and shared transcripts. Recopy after restart; do not reuse an old URL/token.

@@ -60,6 +60,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let nextCommand: { name: string; wait: Promise<void>; entered(): void } | undefined;
   const commands: string[] = [];
   let editorLayout: unknown = { orientation: 0, groups: [{}] };
+  let nextMovedPanelLayout: unknown;
   let nativeLayout = false, cursorGroupWrappers = false, cursorTwoEventContraction = false;
   let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined, settlementPending = false;
   const panels = new Set<ReturnType<typeof panel>>();
@@ -99,6 +100,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       panelReveals.push({ kind, column, preserveFocus });
       const previousColumn = value.viewColumn;
       if (column !== undefined) value.viewColumn = column;
+      if (column !== undefined && previousColumn !== column && nextMovedPanelLayout) { editorLayout = nextMovedPanelLayout; nextMovedPanelLayout = undefined; }
       {
         for (const group of groups) { group.tabs = group.tabs.filter(tab => tab !== nativeTab); if (group.activeTab === nativeTab) group.activeTab = undefined; }
         const group = nativeGroup(value.viewColumn ?? 1);
@@ -228,6 +230,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       lastSourceEditor = { ...editor, get viewColumn() { return destination.viewColumn; } }; activeTextEditorChanged(lastSourceEditor);
     },
     editorLayout: () => structuredClone(editorLayout), changeEditorLayout(layout: unknown) { editorLayout = structuredClone(layout); },
+    flattenOnNextPanelMove(layout: unknown) { nextMovedPanelLayout = structuredClone(layout); },
     useCursorGroupWrappers(twoEventContraction = false) { cursorGroupWrappers = true; cursorTwoEventContraction = twoEventContraction; },
     useNativeLayout(layout: unknown) {
       nativeLayout = true; const previous = [...groups]; groups.splice(0); editorLayout = structuredClone(layout);
@@ -2717,6 +2720,22 @@ test('all three presentation modes retain the exact panels, source, learning ite
     assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true);
     assert.equal(harness.reader.presentationState().presentationControlRevision, 3); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
     assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'study-workspace' });
+  } finally { await harness.close(); }
+});
+
+test('moving a presentation retains both measured axes when native tab relocation flattens the grid', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open();
+    harness.changeEditorLayout({ orientation: 0, groups: [{ size: 352, groups: [{ size: 154 }, { size: 154 }] }, { size: 288 }] });
+    harness.flattenOnNextPanelMove({ orientation: 0, groups: [{ size: 220 }, { size: 220 }, { size: 220 }] });
+    const state = harness.reader.presentationState();
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'restore' });
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 384 }, { size: 256, groups: [{ size: 154 }, { size: 154 }] }] });
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
   } finally { await harness.close(); }
 });
 
