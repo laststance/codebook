@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { getDemoRoot } from './utils/getDemoRoot';
+import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition';
 import { z } from 'zod';
 import { BrowserViewport } from 'codebook-cycle-0001/dist/browserViewport';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
@@ -288,14 +289,14 @@ export class StudyWorkspace {
     }
     const editor = vscode.window.activeTextEditor;
     if (editor) {
-      const document = editor.document, group = vscode.window.tabGroups.activeTabGroup, selections = editor.selections, range = editor.visibleRanges[0], preview = group.activeTab?.isPreview ?? false;
-      return async () => {
+      const document = editor.document, group = vscode.window.tabGroups.activeTabGroup, selections = editor.selections, restoreReadingPosition = retainEditorReadingPosition(editor), preview = group.activeTab?.isPreview ?? false;
+      return async signal => {
         if (!this.app?.active && !this.contextPanel?.active) throw new Error('Focus changed outside Codebook during placement; it was preserved.');
         const currentGroup = document.uri.toString() === this.sourceUri?.toString() ? this.studyPanePositions().sourceGroup
           : vscode.window.tabGroups.all.find(candidate => candidate === group || this.editorGroupIdentities.get(candidate) === this.editorGroupIdentities.get(group));
         if (!currentGroup?.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === document.uri.toString())) throw new Error('The previously focused source group changed; focus was not guessed.');
         const restored = await vscode.window.showTextDocument(document, { viewColumn: currentGroup.viewColumn, preserveFocus: false, preview });
-        restored.selections = selections; if (range) restored.revealRange(range, vscode.TextEditorRevealType.AtTop);
+        restored.selections = selections; await restoreReadingPosition(restored, signal);
       };
     }
     // An empty group has no document to restore; retain its group focus after an explicit first entry.
@@ -421,7 +422,7 @@ export class StudyWorkspace {
       const app = this.app, context = this.contextPanel, descriptor = STUDY_PRESENTATIONS[mode];
       if (!app || !context || !sourceUri || vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) throw new Error('The three retained Study panes are unavailable.');
       const source = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === sourceUri.toString() && editor.viewColumn === this.studyPanePositions().sourceColumn);
-      const selections = source?.selections, range = source?.visibleRanges[0];
+      const selections = source?.selections, restoreReadingPosition = retainEditorReadingPosition(source);
       // Only demo-owned prepared sources may be kept; workspace files and dirty drafts remain learner-owned.
       const ownedKinds = ['codebook.scopedBrowser', 'codebook.studyContext'];
       const isOwnedPreview = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputWebview && ownedKinds.some(kind => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType));
@@ -462,7 +463,7 @@ export class StudyWorkspace {
       }
       assertPreviewOwnership();
       const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: true, preview: false }); assertPlacement();
-      if (selections) editor.selections = selections; if (range) editor.revealRange(range, vscode.TextEditorRevealType.AtTop);
+      if (selections) editor.selections = selections;
       if (this.highlight) for (const visible of vscode.window.visibleTextEditors) if (visible.document.uri.toString() === sourceUri.toString()) visible.setDecorations(this.highlight, [new vscode.Range(new vscode.Position(this.message().model.source.line - 1, 0), new vscode.Position(this.message().model.source.line - 1, 0))]);
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
       const assertAfterMove = this.retainPresentationPlacement();
@@ -473,6 +474,8 @@ export class StudyWorkspace {
       await waitUntil(async () => { const actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertSettling(); return isProportionalEditorLayout(descriptor.layout, actual); }, 'presentation grid proportions', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
       await this.keepPresentationPanel(app, signal); assertPlacement(); await this.keepPresentationPanel(context, signal); assertPlacement();
       const assertConfirmed = this.retainPresentationPlacement();
+      // Relocation and resizing can replace the native view state; restore a visible anchor only after both settle.
+      await restoreReadingPosition(editor, signal); assertPlacement(); assertConfirmed();
       const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertConfirmed();
       if (!isProportionalEditorLayout(descriptor.layout, layout)) throw new Error('Native layout changed while retaining presentation panels.');
       const panes = this.studyPanePositions();

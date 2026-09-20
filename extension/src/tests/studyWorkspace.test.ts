@@ -47,16 +47,39 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const watchedPatterns: RelativePattern[] = [];
   const textDocuments: { uri: Uri; getText(): string }[] = [];
   class TabInputWebview { constructor(readonly viewType: string) {} }
+  /** Supplies native position operations to the editor boundary fake used by workspace tests. @example new Position(22, 0).with(40, 0) */
+  class Position {
+    constructor(readonly line: number, readonly character: number) {}
+    with(line = this.line, character = this.character) { return new Position(line, character); }
+  }
+  /** Supplies native range membership/retention to workspace presentation tests. @example range.contains(new Position(22, 0)) */
+  class Range {
+    constructor(readonly start: Position, readonly end: Position) {}
+    contains(value: Position | Range): boolean { return value instanceof Range ? this.contains(value.start) && this.contains(value.end) : value.line >= this.start.line && value.line <= this.end.line; }
+    with(start = this.start, end = this.end) { return new Range(start, end); }
+  }
   type Tab = { input: TabInputText | TabInputWebview; label?: string; isPreview?: boolean; isDirty?: boolean };
   const groups: { viewColumn: number; tabs: Tab[]; activeTab?: Tab }[] = [{ viewColumn: 2, tabs: [] }];
   let activeTabGroup = groups[0]!;
-  type SourceEditor = { document: { uri: Uri; getText(): string }; readonly viewColumn: number; setDecorations(): void; selections: string[]; visibleRanges: string[]; revealRange(range: unknown): void };
+  type SourceEditor = { document: { uri: Uri; getText(): string }; readonly viewColumn: number; setDecorations(): void; selections: { active: Position }[]; visibleRanges: Range[]; revealRange(range: Range, revealType?: number): void };
   let activeTextEditorChanged = (_editor: SourceEditor | undefined) => {};
   let lastSourceEditor: SourceEditor | undefined;
   let sourceFocusOnArrange: SourceEditor | undefined;
   let reportedSourceColumn: number | undefined;
   let nextSourceDisplay: (() => void) | undefined;
   const visibleSourceEditors: (SourceEditor & { group: typeof groups[number] })[] = [], decoratedColumns: number[] = [];
+  let retainedReadingRange: Range | undefined;
+  /** Models native surrounding-line padding so workspace transfers expose lost reading positions. @example const editor = sourceEditor(document, group) */
+  const sourceEditor = (document: SourceEditor['document'], group: typeof groups[number], reportedColumn?: number): SourceEditor => ({
+    document, get viewColumn() { return reportedColumn ?? group.viewColumn; }, setDecorations() { decoratedColumns.push(reportedColumn ?? group.viewColumn); }, selections: [{ active: new Position(22, 0) }],
+    get visibleRanges() { return [retainedReadingRange ?? new Range(new Position(0, 0), new Position(100, 0))]; },
+    revealRange(range, revealType) {
+      if (!retainedReadingRange) return;
+      // Native AtTop includes five surrounding lines; revealing the whole old viewport repeatedly drifts upward.
+      if (revealType === 3) { const first = Math.max(0, range.start.line - 5); retainedReadingRange = new Range(new Position(first, 0), new Position(first + 11, 0)); }
+      else if (!retainedReadingRange.contains(range)) { const first = Math.max(0, range.start.line - 6); retainedReadingRange = new Range(new Position(first, 0), new Position(first + 11, 0)); }
+    },
+  });
   let changedGroups = (_event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => {};
   let sourceProvider = async (_uri: Uri) => '';
   let nextOpen: { wait: Promise<void>; entered(): void } | undefined;
@@ -138,7 +161,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     reveal: async (participant: string, options: { select: boolean; focus: boolean }) => { assert.equal(options.focus, false); if (options.select) outline.selection = [participant]; } };
   const watcher = { onDidChange(callback: () => void) { changed = callback; return disposable(); }, onDidCreate: disposable, onDidDelete: disposable, dispose() {} };
   const boundary = await loadModule<typeof import('../studyWorkspace')>(resolve(__dirname, '../studyWorkspace.js'), {
-    vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position: class {}, Range: class {}, ViewColumn: { One: 1, Two: 2, Three: 3 }, TextEditorRevealType: { AtTop: 0 }, ThemeColor: class {}, RelativePattern,
+    vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position, Range, ViewColumn: { One: 1, Two: 2, Three: 3 }, TextEditorRevealType: { Default: 0, AtTop: 3 }, ThemeColor: class {}, RelativePattern,
       commands: { async executeCommand(name: string, layout?: unknown): Promise<unknown> {
         commands.push(name); const held = nextCommand; if (held?.name === name) { nextCommand = undefined; held.entered(); await held.wait; }
         if (name === failingCommand) { failingCommand = undefined; throw new Error('Native layout command failed'); }
@@ -195,9 +218,9 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           const group = groups.find(candidate => candidate.viewColumn === sourceColumn) ?? groups[0]!, tab = group.tabs.find(tab => tab.input instanceof TabInputText && tab.input.uri.toString() === document.uri.toString()) ?? { input: new TabInputText(document.uri) };
           if (!group.tabs.includes(tab)) group.tabs.push(tab); group.activeTab = tab; if (!options?.preserveFocus) activeTabGroup = group;
           if (options?.preview !== undefined) tab.isPreview = options.preview;
-          visibleSourceEditors.push({ group, document, get viewColumn() { return group.viewColumn; }, setDecorations() { decoratedColumns.push(group.viewColumn); }, selections: ['original selection'], visibleRanges: ['original range'], revealRange() {} });
+          visibleSourceEditors.push(Object.assign(sourceEditor(document, group), { group }));
           const displayed = nextSourceDisplay; nextSourceDisplay = undefined; displayed?.();
-          return lastSourceEditor = { document, get viewColumn() { return reportedSourceColumn ?? group.viewColumn; }, setDecorations() { decoratedColumns.push(reportedSourceColumn ?? group.viewColumn); }, selections: ['original selection'], visibleRanges: ['original range'], revealRange() {} };
+          return lastSourceEditor = sourceEditor(document, group, reportedSourceColumn);
         },
         tabGroups: { all: groups, get activeTabGroup() { return activeTabGroup; }, onDidChangeTabGroups: (callback: typeof changedGroups) => { changedGroups = callback; return disposable(); }, close: async (tabs: Tab[]) => { for (const group of groups) group.tabs = group.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
       workspace: { textDocuments, registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
@@ -221,6 +244,8 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const reader = createReader();
   if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
   return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, articleOpens, articleReturns, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
+    retainReadingRange(first: number, last: number) { retainedReadingRange = new Range(new Position(first, 0), new Position(last, 0)); },
+    isReadingLineVisible(line: number) { return retainedReadingRange?.contains(new Position(line, 0)); },
     addOpenSource(file: string, text: string) { textDocuments.push({ uri: Uri.file(join(fixture, file)), getText: () => text }); },
     outlineItem: (itemId: string) => outlineItem(itemId), changeOutlineCheckbox: (itemId: string, checked: boolean) => outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
     postedMessages: () => postedMessages, presentationPreferences, watchedPatterns,
@@ -2853,6 +2878,24 @@ test('all three presentation modes retain the exact panels, source, learning ite
     assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true);
     assert.equal(harness.reader.presentationState().presentationControlRevision, 3); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
     assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'study-workspace' });
+  } finally { await harness.close(); }
+});
+
+for (const focus of ['application', 'source'] as const) for (const reading of ['selected statement', 'scrolled context'] as const) test(`${focus}-focused mode transfers keep the ${reading} visible without repeated upward drift`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); await harness.reader.action(focus === 'application' ? 'focus-app' : 'source');
+    harness.retainReadingRange(reading === 'selected statement' ? 16 : 40, reading === 'selected statement' ? 27 : 52);
+    // Act
+    for (const mode of ['living-book', 'guided-walkthrough', 'study-workspace'] as const) {
+      const state = harness.reader.presentationState();
+      await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' });
+    }
+    // Assert
+    assert.equal(harness.isReadingLineVisible(reading === 'selected statement' ? 22 : 46), true);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.runtimes.length, 0);
   } finally { await harness.close(); }
 });
 

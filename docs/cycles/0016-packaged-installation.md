@@ -1,7 +1,7 @@
 # Cycle 0016 — Packaged installation
 
 Type: product-increment\
-Status: implementing\
+Status: validating\
 Result: pending\
 Delivery: PR-open\
 Goal version: 3\
@@ -205,13 +205,15 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 
 ## Installed focus repair checkpoint
 
+[Installed v2 results](evidence/0016/installed-validation-v2.md) demonstrate the bounded workflow independently in both ordinary hosts through fresh-process restart and cleanup: all eleven links, four replay stops, six live/replay focus transfers and native motion. QA ends DONE_WITH_CONCERNS for source viewport UX (C16-QA-002) and reproduced VS Code teardown SIGPIPE (C16-QA-003). Retained helper failures remain qualified; no product edits occurred during qa-only.
+
 [The focus investigation](evidence/0016/focus-investigation.md) confirms that void native `reveal` was mistaken for completed focus restoration. A real Cursor trace and a red regression reproduce the false learner-change rejection. Clean repair `9dd4260` awaits the owned focus receipt while preserving pane/group and cancellation guards. Fresh full suites pass **665/665 + 39/39**. [Schedule v2](evidence/0016/installed-schedule-v2.md) freezes the clean repair package, explicit Application/source focus cases, 32-second hold and actual video dimensions before revalidation. The original owned-tab timeout remains historical and needs this full-schedule recheck; diagnostic successes do not replace v1 failures.
 
 ## Handoff
 
 - Clean installed repair check: six transfers after a 32.5-second current pause pass with unchanged run/snapshot and restored Application/source focus. The earlier cold-reader check remains qualified because it displayed old history. Native dimensions and inspected frames are recorded in the investigation.
-- Exact next action: execute schedule v2 in both hosts with the recorded reader setup prerequisite. Full tests pass 704/704. Preserve v1 and diagnostic failures; original tab timeout, Cursor T4, teardown SIGPIPE attribution, full review/coderabbit-cli and PR merge remain pending.
-- Active processes: owned Cursor profile `~/.cbqa/c16-cursor-e9677ff5`, ordinary clean v2 launch port 64789 after successful bounded repair verification. Earlier diagnostic processes/descriptors are retired and the unrelated draft survives. Both profiles install/reinstall the identical clean v2 package with all 29 installed entries verified. VS Code's owned profile processes are all stopped. Branch: codex/cycle-0016-packaged-installation.
+- Exact next action: isolate SIGPIPE with the Codebook-free debugger probe, then freeze and validate the source-viewport repair in both ordinary hosts before full review/coderabbit-cli and PR merge. Both installed schedule-v2 workflows are complete through restart and cleanup. Full tests pass 704/704; v1 and diagnostic failures remain historical evidence.
+- Active processes: none owned by Cycle 0016. Both ordinary profiles and every connection descriptor are retired after zero window exits; exact unrelated unsaved drafts survive. Both profiles installed/reinstalled identical clean v2 bytes with all 29 installed entries verified. Branch: codex/cycle-0016-packaged-installation.
 - PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
 - Select a single next cycle only after this cycle's evidence identifies the next uncertainty.
 
@@ -234,3 +236,5 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 - **VERDICT:** ENG CLEARED for bounded implementation; retain outside coverage concern. Implementation, artifact, installed/native acceptance, CI, diff review and delivery are pending.
 
 NO UNRESOLVED DECISIONS
+
+[Source viewport investigation](evidence/0016/source-viewport-investigation.md) reproduces native five-line drift from whole-range AtTop restoration. The anchor-based repair passes four red-before regressions and fresh 669/669 + 39/39 suites. Diagnostic video verifies visible-statement and manually scrolled context retention; both-host clean package validation and SIGPIPE attribution remain pending. All owned diagnostic processes are stopped and the installed v2 bytes are restored.
