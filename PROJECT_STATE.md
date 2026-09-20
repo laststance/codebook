@@ -2,7 +2,7 @@
 
 Updated: 2026-09-21\
 Product stage: configured core execution, offline replay and restart demonstrated separately in both editors; complete cross-host and installed usefulness unverified\
-Active cycle: [0016 — Packaged installation](docs/cycles/0016-packaged-installation.md) — planning\
+Active cycle: [0016 — Packaged installation](docs/cycles/0016-packaged-installation.md) — implementing\
 Last cycle: [0015 — Native Wiki navigation ordering](docs/cycles/0015-wiki-navigation-ordering.md) — inconclusive; merged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#19](https://github.com/laststance/codebook/issues/19) — open\
@@ -84,7 +84,7 @@ Current [native integration evidence](docs/cycles/evidence/0011/native-validatio
 
 Earlier [Arrange investigation](docs/cycles/evidence/0011/native-layout-investigation-20260920.md): explicit recovery separates moved Codebook panes, preserves actual source placement across replay-induced render cancellation, follows later manual moves and reports interrupted placement before claiming success. **399/399 product tests pass**, zero failed/skipped/cancelled (16.760s). Final v14 inventory `fb597267fc8ac348ddff5460b8d5c47cf86f13cd231585fa6ea38aeb20a049e2` has 231 entries on dirty `a3fba6f`. Both actual hosts pass the complete Arrange/manual-move sequence, with inspected video, highlighted exact source and unchanged dirty draft. Cursor additionally passes visible 200% observation/recording Return with exact pose and learner ledger. The report qualifies its cramped retained manual layout and child-frame automation failures; this is not complete 200% usability acceptance. All intermediate hypotheses, a retracted host API inference and a simultaneous-host recording ACK timeout remain recorded.
 
-Exact next action: complete `/plan-eng-review` of [Cycle 0016](docs/cycles/0016-packaged-installation.md) on `codex/cycle-0016-packaged-installation`, then make the extension assets and runtime self-contained in a VSIX and verify ordinary installation in both editors. Cycle 0015 is delivered through PR #18; its native experiment remains inconclusive for the modeled late-effect race and made no product repair. No owned native session remains.
+Exact next action: implement the reviewed [Cycle 0016](docs/cycles/0016-packaged-installation.md) plan on `codex/cycle-0016-packaged-installation`: asset-root/regression work, clean bundled VSIX with archive/provenance checks, pinned CI and ordinary installation in both editors. Engineering review selected ten remedies; a fresh native fallback found three of them, while Claude Code plan coverage timed out after five minutes. This is not implementation or final-product review. Cycle 0015 is delivered through PR #18; its native experiment remains inconclusive for the modeled late-effect race and made no product repair. No owned native session remains.
 
 Cycle 0014 delivery is complete through [PR #16](https://github.com/laststance/codebook/pull/16), with Issue #15 closed and its branch removed. The [ship source inventory](docs/cycles/evidence/0014/ship-source-cut.json) binds 245 source/test/script files to `55ce23cfb156a0491976a3a1b295912de7ef41031c73ffc0b20674ff380eafee`. All bytes match the merged tree; 647 tests and both-host SDK proof are identified in [the ship supplement](docs/cycles/evidence/0014/ship-verification-20260921.md). Prior native cuts and failures remain historical, including the Cursor cold-reader foreign-focus rejection and cropped 200% motion.
 

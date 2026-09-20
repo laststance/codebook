@@ -1,7 +1,7 @@
 # Cycle 0016 — Packaged installation
 
 Type: product-increment\
-Status: planning\
+Status: implementing\
 Result: pending\
 Delivery: local-only\
 Goal version: 3\
@@ -46,7 +46,7 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 | --- | --- | --- | --- |
 | P01 self-contained assets | Every consumed demo file is within the extension; missing HTML/source/map/build input fails clearly | Build, extract to an unrelated temporary root, check assets, and run focused negatives | Exact file inventory/hashes, expected failures and no checkout fallback |
 | P02 package integrity | VSIX has the intended metadata, bundles, notices and assets; no private recordings, descriptors, local links or unresolved runtime modules | Inspect staging and archive, compare bundle inputs, load from extraction with only the native vscode boundary supplied | Source/build identity, archive entry list, byte sizes and SHA-256 |
-| P03 failure/update safety | Invalid input or failed packaging does not replace a previous good VSIX; fresh installation and same-artifact reinstall are explicit | Real failing package attempt against a seeded output; actual editor CLI install/reinstall | Exit/output receipt, unchanged prior hash and installed extension identity |
+| P03 failure/update safety | Invalid input or failed packaging does not replace a previous good VSIX; reinstall and changed-source/install-root history preservation are explicit | Real failing package attempt against seeded output; actual CLI install/reinstall; persistent-store relocation/update regression | Exit/output receipt, unchanged prior hash, installed identity and immutable old history with current-source Review needed |
 | P04 ordinary activation and agent control | Installed extension starts its real MCP server with persisted private descriptor; external client discovers and controls the supported API | Visible native command, actual public SDK/HTTP client, inspect installed location | Launch arguments, package/install hashes, API/build/target identity and redacted transcript |
 | P05 installed learning workflow | Source-grounded reading and a predeclared cart-to-confirmation run retain exact source/value/causal evidence | Actual external agent drives the supported workflow without per-stop manual wiring | Frozen scenario table, immutable book/run/recording identities and native screenshots/video |
 | P06 offline replay and restart | Saved screen/source/values/explanations and explicit learner decision survive runtime and ordinary editor exit; playback launches no application | Stop owned runtime, replay, close/relaunch the installed editor, reopen saved content | Persistence receipts, process cleanup, synchronized motion frames and unchanged progress |
@@ -116,7 +116,7 @@ No separate runtime abstractions or storage-schema changes are needed. The exist
 Node's built-in `node:test` is the existing framework. Product tests are TypeScript compiled by the normal build; packaging-script tests can use native `.test.mjs` without adding a test runner. The previous full suite has 647 tests, not a coverage percentage. No LLM prompt/tool-definition change is planned; actual external-agent installed workflow remains required evidence, not a prompt benchmark substitute.
 
 5. **TST1 [P1, confidence 10/10] — asset behavior regressions.** Draft P01 and the new root affect discovery, baselines, fallback and watchers. Add an isolated extension-root fixture with no sibling experiments: all ten files succeeds; remove each file, replace HTML with a directory, and simulate unreadability to get a clear missing-demo result. Verify sealed fixture bytes/maps and markers. Adapt the existing Study harness to the installed asset layout and retain current-source drift/deletion/recovery and dirty-buffer priority. Keep the existing environment test proving missing demo assets do not touch the configured-repository path. These are mandatory regression requirements for the changed callers.
-6. **TST2 [P1, confidence 9/10] — real package and publication failure tests.** Draft P02/P03 need an executable boundary, not assertions about a file list constant. Build a real VSIX; extract outside the repository; compare actual entries and bytes to the stage; load the bundled extension with only a vscode boundary and Node built-ins available. Reject missing/extra entries, traversal/symlink entries, modified assets/bundle, non-native external imports, missing dependency notice and metadata/version inconsistency. Exercise failure before publication and at the final rename with an existing artifact: prior bytes survive, scratch paths are cleaned, and a clear command failure is returned. Test paths with spaces/literal shell characters using executable-plus-argument arrays. A source change during build is rejected. Required archive/library helpers are pinned development dependencies; no handwritten ZIP parser.
+6. **TST2 [P1, confidence 9/10] — real package and publication failure tests.** Draft P02/P03 need an executable boundary, not assertions about a file list constant. Build a real VSIX; extract outside the repository; compare actual entries and bytes to the stage; load this locally built, byte-verified bundle with only a vscode boundary and Node built-ins available. Standalone archive validation must not execute arbitrary supplied extension code. Reject missing/extra entries, traversal/symlink entries, modified assets/bundle, non-native external imports, missing dependency notice and metadata/version inconsistency. Exercise failure before publication and at the final rename with an existing artifact: prior bytes survive, scratch paths are cleaned, and a clear command failure is returned. Test paths with spaces/literal shell characters using executable-plus-argument arrays. A source change during build is rejected. Required archive/library helpers are pinned development dependencies; no handwritten ZIP parser.
 7. **TST3 [P1, confidence 9/10] — installed lifecycle evidence.** Draft P04–P07 require native execution because mocks cannot establish normal activation, writable storage or real debugger/browser integration. Freeze exact artifact/host versions and a finite schedule before launching: CLI install/reinstall, trusted local workspace, visible Start Agent Server, fresh descriptor and public MCP discovery; source publication; checkout actions/four pauses/required causal links; one explicit learner decision; live and paused-replay transfers through all three layouts; stop runtime; offline playback; normal editor exit/restart; reconnect with a new descriptor; read saved content/progress; close all owned processes. Preserve a pre-existing unrelated dirty draft exactly. An old descriptor after restart must not be reused as current authority. A failed phase capture stays partial and triggers a changed hypothesis. No synthetic storage or extension test bootstrap supplies this acceptance.
 
 ```text
@@ -177,15 +177,47 @@ No silent failure without a planned test/handler remains in the new packaging bo
 Synthesized from this review. The owner delegated recommended choices; each listed remedy is agent-selected. No new TODOS.md items: existing out-of-cycle obligations stay in their canonical records.
 
 - [ ] **T1 (P1, human: ~3h / agent: ~25min)** — Assets: introduce one owned demo root/list, copy and validate all ten files, update all four consumers and the reader/environment test fixtures. Findings A1/Q1/TST1. Verify focused asset tests plus existing source/reader regressions.
-- [ ] **T2 (P1, human: ~1 day / agent: ~1h)** — Packaging: pin tools, build into an allowlisted stage, include notices/input identity, validate a real extracted VSIX and atomically replace the output. Findings A2/TST2. Verify positive and failure paths without repository runtime imports.
+- [ ] **T2 (P1, human: ~1 day / agent: ~1h)** — Packaging: pin tools, clean owned compilation outputs, build into an allowlisted stage, include manifest-referenced assets/notices/input identity, validate a real extracted VSIX and atomically replace the output. Findings A2/TST2/N1/N3. Verify stale-output rejection and all positive/failure paths without repository runtime imports.
 - [ ] **T3 (P2, human: ~3h / agent: ~25min)** — Distribution: add the adapted pinned CI pipeline and private installation/update documentation. Finding A3. Verify actionlint, frozen install/build/tests/package and actual CI artifact identity.
 - [ ] **T4 (P1, human: ~1 day / agent: ~2h)** — Installed acceptance: freeze versions/source/package/schedule and drive both ordinary hosts with the external agent, persistent storage, recording/restart and native motion evidence. Finding TST3. Preserve failures and unrelated drafts/processes.
 
 Sequential implementation, no parallelization opportunity: asset layout feeds packaging; the package/check commands feed CI and installed acceptance. Tests travel with each boundary. Review work remains independent after the complete candidate exists. No additional service, worker or worktree is required.
 
+## Independent plan challenge
+
+The Claude Code outside attempt on 571ecb5 timed out after 300000 ms; outside coverage is unavailable, not a clean result. Its private JSON receipt preserves the timeout and unknown model usage. A fresh native fallback, `cycle0016_plan_challenge`, completed read-only review of the plan, canonical records, build/asset consumers, baseline/history comparison and manifest. It found three additional issues. The driving agent independently checked their motivating interfaces and selected each complete remedy under owner delegation:
+
+- **N1 [P1, confidence 9/10]: stale compiler outputs.** A new package stage and stable source hash do not exclude a deleted source's old `.js`/`.d.ts` under linked `dist` directories. Before packaging, recreate the explicitly owned compilation outputs for extension and both linked packages, including fixture builds; never clean source, recordings or a previous published VSIX. Keep output artifacts outside those directories and reject an output path resolving within them. Preseed a stale compiled module/declaration from absent source and prove it cannot enter the bundle or make a clean build falsely succeed. The source snapshot must cover the clean rebuild interval. This is part of T2, not deferred cleanup.
+- **N2 [P2, confidence 9/10]: history across relocation/source update.** Reinstalling identical bytes does not test a changed asset root or source version. Extend T1/P03 with a real persisted old observation/recording and explicit learner decision, reopen the same store from a different installation root containing changed demo source, and assert old captured source/recording/decision bytes remain intact while current source changes and Review needed appears. No second full native matrix is needed for this focused storage regression.
+- **N3 [P2, confidence 9/10]: manifest asset reachability.** Include `src/assets/book.svg` explicitly. Check extracted `package.json` main and every `viewsContainers.*[].icon` reference resolve to safe regular files in the archive, independently of stage/archive equality. Remove the icon from an otherwise valid archive and require rejection. This is part of T2.
+
+Additional implementation constraint from the parent's CI probe: pnpm/action-setup v6.1.0 explicitly adds pnpm 12 support; use current verified full-SHA action pins rather than the skill template's older v6.0.8. Runtime dependency versions remain exactly pinned. New package tooling: esbuild 0.28.2, vsce 4.0.0, Node 24.21.0 / pnpm 12.4.2, with an explicitly pinned ZIP library if needed.
+
+This is native fallback evidence only. No cross-model agreement or final acceptance review is claimed. All ten plan findings have concrete selected remedies; the implementation and installed evidence are still pending.
+
 ## Handoff
 
-- Exact next action: finish the bounded engineering review, record its decisions/test map, then implement asset ownership and packaging.
+- Exact next action: engineering review is complete with ten selected remedies and unavailable outside coverage; implement the asset regressions/root, then packaging, CI and ordinary installed verification.
 - Active processes: no owned native session. Branch: codex/cycle-0016-packaged-installation.
 - PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
 - Select a single next cycle only after this cycle's evidence identifies the next uncertainty.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+| --- | --- | --- | --- | --- | --- |
+| CEO Review | Not selected | Product goal and private first delivery already decided | 0 | Not needed for this scope | No product outcome change |
+| Outside Review | Claude Code / plan-eng-review | Independent plan challenge | 1 | Unavailable | Timeout after 300000 ms; model usage unknown |
+| Native fallback | Fresh cycle0016_plan_challenge | Required fallback after provider failure | 1 | Completed with findings | Three additional remedies incorporated by agent under owner delegation |
+| Eng Review | /plan-eng-review | Architecture, quality, tests and performance | 1 | CLEAR (PLAN), DONE_WITH_CONCERNS | Architecture 3, quality 1, test gaps 3, performance 0, native additions 3; all ten planned, none unresolved |
+| Design Review | Not selected | Existing presentations/interaction model unchanged | 0 | Not needed for this scope | Native installed UX remains an execution requirement |
+| DX Review | Not selected | Existing public MCP integration reused | 0 | Not needed for this scope | No second shipped CLI or changed protocol |
+
+- Step 0: scope reduced to one bundled extension and shared asset contract; more than eight files justified by boundary tests/CI/docs, with no new runtime service.
+- NOT in scope, reuse inventory, failure table and coverage diagram: written. Three test groups are planned gaps, not passing results; zero unhandled silent failure gaps remain in the plan.
+- TODOS: zero new proposals; retain canonical carried obligations. Implementation: one sequential lane, four actionable tasks. Lake Score: N/A; no scored complete-versus-shortcut choice. All choices are agent-selected, not invented owner answers.
+- Separate test-plan and four-task JSONL artifacts: recorded by `artifacts/cycle-0016/eng-artifacts.json` under the local GStack project directory. Plan log and readiness dashboard were written/read on 2026-09-21 JST.
+- **OUTSIDE COVERAGE:** Claude Code unavailable in the plan-review phase. Native fallback does not establish external coverage. Independent development reviews do not count toward final reviews (0/10).
+- **VERDICT:** ENG CLEARED for bounded implementation; retain outside coverage concern. Implementation, artifact, installed/native acceptance, CI, diff review and delivery are pending.
+
+NO UNRESOLVED DECISIONS
