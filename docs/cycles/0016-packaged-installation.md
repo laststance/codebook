@@ -2,7 +2,7 @@
 
 Type: product-increment\
 Status: validating\
-Result: pending\
+Result: bounded installed workflow demonstrated with concerns\
 Delivery: PR-open\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/19\
@@ -70,10 +70,10 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 
 ## Result and decision
 
-- Result: pending.
+- Result: one self-contained private VSIX demonstrates the frozen ordinary installed workflow independently in both required editors. The v4 result includes the original reading/focus regressions, checkout, offline replay, three modes, restart and preserved drafts. Console and intermediate-motion qualifications remain explicit.
 - Keep the shared runtime, recording, reader and presentation ownership. Do not widen the configured repository-browser adapter to disguise packaging work as arbitrary-repository support.
 - All eleven carried Cycle 0014 obligations remain active, including native Wiki ordering (Cycle 0015 inconclusive), all-mode Wiki Return, complete service/SDK/interleaving coverage, full native focus/keyboard/geometry and uncropped/reduced-motion checks, actual-agent evaluation/timing, broad review convergence and integrated final acceptance.
-- Delivery: implementation checkpoints committed on the cycle branch; an intermediate VSIX passes package checks. Installed proof, full review, CI, PR delivery and merge remain pending. Final reviews: 0/10.
+- Delivery: implementation is committed through bcc7b7f; its v4 VSIX, 711 tests, current-head CI and bounded installed proof pass. [Implementation review](evidence/0016/implementation-review.md) has primary/native and CodeRabbit results; the owner requires five-minute timeout increases for the pending Claude Code retries. Documentation, final delivery checks and PR #20 merge remain in progress. Final reviews: 0/10.
 
 ## Engineering review — Step 0 and architecture
 
@@ -187,7 +187,7 @@ Synthesized from this review. The owner delegated recommended choices; each list
 - [x] **T1 (P1, human: ~3h / agent: ~25min)** — Assets: introduce one owned demo root/list, copy and validate all ten files, update all four consumers and the reader/environment test fixtures. Findings A1/Q1/TST1. Verify focused asset tests plus existing source/reader regressions.
 - [x] **T2 (P1, human: ~1 day / agent: ~1h)** — Packaging: pin tools, clean owned compilation outputs, build into an allowlisted stage, include manifest-referenced assets/notices/input identity, validate a real extracted VSIX and atomically replace the output. Findings A2/TST2/N1/N3. Verify stale-output rejection and all positive/failure paths without repository runtime imports.
 - [x] **T3 (P2, human: ~3h / agent: ~25min)** — Distribution: add the adapted pinned CI pipeline and private installation/update documentation. Finding A3. Verify actionlint, frozen install/build/tests/package and actual CI artifact identity.
-- [ ] **T4 (P1, human: ~1 day / agent: ~2h)** — Installed acceptance: freeze versions/source/package/schedule and drive both ordinary hosts with the external agent, persistent storage, recording/restart and native motion evidence. Finding TST3. Preserve failures and unrelated drafts/processes.
+- [x] **T4 (P1, human: ~1 day / agent: ~2h)** — Installed acceptance: freeze versions/source/package/schedule and drive both ordinary hosts with the external agent, persistent storage, recording/restart and native motion evidence. Finding TST3. Preserve failures and unrelated drafts/processes.
 
 Sequential implementation, no parallelization opportunity: asset layout feeds packaging; the package/check commands feed CI and installed acceptance. Tests travel with each boundary. Review work remains independent after the complete candidate exists. No additional service, worker or worktree is required.
 
@@ -212,8 +212,8 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 ## Handoff
 
 - Clean installed repair check: six transfers after a 32.5-second current pause pass with unchanged run/snapshot and restored Application/source focus. The earlier cold-reader check remains qualified because it displayed old history. Native dimensions and inspected frames are recorded in the investigation.
-- Exact next action: freeze clean v4 with the playback-refresh reading repair, then validate the full workflow and manual paused-replay context in both ordinary hosts before full review/coderabbit-cli and PR #20 merge. Current suites pass 672/672 + 39/39; all historical attempts remain recorded.
-- Active processes: none owned by Cycle 0016. Both ordinary profiles are closed, all descriptors retired and exact unsaved drafts retained. Both install/reinstall v3; VS Code runtime/restart passes selected-stop checks but fails manual paused-replay context retention twice; Cursor v3 runtime is not run. Branch: codex/cycle-0016-packaged-installation.
+- Exact next action: finish the escalating Claude Code retries and documentation review, then complete current-head package/CI checks and PR #20 merge closing Issue #19. Primary/native review and CodeRabbit CLI have no verified new code findings. The [Cursor startup investigation](evidence/0016/cursor-console-investigation.md) attributes three error classes independently but retains the descriptor-ordering concern. V4 passes in both ordinary hosts; suites pass 672/672 + 39/39. Preserve all historical attempts.
+- Active processes: none owned by Cycle 0016. Both ordinary v4 profiles are closed, all descriptors retired and exact unsaved drafts retained. Both installed workflows, all confirmed source-reading transfers and fresh restart pass. Cursor transient layout motion and startup console remain qualified. Branch: codex/cycle-0016-packaged-installation.
 - PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
 - Select a single next cycle only after this cycle's evidence identifies the next uncertainty.
 
@@ -239,4 +239,6 @@ NO UNRESOLVED DECISIONS
 
 [Installed v3](evidence/0016/installed-validation-v3.md) verifies twelve selected-source-line transfers, checkout/replay, progress and fresh restart in ordinary VS Code on clean `c4ecb10` (669/669 + 39/39 tests). Supplemental manual-scroll replay checks fail independently before and after restart: a confirmed mode transfer returns source to the selected stop (C16-QA-004). Cursor v3 is installed but runtime validation is not run on this failing candidate. All owned processes/descriptors are stopped and exact unsaved drafts survive. [SIGPIPE isolation](evidence/0016/sigpipe-investigation.md) reproduces that separate teardown message without Codebook.
 
-[Paused replay reading investigation](evidence/0016/replay-reading-investigation.md) confirms C16-QA-004 and implements guarded context restoration after playback refresh. Two focus-specific regressions fail before repair; all three pass afterward. Focused 11/11, full 672/672 and package 39/39 pass. Clean both-host v4 verification remains pending.
+[Paused replay reading investigation](evidence/0016/replay-reading-investigation.md) confirms C16-QA-004 and implements guarded context restoration after playback refresh. Two focus-specific regressions fail before repair; all three pass afterward. Focused 11/11, full 672/672 and package 39/39 pass. [Clean both-host v4 verification](evidence/0016/installed-validation-v4.md) now demonstrates the original pre/post-restart cases independently; full reading UX remains outside the bounded claim.
+
+[Installed v4](evidence/0016/installed-validation-v4.md) completes T4: exact ordinary installation/reinstallation, four-stop checkout, eleven links, seven captures, 33-frame offline recording, six live/six paused/nine manual-reading mode transfers and fresh restart per host. Exact unrelated drafts survive and all owned processes/descriptors reach zero. C16-QA-004 repair is demonstrated. The later [Cursor startup control](evidence/0016/cursor-console-investigation.md) isolates common host errors while retaining the descriptor-ordering concern; transient reading motion remains qualified. QA-only ended DONE_WITH_CONCERNS, provisional score 85 with explicitly limited category coverage. Current clean candidate bcc7b7f has successful CI run 35540033782. [Review and delivery evidence](evidence/0016/implementation-review.md) remain separate.

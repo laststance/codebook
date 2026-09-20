@@ -26,4 +26,4 @@ Private evidence: `artifacts/cycle-0016/investigation/replay-reading-red-tests.l
 - Files: `extension/src/studyWorkspace.ts`, `extension/src/tests/studyWorkspace.test.ts`.
 - Regression: three focus-specific paused-playback tests through the real recording controller, with explicit native-selection behavior at the mocked editor boundary.
 - Related: C16-QA-002 anchor/padding repair and Cycle 0014 last-confirmed replay/learner-interference invariants. SIGPIPE is separately isolated without Codebook.
-- Status: **DONE_WITH_CONCERNS** until clean installed v4 verifies this original user workflow in both hosts.
+- Status: **repair demonstrated within the bounded native cases**. [Clean installed v4](installed-validation-v4.md) independently passes all nine initiating-focus/mode transfers and the original fresh-restart case in both ordinary hosts. Cursor motion still shows an intermediate selected-stop reveal while layout is changing; confirmed reading context is restored. Full reading UX remains outside this repair acceptance.

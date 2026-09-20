@@ -4,7 +4,7 @@ Learn an unfamiliar codebase by connecting what an application does on screen wi
 
 The destination is a chat-driven, recorded walkthrough from adding a product to the cart through checkout, linked to a wiki, codemap, and personal learning progress. Study workspace is the default; Living book and Guided walkthrough provide alternative presentations of the same learning state.
 
-The complete product must work in **both VS Code and Cursor**. Final acceptance includes packaged-extension installation and the full experience in each editor. Both hosts have real synchronous and browser/server fixture evidence. Full packaged-product compatibility remains unverified.
+The complete product must work in **both VS Code and Cursor**. A private VSIX now demonstrates the bounded checkout, offline replay, shared layouts and fresh restart in both ordinary installed editors. Full real-repository usefulness and integrated product acceptance remain open.
 
 ## Start here
 
@@ -12,7 +12,7 @@ The complete product must work in **both VS Code and Cursor**. Final acceptance 
 | --- | --- |
 | What product are we trying to reach? | [PRODUCT_GOAL.md](PRODUCT_GOAL.md) |
 | What is actually proven, and what is next? | [PROJECT_STATE.md](PROJECT_STATE.md) |
-| How do I use the current development extension? | [Setup and MCP tutorial](extension/README.md), [development changes](CHANGELOG.md) |
+| How do I install and use the current preview? | [Private VSIX installation and MCP tutorial](extension/README.md), [development changes](CHANGELOG.md) |
 | How do we use GStack and choose the next cycle? | [DEVELOPMENT.md](DEVELOPMENT.md) |
 | What decisions must survive new sessions? | [DECISIONS.md](DECISIONS.md) |
 | What was approved in office hours? | [Product design](docs/designs/codebook.md) and [visual concepts](docs/designs/README.md) |
@@ -62,6 +62,8 @@ Product design and three visual directions are approved. [Cycle 0001](docs/cycle
 
 [Cycle 0015](docs/cycles/0015-wiki-navigation-ordering.md) investigates whether an older native Wiki source-display operation can overwrite a newer selection. Its 35 instrumented diagnostic cases per development host observed no mismatch, but none reached the modeled reverse completion order. The [investigation and reproduction record](docs/cycles/evidence/0015/native-ordering-20260921.md) therefore remains **inconclusive**; in-memory test storage and finite native observations do not establish a general ordering guarantee. No product code changed, and the modeled concern remains open for future native evidence.
 
-Real-repository checkout, integrated installed recording acceptance, general natural-language orchestration, packaged installation and three intended real-repository uses remain open. Native API assertions and webview checks do not replace complete installed-editor UX acceptance.
+[Cycle 0016](docs/cycles/0016-packaged-installation.md) adds self-contained private VSIX packaging and ordinary installation in VS Code 1.138.0 and Cursor 3.21.16 on macOS arm64. The [separate installed results](docs/cycles/evidence/0016/installed-validation-v4.md) demonstrate four checkout stops, eleven causal links, seven captures, offline recording, all three layouts and fresh restart in each host. Source-reading and focus repairs preserve manually inspected code across confirmed transfers. **672 product/shared tests and 39 package tests** pass. Console findings, transient layout motion and missing Claude Code review coverage remain qualified; this preview is not a Marketplace or Open VSX release.
+
+Real-repository checkout, general natural-language orchestration, three intended real-repository uses and complete installed-editor UX acceptance remain open. A fixture workflow and a verified package do not establish the full product goal.
 
 Repository files are the portable project record. GStack's local cache, chat history, and optional GitHub issues are supporting views of that record. Commits are also stored in the private GitHub repository. Ignored private recordings still require an explicit durable evidence location.
