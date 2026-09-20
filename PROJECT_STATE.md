@@ -2,7 +2,7 @@
 
 Updated: 2026-09-21\
 Product stage: configured core execution, offline replay and restart demonstrated separately in both editors; complete cross-host and installed usefulness unverified\
-Active cycle: [0015 — Native Wiki navigation ordering](docs/cycles/0015-wiki-navigation-ordering.md) — planning\
+Active cycle: [0015 — Native Wiki navigation ordering](docs/cycles/0015-wiki-navigation-ordering.md) — validating; native investigation inconclusive\
 Last cycle: [0014 — Shared presentation controls](docs/cycles/0014-shared-presentation-controls.md) — demonstrated with explicit remaining obligations; merged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#17](https://github.com/laststance/codebook/issues/17) — open\
@@ -11,6 +11,8 @@ Repository: [laststance/codebook](https://github.com/laststance/codebook) — pr
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
 ## Verified facts
+
+- [Cycle 0015 native ordering](docs/cycles/evidence/0015/native-ordering-20260921.md) is **inconclusive** for the modeled late-effect race. 35 instrumented development-host diagnostic cases per host produced zero observed mismatches, using in-memory test storage; all 30 range snapshots at the last native promise fulfillment matched (the later drained per-case result records URI/article identity separately). Actual native display calls overlapped in 10 VS Code / 13 Cursor reader pairs plus ten direct API pairs per host; immutable A/B reader calls overlapped in 0/10 VS Code cases. None settled in the modeled reverse order. Already accepted source tabs can remain after Wiki Close. No product repair or general ordering guarantee is claimed. Both hosts exited 0 with restored settings and no remaining owned profile process.
 
 - [PR #16](https://github.com/laststance/codebook/pull/16) merged Cycles 0008–0014 into main at `11c2b05`; Issue #15 closed at merge. Its tree equals `0264e42`, with all 245 source hashes matching the 647-test candidate. Socket checks passed; hosted CodeRabbit status is not a completed review, formal approval is absent, and no project build/deploy workflow exists. Packaging and installed acceptance remain unverified.
 
@@ -80,13 +82,15 @@ Current [native integration evidence](docs/cycles/evidence/0011/native-validatio
 
 Earlier [Arrange investigation](docs/cycles/evidence/0011/native-layout-investigation-20260920.md): explicit recovery separates moved Codebook panes, preserves actual source placement across replay-induced render cancellation, follows later manual moves and reports interrupted placement before claiming success. **399/399 product tests pass**, zero failed/skipped/cancelled (16.760s). Final v14 inventory `fb597267fc8ac348ddff5460b8d5c47cf86f13cd231585fa6ea38aeb20a049e2` has 231 entries on dirty `a3fba6f`. Both actual hosts pass the complete Arrange/manual-move sequence, with inspected video, highlighted exact source and unchanged dirty draft. Cursor additionally passes visible 200% observation/recording Return with exact pose and learner ledger. The report qualifies its cramped retained manual layout and child-frame automation failures; this is not complete 200% usability acceptance. All intermediate hypotheses, a retracted host API inference and a simultaneous-host recording ACK timeout remain recorded.
 
-Exact next action: run [Cycle 0015](docs/cycles/0015-wiki-navigation-ordering.md) on `codex/cycle-0015-wiki-navigation-ordering`, based on merged main `11c2b05`. Fresh goal/purpose/design and three-image inspection are recorded. Trace and test the modeled Wiki source-display ordering case in both native hosts, including current-file and Close, before deciding on a repair. A mock schedule is not a proven native failure. No owned native session remains from Cycle 0014.
+Exact next action: complete bounded review and delivery of [Cycle 0015](docs/cycles/0015-wiki-navigation-ordering.md) on `codex/cycle-0015-wiki-navigation-ordering`. The native experiment is inconclusive for the modeled late-effect race; no product repair was made. Preserve its limitations and deliver through a PR closing Issue #17. Next candidate: packaged installation and integrated acceptance. No owned native session remains.
 
 Cycle 0014 delivery is complete through [PR #16](https://github.com/laststance/codebook/pull/16), with Issue #15 closed and its branch removed. The [ship source inventory](docs/cycles/evidence/0014/ship-source-cut.json) binds 245 source/test/script files to `55ce23cfb156a0491976a3a1b295912de7ef41031c73ffc0b20674ff380eafee`. All bytes match the merged tree; 647 tests and both-host SDK proof are identified in [the ship supplement](docs/cycles/evidence/0014/ship-verification-20260921.md). Prior native cuts and failures remain historical, including the Cursor cold-reader foreign-focus rejection and cropped 200% motion.
 
-All eleven partial plan obligations remain active: accessible mode-request/success/agent/retry copy; complete SDK, service and interleaving matrices; all-mode Wiki Return; native content-tab/focus/constrained/four-group/keyboard cases; uncropped/reduced-motion evidence; complete actual-agent evaluation and internal timing; broad review convergence; and integrated delivery/acceptance. P43's PR/merge/issue step is now complete, without completing packaging or the product. No scope deletion or final acceptance is inferred.
+All eleven partial plan obligations remain active: accessible mode-request/success/agent/retry copy; complete SDK, service and interleaving matrices; actual-host Wiki source ordering (Cycle 0015 inconclusive; V3-I1 retained) and all-mode Wiki Return; native content-tab/focus/constrained/four-group/keyboard cases; uncropped/reduced-motion evidence; complete actual-agent evaluation and internal timing; broad review convergence; and integrated delivery/acceptance. P43's PR/merge/issue step is now complete, without completing packaging or the product. No scope deletion or final acceptance is inferred.
 
-G10 packaged real-repository usefulness remains furthest from proof. Resolve this bounded navigation correctness question, then advance integrated packaged acceptance rather than repeating solved layout experiments. G01–G11, three intended uses, both hosts, owner acceptance and ten fresh sequential final reviews remain required. Goal #1 stays open; final reviews 0/10.
+Native phase-ACK reliability remains qualified: retain failed/partial captures and change the hypothesis before another attempt. Cropped 200% video never establishes full-window motion. Cycle 0014 broad outside-review coverage remains unavailable (10 MiB integration-input cap and bounded retry timeouts); Cycle 0015 documentation reviews cannot fill that historical implementation gap.
+
+G10 packaged real-repository usefulness remains furthest from proof. The bounded navigation investigation did not reproduce the modeled late effect. Advance integrated packaged acceptance while retaining its qualified concern. G01–G11, recording, all three layouts, packaged installation, three intended uses, both hosts, owner acceptance and ten fresh sequential final reviews remain required. Goal #1 stays open; final reviews 0/10.
 
 ## Full-product completion gate
 

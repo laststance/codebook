@@ -1,8 +1,8 @@
 # Cycle 0015 — Native Wiki navigation ordering
 
 Type: experiment\
-Status: planning\
-Result: pending\
+Status: validating\
+Result: inconclusive\
 Delivery: local-only\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/17\
@@ -51,12 +51,30 @@ Freeze schedule details and host versions before execution. Keep unmodified nati
 
 - Baseline: Cycle 0014 merged tree equals reviewed PR head 0264e42 byte-for-byte; 245 source hashes match its fresh 647-test cut. Historical modeled V3-I1 artifacts remain under ignored artifacts/cycle-0014/review/adversarial-v3-probes.*.
 - Context7 resolution returned its monthly-quota error on 2026-09-21; Serena is absent from the current tool inventory. Use installed native implementation and official primary references, retaining this limitation.
-- No native ordering experiment or product repair has run yet.
+- Both native hosts completed the frozen 35-case schedule without a mismatch; actual native calls overlapped in 20 VS Code and 23 Cursor cases, but never completed in the modeled reverse order. See [the bounded investigation](evidence/0015/native-ordering-20260921.md) and [artifact manifest](evidence/0015/manifest.json). No product repair was made.
 
 ## Result and decision
 
-Pending. Keep the approved shared ownership model and all final obligations. An inconclusive investigation may close this cycle but cannot verify a capability.
+The pre-execution schedule narrowed O01/O02 to real in-process reader entry points rather than concurrent end-to-end public MCP commands. Range measurement covers the last native fulfillment, while the later drained result covers URI/article identity; that part of the original range-after-drain contract remains partial. O04 checks in-session preservation only, not restart persistence.
+
+Keep the approved shared ownership model. The modeled late effect was not reproduced; the finite diagnostic does not establish a general native ordering guarantee. Retain V3-I1 as a qualified concern with explicit reopening triggers. Advance packaged installation and integrated acceptance after this cycle's review and PR delivery; preserve all final obligations.
 
 ## Handoff
 
-Trace exact native showTextDocument ordering and prepare a finite diagnostic that observes real effects without substituting mocked display ordering. No product edit yet. No owned native session running at cycle start. Final reviews remain 0/10.
+Complete bounded review, coderabbit-cli and PR delivery with Closes #17. Both owned hosts exited 0, settings match their original bytes, and owned profile processes are absent. The next candidate is packaged installation and integrated acceptance. Final reviews remain 0/10.
+
+## Frozen native schedule v1 (before execution)
+
+The current-task transcript's `item_completed` event records the schedule append and bootstrap syntax check completed with exit 0 at `2026-09-20T16:43:50.660Z`, before the first host launch directory timestamp `16:43:50.786Z`. This is a completion-event timestamp, not a command-start timestamp. The manifest links the extracted `freeze-proof.json`. The schedule was frozen in the working tree, not included in planning commit `0cbbaa8`.
+
+- Candidate: clean product bytes from merged 11c2b05, rebuilt under planning commit 0cbbaa8; only private diagnostic helpers differ.
+- Hosts: installed VS Code 1.138.0 and Cursor 3.21.16 (API 1.128.0), macOS arm64. Launch manifests must verify their actual bundle commits.
+- Fresh isolated test profiles; use the real tracked Codebook source files to publish two distinct cited articles through public MCP. Authoring/readback is external; diagnostic races invoke the actual reader entry points through a captured instance.
+- The private bootstrap may wrap the real codebook extension API showTextDocument method only if writable. It calls the original immediately, records its real promise settlement and submits the next actual reader operation while that promise is pending. It never sleeps, gates or substitutes a simulated display completion. If observation cannot be installed, report that limitation and revise the setup before running a replacement schedule.
+- Per host: ten immutable A-to-B overlaps, ten current-file-to-B overlaps, five source-to-Close overlaps and ten direct native A/B pairs. Capture final URI/range after all promises settle plus a native layout barrier. Any mismatch or inaccessible schedule is a failed/inconclusive attempt, not a pass.
+- Preserve an explicit test-profile learner decision and unrelated dirty draft across all cases. No application or debug run is started. Restore profile settings and record owned editor exit.
+- Installed workbench snapshots contain editor-operation cancellation and current-operation checks in both hosts. These are a candidate explanation, not yet native proof or a public API ordering guarantee.
+
+### Post-run audit of the frozen harness
+
+The pre-existing bootstrap additionally primed `source-ab` with article B; other scenarios first opened A. Direct probes then opened B to obtain its URI and opened both documents before their A/B calls, using column One, preserveFocus true and preview false. These priming details were present in the frozen executable but omitted from the original prose. They can affect caching and overlap; they do not establish why VS Code's immutable-source native calls did not overlap. The [report's excerpt](evidence/0015/native-ordering-20260921.md#harness-details-and-detector-control) makes that limitation inspectable. A separate offline control rechecks all 70 outcomes and detects deliberately wrong source/Close outcomes and reversed timestamps; synthetic controls are not native cases.
