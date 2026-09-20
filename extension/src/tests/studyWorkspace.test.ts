@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
@@ -28,7 +28,7 @@ import { startServer } from '../server';
 /** Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions. @example const reader = await workspaceHarness() */
 async function workspaceHarness(attach = true, deterministicClock = false) {
   let clock = 0;
-  const harness = await createHarness({ create: async (directory, profile) => { const runtime = new ControlledRuntime(directory, profile); if (deterministicClock) runtime.evidence.elapsedMs = () => clock; return runtime; } }), fixture = join(harness.directory, 'experiments/cycle-0004/fixture');
+  const harness = await createHarness({ create: async (directory, profile) => { const runtime = new ControlledRuntime(directory, profile); if (deterministicClock) runtime.evidence.elapsedMs = () => clock; return runtime; } }), fixture = join(harness.directory, 'extension/dist/demo/fixture');
   await mkdir(fixture, { recursive: true });
   await writeFile(join(fixture, 'server.mts'), 'const price = 24;'); await writeFile(join(fixture, 'client.mts'), 'const count = 1;');
   let changed = () => {};
@@ -43,6 +43,9 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     toString() { return `${this.scheme}://${this.authority}${this.path}`; }
   }
   class TabInputText { constructor(readonly uri: Uri) {} }
+  class RelativePattern { constructor(readonly base: string, readonly pattern: string) {} }
+  const watchedPatterns: RelativePattern[] = [];
+  const textDocuments: { uri: Uri; getText(): string }[] = [];
   class TabInputWebview { constructor(readonly viewType: string) {} }
   type Tab = { input: TabInputText | TabInputWebview; label?: string; isPreview?: boolean; isDirty?: boolean };
   const groups: { viewColumn: number; tabs: Tab[]; activeTab?: Tab }[] = [{ viewColumn: 2, tabs: [] }];
@@ -128,7 +131,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     reveal: async (participant: string, options: { select: boolean; focus: boolean }) => { assert.equal(options.focus, false); if (options.select) outline.selection = [participant]; } };
   const watcher = { onDidChange(callback: () => void) { changed = callback; return disposable(); }, onDidCreate: disposable, onDidDelete: disposable, dispose() {} };
   const boundary = await loadModule<typeof import('../studyWorkspace')>(resolve(__dirname, '../studyWorkspace.js'), {
-    vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position: class {}, Range: class {}, ViewColumn: { One: 1, Two: 2, Three: 3 }, TextEditorRevealType: { AtTop: 0 }, ThemeColor: class {}, RelativePattern: class {},
+    vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position: class {}, Range: class {}, ViewColumn: { One: 1, Two: 2, Three: 3 }, TextEditorRevealType: { AtTop: 0 }, ThemeColor: class {}, RelativePattern,
       commands: { async executeCommand(name: string, layout?: unknown): Promise<unknown> {
         commands.push(name); const held = nextCommand; if (held?.name === name) { nextCommand = undefined; held.entered(); await held.wait; }
         if (name === failingCommand) { failingCommand = undefined; throw new Error('Native layout command failed'); }
@@ -190,9 +193,9 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           return lastSourceEditor = { document, get viewColumn() { return reportedSourceColumn ?? group.viewColumn; }, setDecorations() { decoratedColumns.push(reportedSourceColumn ?? group.viewColumn); }, selections: ['original selection'], visibleRanges: ['original range'], revealRange() {} };
         },
         tabGroups: { all: groups, get activeTabGroup() { return activeTabGroup; }, onDidChangeTabGroups: (callback: typeof changedGroups) => { changedGroups = callback; return disposable(); }, close: async (tabs: Tab[]) => { for (const group of groups) group.tabs = group.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
-      workspace: { textDocuments: [], registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
+      workspace: { textDocuments, registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
         openTextDocument: async (uri: Uri) => { const held = nextOpen; nextOpen = undefined; if (held) { held.entered(); await held.wait; } const text = uri.scheme === 'file' ? await readFile(uri.fsPath, 'utf8') : await sourceProvider(uri); return { uri, getText: () => text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n') }; },
-        onDidChangeTextDocument: disposable, createFileSystemWatcher: () => watcher } },
+        onDidChangeTextDocument: disposable, createFileSystemWatcher: (pattern: RelativePattern) => { watchedPatterns.push(pattern); return watcher; } } },
     './environment': { requireWorkspace: () => harness.directory }, 'codebook-cycle-0001/dist/browserViewport': { BrowserViewport: class {
       async reveal() {} async showLive() {} showHistory() {} close() {} async holdPlacement() { return () => {}; } async restorePlacement() {}
       clearRecorded() { displayedImage = undefined; }
@@ -207,12 +210,13 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let nextPreference: { wait: Promise<void>; entered(): void } | undefined;
   const workspaceState = { get: <Value>(key: string) => presentationPreferences.get(key) as Value | undefined,
     update: async (key: string, value: unknown) => { const held = nextPreference; nextPreference = undefined; held?.entered(); await held?.wait; if (preferenceFailure) throw new Error('Injected preference failure'); presentationPreferences.set(key, structuredClone(value)); } };
-  const createReader = () => new boundary.StudyWorkspace({ extensionPath: join(harness.directory, 'extension'), globalStorageUri: { fsPath: join(harness.directory, 'storage') }, subscriptions: [], workspaceState }, controls);
+  const createReader = (extensionPath = join(harness.directory, 'extension')) => new boundary.StudyWorkspace({ extensionPath, globalStorageUri: { fsPath: join(harness.directory, 'storage') }, subscriptions: [], workspaceState }, controls);
   const reader = createReader();
   if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
   return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, articleOpens, articleReturns, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
+    addOpenSource(file: string, text: string) { textDocuments.push({ uri: Uri.file(join(fixture, file)), getText: () => text }); },
     outlineItem: (itemId: string) => outlineItem(itemId), changeOutlineCheckbox: (itemId: string, checked: boolean) => outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
-    postedMessages: () => postedMessages, presentationPreferences,
+    postedMessages: () => postedMessages, presentationPreferences, watchedPatterns,
     holdPresentationMessage(mode?: 'living-book') { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); heldPresentationMessage = { mode, wait, entered }; return { started, release }; },
     failPresentationPreference(value: boolean) { preferenceFailure = value; },
     holdPresentationPreference() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); nextPreference = { wait, entered }; return { started, release }; },
@@ -871,6 +875,40 @@ test('a fresh reader restores the saved recording position paused and a live-run
   } finally { await reloaded.dispose(); await harness.close(); }
 });
 
+test('updating the installed demo source and location preserves recorded bytes and learner history while requesting source review', async () => {
+  // Arrange: persist actual archive/recording files; only editor and runtime effects are simulated.
+  const harness = await recordedReaderHarness(); let reloaded: ReturnType<typeof harness.createReader> | undefined;
+  try {
+    await harness.reader.understand(true);
+    const library = await harness.reader.learningStorage(), decisions = (await library.readProgress()).decisions;
+    // Retire the original writer before freezing immutable bytes for the installation update.
+    await harness.service.shutdown(); await harness.reader.retire(harness.service); await harness.reader.dispose();
+    const archivePath = join(library.directory, `${harness.studyId}.study.v2.json`), archiveBefore = await readFile(archivePath);
+    const recordingDirectory = harness.store.path(harness.studyId), recordingFiles = (await readdir(recordingDirectory)).sort();
+    const recordingBefore = await Promise.all(recordingFiles.map(file => readFile(join(recordingDirectory, file))));
+    const nextExtension = join(harness.directory, 'codebook-next-install'), nextFixture = join(nextExtension, 'dist/demo/fixture');
+    await mkdir(nextFixture, { recursive: true });
+    await writeFile(join(nextFixture, 'server.mts'), 'const price = 25;'); await writeFile(join(nextFixture, 'client.mts'), 'const count = 1;');
+
+    // Act: a new reader uses the changed installation but the same real persisted workspace store.
+    reloaded = harness.createReader(nextExtension); await reloaded.open();
+    const restored = reloaded.inspect().view!;
+    const currentSource = await readFile(join(nextFixture, 'server.mts'), 'utf8');
+
+    // Assert: old evidence and decisions remain exact, while current-source progress needs review.
+    assert.equal(restored.model.source.text, 'const price = 24;'); assert.equal(restored.model.observation?.values.price, 24);
+    assert.equal(currentSource, 'const price = 25;'); assert.equal(restored.model.sourceChanged, true);
+    assert.equal(harness.watchedPatterns.at(-1)?.base, nextFixture); assert.equal(harness.watchedPatterns.at(-1)?.pattern, '{server,client}.mts');
+    assert.equal(restored.model.understoodCount, 0); assert.equal(restored.model.reviewCount, 1);
+    assert.equal(restored.model.selectedUnderstanding.understood, true);
+    assert.equal(decisions.length, 1); assert.deepEqual((await library.readProgress()).decisions, decisions);
+    assert.deepEqual(await readFile(archivePath), archiveBefore);
+    assert.deepEqual((await readdir(recordingDirectory)).sort(), recordingFiles);
+    assert.deepEqual(await Promise.all(recordingFiles.map(file => readFile(join(recordingDirectory, file)))), recordingBefore);
+    assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
+  } finally { await reloaded?.dispose(); await harness.close(); }
+});
+
 test('starting a live viewport after closing recorded Study leaves its old film closed and preserves the saved replay position', async () => {
   // Arrange
   const harness = await recordedReaderHarness();
@@ -1176,6 +1214,22 @@ test('a closed source file change marks prior understanding for review without c
     assert.equal(await readFile(join(directory, 'progress.v4.json'), 'utf8'), before);
     assert.equal(harness.reader.inspect().view!.model.source.hash, sha256('const price = 25;'));
     assert.ok(harness.counts().outlineUpdates > updatesBefore, 'The closed reader still updates its installed outline');
+  } finally { await harness.close(); }
+});
+
+test('unsaved demo source edits take priority over installed disk bytes without rewriting learner history', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    await harness.reader.understand(true); const library = await harness.reader.learningStorage(), decisions = (await library.readProgress()).decisions;
+    harness.addOpenSource('server.mts', 'const price = 26;');
+    // Act
+    harness.changed(); await waitUntil(() => harness.reader.inspect().view!.model.reviewCount === 1, 'unsaved installed source review', 1_000);
+    // Assert
+    const model = harness.reader.inspect().view!.model;
+    assert.equal(harness.watchedPatterns[0]?.base, harness.fixture);
+    assert.equal(model.source.text, 'const price = 26;'); assert.equal(await readFile(join(harness.fixture, 'server.mts'), 'utf8'), 'const price = 24;');
+    assert.equal(model.understoodCount, 0); assert.deepEqual((await library.readProgress()).decisions, decisions);
   } finally { await harness.close(); }
 });
 

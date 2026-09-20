@@ -174,7 +174,7 @@
     ]
   },
   "scripts": {
-    "build": "pnpm --dir ../experiments/cycle-0004 build && tsc -p tsconfig.json && node scripts/build-metadata.mjs",
+    "build": "pnpm --dir ../experiments/cycle-0004 build && tsc -p tsconfig.json && node scripts/prepare-demo.mjs && node scripts/build-metadata.mjs",
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && node --test dist/tests/*.test.js",
     "native": "pnpm build && node dist/nativeRunner.js"

@@ -37,9 +37,9 @@ test('the configured environment routes only owned DAP responses and reveals imm
   const disposable = { dispose() {} };
   const boundary = await loadModule<typeof import('../environment')>(resolve(__dirname, '../environment.js'), {
     './configuredBrowserRun': { ConfiguredBrowserRun: SelectedRun },
-    './utils/checkDemoFiles': { checkDemoFiles: async () => ['Build the extension and paired-cart-demo packages with pnpm build.'] },
+    './utils/checkDemoFiles': { checkDemoFiles: async () => ['Bundled demo files are missing or unreadable. Reinstall Codebook.'] },
     'codebook-cycle-0004/dist/run': { PairedRun: class { constructor() { throw new Error('Demo must not launch'); } } },
-    'node:fs/promises': { ...filesystem, access: async (path: string) => { accesses.push(path); if (path.includes('cycle-0004')) throw new Error('No installed demo fixtures'); } },
+    'node:fs/promises': { ...filesystem, access: async (path: string) => { accesses.push(path); if (path.includes('/dist/demo/')) throw new Error('No installed demo fixtures'); } },
     'node:util': { promisify: () => async (file: string) => ({ stdout: file === 'node' ? JSON.stringify({ version: '24.21.0', executable: '/external/node' }) : 'Chrome fixture' }) },
     vscode: { workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }], getConfiguration: () => ({ get: (_key: string, fallback: string) => fallback }) },
       env: { appRoot: directory, appName: 'Cursor' }, version: '1.128.0', extensions: { getExtension: () => ({}) },
@@ -58,10 +58,10 @@ test('the configured environment routes only owned DAP responses and reveals imm
   // Assert
   assert.equal(runtime.id, 'configured-run'); assert.equal(selected.options.control, control); assert.equal(selected.options.definition, definition); assert.equal(selected.options.host.id, 'cursor');
   assert.deepEqual(messages, ['request', 'response', 'event']); assert.equal(await factory!.createDebugAdapterTracker({ ...session, id: 'foreign' }), undefined);
-  assert.equal(accesses.some(path => path.includes('cycle-0004')), false);
+  assert.equal(accesses.some(path => path.includes('/dist/demo/')), false);
   await assert.rejects(selected.options.revealSource(createConfiguredStudy().observations[0]!), { code: 'EVIDENCE_UNAVAILABLE' });
   revealed = true; await selected.options.revealSource(createConfiguredStudy().observations[0]!);
-  await assert.rejects(environment.createRuntime(join(directory, 'demo'), 'checkout-demo'), /paired-cart-demo/);
+  await assert.rejects(environment.createRuntime(join(directory, 'demo'), 'checkout-demo'), /Reinstall Codebook/);
   cancellation.abort(); await assert.rejects(environment.createRuntime(join(directory, 'cancelled'), definition, control), /abort/i);
   assert.equal(instances.length, 1);
 });

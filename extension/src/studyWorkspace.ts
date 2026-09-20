@@ -2,7 +2,8 @@ import { REPOSITORY_BROWSER_PROFILE, REPOSITORY_READER_DEBOUNCE_MS, REPOSITORY_S
 import * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { getDemoRoot } from './utils/getDemoRoot';
 import { z } from 'zod';
 import { BrowserViewport } from 'codebook-cycle-0001/dist/browserViewport';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
@@ -905,7 +906,7 @@ export class StudyWorkspace {
   private async readBaselines(): Promise<void> {
     const revision = ++this.baselineRevision;
     const read = async (file: string) => {
-      const path = resolve(this.context.extensionPath, '../experiments/cycle-0004/fixture', file);
+      const path = join(getDemoRoot(this.context.extensionPath), 'fixture', file);
       const document = vscode.workspace.textDocuments.find(value => value.uri.fsPath === path);
       const text = document?.getText() ?? (await readBoundedFile(path, SOURCE_LIMIT_BYTES)).toString();
       if (Buffer.byteLength(text) > SOURCE_LIMIT_BYTES) throw new Error('Current source exceeds the reader limit.');
@@ -924,7 +925,7 @@ export class StudyWorkspace {
       if (revision !== this.baselineRevision) return;
       this.currentSourceAvailable = false;
       if (!this.baselines) {
-        const unavailable = (file: string) => ({ text: '// Current source unavailable. Read a saved observation or retry.', hash: sha256('// Current source unavailable. Read a saved observation or retry.'), line: 1, path: resolve(this.context.extensionPath, '../experiments/cycle-0004/fixture', file) });
+        const unavailable = (file: string) => ({ text: '// Current source unavailable. Read a saved observation or retry.', hash: sha256('// Current source unavailable. Read a saved observation or retry.'), line: 1, path: join(getDemoRoot(this.context.extensionPath), 'fixture', file) });
         this.baselines = { server: unavailable('server.mts'), browser: unavailable('client.mts') };
       }
       this.report('source', error); throw error;
@@ -1413,7 +1414,7 @@ export class StudyWorkspace {
       if (study?.version === 3 && study.descriptor?.sources.some(source => join(this.repositorySources!.workspace, source.path) === event.document.uri.fsPath)) this.scheduleCitationRefresh();
     }));
     // Closed-file changes must invalidate current-source progress just as edits in open documents do.
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(resolve(this.context.extensionPath, '../experiments/cycle-0004/fixture'), '{server,client}.mts'));
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(join(getDemoRoot(this.context.extensionPath), 'fixture'), '{server,client}.mts'));
     const changed = () => { if (this.baselines) void this.readBaselines().then(() => this.renderSelection()).catch(error => this.report('source', error)); };
     this.disposables.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed));
   }
