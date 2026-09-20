@@ -1,9 +1,9 @@
 # Cycle 0012 — Shared Study presentations
 
 Type: product-increment\
-Status: planning\
-Result: pending\
-Delivery: local-only\
+Status: closed\
+Result: falsified\
+Delivery: committed\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/13\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -433,11 +433,11 @@ Completion: Step 0 accepts the bounded outcome and reduces mechanism complexity;
 
 ## Result and decision
 
-Pending. The full goal and review gate remain unchanged. This is a planned shared-presentation increment, not a claim that G08/G09 are implemented.
+Falsified at DX0. Two supported reveal/grid sequences failed to retain the context panel when moving from Living book toward Guided in VS Code. The second sequence achieved the intended Living geometry, but neither completed three-mode retention. [Native failure evidence](evidence/0012/placement-investigation-20260920.md) and [manifest](evidence/0012/placement-manifest.json) preserve both attempts. Cursor and new-mode product tests were not run after the blocking prerequisite failed. No product code/build changed; G08/G09 remain unimplemented. Keep the reviewed shared-model contract; replace its unproven native placement mechanism through one bounded follow-up investigation.
 
 ## Handoff
 
-Exact next action: the bounded both-host DX0 placement experiment before production implementation. DX and design decisions incorporate independent challenges under explicit delegation. One active cycle, no owned native processes. Preserve the Cycle 0011 frozen build and private evidence. No unresolved owner choice currently blocks the delegated routine design work.
+Cycle closed after its two-attempt limit. Next selected candidate: investigate native webview disposal during cross-group movement, first testing preview-tab replacement with observed tab state and disposal order. Both owned VS Code hosts ended with exit 1 and restored settings; no native process remains. Preserve the Cycle 0011 frozen build and private evidence. Reviewed DX/design/engineering requirements remain reusable context, not implemented capability.
 
 ## GSTACK REVIEW REPORT
 
@@ -448,7 +448,7 @@ Exact next action: the bounded both-host DX0 placement experiment before product
 | Design plan | 1 + 1 bounded in-host follow-up | Complete at plan level | 4 → 9 minimum plan score, six delegated decisions; independent 3 High/3 Medium and external 5 P1/4 P2 incorporated |
 | Engineering plan | 1 | Complete at plan level | Nine primary findings; external 5 P1/5 P2 individually dispositioned, no clean external rerun |
 
-VERDICT: DX + DESIGN + ENG plans complete; native DX0 feasibility required before DX1/DX2 implementation.
+VERDICT: DX + DESIGN + ENG plans complete; DX0 native mechanism FALSIFIED. No DX1/DX2 implementation is authorized by this failed mechanism; investigate the specific blocker next.
 
 OUTSIDE COVERAGE: DX, design and engineering external Claude Code completed with findings; design in-host fresh review also completed. No clean external re-review or final-product review is claimed.
 
