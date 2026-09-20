@@ -42,6 +42,14 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   class TabInputWebview { constructor(readonly viewType: string) {} }
   type Tab = { input: TabInputText | TabInputWebview; label?: string };
   const groups: { viewColumn: number; tabs: Tab[]; activeTab?: Tab }[] = [{ viewColumn: 2, tabs: [] }];
+  let activeTabGroup = groups[0]!;
+  type SourceEditor = { document: { uri: Uri; getText(): string }; readonly viewColumn: number; setDecorations(): void };
+  let activeTextEditorChanged = (_editor: SourceEditor | undefined) => {};
+  let lastSourceEditor: SourceEditor | undefined;
+  let sourceFocusOnArrange: SourceEditor | undefined;
+  let reportedSourceColumn: number | undefined;
+  let nextSourceDisplay: (() => void) | undefined;
+  const visibleSourceEditors: (SourceEditor & { group: typeof groups[number] })[] = [], decoratedColumns: number[] = [];
   let changedGroups = (_event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => {};
   let sourceProvider = async (_uri: Uri) => '';
   let nextOpen: { wait: Promise<void>; entered(): void } | undefined;
@@ -52,16 +60,16 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const panels = new Set<ReturnType<typeof panel>>();
   const postedMessages: StudyViewMessage[] = [];
   const receivers = new Map<string, (message: unknown) => void>();
-  let automaticContextReceipt = false, contextCoversSource = false, displayedImage: string | undefined;
+  let automaticContextReceipt = false, contextCoversSource = false, displayedImage: string | undefined, sourceColumn = 2;
   let nextImage: { wait: Promise<void>; entered(): void } | undefined;
-  function panel(kind: string) {
+  function panel(kind: string, _title?: string, options?: { viewColumn: number }) {
     const value = { webview: { html: '', postMessage: async (message: StudyViewMessage) => {
       postedMessages.push(message);
       if (automaticContextReceipt && kind === 'codebook.studyContext' && message.type === 'study' && !message.loading) {
         receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
       }
       return true;
-    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, title: '', reveal() { if (contextCoversSource && kind === 'codebook.studyContext') groups[0]!.activeTab = undefined; }, onDidDispose: disposable, onDidChangeViewState: disposable, dispose() { panels.delete(value); } };
+    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, kind, viewColumn: options?.viewColumn, title: '', reveal(column?: number) { if (column !== undefined) value.viewColumn = column; if (contextCoversSource && kind === 'codebook.studyContext') groups[0]!.activeTab = undefined; }, onDidDispose: disposable, onDidChangeViewState: disposable, dispose() { panels.delete(value); } };
     panels.add(value); return value;
   }
   const initialSelection: string[] = [];
@@ -79,6 +87,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           assert.ok(layout && typeof layout === 'object' && 'commands' in layout && Array.isArray(layout.commands));
           // Both native hosts notify child failures without rejecting the accepted batch promise.
           try { for (const command of layout.commands) await this.executeCommand(typeof command === 'string' ? command : command.command, typeof command === 'string' ? undefined : command.args); } catch {}
+          if (sourceFocusOnArrange) activeTextEditorChanged(sourceFocusOnArrange);
           return;
         }
         if (name === 'vscode.getEditorLayout') return JSON.parse(JSON.stringify(editorLayout, (key, value) => key === 'groups' && Array.isArray(value) ? value.map(group => ({ size: 1, ...group })) : value));
@@ -91,9 +100,17 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         }
         if (name === 'workbench.action.evenEditorWidths') editorLayout = structuredClone(settledLayout);
       } },
-      window: { createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: disposable, createWebviewPanel: panel,
-        showTextDocument: async (document: { uri: Uri; getText(): string }) => { const tab = { input: new TabInputText(document.uri) }; groups[0]!.tabs.push(tab); groups[0]!.activeTab = tab; return { document, setDecorations() {} }; },
-        tabGroups: { all: groups, onDidChangeTabGroups: (callback: typeof changedGroups) => { changedGroups = callback; return disposable(); }, close: async (tabs: Tab[]) => { groups[0]!.tabs = groups[0]!.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
+      window: { createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeTextEditorChanged = callback; return disposable(); }, createWebviewPanel: panel,
+        get visibleTextEditors() { return visibleSourceEditors.filter(editor => editor.group.activeTab?.input instanceof TabInputText && editor.group.activeTab.input.uri.toString() === editor.document.uri.toString()); },
+        showTextDocument: async (document: { uri: Uri; getText(): string }, options?: { viewColumn: number }) => {
+          sourceColumn = options?.viewColumn ?? sourceColumn;
+          const group = groups.find(candidate => candidate.viewColumn === sourceColumn) ?? groups[0]!, tab = group.tabs.find(tab => tab.input instanceof TabInputText && tab.input.uri.toString() === document.uri.toString()) ?? { input: new TabInputText(document.uri) };
+          if (!group.tabs.includes(tab)) group.tabs.push(tab); group.activeTab = tab;
+          visibleSourceEditors.push({ group, document, get viewColumn() { return group.viewColumn; }, setDecorations() { decoratedColumns.push(group.viewColumn); } });
+          const displayed = nextSourceDisplay; nextSourceDisplay = undefined; displayed?.();
+          return lastSourceEditor = { document, get viewColumn() { return reportedSourceColumn ?? group.viewColumn; }, setDecorations() { decoratedColumns.push(reportedSourceColumn ?? group.viewColumn); } };
+        },
+        tabGroups: { all: groups, get activeTabGroup() { return activeTabGroup; }, onDidChangeTabGroups: (callback: typeof changedGroups) => { changedGroups = callback; return disposable(); }, close: async (tabs: Tab[]) => { for (const group of groups) group.tabs = group.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
       workspace: { textDocuments: [], registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
         openTextDocument: async (uri: Uri) => { const held = nextOpen; nextOpen = undefined; if (held) { held.entered(); await held.wait; } const text = uri.scheme === 'file' ? await readFile(uri.fsPath, 'utf8') : await sourceProvider(uri); return { uri, getText: () => text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n') }; },
         onDidChangeTextDocument: disposable, createFileSystemWatcher: () => watcher } },
@@ -114,6 +131,20 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     postedMessages: () => postedMessages,
     clock(value: number) { clock = value; }, acknowledgeContext() { automaticContextReceipt = true; }, displayedImage: () => displayedImage,
     coverSourceWhenContextFocused() { contextCoversSource = true; },
+    panelColumn: (kind: string) => [...panels].find(panel => panel.kind === kind)?.viewColumn,
+    movePanel(kind: string, column: number) { const panel = [...panels].find(panel => panel.kind === kind); assert.ok(panel); panel.viewColumn = column; },
+    sourceColumn: () => sourceColumn,
+    restoreSourceFocusOnArrange() { sourceFocusOnArrange = lastSourceEditor; },
+    reportSourceEditorInColumn(column: number) { reportedSourceColumn = column; },
+    invalidateNextSourceRender() { nextSourceDisplay = () => { reader['revision']++; }; },
+    clearDecorations() { decoratedColumns.length = 0; }, decoratedColumns: () => [...decoratedColumns],
+    moveSource(column: number) {
+      const editor = lastSourceEditor; assert.ok(editor);
+      const previous = groups.find(group => group.viewColumn === sourceColumn)!, destination = groups.find(group => group.viewColumn === column)!;
+      const tab = previous.activeTab!; previous.tabs = previous.tabs.filter(candidate => candidate !== tab); previous.activeTab = undefined;
+      destination.tabs.push(tab); destination.activeTab = tab; activeTabGroup = destination;
+      lastSourceEditor = { ...editor, get viewColumn() { return destination.viewColumn; } }; activeTextEditorChanged(lastSourceEditor);
+    },
     editorLayout: () => structuredClone(editorLayout), changeEditorLayout(layout: unknown) { editorLayout = structuredClone(layout); },
     showTransientNativeSizes() { transientLayout = true; },
     failNextCommand(name: string) { failingCommand = name; },
@@ -501,6 +532,119 @@ test('returning from recording to Wiki keeps background study refresh from cover
     assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.runtimes[0]!.dispatches, 1);
     harness.controller.reveal(); await harness.controller.settle();
     assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.reader.inspect().view?.model.observation?.elapsedMs, 100);
+  } finally { await harness.close(); }
+});
+
+test('explicit Arrange separates moved application, source and context while preserving unrelated tabs', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    await harness.reader.open(); const draft = harness.addForeignDraft();
+    harness.movePanel('codebook.scopedBrowser', 2); harness.movePanel('codebook.studyContext', 2);
+    const sourceGroup = harness.groups.find(group => group.viewColumn === 2)!, contextGroup = harness.groups.find(group => group.viewColumn === 3)!;
+    sourceGroup.viewColumn = 3; contextGroup.viewColumn = 2;
+    harness.changeEditorLayout({ orientation: 0, groups: [{}, {}] });
+    harness.restoreSourceFocusOnArrange();
+    harness.reportSourceEditorInColumn(3);
+    harness.clearDecorations();
+
+    // Act
+    await harness.reader.action('arrange');
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.sourceColumn(), 2);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.decoratedColumns().includes(2), true);
+    assert.equal(sourceGroup.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    // A later Source action must retain Arrange's reader instead of reopening the older duplicate.
+    await harness.reader.action('source');
+    assert.equal(harness.sourceColumn(), 2);
+    assert.equal(sourceGroup.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
+  } finally { await harness.close(); }
+});
+
+for (const moveImmediately of [false, true]) test(`Arrange retains its source region after replay visibility cancels rendering and respects ${moveImmediately ? 'an immediate' : 'a later'} manual move`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    await harness.reader.open(); const draft = harness.addForeignDraft();
+    const original = harness.groups.find(group => group.viewColumn === 2)!, destination = harness.groups.find(group => group.viewColumn === 3)!;
+    original.viewColumn = 3; destination.viewColumn = 2;
+    harness.invalidateNextSourceRender();
+
+    // Act
+    await harness.reader.action('arrange');
+    if (moveImmediately) harness.moveSource(1);
+    await harness.reader.action('source');
+
+    // Assert
+    assert.equal(harness.sourceColumn(), moveImmediately ? 1 : 2);
+    assert.equal(original.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
+    // A completed source render releases the explicit arrangement so later manual moves remain authoritative.
+    harness.moveSource(1); await harness.reader.action('source');
+    assert.equal(harness.sourceColumn(), 1);
+  } finally { await harness.close(); }
+});
+
+test('Arrange reports interrupted source placement and a later explicit retry restores the three regions', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    const original = harness.groups.find(group => group.viewColumn === 2)!, destination = harness.groups.find(group => group.viewColumn === 3)!;
+    original.viewColumn = 3; destination.viewColumn = 2;
+    const held = harness.holdNextSource(); release = held.release;
+
+    // Act
+    const arranging = harness.reader.action('arrange'); await held.started;
+    harness.reader['revision']++; release(); await arranging;
+
+    // Assert
+    assert.equal(harness.reader.inspect().view!.errors.some(error => error.includes('The selected source changed before it could be arranged')), true);
+    await harness.reader.action('arrange'); await harness.reader.action('source');
+    assert.equal(harness.sourceColumn(), 2);
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+  } finally { release(); await harness.close(); }
+});
+
+test('Source follows a learner move after Arrange while preserving the earlier duplicate and dirty draft', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    await harness.reader.open(); const draft = harness.addForeignDraft();
+    const original = harness.groups.find(group => group.viewColumn === 2)!, destination = harness.groups.find(group => group.viewColumn === 3)!;
+    original.viewColumn = 3; destination.viewColumn = 2;
+    await harness.reader.action('arrange');
+    const retainedTabs = [...original.tabs];
+
+    // Act
+    harness.moveSource(1); await harness.reader.action('source');
+
+    // Assert
+    assert.equal(harness.sourceColumn(), 1);
+    assert.deepEqual(original.tabs, retainedTabs);
+    assert.equal(original.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
+  } finally { await harness.close(); }
+});
+
+test('ordinary Study entry retains manually shared pane columns until the learner explicitly arranges them', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false), manual = { orientation: 0, groups: [{}, {}] };
+  try {
+    await harness.reader.open();
+    harness.movePanel('codebook.scopedBrowser', 2); harness.movePanel('codebook.studyContext', 2);
+    harness.changeEditorLayout(manual);
+
+    // Act
+    await harness.reader.open();
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 2);
+    assert.deepEqual(harness.editorLayout(), manual);
   } finally { await harness.close(); }
 });
 

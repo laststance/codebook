@@ -97,6 +97,7 @@ export class StudyWorkspace {
   private readonly disposables: vscode.Disposable[] = [];
   private highlight?: vscode.TextEditorDecorationType;
   private sourceUri?: vscode.Uri;
+  private sourceGroup?: vscode.TabGroup;
   private opened = false;
   private closing = false;
   private closingPromise?: Promise<void>;
@@ -346,7 +347,7 @@ export class StudyWorkspace {
     if (action === 'focus-app') { this.app?.reveal(undefined, false); this.lastActiveRegion = 'app'; }
     if (action === 'focus-context') { this.contextPanel?.reveal(undefined, false); this.lastActiveRegion = 'context'; }
     if (action === 'outline') await vscode.commands.executeCommand('codebook.learningOutline.focus');
-    if (action === 'arrange') await this.arrange();
+    if (action === 'arrange') await this.arrange(undefined, 'study', false, true);
     if (action === 'current-file') {
       const study = this.selectedStudy();
       const path = study?.version === 3 ? join(this.repositorySources!.workspace, study.configuration.source.path) : this.baselines![this.message().model.selectedItem.participant].path;
@@ -468,7 +469,7 @@ export class StudyWorkspace {
       clearTimeout(this.citationRefreshTimer); this.citationRevision++; this.citationKey = undefined;
       for (const watcher of this.citationWatchers.splice(0)) watcher.dispose();
       this.layoutReceipt = undefined;
-      this.sourceUri = undefined; this.sourceRevision = undefined; this.lastSelectionKey = undefined; this.documents.clear();
+      this.sourceUri = undefined; this.sourceGroup = undefined; this.sourceRevision = undefined; this.lastSelectionKey = undefined; this.documents.clear();
     })();
     try { await pending; } finally { if (this.closingPromise === pending) { this.closingPromise = undefined; this.closing = false; } }
   }
@@ -861,7 +862,7 @@ export class StudyWorkspace {
   }
 
   /** Serializes source opens and invalidates obsolete selection work before it can qualify context/app correspondence. @example await this.renderSelection() */
-  private async renderSelection(preserveFocus = true, forceSource = false, signal?: AbortSignal): Promise<void> {
+  private async renderSelection(preserveFocus = true, forceSource = false, signal?: AbortSignal, sourceColumn?: vscode.ViewColumn): Promise<void> {
     signal?.throwIfAborted();
     if (!this.opened || this.closing || !this.baselines || this.pendingHistory !== undefined) return Promise.resolve();
     const lifetime = this.lifetime;
@@ -889,14 +890,26 @@ export class StudyWorkspace {
       const document = await vscode.workspace.openTextDocument(uri);
       signal?.throwIfAborted();
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
-      const group = vscode.window.tabGroups.all.find(group => group.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === this.sourceUri?.toString()));
+      const sourceGroups = vscode.window.tabGroups.all.filter(group => group.tabs.some(tab => tab.input instanceof vscode.TabInputText && [uri.toString(), this.sourceUri?.toString()].includes(tab.input.uri.toString())));
+      // Retain the last rendered source group through wrapper resync without adopting an older duplicate.
+      const sourceGroupIdentity = this.sourceGroup && this.editorGroupIdentities.get(this.sourceGroup);
+      const group = sourceGroups.find(group => group === this.sourceGroup || sourceGroupIdentity && this.editorGroupIdentities.get(group) === sourceGroupIdentity)
+        ?? sourceGroups.find(group => group === vscode.window.tabGroups.activeTabGroup) ?? sourceGroups[0];
+      const targetColumn = sourceColumn ?? group?.viewColumn ?? vscode.ViewColumn.Two;
       const position = new vscode.Position(source.line - 1, 0);
-      const editor = await vscode.window.showTextDocument(document, { viewColumn: group?.viewColumn ?? vscode.ViewColumn.Two, preserveFocus, preview: false, selection: new vscode.Range(position, position) });
+      const editor = await vscode.window.showTextDocument(document, { viewColumn: targetColumn, preserveFocus, preview: false, selection: new vscode.Range(position, position) });
       signal?.throwIfAborted();
+      if (this.closing || lifetime !== this.lifetime) return;
+      // Placement is an accepted native effect even when replay visibility supersedes this observation render.
+      this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === targetColumn && group.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString())) ?? this.sourceGroup;
       if (revision !== this.revision || this.closing || this.pendingHistory !== undefined) return;
       if (normalizeNativeSourceText(editor.document.getText()) !== normalizeNativeSourceText(source.text)) throw new Error('Displayed captured source does not match the selected observation.');
       const previousUri = this.sourceUri;
-      this.sourceUri = uri; if (this.highlight) editor.setDecorations(this.highlight, [new vscode.Range(position, position)]);
+      this.sourceUri = uri;
+      // Every visible copy of the same immutable source describes the same selected stop.
+      if (this.highlight) for (const visibleEditor of vscode.window.visibleTextEditors) {
+        if (visibleEditor.document.uri.toString() === uri.toString()) visibleEditor.setDecorations(this.highlight, [new vscode.Range(position, position)]);
+      }
       // Replace transient source-derived revisions while preserving deliberately opened observed-source tabs.
       if (previousUri && previousUri.toString() !== uri.toString() && previousUri.path.startsWith('/source-derived/')) {
         const obsolete = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === previousUri.toString());
@@ -1025,7 +1038,7 @@ export class StudyWorkspace {
   }
 
   /** Switches explicit reader entry between owned layouts without merging groups or replacing manual arrangements. @example await this.arrange(signal, 'repository', true) */
-  private async arrange(signal?: AbortSignal, mode: 'study' | 'repository' = 'study', ownedOnly = false): Promise<void> {
+  private async arrange(signal?: AbortSignal, mode: 'study' | 'repository' = 'study', ownedOnly = false, restoreRegions = false): Promise<void> {
     const lifetime = this.lifetime, assertCurrent = () => { this.assertLifetime(lifetime); signal?.throwIfAborted(); };
     assertCurrent();
     // A later explicit navigation must drain an accepted host command before applying its own target.
@@ -1041,6 +1054,15 @@ export class StudyWorkspace {
       }
       if (vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) { this.layoutReceipt = undefined; this.report('layout', new Error('Existing editor groups were preserved. Use the focus commands or arrange the Codebook panes manually.')); return; }
       this.layoutReceipt = undefined;
+      // Explicit Arrange separates learner-moved Codebook panes; ordinary entry still preserves manual placement.
+      if (restoreRegions) {
+        this.app?.reveal(vscode.ViewColumn.One, true); this.contextPanel?.reveal(vscode.ViewColumn.Three, true);
+        await this.renderSelection(true, true, signal, vscode.ViewColumn.Two); assertCurrent();
+        // An observation refresh can cancel source I/O before placement; do not certify a partially arranged reader.
+        if (!vscode.window.tabGroups.all.some(group => group.viewColumn === vscode.ViewColumn.Two && group.activeTab?.input instanceof vscode.TabInputText && group.activeTab.input.uri.toString() === this.sourceUri?.toString())) {
+          this.report('layout', new Error('The selected source changed before it could be arranged. Select Arrange again.')); return;
+        }
+      }
       const retainedGroups = [...vscode.window.tabGroups.all];
       // The workbench accepts both native effects together; its interim split sizes are not a receipt.
       await vscode.commands.executeCommand('runCommands', { commands: [
