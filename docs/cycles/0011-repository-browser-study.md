@@ -3,7 +3,7 @@
 Type: product-increment
 Status: closed
 Result: demonstrated
-Delivery: committed; remote closure sync follows push
+Delivery: committed and pushed; Issue #12 closed with evidence
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/12
 Goal issue: https://github.com/laststance/codebook/issues/1
@@ -516,7 +516,7 @@ Result: demonstrated within the declared configured browser scope. [Final reconc
 
 ## Handoff
 
-Exact next action: Cycle 0011 is demonstrated and closed in repository records. Push the closure and close Issue #12 with its commit/evidence links; then begin the one selected next candidate, shared presentation modes, by reading Issue #1 purpose and visually inspecting its three design images. Plan a bounded shared-state switch between Study workspace, Living book and Guided walkthrough that preserves run/item/understanding/playback identity in both hosts. No owned QA host remains active. The full G01–G11 goal, packaged acceptance, intended uses and owner feedback remain open; final reviews 0/10.
+Exact next action: Cycle 0011 closure `f594ec7` is pushed and Issue #12 is closed with evidence. Continue the sole active [Cycle 0012](0012-shared-study-presentations.md) / Issue #13. Its goal-purpose and approved-image inspection is complete; scoped DX/design/engineering reviews precede implementation. Full-product acceptance and final reviews 0/10 remain open.
 
 
 ### Recording-fault evidence amendment (2026-09-20, before the native probes)
