@@ -12,7 +12,7 @@ Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 3
 
 ## Verified facts
 
-- Cycle 0016 asset checkpoint passes **669/669** combined tests after moving all demo consumers to extension-owned assets. Missing HTML/non-file checks, complete-set replacement recovery, changed-install-root history preservation, watcher paths and unsaved-source priority are covered. Packaging, CI and ordinary installed acceptance remain pending.
+- Cycle 0016 implementation checkpoint passes **664/664 product/shared tests and 39/39 package tests**. Extension 0.2.1 / API 1.5 now builds a self-contained VSIX with exact demo assets, 12 dependency inventories/notices, clean compilation, provenance, real archive checks and failure-safe single-file publication. An intermediate 31-entry artifact loads outside the checkout. CI/private-install documentation is implemented; actual CI, ordinary installed acceptance, review and merge remain pending. This is not a final capability claim.
 
 - [PR #18](https://github.com/laststance/codebook/pull/18) merged Cycle 0015 into main at `3149e75`, exactly matching delivery head `65a78b3`; Issue #17 closed at merge. Root VERSION 0.2.0.1 is a documentation checkpoint, while the extension remains 0.2.0 / API 1.5. The fresh 647-test suite passes unchanged product sources. Bounded documentation checks, non-converged GStack review, qualified outside coverage, CodeRabbit CLI results, ignored hosted CodeRabbit status and absent formal approval remain separate. No package/publication claim follows.
 

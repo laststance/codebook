@@ -1,8 +1,47 @@
-# codebook extension — development increment
+# codebook — private VSIX preview
 
 Connect an external MCP agent to a real browser/server study in **VS Code and Cursor**. The default `checkout-demo` adds one product, pauses before server cart mutation and browser cart rendering, then creates an order and pauses before server storage and browser confirmation. The original two-stop `paired-cart-demo` remains selectable.
 
-The adapter is intentionally declared in discovery. It includes four linked checkout learning items, retained observations and source-versioned personal progress. The local checkout fixture performs no payment. An external agent can also read the selected Git repository and publish a cited learning book without running its application. API 1.4 adds the bounded `repository-browser` profile described below. API 1.5 adds shared presentation controls validated separately in both supported development hosts; the [Cycle 0014 evidence](../docs/cycles/evidence/0014/README.md) records the exact source cuts and remaining limits. General repository/framework execution and packaged installation remain future increments. [The full product goal](../PRODUCT_GOAL.md) retains those requirements in both editors.
+The adapter is intentionally declared in discovery. It includes four linked checkout learning items, retained observations and source-versioned personal progress. The local checkout fixture performs no payment. An external agent can also read the selected Git repository and publish a cited learning book without running its application. API 1.4 adds the bounded `repository-browser` profile described below. API 1.5 adds shared presentation controls validated separately in both supported development hosts; the [Cycle 0014 evidence](https://github.com/laststance/codebook/blob/main/docs/cycles/evidence/0014/README.md) records the exact source cuts and remaining limits. Extension 0.2.1 adds a self-contained private VSIX build. Ordinary installed acceptance is in progress in [Cycle 0016](https://github.com/laststance/codebook/blob/main/docs/cycles/0016-packaged-installation.md); packaging alone does not verify native behavior or general repository support. [The full product goal](https://github.com/laststance/codebook/blob/main/PRODUCT_GOAL.md) retains those requirements in both editors.
+
+## Install the private VSIX
+
+Obtain the VSIX and `SHA256SUMS` from a successful **Build, test and package** workflow in the private repository, or build them from the checkout as described below. Verify the downloaded bytes in their directory:
+
+```sh
+shasum -a 256 -c SHA256SUMS
+code --install-extension /absolute/path/codebook.vsix --force
+cursor --install-extension /absolute/path/codebook.vsix --force
+```
+
+Each command installs `laststance.codebook` in that editor. Install in whichever host you are using; testing one does not verify the other. The current native validation target is **macOS arm64, VS Code 1.138.0 and Cursor 3.21.16 (API 1.128.0)**. A JavaScript-only VSIX and the manifest's engine range do not establish support for every OS/editor version. This preview is privately distributed; it is not a Marketplace or Open VSX release.
+
+Open a trusted local Git workspace. Source reading requires Git. Browser execution also requires external **Node.js 24+** and **Google Chrome**; set **Codebook: Node Executable** and **Codebook: Chrome Executable** to their actual executable paths when needed. For Cursor, disable **Settings → General → Layout → Open Chat as Editor Tabs** before opening Codebook. Remote and virtual workspaces are outside this adapter's support.
+
+Run **Codebook: Start Agent Server**, then **Codebook: Copy Agent Connection** and configure your external MCP client with that current connection. The server is loopback-only and uses a private descriptor in the editor's extension storage. Treat copied credentials as private; do not commit them. Use **Codebook: Open Study Workspace** to open the learning panes. The installed extension includes its demo runtime assets and bundled dependencies; it does not need this source checkout or a package installation inside the extension directory.
+
+To update or reinstall, stop active Codebook runs, close the affected editor windows, install the desired verified VSIX with the same command and reopen the same workspace/profile. Start the server and copy a fresh connection; the previous instance's connection is obsolete. Keep the editor's extension storage to retain books, recordings and explicit understanding decisions. Old captured source remains immutable; changed current source can show **Review needed**. Missing bundled demo assets require reinstalling the verified VSIX. Do not repair an installation by copying an experiment directory beside it.
+
+For isolated evaluation, use the same `--user-data-dir /absolute/profile` and `--extensions-dir /absolute/extensions` arguments on both the install and launch commands. These are ordinary installations. A different profile/workspace has separate persisted state.
+
+## Build and verify a package
+
+Maintainers use **Node 24.21.0** and the integrity-pinned **pnpm 12.4.2** in `package.json`. From the repository root:
+
+```sh
+pnpm --dir experiments/cycle-0001 install --frozen-lockfile
+pnpm --dir experiments/cycle-0004 install --frozen-lockfile
+pnpm --dir experiments/cycle-0010 install --frozen-lockfile
+pnpm --dir extension install --frozen-lockfile
+pnpm --dir extension package
+pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.1.vsix"
+```
+
+The package command removes only the three packages' known compiler outputs, rebuilds, bundles the extension, copies the ten original demo source/JavaScript/map/HTML files and includes manifest icons and dependency licenses. It rejects source changes during the build, unexpected imports, missing assets and invalid archives before replacing the requested VSIX. Use `pnpm --dir extension package --out /absolute/path/codebook.vsix` for a different destination outside source/build directories. A failed build or final rename preserves an existing VSIX. Do not run packaging concurrently with another build in the same checkout.
+
+The VSIX includes `package-manifest.json` with file hashes, exact dependency/input identity and tool versions, plus `dist/build.json` with source revision, dirty state and source hashes. `THIRD_PARTY_NOTICES.md` links the bundled dependency licenses. The separate check command verifies archive structure and metadata without executing supplied extension code; its self-consistency checks are not a publisher signature. The build additionally loads its own verified artifact in an unrelated temporary directory without repository dependencies. Normal installed activation and native workflow evidence are separate checks.
+
+CI runs the product/runtime tests and real packaging/failure tests before uploading only the VSIX, build receipt, verification receipt and checksum. Native recordings and connection descriptors stay outside distribution. For local regression testing, build Cycle 0010 and the extension, run the compiled suites, then run `pnpm --dir extension test:package`; package tests run sequentially because the integration test cleans shared compiler outputs.
 
 ## Shared presentations (API 1.5 development build)
 
@@ -20,13 +59,13 @@ A transfer pauses recording playback at its last fully displayed position. Read 
 
 The preferred mode is saved per workspace. A failed save leaves the successfully applied layout available and shows **Save preference**. Unknown preferences remain untouched until an explicit replacement. Foreign preview tabs and unsupported focused editors are preserved; keep a preview or focus a Codebook/text pane explicitly before retrying. More than three editor groups require manual consolidation or the existing focus controls. Use **Enlarge explanation** at constrained sizes and **Restore layout** to return to the selected presentation. At 200%, hide sidebars or the bottom panel if the requested native proportions do not fit. An unachievable layout remains unconfirmed and preserves the current evidence. Cycle 0014 passes 15 theme/zoom cells per host; complete installed acceptance and uncropped full-window motion remain separate requirements.
 
-The complete [presentation SDK example](examples/select-presentation.mjs) discovers the current capability, reads its reader identity and revision, selects one explicitly requested mode, and reports layout confirmation separately from the preference result. After building, run from the repository root with `CODEBOOK_CONNECTION` pointing to the private connection descriptor produced by a native session (not the copied MCP configuration wrapper):
+The complete [presentation SDK example](https://github.com/laststance/codebook/blob/main/extension/examples/select-presentation.mjs) discovers the current capability, reads its reader identity and revision, selects one explicitly requested mode, and reports layout confirmation separately from the preference result. After building, run from the repository root with `CODEBOOK_CONNECTION` pointing to the private connection descriptor produced by a native session (not the copied MCP configuration wrapper):
 
 ```sh
 CODEBOOK_MODE=living-book node extension/examples/select-presentation.mjs
 ```
 
-The same file works with a current VS Code or Cursor descriptor. Change only `CODEBOOK_MODE` to another ID in the table. It prints no credentials, closes its SDK session, and does not start application execution. A stale revision or lost response triggers a read of the latest state and an error; inspect that state before deliberately retrying. If a first opening cannot retain the previously focused source group, explicitly open Study, focus its explanation pane and retry with fresh state. The output includes prepared discovery and total selection durations, not internal render or storage-stage timings. If replay was open, use the returned `playbackRevision` for the next playback control. [Both-host execution evidence](../docs/cycles/evidence/0014/ship-verification-20260921.md) preserves the initial Cursor failure and its explicit recovery.
+The same file works with a current VS Code or Cursor descriptor. Change only `CODEBOOK_MODE` to another ID in the table. It prints no credentials, closes its SDK session, and does not start application execution. A stale revision or lost response triggers a read of the latest state and an error; inspect that state before deliberately retrying. If a first opening cannot retain the previously focused source group, explicitly open Study, focus its explanation pane and retry with fresh state. The output includes prepared discovery and total selection durations, not internal render or storage-stage timings. If replay was open, use the returned `playbackRevision` for the next playback control. [Both-host execution evidence](https://github.com/laststance/codebook/blob/main/docs/cycles/evidence/0014/ship-verification-20260921.md) preserves the initial Cursor failure and its explicit recovery.
 
 ## Development setup
 
@@ -62,7 +101,7 @@ All clients with this bearer have workspace-owner authority. The server binds on
 
 For the two-stop regression profile, start `paired-cart-demo`, perform only `add-to-cart`, and stop after its server/browser observations. Follow discovery and `nextActions` for either profile. Lost responses require the **same** action/key; a new key must not replay an accepted action.
 
-The [external SDK client](src/client.ts) implements authenticated initialization, discovery, tool calls, resources, and credential-free transcripts. The [native runner](src/nativeRunner.ts) is an executable reference for this sequence. Scripted explanation text in that runner is not evidence of natural-language agent planning; a separate agent-use smoke transcript records actual agent choices.
+The [external SDK client](https://github.com/laststance/codebook/blob/main/extension/src/client.ts) implements authenticated initialization, discovery, tool calls, resources, and credential-free transcripts. The [native runner](https://github.com/laststance/codebook/blob/main/extension/src/nativeRunner.ts) is an executable reference for this sequence. Scripted explanation text in that runner is not evidence of natural-language agent planning; a separate agent-use smoke transcript records actual agent choices.
 
 ## Learn this repository
 
@@ -84,7 +123,7 @@ Evidence navigation preserves hidden outline/timeline panes so the article remai
 
 Source discovery excludes hidden paths, dependency/build directories, lockfiles, secret/key filenames, symlinks and unsupported extensions. It is not a secret-content detector. Reads are bounded to regular tracked UTF-8 files: 5,000 tracked names, 100 names per page, 256 KiB per source and 32 sources per revision. Publication accepts at most 1 MiB of document JSON, 64 articles, 128 relationships, 12 sections per article and 8 citations/observation links per article. Retention is bounded to 16 books, 20 revisions per book, 4 MiB per revision and 8 MiB per book, without automatic eviction. Capacity, corruption, changed source and concurrent-revision failures preserve existing data.
 
-The existing [typed SDK client](src/client.ts) is also executable from the built extension. This source-reading example uses the private connection descriptor produced by a native session, not the copied MCP configuration wrapper. Run from `extension/` after building, with `CODEBOOK_CONNECTION` set to that descriptor's path and `CODEBOOK_SOURCE` to an eligible path such as `extension/src/service.ts`. It prints only the requested source and its identity; use the discovered authoring schemas and steps above to write the explanation after reading it.
+The repository's [typed SDK client](https://github.com/laststance/codebook/blob/main/extension/src/client.ts) is a development helper; its separate modules and the examples are not shipped in the VSIX. Ordinary installed clients use the copied MCP connection. This source-reading example requires this source checkout and uses the private connection descriptor produced by a native session, not the copied MCP configuration wrapper. Run from `extension/` after building, with `CODEBOOK_CONNECTION` set to that descriptor's path and `CODEBOOK_SOURCE` to an eligible path such as `extension/src/service.ts`. It prints only the requested source and its identity; use the discovered authoring schemas and steps above to write the explanation after reading it.
 
 ```sh
 node --input-type=module <<'NODE'
@@ -123,7 +162,7 @@ For actual-editor Playwright CLI video, set `CODEBOOK_EDITOR_CDP=1` only on the 
 
 ## Run one configured repository action
 
-Requires **extension 0.2.0 / API 1.4**. This development build exposes `repository-browser` in `codebook_status.profiles` and its exact input schema at `codebook://help/repository-browser`. Actual external-client execution, source/value pauses, recording/restart, interrupted evidence and native reader flows have separate evidence in both editors. The [Cycle 0011 evidence](../docs/cycles/evidence/0011/native-validation-20260920.md) identifies each validated source cut and its limits; this does not establish packaged or full-product acceptance.
+Requires **extension 0.2.0 / API 1.4**. This development build exposes `repository-browser` in `codebook_status.profiles` and its exact input schema at `codebook://help/repository-browser`. Actual external-client execution, source/value pauses, recording/restart, interrupted evidence and native reader flows have separate evidence in both editors. The [Cycle 0011 evidence](https://github.com/laststance/codebook/blob/main/docs/cycles/evidence/0011/native-validation-20260920.md) identifies each validated source cut and its limits; this does not establish packaged or full-product acceptance.
 
 The current adapter is `next-dev-webpack`: a trusted local Git root with dependencies already installed, an executable Next development server, the root route `/`, default `.next/dev` output, and webpack modules/maps that retain the exact original selected source. Codebook starts an owned server and Chrome on dynamic loopback endpoints. Existing development locks are rejected and preserved. If a previous owned run has ended but `.next/dev/lock` remains, check the recorded owner PID and listening port before retrying. Preserve any live or unknown owner. Only after both are confirmed gone, retain the stale lock as a diagnostic artifact and move it out of the way, then start with a new operation identity. Codebook does not automatically delete locks. It does not reuse an unrelated app/debugger, execute caller-supplied shell commands, supply arbitrary debugger expressions, or modify the application's source to add instrumentation. Remote/virtual workspaces, alternate build directories, Turbopack, non-root routes, server pauses and multiple actions/stops are outside this adapter's declared scope.
 

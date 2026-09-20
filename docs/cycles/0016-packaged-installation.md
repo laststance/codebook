@@ -58,15 +58,19 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 - Baseline: PR #18 merged at 3149e75; its tree matches head 65a78b3 and Issue #17 is closed. Cycle 0015 remains inconclusive for the modeled late native Wiki effect; it made no product repair.
 - Packaging discovery: four production asset references currently point to the sibling cycle-0004 checkout. `checkDemoFiles` omits HTML consumed by `sealFixture`. Existing linked packages are build inputs, not installable runtime dependencies.
 - Context7 monthly quota is exhausted and Serena is absent from the tool inventory. Use official library/platform documentation as fallback and retain these coverage limitations.
-- No package or installed acceptance result exists yet.
+- Initial package produced; ordinary installed acceptance remains pending.
 - T1 asset checkpoint: all four production consumers use `extension/dist/demo`; the normal build prepares exactly ten original files and validates readable regular files, including HTML. Missing/invalid input or failed replacement preserves the previous complete set; failed rollback retains its recovery directory. Focused negatives first reproduced HTML/directory/symlink acceptance. A fresh build and combined suites pass **669/669**, zero failures/skips/cancellations, 54.422 seconds (`artifacts/cycle-0016/t1-build.log`, `t1-full-tests.log`). The new persistent-store relocation test keeps exact old archive/recording/learner decisions while changed installed source requires review; watcher roots and dirty-buffer priority are explicit assertions. Earlier test-only cross-realm comparison and writer-freeze ordering failures remain in private attempt logs; neither was a product regression.
+
+- T2 package checkpoint: extension 0.2.1 / API 1.5 uses esbuild 0.28.2, vsce 4.0.0, yauzl 3.4.0, yazl 3.3.1 and xml2js 0.6.2 as pinned build tools. The first accepted VSIX has 31 entries, 12 bundled dependencies and exact fixture bytes, with isolated module loading outside the checkout. Its private receipt is `artifacts/cycle-0016/package-initial-receipt.json`; it is an intermediate artifact, not the installed candidate. Two earlier attempts failed closed on vsce README name normalization and an uncaptured `.cjs` input; both were corrected before publication.
+- Fresh current checkpoint: **664/664 product/shared tests** (53.672 seconds) plus **39/39 package/asset-script tests** (9.096 seconds), zero failures/skips/cancellations. Real ZIP negatives cover missing/extra/modified files, dependency notice, metadata, manifest references, symlink/case collision/traversal, truncation and unresolved imports. Real compiler proof shows stale declarations can conceal missing source before cleaning and cannot afterward. Build/source-change/final-rename failure tests preserve previous artifact bytes and unrelated files. Logs: `artifacts/cycle-0016/package-product-tests.log`, `package-tests-2.log`, `package-final-build.log`, `package-frozen-install.log`.
+- T3 pipeline/docs checkpoint: the one pinned workflow, store-only cache, read-only token, integrity-pinned pnpm and frozen installs are implemented; actionlint and diff checks pass. README describes private ordinary installation/update and distinguishes development helpers from shipped bytes. Actual CI and installed runs are pending.
 
 ## Result and decision
 
 - Result: pending.
 - Keep the shared runtime, recording, reader and presentation ownership. Do not widen the configured repository-browser adapter to disguise packaging work as arbitrary-repository support.
 - All eleven carried Cycle 0014 obligations remain active, including native Wiki ordering (Cycle 0015 inconclusive), all-mode Wiki Return, complete service/SDK/interleaving coverage, full native focus/keyboard/geometry and uncropped/reduced-motion checks, actual-agent evaluation/timing, broad review convergence and integrated final acceptance.
-- Delivery: asset implementation checkpoint committed on the cycle branch. Package, installed proof, review, PR and merge remain pending. Final reviews: 0/10.
+- Delivery: implementation checkpoints committed on the cycle branch; an intermediate VSIX passes package checks. Installed proof, full review, CI, PR delivery and merge remain pending. Final reviews: 0/10.
 
 ## Engineering review — Step 0 and architecture
 
@@ -178,7 +182,7 @@ No silent failure without a planned test/handler remains in the new packaging bo
 Synthesized from this review. The owner delegated recommended choices; each listed remedy is agent-selected. No new TODOS.md items: existing out-of-cycle obligations stay in their canonical records.
 
 - [x] **T1 (P1, human: ~3h / agent: ~25min)** — Assets: introduce one owned demo root/list, copy and validate all ten files, update all four consumers and the reader/environment test fixtures. Findings A1/Q1/TST1. Verify focused asset tests plus existing source/reader regressions.
-- [ ] **T2 (P1, human: ~1 day / agent: ~1h)** — Packaging: pin tools, clean owned compilation outputs, build into an allowlisted stage, include manifest-referenced assets/notices/input identity, validate a real extracted VSIX and atomically replace the output. Findings A2/TST2/N1/N3. Verify stale-output rejection and all positive/failure paths without repository runtime imports.
+- [x] **T2 (P1, human: ~1 day / agent: ~1h)** — Packaging: pin tools, clean owned compilation outputs, build into an allowlisted stage, include manifest-referenced assets/notices/input identity, validate a real extracted VSIX and atomically replace the output. Findings A2/TST2/N1/N3. Verify stale-output rejection and all positive/failure paths without repository runtime imports.
 - [ ] **T3 (P2, human: ~3h / agent: ~25min)** — Distribution: add the adapted pinned CI pipeline and private installation/update documentation. Finding A3. Verify actionlint, frozen install/build/tests/package and actual CI artifact identity.
 - [ ] **T4 (P1, human: ~1 day / agent: ~2h)** — Installed acceptance: freeze versions/source/package/schedule and drive both ordinary hosts with the external agent, persistent storage, recording/restart and native motion evidence. Finding TST3. Preserve failures and unrelated drafts/processes.
 
@@ -198,7 +202,7 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 
 ## Handoff
 
-- Exact next action: T1 passes 669 combined tests; implement packaging, then CI and ordinary installed verification. Engineering review has ten selected remedies and unavailable outside coverage.
+- Exact next action: T1/T2 and CI/docs implementation pass 664 product/shared plus 39 package tests. Trigger actual CI, freeze a clean VSIX and the finite ordinary-installed schedule, then validate both required hosts. Engineering review has ten selected remedies and unavailable outside coverage.
 - Active processes: no owned native session. Branch: codex/cycle-0016-packaged-installation.
 - PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
 - Select a single next cycle only after this cycle's evidence identifies the next uncertainty.

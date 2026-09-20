@@ -1,0 +1,186 @@
+import { after, before, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { pipeline } from 'node:stream/promises';
+import { ZipFile } from 'yazl';
+import { buildPackage } from '../utils/buildPackage.mjs';
+import { COMPILED_DIRECTORIES } from '../utils/packageConstants.mjs';
+import { readVsixEntries } from '../utils/readVsixEntries.mjs';
+import { verifyPackageContent } from '../utils/verifyPackageContent.mjs';
+import { runPackageCommand } from '../utils/runPackageCommand.mjs';
+
+const repository = fileURLToPath(new URL('../../../', import.meta.url));
+let directory, artifact, original, receipt;
+before(async () => {
+  directory = await mkdtemp(join(tmpdir(), 'codebook VSIX $() `literal` ')); artifact = join(directory, 'installed codebook.vsix');
+  // These absent-source compiler leftovers must be deleted, including declarations that could hide build errors.
+  for (const path of COMPILED_DIRECTORIES) {
+    await mkdir(join(repository, path), { recursive: true });
+    await writeFile(join(repository, path, 'obsolete-package-probe.js'), 'throw new Error("stale compiler output");');
+    await writeFile(join(repository, path, 'obsolete-package-probe.d.ts'), 'export declare const obsolete: string;');
+  }
+  receipt = await buildPackage(repository, artifact); original = await readVsixEntries(artifact);
+});
+after(async () => { if (directory) await rm(directory, { recursive: true, force: true }); });
+
+/** Creates real ZIP mutations so archive rejection tests exercise parsing and content verification together. @example await writeArchive(entries, 'missing-icon') */
+async function writeArchive(entries, name, options = {}) {
+  const output = join(directory, `${name}.vsix`), archive = new ZipFile();
+  for (const [path, content] of entries) archive.addBuffer(content, path, options[path]);
+  archive.end(); await pipeline(archive.outputStream, createWriteStream(output)); return output;
+}
+
+/** Keeps declared hashes consistent when a test targets a semantic contract rather than accidental corruption. @example replaceFile(entries, 'package.json', Buffer.from('{}')) */
+function replaceFile(entries, path, content) {
+  entries.set(`extension/${path}`, content);
+  if (path === 'package-manifest.json') return;
+  const manifest = JSON.parse(entries.get('extension/package-manifest.json'));
+  manifest.files[path] = { bytes: content.length, sha256: createHash('sha256').update(content).digest('hex') };
+  entries.set('extension/package-manifest.json', Buffer.from(JSON.stringify(manifest)));
+}
+
+test('a real VSIX loads outside the checkout and preserves exact fixture maps, patch identity and dependency notices', async () => {
+  // Arrange / Act
+  const checked = await verifyPackageContent(original);
+  // Assert
+  assert.equal(receipt.isolatedModuleLoad, true); assert.equal(checked.extension.version, '0.2.1'); assert.equal(checked.extension.apiVersion, '1.5');
+  assert.equal(checked.entries, 31); assert.equal(receipt.dependencies.length, 12);
+  for (const path of ['fixture/server.mts', 'fixture/client.mts', 'fixture/constants.mts', 'fixture/index.html', 'build/server.mjs', 'build/server.mjs.map', 'build/client.mjs', 'build/client.mjs.map', 'build/constants.mjs', 'build/constants.mjs.map']) {
+    assert.deepEqual(original.get(`extension/dist/demo/${path}`), await readFile(join(repository, 'experiments/cycle-0004', path)));
+  }
+  for (const path of COMPILED_DIRECTORIES) {
+    await assert.rejects(lstat(join(repository, path, 'obsolete-package-probe.js')), { code: 'ENOENT' });
+    await assert.rejects(lstat(join(repository, path, 'obsolete-package-probe.d.ts')), { code: 'ENOENT' });
+  }
+  const inventory = JSON.parse(original.get('extension/package-manifest.json'));
+  assert.ok(inventory.inputs.every(input => !input.path.includes('obsolete-package-probe')));
+  assert.ok(inventory.inputs.some(input => input.path.startsWith('dependency:@modelcontextprotocol/sdk@1.30.0/')));
+  assert.ok(checked.build.sourceHashes.some(input => input.startsWith('extension/patches/@modelcontextprotocol__sdk@1.30.0.patch:')));
+  assert.deepEqual(original.get('extension/src/assets/book.svg'), await readFile(join(repository, 'extension/src/assets/book.svg')));
+});
+
+test('the standalone checker reports the actual VSIX checksum without executing its extension code', async () => {
+  // Arrange: a coherent archive contains a throwing entry, which the checker must never run.
+  const entries = new Map(original); replaceFile(entries, 'dist/extension.js', Buffer.from('throw new Error("must not execute checker input");'));
+  const path = await writeArchive(entries, 'non-executing-check');
+  // Act
+  const result = await runPackageCommand(process.execPath, [join(repository, 'extension/scripts/check-package.mjs'), path], directory);
+  // Assert
+  const checked = JSON.parse(result.stdout); assert.equal(checked.extension.name, 'codebook');
+  assert.equal(checked.sha256, createHash('sha256').update(await readFile(path)).digest('hex'));
+  assert.equal(result.stderr, '');
+});
+
+for (const file of ['dist/demo/fixture/index.html', 'dist/demo/build/server.mjs.map', 'dist/extension.js', 'src/assets/book.svg']) {
+  test(`a VSIX missing ${file} is rejected before installation`, async () => {
+    // Arrange
+    const entries = new Map(original); entries.delete(`extension/${file}`); const path = await writeArchive(entries, `missing-${file.replaceAll('/', '-')}`);
+    // Act / Assert
+    await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /missing or extra|Missing package file/);
+  });
+}
+
+test('removing the icon from both archive and self-declared inventory still violates the package contract', async () => {
+  // Arrange
+  const entries = new Map(original), manifest = JSON.parse(entries.get('extension/package-manifest.json'));
+  entries.delete('extension/src/assets/book.svg'); delete manifest.files['src/assets/book.svg'];
+  replaceFile(entries, 'package-manifest.json', Buffer.from(JSON.stringify(manifest))); const path = await writeArchive(entries, 'self-consistent-missing-icon');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /allowed files/);
+});
+
+for (const file of ['dist/demo/fixture/server.mts', 'dist/extension.js']) {
+  test(`modified ${file} fails the recorded byte contract`, async () => {
+    // Arrange
+    const entries = new Map(original); entries.set(`extension/${file}`, Buffer.from('modified bytes')); const path = await writeArchive(entries, `changed-${file.replaceAll('/', '-')}`);
+    // Act / Assert
+    await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /Package (size|hash) mismatch/);
+  });
+}
+
+test('an unexpected connection descriptor is rejected even when the other package files are valid', async () => {
+  // Arrange
+  const entries = new Map(original); entries.set('extension/connection.json', Buffer.from('private dummy data')); const path = await writeArchive(entries, 'extra-descriptor');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /missing or extra entries/);
+});
+
+test('a missing dependency license is rejected instead of silently dropping its notice', async () => {
+  // Arrange
+  const entries = new Map(original); entries.delete('extension/notices/ws8.21.3/LICENSE'); const path = await writeArchive(entries, 'missing-notice');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /Missing package file: notices\/ws8.21.3\/LICENSE/);
+});
+
+test('metadata cannot claim a different build version even with a matching file hash', async () => {
+  // Arrange
+  const entries = new Map(original), build = JSON.parse(entries.get('extension/dist/build.json')); build.extensionVersion = '99.0.0';
+  replaceFile(entries, 'dist/build.json', Buffer.from(JSON.stringify(build))); const path = await writeArchive(entries, 'wrong-build-version');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /Build version mismatch/);
+});
+
+test('a VSIX wrapper with a different publisher is rejected', async () => {
+  // Arrange
+  const entries = new Map(original); entries.set('extension.vsixmanifest', Buffer.from(entries.get('extension.vsixmanifest').toString('utf8').replace('Publisher="laststance"', 'Publisher="someone-else"')));
+  const path = await writeArchive(entries, 'wrong-wrapper');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /VSIX publisher mismatch/);
+});
+
+test('an unresolved runtime package cannot be added to the allowed native externals', async () => {
+  // Arrange
+  const entries = new Map(original), manifest = JSON.parse(entries.get('extension/package-manifest.json')); manifest.externals.push('missing-runtime-package');
+  replaceFile(entries, 'package-manifest.json', Buffer.from(JSON.stringify(manifest))); const path = await writeArchive(entries, 'bad-external');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /Unresolved runtime import/);
+});
+
+for (const reference of ['entry', 'icon']) {
+  test(`a manifest ${reference} must resolve to a shipped file independently of inventory hashes`, async () => {
+    // Arrange
+    const entries = new Map(original), manifest = JSON.parse(entries.get('extension/package.json'));
+    if (reference === 'entry') manifest.main = './dist/missing.js'; else manifest.contributes.viewsContainers.activitybar[0].icon = 'src/assets/missing.svg';
+    replaceFile(entries, 'package.json', Buffer.from(JSON.stringify(manifest))); const path = await writeArchive(entries, `missing-${reference}-reference`);
+    // Act / Assert
+    await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /Missing package file/);
+  });
+}
+
+test('ZIP symlinks are rejected before their contents can be extracted', async () => {
+  // Arrange
+  const path = await writeArchive(original, 'symlink-entry', { 'extension/src/assets/book.svg': { mode: 0o120777 } });
+  // Act / Assert
+  await assert.rejects(readVsixEntries(path), /Unsafe archive entry/);
+});
+
+test('case-colliding ZIP names cannot overwrite a file on a case-insensitive installation', async () => {
+  // Arrange
+  const entries = new Map(original); entries.set('extension/Readme.md', Buffer.from('collision')); const path = await writeArchive(entries, 'case-collision');
+  // Act / Assert
+  await assert.rejects(readVsixEntries(path), /Duplicate archive entry/);
+});
+
+for (const unsafe of ['../escape', 'zz\\escape']) {
+  test(`unsafe archive path ${JSON.stringify(unsafe)} is rejected by the real ZIP reader`, async () => {
+    // Arrange: corrupt equal-length fixture name bytes; this is not a ZIP parser or production writer.
+    const path = await writeArchive(new Map([['zz/escape', Buffer.from('fixture')]]), `unsafe-${unsafe.startsWith('..') ? 'parent' : 'slash'}`);
+    const content = await readFile(path), needle = Buffer.from('zz/escape'); let offset = content.indexOf(needle);
+    while (offset !== -1) { Buffer.from(unsafe).copy(content, offset); offset = content.indexOf(needle, offset + needle.length); }
+    await writeFile(path, content);
+    // Act / Assert
+    await assert.rejects(readVsixEntries(path), /invalid relative path|invalid characters|Unsafe archive entry/);
+  });
+}
+
+test('a truncated VSIX fails clearly instead of passing a partial inventory', async () => {
+  // Arrange
+  const path = join(directory, 'truncated.vsix'); await writeFile(path, (await readFile(artifact)).subarray(0, 100));
+  // Act / Assert
+  await assert.rejects(readVsixEntries(path), /end of central directory|End of central directory/);
+});
