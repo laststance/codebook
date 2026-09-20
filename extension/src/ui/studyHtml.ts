@@ -52,9 +52,23 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
   const playback = (action: 'play' | 'pause' | 'seek', positionMs?: number) => { if (current?.recording) send({ type: 'playback', action, expectedRevision: current.recording.revision, ...(positionMs === undefined ? {} : { positionMs }) }); };
   const strip = document.querySelector<HTMLElement>('.live-strip');
   // Oversized sticky controls must not hide keyboard focus at narrow widths or enlarged text.
-  const adaptStrip = () => { if (strip) strip.classList.toggle('flowing', strip.getBoundingClientRect().height > window.innerHeight * options.maxStickyFraction); };
+  const adaptStrip = () => {
+    if (!strip) return;
+    const height = strip.getBoundingClientRect().height;
+    strip.classList.toggle('flowing', height > window.innerHeight * options.maxStickyFraction);
+    // Native focus scrolling must leave room for the visible sticky strip and its outline.
+    document.documentElement.style.setProperty('--codebook-sticky-height', `${getComputedStyle(strip).position === 'sticky' ? height : 0}px`);
+  };
   if (strip) new ResizeObserver(adaptStrip).observe(strip);
   window.addEventListener('resize', adaptStrip);
+  const valuesScroller = document.querySelector<HTMLElement>('.table-scroll');
+  valuesScroller?.addEventListener('focus', () => {
+    // Pointer reading must retain its position; keyboard entry starts with visible column headings.
+    if (!valuesScroller.matches(':focus-visible')) return;
+    const scrollPadding = Number.parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop);
+    // Chromium centers oversized focus targets even when that hides their heading behind sticky controls.
+    if (valuesScroller.getBoundingClientRect().top < scrollPadding) valuesScroller.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
+  });
   document.addEventListener('click', event => {
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>('button') : null;
     if (!target || target instanceof HTMLButtonElement && target.disabled) return;
@@ -68,7 +82,11 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     else if (target.dataset.item) send({ type: 'select', itemId: target.dataset.item });
   });
   element('understood').addEventListener('change', event => {
-    if (event.target instanceof HTMLInputElement) { const understood = event.target.checked; event.target.checked = current?.model.selectedUnderstanding.understood ?? false; send({ type: 'understanding', understood }); }
+    if (!(event.target instanceof HTMLInputElement)) return;
+    const understood = event.target.checked; event.target.checked = current?.model.selectedUnderstanding.understood ?? false;
+    // Keep pending writes focusable while rejecting repeated keyboard/pointer input until the host settles.
+    if (!current || current.saving || current.loading || !current.model.selectedUnderstanding.known || event.target.getAttribute('aria-disabled') === 'true') return;
+    event.target.setAttribute('aria-disabled', 'true'); send({ type: 'understanding', understood });
   });
   element('profiles').addEventListener('change', event => { if (event.target instanceof HTMLSelectElement) send({ type: 'profile', profile: event.target.value }); });
   element('studies').addEventListener('change', event => { if (event.target instanceof HTMLSelectElement && event.target.value) send({ type: 'history', studyId: event.target.value }); });
@@ -165,7 +183,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     element('understanding-description').hidden = model.selection.profile !== 'repository-browser';
     text('source-drift', !model.currentSourceAvailable ? 'Current source unavailable. Historical source and understanding are retained.' : model.sourceChanged ? model.selection.profile === 'repository-browser' ? 'Review needed — a cited source changed. Historical understanding still refers to the complete captured citation set.' : 'Review needed — source changed. This is the captured older revision.' : '');
     const checkbox = element('understood');
-    if (checkbox instanceof HTMLInputElement) { checkbox.checked = model.selectedUnderstanding.understood; checkbox.disabled = message.saving || message.loading || !model.selectedUnderstanding.known; }
+    // Native disabled blurs a focused checkbox; saving retains its focus and exposes the temporary ARIA state.
+    if (checkbox instanceof HTMLInputElement) { checkbox.checked = model.selectedUnderstanding.understood; checkbox.disabled = message.loading || !model.selectedUnderstanding.known; checkbox.setAttribute('aria-disabled', String(message.saving || checkbox.disabled)); }
     text('save-state', message.saving ? 'Saving…' : !model.selectedUnderstanding.known ? 'Understanding storage unavailable' : model.selectedUnderstanding.understood ? `Learner marked understood · ${model.selectedUnderstanding.at ?? ''}` : 'Checked only by you; execution never changes this.');
     text('progress', !model.currentSourceAvailable ? 'Current source unavailable — historical understanding retained.' : `${model.understoodCount} of ${model.progressByItem.length} understood for current source · ${model.reviewCount} needs review`);
     text('value-caption', model.observation ? 'Actual primitive values captured at this stop.' : 'No values captured for this item.');

@@ -27,6 +27,7 @@ import { createRecordingObserver } from './utils/createRecordingObserver';
 import type { BookObservationBinding } from './repositorySchemas';
 import { bookObservationHash } from './utils/bookObservationHash';
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout';
+import { isProportionalEditorLayout } from './utils/isProportionalEditorLayout';
 import { retainedStudySelectionSchema, type RetainedStudy, type RetainedStudySelection } from './retainedStudySchemas';
 import { learningItemSchema } from './identitySchemas';
 import { repositorySelectionSchema, type RepositorySelection } from './learnerSchemas';
@@ -266,7 +267,14 @@ export class StudyWorkspace {
     try {
       const reentry = origin === 'repository' ? await this.captureRepositoryLayout(signal) : undefined;
       this.assertLifetime(lifetime); signal?.throwIfAborted();
-      this.installReaders(); this.ensureApp(); this.ensureContext();
+      this.installReaders(); this.ensureApp();
+      let initialLayoutFailed = false;
+      // Native webviews create only one missing group; reserve all panes before Context requests column three.
+      if (firstOpen && !vscode.window.tabGroups.all.some(group => group.viewColumn === vscode.ViewColumn.Two)) {
+        await this.arrange(signal); this.assertLifetime(lifetime); signal?.throwIfAborted();
+        initialLayoutFailed = !this.layoutReceipt;
+      }
+      this.ensureContext();
       if (firstOpen && this.currentRecord() && this.selection.follow) this.selection = { ...this.selection, follow: true, tab: 'live' };
       await this.refresh(signal); signal?.throwIfAborted(); await this.renderSelection(true, reentry?.sourceTargetColumn !== undefined, signal, reentry ? { kind: 'reentry', receipt: reentry } : undefined);
       this.assertLifetime(lifetime); signal?.throwIfAborted();
@@ -282,7 +290,7 @@ export class StudyWorkspace {
       this.contextPanel?.reveal(undefined, false);
       if (this.recordingActive && (firstOpen || !this.replayViewport)) this.playback?.reveal();
       // Capture ownership after explicit view reveals finish resizing the native workbench.
-      await this.arrange(signal, 'study', !firstOpen);
+      if (!initialLayoutFailed) await this.arrange(signal, 'study', !firstOpen);
       this.assertLifetime(lifetime); signal?.throwIfAborted();
     } finally { signal?.removeEventListener('abort', cancel); }
   }
@@ -1110,7 +1118,7 @@ export class StudyWorkspace {
       const panes = { ...restored.before, sourceGroup: restored.after.sourceGroup, sourceColumn: restored.after.sourceColumn };
       const preparedLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); this.assertLifetime(lifetime);
       // Cancellation ends the intent after its accepted pane effects are recorded; Close or manual changes cannot acquire them.
-      if (JSON.stringify(preparedLayout) === JSON.stringify(restored.studyLayout) && this.sameEditorGroups(preparedGroups, vscode.window.tabGroups.all) && this.sameStudyPanePositions(panes)) {
+      if (isProportionalEditorLayout(restored.studyLayout, preparedLayout) && this.sameEditorGroups(preparedGroups, vscode.window.tabGroups.all) && this.sameStudyPanePositions(panes)) {
         this.layoutReceipt = reentry = { mode: 'study-reentry', signature: JSON.stringify(preparedLayout), groups: preparedGroups, panes, sourceTargetColumn: restored.before.sourceColumn !== restored.after.sourceColumn ? restored.before.sourceColumn : undefined };
       }
       assertCurrent();
@@ -1136,7 +1144,8 @@ export class StudyWorkspace {
       // Retain accepted placement effects even after cancellation, so a newer evidence visit can reverse them safely.
       const after = this.studyPanePositions();
       const restoredLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); this.assertLifetime(lifetime);
-      if (JSON.stringify(restoredLayout) !== JSON.stringify(saved.layout) || !this.sameEditorGroups(saved.groups, vscode.window.tabGroups.all) || !this.sameStudyPanePositions(after)) { this.report('layout', new Error('The editor could not restore the saved reading layout. Arrange the reading panes manually.')); assertCurrent(); return; }
+      // Native minimum sizes can expand the editor area; certify the saved split proportions, then retain exact returned pixels.
+      if (!isProportionalEditorLayout(saved.layout, restoredLayout) || !this.sameEditorGroups(saved.groups, vscode.window.tabGroups.all) || !this.sameStudyPanePositions(after)) { this.report('layout', new Error('The editor could not restore the saved reading layout. Arrange the reading panes manually.')); assertCurrent(); return; }
       this.repositoryLayoutRestored = { signature: JSON.stringify(restoredLayout), studyLayout: layout, groups: vscode.window.tabGroups.all.map(group => ({ group, column: group.viewColumn })), before, after };
       this.sourceGroup = this.repositoryLayoutRestored.after.sourceGroup; this.errors.delete('layout'); this.publish(); assertCurrent();
     });

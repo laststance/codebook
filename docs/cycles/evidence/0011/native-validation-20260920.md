@@ -1,8 +1,8 @@
-# Cycle 0011 native integration — in progress
+# Cycle 0011 native integration
 
-This is current-product native evidence, separate from the earlier Cycle 0010 prototype and from CodeRabbit/OCR review. Cycle 0011 remains open. Both core paths now pass separately; the remaining failure/layout cases, packaged installation, and final acceptance are not cleared by this report.
+The bounded configured path is demonstrated separately in both required editors. The [final N01–N14 reconciliation](final-reconciliation-20260920.md), [v29 layout/focus investigation](native-initial-layout-20260920.md), [live DX audit](dx-live-20260920.md) and [manifest](final-manifest-20260920.json) own the latest result. Current v29 has **476/476 passing tests**, 236 matching source entries, SHA-256 `d6979cd45081ddaf4d5390ab625a7a8100cde78b4dd9f6a58f4b4e5f2502dbd6`. Both hosts complete twelve affected theme/geometry cells, exact historic correspondence and authentic partial replay; owned editors exit zero with settings/source restored. Earlier unchanged runtime/error cases retain the source qualifications in the reconciliation.
 
-Latest checkpoint: **464/464 tests**, v24 `44a2f18783e6429615f8d01bb0c5cb504079b7e7b2a848e68c2e7681fa30e55a`, compiled dirty `fd5a811`, source-equivalent implementation `e3a98de` across232 entries. [N12 UX evidence](native-n12-20260920.md) records two preflight defects and both-host normal/200% typography/table repair, bounded reviews and exact cleanup. Both hosts exit0; no native host remains active. Full N12 and paused-frame correspondence remain open. Earlier v23 [Return investigation](native-return-investigation-20260920.md), v14 [Arrange investigation](native-layout-investigation-20260920.md) and all historical cuts retain their own source and limits.
+This report below preserves the original attempts and checkpoints chronologically, including statements of what was pending at those checkpoints. They are not the current handoff. Full implementation review remains non-converged; packaging and final acceptance remain unverified.
 
 ## Frozen input and environment
 

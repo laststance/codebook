@@ -74,7 +74,13 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
   };
   element('versions').onchange = event => { if (current?.selection && event.target instanceof HTMLSelectElement) select({ ...current.selection, revision: Number(event.target.value), anchorIndex: 0, location: undefined }); };
   element('nodes').onchange = event => { if (current?.selection && event.target instanceof HTMLSelectElement) select({ ...current.selection, nodeId: event.target.value, anchorIndex: 0, location: undefined }); };
-  element('understand').onchange = event => { if (event.target instanceof HTMLInputElement) { const understood = event.target.checked; event.target.checked = current?.understanding?.understood ?? false; send({ type: 'understanding', understood }); } };
+  element('understand').onchange = event => {
+    if (!(event.target instanceof HTMLInputElement)) return;
+    const understood = event.target.checked; event.target.checked = current?.understanding?.understood ?? false;
+    // Keep pending writes focusable while rejecting repeated keyboard/pointer input until the host settles.
+    if (!current || current.saving || current.loading || !current.understanding?.known || event.target.getAttribute('aria-disabled') === 'true') return;
+    event.target.setAttribute('aria-disabled', 'true'); send({ type: 'understanding', understood });
+  };
   element('back-top').onclick = () => { window.scrollTo(0, 0); element('article-title').focus({ preventScroll: true }); persist(); };
   window.addEventListener('scroll', () => { if (!restoring) { clearTimeout(timer); timer = setTimeout(persist, debounceMs); } });
   document.addEventListener('focusin', () => { if (!restoring) { clearTimeout(timer); timer = setTimeout(persist, debounceMs); } });
@@ -158,7 +164,8 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     for (const link of links) for (const recording of [false, true]) { const control = element(`evidence-${link.linkIndex}-${recording ? 'recording' : 'observation'}`); if (control instanceof HTMLButtonElement) control.setAttribute('aria-disabled', String(message.loading || link.status !== 'available' || recording && link.recording.status !== 'available')); }
     const selectedAnchor = node.anchors[selection.anchorIndex], currentFile = element('current-file');
     if (currentFile instanceof HTMLButtonElement) currentFile.disabled = message.loading || !message.sources.some(source => source.path === selectedAnchor?.path && source.hash === selectedAnchor.hash && source.status === 'current');
-    const checkbox = element('understand'); if (checkbox instanceof HTMLInputElement) { checkbox.checked = understanding?.understood ?? false; checkbox.disabled = message.saving || message.loading || !understanding?.known; }
+    // Native disabled blurs a focused checkbox; saving retains its focus and exposes the temporary ARIA state.
+    const checkbox = element('understand'); if (checkbox instanceof HTMLInputElement) { checkbox.checked = understanding?.understood ?? false; checkbox.disabled = message.loading || !understanding?.known; checkbox.setAttribute('aria-disabled', String(message.saving || checkbox.disabled)); }
     if (!message.loading) text('state', `Revision ${selection.revision} · ${new Date(book.revision.publishedAt).toLocaleString()}${changedSource ? ' · Review needed' : unavailable ? ' · Current source unverified' : ''}`);
     text('progress-status', changedSource || unavailable ? `${changedSource ? 'Review needed' : 'Current source unverified'}${understanding?.understood ? ' · historical understanding retained' : ''}` : understanding?.reviewNeeded ? 'Review needed' : '');
     element('progress-status').hidden = !element('progress-status').textContent;

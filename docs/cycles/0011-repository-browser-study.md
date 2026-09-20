@@ -2,7 +2,7 @@
 
 Type: product-increment
 Status: validating
-Result: pending
+Result: demonstrated
 Delivery: local-only
 Goal version: 3
 Tracking issue: https://github.com/laststance/codebook/issues/12
@@ -166,15 +166,15 @@ Reuse `StudyService`, existing MCP resources/errors/idempotency, source catalogu
 
 Not in scope: hosted playground/account onboarding (own local data is the value), arbitrary launch commands or evaluation language (a bounded supported adapter is sufficient), multi-language SDKs/community redesign (no demonstrated need), packaging/new platforms (required final work, separate cycle), a background DX monitor (not authorized). Do not create duplicate TODOs for capabilities already owned by PRODUCT_GOAL.md. No new unrelated TODO is selected.
 
-- [ ] First prepared real-agent success measured against five minutes in each host; cold setup reported separately.
-- [ ] New profile/configuration discoverable; example uses current source identity and returned next actions.
-- [ ] Rejected configuration sends no input; recovery distinguishes preparation, input, evidence and persistence.
-- [ ] Old demo calls, old archives, reader returns and explicit learner understanding remain usable.
-- [ ] Book-first understanding survives attaching observation, re-running and restarting; changed secondary citations require review.
-- [ ] Before/after conditions and root-route support are discoverable; incomplete pause/input/frame/persistence stays qualified.
-- [ ] Configured recording replays offline with exact source/value/interpretation/frame correspondence.
-- [ ] README, extension tutorial/reference and changelog describe the implemented version and limits.
-- [ ] Native evidence and post-implementation DX audit report actual friction and interventions.
+- [x] First prepared real-agent success measured against five minutes in each host; cold setup reported separately.
+- [x] New profile/configuration discoverable; example uses current source identity and returned next actions.
+- [x] Rejected configuration sends no input; recovery distinguishes preparation, input, evidence and persistence.
+- [x] Old demo calls, old archives, reader returns and explicit learner understanding remain usable.
+- [x] Book-first understanding survives attaching observation, re-running and restarting; changed secondary citations require review.
+- [x] Before/after conditions and root-route support are discoverable; incomplete pause/input/frame/persistence stays qualified.
+- [x] Configured recording replays offline with exact source/value/interpretation/frame correspondence.
+- [x] README, extension tutorial/reference and changelog describe the implemented version and limits.
+- [x] Native evidence and post-implementation DX audit report actual friction and interventions.
 
 One-command installation, hosted search, public support channels and codemods are not checked off: the first three are outside this development increment; unchanged legacy calls require no codemod. TypeScript contracts and noninteractive unit tests remain required; native host acceptance is an explicit separate run.
 
@@ -447,26 +447,26 @@ Before implementation, `pnpm --dir extension typecheck` and `git diff --check` p
 
 Synthesized from DX/design and engineering findings; engineering challenge amendments are incorporated; implement in the recorded dependency order. Effort is a rough planning estimate, not an execution promise.
 
-- [ ] **DX1 (P1, human: ~1 day / agent: ~2 hours)** — Public API — Add configured discovery/start/action/inspection contracts and full-configuration idempotency. Surfaced by Passes 1–3. Files: extension/src/{schemas,service,protocol,errors,runtime,environment}.ts and focused tests. Verify: real SDK discovery/error/retry tests and both-host transcript.
-- [ ] **DX2 (P1, human: ~2 days / agent: ~3 hours)** — Evidence model — Preserve old formats while introducing self-contained configured study/item/source/value descriptors. Surfaced by Passes 2/5. Files: extension/src/{studySchemas,studyModel,recordingSchemas,recordingStore}.ts and consumers identified by engineering audit. Verify: legacy/current mixed catalogue, restart, drift and offline seek tests; no understanding auto-check.
-- [ ] **DX3 (P1, human: ~2 days / agent: ~3 hours)** — Browser adapter — Connect the proven owned browser/source/pause lifecycle to product contracts without target constants or invented server links. Surfaced by Passes 2/3/6. Files: extension runtime adapter, reusable Cycle 0010 helpers and focused tests. Verify: exact source tuple, bounded configuration, one input, stale/foreign authority and cleanup cases in each host.
-- [ ] **DX4 (P2, human: ~3 hours / agent: ~30 minutes)** — Documentation — Update current capability summary, prepared tutorial, supported configuration, errors and migration notes. Surfaced by Passes 1/4/7. Files: README.md, extension/README.md, extension help, changelog. Verify: execute the published example through the actual public surface and inspect sanitized issue record.
-- [ ] **DX5 (P1, human: ~1 day / agent: ~2 hours)** — Acceptance — Measure external-agent first success, connected Study/book/recording and legacy regression in both hosts. Surfaced by Passes 6/8. Files: bounded validation client, cycle evidence/manifest and PROJECT_STATE.md. Verify: frozen expectations, videos with inspected frames, offline replay, per-host timing and `/devex-review` findings.
-- [ ] **D1 (P1, human: ~1 day / agent: ~90 minutes)** — Study presentation — Project configured item descriptors and truthful current/history/pending/partial states into existing panes; distinguish configured entry from demo launch. Surfaced by Design Passes 1/2/4/5. Files: extension/src/{studyWorkspace,studyModel}.ts, extension/src/ui/{studyHtml,constants}.ts and relevant tests. Verify: each state-table row, exact Continue authority, dynamic empty/long/unavailable text and stable keyboard focus.
-- [ ] **D2 (P1, human: ~1 day / agent: ~90 minutes)** — Learning/navigation — Share full-citation understanding and exact book-first returns with configured observation/replay. Surfaced by Design Pass 3 and DX-R1. Files: study projection, learner schemas/library, repository reader and playback projection. Verify: check → observe/link → rerun → restart → source-change sequence, with both directions preserving item and reader position.
-- [ ] **D3 (P1, human: ~1 day / agent: ~90 minutes)** — Native usability — Verify configured states at wide/constrained/200% sizes, keyboard traversal, supported themes and partial offline replay. Surfaced by Design Pass 6. Files: relevant UI/native QA harnesses and sanitized Cycle 0011 evidence. Verify: actual VS Code and Cursor videos/inspected frames, full focus/return sequence; static mockups never count as this result.
+- [x] **DX1 (P1, human: ~1 day / agent: ~2 hours)** — Public API — Add configured discovery/start/action/inspection contracts and full-configuration idempotency. Surfaced by Passes 1–3. Files: extension/src/{schemas,service,protocol,errors,runtime,environment}.ts and focused tests. Verify: real SDK discovery/error/retry tests and both-host transcript.
+- [x] **DX2 (P1, human: ~2 days / agent: ~3 hours)** — Evidence model — Preserve old formats while introducing self-contained configured study/item/source/value descriptors. Surfaced by Passes 2/5. Files: extension/src/{studySchemas,studyModel,recordingSchemas,recordingStore}.ts and consumers identified by engineering audit. Verify: legacy/current mixed catalogue, restart, drift and offline seek tests; no understanding auto-check.
+- [x] **DX3 (P1, human: ~2 days / agent: ~3 hours)** — Browser adapter — Connect the proven owned browser/source/pause lifecycle to product contracts without target constants or invented server links. Surfaced by Passes 2/3/6. Files: extension runtime adapter, reusable Cycle 0010 helpers and focused tests. Verify: exact source tuple, bounded configuration, one input, stale/foreign authority and cleanup cases in each host.
+- [x] **DX4 (P2, human: ~3 hours / agent: ~30 minutes)** — Documentation — Update current capability summary, prepared tutorial, supported configuration, errors and migration notes. Surfaced by Passes 1/4/7. Files: README.md, extension/README.md, extension help, changelog. Verify: execute the published example through the actual public surface and inspect sanitized issue record.
+- [x] **DX5 (P1, human: ~1 day / agent: ~2 hours)** — Acceptance — Measure external-agent first success, connected Study/book/recording and legacy regression in both hosts. Surfaced by Passes 6/8. Files: bounded validation client, cycle evidence/manifest and PROJECT_STATE.md. Verify: frozen expectations, videos with inspected frames, offline replay, per-host timing and `/devex-review` findings.
+- [x] **D1 (P1, human: ~1 day / agent: ~90 minutes)** — Study presentation — Project configured item descriptors and truthful current/history/pending/partial states into existing panes; distinguish configured entry from demo launch. Surfaced by Design Passes 1/2/4/5. Files: extension/src/{studyWorkspace,studyModel}.ts, extension/src/ui/{studyHtml,constants}.ts and relevant tests. Verify: each state-table row, exact Continue authority, dynamic empty/long/unavailable text and stable keyboard focus.
+- [x] **D2 (P1, human: ~1 day / agent: ~90 minutes)** — Learning/navigation — Share full-citation understanding and exact book-first returns with configured observation/replay. Surfaced by Design Pass 3 and DX-R1. Files: study projection, learner schemas/library, repository reader and playback projection. Verify: check → observe/link → rerun → restart → source-change sequence, with both directions preserving item and reader position.
+- [x] **D3 (P1, human: ~1 day / agent: ~90 minutes)** — Native usability — Verify configured states at wide/constrained/200% sizes, keyboard traversal, supported themes and partial offline replay. Surfaced by Design Pass 6. Files: relevant UI/native QA harnesses and sanitized Cycle 0011 evidence. Verify: actual VS Code and Cursor videos/inspected frames, full focus/return sequence; static mockups never count as this result.
 
-- [ ] **E1 (P1, human: ~3 days / agent: ~4 hours)** — Version every identity-bearing boundary and preserve immutable legacy formats. Surfaced by Architecture E1: closed study, book, progress and recording schemas currently embed fixed demo IDs. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
-- [ ] **E2 (P1, human: ~1 day / agent: ~90 minutes)** — Reserve canonical configuration before cancellable asynchronous binding. Surfaced by Architecture E2: start keys currently compare only profile; new async book binding must preserve reservation. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
-- [ ] **E3 (P1, human: ~3 days / agent: ~4 hours)** — Implement bounded declared conditions and actual captured inspections without target constants. Surfaced by Architecture E3: prototype names Header, theme selectors and expected runtime values. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
-- [ ] **E4 (P2, human: ~1 day / agent: ~90 minutes)** — Centralize descriptor selection and reuse citation learning and presentation barriers. Surfaced by Code Quality E4: fixed participant and profile assumptions span all views. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
-- [ ] **E5 (P1, human: ~2 days / agent: ~3 hours)** — Implement the 16 new-path groups and legacy regression matrix with host-specific evidence. Surfaced by Test E5: configured integration paths have no current tests. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
-- [ ] **E6 (P2, human: ~half day / agent: ~45 minutes)** — Align setup hold overall budgets and avoid copying sealed sources in state refresh. Surfaced by Performance E6: 250ms state hashing and prototype 120s whole-run lifetime do not fit configured input. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
+- [x] **E1 (P1, human: ~3 days / agent: ~4 hours)** — Version every identity-bearing boundary and preserve immutable legacy formats. Surfaced by Architecture E1: closed study, book, progress and recording schemas currently embed fixed demo IDs. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
+- [x] **E2 (P1, human: ~1 day / agent: ~90 minutes)** — Reserve canonical configuration before cancellable asynchronous binding. Surfaced by Architecture E2: start keys currently compare only profile; new async book binding must preserve reservation. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
+- [x] **E3 (P1, human: ~3 days / agent: ~4 hours)** — Implement bounded declared conditions and actual captured inspections without target constants. Surfaced by Architecture E3: prototype names Header, theme selectors and expected runtime values. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
+- [x] **E4 (P2, human: ~1 day / agent: ~90 minutes)** — Centralize descriptor selection and reuse citation learning and presentation barriers. Surfaced by Code Quality E4: fixed participant and profile assumptions span all views. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
+- [x] **E5 (P1, human: ~2 days / agent: ~3 hours)** — Implement the 16 new-path groups and legacy regression matrix with host-specific evidence. Surfaced by Test E5: configured integration paths have no current tests. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
+- [x] **E6 (P2, human: ~half day / agent: ~45 minutes)** — Align setup hold overall budgets and avoid copying sealed sources in state refresh. Surfaced by Performance E6: 250ms state hashing and prototype 120s whole-run lifetime do not fit configured input. Verify the corresponding engineering diagram groups and mixed-format/native evidence.
 
 Engineering tasks artifact: `/Users/ryotamurakami/.gstack/projects/codebook/tasks-eng-review-20260919-173550.jsonl` (8 tasks). QA input: `/Users/ryotamurakami/.gstack/projects/codebook/ryotamurakami-codex-cycle-0009-repository-learning-book-eng-review-test-plan-20260919-173550.md`.
 
-- [ ] **E7 (P1, human: ~half day / agent: ~45 minutes)** — Admit one pause, confirm owned breakpoint retirement, and cancel late after completion on any additional stop. Surfaced by independent E7. Verify repeat-line/reentrant pause and unchanged user breakpoints.
-- [ ] **E8 (P2, human: ~half day / agent: ~45 minutes)** — Preserve raw target tabs and dirty target documents through rejection, run and cleanup. Surfaced by independent E8. Verify unit ownership cases and both-host pre-existing/dirty target cases.
+- [x] **E7 (P1, human: ~half day / agent: ~45 minutes)** — Admit one pause, confirm owned breakpoint retirement, and cancel late after completion on any additional stop. Surfaced by independent E7. Verify repeat-line/reentrant pause and unchanged user breakpoints.
+- [x] **E8 (P2, human: ~half day / agent: ~45 minutes)** — Preserve raw target tabs and dirty target documents through rejection, run and cleanup. Surfaced by independent E8. Verify unit ownership cases and both-host pre-existing/dirty target cases.
 
 ## Attempts and evidence
 
@@ -512,35 +512,12 @@ Implementation checkpoint 19: explicit Arrange now separates learner-moved panes
 
 ## Result and decision
 
-Result: pending. Local implementation and automated checks are recorded above; current-code native validation is still required. One active cycle only. The full destination and all final acceptance requirements remain unchanged.
+Result: demonstrated within the declared configured browser scope. [Final reconciliation](evidence/0011/final-reconciliation-20260920.md) records N01–N14, 476 tests, both-host native evidence, retained failures and exact source identity; [live DX](evidence/0011/dx-live-20260920.md) records actual prepared timing and recovery. Keep the adapter/shared evidence model. Complete commit/issue synchronization, then select the missing shared presentation modes. Full review non-convergence, packaging, all intended uses, owner acceptance and final reviews remain open.
 
 ## Handoff
 
-Exact next action: continue N12 on v25 inventory `01ab8314623fbd15fe2126575c4ebcf6bffe01a6a8862caff6a219447193705e` (232 entries; dirty `f5fffa4`). All source hashes and 16 critical evidence hashes match the restored handoff; saved 464 tests pass, CodeRabbit reviews two files with no finding and OCR covers 2/2. The [matrix continuation](evidence/0011/native-n12-matrix-20260920.md) records v24 findings 003/004, the two-file v25 repair and 4/24 executed v25 cells. Root inspection of all four saved v25 video contact sheets now identifies pending ISSUE-N12-005: observation entry reports saved-layout restoration failure and leaves source hidden in a tab. Reproduce this on a fresh owned profile before accepting the display matrix. Both former temporary profiles are missing; create authentic book/run state through public MCP and preserve the new isolated storage durably. Saved videos, target and seven original backups remain. Complete native theme/geometry/keyboard/status/state checks and N01–N14/pause-image reconciliation before cycle closure. One host/UI command at a time; no edits/build while native runs. Same branch, goal/cycle issues open and final reviews 0/10 remain unchanged.
+Exact next action: v29 affected native and live DX verification are complete in both editors; no owned host remains active. The 236-entry inventory `d6979cd45081ddaf4d5390ab625a7a8100cde78b4dd9f6a58f4b4e5f2502dbd6` matches disk, 476 tests pass, and N01–N14 are reconciled with unchanged earlier-runtime evidence qualified. Complete the bounded OCR diff accounting, commit/push the cycle records, close Issue #12 with evidence, then select the shared presentation-mode cycle after inspecting Issue #1 images and purpose again. The final reconciliation and DX report contain exact local artifact paths and remaining limitations. Full review is non-converged; final reviews remain 0/10.
 
-## GSTACK REVIEW REPORT
-
-| Review | Trigger | Why | Runs | Status | Findings |
-| --- | --- | --- | --- | --- | --- |
-| DX plan | `/plan-devex-review` | Configured API workflow | 1 | Complete | 8 passes; 4.75 → 9.375/10; unmeasured prepared TTHW target 2–5 minutes |
-| Native DX challenge | In-host `cycle0011_dx_plan_challenge` | Independent contract check | 1 fresh + 1 scoped reuse | Findings amended | Stable identity, completion conditions, wait-before-stop; no final fresh clean pass claimed |
-| Design plan | `/plan-design-review` | Study/book/replay interaction | 1 | Complete | 7 passes; minimum specificity 4 → 10; eight decisions; four inspected mockups, one agent-selected composition |
-| Native design challenge | In-host `cycle0011_design_completeness` | Independent flow/state check | 1 fresh | Findings amended | Open/Return distinction and failed replay at native 200% |
-| Engineering plan | `/plan-eng-review` | Architecture, tests, performance | 1 | CLEAR (PLAN) | 3 architecture + 1 quality + 16 test gaps + 1 performance + 2 native amendments; zero unresolved decisions |
-| Native engineering challenge | In-host `cycle0011_engineering_challenge` | Independent technical gaps | 1 fresh | Findings amended | E7 single-stop authority; E8 raw target tab ownership; both checked and applied by primary |
-| Outside provider | Codex own-harness preflight | Independent provider coverage | 0 completed in DX/design/eng | Unavailable | `under_codex`; no outside process; no model-diversity claim |
-| Implementation review | `/review`, base `24e7f20` | Actual Cycle 0011 product diff | 3 fixing passes; third pass has disclosed reviewer reuse | Closed, non-converged | R1–R21 fixed; 384 tests; post-fix adversarial full production read found no additional issue |
-| Owner-requested provider review | CodeRabbit CLI 0.7.8 | Alternate external review | 1 completed | Completed and triaged | 104 files; ten notifications / seven topics; three fixes, two declines, two qualified limitations |
-| Owner-requested delegated review | open-code-review-delegate / OCR 1.12.5 | Deterministic selection/rules plus host review | Range + workspace, 3 bounded batches | Complete within eligible coverage | 90/90 eligible entries reviewed, 44 default exclusions; no external LLM; targeted fix review separate |
-| Current-code native QA | Frozen N01–N14 matrix | Actual changed product in both editors | Versioned attempts retained | In progress | Both original core/offline/restart paths, Cursor v5 interference/core and final v14 explicit Arrange pass; full latest matrix remains open |
-
-Task artifacts under `/Users/ryotamurakami/.gstack/projects/codebook/`: `tasks-devex-review-20260919-170210.jsonl` (5), `tasks-design-review-20260919-171900.jsonl` (3), `tasks-eng-review-20260919-173550.jsonl` (8). The detailed QA input is linked above. Native reviewers made no edits; primary incorporated their findings without claiming post-amendment fresh clean passes.
-
-**OUTSIDE COVERAGE:** unavailable for each Cycle 0011 plan phase and GStack's own outside-Codex phase. The later owner-requested CodeRabbit implementation review completed on its recorded snapshot; OCR delegation and native subagents are not outside providers. Final sequential product reviews remain 0/10.
-
-**VERDICT:** DX + DESIGN + ENGINEERING PLANS COMPLETE WITH COVERAGE CONCERN; implementation connected, three fixing passes closed non-converged, owner-requested alternate reviews triaged. Native validation is in progress. Review, native validation, packaging and final acceptance remain separate gates.
-
-NO UNRESOLVED DECISIONS
 
 ### Recording-fault evidence amendment (2026-09-20, before the native probes)
 
@@ -559,3 +536,29 @@ Implementation checkpoint 22: Cursor's public wrapper trace explains the group-i
 Implementation checkpoint 23: measured Cursor two-event contraction has two red regressions and exact-first survivor matching; scoped 151/151 and full **464/464** pass on 232-entry v23 source `469572e547b7adfe16bbdce4a06394e5010427458aaa8ccd0acaff4eb3bb548a`, dirty `cabded4`. A newly created independent reviewer found no actionable defect in this bounded repair. Cursor v23 three after-open faults, empty post-Return errors, healthy automatic three-pane reentry and actual captured-image identity pass. N08 v5 proves actual stale-outline Space is inert, automatic drift/recovery and immutable history/ledger/source preservation; videos inspected, failed helper attempts retained. Both hosts now pass these same bounded paths, including all VS Code pointer cases; independent native-image review supports findings002/003/004 closure. Settings/header/source cleanup, exit0 and PID absence are verified separately. Implementation `e74f035` is source-equivalent across all 232 validated entries. CodeRabbit CLI reports only three stale-record findings across 12 files; OCR eligible6 reviewed/default-excluded6, no additional actionable finding. This checkpoint updates those records; the both-host Return/N08 evidence is complete and the full N12 UX matrix remains a separate gate. Final reviews 0/10.
 
 Implementation checkpoint24: [N12 native preflight and bounded repair](evidence/0011/native-n12-20260920.md) identify and fix host body13px inheritance and an unnamed captured-values table. Implementation `e3a98de` is source-equivalent to v24 across232 entries; full464 tests pass. Both editors at normal/200% expose16px/24px body and named/described tables, with inspected videos and independent review. CodeRabbit2 files/one declined suggestion and OCR2/2 eligible/no extra finding remain separate. Both hosts are stopped with byte-exact settings and exit0. The finite four-theme/three-geometry N12 matrix remains pending; final reviews0/10.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+| --- | --- | --- | --- | --- | --- |
+| DX plan | `/plan-devex-review` | Configured API workflow | 1 | Complete | 8 passes; 4.75 → 9.375/10; unmeasured prepared TTHW target 2–5 minutes |
+| Native DX challenge | In-host `cycle0011_dx_plan_challenge` | Independent contract check | 1 fresh + 1 scoped reuse | Findings amended | Stable identity, completion conditions, wait-before-stop; no final fresh clean pass claimed |
+| Design plan | `/plan-design-review` | Study/book/replay interaction | 1 | Complete | 7 passes; minimum specificity 4 → 10; eight decisions; four inspected mockups, one agent-selected composition |
+| Native design challenge | In-host `cycle0011_design_completeness` | Independent flow/state check | 1 fresh | Findings amended | Open/Return distinction and failed replay at native 200% |
+| Engineering plan | `/plan-eng-review` | Architecture, tests, performance | 1 | CLEAR (PLAN) | 3 architecture + 1 quality + 16 test gaps + 1 performance + 2 native amendments; zero unresolved decisions |
+| Native engineering challenge | In-host `cycle0011_engineering_challenge` | Independent technical gaps | 1 fresh | Findings amended | E7 single-stop authority; E8 raw target tab ownership; both checked and applied by primary |
+| Outside provider | Codex own-harness preflight | Independent provider coverage | 0 completed in DX/design/eng | Unavailable | `under_codex`; no outside process; no model-diversity claim |
+| Implementation review | `/review`, base `24e7f20` | Actual Cycle 0011 product diff | 3 fixing passes; third pass has disclosed reviewer reuse | Closed, non-converged | R1–R21 fixed; 384 tests; post-fix adversarial full production read found no additional issue |
+| Owner-requested provider review | CodeRabbit CLI 0.7.8 | Alternate external review | 1 completed | Completed and triaged | 104 files; ten notifications / seven topics; three fixes, two declines, two qualified limitations |
+| Owner-requested delegated review | open-code-review-delegate / OCR 1.12.5 | Deterministic selection/rules plus host review | Range + workspace, 3 bounded batches | Complete within eligible coverage | 90/90 eligible entries reviewed, 44 default exclusions; no external LLM; targeted fix review separate |
+| Final bounded review | CodeRabbit v29 + OCR | N12 layout/focus repairs | 1 completed per method | No open bounded finding | CodeRabbit 13 files / two notifications / one documentation topic corrected; OCR 9/9 eligible, 12 default exclusions retained |
+| Current-code native QA | Frozen N01–N14 matrix | Actual changed product in both editors | Versioned attempts retained | Demonstrated within scope | v29 affected 12-cell matrix per host, partial prefix/restart and timed grounded runs; unchanged earlier negatives qualified |
+| Live DX audit | `/devex-review` | Prepared agent workflow | 1 audit, two hosts | DONE_WITH_CONCERNS | 7.75/10; 51.904/47.439 s; first VS Code attempt plus recovery 133.350 s; cold installation unmeasured |
+
+Task artifacts under `/Users/ryotamurakami/.gstack/projects/codebook/`: `tasks-devex-review-20260919-170210.jsonl` (5), `tasks-design-review-20260919-171900.jsonl` (3), `tasks-eng-review-20260919-173550.jsonl` (8). The detailed QA input is linked above. Native reviewers made no edits; primary incorporated their findings without claiming post-amendment fresh clean passes.
+
+**OUTSIDE COVERAGE:** unavailable for each Cycle 0011 plan phase and GStack's own outside-Codex phase. The later owner-requested CodeRabbit implementation review completed on its recorded snapshot; OCR delegation and native subagents are not outside providers. Final sequential product reviews remain 0/10.
+
+**VERDICT:** DX + DESIGN + ENGINEERING PLANS COMPLETE WITH COVERAGE CONCERN; implementation connected, three fixing passes closed non-converged, owner-requested alternate reviews triaged. Bounded native and live DX validation are demonstrated; full implementation review is not cleared for shipping. Review, native validation, packaging and final acceptance remain separate gates.
+
+NO UNRESOLVED DECISIONS

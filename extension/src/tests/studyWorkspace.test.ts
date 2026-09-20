@@ -81,13 +81,15 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   }
   function panel(kind: string, _title?: string, options?: { viewColumn: number }) {
     const nativeTab = { input: new TabInputWebview(kind) };
+    // Native webviews create only one missing group, even when a later column was requested.
+    const viewColumn = nativeLayout && options?.viewColumn ? Math.min(options.viewColumn, groups.length + 1) : options?.viewColumn;
     const value = { webview: { html: '', postMessage: async (message: StudyViewMessage) => {
       postedMessages.push(message);
       if (automaticContextReceipt && kind === 'codebook.studyContext' && message.type === 'study' && !message.loading) {
         receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
       }
       return true;
-    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, kind, nativeTab, viewColumn: options?.viewColumn, title: '', reveal(column?: number, preserveFocus?: boolean) {
+    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, kind, nativeTab, viewColumn, title: '', reveal(column?: number, preserveFocus?: boolean) {
       panelReveals.push({ kind, column, preserveFocus });
       if (column !== undefined) value.viewColumn = column;
       if (nativeLayout) {
@@ -204,7 +206,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       nativeLayout = true; const previous = [...groups]; groups.splice(0); editorLayout = structuredClone(layout);
       for (let column = 1; column <= nativeGroupCount(layout); column++) nativeGroup(column);
       groups[0]!.tabs.push({ input: new TabInputText(Uri.file(join(harness.directory, 'article-source.ts'))) });
-      groups[1]!.tabs.push({ input: new TabInputWebview('codebook.repositoryWiki') });
+      groups[1]?.tabs.push({ input: new TabInputWebview('codebook.repositoryWiki') });
       changedGroups({ opened: [...groups], closed: previous, changed: [] });
     },
     showTransientNativeSizes() { transientLayout = true; },
@@ -699,6 +701,66 @@ test('Source follows a learner move after Arrange while preserving the earlier d
     assert.equal(harness.sourceColumn(), 1);
     assert.deepEqual(original.tabs, retainedTabs);
     assert.equal(original.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
+  } finally { await harness.close(); }
+});
+
+test('first Study entry from one editor group keeps empty Context separate from the application', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const draft = harness.addForeignDraft(1);
+  try {
+    // Act
+    await harness.reader.open();
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ groups: [{}, {}] }, {}] });
+    assert.equal(harness.groups[0]!.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('first configured Study pause keeps captured source visible beside Context without manual Arrange', async () => {
+  // Arrange
+  const harness = await configuredWorkspaceHarness();
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    // Act
+    await harness.start(); await harness.reader.action('click');
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.sourceColumn(), 2);
+    const source = harness.groups.find(group => group.viewColumn === 2)!.activeTab?.input;
+    assert.ok(source && 'uri' in source);
+    assert.equal(source.uri.toString(), harness.reader.inspect().sourceUri);
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    const observation = harness.reader.inspect().view!.model.observation;
+    assert.ok(observation?.actionId === 'repository-click');
+    assert.equal(observation.values['value:enabled'], false);
+  } finally { await harness.close(); }
+});
+
+test('failed initial pane reservation remains visible and cannot silently retry or acquire the partial layout', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  harness.failNextCommand('vscode.setEditorLayout');
+  try {
+    // Act
+    await harness.reader.open();
+    const afterFailure = harness.editorLayout();
+    await harness.reader.arrangeRepository(new AbortController().signal);
+
+    // Assert
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, 1);
+    assert.deepEqual(harness.editorLayout(), afterFailure);
+    assert.equal(harness.reader.inspect().view!.errors.some(error => error.includes('The editor did not retain the requested Codebook layout')), true);
+    assert.equal(harness.runtimes.length, 0);
   } finally { await harness.close(); }
 });
 
@@ -1901,6 +1963,50 @@ for (const corrupt of [false, true]) test(`returning from ${corrupt ? 'a failed'
     assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
     assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
   } finally { await writeFile(headerPath, header); await harness.close(); }
+});
+
+test('native minimum-width expansion keeps Wiki Return successful and the next observation in three visible panes', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness();
+  let releaseLayout = () => {}, releaseReceipt = () => {};
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 326 }, { size: 326 }] });
+    const draft = harness.addForeignDraft(), decisions = (await harness.library.readProgress()).decisions;
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
+    const layout = harness.holdNextCommand('vscode.setEditorLayout'); releaseLayout = layout.release;
+    // Act
+    const returning = harness.reader.action('return-wiki'); await layout.started;
+    const receipt = harness.holdNextCommand('vscode.getEditorLayout'); releaseReceipt = receipt.release;
+    layout.release(); await receipt.started;
+    harness.changeEditorLayout({ orientation: 0, groups: [{ size: 330 }, { size: 330 }] });
+    receipt.release(); await returning;
+    // Assert
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 330 }, { size: 330 }] });
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    const source = harness.groups.find(group => group.viewColumn === 2)?.activeTab?.input;
+    assert.ok(source && 'uri' in source); assert.equal(source.uri.toString(), harness.reader.inspect().sourceUri);
+    assert.equal(harness.groups[0]!.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
+    assert.deepEqual((await harness.library.readProgress()).decisions, decisions);
+  } finally { releaseLayout(); releaseReceipt(); await harness.close(); }
+});
+
+test('a proportional learner resize after Wiki Return remains authoritative on the next observation', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness();
+  try {
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
+    await harness.reader.action('return-wiki');
+    harness.changeEditorLayout({ orientation: 1, groups: [{ size: 322 }, { size: 324 }] });
+    const mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+    // Act
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 322 }, { size: 324 }] });
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, mutations);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 2);
+  } finally { await harness.close(); }
 });
 
 for (const change of ['resize', 'source move', 'context move', 'application move', 'foreign tab', 'foreign group', 'replaced group']) test(`actual article Return preserves a learner's ${change} after opening recording evidence`, async () => {
