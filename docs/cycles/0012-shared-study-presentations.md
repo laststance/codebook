@@ -102,7 +102,7 @@ Initial 7/10: existing prepared path works, but the three choices are absent. A 
 
 ### Pass 2 — API / CLI / SDK
 
-Initial 4/10: no layout control exists in `protocol.ts`; `StudyWorkspace` is the one reader owner, while `StudyService` already delegates playback to its controller. Reuse that boundary for presentation rather than accepting arbitrary editor commands. Add `codebook_presentation` with current `instanceId`, `mode` from `study-workspace | living-book | guided-walkthrough`, and `expectedRevision`. Discovery and a read-only presentation resource expose all three modes, the paired instance ID and applied mode/revision, `applying`, persistence status, description and recovery hint. Revision is monotonic within one presentation-controller instance and starts at zero for a new instance; it is never persisted with the workspace preference. UI and MCP use the same serialized transition. A response must distinguish applied layout from saved preference. Source selection and live pause remain discoverable through existing resources.
+Initial 4/10: no layout control exists in `protocol.ts`; `StudyWorkspace` is the one reader owner, while `StudyService` already delegates playback to its controller. Reuse that boundary for presentation rather than accepting arbitrary editor commands. Add `codebook_presentation` with current server `instanceId`, reader-lifetime `presentationId`, `mode` from `study-workspace | living-book | guided-walkthrough`, and `expectedRevision`. Discovery and a read-only presentation resource expose all three modes, both identities and applied mode/revision, `applying`, persistence status, description and recovery hint. Revision is monotonic within one reader lifetime and starts at zero for its new identity; neither is persisted with the workspace preference. UI and MCP use the same serialized transition. A response must distinguish applied layout from saved preference. Source selection and live pause remain discoverable through existing resources.
 
 All three modes are valid with live evidence, recorded evidence, or neither. Presentation preference is independent of content availability. With neither, Guided still provides the app/source-focused arrangement and truthful empty evidence state, without fabricated playback or an automatic run. A supported saved workspace mode applies when any study opens; content tabs never override it. Unsupported preference keeps its original bytes and exposes a disclosed temporary Study fallback until the learner explicitly chooses/reset the preference.
 
@@ -119,7 +119,7 @@ Initial 4/10: `StudyError` already provides code/message/cause/recovery/docs, bu
 | Native arrangement fails, is cancelled or superseded | Existing pane error cannot describe requested versus observed presentation | `PRESENTATION_UNAVAILABLE`: name failed placement, keep last committed mode and report layout unconfirmed/partial effects; inspect/retry the mode or explicitly Arrange; never resume a live debugger and never automatically continue recorded playback |
 | Preference storage fails after panes moved | No separate mode persistence receipt | Return actual applied mode with `persistence: failed` and visible “Layout applied; preference not saved”; retry saving the same preference without replaying runtime actions |
 
-Validate the exact current instance before dispatch; malformed modes/versions reject at schema validation. Explain host-lifetime interruption and preserve unknown/corrupt preference bytes until explicit reset of this preference only. Technical details remain expandable, useful recovery first. Refined plan 10/10.
+Validate the exact current server and reader identities before dispatch; malformed modes/versions reject at schema validation. Explain host-lifetime interruption and preserve an unknown/corrupt stored preference value until explicit replacement/reset of this preference only. Technical details remain expandable, useful recovery first. Refined plan 10/10.
 
 ### Pass 4 — Documentation and learning
 
@@ -280,6 +280,140 @@ What already exists: DESIGN.md; approved three-mode hierarchy and D016/D017 Wiki
 
 These are plan scores. The same independent in-host reviewer completed a bounded revised-plan/three-image follow-up: all six prior findings resolved at plan level, no remaining P1/P2 design blocker or new blocker. Root inspected the revised standard, empty/live and constrained/focused sketches; native behavior remains unverified. Original sketch defects remain preserved; no clean external re-review is claimed. Generated mockups: 0; owner-approved new mockups: 0; delegated HTML direction: 1. Design implementation tasks below remain open.
 
+## Engineering review
+
+Reviewed against `fd1aa21` on 2026-09-20. This is a plan review, not implementation or a new native pass. The owner's active goal explicitly delegates recommended choices and waives repeated skill question gates; E1A–E9A below are agent selections under that delegation, not invented owner answers. FULL_REVIEW covers architecture, code quality, tests and performance in that order. The installed skill's shared-section path is absent; the corresponding source at `/Users/ryotamurakami/gstack/plan-eng-review/sections/review-sections.md` supplies the same review requirements.
+
+### Step 0 — Scope and reuse
+
+The estimated change spans more than eight files because public MCP, native placement, UI and regression boundaries must agree. Narrow the mechanism rather than weakening acceptance: one reader, one mode schema/descriptor, existing layout serialization and playback controller, one standard workspace preference. No new presentation-controller class, event bus, native layout framework, renderer instance or evidence store. Keep the approved three outcomes and DX0 prerequisite. A UI-only local selector is smaller but leaves the agent-owned workflow incomplete; a new parallel controller/store duplicates existing ownership. Choose the complete shared boundary (Lake Score 1/1).
+
+Existing seams: `StudyWorkspace` owns app/context panels, immutable native source, selection, repository Return receipts, layout lifetime and `withLayout`; `StudyService` owns server identity and runtime mutations; `PlaybackController` owns requested versus confirmed position; `BrowserViewport` owns render ACKs. `WorkspaceContext` currently omits `workspaceState`; activation and mocks must pass its narrow `get`/`update` contract. `StudyPresentation` already names the runtime viewport interface, so a new mode type must use a different name derived from its schema. Existing retained selection and ledger schemas remain unchanged.
+
+Fresh Context7 / primary documentation confirms [WebviewPanel and workspace Memento](https://code.visualstudio.com/api/references/vscode-api), [getEditorLayout and editor commands](https://code.visualstudio.com/api/references/commands), and [native maximize/restore](https://code.visualstudio.com/docs/configure/custom-layout). Documentation is API guidance, not proof that all three grids behave identically in both hosts; exact layout arguments and measured placements must pass DX0. No additional dependency or distribution artifact is proposed. Existing build/test scripts remain the pipeline; packaging/publication and installed acceptance remain later G10 obligations.
+
+### 1. Architecture
+
+**E1 [P1, confidence 9/10] — Reader lifetime differs from server lifetime.** The original API plan said “Revision is monotonic within one presentation-controller instance”; `service.ts:52` instead defines `readonly instanceId = randomUUID();`, while `studyWorkspace.ts:475` retires the reader with `this.revision++; this.lifetime++;`. Closing/reopening a reader under the same server must not admit an old revision-zero request. E1A selected: add `presentationId`, rotated immediately when Close retires its lifetime, independently of the existing server ID. Discovery exposes the current closed/open reader identity, revision and availability. The next open uses that new lifetime; server restart still validates its own ID separately. Reject wrong reader ID as `PRESENTATION_INSTANCE_GONE`, wrong revision as `STALE_PRESENTATION`, before any UI/persistence effect. Alternative B, server ID alone with revision reset, is unsafe; C, a separate service/controller per open, is unnecessary lifecycle coupling.
+
+**E2 [P1, confidence 9/10] — Layout and rendering have different barriers.** Plan validation requires “exact confirmed frame/source/context/item”; `studyWorkspace.ts:1073` waits `while (this.arranging)` while `playbackController.ts` independently serializes frame restoration. Waiting for playback/source presentation while holding `withLayout` can reenter that same layout path. E2A selected: reserve one presentation operation synchronously, pause/settle confirmed replay outside the native layout lock, acquire `withLayout` only for pane movement/ownership receipt, release it, then settle the renderer/source receipt before reporting success. No nested `open()`/layout acquisition or playback wait inside the layout lock. Mode transfer retains the existing panels and their webview documents. Alternative B, rebuilding all panels, loses pose/ACK ownership; C, one giant lock, invites deadlock.
+
+**E3 [P1, confidence 8/10] — Live captures and control need mutual admission.** Plan requires “unchanged live pause”; `configuredBrowserRun.ts:347` marks a capture `pending`, and lines 356–359 reveal/present before marking it `captured`. Moving the panel during that sequence can invalidate its renderer epoch. E3A selected: reject mode changes with `PRESENTATION_UNAVAILABLE` before native effects while runtime preparation, an unsettled input/continue, a pending required capture, source reveal or reader navigation is active. Permit a settled ready state, completed/stopped history, or a captured held pause. Admission reserves the mode operation before its first await; UI and service start/action/continue/playback and reader navigation use the same busy predicate. Existing idempotent action receipts can still be read; no new input is sent. Stop, Close and read-only discovery remain available. Revalidate lifetime and the captured run/session/generation/source tuple after awaited boundaries. Manual native resume/termination is observable interference: cancel/fail truthfully, never resume or roll back a debugger. Implement concrete readiness from existing runtime states/capture receipts; a mere absence of pending captures is insufficient while an input/continue is progressing. Alternative B, automatically wait/retry runtime input, violates explicit control; C, another runtime/renderer lease layer, expands scope without evidence it is needed.
+
+Data/effect order:
+
+```text
+UI select / Command Palette / MCP tool
+  -> schema -> server ID (MCP) -> reader ID -> revision -> availability
+  -> same mode + confirmed layout? no-op
+  -> reserve operation + advance revision (including later failure)
+  -> snapshot item/tab/pose/live tuple/confirmed replay
+  -> pause + settle replay              [outside layout lock]
+  -> withLayout: move retained panels/source; certify ownership
+  -> settle source/renderer + verify tuple [outside layout lock]
+  -> applied mode + confirmed layout receipt
+  -> workspaceState.update(versioned preference)
+     + saved -> saved receipt
+     + rejected -> applied receipt + persistence failed
+  -> release reservation; replay remains paused
+
+Any obsolete lifetime / cancellation / native failure
+  -> drain already accepted native commands
+  -> retain actual panes + prior applied mode; layout unconfirmed
+  -> no preference write; explicit recovery uses current identities/revision
+Close -> retire ID -> block new effects -> drain -> dispose only owned panes
+```
+
+Linearization: an accepted non-no-op command advances revision synchronously and marks `applying`; concurrent mutations reject busy rather than queue stale intent. Validation rejection, cancelled Quick Pick and confirmed same-mode no-op do not change revision. Success changes applied mode only after native and content receipts; failure retains the prior applied mode, requested mode, actual placement and an unconfirmed-layout state. A response loss is recovered by reading the resource, never by replaying application input. The mode argument is paired with `action: select | restore | save-preference` (default select). Restore explicitly reapplies that mode; save-preference accepts only the current confirmed applied mode and does no native work. Both use the same identity/revision checks. A mode choice can open a closed reader without a runtime; MCP opening preserves foreign focus, unlike ordinary explicit Study entry.
+
+### 2. Code quality
+
+**E4 [P1, confidence 9/10] — Native positions are repeated assumptions.** `studyWorkspace.ts:1168` onward currently targets app/source/context columns 1/2/3 and the single balanced Study grid; the plan requires three distinct hierarchies and mode-aware Arrange/Return. E4A selected: one immutable descriptor maps mode to grid, app/source/context target columns and reader emphasis. Reuse it at initial open, explicit Arrange, source presentation, live prepare/reveal, replay restore and repository Return. Reuse exact group/panel ownership checks and Cursor wrapper identities. Proportional comparison is only a post-restore certification; it must not relax pre-effect ownership checks. `evenEditorWidths` cannot flatten a deliberate Living book ratio. Source identity means immutable URI/hash/selection/scroll, not a physical TextEditor wrapper: moving may create a new native tab; close only the provably owned old tab after the new one is confirmed. Foreign duplicates and dirty drafts survive. Alternative B, three copies of arrange, diverges; C, always flatten manual groups on refresh, violates accepted behavior.
+
+**E5 [P1, confidence 9/10] — Preference durability is not native success.** DX plan says “A response must distinguish applied layout from saved preference”; `WorkspaceContext` at `studyWorkspace.ts:52` has no workspace state dependency yet. E5A selected: one namespaced versioned Memento key `{version: 1, mode}`, validate unknown data before use, use temporary disclosed Study fallback on unsupported values and preserve the stored value. Explicit selection/save/reset replaces only that key. Await the standard `update` promise; if it rejects, report applied/confirmed plus persistence failed, not a fictitious rolled-back layout. Save-only recovery never moves panes or starts a run. Close drains an already accepted preference write; older writes cannot overtake newer ones within this reader. Other windows have local active state and last successful persisted preference wins; no live cross-window synchronization is claimed. Alternative B, new filesystem storage class, duplicates built-in durability; C, storing mode in archives/progress, changes unrelated evidence formats.
+
+No broader coordinator refactor is authorized by this finding. Keep schema-derived types near their schema, small pure mode/validation utilities in `utils`, constants in `constants.ts`, concise caller/purpose/example JSDoc, and existing explicit error-help projection. The existing native ownership comments stay accurate after descriptor use. No speculative “missing field” bug is reported as a current defect; these are concrete proposed integration gaps.
+
+### 3. Tests
+
+Framework: extension `package.json` runs TypeScript build then `node --test dist/tests/*.test.js`; VM-backed native mocks, real temporary storage and real MCP SDK/HTTP tests already exist. Existing 476-test/native baseline predates this increment. Coverage below records existing behavior separately; every new presentation branch is currently a GAP, not a passed test.
+
+**E6 [P1, confidence 9/10] — Contract/lifetime branch coverage missing.** Proposed `codebook_presentation` adds a boundary absent from current `protocol.test.ts`. E6A selected: real SDK discovery/resource/tool tests for exact modes, malformed/unknown fields, unavailable reader, wrong server/reader ID, stale revision, concurrent requests, same-mode no-op, restore and save-only, closed-reader opening without a runtime, and read-after-response-loss. Cancelled Quick Pick is a no-op. Assert stable explicit error codes/state and zero native/runtime mutations on rejection. Tool descriptions change, so add a bounded actual-agent task using discovery to select a mode and recover a stale response; compare with the same task in each host. This is the tool-use evaluation [EVAL], not a new model benchmark.
+
+**E7 [P1, confidence 9/10] — Existing replay/live/Return behavior needs changed-path regression proof.** The plan's retained-state contract modifies paths covered by `studyWorkspace.test.ts:687,767,798,1158,1516,1538` and `playbackController.test.ts:62,76,121`. E7A selected, CRITICAL: extend behavior tests with all three descriptors, pending-read/decode/ACK mode transfer, Close during accepted layout, manual moves/duplicate source/dirty draft, repository round trip and source-view restoration. Assert confirmed position/frame/source, pause tuple, selected item/tab/ledger and no additional input/continue. Force native rejection after one pane moves, Stop/Close after each await, manual resume interference and stale renderer ACK. Reuse the existing playback engine tests; do not create a second playback implementation for tests.
+
+**E8 [P1, confidence 8/10] — Storage/focus/native behavior cannot be certified by mocks alone.** DX requires restart and design requires reading pose, constrained/200% access and no MCP focus theft. E8A selected: deterministic Memento rejection/deferred-write/corrupt-value tests plus real profile restart; compiled webview interaction checks for selector/tab keyboard, state copy, 44px controls, focus/section restoration and all four themes. Actual-editor video and rectangles cover geometry, source identity, maximize/restore, held live pause and offline replay in both hosts. Keep the HTML sketch and VM/browser adapter explicitly separate from native proof. Native layout ratio tests allow host clamping only while the mode's intended hierarchy remains evident; unsupported hierarchy fails DX0.
+
+```text
+CODE PATH / COVERAGE                                 USER FLOW / REQUIRED PROOF
+presentation schema + service + protocol [GAP E6]    -> discover/select/reconnect [E2E + EVAL]
+  invalid/foreign/stale/busy -> reject                -> no effect + actionable state
+  same-mode -> no-op; restore/save-only -> scoped     -> double click / response loss
+extension Quick Pick + webview [GAP E6/E8]            -> cancel, keyboard, tab independence
+workspace transition [GAP E7]                        -> held live / offline replay [E2E]
+  no study / live-ready / captured-pause / replay     -> preserve source/item/tab/ledger
+  preparing / pending capture / navigation -> reject -> retry only after settled state
+  pause/settle -> native lock -> render receipt       -> no deadlock or implicit continue
+  Close / Stop / manual resume -> invalidate         -> partial state + explicit recovery
+descriptor + ownership [GAP E7/E8]                    -> 3 modes / Arrange / Return [E2E]
+  foreign groups/dirty duplicate -> preserve         -> existing user work survives
+Memento [GAP E8]                                     -> absent/supported/corrupt/restart
+  save pending/reject -> truthful receipt            -> save-only does not move/replay
+webview state/focus [GAP E8]                          -> normal/constrained/200% [E2E]
+
+Existing related tests (not new-mode coverage):
+  [***] playbackController: confirmed seek/pause/hide; late ACK and I/O
+  [***] studyWorkspace: Return/Close/native ownership; dirty source duplicates
+  [***] protocol: real SDK/HTTP schemas and instance boundaries
+New-mode groups: 0/8 demonstrated; eight planned groups above remain GAP.
+*** = behavior + error/edge cases. No new coverage percentage is claimed.
+```
+
+Implement tests alongside DX1/DX2/DS1/DS2; no deferred test cycle. Run the affected node:test files during work, then the full extension suite and typecheck on the frozen candidate. Native tests run only after builds stop, one host/UI command at a time. UI motion requires video plus inspected frames. The plan adds no product LLM prompt/model or new archive format, so no unrelated eval/migration suite is required. QA artifact records these observable checks separately.
+
+### 4. Performance
+
+**E9 [P2, confidence 8/10] — Repeated native movement can multiply render/source work.** Plan proposes pilot timing; existing `ensureApp`/`ensureContext` retain panels while `renderSelection` and visibility callbacks trigger restore work. E9A selected: one accepted transition at a time, reuse webview HTML/viewport, O(3 panes + bounded open groups) placement and one preference update after confirmation. Do not reread/rehash archives or reload source contents just to select a mode. Content rendering should reuse the current confirmed bundle; merge redundant publish events without skipping readiness ACKs. Discovery/resource reads stay constant-size and available while applying. No queue growth from rapid submissions; busy requests reject. Record five pilot transitions per host, including render/persistence stage durations, before selecting a threshold; retain outliers and failures. Alternative B, debounce away requests silently, obscures intent; C, new caches/worker threads, is unsupported complexity.
+
+No N+1 database issue: there is no added database query. Memento stores one tiny JSON value, and the transition holds existing IDs/pose rather than image copies. No speculative performance bug is asserted before measurements. If an existing host call stalls, retain applying/interruptible state and use Stop/Close; do not report success from a timeout alone.
+
+### Failure modes, sequence and review disposition
+
+| Boundary | Realistic failure | Required response / proof |
+| --- | --- | --- |
+| Public tool | Stale client after Close/server restart | Correct identity-specific rejection before effects; SDK test |
+| Admission | Capture/input/reader navigation still progressing | Reject busy; no renderer invalidation; deterministic and native held-pause checks |
+| Playback barrier | Late decode/ACK arrives during transfer | Pause/invalidate old work; retain last confirmed bundle; regression |
+| Native movement | Second command fails after first moved | Actual panes retained, layout unconfirmed, no preference write; explicit Restore |
+| Ownership | Learner moves source/groups during await | Revalidate receipt, preserve foreign/manual content, report interruption |
+| Renderer | Moved panel not ready / source changed | No applied-mode claim until receipt; paused recovery without application input |
+| Preference | Update rejects after layout succeeds | Applied + persistence failed; save-only recovery; restart test |
+| Close/Stop | Cancellation arrives during accepted effect | Retire identity, drain accepted effect, no later new effect or stale publish |
+| Focus/zoom | Host clamps minimums / MCP steals focus | Native focus/enlarge/restore contract and video, not sketch certification |
+
+All nine primary findings have selected remedies and test obligations; no deferred in-scope decision or unhandled critical failure scenario remains in the plan. Native feasibility is still unverified and blocks DX1/DX2. Suppressed findings: none promoted from low-confidence speculation; exact API compatibility remains an experiment, not an invented current defect. No new TODO item is proposed because goal-wide packaging/general-runtime gaps are already recorded.
+
+Execution is one lane, zero parallel implementation lanes: DX0 (both hosts sequentially) → E1/E4/E5 contract/descriptor/preference + tests → E2/E3 shared transition + tests → UI/agent documentation → frozen native/eval evidence → bounded implementation/CodeRabbit reviews. Shared files and host state make parallel editing counterproductive. Existing native geometry, source identity and renderer ACK learnings inform the tests; none supplies new evidence. Outside engineering challenge and its individual dispositions follow.
+
+### Outside engineering challenge and final refinements
+
+External Claude Code completed successfully, model `claude-opus-5` as reported in `modelUsage`, session `35a80fa3-59d8-4e60-94d7-37daf07a8719`, host Codex, access none. The complete engineering section and relevant existing source accompanied the first 30 KB of the longer plan. The validated response contains 5 P1 + 5 P2; full response and provider receipt remain in private `artifacts/cycle-0012/eng-outside-{review.txt,result.json}`. Full output was shown verbatim. The following dispositions are selected under the owner's delegation; no clean outside rerun is claimed.
+
+1. **Runtime-to-placement exclusion (P1, adopted).** E3's service busy check alone does not protect renderer work admitted earlier. Extend the existing `BrowserViewport` with one scoped placement barrier shared with its required reveal/present operations. Acquire it outside `withLayout`, drain in-flight required renderer work, then recheck runtime readiness; new required reveal/present work waits until placement releases the barrier in `finally`. Do not hold it while awaiting the post-move renderer ACK or playback restore. Stop/Close abort acquisition and drain already accepted effects. Gate new input/continue at the service before its first await; require participant phase exactly `paused`, committed snapshot plus captured phase, or settled ready/completed status. A `resume-requested` participant, active source reveal or any pending capture is unavailable even if the displayed status still says paused. Read-only operations remain available. Add deterministic capture-after-admission/reveal/Close tests to `BrowserViewport` tests and the shared-owner suite. This is one lock in the retained viewport, not another renderer/controller; native tuple verification remains a defense against manual interference, not the exclusion mechanism.
+2. **Playback revision/save side effects (P1, adopted with correction).** `hide()` advances playback revision and saves the confirmed playback preference. The current save target is `RecordingStore.savePreference` (`studyWorkspace.ts:530`), not the learner understanding ledger. A mode request is an explicit presentation mutation, not a read-only operation. It pauses playback; clients must reread the playback resource after transfer and receive its new control revision in the presentation receipt. Do not promise unchanged playback revision or unchanged preference bytes. Preserve exact confirmed position/frame/context and unchanged learner decisions. Suppress redundant intermediate hide/reveal work only within the owned relocation window, then perform one final visibility reconciliation; ordinary manual hide behavior remains unchanged. Playback preference failure is disclosed separately from presentation preference failure. Tests assert these distinctions and save failures rather than treating any revision change as failure.
+3. **Ratio receipt work (P1, clarified).** E4 already removes `evenEditorWidths` and specifies a grid descriptor, but explicitly include `rememberLayout`, `isBalancedEditorLayout` usage, repository origin/restoration and `isProportionalEditorLayout` postconditions in the change inventory. Certification consumes the selected descriptor's orientation/nesting/ratios. Exact pre-effect ownership remains unchanged; host-clamped geometry needs observed purpose, not a falsely exact ratio.
+4. **More than three groups (P1, adopted).** Before pane movement, reject a four-or-more-group layout with an actionable `PRESENTATION_UNAVAILABLE` reason. Preserve all tabs/groups and the applied mode; instruct the learner to consolidate editor groups themselves, then retry explicitly. Never close/relocate foreign content to manufacture a three-pane pass. Cover UI/SDK error behavior, actual native four-group rejection and recovery to three groups. This is a documented current limitation; the normal three-mode proof cannot imply support for every arbitrary editor topology.
+5. **Bounded DX0 failure (P1, adopted).** Try the concrete supported three-leaf grid mechanism once per host. If it fails, retain evidence and permit one further attempt only with a distinct evidence-backed supported mechanism. If that still fails, close this cycle as not demonstrated/inconclusive with the exact unmet mode/host capability and choose a bounded architecture investigation as the next cycle; do not implement the falsified descriptor, silently fall back to reordered equal panes, or repeat indefinitely. Issue #1 remains open.
+6. **Grid traversal (P2, clarified).** Descriptor includes orientation, nesting, normalized sizes and explicit leaf traversal map; columns alone are insufficient. DX0 measures Guided's vertical root/top row and Living book's narrative-dominant left column. No descriptor is treated as proven until both hosts agree with intended geometry.
+7. **Separate revision (P2, adopted).** Name the new counter `presentationControlRevision`; never reuse reader `revision` or playback presentation/control revisions. Changing content tabs, refresh polling or selecting an item cannot advance it. Close rotates `presentationId` and resets only its own counter for the next lifetime.
+8. **Memento dependency (P2, adopted).** `workspaceState` is required in the shared narrow activation/workspace context type; missing production persistence must not silently succeed. Update activation and every VM context factory/mocked StudyWorkspace caller in the same implementation step. Controlled get/update mocks cover rejection and deferred completion.
+9. **Close save barrier (P2, adopted).** Add the accepted presentation-preference write promise to Close's explicit drain set. Close retires admission first, drains an already accepted write, and prevents obsolete completion from publishing into the new lifetime. This extends the existing drain set rather than relying on object disposal.
+10. **Three verbs / agent authority (P2, narrowed).** `save-preference` is the actual API used by the UI's save-only retry, not duplicate implementation. It guarantees no native reflow. `restore` is the same explicit mode/Arrange operation available to the connected agent by the owner's required MCP control; it may rearrange owned panes, but cannot bypass foreign-group checks. The outside claim that an explicit MCP selection is categorically unauthorized conflicts with this product goal. Retain the three scoped actions, document their effects, and test shared dispatch. No arbitrary command endpoint is added.
+
+Cross-model tension: the primary plan treated runtime admission as sufficient; the external challenge exposed the asynchronous opposite direction, now protected by the viewport barrier. It also usefully required explicit playback revision semantics. The primary and external agree on distinct hierarchy, conservative ownership, paused replay and truthful persistence; the external ledger/agent-authority interpretations are qualified against actual code and the accepted goal.
+
+Completion: Step 0 accepts the bounded outcome and reduces mechanism complexity; architecture 3 findings, code quality 2, test review 3 gaps plus ASCII branch map, performance 1. The outside challenge adds/refines the ten dispositions above. Critical unhandled plan gaps 0, unresolved owner decisions 0, new deferred TODOs 0, one sequential lane, Lake Score 1/1. Implementation and all eight new-mode coverage groups remain unverified. Engineering review is complete at plan level; proceed to DX0 only.
+
 ## Implementation Tasks
 
 - [ ] **DX0 (P1, human: ~3 hours / agent: ~45 minutes)** — Placement feasibility: prove the approved three hierarchies and retained panel/source identity using supported native APIs in both hosts before DX1/DX2. From the independent P1 challenge. Files: disposable QA harness, Cycle 0012 evidence. Verify native rectangles/video and no runtime/evidence mutation; retain failure if unsupported.
@@ -292,13 +426,18 @@ These are plan scores. The same independent in-host reviewer completed a bounded
 - [ ] **DS2 (P1, human: ~1 day / agent: ~2 hours)** — Connect truthful loading/empty/live/recorded/partial/error/agent/persistence states to one accessible selector and scoped recovery actions. From D2/D5/D6. Files: existing Study view/model/protocol integration. Verify each state, existing tab/range keyboard behavior, all four themes and recorded native mode transfers.
 - [ ] **DS3 (P1, human: ~3 hours / agent: ~45 minutes)** — Extend DX0/DX4 with narrow focus/enlarge/restore and measured pane-purpose checks; retain original/revised design artifacts and root inspection. From D1/D6 and independent narrow-width findings. Files: scoped QA harness and Cycle 0012 evidence. Verify both actual hosts, no foreign tab loss, no unchanged-source evidence inflation.
 
+- [ ] **EN1 (P1, human: ~1 day / agent: ~90 minutes)** — Implement reader identity, revision admission and Memento receipts within the existing shared owner. From E1/E5/E6; refines DX1/DX2. Files: presentation schema, `service.ts`, `protocol.ts`, `studyWorkspace.ts`, `extension.ts`, corresponding tests. Verify stale/closed/concurrent/no-op/save-only/restart and write-failure behavior.
+- [ ] **EN2 (P1, human: ~2 days / agent: ~3 hours)** — Use one mode descriptor and non-reentrant transition barriers across live/replay/Return. From E2/E3/E4/E7; refines DX2/DS1. Files: `studyWorkspace.ts`, mode utility, existing service/playback boundaries and tests. Verify late ACK/Close/Stop/manual moves/foreign drafts and unchanged confirmed evidence.
+- [ ] **EN3 (P1, human: ~1 day / agent: ~2 hours)** — Prove complete new contract and native branch groups, including actual-agent tool evaluation. From E6/E7/E8; refines DX4/DS2/DS3. Files: existing node:test suites, scoped browser/native QA and evidence. Verify every diagram group; no mock/sketch substitutes for host proof.
+- [ ] **EN4 (P2, human: ~2 hours / agent: ~30 minutes)** — Measure transition stage timing and bound work/queue growth. From E9; refines DX4. Files: scoped test instrumentation and evidence. Verify five pilots per host, responsive status/Close and no repeated archive work.
+
 ## Result and decision
 
 Pending. The full goal and review gate remain unchanged. This is a planned shared-presentation increment, not a claim that G08/G09 are implemented.
 
 ## Handoff
 
-Exact next action: engineering review and the both-host placement experiment before production implementation. DX and design decisions incorporate independent challenges under explicit delegation. One active cycle, no owned native processes. Preserve the Cycle 0011 frozen build and private evidence. No unresolved owner choice currently blocks the delegated routine design work.
+Exact next action: the bounded both-host DX0 placement experiment before production implementation. DX and design decisions incorporate independent challenges under explicit delegation. One active cycle, no owned native processes. Preserve the Cycle 0011 frozen build and private evidence. No unresolved owner choice currently blocks the delegated routine design work.
 
 ## GSTACK REVIEW REPORT
 
@@ -307,10 +446,10 @@ Exact next action: engineering review and the both-host placement experiment bef
 | DX plan | 1 | Complete; primary plan assessment 6.0 → 9.75 | Eight passes, five actionable tasks; native usability remains unverified |
 | Outside DX plan challenge | 1 | Completed; issues found | Claude Code / `claude-opus-5`; 4 P1 + 5 P2 resolved in plan, no clean external rerun claimed |
 | Design plan | 1 + 1 bounded in-host follow-up | Complete at plan level | 4 → 9 minimum plan score, six delegated decisions; independent 3 High/3 Medium and external 5 P1/4 P2 incorporated |
-| Engineering plan | 0 | Pending | Required before implementation |
+| Engineering plan | 1 | Complete at plan level | Nine primary findings; external 5 P1/5 P2 individually dispositioned, no clean external rerun |
 
-VERDICT: DX/design plans complete; engineering review and native feasibility required before implementation.
+VERDICT: DX + DESIGN + ENG plans complete; native DX0 feasibility required before DX1/DX2 implementation.
 
-OUTSIDE COVERAGE: DX and design external Claude Code completed with findings; design in-host fresh review also completed. No clean external re-review or final-product review is claimed.
+OUTSIDE COVERAGE: DX, design and engineering external Claude Code completed with findings; design in-host fresh review also completed. No clean external re-review or final-product review is claimed.
 
 NO UNRESOLVED DECISIONS
