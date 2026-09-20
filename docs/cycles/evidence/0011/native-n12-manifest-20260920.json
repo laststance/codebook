@@ -1,0 +1,715 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-20T05:45:14.747116+00:00",
+  "cycle": "0011",
+  "source": {
+    "cut": "v24",
+    "validatedDirtyBase": "fd5a8112dde3d34d0066295709654b4fcfa75bc9",
+    "implementation": "e3a98deff919f7db776d3d27eb117d33b2b06fc8",
+    "sourceHash": "44a2f18783e6429615f8d01bb0c5cb504079b7e7b2a848e68c2e7681fa30e55a",
+    "entries": 232,
+    "committedEquivalent": true
+  },
+  "automated": {
+    "tests": 464,
+    "passed": 464,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "todo": 0,
+    "durationMs": 29326.544084
+  },
+  "native": "Both-host normal/200% bounded typography/table repair verified; full N12 pending; both hosts stopped and settings restored. See report qualifications.",
+  "artifacts": [
+    {
+      "path": ".gstack/qa-reports/qa-report-codebook-n12-2026-09-20.md",
+      "bytes": 6527,
+      "sha256": "065c93b836261851835b60b9da16f7fbb26c9f37256fd3174210c7d02c02efa3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/n12-v24-coderabbit-triage.json",
+      "bytes": 1408,
+      "sha256": "408f020be68324e2f0178473793ba61696551e6aaf1b30f0a544c508ee052e16",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/n12-v24-coderabbit.log",
+      "bytes": 1480,
+      "sha256": "c51427553bf308fac67ea3dc7598b2f909055c273e71cb9ea871559c73b41f7e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/n12-v24-commit-equivalence.json",
+      "bytes": 258,
+      "sha256": "0617d4e696a4dd1a1cd24bd64c8608490fdeaaeed19ebdac8567e94943f99098",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/n12-v24-ocr-preview.json",
+      "bytes": 561,
+      "sha256": "909fe3f88c3e6f22540d2f03460f4675cde8dfb5b838cb5ec32707ea4fa4996f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/n12-v24-ocr-review.json",
+      "bytes": 1220,
+      "sha256": "d50eb2c41db2b4140fba338511b9545e34854ffffbb873e46e6a7b0c33376584",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/n12-v24-ocr-rules.json",
+      "bytes": 3581,
+      "sha256": "a9169b8ba2697d4b7b8d97c87fd7c7831f6e597c7a9d88a6377424fc5f80af90",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/n12-v24-source.diff",
+      "bytes": 11905,
+      "sha256": "14d73547137246d79c72b807b2e77a6330452977ee7d09425f933585a708d386",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/cursor-host-console-baseline.log",
+      "bytes": 612913,
+      "sha256": "e9f8406f82ba9fd32d997e8f117a704b02458a4ea50af7ac0afe0b5c74eabf1e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/exit.json",
+      "bytes": 14,
+      "sha256": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-app200-contact.png",
+      "bytes": 736500,
+      "sha256": "653b1a5b68b48766d1fe3804cbfbd0fbdee4f6e8cb22c41ec93b0c9313e15b1c",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-app200-image-contact.png",
+      "bytes": 583753,
+      "sha256": "007d104158968a0c11b59b17eaf66bb6244234e87adc8febeebcf3007e92ae4a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-app200-image.png",
+      "bytes": 316475,
+      "sha256": "6536c4b9c92a1a56cc43f85f0fa47215138712eba2e9d3ed86a9f4ff96cd4a19",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-app200-image.txt",
+      "bytes": 950,
+      "sha256": "284ffb11f5d20d813024079335d1657783e8c53f11a1ea6dcb6fd702e89b3c7e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-app200-image.webm",
+      "bytes": 456305,
+      "sha256": "41c7df8f329d2fd1c0f1299ce10a63ba8eaa74d9117621c7914333c8a538cc15",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-app200.png",
+      "bytes": 313138,
+      "sha256": "2ab37487d0d2a234c0526abd8d1c108e9fab0ff0b2e2bc5042f7ae8449d2d6be",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-app200.txt",
+      "bytes": 1901,
+      "sha256": "07bb03356c2aff97e1f911413f8d678cb4f16bc0c62ade607cdc1197e303b1ea",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-app200.webm",
+      "bytes": 417304,
+      "sha256": "d8cee16704a752b83c23022cd03a807cbecfcc44569e82e22a00a052eec991bb",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-cleanup.json",
+      "bytes": 371,
+      "sha256": "3b8847d468f718adb9087e49697b0525946b83d701dae182d655d9b314d1fafd",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-normal-contact.png",
+      "bytes": 633189,
+      "sha256": "7e1e11dc452004af7acb0b92feaecb01c066ca07707c481e1de9a09e5e285a19",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-normal-flow.txt",
+      "bytes": 7742,
+      "sha256": "38911119d17ffbebec40a6fb5ab024d8eddc9723944028a9ed76c7e9052b66f7",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-normal-observation.png",
+      "bytes": 195609,
+      "sha256": "7d168b3ad573a958c7085a0973ef1590a71b180f03d922fbbcb92c3aa5b9697c",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-normal-recording.png",
+      "bytes": 135164,
+      "sha256": "ea5efc3c0027b963caab3899a6e3cde6b183d26d5632a348de7d2dc98a092b1b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-normal-resize.txt",
+      "bytes": 461,
+      "sha256": "4ae2351be06f2a6bc3c6f6d046c6222b9e3fcaa589e80f78ffe69f1c3c3c3de1",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-normal-result.json",
+      "bytes": 4630,
+      "sha256": "e3f99cf2185f42a6e5f3174e27e084613268ecbc07a81de1c4cb265191136591",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-normal-return.png",
+      "bytes": 129018,
+      "sha256": "0ca3e6d234088d1d8b723cdbe7925edb5e01de4f4d52f7648e86d67bb11b31d9",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-normal-video-start.txt",
+      "bytes": 405,
+      "sha256": "7a4b8e059634b50b854765b9d6606eb0914f0771b6bc2f3b69b9cf170ec0cb61",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-normal-video-stop.txt",
+      "bytes": 480,
+      "sha256": "9d8e522419ec266213f7137ab4403d4badc9aa3f36b01ac8cac9d6c0e0e8fad2",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-normal.webm",
+      "bytes": 211770,
+      "sha256": "aedd815356e4cc6e6e4c4043b195262387a8ca894c1a91d032762cb2c0baf0b6",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-zoom200-contact.png",
+      "bytes": 509662,
+      "sha256": "1a7d8f5ec095db196efd1a886d25a70225b469876e9dc01a7cdc305d3b9e930d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-zoom200-flow.txt",
+      "bytes": 7743,
+      "sha256": "dc15820a2771b4bec1e0fffb302d1067cb0602d68a92dde0b158fcb7c8dd18b0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-zoom200-observation.png",
+      "bytes": 290406,
+      "sha256": "ba2ab37c29b617f639624f4e44fdf43c933a4c98b49c9894d0a57db3b3f592d4",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-zoom200-recording.png",
+      "bytes": 286350,
+      "sha256": "174f597abd26521a25570a83325ea5f50bee6d2ddd839fe17677de3ca3654770",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-zoom200-resize.txt",
+      "bytes": 462,
+      "sha256": "8ae189fe48a69ea8cdd1ce967cf4417b12b8b1750fed14272a536282c360ed16",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-zoom200-result.json",
+      "bytes": 4630,
+      "sha256": "501bd5c436d85a36daef5490f624e87dec2534cdad2f9757d7916fe43c01db5c",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-zoom200-return.png",
+      "bytes": 286338,
+      "sha256": "03d7a5cba52e042783efbe50606562690148b10fa7d139f7e321bec8b673c9c0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-zoom200-video-start.txt",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-zoom200-video-stop.txt",
+      "bytes": 112,
+      "sha256": "4603fa344efa2a63e8da9757aedabb99fc2e4d13cebbe3a467f59a08cc5bb395",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/n12-v24-zoom200.webm",
+      "bytes": 147154,
+      "sha256": "a553bc56923e7810c34bb43a81de66cc66b9d663b8f5c7bcbc050105d92ac714",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/qa-settings-restored.json",
+      "bytes": 252,
+      "sha256": "79228651c3e48e78a99fb5cecfd0dafcc0a01e4ce9c0d4b738d696514e736537",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/cursor/2026-09-20T05-33-23.788Z-4b3f9e29/reload-6.json",
+      "bytes": 35292,
+      "sha256": "fa382d22f3361091b4f415702f88a34233ad061cdf68dde07d2de8dd0bb6b108",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/attach.log",
+      "bytes": 608,
+      "sha256": "d9796499db0922d8c2626d5147942672efb730a95d59e4e7859baa11caca3645",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/command.json",
+      "bytes": 32,
+      "sha256": "084da46ed8b7d8b934d9dc36e68eb421880b61b7d6e5c9e6f9f94b8ebd4f8ad6",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/exit.json",
+      "bytes": 14,
+      "sha256": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-cleanup.json",
+      "bytes": 297,
+      "sha256": "be005ec637edef5a11542dd0b8eeeab2a9edaa1fcc28b48bec84354c296a37db",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-dark-constrained-measure.json",
+      "bytes": 64590,
+      "sha256": "7e56097be74a63a7f1cc9faeb2c9cf984e8fbf2061cccf675dc6b3baecab1f74",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-dark-constrained-measure.txt",
+      "bytes": 38500,
+      "sha256": "9154bbf6c85af80d223e1d720653f727d2b0fbef8759d853aef53a28a2d9c724",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-dark-constrained.png",
+      "bytes": 186136,
+      "sha256": "6986bff1eeaea61c815ecea1910a6131ab19471c4c8248d16594f3ecc7aad517",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hcdark-live-keyboard.txt",
+      "bytes": 1869,
+      "sha256": "f78428d5203e7b4e2e2436011bc234fd70b3f483b133f5396d38f6c108af2d7c",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hcdark-live-measure.json",
+      "bytes": 62614,
+      "sha256": "e81725dc51952350eb34d9e77d336b36804a5f2d3c7766ff6e66963a1f91ba7b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hcdark-live-measure.txt",
+      "bytes": 36537,
+      "sha256": "7c73851b4bffb939368c42b18bd297b685cd29422ecc98005953f4013cf403b7",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hcdark-live.png",
+      "bytes": 216559,
+      "sha256": "e19187df1efde9ccf3ce40e40b3309ee5259abb43f2e4ea03eeec8e210d5ef3e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hclight-live-keyboard.txt",
+      "bytes": 2519,
+      "sha256": "1835e140cee0b936f6f759d2050629d0208c88522040213d25f5e0f169650ef2",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hclight-live-measure.json",
+      "bytes": 81194,
+      "sha256": "aeb1272217fed4d639e1bc0d8b37a5cd2b0034197a642853eae4709c482d35cf",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hclight-live-measure.txt",
+      "bytes": 47245,
+      "sha256": "3fc638acb6336764a0b86fb8ea60c168eaf9e10fe44025ad625da1439f4cf19a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hclight-live.png",
+      "bytes": 178487,
+      "sha256": "f261d5992ca008edbe80df0adb0335b3d8dcc674de0dc34328cf6f10d9533758",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hclight-recording-measure.json",
+      "bytes": 81303,
+      "sha256": "68ae835800d0665a36aca54a8b7cd03cc8b0971068cd88927f33fcf9c052d2a8",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hclight-recording-measure.txt",
+      "bytes": 46940,
+      "sha256": "5e6ba5d7f7a05f53abdc9a7d645646546839e058e2a2837b562ee77d4ac92358",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-hclight-recording.png",
+      "bytes": 170094,
+      "sha256": "22fe7aa7dea87162706f872ea279e917bf34edea00f42d125c847d75106c02ef",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-initial.txt",
+      "bytes": 333,
+      "sha256": "571a2bbf6f2847a0bb64423b117423a55c9475f1f92a55f45e5ff3026f4312a6",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-light-study-keyboard.txt",
+      "bytes": 1103,
+      "sha256": "f9904375ca2d0043ddb18cd9a312f581b8473974ecbac12b2cb049eea6bf95bd",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-light-study-measure.json",
+      "bytes": 81506,
+      "sha256": "6fbe2303fd1a5b22667af73e0e5accbc59792cba451b4a107eea169da61d5c78",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-light-study-measure.txt",
+      "bytes": 47143,
+      "sha256": "e4ef8571cbcaf83eedc04a4f5760c4c0ba32ae7d88246cfc1b90003ee675bc93",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-light-study.png",
+      "bytes": 175718,
+      "sha256": "a35afc406e37319957ac2be2fe2665db9968a0eb3f947bb03663324c850deea5",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-light-study.txt",
+      "bytes": 6328,
+      "sha256": "a4eea3c182f426e98e6d4c7a221acda95ec1310673bab034c8804ff076213a6d",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-light-wiki-keyboard.txt",
+      "bytes": 4857,
+      "sha256": "40607a79a255e607e559228b5f9f35c6f8149ee1eb2921e8de3d164d8a6fd429",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-light-wiki-measure.json",
+      "bytes": 17703,
+      "sha256": "09700dfc83b5704ea6b8ee2998a22dad5e4b79cd9fdf95b75a1b128319c06152",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-light-wiki-measure.txt",
+      "bytes": 12937,
+      "sha256": "23cc01563dff6b34202b49bbe96ef7a8af81a3a415448db500c23cbc2a5da893",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-light-wiki-traversal.txt",
+      "bytes": 24448,
+      "sha256": "2d5d95b6b777c363d4e7d955e5d33750938a7743f5c9a38d5b83c8c9fc8e5e1e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-light-wiki.png",
+      "bytes": 228312,
+      "sha256": "c7239dc143d2eb67e35f7f795623f413ce6f849d0c6ad68720b025ddcf2ba1d3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-measurement-summary.json",
+      "bytes": 8152,
+      "sha256": "3e2c8adf8a4ee097ae38477b129dd361ef04d4fdcdb33c9efebb2b2a4209c702",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-orient.txt",
+      "bytes": 6929,
+      "sha256": "77c44ca26826dd75d0b7f9935d46c74a14b5dd0b42a91d93d42fb773a627ab36",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-themes-contact.png",
+      "bytes": 1233064,
+      "sha256": "9e408f3a17bba969c72a90810d6dab57265dce104bfe3741692954ebf1672d61",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/n12-themes.webm",
+      "bytes": 16079739,
+      "sha256": "7ce1b331a0b2a435d0ba59634c18121d9ef965750bf09056ede7a2e3baea6723",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/qa-settings-restored.json",
+      "bytes": 115,
+      "sha256": "a38736be4aabc07da1f06527b45bd0b2a9888eedd95a15baae1a91978a65d7e2",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/reload-0.json",
+      "bytes": 21354,
+      "sha256": "2f424f7b0f25aee9467e54a236f0ba4966202236b8889775bda032e4fd6ae51f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/reload-1.json",
+      "bytes": 32973,
+      "sha256": "dfa025e5bb044c253f9c79353891ca1c81beb865011d1b324a7b2ecc419fc9dd",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/reload-2.json",
+      "bytes": 36059,
+      "sha256": "337cfc319b6e3e464eb8dc6f24bb46e71c6be25f7ce47117bd5aac3feb5ecf3c",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/reload-3.json",
+      "bytes": 35905,
+      "sha256": "6c1c82c0b12bd44c58801523d7b1941046c625774bc11318076d1bbb2c949d6a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/reload-launch.json",
+      "bytes": 28853,
+      "sha256": "1c59ab5123daf58d6e10b83cb295149fb7882852dfb7b35abbbc1329150436fc",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-13-08.424Z-a0edd24f/reload.log",
+      "bytes": 6874,
+      "sha256": "f512d4aecb5164a2a3d3089c244272be2c3969095d8625ec992082ec7910ee92",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/exit.json",
+      "bytes": 14,
+      "sha256": "6041df3e9b345d68be886f995c452395674ea950cd3ca9992c13b64f3aa9cbd0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-cleanup.json",
+      "bytes": 231,
+      "sha256": "cb0778a1cfa701068822797a6845c415cf5c6505194b4f6d21d2f3a26f47b56a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-normal-contact.png",
+      "bytes": 1122329,
+      "sha256": "1640c07d6b362c084800002b0290350b1f26c968a725439acc644fb2bbfc641e",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-normal-flow.txt",
+      "bytes": 7749,
+      "sha256": "cd995db0efdc978e575ee0d0d94c878c27eb3dbca96bd72b5bcaac37460de784",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-normal-observation.png",
+      "bytes": 243690,
+      "sha256": "4f1ee1c1ccee8b083b2ffbd2f9b1fff462561434c87abd423f88bafe42e8d0af",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-normal-recording.png",
+      "bytes": 168564,
+      "sha256": "8c497f28ee7b0d9c6fb558d11286a7cad0584f7c7f8d3af074ab2a182a4f838f",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-normal-resize.txt",
+      "bytes": 92,
+      "sha256": "5d1fbd26911b868e7d964eba0569895db41aeaa971bc5dad53dc4ac21d10b6a9",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-normal-result.json",
+      "bytes": 4626,
+      "sha256": "ea41eb3e8567486889223c2665c4394a612962f245b1628411d14974d2ae1bd4",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-normal-return.png",
+      "bytes": 163490,
+      "sha256": "d648fb76b5ba4a8188e733a24ac74587ab18cfc3fba8c517d1396ee1c7b884b7",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-normal-video-start.txt",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-normal-video-stop.txt",
+      "bytes": 111,
+      "sha256": "f1d6225dd8d5fd1fc73ce08112c31ef3c959d00bc6b2d0ba76971f58199854cb",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-normal.webm",
+      "bytes": 227694,
+      "sha256": "058e0ef6cd24428922d1ca3edfa9025fffc045919f6416df717cb3726494fe2a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-zoom200-contact.png",
+      "bytes": 906058,
+      "sha256": "15a16d9c10d90d9946e73b741074f381e0ab4dfdecf3be063c309a56dbc0adb3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-zoom200-flow.txt",
+      "bytes": 7750,
+      "sha256": "0bff8d12bcb631c94986331541a5dedd552031e9980dc230d2b3efd9327f5f05",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-zoom200-observation.png",
+      "bytes": 366557,
+      "sha256": "6a89c3f91d700ac74a48c75073bef795fb827f9128fa9b5fb82a30ff5a9f6262",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-zoom200-recording.png",
+      "bytes": 347758,
+      "sha256": "6706e43417b47e6bc08535dd82f38cf0d5b748122dd330b0c8283eccbd5b59c0",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-zoom200-resize.txt",
+      "bytes": 93,
+      "sha256": "4cfe726dd46992a3bd52d8ce6dc3e1c885ef4114224b860bb30643529e1cebd3",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-zoom200-result.json",
+      "bytes": 4626,
+      "sha256": "62c05866f90ed8f52409165935c76ed8545afc4631cad5f8a62411009a12578b",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-zoom200-return.png",
+      "bytes": 321288,
+      "sha256": "3bbfb90cdfa1312ccc608774157c4b56af4908963ee81fce33c429d90609e578",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-zoom200-video-start.txt",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-zoom200-video-stop.txt",
+      "bytes": 112,
+      "sha256": "963cb8ac6f2d2b7841c5cc6b170a134d9acf780d5818771272ff440acfc2f54c",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/n12-v24-zoom200.webm",
+      "bytes": 166268,
+      "sha256": "6567c6150d0275f2e34a3de8c8601e853441f3115b1a5acb096d7cc0d96bcc46",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/qa-settings-restored.json",
+      "bytes": 115,
+      "sha256": "a38736be4aabc07da1f06527b45bd0b2a9888eedd95a15baae1a91978a65d7e2",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native/vscode/2026-09-20T05-28-42.342Z-d3c62d2e/reload-6.json",
+      "bytes": 36090,
+      "sha256": "ac481e3a4de1a70b6264d1bb429fa2428557526fdf57feed389c7c260e3a754a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-build-v24.json",
+      "bytes": 26819,
+      "sha256": "2a626a2021d16110f8672711a0b882e359613ca7acaf33b27b5038b68109dfb4",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-n12-expectations-v1.md",
+      "bytes": 2763,
+      "sha256": "f6870c8a56974f44a85b408ece4f7ff3be85a5d58caba6b1f358cb95795d209a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-n12-fix.mjs",
+      "bytes": 6544,
+      "sha256": "fb11067b01aec0417400867bfddc955471d459d6e1b6a4cbc2d6221662309e56",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-n12-measure.js",
+      "bytes": 3808,
+      "sha256": "07c37d7b2071ede9dfff1c996263a7533eddcdad9e0759efc3634b9e4b4961ca",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-n12-preflight-manifest.json",
+      "bytes": 9395,
+      "sha256": "bd1826306a83d90892d1d752e59854805459b6d8c3bf90681ae33af1298fbec9",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-n12-v24-cursor-settings-before.json",
+      "bytes": 340,
+      "sha256": "1ca5ab4ceea8a48960f3803916a0b11769f7bee034ff3f1933ab91592a9c4962",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-n12-v24-expectations.md",
+      "bytes": 882,
+      "sha256": "57e915e5712c2f20e2dd3ae24a03ba8813147f42574df45d7a3d21e7d1da77c9",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-n12-v24-vscode-settings-before.json",
+      "bytes": 300,
+      "sha256": "727e878681895ef423e6e7ce99958430c8029d2d4775a7f8a343b4f5e31c104a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/native-n12-vscode-settings-before.json",
+      "bytes": 300,
+      "sha256": "727e878681895ef423e6e7ce99958430c8029d2d4775a7f8a343b4f5e31c104a",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    },
+    {
+      "path": "artifacts/cycle-0011/product-tests-n12-v24-20260920.log",
+      "bytes": 55686,
+      "sha256": "c369509d054941ef7ca25c1c314da8effbf818a7db3674a04b60204c0bd50667",
+      "availability": "private local ignored artifact; preserve before workspace cleanup"
+    }
+  ]
+}

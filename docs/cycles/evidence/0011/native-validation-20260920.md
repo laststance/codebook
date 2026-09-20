@@ -2,7 +2,7 @@
 
 This is current-product native evidence, separate from the earlier Cycle 0010 prototype and from CodeRabbit/OCR review. Cycle 0011 remains open. Both core paths now pass separately; the remaining failure/layout cases, packaged installation, and final acceptance are not cleared by this report.
 
-Latest checkpoint: **464/464 tests**, Return/reentry cut v23 `469572e547b7adfe16bbdce4a06394e5010427458aaa8ccd0acaff4eb3bb548a`, validated dirty base `cabded4`, source-equivalent implementation `e74f035` across232 entries. [Return investigation](native-return-investigation-20260920.md) records three actual after-open faults, healthy automatic reentry and stale-outline Space/history preservation separately in both hosts, inspected videos and exact cleanup. Both hosts exit0; no native host remains active. Full N12 UX/theme/contrast and paused-frame correspondence remain open. Earlier v14 [Arrange investigation](native-layout-investigation-20260920.md) and all historical cuts remain identified below.
+Latest checkpoint: **464/464 tests**, v24 `44a2f18783e6429615f8d01bb0c5cb504079b7e7b2a848e68c2e7681fa30e55a`, compiled dirty `fd5a811`, source-equivalent implementation `e3a98de` across232 entries. [N12 UX evidence](native-n12-20260920.md) records two preflight defects and both-host normal/200% typography/table repair, bounded reviews and exact cleanup. Both hosts exit0; no native host remains active. Full N12 and paused-frame correspondence remain open. Earlier v23 [Return investigation](native-return-investigation-20260920.md), v14 [Arrange investigation](native-layout-investigation-20260920.md) and all historical cuts retain their own source and limits.
 
 ## Frozen input and environment
 
