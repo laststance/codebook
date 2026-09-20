@@ -45,4 +45,4 @@ Frozen before installation/execution on 2026-09-21 JST. Scope: [Cycle 0016](../.
 
 ## Results
 
-Pending. Neither host has been installed/launched for this schedule yet.
+Executed against the frozen clean candidate. [Schedule v1 results](installed-validation-v1.md): both hosts install/reinstall and read/publish source; VS Code completes the bounded workflow, offline replay and ordinary window restart. Cursor fails I07 returning from Guided walkthrough to Study workspace, then also fails one stopped-state retry. The incomplete walkthrough is preserved and its runtime is released. I08–I16 remain unexecuted for Cursor. Diagnose before any revised acceptance; retain this schedule and its failed attempt.
