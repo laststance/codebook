@@ -1,5 +1,5 @@
 {
-  "scope": "Cycle 0018 ordinary v4 Wiki reentry failure, separately modified diagnostic traces and source regression controls; not final acceptance",
+  "scope": "Cycle 0018 ordinary v4/v5 reentry failures, separately modified diagnostic traces, source regressions and qualified initial successes; not final acceptance",
   "artifacts": [
     {
       "path": "artifacts/cycle-0018/installed-development-v4/schedule-full.json",
@@ -235,6 +235,206 @@
       "path": "artifacts/cycle-0018/wiki-reentry-final-controls-green.tap",
       "bytes": 5106,
       "sha256": "aeaff8660617e8c0db350789f3eecd9c5314e61f58b220bebd77064b36772581"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-final-validation.json",
+      "bytes": 31996,
+      "sha256": "b9ab6573296e96585f520720c937af451608b383a6eb651160d68d4f851d7a0e"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-mode-final-validation.json",
+      "bytes": 32007,
+      "sha256": "c2a92fa9547366bea1d403ef777ff80b50e4a5554d09aeff8143b366764ca11c"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-mode-confirmation-red.tap",
+      "bytes": 986,
+      "sha256": "250efbad7213f7acafa718b1ccb1fa8ef25b6a53cf08460dde2abcf00c304fdd"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-mode-final-controls-green.tap",
+      "bytes": 5335,
+      "sha256": "cdc395858cc48b5e002d3d2c40e5e4683bccfb1be138a29b7b076753c9d68fec"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-return-identity-red.tap",
+      "bytes": 2733,
+      "sha256": "65bc919b64c159644efb69f6d56fe5480f9d673e5e656426147ad5a5b7e4efbc"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-return-identity-first-green.tap",
+      "bytes": 4690,
+      "sha256": "64c1aaea19d1a052250f119c61c98325d7b1aa999dbe60347dbc2ae200d06a9f"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-return-identity-final-focused.tap",
+      "bytes": 3430,
+      "sha256": "9153d32f5bcc8cbe242d970c006da4e09899e7444953363404cd8b9c07b0d734"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/candidate.json",
+      "bytes": 32521,
+      "sha256": "56aafbf0e4c17fe59223bd016c1f275c8ae5e366649f7d5ee4ec16a83e834873"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/schedule.json",
+      "bytes": 4022,
+      "sha256": "3b46a69314232a27e0bef51fc2201660008c78b11c0fe92cb83ae332161c4b9d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/codebook-cycle0018-v5.vsix",
+      "bytes": 597275,
+      "sha256": "516978008d17dd60391067b3ae9aa942d7205e6d94e5b6bcf4eede4bdaf8f304"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/profile-preparation.json",
+      "bytes": 23457,
+      "sha256": "e22ab1652166956149463d5bbce7f6bb42272b362e30c9b49656a42bb9f7ef2d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/installation.json",
+      "bytes": 7077,
+      "sha256": "1ed601aaaad935c3093c0e084e7f029c084c063c0d6cbd93d215967a6802e2d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-launch.json",
+      "bytes": 1444,
+      "sha256": "4d864649a1e3c491c3f9d1b92fda1fc7cf7e4c7c36e3c43bad81800a23b1f5cc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-bootstrap.json",
+      "bytes": 157805,
+      "sha256": "c3f51ab6f24eb3dca789de25b00236b421baab920ce6876bb3abbb2cb77a7707"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-entry-receipt.json",
+      "bytes": 180941,
+      "sha256": "ed4688eb172aa3e2d754e1d8f99c431f95b9b515f10ded332e1f3bd0546487ec"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-ready-replay.png",
+      "bytes": 143319,
+      "sha256": "0c7900af27dfbdf919b8d194c461780230fac6abae861c4e77a7f04278376eaa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-roundtrip-receipt.json",
+      "bytes": 212392,
+      "sha256": "6718f2ae428573dd1017f9f9a5415bf5d98fff363db696c90c83d4b5e9202483"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-roundtrip-failure.png",
+      "bytes": 182669,
+      "sha256": "da5e4cfd4181519e8e9b8ab134b1088df6a023d101b9afcf5f972490db3452aa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-native.webm",
+      "bytes": 4914534,
+      "sha256": "7550dca0d349c6e35b570539be90c8e08021fe36cb3b9868279093592da59b60"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-transition-frames.png",
+      "bytes": 455942,
+      "sha256": "ebe78f9abda5bfc02701793944c1670462870865264802dd24387105a9150451"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "bff65b49d988e67186648ad79c445505a2e0c61dc4d7372a88e3ee9656c3f487"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "87d5d8eecdc157608164b007b6e4f2fad1454911b881bd5cfdc70c06aeb2bd8d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/profile-preparation.json",
+      "bytes": 23451,
+      "sha256": "3d5f327b0df116f172d5f3d94426e0b12bf81367497d0aac44d31d6db9bda90a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/installation.json",
+      "bytes": 7110,
+      "sha256": "b0e9bb3363dab521e01fb593388b364455b5643729679f065c7699e26416f612"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-launch.json",
+      "bytes": 1474,
+      "sha256": "3ed495b80084faf5522843a8bd2b5b57d1a4acb8a80c736ad0b75dee2b7d3165"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "ce07e725b1cf6bcf8f42794ca227939f643471f95ed801d2d73c0f5cc9721d22"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-entry-receipt.json",
+      "bytes": 181449,
+      "sha256": "41285cb9646c8db49365fb7c36bfc94194964f02113f3bcf69c75acc1e1f9cd1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-ready-replay.png",
+      "bytes": 143319,
+      "sha256": "0c7900af27dfbdf919b8d194c461780230fac6abae861c4e77a7f04278376eaa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-roundtrip-receipt.json",
+      "bytes": 212611,
+      "sha256": "49a99a9b5896397253436dcd2f7916dc3e6de5384be43ee0caed1680e42dbac6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-roundtrip-failure.png",
+      "bytes": 182669,
+      "sha256": "da5e4cfd4181519e8e9b8ab134b1088df6a023d101b9afcf5f972490db3452aa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-native.webm",
+      "bytes": 5053193,
+      "sha256": "bb0990ad462fc430925969f0c667bdb7cd40349aacc1cc04e94295d97c80c9eb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-transition-frames.png",
+      "bytes": 382665,
+      "sha256": "c2d76392d0d2e06fffa233bed46b9d315a4acbedff55a335b7d44db5bd2edf8d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-exit.json",
+      "bytes": 61,
+      "sha256": "0bc0bdfacd4897402148d86acdf1dc59d3fe7c527600e45f0add19ee16e165c1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "9abac71e7faee1b7684264e3bead3c5c9b69e2a2298aa0798a0619ed761b3878"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-full/initial-post-failure-status.json",
+      "bytes": 2463,
+      "sha256": "3779db7aa2c9090a8a3071134b67ce09ca6b0b9e1fa744ef14d2fea02be34d13"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/diagnostic-bundle.json",
+      "bytes": 332,
+      "sha256": "f323b8137a831ef9f831a25f71e1fba9648a666d8598c2c39a5621d5d89b4201"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/recording-trace.json",
+      "bytes": 59325,
+      "sha256": "05185dab3199cbe0e534b6d312d26baa73437f4a1402fa8b3436aefee75cb02d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v5/cursor-recording-trace/initial-video-info.json",
+      "bytes": 248,
+      "sha256": "1421785133a0550497e48051a31971badfac08ed8cfe3262ee7b61f1fc35cb03"
     }
   ]
 }

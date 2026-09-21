@@ -2913,6 +2913,55 @@ async function articleRecordingLayoutHarness(capturedApplication = false) {
   } catch (error) { await harness.close(); throw error; }
 }
 
+for (const recording of [false, true]) test(`Wiki ${recording ? 'recording' : 'observation'} reentry restores Study after an empty chat wrapper refresh following actual Return`, async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness();
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.groups.at(-1)!.tabs = []; harness.groups.at(-1)!.activeTab = undefined;
+  try {
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
+    await harness.reader.action('return-wiki');
+    // Act
+    harness.resyncEditorGroups('empty');
+    await harness.reader.openRepositoryEvidence(harness.binding, recording, undefined, harness.origin); await harness.controller.settle();
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    if (recording) { assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.controller.state().mode, 'paused'); }
+    assert.deepEqual(harness.groups.at(-1)!.tabs, []); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.groups[0]!.tabs.some(tab => 'uri' in tab.input && tab.input.uri.toString() === draft.document.uri.toString()), true);
+  } finally { await harness.close(); }
+});
+
+for (const change of ['replace', 'unannounced', 'move', 'ambiguous'] as const) test(`Wiki recording reentry preserves the reading grid after an empty other-part ${change} following actual Return`, async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness();
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.groups.at(-1)!.tabs = []; harness.groups.at(-1)!.activeTab = undefined;
+  try {
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
+    await harness.reader.action('return-wiki');
+    const mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+    if (change === 'move') harness.groups.at(-1)!.viewColumn = 5;
+    if (change === 'ambiguous') harness.groups.push({ viewColumn: 5, tabs: [] });
+    // Act
+    harness.resyncEditorGroups(change === 'replace' || change === 'unannounced' ? change : 'empty', true);
+    const opening = harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin);
+    // A missing global column makes the part ambiguous; recording load refuses that scope instead of repairing it.
+    if (change === 'move') await assert.rejects(opening, /outside the verified recording range/);
+    else await opening;
+    await harness.controller.settle();
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 1 }, { size: 1 }, { size: 1 }] });
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, mutations);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+  } finally { await harness.close(); }
+});
+
 for (const cursor of [false, true]) for (const shuffled of [false, true]) test(`${cursor ? 'Cursor' : 'VS Code'} Wiki and recording round trips preserve the separate chat part and original two-row article with ${shuffled ? 'reordered' : 'ordered'} API groups`, async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(), chat = harness.addSeparateEditorPart();

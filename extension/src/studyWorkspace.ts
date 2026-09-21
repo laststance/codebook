@@ -1820,7 +1820,9 @@ export class StudyWorkspace {
   /** Retains logical ownership across Cursor's wrapper-only tab-model resync, never across moved or replaced groups. @example this.observeEditorGroups(event) */
   private observeEditorGroups(event?: vscode.TabGroupChangeEvent): void {
     const current = vscode.window.tabGroups.all, previous = this.observedEditorGroups;
-    const mainCount = this.layoutReceipt && editorLayoutGroupCount(JSON.parse(this.layoutReceipt.signature));
+    // Actual Return retains verified main scope while its Study receipt is released; later wrapper refreshes must preserve that boundary too.
+    const signature = this.layoutReceipt?.signature ?? this.repositoryLayoutRestored?.signature;
+    const mainCount = signature === undefined ? undefined : editorLayoutGroupCount(JSON.parse(signature));
     // A unique unchanged empty foreign part may refresh its wrapper; main empty groups and lifecycle changes stay unowned.
     const emptyOutsideBefore = mainCount === undefined ? [] : previous.filter(entry => entry.column > mainCount && !entry.group.tabs.length);
     const emptyOutsideAfter = mainCount === undefined ? [] : current.filter(group => group.viewColumn > mainCount && !group.tabs.length);
