@@ -125,6 +125,16 @@
       "path": "artifacts/cycle-0018/installed-development-v2/cursor-context-trace/initial-shutdown.json",
       "bytes": 449,
       "sha256": "161fa2f4c293520f3c5302d8a7e99a617109a5162c4e9e7b5c6a1d0231ea3ad6"
+    },
+    {
+      "path": "artifacts/cycle-0018/context-focus-final-product-shared.tap",
+      "bytes": 196653,
+      "sha256": "8b7ab76b91de3b57b7bdf4423cf992e6840befeced0a0d18e189696602edc8ae"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-context-focus-manual-green.tap",
+      "bytes": 2142,
+      "sha256": "efdb816598548842c9424f936a7bca9f8b1613f666f76f5166bd5cb1563aa3a5"
     }
   ]
 }

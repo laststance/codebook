@@ -693,7 +693,9 @@ export class StudyWorkspace {
       // Only the current explicit observation entry fronts the app; learner columns and final context focus stay intact.
       if (origin === 'repository' && !this.recordingActive && request === this.openRequest && historyRequest === this.historyRequest) this.app?.reveal(undefined, true);
       if (origin !== 'presentation' && this.contextPanel) {
-        const panel = this.contextPanel, assertPlacement = this.retainPresentationPlacement(false);
+        const panel = this.contextPanel;
+        // Reentry without a retained layout cannot arrange anything; already manual groups must remain usable.
+        const assertPlacement = firstOpen || this.layoutReceipt ? this.retainPresentationPlacement(false) : () => {};
         panel.reveal(undefined, false);
         // Drain the requested native focus change before the final layout read starts a passive ownership guard.
         await waitUntil(() => {
