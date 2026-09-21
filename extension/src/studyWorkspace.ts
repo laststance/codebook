@@ -166,7 +166,7 @@ export class StudyWorkspace {
     const matchingColumns = panes.appColumn === descriptor.appColumn && panes.sourceColumn === descriptor.sourceColumn && panes.contextColumn === descriptor.contextColumn;
     return { presentationId: this.presentationId, presentationControlRevision: this.presentationControlRevision, mode: this.presentationMode,
       requestedMode: this.requestedPresentation, state: this.presentationTransition ? 'applying' : this.opened && !this.closing ? 'open' : 'closed',
-      layoutConfirmed: this.presentationConfirmed && this.opened && !this.closing && matchingColumns && Boolean(this.layoutReceipt && this.sameStudyPanePositions(this.layoutReceipt.panes)),
+      layoutConfirmed: this.presentationConfirmed && this.opened && !this.closing && matchingColumns && Boolean(this.layoutReceipt?.mode === 'study' && this.sameStudyPanePositions(this.layoutReceipt.panes)),
       preference: { ...this.presentationPreference }, reason: this.presentationReason, playbackRevision: this.recordingActive ? this.playback?.state().revision : undefined,
       panes: { appColumn: panes.appColumn, sourceColumn: panes.sourceColumn, contextColumn: panes.contextColumn } };
   }

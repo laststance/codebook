@@ -572,6 +572,23 @@ test('returning to Wiki places source beside article without merging tabs and th
   } finally { await harness.close(); }
 });
 
+test('Wiki reading layout cannot report the selected Study presentation as confirmed', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    await harness.reader.open();
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal);
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal((await harness.reader.readPresentationState()).layoutConfirmed, false);
+    await harness.reader.open();
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+  } finally { await harness.close(); }
+});
+
 for (const change of ['shape', 'size', 'identity', 'extra-group']) test(`returning to Wiki preserves a learner's ${change} change to the native editor layout`, async () => {
   // Arrange
   const harness = await workspaceHarness(false);
