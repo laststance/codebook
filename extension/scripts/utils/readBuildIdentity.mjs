@@ -6,11 +6,24 @@ import { BUILD_PACKAGES, PACKAGE_COMMAND_OUTPUT_BYTES, PACKAGE_COMMAND_TIMEOUT_M
 
 /** Captures source provenance for metadata and {@link buildPackage}; the final check excludes only its owned untracked scratch. @example await readBuildIdentity(repository) // { revision, dirty, sourceHash, sourceHashes } */
 export async function readBuildIdentity(repository, ownedScratchDirectory) {
-  const sourceHashes = [];
+  // Hook/worktree overrides must not redirect provenance; ignore rules and index hints cannot hide selected inputs.
+  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+  const gitOptions = { cwd: repository, env: environment, encoding: 'utf8', timeout: PACKAGE_COMMAND_TIMEOUT_MS, maxBuffer: PACKAGE_COMMAND_OUTPUT_BYTES };
+  const revision = execFileSync('git', ['rev-parse', 'HEAD'], gitOptions).trim();
+  const objectFormat = execFileSync('git', ['rev-parse', '--show-object-format'], gitOptions).trim();
+  if (!['sha1', 'sha256'].includes(objectFormat)) throw new Error(`Unsupported Git object format: ${objectFormat}`);
+  const headInputs = new Map();
+  for (const entry of execFileSync('git', ['ls-tree', '-r', '-z', '--full-tree', revision, '--', ...BUILD_PACKAGES], gitOptions).split('\0')) {
+    if (!entry) continue;
+    const separator = entry.indexOf('\t'), [mode, type, object] = entry.slice(0, separator).split(' ');
+    headInputs.set(entry.slice(separator + 1), type === 'blob' && ['100644', '100755'].includes(mode) ? object : undefined);
+  }
+  const sourceHashes = []; let selectedInputsDifferFromHead = false;
   for (const name of BUILD_PACKAGES) {
     const directory = join(repository, name);
     const files = ['package.json', 'pnpm-lock.yaml', 'tsconfig.json', ...(name === 'extension' ? ['pnpm-workspace.yaml', 'README.md'] : [])];
-    for (const part of ['src', ...(name === 'extension' ? ['scripts', 'patches'] : ['fixture'])]) {
+    const parts = ['src', ...(name === 'extension' ? ['scripts', 'patches'] : ['fixture'])];
+    for (const part of parts) {
       const inputDirectory = join(directory, part);
       if (!(await lstat(inputDirectory)).isDirectory()) throw new Error(`Expected source directory: ${name}/${part}`);
       for (const entry of await readdir(inputDirectory, { recursive: true, withFileTypes: true })) {
@@ -21,18 +34,22 @@ export async function readBuildIdentity(repository, ownedScratchDirectory) {
     for (const file of files.sort()) {
       const input = join(directory, file);
       if (!(await lstat(input)).isFile()) throw new Error(`Expected source file: ${name}/${file}`);
-      sourceHashes.push(`${name}/${file.split('\\').join('/')}:${createHash('sha256').update(await readFile(input)).digest('hex')}`);
+      const path = `${name}/${file.split('\\').join('/')}`, bytes = await readFile(input);
+      sourceHashes.push(`${path}:${createHash('sha256').update(bytes).digest('hex')}`);
+      // Hash every actual input, even ignored files, and compare its raw blob bytes to the exact recorded revision.
+      const object = createHash(objectFormat).update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+      if (headInputs.get(path) !== object) selectedInputsDifferFromHead = true;
+      headInputs.delete(path);
     }
+    // Deleted recursive inputs can also be hidden by index hints; surviving HEAD paths make the snapshot dirty.
+    if ([...headInputs.keys()].some(path => parts.some(part => path.startsWith(`${name}/${part}/`)))) selectedInputsDifferFromHead = true;
   }
   // Ignore only this publication's untracked scratch; tracked changes and other untracked files still count.
   const scratchPrefix = ownedScratchDirectory === undefined ? undefined : `?? ${relative(await realpath(repository), await realpath(ownedScratchDirectory)).split('\\').join('/')}/`;
-  // Hook/worktree Git overrides must not redirect provenance away from the source root being hashed.
-  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
-  const gitOptions = { cwd: repository, env: environment, encoding: 'utf8', timeout: PACKAGE_COMMAND_TIMEOUT_MS, maxBuffer: PACKAGE_COMMAND_OUTPUT_BYTES };
   const status = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], gitOptions);
-  const dirty = status.split('\0').some(entry => entry && !(scratchPrefix && entry.startsWith(scratchPrefix)));
+  const dirty = selectedInputsDifferFromHead || status.split('\0').some(entry => entry && !(scratchPrefix && entry.startsWith(scratchPrefix)));
   return {
-    revision: execFileSync('git', ['rev-parse', 'HEAD'], gitOptions).trim(),
+    revision,
     dirty,
     sourceHash: createHash('sha256').update(sourceHashes.join('\n')).digest('hex'), sourceHashes,
   };

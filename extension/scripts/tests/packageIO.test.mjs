@@ -21,7 +21,7 @@ async function outputFixture(context) {
 }
 
 /** Supplies real Git/source identity for build-boundary failures without touching the working checkout. @example const repository = await sourceFixture(context) */
-async function sourceFixture(context) {
+async function sourceFixture(context, objectFormat = 'sha1') {
   const { directory, output } = await outputFixture(context), repository = join(directory, 'repository');
   for (const name of BUILD_PACKAGES) {
     const root = join(repository, name);
@@ -32,7 +32,7 @@ async function sourceFixture(context) {
     await writeFile(join(root, 'src/main.ts'), 'export const source = 1;');
   }
   await writeFile(join(repository, '.gitignore'), '**/dist/\n**/build/\n');
-  await runPackageCommand('git', ['init', '--quiet'], repository); await runPackageCommand('git', ['add', '.'], repository);
+  await runPackageCommand('git', ['init', '--quiet', `--object-format=${objectFormat}`], repository); await runPackageCommand('git', ['add', '.'], repository);
   await runPackageCommand('git', ['-c', 'user.name=Codebook Test', '-c', 'user.email=codebook-test@example.invalid', 'commit', '--quiet', '-m', 'fixture'], repository);
   return { directory, output, repository };
 }
@@ -218,6 +218,67 @@ test('package provenance remains readable when unrelated untracked paths exceed 
   const actual = await readBuildIdentity(fixture.repository);
   // Assert
   assert.equal(actual.dirty, true); assert.equal(actual.revision, before.revision); assert.equal(actual.sourceHash, before.sourceHash);
+});
+
+// Git hiding mechanisms must not remove actual compiler inputs from the clean-revision contract.
+for (const exclusion of ['tracked-ignore', 'repository-exclude', 'configured-excludes-file']) {
+  test(`selected source hidden by ${exclusion} still makes package provenance dirty`, async context => {
+    // Arrange
+    const fixture = await sourceFixture(context), path = 'extension/src/ignored/extra.ts';
+    if (exclusion === 'tracked-ignore') {
+      await writeFile(join(fixture.repository, '.gitignore'), '**/dist/\n**/build/\nextension/src/ignored/\n');
+      await runPackageCommand('git', ['add', '.gitignore'], fixture.repository);
+      await runPackageCommand('git', ['-c', 'user.name=Codebook Test', '-c', 'user.email=codebook-test@example.invalid', 'commit', '--quiet', '-m', 'ignore fixture input'], fixture.repository);
+    } else if (exclusion === 'repository-exclude') {
+      await writeFile(join(fixture.repository, '.git/info/exclude'), 'extension/src/ignored/\n');
+    } else {
+      const excludes = join(fixture.directory, 'user-excludes'); await writeFile(excludes, 'extension/src/ignored/\n');
+      await runPackageCommand('git', ['config', '--local', 'core.excludesFile', excludes], fixture.repository);
+    }
+    const before = await readBuildIdentity(fixture.repository); assert.equal(before.dirty, false);
+    await mkdir(join(fixture.repository, 'extension/src/ignored')); await writeFile(join(fixture.repository, path), 'export const hidden = 2;\n');
+    assert.equal(execFileSync('git', ['status', '--porcelain=v1'], { cwd: fixture.repository, encoding: 'utf8' }), '');
+    // Act
+    const actual = await readBuildIdentity(fixture.repository);
+    // Assert
+    assert.equal(actual.dirty, true); assert.equal(actual.revision, before.revision);
+    assert.notEqual(actual.sourceHash, before.sourceHash);
+    assert.ok(actual.sourceHashes.includes('extension/src/ignored/extra.ts:58f6035b29c59570255ef3f7b197448d52aa48d834c4ca7f097c5127ffe814ca'));
+  });
+}
+
+// Index hints can hide both edited bytes and a deleted recursive input from ordinary status.
+for (const flag of ['assume-unchanged', 'skip-worktree']) {
+  for (const change of ['edited', 'deleted']) {
+    test(`${change} selected source hidden by ${flag} cannot receive clean package provenance`, async context => {
+      // Arrange
+      const fixture = await sourceFixture(context), path = 'extension/src/main.ts', before = await readBuildIdentity(fixture.repository);
+      assert.equal(before.dirty, false);
+      await runPackageCommand('git', ['update-index', `--${flag}`, path], fixture.repository);
+      if (change === 'edited') await writeFile(join(fixture.repository, path), 'export const source = 2;');
+      else await rm(join(fixture.repository, path));
+      assert.equal(execFileSync('git', ['status', '--porcelain=v1'], { cwd: fixture.repository, encoding: 'utf8' }), '');
+      // Act
+      const actual = await readBuildIdentity(fixture.repository);
+      // Assert
+      assert.equal(actual.dirty, true); assert.equal(actual.revision, before.revision);
+      assert.notEqual(actual.sourceHash, before.sourceHash);
+      assert.equal(actual.sourceHashes.some(input => input.startsWith('extension/src/main.ts:')), change === 'edited');
+    });
+  }
+}
+
+test('SHA-256 repositories preserve clean input identity for literal tabs and Unicode in source paths', async context => {
+  // Arrange
+  const fixture = await sourceFixture(context, 'sha256'), path = 'extension/src/雪\tinput.ts';
+  await writeFile(join(fixture.repository, path), 'export const source = 1;');
+  await runPackageCommand('git', ['add', '--', path], fixture.repository);
+  await runPackageCommand('git', ['-c', 'user.name=Codebook Test', '-c', 'user.email=codebook-test@example.invalid', 'commit', '--quiet', '-m', 'literal source path'], fixture.repository);
+  // Act
+  const actual = await readBuildIdentity(fixture.repository);
+  // Assert
+  assert.equal(actual.dirty, false); assert.equal(actual.revision.length, 64);
+  assert.ok(actual.sourceHashes.some(input => input.startsWith('extension/src/雪\tinput.ts:')));
 });
 
 // Each accidental development entry must be rejected before the dependency inventory can accept it.
