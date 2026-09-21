@@ -3819,6 +3819,60 @@ for (const separatePart of [false, true]) for (const primaryContent of ['applica
   } finally { await harness.close(); }
 });
 
+for (const mode of ['study-workspace', 'living-book', 'guided-walkthrough'] as const) test(`explicit ${mode} reentry confirms the retained layout after its pending replay source becomes ready`, async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let releaseChrome = () => {}, releaseSource = () => {};
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const state = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' });
+    const source = harness.reader.inspect().sourceUri, bundle = harness.controller.bundle(), progress = await (await harness.reader.learningStorage()).readProgress();
+    const chrome = harness.holdNextCommand('codebook.observedMoments.focus'); releaseChrome = chrome.release;
+    const opening = harness.reader.open(); await chrome.started;
+    const pendingSource = harness.holdNextSource(); releaseSource = pendingSource.release;
+    // Act: native app visibility rehydrates the same replay while explicit entry completes its layout work.
+    harness.controller.hide(); harness.controller.reveal(); await pendingSource.started;
+    chrome.release(); await opening;
+    // Assert: a verified grid never certifies a source that is still loading.
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    pendingSource.release(); await harness.controller.settle();
+    assert.equal((await harness.reader.readPresentationState()).layoutConfirmed, true);
+    assert.equal(harness.reader.presentationState().mode, mode);
+    assert.deepEqual({ ...harness.reader.presentationState().panes }, mode === 'living-book' ? { appColumn: 2, sourceColumn: 3, contextColumn: 1 } : { appColumn: 1, sourceColumn: 2, contextColumn: 3 });
+    assert.equal(harness.reader.inspect().sourceUri, source); assert.equal(harness.controller.bundle(), bundle);
+    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.controller.state().mode, 'paused');
+    assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
+    assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
+  } finally { releaseChrome(); releaseSource(); await harness.close(); }
+});
+
+for (const change of ['layout', 'groups'] as const) test(`replay readiness after explicit reentry cannot confirm later learner ${change}`, async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let releaseChrome = () => {}, releaseSource = () => {};
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const state = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const draft = harness.addForeignDraft(1), chrome = harness.holdNextCommand('codebook.observedMoments.focus'); releaseChrome = chrome.release;
+    const opening = harness.reader.open(); await chrome.started;
+    const pendingSource = harness.holdNextSource(); releaseSource = pendingSource.release;
+    harness.controller.hide(); harness.controller.reveal(); await pendingSource.started;
+    chrome.release(); await opening;
+    // Act: later learner ownership must outrank the retained placement when replay finishes.
+    if (change === 'layout') harness.changeEditorLayout({ orientation: 0, groups: [{ size: 8 }, { size: 2, groups: [{ size: 1 }, { size: 1 }] }] });
+    else harness.resyncEditorGroups('replace');
+    const manualLayout = harness.editorLayout();
+    pendingSource.release(); await harness.controller.settle();
+    // Assert
+    assert.equal((await harness.reader.readPresentationState()).layoutConfirmed, false);
+    assert.deepEqual(harness.editorLayout(), manualLayout);
+    assert.equal(harness.groups.some(group => group.tabs.some(tab => tab.isDirty && 'uri' in tab.input && tab.input.uri.toString() === draft.input.uri.toString())), true);
+    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.runtimes[0]!.dispatches, 1);
+  } finally { releaseChrome(); releaseSource(); await harness.close(); }
+});
+
 test('all three presentation modes retain the exact panels, source, learning item and learner decisions', async () => {
   // Arrange
   const harness = await workspaceHarness(false);

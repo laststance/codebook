@@ -166,7 +166,7 @@ export class StudyWorkspace {
     const matchingColumns = panes.appColumn === descriptor.appColumn && panes.sourceColumn === descriptor.sourceColumn && panes.contextColumn === descriptor.contextColumn;
     return { presentationId: this.presentationId, presentationControlRevision: this.presentationControlRevision, mode: this.presentationMode,
       requestedMode: this.requestedPresentation, state: this.presentationTransition ? 'applying' : this.opened && !this.closing ? 'open' : 'closed',
-      layoutConfirmed: this.presentationConfirmed && this.opened && !this.closing && matchingColumns && Boolean(this.layoutReceipt?.mode === 'study' && this.sameStudyPanePositions(this.layoutReceipt.panes)),
+      layoutConfirmed: this.presentationConfirmed && this.sourceReady() && matchingColumns && Boolean(this.layoutReceipt?.mode === 'study' && this.sameStudyPanePositions(this.layoutReceipt.panes)),
       preference: { ...this.presentationPreference }, reason: this.presentationReason, playbackRevision: this.recordingActive ? this.playback?.state().revision : undefined,
       panes: { appColumn: panes.appColumn, sourceColumn: panes.sourceColumn, contextColumn: panes.contextColumn } };
   }
@@ -724,7 +724,8 @@ export class StudyWorkspace {
       // Capture ownership after explicit view reveals finish resizing the native workbench.
       if (!initialLayoutFailed) await this.arrange(signal, 'study', !firstOpen);
       this.assertLifetime(lifetime); signal?.throwIfAborted();
-      if (!this.presentationTransition) this.presentationConfirmed = Boolean(this.layoutReceipt && this.sourceReady());
+      // Replay visibility can invalidate source readiness until its next ACK; retain layout ownership and project current readiness separately.
+      if (!this.presentationTransition) this.presentationConfirmed = Boolean(this.layoutReceipt);
       if (request === this.openRequest) this.initialAppPlacement = undefined;
     } catch (error) {
       // A failed first entry remains retryable without retiring a newer Open or discarding accepted native effects.
