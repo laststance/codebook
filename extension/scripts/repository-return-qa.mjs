@@ -73,6 +73,7 @@ async function check(page, options) {
 }
 
 const report = { mode, htmlSha256: createHash('sha256').update(html).digest('hex'), qualification: 'Real compiled renderer and Chromium; controlled host/cached-state inputs, separate from native installed validation.', cases: [] };
+const failures = [];
 let recording = false;
 try {
   await command(['open', 'about:blank'], 'open');
@@ -80,13 +81,17 @@ try {
   const result = await command(['run-code', `async page => (${check.toString()})(page, ${JSON.stringify({ html, message, output })})`], 'cases');
   report.cases = JSON.parse(result.split('### Result\n')[1].split('\n###')[0]);
   assert.deepEqual(report.cases.map(entry => entry.passed), mode === 'red' ? [false, false, true, true] : [true, true, true, true]);
+} catch (error) {
+  failures.push(error);
 } finally {
-  // Keep product results and session retirement independent of a failed recording transport.
+  // Attempt every cleanup step and retain earlier verification/transport failures if a later step also fails.
   try {
     if (recording) await command(['video-stop'], 'video-stop');
-  } finally {
-    try { await writeFile(`${output}/result.json`, `${JSON.stringify(report, null, 2)}\n`); }
-    finally { await command(['close'], 'close'); }
-  }
+  } catch (error) { failures.push(error); }
+  try { await writeFile(`${output}/result.json`, `${JSON.stringify(report, null, 2)}\n`); }
+  catch (error) { failures.push(error); }
+  try { await command(['close'], 'close'); }
+  catch (error) { failures.push(error); }
 }
+if (failures.length) throw new AggregateError(failures, 'Repository renderer QA failed; see command logs.', { cause: failures[0] });
 console.log(JSON.stringify(report.cases.map(entry => ({ name: entry.name, passed: entry.passed, actual: entry.actual }))));
