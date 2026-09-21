@@ -1,7 +1,7 @@
 {
   "scope": "Cycle 0018 v11 clean package, source equivalence and normal installation preparation; not actual extension loading or final acceptance",
   "availability": "Private local artifacts. Preserve or copy to durable private storage before moving this checkout. Profiles, raw runtime data and credentials are not public repository files.",
-  "updatedAt": "2026-09-21T19:33:12.919828+00:00",
+  "updatedAt": "2026-09-21T23:09:06.569601+00:00",
   "artifacts": [
     {
       "path": "artifacts/cycle-0018/blocked-audit-native-visibility.json",
@@ -37,6 +37,16 @@
       "path": "artifacts/cycle-0018/installed-development-v10/cursor-full/continuation-1924-visibility.json",
       "bytes": 7098,
       "sha256": "b68eaa05bd6543948193e660f2c171e0fb35b16a6fa1425107701ceff372f2b5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v10/cursor-full/resumed-2301-visibility.json",
+      "bytes": 7071,
+      "sha256": "658438bea70f240f6d2c22c538e4b0f5dd7601e420a177aceb8f6e331ced5298"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v10/cursor-full/resumed-2308-raised-visibility.json",
+      "bytes": 7034,
+      "sha256": "443b4e8d6a25df63470babb5fb10f72f2904f61aa9536adb31d5205772424201"
     },
     {
       "path": "artifacts/cycle-0018/installed-development-v11/before-restart.mjs",
@@ -157,6 +167,16 @@
       "path": "artifacts/cycle-0018/installed-development-v11/vscode-full/profile-preparation.json",
       "bytes": 43876,
       "sha256": "2de5f00f56cbfea368ee78ac201a48296d4b5eb04a3f7965ce907b381a9aafd9"
+    },
+    {
+      "path": "artifacts/cycle-0018/resumed-native-visibility-20260922.json",
+      "bytes": 2282,
+      "sha256": "22c9d9e9406781fc25335e680b7c06d463165753c73b309d48a386e11f1644a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/skill-specification/documentation-resume-check-20260922.json",
+      "bytes": 902,
+      "sha256": "23d74b546eb6d670fc0e8076794744919419417afc9caf747ebd28765570bff8"
     }
   ]
 }
