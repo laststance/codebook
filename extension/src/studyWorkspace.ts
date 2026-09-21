@@ -688,7 +688,9 @@ export class StudyWorkspace {
       this.ensureContext();
       if (request === this.openRequest) this.sourceEntryPending = false;
       if (firstOpen && this.currentRecord() && this.selection.follow) this.selection = { ...this.selection, follow: true, tab: 'live' };
-      await this.refresh(signal); signal?.throwIfAborted(); await this.renderSelection(true, reentry?.sourceTargetColumn !== undefined, signal, reentry ? { kind: 'reentry', receipt: reentry } : undefined);
+      await this.refresh(signal); signal?.throwIfAborted();
+      // Explicit entry fronts a covered source without queueing behind a still-loading Wiki selection.
+      await this.renderSelection(true, origin === 'study' && !this.loading && !this.sourceReady() || reentry?.sourceTargetColumn !== undefined, signal, reentry ? { kind: 'reentry', receipt: reentry } : undefined);
       this.assertLifetime(lifetime); signal?.throwIfAborted();
       // Wiki evidence keeps the learner's navigation chrome unchanged; explicit Study still reveals its outline/timeline.
       if (origin === 'study') {
@@ -697,8 +699,8 @@ export class StudyWorkspace {
         await vscode.commands.executeCommand('codebook.observedMoments.focus');
       }
       this.assertLifetime(lifetime); signal?.throwIfAborted();
-      // Only the current explicit observation entry fronts the app; learner columns and final context focus stay intact.
-      if (origin === 'repository' && !this.recordingActive && request === this.openRequest && historyRequest === this.historyRequest) this.app?.reveal(undefined, true);
+      // Settled Study or observation entry fronts its app; a newer Open cannot front a still-loading old selection.
+      if ((origin === 'study' && !this.loading || origin === 'repository' && !this.recordingActive) && request === this.openRequest && historyRequest === this.historyRequest) this.app?.reveal(undefined, true);
       if (origin !== 'presentation' && this.contextPanel) {
         const panel = this.contextPanel;
         // Reentry without a retained layout cannot arrange anything; already manual groups must remain usable.
@@ -1818,10 +1820,17 @@ export class StudyWorkspace {
   /** Retains logical ownership across Cursor's wrapper-only tab-model resync, never across moved or replaced groups. @example this.observeEditorGroups(event) */
   private observeEditorGroups(event?: vscode.TabGroupChangeEvent): void {
     const current = vscode.window.tabGroups.all, previous = this.observedEditorGroups;
+    const mainCount = this.layoutReceipt && editorLayoutGroupCount(JSON.parse(this.layoutReceipt.signature));
+    // A unique unchanged empty foreign part may refresh its wrapper; main empty groups and lifecycle changes stay unowned.
+    const emptyOutsideBefore = mainCount === undefined ? [] : previous.filter(entry => entry.column > mainCount && !entry.group.tabs.length);
+    const emptyOutsideAfter = mainCount === undefined ? [] : current.filter(group => group.viewColumn > mainCount && !group.tabs.length);
+    const emptyOutsideMatch = event && !event.opened.length && !event.closed.length && current.length === previous.length
+      && emptyOutsideBefore.length === 1 && emptyOutsideAfter.length === 1 && emptyOutsideBefore[0]!.column === emptyOutsideAfter[0]!.viewColumn
+      && event.changed.includes(emptyOutsideAfter[0]!) ? { before: emptyOutsideBefore[0]!, after: emptyOutsideAfter[0]! } : undefined;
     // Opened/closed groups never inherit identity; only changed replacement wrappers may represent survivors.
     const survivors = event ? previous.filter(entry => !event.closed.includes(entry.group) && !current.includes(entry.group)) : [];
     const replacements = event ? current.filter(group => !this.editorGroupIdentities.has(group) && !event.opened.includes(group) && event.changed.includes(group))
-      .map(group => ({ group, matches: survivors.filter(entry => this.retainsEditorTabs(entry.group, group)) })) : [];
+      .map(group => ({ group, matches: survivors.filter(entry => this.retainsEditorTabs(entry.group, group) || emptyOutsideMatch?.before === entry && emptyOutsideMatch.after === group) })) : [];
     // Exact survivors precede copied contraction tabs; ambiguous exact candidates cannot fall back to a weaker match.
     const exactReplacements = replacements.map(({ group, matches }) => ({ group, matches: matches.filter(entry => entry.group.tabs.length === group.tabs.length) }));
     const expandedReplacements = replacements.map(({ group, matches }) => ({ group, matches: exactReplacements.some(replacement => replacement.group === group && replacement.matches.length)

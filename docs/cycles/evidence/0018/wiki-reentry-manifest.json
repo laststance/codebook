@@ -1,0 +1,240 @@
+{
+  "scope": "Cycle 0018 ordinary v4 Wiki reentry failure, separately modified diagnostic traces and source regression controls; not final acceptance",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/schedule-full.json",
+      "bytes": 2464,
+      "sha256": "911f1a889fb5607cf693fed65597f155b3ab4c9e8b16b079f35334ce615bad9f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/candidate.json",
+      "bytes": 32521,
+      "sha256": "98bb87a518054e7f7c4ad567ad42e0c41668bb8ced25189376cfa95e2385e474"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-full/installation.json",
+      "bytes": 7079,
+      "sha256": "eaf1ba0407a5e62ebbf9d8fa57b7064a386c86fe8da485b6b217963e6f20b15b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-full/initial-launch.json",
+      "bytes": 1454,
+      "sha256": "2cae0ddd04f5bb501aeb2777d0d9ea7417a4fe1807eb19dd2ae7fde08db26cb9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-full/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "7e552c4cb6b05a9c195b8c81a2204f1603b28c2755ba72b3089c2c0f6918b557"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-full/initial-entry-receipt.json",
+      "bytes": 194746,
+      "sha256": "d7b364068a2fefffdd3b7cec66744e6b6d129b3282d3ac2442de3e16092dbe1c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-full/initial-entry-failure.png",
+      "bytes": 176713,
+      "sha256": "4af750f908de6591e2a34c695551ab7e41ed50e7b86637f04bd47bedc5e4438e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-full/initial-native.webm",
+      "bytes": 3347568,
+      "sha256": "6e7c7b373d3cb83aed88b33674c08d029e41364e7cd54164460a8f2a7179b12f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-full/initial-video-info.json",
+      "bytes": 248,
+      "sha256": "ee1c808a0a9d3f699130d48c740a6a689b0233abfa1cedcfe40eeec479eb393a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "21a356c4f22ab65a4316e872c023b7f31a3268b5166ace0a14c8498615222e4f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-full/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "91e12ed345da6de0b53ee135a6654e17b33a30bfe3ee6452c2a092886e4ef0a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-full/initial-entry-frames.png",
+      "bytes": 995280,
+      "sha256": "233600f14041cfa586563ae79bd3d1ffc9176e84774fbb4238715f4c01a998d1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/installation.json",
+      "bytes": 7097,
+      "sha256": "374d1caf3ad176376f656ad66dfd11b77dadfd0a4410fb8357ee8f864b287134"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/initial-launch.json",
+      "bytes": 1463,
+      "sha256": "1ee32db8c960ee83990d1c8241e83237d0a02b9677744362942b26aafb7e5a7e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "daff44ac15f98cce1938de28ee54b525f274917358a79cc678bac1b26ca183cf"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/initial-entry-receipt.json",
+      "bytes": 194573,
+      "sha256": "586d94a0ff21cb09427f16d728873e2076a62b6865913c8cecb7ccf3f41db2d5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/initial-entry-failure.png",
+      "bytes": 176713,
+      "sha256": "4af750f908de6591e2a34c695551ab7e41ed50e7b86637f04bd47bedc5e4438e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/initial-native.webm",
+      "bytes": 4043394,
+      "sha256": "6f3a16656a09aaedad504114f96ab548778a2ba5e61b6359041b6115c72dbf4d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/initial-video-info.json",
+      "bytes": 194,
+      "sha256": "e7d927965b7d6904adff883c3802c7788c4692ffce8a76f00aeee55e74bab000"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/initial-exit.json",
+      "bytes": 61,
+      "sha256": "5461640653c248679fdd5e04b7d1ea1bbc311ba75ad014f4f087889f36dd02ed"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/initial-shutdown.json",
+      "bytes": 448,
+      "sha256": "4b2b3252158befc8294cf46dd5cb01d65888909ee47d6cc3998413d4f67b9cdc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/entry-frames.png",
+      "bytes": 740294,
+      "sha256": "ca834e6bb8ee1935f7edfcca8e705975951e741bbe8d8b6bc0b910fee41a96c5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/diagnostic-bundle.json",
+      "bytes": 332,
+      "sha256": "7792f74926d575997aec86f5e0596dfac3714c409235bf5c97de06a8bc081eaa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace/reentry-trace.json",
+      "bytes": 2828,
+      "sha256": "94d194b2b495b5a59f4e4ca6a4e79ce4744ddfdd0472a14f3cee6f63b26f08e4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/installation.json",
+      "bytes": 7098,
+      "sha256": "9d56e11c32d88643737a65453656de3d0eb9cd1bc0b02719d6ac42640f47e116"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/initial-launch.json",
+      "bytes": 1463,
+      "sha256": "27f6eade70c3dde4bc081f61df83610a21ba17aeb0b1e6e615c1ef07907901a8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "5aec926d329637d460f5abf75b8e5e1fc96c1e7ee1f48e24c6446732168d4c66"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/initial-entry-receipt.json",
+      "bytes": 193317,
+      "sha256": "971686a483ae85a183947250d8d11dfb18edcec5b9a970fd30891078258563e6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/initial-entry-failure.png",
+      "bytes": 176713,
+      "sha256": "4af750f908de6591e2a34c695551ab7e41ed50e7b86637f04bd47bedc5e4438e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/initial-native.webm",
+      "bytes": 4383686,
+      "sha256": "64349dc124b25be81181969bf2fa484564127698235a0f5f5a0468e8b2420596"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/initial-video-info.json",
+      "bytes": 194,
+      "sha256": "932f12d513b2ebba087b5c2222f6c88ee61657598368a4b41fca6e343c462d29"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/initial-exit.json",
+      "bytes": 61,
+      "sha256": "7da4f23702302e12223e9708947dfe90f86ceab2e782d5875d0fd329195899d5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/initial-shutdown.json",
+      "bytes": 448,
+      "sha256": "d1f6806d3b5a21d50d8fb1bd446023daa8249cff8b8c66fcdb7912ada2c886ef"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/entry-frames.png",
+      "bytes": 881245,
+      "sha256": "2381088f185d0c2addb01501361d46f1c75d37bf873c61fedf4770b04cca9f6b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/diagnostic-bundle.json",
+      "bytes": 332,
+      "sha256": "833f9e20ec7f17b73ffb6a045f877013a3ba0558a55a64a8e00f284a56de9f9b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/reentry-trace.json",
+      "bytes": 6858,
+      "sha256": "7ac2314f2e8681766d0ef896307b18549a9499d0574021b0f99730ad16025b59"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v4/cursor-reentry-trace2/native-tab-model-contract.json",
+      "bytes": 1069,
+      "sha256": "eb5c432eddb916afed25ca88fd90003e844afcfb8f34dcfdffd3f1b554723282"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-controls-red.tap",
+      "bytes": 2504,
+      "sha256": "29876c1de51872b9fde9d584f6db7c515fde9928de9e28bc7f1be03db6cdbc18"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-controls-green.tap",
+      "bytes": 3150,
+      "sha256": "3a156c3243bfad4ff204decac030512f79d0825e7fad2cf5638ca87bb08be245"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-preservation-green.tap",
+      "bytes": 4090,
+      "sha256": "4c0ea798d8feadd77f4e28747a26e96b2fbce09eea85d762ac77c1f9901c937d"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-preservation-final-green.tap",
+      "bytes": 4608,
+      "sha256": "6b13861c5c65d4459ad2e18a8e95c4654b0dce53ab3a2c2079db8d07bf89ce55"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-workspace-reader.tap",
+      "bytes": 7188,
+      "sha256": "4b18c527ab76cfbcbe9ec2e6cbd14ab720ee1bd29267ae9991c2695b08e9993f"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-workspace-interruption.json",
+      "bytes": 1800,
+      "sha256": "3135fccd30ecaa12609d5d9b822c38c29d9e74959f2b674507453f1371166989"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-workspace-diagnostic.tap",
+      "bytes": 34883,
+      "sha256": "11d634d39a983a9459c813c76b498a18953ae46c80fc1fd3f9cdb5c34284d032"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-diagnostic-interruption.json",
+      "bytes": 460,
+      "sha256": "82dea3a94309e26e18eec7ce26ffea94064285025ea04be3d7733d614480c1a6"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-workspace-reader-final.tap",
+      "bytes": 74193,
+      "sha256": "08d7478c220bb8520ac7f4756b3fc10ef30b909224c7e62db0b8fe4788084a28"
+    },
+    {
+      "path": "artifacts/cycle-0018/wiki-reentry-final-controls-green.tap",
+      "bytes": 5106,
+      "sha256": "aeaff8660617e8c0db350789f3eecd9c5314e61f58b220bebd77064b36772581"
+    }
+  ]
+}

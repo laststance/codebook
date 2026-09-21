@@ -369,11 +369,13 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     changeAfterNextReadingReveal(change: () => void) { nextReadingReveal = change; },
     addForeignDraft(column = groups[0]!.viewColumn) { const tab = { input: new TabInputText(Uri.file(join(harness.directory, 'notes.txt'))), isDirty: true }; groups.find(group => group.viewColumn === column)!.tabs.push(tab); return tab; },
     addTextPreview(path: string, column: number, dirty = false) { const tab = { input: new TabInputText(Uri.file(path)), isPreview: true, isDirty: dirty }; groups.find(group => group.viewColumn === column)!.tabs.push(tab); return tab; },
-    resyncEditorGroups(change?: 'move' | 'replace' | 'append' | 'unannounced' | 'remove' | 'reorder' | 'empty') {
+    resyncEditorGroups(change?: 'move' | 'replace' | 'append' | 'unannounced' | 'remove' | 'reorder' | 'empty', preserveEmpty = false) {
       // Give each fake group a distinct stable input, like the actual singleton panels/native source tabs.
-      for (const group of groups) if (!group.tabs.length && change !== 'empty') group.tabs.push({ input: new TabInputText(Uri.file(`/group-${group.viewColumn}`)) });
+      for (const group of groups) if (!group.tabs.length && change !== 'empty' && !preserveEmpty) group.tabs.push({ input: new TabInputText(Uri.file(`/group-${group.viewColumn}`)) });
       const previous = [...groups];
       groups.splice(0, groups.length, ...groups.map(group => ({ ...group, tabs: group.tabs.map(tab => ({ ...tab, label: 'Recorded application', input: tab.input instanceof TabInputText ? new TabInputText(tab.input.uri) : tab.input instanceof TabInputWebview ? new TabInputWebview(tab.input.viewType) : new TabInputUnknown() })) })));
+      // Full-model replacement keeps the same separate part behind its newly reported native wrapper.
+      if (separateEditorPart) separateEditorPart.group = groups[previous.indexOf(separateEditorPart.group)]!;
       if (change === 'move') { const first = groups[0]!.tabs; groups[0]!.tabs = groups[1]!.tabs; groups[1]!.tabs = first; }
       if (change === 'append') groups[0]!.tabs.splice(1, 0, { input: new TabInputText(Uri.file('/learner-added-notes.txt')) });
       if (change === 'remove') groups[0]!.tabs.pop();
@@ -667,6 +669,71 @@ test('Cursor wrapper-only tab resync preserves Wiki and Study layout switching d
     assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.commands.filter(name => name === 'vscode.setEditorLayout').length, 3);
   } finally { release(); await harness.close(); }
+});
+
+test('an unchanged empty chat part cannot block Study reentry after Wiki tab resync', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.groups.at(-1)!.tabs = []; harness.groups.at(-1)!.activeTab = undefined;
+  try {
+    await harness.reader.open(); await harness.reader.arrangeRepository(new AbortController().signal);
+    // Act
+    harness.resyncEditorGroups('empty'); await harness.reader.open();
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.deepEqual(harness.groups.at(-1)!.tabs, []); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.groups[0]!.tabs.some(tab => 'uri' in tab.input && tab.input.uri.toString() === draft.document.uri.toString()), true);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n'); assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+for (const change of ['replace', 'unannounced', 'move', 'ambiguous'] as const) test(`an empty other-part ${change} cannot authorize Study to replace the reading layout`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.groups.at(-1)!.tabs = []; harness.groups.at(-1)!.activeTab = undefined;
+  try {
+    await harness.reader.open(); await harness.reader.arrangeRepository(new AbortController().signal);
+    const layout = harness.editorLayout(), mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+    if (change === 'move') harness.groups.at(-1)!.viewColumn = 5;
+    if (change === 'ambiguous') harness.groups.push({ viewColumn: 5, tabs: [] });
+    // Act
+    harness.resyncEditorGroups(change === 'replace' || change === 'unannounced' ? change : 'empty', true);
+    await harness.reader.open();
+    // Assert
+    assert.deepEqual(harness.editorLayout(), layout);
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, mutations);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal(harness.groups.filter(group => group.viewColumn > 3).every(group => group.tabs.length === 0), true);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(draft.document.getText(), 'Original learner draft.\n'); assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('explicit Study reentry reveals its application and captured source over retained reading tabs', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    await harness.reader.open(); await harness.reader.arrangeRepository(new AbortController().signal);
+    const citation = harness.addTextPreview('/article-citation.ts', 1), article = harness.addTextPreview('/wiki-reader.html', 2);
+    harness.groups.find(group => group.viewColumn === 1)!.activeTab = citation;
+    harness.groups.find(group => group.viewColumn === 2)!.activeTab = article;
+    // Act
+    await harness.reader.open();
+    // Assert
+    const application = harness.groups.find(group => group.viewColumn === 1)!.activeTab?.input;
+    const source = harness.groups.find(group => group.viewColumn === 2)!.activeTab?.input;
+    assert.ok(application && 'viewType' in application); assert.equal(application.viewType, 'codebook.scopedBrowser');
+    assert.ok(source && 'uri' in source); assert.equal(source.uri.toString(), harness.reader.inspect().sourceUri);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.groups.find(group => group.viewColumn === 1)!.tabs.includes(citation), true);
+    assert.equal(harness.groups.find(group => group.viewColumn === 2)!.tabs.includes(article), true);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
 });
 
 for (const change of ['move', 'replace', 'remove', 'reorder', 'unannounced'] as const) test(`a host tab resync cannot disguise a learner group ${change} as Codebook ownership`, async () => {
