@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.2.1.0] - 2026-09-21
+
+Private extension preview 0.2.1 / MCP API 1.5. The self-contained VSIX supports ordinary installation in VS Code and Cursor. Source-qualified native checks demonstrate the bounded checkout, offline replay, shared layouts, manual-reading retention and restart independently in both editors. Packaging and native regressions found during delivery are repaired, with their original failures retained in Cycle 0016. Clean v16 binds the reviewed package to exact both-host installation, 12/12 Wiki observation/recording returns, retained drafts and complete owned cleanup; its runtime/assets match v14, which separately demonstrates 24/24 original/restarted Wiki returns. Current v16 PR CI passes 680 + 96 tests and matches all 267 selected inputs and 29 non-metadata archive entries. The two remaining frozen Claude Code reviews were stopped at the owner’s request after repeated timeouts; no completed result is inferred. Merge and main-CI comparison remain pending. Real-repository usefulness and complete product acceptance remain open.
+
+### Added
+
+- Build and verify a self-contained VSIX with its own ten demo source/executable/map/HTML assets, bundled runtime dependencies, license notices and source/file identities. The pinned CI workflow supplies the private VSIX and checksum file; ordinary installation and update instructions cover VS Code and Cursor.
+- Propose weekly updates to pinned GitHub Actions through Dependabot; normal review and checks remain required.
+- Validate a real archive before atomic publication, reject unsafe or excessive ZIP contents and unresolved runtime imports, and load the locally built artifact outside the checkout. Failed compilation, source changes, validation or final rename preserve the previous VSIX.
+
+### Fixed
+
+- Restore an explicit Wiki Return position before stale cached viewport state when native pane movement recreates the reader. A real-renderer regression and both-host original/restarted observation and recording checks preserve the exact link, reading position and understanding.
+- Preserve all renderer QA verification and cleanup failures while independently attempting video stop, evidence writing and browser close. Three combined-failure controls retain the original cause and later diagnostics.
+- Preserve compiler outputs when pnpm cannot start; reject case variants of owned build/source output destinations before cleanup. Disable optional Git index writes when reading provenance. Record running/resolved package tool versions and explicitly distinguish clean source identity from dependency-store attestation.
+- Preserve the original package spawn error when descriptor exhaustion prevents diagnostic pipes from being created; keep caller signal handlers and empty diagnostics intact.
+- Accept coherent SHA-1 and SHA-256 Git revision formats in package metadata while rejecting malformed identities. Full SHA-256 repository builds remain outside demonstrated coverage.
+- Retire owned POSIX package process groups after success, failure, timeout, output overflow or SIGINT/SIGTERM/SIGHUP/SIGQUIT during an active command. Propagate those interruptions through caller cleanup so the prior VSIX survives and owned stage/candidate files are removed; retain caller signal handlers and preserve the original code/signal if cleanup also fails. Signal handling outside command ownership remains a documented limitation. Reject Windows package builds before Git, output preparation or compiler cleanup.
+- Reject duplicate dependency-notice paths before hashing the repeated content.
+- Hash the same bounded archive bytes that were validated, even when another process atomically replaces the input path during checking.
+- Await each moved pane’s actual native focus before observing the new grid, preserving strict later learner-focus checks.
+- Isolate package Git provenance from inherited `GIT_*` overrides, compare actual selected inputs directly with the stored HEAD tree despite ignore rules/index hints/replacement refs, detect hidden deletions, bound Git output and reject explicitly empty `--out` values.
+- Cancel a pending focus-recovery receipt when the learner closes Study, preserving the original transfer failure and unrelated draft.
+- Avoid retrying an already-failed final focus wait. Reject an obsolete reading pose when the learner document changes during transfer, preserving edited text and the dirty tab.
+- Wait for the native focus receipt before confirming a presentation transfer. Preserve the visible source reading position after final pane placement and across paused replay refresh, including manual reading away from the selected stop.
+- Exclude only the current package operation's untracked scratch files from its final source-state comparison so a clean checkout can use a custom in-repository output path. Unrelated files and actual source changes still invalidate the applicable identity checks.
+- Reject accidental test, SDK-client and native-runner inputs before they enter the shipped runtime bundle. Regressions preserve evidence and unrelated drafts when final focus or source restoration cannot complete.
+
+### Changed
+
+- Resolve demo assets through the extension-owned copy in both development and ordinary installation. Development edits to the original experiment sources require a rebuild before the copied-source watcher detects them.
+- Record host-specific installation, checkout, offline replay, three-mode transfer, restart and cleanup evidence. Historical failures, transient layout motion, host console attribution and the unresolved Cursor view-descriptor ordering observation remain explicit.
+
+See [Cycle 0016](docs/cycles/0016-packaged-installation.md) for exact artifact and validation identities, and [the installation guide](extension/README.md) for supported versions and limits.
+
 ## [0.2.0.1] - 2026-09-21
 
 Documentation checkpoint; development extension remains 0.2.0 / MCP API 1.5.

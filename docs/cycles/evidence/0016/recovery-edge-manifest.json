@@ -1,0 +1,288 @@
+{
+  "recordedAt": "2026-09-21T00:57:38.057278+00:00",
+  "baselineRevision": "4379656d5772b42d915a466605f007f3656e9fda",
+  "repairBase": "7527b4920dd8978903d5477f8136b0ab70b92671",
+  "nativeOutcome": "inconclusive; original installed bundle restored",
+  "focusedRegression": {
+    "before": {
+      "pass": 1,
+      "fail": 4
+    },
+    "after": {
+      "pass": 6,
+      "fail": 0
+    }
+  },
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-attach.log",
+      "bytes": 1314,
+      "sha256": "1600b273fe8ef9445501b28a816c1dbac3d466d565d06e402eda6eb5eca38470"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-discovery-timing.json",
+      "bytes": 778,
+      "sha256": "feb574aa3c1e6edecc520071028ed6bf2c0410416cf04114568d0ee930962332"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-draft-visible.log",
+      "bytes": 771,
+      "sha256": "b3e0d92c3ed9a61013b06d2a4f533d01936505b75c70a70677c77f2858c81016"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-draft.png",
+      "bytes": 77968,
+      "sha256": "4e0c22318fd87e9d19ae0407686abe8c0f6f9d82f6011f81ab750e7324ed9732"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-exit.json",
+      "bytes": 61,
+      "sha256": "2dfa30cb3c1d422d6d4836b181b48953bd0ca2b9ecc3a244417c3556f3f819cb"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-Application-guided-walkthrough.png",
+      "bytes": 160841,
+      "sha256": "d166a8cbd472d603a4a58509ccc66c334c3ce6b59d027f8be71e7181f94e8f33"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-Application-living-book.png",
+      "bytes": 159169,
+      "sha256": "645f0eb02e8d9cbd9eb6a51b2873615ed64b2bf7dc5fe3781bd8f444fdc37b31"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-Application-study-workspace.png",
+      "bytes": 170799,
+      "sha256": "a1687df72c0fe8acf49a799042169190358f8932e9622a293c6b61a45c6bd541"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-Explanation-guided-walkthrough.png",
+      "bytes": 160857,
+      "sha256": "2bea61959204e99beb90778344dd2386502d7e1e7ff3430ef03c9f4c344ed3fe"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-Explanation-living-book.png",
+      "bytes": 159454,
+      "sha256": "8ae02cc623772d43823e0226af29160454f791b314d9b76efd43246af63bf3f6"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-Explanation-study-workspace.png",
+      "bytes": 170775,
+      "sha256": "a2e790df4fda6d45eb2d55d70d9d2982a2e801c3e1e6eb4c44ba507fb746c6c1"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-Source-guided-walkthrough.png",
+      "bytes": 162497,
+      "sha256": "6a47d98994d40feba5b3627d905a4cb178f4337c1bef10a6c1dac302dcf831cf"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-Source-living-book.png",
+      "bytes": 160673,
+      "sha256": "1b4abe8174d2113ede966c50764ef1480b6316dc5da28258fcbcfc843d7e520a"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-Source-study-workspace.png",
+      "bytes": 171313,
+      "sha256": "c2891d4375e7967b6ab7c493e2136a5884f390df531b39155194a76f8f70b7b3"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-native.webm",
+      "bytes": 4168038,
+      "sha256": "b2d5c0f7db1d3441791e2ae4cb3bcf48d04997fe054948495d0d9ebf714e0879"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate-receipt.json",
+      "bytes": 138361,
+      "sha256": "b17119dcfb22db5776f2d1311729e3d91c0650e6c5a80ccd51481abd68b82f6d"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-immediate.log",
+      "bytes": 47,
+      "sha256": "f9bc5c29f00f56e86e995617b09bf0bca36a7f30965f6b7e6064bf08dbde98d2"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-launch.json",
+      "bytes": 1326,
+      "sha256": "a3b18fbe097ad4d1d509b114255a8ca325dd882b821f62f96c729e2e8e4dcfee"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-playback.png",
+      "bytes": 159201,
+      "sha256": "2abc783fad32c2f092095b7d4b7101ea8796af8db359e59cce7bd7e0019635b8"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-prepare.log",
+      "bytes": 379,
+      "sha256": "60d2767899a41fe24c57066710f97cca081db3c220d09ef46d60e55ff8d553b4"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-receipt.json",
+      "bytes": 259439,
+      "sha256": "aaedaff1088715d76b53e2bf8aab996e4844f888e6291ed03840aed1aab4beb9"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-restart-native.webm",
+      "bytes": 845110,
+      "sha256": "115b364a49700aa53b6707783b2a443009b42c744d14d728fee5a77b649935bf"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-Application-guided-walkthrough.png",
+      "bytes": 160841,
+      "sha256": "d166a8cbd472d603a4a58509ccc66c334c3ce6b59d027f8be71e7181f94e8f33"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-Application-living-book.png",
+      "bytes": 159169,
+      "sha256": "645f0eb02e8d9cbd9eb6a51b2873615ed64b2bf7dc5fe3781bd8f444fdc37b31"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-Application-study-workspace.png",
+      "bytes": 170799,
+      "sha256": "a1687df72c0fe8acf49a799042169190358f8932e9622a293c6b61a45c6bd541"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-Explanation-guided-walkthrough.png",
+      "bytes": 160857,
+      "sha256": "2bea61959204e99beb90778344dd2386502d7e1e7ff3430ef03c9f4c344ed3fe"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-Explanation-living-book.png",
+      "bytes": 159454,
+      "sha256": "8ae02cc623772d43823e0226af29160454f791b314d9b76efd43246af63bf3f6"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-Explanation-study-workspace.png",
+      "bytes": 170775,
+      "sha256": "a2e790df4fda6d45eb2d55d70d9d2982a2e801c3e1e6eb4c44ba507fb746c6c1"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-Source-guided-walkthrough.png",
+      "bytes": 162497,
+      "sha256": "12a729cbd463a60fcfa558bead4a32bb1e4cc1d0980ad9eca5a1dd5521e3d9dd"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-Source-living-book.png",
+      "bytes": 160673,
+      "sha256": "1b4abe8174d2113ede966c50764ef1480b6316dc5da28258fcbcfc843d7e520a"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-Source-study-workspace.png",
+      "bytes": 171313,
+      "sha256": "c2891d4375e7967b6ab7c493e2136a5884f390df531b39155194a76f8f70b7b3"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-native.webm",
+      "bytes": 4162963,
+      "sha256": "0271d6b5d33593e277e2f5b9f22dfbcdd3757299e44bc7574ab8ce9dace92107"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled-receipt.json",
+      "bytes": 139226,
+      "sha256": "f372f7dad3a88088538d60719d00590b228f88393592da7504b703f80667b0a7"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-settled.log",
+      "bytes": 47,
+      "sha256": "f9bc5c29f00f56e86e995617b09bf0bca36a7f30965f6b7e6064bf08dbde98d2"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-shutdown.json",
+      "bytes": 920,
+      "sha256": "70ee49414430ec8d4f41bfb20fbce5d6cd2456effa6274f96bacc50602918e99"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/tab-diagnostic-wiki.png",
+      "bytes": 125821,
+      "sha256": "815ae8154bff586a9da795b6c88e0613ab00874dbcbabcf93a5595e94486202a"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/hardening-runtime-triage/probe-results.json",
+      "bytes": 4355,
+      "sha256": "ae5faf1b0ad13001d39cee1eb98f4233bb9bd578cb13884d16c9cebc701ef7cf"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/hardening-runtime-triage/probe.log",
+      "bytes": 1895,
+      "sha256": "f4a61ec3c77d818ec458bf15a31171f01bcccac3e475af8c3af45a7dafe60a12"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/hardening-runtime-triage/probe.mjs",
+      "bytes": 14258,
+      "sha256": "e025679689ae45332149c07056d4f5cf0fa4e04209cc8be6a4053f279b11edee"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/hardening-runtime-triage/report.md",
+      "bytes": 17958,
+      "sha256": "201c65b06dc114331328408cbdcc365581be8e2557cfc5dd2cb04b580ae9c1a5"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/hardening-runtime-triage/result.json",
+      "bytes": 22365,
+      "sha256": "43122423fae4143911c605d3ffbefe1725821f594a9219c32ef1b7dfffbb3c36"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/recovery-edge-green-build.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/recovery-edge-green-tests.log",
+      "bytes": 830,
+      "sha256": "1f918a126ba21af5a759e63071fe1a70179e584457b27c84ee1ee9809e072bfd"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/recovery-edge-red-build.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/recovery-edge-red-tests.log",
+      "bytes": 3673,
+      "sha256": "cc0aa22b363c26a5f56440d784eada742e11543644c4734961d950a32c0ea1c3"
+    },
+    {
+      "path": "artifacts/cycle-0016/tab-investigation/expectation.json",
+      "bytes": 1404,
+      "sha256": "5f111c609b9c1c8d0c4a333cd9db175cff5767b561edd44ac835b9c33d3532e6"
+    },
+    {
+      "path": "artifacts/cycle-0016/tab-investigation/frames/immediate-12.png",
+      "bytes": 458973,
+      "sha256": "a2af8359278f89d440c9649d829ffd67c9277f4d256283abdfb9dce42abe6409"
+    },
+    {
+      "path": "artifacts/cycle-0016/tab-investigation/frames/immediate-22.png",
+      "bytes": 414189,
+      "sha256": "ff4a419d017d4b32a7c105eb790a33f464e936c8ff193211f2a1a4c1e6da4ea6"
+    },
+    {
+      "path": "artifacts/cycle-0016/tab-investigation/frames/settled-12.png",
+      "bytes": 468339,
+      "sha256": "529e50e39a8fdbfe971a21a4cb991a25e8a8754e5ef878db4b3e1efb18312dec"
+    },
+    {
+      "path": "artifacts/cycle-0016/tab-investigation/frames/settled-22.png",
+      "bytes": 472463,
+      "sha256": "766d79dd453d2f9c5a7c00d9f36659fb6f1ac9bf75bf88b2e0b0f3c859dfa752"
+    },
+    {
+      "path": "artifacts/cycle-0016/tab-investigation/native-events.ndjson",
+      "bytes": 198561,
+      "sha256": "3c0d19830097e0143e7af2171f842ce3d73f34484cc0a9513c7e8855ad5c2ffa"
+    },
+    {
+      "path": "artifacts/cycle-0016/tab-investigation/restoration.json",
+      "bytes": 349,
+      "sha256": "f2fc5e16146074c413b56c8ec222226ce620975097a434695de50ad087edb210"
+    },
+    {
+      "path": "artifacts/cycle-0016/tab-investigation/result.json",
+      "bytes": 980,
+      "sha256": "f3099e1f533c2d6e833fbeb24a0c10cdcfdbddb08b6e0e6bb41b8f589c027761"
+    }
+  ]
+}

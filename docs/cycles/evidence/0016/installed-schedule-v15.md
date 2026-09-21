@@ -1,0 +1,12 @@
+# Final provenance supplement v15
+
+Frozen: 2026-09-21, before the new archive or native execution.\
+Scope: Cycle 0016 final delivery cut after the renderer QA script's cleanup-only repair.
+
+The only selected-input delta after clean v14 is `extension/scripts/repository-return-qa.mjs`: nested cleanup still writes product results and attempts session close if video-stop fails. A CLI transport red/green control and the real Chromium four-case regression already pass. Product/package implementations are unchanged; 680 + 96 passing local tests retain their v14 source identity. Fresh CI will execute its complete suite against the new committed input inventory.
+
+1. Commit the cleanup fix and accurate v14 evidence. Build/check a clean candidate and verify every selected input against that commit. Compare all archive entries with installed v14; require exactly the two build-metadata entries to differ and every runtime/asset entry to match. Any other change requires investigation before installation.
+2. Both owned profiles must be stopped with exact saved/unsaved draft backups. Install and force-reinstall the exact new archive in each actual editor, verify all 29 extension files and separately normalize only installer-added package metadata.
+3. Fresh ordinary launch, visible dirty draft, public MCP discovery, exact new build, zero application runs. Run the unchanged v14 six-case observation/recording Return schedule once per host (VS Code 1440×900; Cursor 1280×800; dark). Require all three modes, exact selected item/article/revision/citation/focus/understanding, empty Wiki/Study errors, confirmed Study before Return and x/y within 3 px. No hooks, no diagnostic delays, no learner changes.
+4. Save 12 fps native video and inspect extracted transition frames. Close normally, handle actual Cursor confirmation, wait for CLI exit and retire only owned idle processes; require exact draft backup, zero owned processes and zero descriptors. V14's separately completed restarted schedules retain their original archive identity under the explicit byte-equivalence comparison.
+5. Fresh CodeRabbit delta and primary review of the cleanup change, latest CI artifact/source/entry comparison, final documentation/PR state and outstanding Claude reports remain separate. Keep original failed v13 and diagnostic attempts. Merge PR #20 with Closes #19 only after reconciliation, then compare actual main-CI archive with installed v15. Goal #1 remains open; no final acceptance or publication claim.

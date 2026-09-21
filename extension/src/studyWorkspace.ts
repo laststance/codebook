@@ -2,7 +2,9 @@ import { REPOSITORY_BROWSER_PROFILE, REPOSITORY_READER_DEBOUNCE_MS, REPOSITORY_S
 import * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { getDemoRoot } from './utils/getDemoRoot';
+import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition';
 import { z } from 'zod';
 import { BrowserViewport } from 'codebook-cycle-0001/dist/browserViewport';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
@@ -273,21 +275,31 @@ export class StudyWorkspace {
   }
 
   /** Retains exact native focus before owned keep/move operations; unsupported foreign editors fail before any effect. @example const restore = this.capturePresentationFocus() */
-  private capturePresentationFocus(): () => Promise<void> {
+  private capturePresentationFocus(): (signal?: AbortSignal) => Promise<void> {
     if (this.app?.active || this.contextPanel?.active) {
       const panel = this.app?.active ? this.app : this.contextPanel!;
-      return async () => { if (!this.app?.active && !this.contextPanel?.active) throw new Error('Focus changed outside Codebook during placement; it was preserved.'); if (panel !== this.app && panel !== this.contextPanel) throw new Error('The focused Codebook panel was closed.'); panel.reveal(undefined, false); };
+      return async signal => {
+        if (!this.app?.active && !this.contextPanel?.active) throw new Error('Focus changed outside Codebook during placement; it was preserved.');
+        if (panel !== this.app && panel !== this.contextPanel) throw new Error('The focused Codebook panel was closed.');
+        const assertRetained = this.retainPresentationPlacement(false);
+        panel.reveal(undefined, false);
+        // Native reveal is void; wait for its focus receipt before treating later focus changes as learner actions.
+        await waitUntil(() => { assertRetained(); return panel.active && panel.visible && vscode.window.tabGroups.activeTabGroup.viewColumn === panel.viewColumn; }, 'restored presentation pane focus', PRESENTATION_READY_TIMEOUT_MS, signal);
+      };
     }
     const editor = vscode.window.activeTextEditor;
     if (editor) {
-      const document = editor.document, group = vscode.window.tabGroups.activeTabGroup, selections = editor.selections, range = editor.visibleRanges[0], preview = group.activeTab?.isPreview ?? false;
-      return async () => {
+      const document = editor.document, documentVersion = document.version, group = vscode.window.tabGroups.activeTabGroup, selections = editor.selections, restoreReadingPosition = retainEditorReadingPosition(editor), preview = group.activeTab?.isPreview ?? false;
+      return async signal => {
         if (!this.app?.active && !this.contextPanel?.active) throw new Error('Focus changed outside Codebook during placement; it was preserved.');
+        // Edits can retain the same tab/group while invalidating its captured selections and reading position.
+        if (document.version !== documentVersion) throw new Error('The previously focused document changed during presentation; its current reading position was preserved.');
         const currentGroup = document.uri.toString() === this.sourceUri?.toString() ? this.studyPanePositions().sourceGroup
           : vscode.window.tabGroups.all.find(candidate => candidate === group || this.editorGroupIdentities.get(candidate) === this.editorGroupIdentities.get(group));
         if (!currentGroup?.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === document.uri.toString())) throw new Error('The previously focused source group changed; focus was not guessed.');
         const restored = await vscode.window.showTextDocument(document, { viewColumn: currentGroup.viewColumn, preserveFocus: false, preview });
-        restored.selections = selections; if (range) restored.revealRange(range, vscode.TextEditorRevealType.AtTop);
+        if (document.version !== documentVersion) throw new Error('The previously focused document changed during presentation; its current selections were preserved.');
+        restored.selections = selections; await restoreReadingPosition(restored, signal);
       };
     }
     // An empty group has no document to restore; retain its group focus after an explicit first entry.
@@ -296,10 +308,10 @@ export class StudyWorkspace {
   }
 
   /** Transfers only stable shared state, with renderer waits outside {@link withLayout} and preference persistence after confirmation. @example await this.performPresentation(input, transition, restoreFocus) */
-  private async performPresentation(input: PresentationIntent, transition: NonNullable<StudyWorkspace['presentationTransition']>, restoreFocus?: () => Promise<void>): Promise<PresentationState> {
+  private async performPresentation(input: PresentationIntent, transition: NonNullable<StudyWorkspace['presentationTransition']>, restoreFocus?: ReturnType<StudyWorkspace['capturePresentationFocus']>): Promise<PresentationState> {
     const signal = transition.cancellation.signal, lifetime = this.lifetime;
     const previousMode = this.presentationMode;
-    let evidenceConfirmed = false;
+    let evidenceConfirmed = false, restoreFocusAttempted = false;
     let assertRetainedPlacement = this.opened ? this.retainPresentationPlacement() : undefined;
     this.presentationMovedFocus = false;
     const assertCurrent = () => {
@@ -316,7 +328,10 @@ export class StudyWorkspace {
         assertRetainedPlacement ??= this.retainPresentationPlacement();
         this.presentationPoseRevision = undefined; this.lastPublished = undefined; this.publish();
         await waitUntil(() => this.presentationPoseRevision === this.presentationControlRevision, 'retained reading position', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertRetainedPlacement();
-        // Retire pending B and fully restore confirmed A before capturing selection/source for native movement.
+        const retainedSource = this.sourceReady() ? vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === this.sourceUri?.toString() && editor.viewColumn === this.studyPanePositions().sourceColumn) : undefined;
+        const retainedObservation = this.message(true).model.observation?.id, retainedSelections = retainedSource?.selections;
+        const restoreSourceReading = retainEditorReadingPosition(retainedSource);
+        // Retire pending B and fully restore confirmed A before moving panes or adopting its evidence.
         if (this.recordingActive) {
           if (!this.playback!.bundle()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Wait for the first confirmed replay position before selecting a presentation.');
           this.playback!.hide(); await this.playback!.settle(); assertCurrent();
@@ -337,7 +352,14 @@ export class StudyWorkspace {
         else await viewport?.restorePlacement(signal);
         assertCurrent(); assertRetainedPlacement();
         if (selection !== JSON.stringify(this.selection) || bundle && this.playback?.bundle() !== bundle) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The run, selected item or confirmed replay changed during placement. Inspect the current state before restoring.');
-        await restoreFocus?.(); assertCurrent();
+        // Replay rehydration reveals the stop twice; restore the original reading context only for that same source/observation.
+        if (retainedSource && retainedSource.document.uri.toString() === this.sourceUri?.toString() && retainedObservation === this.message(true).model.observation?.id) {
+          const restoredSource = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === this.sourceUri?.toString() && editor.viewColumn === this.studyPanePositions().sourceColumn);
+          if (!restoredSource) throw new Error('The retained source is no longer visible after replay restoration.');
+          if (retainedSelections) restoredSource.selections = retainedSelections;
+          await restoreSourceReading(restoredSource, signal); assertCurrent(); assertRetainedPlacement();
+        }
+        restoreFocusAttempted = true; await restoreFocus?.(signal); assertCurrent();
         assertRetainedPlacement = this.retainPresentationPlacement();
         const receipt = this.layoutReceipt, actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent();
         assertRetainedPlacement();
@@ -353,8 +375,8 @@ export class StudyWorkspace {
       this.errors.delete('presentation');
       return { ...this.presentationState(), state: this.opened ? 'open' : 'closed' };
     } catch (error) {
-      // Restore only while focus still belongs to our move; a manual foreign focus is never taken back.
-      if (this.presentationMovedFocus && !this.closing && lifetime === this.lifetime && (this.app?.active || this.contextPanel?.active)) await restoreFocus?.().catch(() => undefined);
+      // Recover only before normal restoration was attempted; a failed receipt must not incur a second full wait.
+      if (!restoreFocusAttempted && this.presentationMovedFocus && !this.closing && lifetime === this.lifetime && (this.app?.active || this.contextPanel?.active)) await restoreFocus?.(signal).catch(() => undefined);
       if (transition.id === this.presentationId) { if (!this.presentationConfirmed) this.presentationMode = previousMode; this.presentationReason = String(error); this.publish(); }
       if (error instanceof StudyError) throw error;
       throw new StudyError('PRESENTATION_UNAVAILABLE', 'The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.', String(error));
@@ -413,7 +435,7 @@ export class StudyWorkspace {
       const app = this.app, context = this.contextPanel, descriptor = STUDY_PRESENTATIONS[mode];
       if (!app || !context || !sourceUri || vscode.window.tabGroups.all.length > STUDY_EDITOR_GROUP_COUNT) throw new Error('The three retained Study panes are unavailable.');
       const source = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === sourceUri.toString() && editor.viewColumn === this.studyPanePositions().sourceColumn);
-      const selections = source?.selections, range = source?.visibleRanges[0];
+      const selections = source?.selections, restoreReadingPosition = retainEditorReadingPosition(source);
       // Only demo-owned prepared sources may be kept; workspace files and dirty drafts remain learner-owned.
       const ownedKinds = ['codebook.scopedBrowser', 'codebook.studyContext'];
       const isOwnedPreview = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputWebview && ownedKinds.some(kind => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType));
@@ -448,13 +470,14 @@ export class StudyWorkspace {
       for (const [panel, column] of [[app, descriptor.appColumn], [context, descriptor.contextColumn]] as const) {
         // Native movement yields between panes; recheck previews immediately before each destination reveal.
         assertPreviewOwnership();
-        panel.reveal(column, true);
-        await waitUntil(() => panel.viewColumn === column && panel.visible, 'presentation pane placement', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
+        // Position can arrive before native focus; settle each owned move before capturing a passive layout baseline.
+        panel.reveal(column, false);
+        await waitUntil(() => panel.viewColumn === column && panel.visible && panel.active && vscode.window.tabGroups.activeTabGroup.viewColumn === column, 'presentation pane placement', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
         if (this.app !== app || this.contextPanel !== context) throw new Error('A retained presentation panel was disposed.');
       }
       assertPreviewOwnership();
       const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: true, preview: false }); assertPlacement();
-      if (selections) editor.selections = selections; if (range) editor.revealRange(range, vscode.TextEditorRevealType.AtTop);
+      if (selections) editor.selections = selections;
       if (this.highlight) for (const visible of vscode.window.visibleTextEditors) if (visible.document.uri.toString() === sourceUri.toString()) visible.setDecorations(this.highlight, [new vscode.Range(new vscode.Position(this.message().model.source.line - 1, 0), new vscode.Position(this.message().model.source.line - 1, 0))]);
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
       const assertAfterMove = this.retainPresentationPlacement();
@@ -465,6 +488,8 @@ export class StudyWorkspace {
       await waitUntil(async () => { const actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertSettling(); return isProportionalEditorLayout(descriptor.layout, actual); }, 'presentation grid proportions', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
       await this.keepPresentationPanel(app, signal); assertPlacement(); await this.keepPresentationPanel(context, signal); assertPlacement();
       const assertConfirmed = this.retainPresentationPlacement();
+      // Relocation and resizing can replace the native view state; restore a visible anchor only after both settle.
+      await restoreReadingPosition(editor, signal); assertPlacement(); assertConfirmed();
       const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertConfirmed();
       if (!isProportionalEditorLayout(descriptor.layout, layout)) throw new Error('Native layout changed while retaining presentation panels.');
       const panes = this.studyPanePositions();
@@ -905,7 +930,7 @@ export class StudyWorkspace {
   private async readBaselines(): Promise<void> {
     const revision = ++this.baselineRevision;
     const read = async (file: string) => {
-      const path = resolve(this.context.extensionPath, '../experiments/cycle-0004/fixture', file);
+      const path = join(getDemoRoot(this.context.extensionPath), 'fixture', file);
       const document = vscode.workspace.textDocuments.find(value => value.uri.fsPath === path);
       const text = document?.getText() ?? (await readBoundedFile(path, SOURCE_LIMIT_BYTES)).toString();
       if (Buffer.byteLength(text) > SOURCE_LIMIT_BYTES) throw new Error('Current source exceeds the reader limit.');
@@ -924,7 +949,7 @@ export class StudyWorkspace {
       if (revision !== this.baselineRevision) return;
       this.currentSourceAvailable = false;
       if (!this.baselines) {
-        const unavailable = (file: string) => ({ text: '// Current source unavailable. Read a saved observation or retry.', hash: sha256('// Current source unavailable. Read a saved observation or retry.'), line: 1, path: resolve(this.context.extensionPath, '../experiments/cycle-0004/fixture', file) });
+        const unavailable = (file: string) => ({ text: '// Current source unavailable. Read a saved observation or retry.', hash: sha256('// Current source unavailable. Read a saved observation or retry.'), line: 1, path: join(getDemoRoot(this.context.extensionPath), 'fixture', file) });
         this.baselines = { server: unavailable('server.mts'), browser: unavailable('client.mts') };
       }
       this.report('source', error); throw error;
@@ -1413,7 +1438,7 @@ export class StudyWorkspace {
       if (study?.version === 3 && study.descriptor?.sources.some(source => join(this.repositorySources!.workspace, source.path) === event.document.uri.fsPath)) this.scheduleCitationRefresh();
     }));
     // Closed-file changes must invalidate current-source progress just as edits in open documents do.
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(resolve(this.context.extensionPath, '../experiments/cycle-0004/fixture'), '{server,client}.mts'));
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(join(getDemoRoot(this.context.extensionPath), 'fixture'), '{server,client}.mts'));
     const changed = () => { if (this.baselines) void this.readBaselines().then(() => this.renderSelection()).catch(error => this.report('source', error)); };
     this.disposables.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed));
   }

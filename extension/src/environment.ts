@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, readFile } from 'node:fs/promises';
 import { constants as filesystemConstants } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { PairedRun } from 'codebook-cycle-0004/dist/run';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import type { HostConfiguration } from 'codebook-cycle-0001/dist/hostBrowser';
@@ -17,6 +17,7 @@ import { readBoundedFile } from './utils/readBoundedFile';
 import type { BrowserViewportFactory } from 'codebook-cycle-0001/dist/browserViewport';
 import { assertDevelopmentWorkspace } from './utils/assertDevelopmentWorkspace';
 import { checkDemoFiles } from './utils/checkDemoFiles';
+import { getDemoRoot } from './utils/getDemoRoot';
 
 export interface StudyPresentation {
   createViewport: BrowserViewportFactory;
@@ -44,7 +45,7 @@ export async function createEnvironment(context: Pick<vscode.ExtensionContext, '
   const product = productSchema.parse(JSON.parse(await readFile(join(vscode.env.appRoot, 'product.json'), 'utf8')));
   const host: HostConfiguration = { id: vscode.env.appName.toLowerCase().includes('cursor') ? 'cursor' : 'vscode', productVersion: product.version, apiVersion: vscode.version, commit: product.commit, browserBackend: 'managed' };
   const build = buildSchema.parse(JSON.parse(await readFile(join(context.extensionPath, 'dist/build.json'), 'utf8')));
-  const templateRoot = resolve(context.extensionPath, '../experiments/cycle-0004');
+  const templateRoot = getDemoRoot(context.extensionPath);
   const tracker = vscode.debug.registerDebugAdapterTrackerFactory('*', {
     createDebugAdapterTracker(session) {
       const run = [...runs.values()].find(candidate => candidate.owner(session));

@@ -1,0 +1,368 @@
+{
+  "recordedAt": "2026-09-21T02:30:48.757253+00:00",
+  "source": "5111cb9217d986901a4fdd3c69a22f1f5e170411",
+  "candidateSha256": "6e5f96c70366a980d35774a97c8ae80610ceb48b1bf8950bc9d643a3334a1377",
+  "availability": "Local private evidence; sanitized locations and hashes do not imply public access or full product acceptance.",
+  "artifacts": [
+    {
+      "path": "artifacts/packages/codebook-0.2.1-installed-v8.vsix",
+      "bytes": 589253,
+      "sha256": "6e5f96c70366a980d35774a97c8ae80610ceb48b1bf8950bc9d643a3334a1377"
+    },
+    {
+      "path": "artifacts/cycle-0016/attach-v8.mjs",
+      "bytes": 3777,
+      "sha256": "09354184b60c855ef1f855ef7570c132ebb1c0fa6752d9aec28c45b42a4aaca9"
+    },
+    {
+      "path": "artifacts/cycle-0016/complete-v8-timing.mjs",
+      "bytes": 2337,
+      "sha256": "efaa9e0238bd05cf7dc8cf91e29ac38d5520cb47d4c8523a6f277c16d241fbd9"
+    },
+    {
+      "path": "artifacts/cycle-0016/inspect-native-motion-v8.mjs",
+      "bytes": 1189,
+      "sha256": "39fd96a5848fc077f2677331095ce806ad2e92b2d833a42d5feb531741487a56"
+    },
+    {
+      "path": "artifacts/cycle-0016/install-v8.log",
+      "bytes": 864,
+      "sha256": "83808b5b0f8c42e2f760259e26aa21d2c585c44f477d66f89c0fc51b4d590abb"
+    },
+    {
+      "path": "artifacts/cycle-0016/install-v8.mjs",
+      "bytes": 3376,
+      "sha256": "559aa7707e3a8a9d3cd8e47646eb132114ecd198eb74363d6b7c415b80a46b0b"
+    },
+    {
+      "path": "artifacts/cycle-0016/installations-v8.json",
+      "bytes": 1012,
+      "sha256": "e8d9dcdd692f7060130f0c309efa723bf112cbc682347161459cc1c280586042"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-candidate-v8.json",
+      "bytes": 32013,
+      "sha256": "c157248d84820b1ee76183666b4edfcef0479eb67a0871a06731cc97fb66f2cd"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-schedule-v8.md",
+      "bytes": 2158,
+      "sha256": "fad0e61027e8aabcc2c2f964e2d30339f2a6fc46d5410fd357259819307a7a3d"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-smoke-v8.mjs",
+      "bytes": 6776,
+      "sha256": "9936a4e0f10376c1d64d1c40dbb0802ed6dadbad9390eb774a5e1db837a38fe8"
+    },
+    {
+      "path": "artifacts/cycle-0016/launch-v8.mjs",
+      "bytes": 1999,
+      "sha256": "3dcc3cae0ac5284e652d88037a77c0426c596abe30a27ca58610e58ae888ae38"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/installation-v8.json",
+      "bytes": 8563,
+      "sha256": "723833277d65da2e00a6e2ac154df84e652235bea87b91bc75a4b280c8c89e97"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-attach.log",
+      "bytes": 1290,
+      "sha256": "cc0b6efa4df156733cee9a4f5cd8671fdc0958c7aba8886b5f7c8fc7518c2f2a"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-complete-console.log",
+      "bytes": 18963,
+      "sha256": "8607fa1f59fe42f7c08000b94d3254cdca729841585d57565a0e96c4de4c44e7"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-console.json",
+      "bytes": 501,
+      "sha256": "40888d1837fc43629e3292b0d69f8cc571a8bc73fe69d1ca0c4f1b66986f3a75"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-discovery-timing.json",
+      "bytes": 1423,
+      "sha256": "822b9a7b50c70db7a393dfa82a7569869cc4772f2ccc2af4f0806a3aff734889"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-draft-visible.log",
+      "bytes": 759,
+      "sha256": "bcf889af6ccf8ad7a830700efebd4d6886d3bcf6ec8a521edc082630b3b1d8ab"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-draft.png",
+      "bytes": 80263,
+      "sha256": "28c104b91870c54d891fc7ddb5608ab8e04bc45d413ca7a4df4a58cf869243e5"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-exit.json",
+      "bytes": 61,
+      "sha256": "08e0f9dbe0e8e4cedb4660c55f8c14fe02ed05358138ab2d9993baa58d5b2e9b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-launch.json",
+      "bytes": 1314,
+      "sha256": "ca400969e1f1df68ce6698b7c35cb4cb295b2a6ce885ac02f9959169a4b19ea8"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-motion-inspection.json",
+      "bytes": 1074,
+      "sha256": "353008b5738a46a05482e73da3fbe5168fa90fc2858967f504b0024d0c6847ef"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-native-frames/contact.png",
+      "bytes": 436734,
+      "sha256": "4dd65d1ccb8df7ed00490769422e386879b0c001d5b2dab582e5c08c184f06d4"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-native-frames/final.png",
+      "bytes": 440367,
+      "sha256": "817eeff0bfac60e434076b0397a7ab399f66299392ec06a2ceab13a0f9f8e3f5"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-native-frames/frame-1.png",
+      "bytes": 219205,
+      "sha256": "cc224e7dce7432dab76c08e9e9dd9fd93f8b1faf64faf63173232f6cbaf30f57"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-native-frames/frame-2.png",
+      "bytes": 562199,
+      "sha256": "02a09100acaf2a26f52ae090979047017f83207e61c5de280678b9b391a6757b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-native-frames/frame-3.png",
+      "bytes": 377159,
+      "sha256": "bf4f4dbb9a7b513bc14e4245657afb1094afbdfd7e865c35c42d17e9d99a3ef5"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-native-frames/frame-4.png",
+      "bytes": 445221,
+      "sha256": "f410b4d8de5be577e21324d2c422a635d9fcfc34cacef1916abc521c171e888d"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-native.webm",
+      "bytes": 1269427,
+      "sha256": "ceebe1c61f2f71f51d7edb5655755db21dd8ddf885a7ee62265c50b210070c76"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-shutdown.json",
+      "bytes": 920,
+      "sha256": "3fb8ee645aa23743ab43e3bce65febdf0ea39501d97844696264084e1a1507a0"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-smoke-playback.png",
+      "bytes": 174345,
+      "sha256": "c8b22b3f20f5ab24b38b73db42fa117b3db9b4ebd99b2a0bda2c4b8b4f11f475"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-smoke-receipt.json",
+      "bytes": 299446,
+      "sha256": "7fe226e6eded93dbfa804474fdfeb3f89192f43013c38683cd4b3185862e08ae"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-smoke-wiki.png",
+      "bytes": 197761,
+      "sha256": "ae304688c562927b8e24ff800302169d6db121eb982e006d4267bbbbe5095793"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-smoke.log",
+      "bytes": 392,
+      "sha256": "648cfd7f860d3c847149e1dccaa897f0d9b77a1c4d91249060d8d0da45fbf7b5"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v8-visual-inspection.json",
+      "bytes": 1243,
+      "sha256": "04e85794562fb6dc504621a79f8ece31eadc5928e77a3c72542989cd7c77245a"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/installation-v8.json",
+      "bytes": 8592,
+      "sha256": "e721bd0faaec261b0bb5cc5c1197643603c8febdad9463bd2686dd4773d0333d"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-attach.log",
+      "bytes": 1305,
+      "sha256": "6716314f5134eda107d64957045a1b4b33d876f0e020b738c1240ddb9f7496ec"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-complete-console.log",
+      "bytes": 7942,
+      "sha256": "4233c1edfcaff34167fa296a34ffd9ac2621c610116a42c5aa31f23225939724"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-console.json",
+      "bytes": 501,
+      "sha256": "727913b49ceeedcc99e9c05fff38bb974022294f1e161a8100b75a1726eba970"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-discovery-timing.json",
+      "bytes": 1423,
+      "sha256": "974681570ee47f718fc63c8cb1dfbddbcb4fff3ef37a5c1f10b6159ebc515485"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-draft-visible.log",
+      "bytes": 849,
+      "sha256": "378cfc483ffe7f29472aa0b33edd2ff058c51130fd8c41e4624528d8369a04a5"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-draft.png",
+      "bytes": 105810,
+      "sha256": "04fd80809f3663de3b019204113909ba92ba9f743177c13876c9e45663825340"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-exit.json",
+      "bytes": 61,
+      "sha256": "0a10eaec157a04d9fa69ad12757d77ce48a45edfb0aa70829c0b772903966e9f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-launch.json",
+      "bytes": 1299,
+      "sha256": "8104cfd00cf85bcfffdefbbb36a43eaeda723c9ac38eb2f11df1e258bacad377"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-motion-inspection.json",
+      "bytes": 1091,
+      "sha256": "f0728c6c8f5156e3e519c695167c6b83bc28191d9c373285812a81d2628eef48"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-native-frames/contact.png",
+      "bytes": 531431,
+      "sha256": "ebe0d088a6ec5952aaef1476ef802bd351d0de6481a9cd9948c731f0a7739733"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-native-frames/final.png",
+      "bytes": 600319,
+      "sha256": "ba1b302bf26669db359b4d77763bb2dced8d9c01c4fe5b9e9854b0e329146a6c"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-native-frames/frame-1.png",
+      "bytes": 285968,
+      "sha256": "9bd51f07afd2f55b01d6bc732961327fc836644f46be995ad68450bc9a8384f2"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-native-frames/frame-2.png",
+      "bytes": 566755,
+      "sha256": "a8143700b9c5fa41f736910ae862d25c3c614a8b542d0ec07af2d048037c3f7d"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-native-frames/frame-3.png",
+      "bytes": 563979,
+      "sha256": "2671b94035355fd7ff5ab2a57fd314b89278e9d074964a33a9871297f06cfc99"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-native-frames/frame-4.png",
+      "bytes": 611890,
+      "sha256": "4b8597d48bc9c5398c9edb1ad370dd090f1058ceb8d8dffe2a5eef11376e365b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-native.webm",
+      "bytes": 1553156,
+      "sha256": "e90365944e7b0f83350d6af95435bd5ab39bd9830f56cee37e1ce76e32e0350b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-shutdown.json",
+      "bytes": 1127,
+      "sha256": "9c0f8fa4f13b406c6d0b8a0ae92cdbcbe38dbffcdce45b863af50fb38762de8f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-smoke-playback.png",
+      "bytes": 247294,
+      "sha256": "f039a795e7be98c14a020ead92960f44d41fb11dac9595b6754d858dbf55d10f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-smoke-receipt.json",
+      "bytes": 293730,
+      "sha256": "cae4540d8380104e119443180ce6f2368fec98c0dcd1b880bdbaf0cdf7987c35"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-smoke-wiki.png",
+      "bytes": 269520,
+      "sha256": "f232cf4a6f6f7ceb9cb2dab9376302c729ebb4b6c5afa5618d4142026dbaf8e2"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-smoke.log",
+      "bytes": 392,
+      "sha256": "9171824c9f7da6985746b998cf1e1b7d1f33f1987f02d0c35f9ddf7ab4ad6200"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v8-visual-inspection.json",
+      "bytes": 1243,
+      "sha256": "b2e5a35d5263f8a73687d4cef7919fcfa2b74e46611bf557b58e1c29e6d6b5ae"
+    },
+    {
+      "path": "artifacts/cycle-0016/package-v8.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0016/save-v8-video.mjs",
+      "bytes": 667,
+      "sha256": "c4bbaa930c0bc0ca41d3034a9d404d5106327baaa8ab41a35acda38b541c1030"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/frozen-provenance-package-tests.log",
+      "bytes": 6777,
+      "sha256": "f7ce1095083eaae2b86b251608be094657ab113b5c4f7c966d00e189ef699ae6"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/frozen-provenance-tests.log",
+      "bytes": 78482,
+      "sha256": "8c3e056dc5da4d9db69d62f13d6fa5fec5c15237a40978b5a80b4837acab7147"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/selected-inputs-green.log",
+      "bytes": 1284,
+      "sha256": "1471b7468fdec603d2d485d337eb4c2879358aad56a8592a56c525c2652c4521"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/selected-inputs-package-tests.log",
+      "bytes": 6610,
+      "sha256": "c3af465ba7406d563bdccc2ac05fa60b3167ce207c66edfbc7f87e5c4c3e15ba"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/selected-inputs-red.log",
+      "bytes": 5776,
+      "sha256": "158e8f23fbd7a65d2efb6ae0ad445f5fa13d1d4aa25517bcb98f2d709655bb26"
+    },
+    {
+      "path": "artifacts/cycle-0016/v8-driver-freeze.json",
+      "bytes": 1723,
+      "sha256": "52d4a8d8cf98e547b913005f917e816a020b74e2da75878438a31a68530c94ae"
+    },
+    {
+      "path": "artifacts/cycle-0016/v8-preflight-correction.json",
+      "bytes": 617,
+      "sha256": "576f6ea6a0926364f13888c17481371951f3a35a75aca32a5eb2a111a259ecf7"
+    },
+    {
+      "path": "artifacts/cycle-0016/v8-v7-archive-comparison.json",
+      "bytes": 9745,
+      "sha256": "0f41ea4c55bd7ce056b1a20600ad6d3d3ab54526d5b6408f2de970d39a6677eb"
+    },
+    {
+      "path": "artifacts/cycle-0016/v8-verification.json",
+      "bytes": 7853,
+      "sha256": "2bc4b2f60f6f5624b261a3bc1e0504bcb07acfca337c5e56b8be616daa396293"
+    },
+    {
+      "path": "artifacts/cycle-0016/verify-owned-shutdown-v8.mjs",
+      "bytes": 2731,
+      "sha256": "0d33c24bb2506df3a8bc7e9d48eeede59bbd02412688ee1f65ba5ce3aeb2df52"
+    },
+    {
+      "path": "artifacts/cycle-0016/versions-v8.json",
+      "bytes": 946,
+      "sha256": "76806aa15242e0e4ab4e9fc2e88dbd3edc5d36f372ddaa03f0064478f8edc584"
+    }
+  ]
+}

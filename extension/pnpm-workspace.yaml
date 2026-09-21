@@ -1,2 +1,5 @@
+allowBuilds:
+  '@vscode/vsce-sign': false
+  'esbuild@0.28.2': true
 patchedDependencies:
   '@modelcontextprotocol/sdk@1.30.0': patches/@modelcontextprotocol__sdk@1.30.0.patch
