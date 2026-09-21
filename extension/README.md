@@ -14,6 +14,8 @@ code --install-extension /absolute/path/codebook.vsix --force
 cursor --install-extension /absolute/path/codebook.vsix --force
 ```
 
+This checksum detects changed download bytes; it does not authenticate the publisher. Obtain both files from the trusted private workflow.
+
 Each command installs `laststance.codebook` in that editor. Install in whichever host you are using; testing one does not verify the other. The bounded installed workflow is demonstrated on **macOS arm64, VS Code 1.138.0 and Cursor 3.21.16 (API 1.128.0)**. A JavaScript-only VSIX and the manifest's engine range do not establish support for every OS/editor version. This preview is privately distributed; it is not a Marketplace or Open VSX release.
 
 Open a trusted local Git workspace. Source reading requires Git. Browser execution also requires external **Node.js 24+** and **Google Chrome**; set **Codebook: Node Executable** and **Codebook: Chrome Executable** to their actual executable paths when needed. For Cursor, disable **Settings → General → Layout → Open Chat as Editor Tabs** before opening Codebook. Remote and virtual workspaces are outside this adapter's support.
@@ -31,7 +33,6 @@ Maintainers use **Node 24.21.0** and the integrity-pinned **pnpm 12.4.2** in `pa
 ```sh
 pnpm --dir experiments/cycle-0001 install --frozen-lockfile
 pnpm --dir experiments/cycle-0004 install --frozen-lockfile
-pnpm --dir experiments/cycle-0010 install --frozen-lockfile
 pnpm --dir extension install --frozen-lockfile
 pnpm --dir extension package
 pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.1.vsix"
@@ -41,7 +42,11 @@ The package command removes only the three packages' known compiler outputs, reb
 
 The VSIX includes `package-manifest.json` with file hashes, exact dependency/input identity and tool versions, plus `dist/build.json` with source revision, dirty state and source hashes. `THIRD_PARTY_NOTICES.md` links the bundled dependency licenses. The separate check command verifies archive structure and metadata without executing supplied extension code; its self-consistency checks are not a publisher signature. The build additionally loads its own verified artifact in an unrelated temporary directory without repository dependencies. Normal installed activation and native workflow evidence are separate checks.
 
-CI runs the product/runtime tests and real packaging/failure tests before uploading only the VSIX, build receipt, verification receipt and checksum. Native recordings and connection descriptors stay outside distribution. For local regression testing, build Cycle 0010 and the extension, run the compiled suites, then run `pnpm --dir extension test:package`; package tests run sequentially because the integration test cleans shared compiler outputs.
+Archive checking and the reported SHA-256 use the same captured bytes. The checker rejects archives larger than 64 MiB, more than 2,048 entries, or more than 64 MiB of declared expanded content. Each package subprocess has a three-minute timeout and an 8 MiB output limit; failures preserve the previous VSIX.
+
+The private VSIX intentionally includes relative source/test paths and hashes in its build metadata. Those inventories are visible to anyone receiving the archive. Review or minimize that metadata before any public Marketplace/Open VSX distribution.
+
+CI runs the product/runtime tests and real packaging/failure tests before uploading only the VSIX, build receipt, verification receipt and checksum, with clean provenance required. Native recordings and connection descriptors stay outside distribution. Workflow artifacts expire after 14 days; preserve any artifact needed for later acceptance together with its checksum in the private evidence store. For local regression testing, also run `pnpm --dir experiments/cycle-0010 install --frozen-lockfile`, build Cycle 0010 and the extension, run the compiled suites, then run `pnpm --dir extension test:package`; package tests run sequentially because the integration test cleans shared compiler outputs.
 
 ## Shared presentations (API 1.5)
 

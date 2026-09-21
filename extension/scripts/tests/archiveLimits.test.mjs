@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createWriteStream } from 'node:fs';
-import { mkdtemp, rm, stat, truncate, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
@@ -26,6 +26,17 @@ test('a VSIX larger than 64 MiB is rejected before ZIP parsing', async context =
   await writeFile(path, ''); await truncate(path, 67_108_865);
   // Act / Assert
   await assert.rejects(readVsixEntries(path), /Expected a regular VSIX within the archive size limit/);
+});
+
+test('symlink and directory inputs cannot be accepted as ordinary VSIX files', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-archive-input-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const target = await archiveFixture(context, [['entry.txt', Buffer.from('bounded bytes')]]);
+  const alias = join(directory, 'alias.vsix'); await symlink(target, alias);
+  // Act / Assert
+  await assert.rejects(readVsixEntries(alias), { code: 'ELOOP' });
+  await assert.rejects(readVsixEntries(directory), /Expected a regular VSIX within the archive size limit/);
 });
 
 test('small compressed entries whose combined content exceeds 64 MiB are rejected', async context => {

@@ -63,4 +63,4 @@ Frozen before installation/execution on 2026-09-21 JST. Scope: [Cycle 0016](../.
 
 ## Results
 
-Pending. The clean v2 receipt is frozen above before installation. Do not credit diagnostics or v1 observations as v2 native completion.
+[Installed validation v2](installed-validation-v2.md) records the completed two-host execution of this frozen schedule, including its concerns. Those results retain their v2 artifact identity; diagnostics and v1 observations are not v2 completion.

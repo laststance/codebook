@@ -3139,6 +3139,51 @@ test('Close retires the reader identity immediately and waits for an already acc
   } finally { held.release(); await harness.close(); }
 });
 
+for (const trigger of ['native layout read failure', 'final focus timeout'] as const) test(`Close cancels a pending focus recovery after ${trigger} without losing the draft or original failure`, async context => {
+  // Arrange: earlier owned-panel focus receipts succeed; failure recovery receives no final focus receipt.
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let recoveryEntered = () => {};
+  const recoveryStarted = new Promise<void>(resolve => { recoveryEntered = resolve; });
+  try {
+    await harness.reader.open(); await harness.reader.action('focus-app');
+    const draft = harness.addForeignDraft(), state = harness.reader.presentationState();
+    const app = harness.reader['app']; assert.ok(app);
+    const reveal = app.reveal.bind(app); let focusRequests = 0;
+    context.mock.method(app, 'reveal', (...args: Parameters<typeof reveal>) => {
+      if (!args[1]) {
+        focusRequests++;
+        // Early layout failure recovers after one Keep Editor; final-focus timeout recovers after two keeps and one failed restore.
+        const recoveryRequest = trigger === 'native layout read failure' ? 2 : 4;
+        if (focusRequests >= recoveryRequest) { recoveryEntered(); return; }
+        if (trigger === 'final focus timeout' && focusRequests === 3) return;
+      }
+      reveal(...args);
+    });
+    if (trigger === 'native layout read failure') harness.failNextCommand('vscode.getEditorLayout');
+    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const rejected = assert.rejects(transfer, {
+      code: 'PRESENTATION_UNAVAILABLE', causeDetail: trigger === 'native layout read failure' ? 'Error: Native layout command failed' : 'Error: Timed out waiting for restored presentation pane focus',
+    });
+    await recoveryStarted;
+    const cancellation = harness.reader['presentationTransition']?.cancellation.signal; assert.ok(cancellation);
+    // Act: Close arrives after recovery begins, so its initial ownership check cannot skip the recovery.
+    let closed = false; const closing = harness.reader.close().then(() => { closed = true; });
+    assert.equal(cancellation.aborted, true);
+    await waitUntil(() => closed, 'Close cancels the recovery receipt', 1_000).catch(() => undefined);
+    const closedWithinBudget = closed;
+    // Drain even a failing regression so no native operation outlives this test.
+    await closing; await rejected;
+    // Assert
+    assert.equal(harness.reader.presentationState().state, 'closed'); assert.equal(harness.reader.inspect().opened, false);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.notEqual(harness.reader.presentationState().presentationId, state.presentationId);
+    assert.equal(harness.counts().panels, 0); assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true);
+    assert.equal(harness.runtimes.length, 0);
+    assert.equal(closedWithinBudget, true, 'Close should cancel an in-flight recovery focus receipt instead of waiting its full timeout');
+  } finally { context.mock.restoreAll(); await harness.close(); }
+});
+
 test('real MCP presentation discovery and control preserve identities across response loss and reject stale clients', async () => {
   // Arrange
   const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] }); await harness.reader.open();

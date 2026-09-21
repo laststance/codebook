@@ -372,8 +372,8 @@ export class StudyWorkspace {
       this.errors.delete('presentation');
       return { ...this.presentationState(), state: this.opened ? 'open' : 'closed' };
     } catch (error) {
-      // Restore only while focus still belongs to our move; a manual foreign focus is never taken back.
-      if (this.presentationMovedFocus && !this.closing && lifetime === this.lifetime && (this.app?.active || this.contextPanel?.active)) await restoreFocus?.().catch(() => undefined);
+      // Restore owned focus only; Close can cancel a recovery that is already awaiting its native receipt.
+      if (this.presentationMovedFocus && !this.closing && lifetime === this.lifetime && (this.app?.active || this.contextPanel?.active)) await restoreFocus?.(signal).catch(() => undefined);
       if (transition.id === this.presentationId) { if (!this.presentationConfirmed) this.presentationMode = previousMode; this.presentationReason = String(error); this.publish(); }
       if (error instanceof StudyError) throw error;
       throw new StudyError('PRESENTATION_UNAVAILABLE', 'The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.', String(error));

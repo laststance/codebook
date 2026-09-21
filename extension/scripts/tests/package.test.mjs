@@ -5,7 +5,8 @@ import { createWriteStream } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import { ZipFile } from 'yazl';
 import { buildPackage } from '../utils/buildPackage.mjs';
@@ -26,7 +27,11 @@ before(async () => {
   }
   receipt = await buildPackage(repository, artifact); original = await readVsixEntries(artifact);
 });
-after(async () => { if (directory) await rm(directory, { recursive: true, force: true }); });
+after(async () => {
+  // Failed builds still retire the exact stale-output probes owned by this suite; later builds recreate compiled outputs normally.
+  await Promise.all(COMPILED_DIRECTORIES.flatMap(path => ['js', 'd.ts'].map(extension => rm(join(repository, path, `obsolete-package-probe.${extension}`), { force: true }))));
+  if (directory) await rm(directory, { recursive: true, force: true });
+});
 
 /** Creates real ZIP mutations so archive rejection tests exercise parsing and content verification together. @example await writeArchive(entries, 'missing-icon') */
 async function writeArchive(entries, name, options = {}) {
@@ -74,6 +79,33 @@ test('the standalone checker reports the actual VSIX checksum without executing 
   // Assert
   const checked = JSON.parse(result.stdout); assert.equal(checked.extension.name, 'codebook');
   assert.equal(checked.sha256, createHash('sha256').update(await readFile(path)).digest('hex'));
+  assert.equal(result.stderr, '');
+});
+
+test('replacing the input pathname during archive validation cannot change the reported verified checksum', async () => {
+  // Arrange: an atomic replacement after ZIP acquisition leaves the original opened bytes available.
+  const path = await writeArchive(original, 'concurrent-check'), expected = await readFile(path);
+  const preload = join(directory, 'replace-after-open.mjs');
+  await writeFile(preload, `import yauzl from ${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve('yauzl')).href)};
+import { rename, writeFile } from 'node:fs/promises';
+const path = process.argv.at(-1);
+for (const method of ['openPromise', 'fromBufferPromise']) {
+  const original = yauzl[method];
+  yauzl[method] = async function(...args) {
+    const archive = await original.apply(this, args);
+    await writeFile(path + '.replacement', 'This replacement is not a ZIP.\\n');
+    await rename(path + '.replacement', path);
+    return archive;
+  };
+}
+`);
+  // Act
+  const result = await runPackageCommand(process.execPath, ['--import', preload, join(repository, 'extension/scripts/check-package.mjs'), path], directory);
+  // Assert: the receipt describes the validated snapshot, even though that pathname now contains invalid bytes.
+  const checked = JSON.parse(result.stdout);
+  assert.equal(checked.sha256, createHash('sha256').update(expected).digest('hex'));
+  assert.equal(checked.bytes, expected.length);
+  assert.equal(await readFile(path, 'utf8'), 'This replacement is not a ZIP.\n');
   assert.equal(result.stderr, '');
 });
 

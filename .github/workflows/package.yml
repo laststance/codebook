@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: package-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   package:
@@ -53,6 +53,7 @@ jobs:
           mkdir -p artifacts/packages
           node extension/scripts/package.mjs --out artifacts/packages/codebook.vsix > artifacts/packages/build-receipt.json
           node extension/scripts/check-package.mjs artifacts/packages/codebook.vsix > artifacts/packages/verification.json
+          node -e 'const fs = require("node:fs"), assert = require("node:assert/strict"); for (const path of ["build-receipt.json", "verification.json"]) assert.equal(JSON.parse(fs.readFileSync("artifacts/packages/" + path)).build.dirty, false, "CI packages require clean provenance");'
           cd artifacts/packages
           sha256sum codebook.vsix > SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

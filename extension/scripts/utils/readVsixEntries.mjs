@@ -1,12 +1,12 @@
 import yauzl from 'yauzl';
-import { lstat } from 'node:fs/promises';
 import { MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES } from './packageConstants.mjs';
+import { readVsixBytes } from './readVsixBytes.mjs';
 
 /** Reads bounded ordinary ZIP entries for package validation without extracting or executing supplied code. @example const files = await readVsixEntries('/tmp/codebook.vsix') */
-export async function readVsixEntries(path) {
-  const file = await lstat(path);
-  if (!file.isFile() || file.size > MAX_ARCHIVE_BYTES) throw new Error('Expected a regular VSIX within the archive size limit.');
-  const archive = await yauzl.openPromise(path, { lazyEntries: true, strictFileNames: true, validateEntrySizes: true, autoClose: false });
+export async function readVsixEntries(input) {
+  const bytes = Buffer.isBuffer(input) ? input : await readVsixBytes(input);
+  if (bytes.length > MAX_ARCHIVE_BYTES) throw new Error('Expected a regular VSIX within the archive size limit.');
+  const archive = await yauzl.fromBufferPromise(bytes, { lazyEntries: true, strictFileNames: true, validateEntrySizes: true });
   const entries = new Map(), foldedNames = new Set(); let expandedBytes = 0;
   try {
     for await (const entry of archive.eachEntry()) {

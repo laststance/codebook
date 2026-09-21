@@ -10,6 +10,7 @@ import { cleanPackageOutputs } from './cleanPackageOutputs.mjs';
 import { resolvePackageDestination } from './resolvePackageDestination.mjs';
 import { inspectBundle } from './inspectBundle.mjs';
 import { readVsixEntries } from './readVsixEntries.mjs';
+import { readVsixBytes } from './readVsixBytes.mjs';
 import { REQUIRED_DEMO_FILES, REQUIRED_PACKAGE_FILES, verifyPackageContent } from './verifyPackageContent.mjs';
 import { loadBuiltExtension } from './loadBuiltExtension.mjs';
 import { withPackageOutput } from './withPackageOutput.mjs';
@@ -24,7 +25,7 @@ export async function buildPackage(repository, output, runCommand = runPackageCo
     // Source snapshot -> clean compilation -> closed stage -> real archive -> isolated load -> atomic publication.
     await cleanPackageOutputs(repository);
     await runCommand('pnpm', ['--dir', extensionRoot, 'build'], repository);
-    assert.deepEqual(await readBuildIdentity(repository), before, 'Source inputs changed during compilation. Retry from a stable checkout.');
+    assert.deepEqual(await readBuildIdentity(repository, directory), before, 'Source inputs changed during compilation. Retry from a stable checkout.');
     const compiled = await import(pathToFileURL(join(extensionRoot, 'dist/constants.js')).href);
     assert.deepEqual([...compiled.DEMO_ASSET_PATHS].sort(), [...REQUIRED_DEMO_FILES].sort(), 'Runtime and package asset contracts differ.');
     const developmentManifest = JSON.parse(await readFile(join(extensionRoot, 'package.json'), 'utf8'));
@@ -60,10 +61,10 @@ export async function buildPackage(repository, output, runCommand = runPackageCo
     for (const [file, content] of files) { const path = join(stage, file); await mkdir(dirname(path), { recursive: true }); await writeFile(path, content); }
     const requireTool = createRequire(import.meta.url), vsce = join(dirname(requireTool.resolve('@vscode/vsce/package.json')), 'vsce');
     await runCommand(process.execPath, [vsce, 'package', '--out', candidate, '--no-dependencies', '--skip-license', '--no-rewrite-relative-links', '--no-gitHubIssueLinking', '--no-gitLabIssueLinking'], stage);
-    const entries = await readVsixEntries(candidate), checked = await verifyPackageContent(entries, files);
+    const archiveBytes = await readVsixBytes(candidate);
+    const entries = await readVsixEntries(archiveBytes), checked = await verifyPackageContent(entries, files);
     const loaded = await loadBuiltExtension(entries);
     assert.deepEqual(await readBuildIdentity(repository, directory), before, 'Source inputs changed during packaging. Retry from a stable checkout.');
-    const archiveBytes = await readFile(candidate);
     return { output: destination, sha256: createHash('sha256').update(archiveBytes).digest('hex'), bytes: archiveBytes.length,
       ...checked, ...loaded, dependencies: inventory.dependencies.map(value => `${value.name}@${value.version}`), durationMs: Math.round(performance.now() - started) };
   });

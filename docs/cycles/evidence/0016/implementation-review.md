@@ -21,3 +21,7 @@ Private transcripts and pass receipts are under `artifacts/cycle-0016/review/`; 
 ## Delivery follow-up
 
 [The later ship review](ship-review-fixes.md) records the reproduced custom-output packaging failure, completed Claude Code structured/adversarial/documentation reviews of `24e5467`, their individual triage and selected fixes, and fresh negative tests. The [final artifact supplement](installed-final-validation.md) separately passes in both ordinary hosts. The initial no-new-code-finding result and unavailable outside passes above are historical. Fresh delivery-tree reviews retain the owner's five-minute timeout escalation policy; their convergence and CI/merge remain separate delivery gates.
+
+## Subsequent hardening review
+
+The completed `93f8fc3` full-branch and `29e55f7` documentation passes are triaged in [delivery hardening](delivery-hardening.md). Two additional failures are reproduced and repaired: the standalone checker could hash replacement bytes after validating the original archive, and Close could wait an uncancellable focus-recovery deadline. Earlier successful tests/native supplements remain snapshot-bound; fresh verification for those repairs is required.
