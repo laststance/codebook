@@ -55,6 +55,8 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 
 ## Attempts and evidence
 
+- [Installed v11](evidence/0016/installed-validation-v11.md): clean `ba192ace`, **680/680 + 89/89**, both-host exact installation/retained state/video/normal cleanup, and successful manual CI with all 266 selected inputs and 31 archive entries equal. Its completed structured review yields three P3 topics, independently reproduced or reconciled in [descriptor hardening](evidence/0016/descriptor-exhaustion-hardening.md); modified-source checks pass **17/17 + 92/92**. [V12](evidence/0016/installed-schedule-v12.md) is the next predeclared clean-candidate supplement.
+
 - [Terminal interruption follow-up](evidence/0016/terminal-signal-hardening.md): completed structured review yields four reproduced failures (SIGHUP, SIGQUIT, simulated Windows admission and aggregate diagnostics), repaired to 5/5 selected cases and 88/88 package tests. A subsequent independently reproduced late-cleanup signal gap has separate red/green proof and a final 89/89 package suite; its independent repair verification finds no additional narrow-source defects. The modified source needs a fresh clean candidate; the original frozen adversarial pass is still running. Previous v10 native/CI results remain separate.
 
 - [Frozen v10 delivery review](evidence/0016/delivery-review-v10.md): parent/four fresh specialists/red team find no additional in-scope code defect; in-host adversarial retains a P3 broader packaging-lifetime limitation. CodeRabbit's four notifications are triaged into three topics. Claude Code phases and current CI/merge remain separate pending gates.
@@ -227,11 +229,11 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 
 ## Handoff
 
-- Latest native evidence: v7 completes the bounded fixture in each host; v8 and v10 separately verify unchanged runtime/assets, exact new installation and retained state. Clean `479dd29` / v10 passes 680 + 83 tests and bounded installed validation in both hosts. V9 is package-only and held before installation after the interruption finding. Earlier failed candidates remain separate.
-- Exact next action: finish the remaining frozen adversarial review and independent terminal-repair review, then commit/freeze the corrected source and complete clean suites, the next package/native supplement, current review/CI and PR #20 merge closing Issue #19. Each timeout adds five minutes without a retry cap. Compare the main CI artifact with the final actually installed candidate before distribution claims.
-- Native profiles are stopped: both v10 windows exited normally, exact owned idle host processes were retired, descriptors reached zero and exact original drafts remain. Build/review processes are separate. Branch: codex/cycle-0016-packaged-installation.
-- PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
-- Select a single next cycle only after this cycle's evidence identifies the next uncertainty.
+- Latest native evidence: v7 completes the bounded fixture per host; v8/v10/v11 separately bind new packages to unchanged runtime/assets and retained state. V11 at `ba192ace` passes 680 + 89 local and manual-CI tests, both-host installation/native cleanup, and all 31 CI/archive entry comparisons. V9 remains package-only/held; earlier failures remain separate.
+- Completed reviews: the narrow terminal repair, four delta specialists, subsequent delta red team, 16-file CodeRabbit CLI and full v11 structured outside pass. CodeRabbit's stale next-action wording is corrected here. Structured findings are reproduced/reconciled in descriptor hardening; its independent repair supplement completes with no findings, ten FD probes and four detected mutations.
+- Exact next action: commit the reviewed descriptor repair and run clean suites, then package/install/validate the predeclared v12 supplement. Preserve both frozen older adversarial reviews and add five minutes after every timeout. Reconcile current complete review/CI before PR #20 merge closing Issue #19; compare main-CI artifacts with the actual installed candidate.
+- Native profiles are stopped after v11: normal window/CLI exit, exact draft preservation and zero owned processes/descriptors in each host. Separate worktrees preserve the two review sources while preparing the descriptor repair; do not reset or rewrite either pending source.
+- PROJECT_STATE.md retains this one active cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged. Goal #1 stays open and final reviews are 0/10.
 
 ## GSTACK REVIEW REPORT
 

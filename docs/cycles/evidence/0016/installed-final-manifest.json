@@ -4,7 +4,7 @@
   "scope": "Final delivery supplement; no new live checkout",
   "sourceCommit": "822b1ca219e88cfd62c57676dd450850d22e88d1",
   "sourceHash": "25da6ccf0b597f0fbfa82faf4c72fb81763408e2a028ab44b9ba989930e89c94",
-  "privateArtifactRoot": "/Users/ryotamurakami/laststance/vscode-extension/codebook",
+  "privateArtifactRoot": ".",
   "hosts": {
     "vscode": {
       "version": "1.138.0",

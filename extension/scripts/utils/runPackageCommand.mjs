@@ -21,8 +21,11 @@ export async function runPackageCommand(executable, arguments_, cwd) {
     const chunks = { stdout: [], stderr: [] };
     // Drain both pipes concurrently, retaining at most the existing limit for each diagnostic channel.
     const readers = ['stdout', 'stderr'].map(async channel => {
+      // Descriptor exhaustion can reject spawn before pipes exist; preserve its original error event.
+      const stream = child[channel];
+      if (!stream) return;
       let bytes = 0;
-      for await (const chunk of child[channel]) {
+      for await (const chunk of stream) {
         chunks[channel].push(chunk.subarray(0, Math.max(0, PACKAGE_COMMAND_OUTPUT_BYTES - bytes)));
         bytes += chunk.length;
         if (bytes > PACKAGE_COMMAND_OUTPUT_BYTES) throw Object.assign(new Error(`${channel} maxBuffer length exceeded`), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
@@ -58,7 +61,7 @@ export async function runPackageCommand(executable, arguments_, cwd) {
       cleanupFailure = cleanupError;
     }
     // Close owned pipes even when an escaped or unkillable process retains an inherited descriptor.
-    child.stdout.destroy(); child.stderr.destroy(); await Promise.allSettled(readers);
+    child.stdout?.destroy(); child.stderr?.destroy(); await Promise.allSettled(readers);
     const result = { stdout: Buffer.concat(chunks.stdout).toString('utf8'), stderr: Buffer.concat(chunks.stderr).toString('utf8') };
     failure ??= interruption;
     // Settle diagnostics after cleanup and pipe draining so a late owned-phase signal keeps its identity.

@@ -2,7 +2,7 @@
   "recordedAt": "2026-09-21T03:21:55.652546+00:00",
   "baseline": "a02ef7f0b25ff9a3dc77603dd0682aa414f9e774",
   "sourceState": "Owned review-fix worktree before commit; exact tested source file hashes listed. Fresh canonical delivery verification remains separate.",
-  "privateRoot": "/Users/ryotamurakami/laststance/vscode-extension/codebook",
+  "privateRoot": ".",
   "tests": {
     "productShared": {
       "pass": 680,

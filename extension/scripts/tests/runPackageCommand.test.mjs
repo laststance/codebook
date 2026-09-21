@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +11,8 @@ const utilitySource = new URL('../utils/', import.meta.url);
 
 /** Isolates real lifecycle descendants with a shorter test-only deadline while preserving the runner and output limit. @example const fixture = await commandFixture(context, 'overflow') */
 async function commandFixture(context, scenario, cleanupTimeoutMs = 5000) {
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'];
+  const originalListeners = Object.fromEntries(signals.map(signal => [signal, process.listeners(signal)]));
   const directory = await mkdtemp(join(tmpdir(), 'codebook-command-'));
   context.after(async () => {
     // A red-before run can leave the recorded fixture writer alive; never clean up by process name.
@@ -21,6 +23,7 @@ async function commandFixture(context, scenario, cleanupTimeoutMs = 5000) {
       try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
     }
     await rm(directory, { recursive: true, force: true });
+    assert.deepEqual(Object.fromEntries(signals.map(signal => [signal, process.listeners(signal)])), originalListeners);
   });
   await mkdir(join(directory, 'utils'));
   await writeFile(join(directory, 'utils/runPackageCommand.mjs'), await readFile(new URL('runPackageCommand.mjs', utilitySource)));
@@ -100,6 +103,26 @@ test('an unavailable package executable preserves its spawn error without claimi
   await assert.rejects(fixture.runPackageCommand(join(fixture.directory, 'unavailable'), [], fixture.directory), { code: 'ENOENT', stdout: '', stderr: '' });
 });
 
+test('descriptor exhaustion preserves the package spawn error and all caller signal handlers', async context => {
+  // Arrange: cap descriptors only in an isolated process; initialize Node signal handles before exhausting them.
+  const fixture = await commandFixture(context, 'success');
+  const runner = pathToFileURL(join(fixture.directory, 'utils/runPackageCommand.mjs')).href;
+  const script = `import {runPackageCommand} from ${JSON.stringify(runner)}; import {openSync,closeSync} from 'node:fs';
+const signals=['SIGINT','SIGTERM','SIGHUP','SIGQUIT'];
+for(const signal of signals) process.on(signal,()=>{});
+const descriptors=[];let exhaustion,failure;
+try{for(;;) descriptors.push(openSync('/dev/null','r'));}catch(error){exhaustion=error.code;}
+try{await runPackageCommand(process.execPath,['-e','process.exit(0)'],process.cwd());}
+catch(error){failure={code:error.code??null,stdout:error.stdout??null,stderr:error.stderr??null};}
+finally{for(const descriptor of descriptors) closeSync(descriptor);}
+console.log(JSON.stringify({exhaustion,failure,listeners:Object.fromEntries(signals.map(signal=>[signal,process.listenerCount(signal)]))}));`;
+  // Act
+  const result = JSON.parse(execFileSync('/bin/sh', ['-c', 'ulimit -n 128 && exec "$@"', 'codebook-descriptor-test', process.execPath, '--input-type=module', '-e', script], { cwd: fixture.directory, encoding: 'utf8', timeout: 10_000 }));
+  // Assert
+  assert.deepEqual(result, { exhaustion: 'EMFILE', failure: { code: 'EMFILE', stdout: '', stderr: '' }, listeners: { SIGINT: 1, SIGTERM: 1, SIGHUP: 1, SIGQUIT: 1 } });
+  await assert.rejects(readFile(join(fixture.directory, 'lifecycle.json')), { code: 'ENOENT' });
+});
+
 /** Exercises terminal-group interruption through a real package parent after its lifecycle writer is ready. @example await interruptPackageParent(context, fixture, 'SIGINT') */
 async function interruptPackageParent(context, fixture, signal, callerHandlesSignal = false) {
   const runner = pathToFileURL(join(fixture.directory, 'utils/runPackageCommand.mjs')).href;
@@ -109,7 +132,7 @@ async function interruptPackageParent(context, fixture, signal, callerHandlesSig
 let signalsHandled=0;
 ${callerHandlesSignal ? `process.on(${JSON.stringify(signal)},()=>{signalsHandled++;});` : ''}
 try { await withPackageOutput(join(process.cwd(),'codebook.vsix'),async({candidate})=>{writeFileSync(candidate,'unfinished candidate');await runPackageCommand('pnpm',['build'],process.cwd());}); }
-catch(error) { writeFileSync('interrupt-result.json',JSON.stringify({code:error.code,signal:error.signal,signalsHandled,remainingListeners:process.listenerCount(${JSON.stringify(signal)})})); ${callerHandlesSignal ? '' : 'throw error;'} }
+catch(error) { writeFileSync('interrupt-result.json',JSON.stringify({code:error.code,signal:error.signal,signalsHandled,remainingListeners:Object.fromEntries(['SIGINT','SIGTERM','SIGHUP','SIGQUIT'].map(signal=>[signal,process.listenerCount(signal)]))})); ${callerHandlesSignal ? '' : 'throw error;'} }
 `;
   const parent = spawn(process.execPath, ['--input-type=module', '-e', script], { cwd: fixture.directory, detached: true, stdio: 'ignore' });
   const exited = new Promise((resolve, reject) => { parent.once('error', reject); parent.once('exit', (code, signal) => resolve({ code, signal })); });
@@ -138,7 +161,7 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT']) {
     const exit = await interruptPackageParent(context, fixture, signal);
     // Assert
     assert.deepEqual(exit, { code: 1, signal: null });
-    assert.deepEqual(JSON.parse(await readFile(join(fixture.directory, 'interrupt-result.json'), 'utf8')), { code: 'ABORT_ERR', signal, signalsHandled: 0, remainingListeners: 0 });
+    assert.deepEqual(JSON.parse(await readFile(join(fixture.directory, 'interrupt-result.json'), 'utf8')), { code: 'ABORT_ERR', signal, signalsHandled: 0, remainingListeners: { SIGINT: 0, SIGTERM: 0, SIGHUP: 0, SIGQUIT: 0 } });
     assert.equal(await readFile(join(fixture.directory, 'codebook.vsix'), 'utf8'), 'previous verified archive');
     assert.deepEqual((await readdir(fixture.directory)).filter(name => name.startsWith('.codebook-package-')), []);
     for (const name of ['lifecycle.json', 'writer.json']) {
@@ -183,7 +206,7 @@ test('a caller-owned interrupt handler runs once and survives package descendant
   assert.deepEqual(exit, { code: 0, signal: null });
   assert.equal(await readFile(join(fixture.directory, 'codebook.vsix'), 'utf8'), 'previous verified archive');
   assert.deepEqual((await readdir(fixture.directory)).filter(name => name.startsWith('.codebook-package-')), []);
-  assert.deepEqual(JSON.parse(await readFile(join(fixture.directory, 'interrupt-result.json'), 'utf8')), { code: 'ABORT_ERR', signal: 'SIGINT', signalsHandled: 1, remainingListeners: 1 });
+  assert.deepEqual(JSON.parse(await readFile(join(fixture.directory, 'interrupt-result.json'), 'utf8')), { code: 'ABORT_ERR', signal: 'SIGINT', signalsHandled: 1, remainingListeners: { SIGINT: 1, SIGTERM: 0, SIGHUP: 0, SIGQUIT: 0 } });
   for (const name of ['lifecycle.json', 'writer.json']) {
     const { pid } = JSON.parse(await readFile(join(fixture.directory, name), 'utf8'));
     assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
@@ -215,3 +238,35 @@ test('an interruption during cleanup retains its identity when the successful co
   assert.match(failure.stdout, /fixture finished\n/);
   assert.deepEqual(process.listeners('SIGHUP'), existingListeners);
 });
+
+for (const [signals, expectedSignal] of [[['SIGHUP'], 'SIGHUP'], [['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'], 'SIGINT']]) {
+  test(`successful cleanup after ${signals.join(' then ')} rejects with the first interruption`, async context => {
+    // Arrange: emit owned-phase signals when the real successful child's group is checked for retirement.
+    const fixture = await commandFixture(context, 'success');
+    const sendSignal = process.kill.bind(process);
+    let signalled = false;
+    const killMock = context.mock.method(process, 'kill', (pid, signal) => {
+      if (pid < 0 && signal === 0 && !signalled) {
+        signalled = true;
+        for (const interruption of signals) process.emit(interruption);
+      }
+      return sendSignal(pid, signal);
+    });
+    // Act
+    let failure;
+    try { await fixture.runPackageCommand('pnpm', ['build'], fixture.directory); } catch (error) { failure = error; }
+    finally { killMock.mock.restore(); }
+    // Assert
+    assert.equal(signalled, true);
+    assert.ok(failure instanceof Error);
+    assert.equal(failure instanceof AggregateError, false);
+    assert.equal(failure.code, 'ABORT_ERR');
+    assert.equal(failure.signal, expectedSignal);
+    assert.match(failure.stdout, /fixture finished\n/);
+    assert.equal(await readFile(join(fixture.directory, 'completed.txt'), 'utf8'), 'child completed');
+    for (const name of ['lifecycle.json', 'writer.json']) {
+      const { pid } = JSON.parse(await readFile(join(fixture.directory, name), 'utf8'));
+      assert.throws(() => sendSignal(pid, 0), { code: 'ESRCH' });
+    }
+  });
+}
