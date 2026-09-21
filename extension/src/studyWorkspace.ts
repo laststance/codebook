@@ -521,7 +521,7 @@ export class StudyWorkspace {
   /** Restores the actual article's native layout on Return; ordinary {@link RepositoryReader.open} keeps the existing owned-entry policy. @example await workspace.arrangeRepository(signal, selection) */
   async arrangeRepository(signal: AbortSignal, returnSelection?: RepositorySelection, focus?: RepositoryLayoutFocus): Promise<void> {
     this.assertPresentationIdle();
-    if (returnSelection && this.repositoryLayoutOrigin) { await this.restoreRepositoryLayout(returnSelection, signal); return; }
+    if (returnSelection && this.repositoryLayoutOrigin) { await this.restoreRepositoryLayout(returnSelection, signal, focus); return; }
     // A cold Wiki has no owned Study receipt yet, but its column Two must be a real main-grid leaf.
     if (!this.opened && !this.layoutReceipt) {
       await this.initialize(); signal.throwIfAborted(); this.installReaders();
@@ -654,19 +654,21 @@ export class StudyWorkspace {
   async open(signal?: AbortSignal, origin: 'study' | 'repository' | 'presentation' = 'study'): Promise<void> {
     if (origin !== 'presentation') this.assertPresentationIdle();
     signal?.throwIfAborted(); const lifetime = this.lifetime; this.assertLifetime(lifetime); signal?.throwIfAborted();
+    // Claim cold preparation before any await so a duplicate Open cannot bypass its unfinished native reservation.
+    if (this.sourceEntryPending) throw new StudyError('BUSY', 'Study workspace is opening. Wait for its panes before opening it again.');
     const request = ++this.openRequest, historyRequest = this.historyRequest;
-    await this.initialize(); this.assertLifetime(lifetime); signal?.throwIfAborted();
-    await this.refreshProgress(); this.assertLifetime(lifetime); signal?.throwIfAborted();
     const firstOpen = !this.opened;
     // Polling and source watchers cannot reveal a reader until cold entry has reserved its native destinations.
     if (firstOpen) this.sourceEntryPending = true;
-    this.opened = true; this.closing = false;
     const cancel = () => {
       // A cancelled first entry cannot let background refresh finish its UI, or retire a newer explicit Open.
       if (firstOpen && request === this.openRequest) this.opened = false;
     };
     signal?.addEventListener('abort', cancel, { once: true });
     try {
+      await this.initialize(); this.assertLifetime(lifetime); signal?.throwIfAborted();
+      await this.refreshProgress(); this.assertLifetime(lifetime); signal?.throwIfAborted();
+      this.opened = true; this.closing = false;
       // Explicit Study after actual Return uses the same retained layout proof as a Wiki evidence link.
       const reentry = origin === 'repository' || origin === 'study' && this.repositoryLayoutRestored ? await this.captureRepositoryLayout(signal) : undefined;
       this.assertLifetime(lifetime); signal?.throwIfAborted();
@@ -674,7 +676,6 @@ export class StudyWorkspace {
       await this.settleInitialApp(signal, lifetime);
       // A learner move after failed entry releases our unfinished placement, even when the same app panel survives.
       if (this.initialAppPlacement?.panel !== this.app || this.initialAppPlacement?.column !== this.app?.viewColumn) this.initialAppPlacement = undefined;
-      let initialLayoutFailed = false;
       let needsInitialReservation = false;
       if (firstOpen) await this.withLayout(signal, async (_lifetime, assertCurrent) => {
         const count = (await this.readMainEditorGrid(signal, assertCurrent)).groups.length;
@@ -683,10 +684,11 @@ export class StudyWorkspace {
       // Either requested destination may already name chat; reserve main panes before creating Context.
       if (needsInitialReservation) {
         await this.arrange(signal); this.assertLifetime(lifetime); signal?.throwIfAborted();
-        initialLayoutFailed = !this.layoutReceipt;
+        // A failed reservation leaves Context/source destinations ambiguous; keep accepted effects only for an explicit retry.
+        if (!this.layoutReceipt) throw new Error('The editor could not reserve separate Codebook panes. Existing editor parts were preserved; retry Open Study Workspace explicitly.');
       }
       // A cancelled reservation can already have created every main pane; finish its retained app move on explicit retry too.
-      if (!initialLayoutFailed && this.initialAppPlacement && this.app?.viewColumn !== STUDY_PRESENTATIONS[this.presentationMode].appColumn) {
+      if (this.initialAppPlacement && this.app?.viewColumn !== STUDY_PRESENTATIONS[this.presentationMode].appColumn) {
         this.app?.reveal(STUDY_PRESENTATIONS[this.presentationMode].appColumn, true);
         await waitUntil(() => this.app?.viewColumn === STUDY_PRESENTATIONS[this.presentationMode].appColumn, 'new application main pane', PRESENTATION_READY_TIMEOUT_MS, signal);
         this.assertLifetime(lifetime); signal?.throwIfAborted();
@@ -722,7 +724,7 @@ export class StudyWorkspace {
       }
       if (this.recordingActive && (firstOpen || !this.replayViewport)) this.playback?.reveal();
       // Capture ownership after explicit view reveals finish resizing the native workbench.
-      if (!initialLayoutFailed) await this.arrange(signal, 'study', !firstOpen);
+      await this.arrange(signal, 'study', !firstOpen);
       this.assertLifetime(lifetime); signal?.throwIfAborted();
       // Replay visibility can invalidate source readiness until its next ACK; retain layout ownership and project current readiness separately.
       if (!this.presentationTransition) this.presentationConfirmed = Boolean(this.layoutReceipt);
@@ -1628,7 +1630,17 @@ export class StudyWorkspace {
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
       if (useCitation) { assertAcquiredFocus = await acquireSourceFocus!(); assertCurrent(); assertGroups(); assertAcquiredFocus(); }
       else { await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup'); assertCurrent(); assertGroups(); }
-      await waitUntil(firstFocused, 'identifiable primary editor focus', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertGroups();
+      await waitUntil(() => {
+        const currentInput = vscode.window.tabGroups.all.find(group => group.viewColumn === vscode.ViewColumn.One)?.activeTab?.input;
+        const samePrimaryInput = firstInput instanceof vscode.TabInputText && currentInput instanceof vscode.TabInputText && firstInput.uri.toString() === currentInput.uri.toString()
+          || firstInput instanceof vscode.TabInputWebview && currentInput instanceof vscode.TabInputWebview && firstInput.viewType === currentInput.viewType;
+        // Group focus preserves its active tab; a different tab belongs to the learner, not this temporary focus request.
+        if (!useCitation && identifiableFirst && !samePrimaryInput) {
+          this.presentationMovedFocus = false;
+          throw new Error('The primary editor selection changed during scope measurement; the newer learner focus was preserved.');
+        }
+        return firstFocused();
+      }, 'identifiable primary editor focus', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertGroups();
       const assertFocused = this.retainPresentationPlacement();
       layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent(); assertFocused(); assertAcquiredFocus();
       count = editorLayoutGroupCount(layout);
@@ -1744,13 +1756,15 @@ export class StudyWorkspace {
   }
 
   /** Restores an exact article-origin grid on actual Return while preserving foreign tabs and later manual arrangements. @example await this.restoreRepositoryLayout(selection, signal) */
-  private async restoreRepositoryLayout(selection: RepositorySelection, signal: AbortSignal): Promise<void> {
+  private async restoreRepositoryLayout(selection: RepositorySelection, signal: AbortSignal, focus?: RepositoryLayoutFocus): Promise<void> {
     await this.withLayout(signal, async (lifetime, assertCurrent) => {
+      // Actual Return must validate its original focus after queueing, before any early exit or native operation.
+      focus?.begin();
       const saved = this.repositoryLayoutOrigin, receipt = this.layoutReceipt;
       if (!saved || JSON.stringify(saved.origin) !== JSON.stringify(this.repositoryOrigin) || JSON.stringify(saved.origin.selection) !== JSON.stringify(selection) || !receipt || receipt.mode === 'repository') return;
       // Already-observed learner group changes release ownership before any scope command can borrow focus.
       if (!this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all)) { this.layoutReceipt = undefined; return; }
-      const grid = await this.readMainEditorGrid(signal, assertCurrent), layout = grid.layout;
+      const grid = await this.readMainEditorGrid(signal, assertCurrent, focus?.acquireSourceFocus), layout = grid.layout;
       const groups = vscode.window.tabGroups.all, retained = grid.groups.filter(group => saved.groups.some(entry => entry.column === group.viewColumn));
       // Only Codebook-created groups may contract; an added learner tab must keep its current group.
       const extraGroups = grid.groups.filter(group => !retained.includes(group));

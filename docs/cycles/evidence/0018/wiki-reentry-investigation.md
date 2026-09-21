@@ -128,3 +128,7 @@ Host console summaries retain startup registration/TrustedScript notices, iframe
 | Regression tests | `extension/src/tests/studyWorkspace.test.ts:3793`, `:3822` and `:3850`; the last group retains manual layout/group protection. |
 | Related | Earlier v4–v7 Return/scope regressions above, Cycle 0018 T4/T5 and the separately required G12 development plan. |
 | Status | **DONE_WITH_CONCERNS** for this investigation: original failures are repaired and natively verified; the separate-part focus negative control, fresh delivery review/CI/merge and complete-product acceptance remain open. |
+
+## Subsequent scope-refusal and visibility checks
+
+The [follow-up report](scope-refusal-and-visibility.md) records the executed v9 separate-part negative failure, the v10 visible-notification repair and its separate positive playback failure. Its newer source review reopens ownership work. Earlier v9 successes and cleanup above retain their original candidate/profile scope; the currently retained v10 Cursor window is not covered by those cleanup receipts.

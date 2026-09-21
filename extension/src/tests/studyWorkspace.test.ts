@@ -364,14 +364,18 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     showTransientNativeSizes() { transientLayout = true; },
     failNextCommand(name: string) { failingCommand = name; },
     /** Gives presentation regressions a learner-owned mutable document whose edits do not move its tab. @example const draft = harness.focusMutableDraft(); draft.replaceContent('new text'); */
-    focusMutableDraft() {
+    focusMutableDraft(filename = 'mutable-notes.txt') {
       let text = 'Original learner draft.\n';
-      const document = { uri: Uri.file(join(harness.directory, 'mutable-notes.txt')), version: 1, getText: () => text };
+      const document = { uri: Uri.file(join(harness.directory, filename)), version: 1, getText: () => text };
       const group = groups[0]!, tab = { input: new TabInputText(document.uri), isPreview: false, isDirty: true };
       const editor = Object.assign(sourceEditor(document, group), { group });
       group.tabs.push(tab); group.activeTab = tab; activeTabGroup = group; visibleSourceEditors.push(editor);
       if (separateEditorPart) separateEditorPart.focused = false;
-      return { document, tab, replaceContent(value: string) { text = value; document.version++; } };
+      return { document, tab, replaceContent(value: string) { text = value; document.version++; }, focus() {
+        group.activeTab = tab; activeTabGroup = group;
+        if (separateEditorPart) separateEditorPart.focused = false;
+        activeTextEditorChanged(editor);
+      } };
     },
     useOpaquePrimary(kind: 'blank' | 'settings') {
       const group = groups.find(group => group.viewColumn === 1)!;
@@ -1019,6 +1023,82 @@ test('first Study entry reserves all three main panes when a separate chat part 
   } finally { await harness.close(); }
 });
 
+test('a second cold Open Study reports busy without creating Context before the first native reservation completes', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  const held = harness.holdNextCommand('vscode.getEditorLayout'), first = harness.reader.open();
+  let second: Promise<unknown> | undefined;
+  const refreshProgress = harness.reader['refreshProgress'].bind(harness.reader);
+  try {
+    await held.started;
+    let prepared = () => {};
+    const preparation = new Promise<void>(resolve => { prepared = resolve; });
+    harness.reader['refreshProgress'] = async () => { await refreshProgress(); prepared(); };
+
+    // Act
+    second = harness.reader.open().catch(error => error);
+    await Promise.race([preparation, second]);
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.reader.inspect().sourceUri, undefined);
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{}, {}] });
+    assert.equal(harness.groups.length, 3); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    const duplicate = await second;
+    assert.ok(duplicate instanceof Error && 'code' in duplicate); assert.equal(duplicate.code, 'BUSY');
+    held.release(); await first;
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true); assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); await Promise.allSettled([first, second]); harness.reader['refreshProgress'] = refreshProgress; await harness.close(); }
+});
+
+test('a duplicate Open Study during initialization reports busy while the first entry remains usable', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false), initialize = harness.reader['initialize'].bind(harness.reader);
+  let release = () => {}, initializeCalls = 0;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  harness.reader['initialize'] = async () => { initializeCalls++; await held; await initialize(); };
+  const first = harness.reader.open();
+  let second: Promise<unknown> | undefined;
+  try {
+    // Act
+    second = harness.reader.open().catch(error => error);
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    // Assert
+    assert.equal(initializeCalls, 1);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    const duplicate = await second;
+    assert.ok(duplicate instanceof Error && 'code' in duplicate); assert.equal(duplicate.code, 'BUSY');
+    release(); await first;
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { release(); await Promise.allSettled([first, second]); harness.reader['initialize'] = initialize; await harness.close(); }
+});
+
+test('a failed cold initialization allows the next explicit Open Study to retry', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false), initialize = harness.reader['initialize'].bind(harness.reader);
+  harness.reader['initialize'] = async () => { throw new Error('Learning storage is temporarily unavailable.'); };
+  try {
+    // Act
+    await assert.rejects(harness.reader.open(), /Learning storage is temporarily unavailable/);
+    harness.reader['initialize'] = initialize;
+    await harness.reader.open();
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { harness.reader['initialize'] = initialize; await harness.close(); }
+});
+
 test('background refresh cannot open captured source into Application before cold Study reserves its panes', async () => {
   // Arrange
   const harness = await workspaceHarness(false);
@@ -1296,6 +1376,29 @@ test('opening Wiki after Study acquires its citation from a Settings-focused mai
     assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
     assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{}, {}, {}] }); assert.equal(harness.runtimes.length, 0);
   } finally { await harness.close(); }
+});
+
+for (const primary of ['application', 'text']) test(`a learner tab selected while borrowing ${primary} primary focus prevents a late Wiki arrangement or focus restoration`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  await harness.reader.open();
+  if (primary === 'text') harness.focusMutableDraft('primary.ts');
+  harness.movePanel('codebook.studyContext', 3);
+  const original = harness.editorLayout(), mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+  const held = harness.holdNextCommand('workbench.action.focusFirstEditorGroup');
+  const arranging = harness.reader.arrangeRepository(new AbortController().signal), rejected = assert.rejects(arranging, /primary editor selection changed/i);
+  try {
+    // Act
+    await held.started; draft.focus(); held.release(); await rejected;
+    // Assert
+    assert.equal(harness.groups[0]!.activeTab, draft.tab); assert.equal(harness.focusedPanel(), undefined);
+    assert.deepEqual(harness.editorLayout(), original);
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, mutations);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); await arranging.catch(() => {}); await harness.close(); }
 });
 
 test('a queued Wiki after Study preserves later learner focus before measuring an owned layout', async () => {
@@ -1618,22 +1721,37 @@ test('first configured Study pause keeps captured source visible beside Context 
   } finally { await harness.close(); }
 });
 
-test('failed initial pane reservation remains visible and cannot silently retry or acquire the partial layout', async () => {
+for (const initial of [
+  { mainGroups: 1, separatePart: false, globalGroups: 1 },
+  { mainGroups: 1, separatePart: true, globalGroups: 2 },
+  { mainGroups: 2, separatePart: true, globalGroups: 3 },
+]) test(`failed initial pane reservation with ${initial.mainGroups} main panes and ${initial.separatePart ? 'a separate part' : 'one part'} cannot create Context before an explicit retry`, async () => {
   // Arrange
   const harness = await workspaceHarness(false);
-  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  harness.useNativeLayout({ orientation: 0, groups: Array.from({ length: initial.mainGroups }, () => ({})) });
+  const chat = initial.separatePart ? harness.addSeparateEditorPart() : undefined, draft = harness.focusMutableDraft();
+  const original = harness.editorLayout();
   harness.failNextCommand('vscode.setEditorLayout');
   try {
     // Act
-    await harness.reader.open();
-    const afterFailure = harness.editorLayout();
-    await harness.reader.arrangeRepository(new AbortController().signal);
+    await assert.rejects(harness.reader.open(), /could not reserve separate Codebook panes/);
+    await harness.reader['refresh']();
 
     // Assert
     assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, 1);
-    assert.deepEqual(harness.editorLayout(), afterFailure);
+    assert.deepEqual(harness.editorLayout(), original); assert.equal(harness.groups.length, initial.globalGroups);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined); assert.equal(harness.reader.inspect().sourceUri, undefined);
+    assert.equal(harness.reader.inspect().opened, false); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    if (chat) { assert.equal(harness.groups.at(-1)!.tabs.includes(chat.tab), true); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); }
     assert.equal(harness.reader.inspect().view!.errors.some(error => error.includes('The editor did not retain the requested Codebook layout')), true);
     assert.equal(harness.runtimes.length, 0);
+
+    await harness.reader.open();
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    if (chat) { assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); }
   } finally { await harness.close(); }
 });
 
@@ -3190,6 +3308,32 @@ test('actual Return cannot consume another article origin when its native layout
     await harness.reader.action('return-wiki');
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
   } finally { await harness.close(); }
+});
+
+test('a queued actual article Return preserves a later learner draft focus without changing the Study layout', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(), cancellation = new AbortController();
+  let release = () => {};
+  try {
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
+    const original = harness.editorLayout(), mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+    const held = harness.holdNextCommand('vscode.getEditorLayout'); release = held.release;
+    const earlier = harness.reader.arrangeRepository(cancellation.signal, harness.origin), earlierRejected = assert.rejects(earlier, /abort/i);
+    await held.started;
+    const originalFocus = harness.focusedPanel();
+    const returning = harness.reader.arrangeRepository(new AbortController().signal, harness.origin, { begin() {
+      if (harness.focusedPanel() !== originalFocus) throw new Error('Original learner focus changed.');
+    } });
+    const rejected = assert.rejects(returning, /Original learner focus changed/);
+
+    // Act
+    const draft = harness.focusMutableDraft(); cancellation.abort(); held.release(); await earlierRejected; await rejected;
+
+    // Assert
+    assert.deepEqual(harness.editorLayout(), original);
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, mutations);
+    assert.equal(harness.groups[0]!.activeTab, draft.tab); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+  } finally { release(); await harness.close(); }
 });
 
 test('cancelling actual Return during its ownership read preserves Study and permits a later explicit Return', async () => {
