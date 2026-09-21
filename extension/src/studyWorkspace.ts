@@ -662,7 +662,8 @@ export class StudyWorkspace {
     };
     signal?.addEventListener('abort', cancel, { once: true });
     try {
-      const reentry = origin === 'repository' ? await this.captureRepositoryLayout(signal) : undefined;
+      // Explicit Study after actual Return uses the same retained layout proof as a Wiki evidence link.
+      const reentry = origin === 'repository' || origin === 'study' && this.repositoryLayoutRestored ? await this.captureRepositoryLayout(signal) : undefined;
       this.assertLifetime(lifetime); signal?.throwIfAborted();
       this.installReaders(); this.ensureApp();
       await this.settleInitialApp(signal, lifetime);

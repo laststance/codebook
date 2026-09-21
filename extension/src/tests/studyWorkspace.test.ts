@@ -2962,6 +2962,42 @@ for (const change of ['replace', 'unannounced', 'move', 'ambiguous'] as const) t
   } finally { await harness.close(); }
 });
 
+for (const recording of [false, true]) for (const mainGroups of [2, 3]) test(`explicit Study after actual Wiki Return restores its verified ${mainGroups}-group origin following ${recording ? 'recording' : 'observation'} entry`, async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness();
+  if (mainGroups === 3) harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  try {
+    await harness.reader.openRepositoryEvidence(harness.binding, recording, undefined, harness.origin); await harness.controller.settle();
+    await harness.reader.action('return-wiki');
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.groups.find(group => group.viewColumn === 4)!.tabs.includes(chat.tab), true);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+  } finally { await harness.close(); }
+});
+
+for (const change of ['shape', 'size'] as const) test(`explicit Study after actual Wiki Return preserves a learner's ${change} edit to the reading grid`, async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(), chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  const manual = change === 'shape' ? { orientation: 0, groups: [{ size: 161 }, { size: 162 }] } : { orientation: 1, groups: [{ size: 100 }, { size: 223 }] };
+  try {
+    await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
+    await harness.reader.action('return-wiki'); harness.changeEditorLayout(manual);
+    const mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.deepEqual(harness.editorLayout(), manual); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, mutations);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+  } finally { await harness.close(); }
+});
+
 for (const cursor of [false, true]) for (const shuffled of [false, true]) test(`${cursor ? 'Cursor' : 'VS Code'} Wiki and recording round trips preserve the separate chat part and original two-row article with ${shuffled ? 'reordered' : 'ordered'} API groups`, async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(), chat = harness.addSeparateEditorPart();
