@@ -2,7 +2,7 @@
 
 Date: 2026-09-21
 Scope: Cycle 0016 P07; exact observation/recording return in all three presentations.
-Status: renderer repair demonstrated; fresh packaged native validation pending.
+Status: DONE_WITH_CONCERNS; [installed v14](installed-validation-v14.md) demonstrates the original and restart cases separately in both hosts.
 
 ## Original installed result
 
@@ -29,3 +29,15 @@ Commands: `pnpm --dir extension build`; `node extension/scripts/repository-retur
 ## Next evidence
 
 Freeze a new clean v14 candidate, run complete product/shared and package suites, compare its archive with v13, and install/reinstall the same archive in each ordinary host. Repeat the original six cases without diagnostic hooks, with the corrected Wiki error selector; inspect native motion, confirm saved replay/1-of-4 understanding and zero runs, then close/restart and repeat. Preserve any failure separately. Product runtime bytes changed, so the prior runtime-byte-equivalence chain does not qualify v14; the old full fixture result retains its own source identity. Current review, CI, merge and final main archive comparison remain separate gates. Goal #1 stays open; final reviews remain 0/10.
+
+## DEBUG REPORT
+
+- Symptom: Cursor Guided recording Return restores the correct control 264 px away from the original reading location.
+- Root cause: reconstructed article preferred stale cached viewport state over the correct explicit host origin.
+- Fix: `extension/src/ui/repositoryHtml.ts:105` prioritizes explicit `selection.location`, preserving cache-only fallback.
+- Evidence: two real-renderer red cases become 4/4; fresh 680/680 + 96/96 suites; exact v14 archive installed/reinstalled in both hosts; original/restarted native schedules each pass 6/6 with zero x/y displacement.
+- Regression: `extension/scripts/repository-return-qa.mjs`; controlled host/cache inputs in actual Chromium, separate from native evidence.
+- Related: D016/D017 exact reading return; earlier source-focus investigations remain separate.
+- Status: DONE_WITH_CONCERNS. Repair demonstrated; native intermediate motion, constrained reading and console attribution retain the limitations in v14.
+
+Durable project finding: when reconstructing a native webview after pane movement, explicit navigation state must outrank presentation cache. A slower diagnostic pass can hide the original sequence; preserve both schedules and bind traces to the actual document's handlers.

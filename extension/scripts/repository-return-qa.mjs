@@ -81,8 +81,12 @@ try {
   report.cases = JSON.parse(result.split('### Result\n')[1].split('\n###')[0]);
   assert.deepEqual(report.cases.map(entry => entry.passed), mode === 'red' ? [false, false, true, true] : [true, true, true, true]);
 } finally {
-  if (recording) await command(['video-stop'], 'video-stop');
-  await writeFile(`${output}/result.json`, `${JSON.stringify(report, null, 2)}\n`);
-  await command(['close'], 'close');
+  // Keep product results and session retirement independent of a failed recording transport.
+  try {
+    if (recording) await command(['video-stop'], 'video-stop');
+  } finally {
+    try { await writeFile(`${output}/result.json`, `${JSON.stringify(report, null, 2)}\n`); }
+    finally { await command(['close'], 'close'); }
+  }
 }
 console.log(JSON.stringify(report.cases.map(entry => ({ name: entry.name, passed: entry.passed, actual: entry.actual }))));
