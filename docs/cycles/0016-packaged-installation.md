@@ -55,6 +55,8 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 
 ## Attempts and evidence
 
+- [Terminal interruption follow-up](evidence/0016/terminal-signal-hardening.md): completed structured review yields four reproduced failures (SIGHUP, SIGQUIT, simulated Windows admission and aggregate diagnostics), repaired to 5/5 selected cases and 88/88 package tests. A subsequent independently reproduced late-cleanup signal gap has separate red/green proof and a final 89/89 package suite; its independent repair verification finds no additional narrow-source defects. The modified source needs a fresh clean candidate; the original frozen adversarial pass is still running. Previous v10 native/CI results remain separate.
+
 - [Frozen v10 delivery review](evidence/0016/delivery-review-v10.md): parent/four fresh specialists/red team find no additional in-scope code defect; in-host adversarial retains a P3 broader packaging-lifetime limitation. CodeRabbit's four notifications are triaged into three topics. Claude Code phases and current CI/merge remain separate pending gates.
 
 - [V10 delivery supplement](evidence/0016/installed-validation-v10.md): clean `479dd29`, fresh **680/680 + 83/83** tests, exact installation/reinstallation and bounded saved Wiki/replay/progress/native cleanup in both hosts. Runtime/assets are byte-equal to v8/v7; complete current review, CI, PR #20 merge and final main-CI comparison remain pending.
@@ -226,7 +228,7 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 ## Handoff
 
 - Latest native evidence: v7 completes the bounded fixture in each host; v8 and v10 separately verify unchanged runtime/assets, exact new installation and retained state. Clean `479dd29` / v10 passes 680 + 83 tests and bounded installed validation in both hosts. V9 is package-only and held before installation after the interruption finding. Earlier failed candidates remain separate.
-- Exact next action: finish the current Claude Code review retries and reconcile their findings, complete current CI and merge PR #20 closing Issue #19. Each timeout adds five minutes without a retry cap. Compare the main CI artifact with the installed v10 candidate before distribution claims.
+- Exact next action: finish the remaining frozen adversarial review and independent terminal-repair review, then commit/freeze the corrected source and complete clean suites, the next package/native supplement, current review/CI and PR #20 merge closing Issue #19. Each timeout adds five minutes without a retry cap. Compare the main CI artifact with the final actually installed candidate before distribution claims.
 - Native profiles are stopped: both v10 windows exited normally, exact owned idle host processes were retired, descriptors reached zero and exact original drafts remain. Build/review processes are separate. Branch: codex/cycle-0016-packaged-installation.
 - PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
 - Select a single next cycle only after this cycle's evidence identifies the next uncertainty.

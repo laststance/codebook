@@ -3,7 +3,7 @@
   "source": "479dd29709b738e05db695e317ee2cdca02938cc",
   "sourceHash": "60e2a1c6bf77b44111f30bedf5d845ee830ebb0196593f102806788300b0e49f",
   "candidateSha256": "91c264ee7b7329bc99e930f058eae712432b417180928580d3081a4be35a6a65",
-  "privateRoot": "/Users/ryotamurakami/laststance/vscode-extension/codebook",
+  "privateRoot": ".",
   "availability": "Local private evidence; sanitized locations and hashes do not imply public access or full product acceptance.",
   "scope": "V10 ordinary installed saved-state supplement, exact package and current test/repair receipts; v7 full workflow and v8 retained-state artifacts keep their own manifests.",
   "artifacts": [
@@ -382,5 +382,6 @@
       "bytes": 589925,
       "sha256": "91c264ee7b7329bc99e930f058eae712432b417180928580d3081a4be35a6a65"
     }
-  ]
+  ],
+  "privateRootResolution": "Resolve relative paths from the original evidence-owning Codebook checkout; isolated validation worktrees do not own these artifacts."
 }

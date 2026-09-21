@@ -1,0 +1,150 @@
+{
+  "at": "2026-09-21T05:01:45.128081+00:00",
+  "reviewedBase": "479dd29709b738e05db695e317ee2cdca02938cc",
+  "worktreeHeadBeforeRepair": "f8253e1bde6825a3d45756d6b8ac94f6b2c34dce",
+  "sourceState": "modified, before the next clean implementation commit",
+  "privateRoot": ".",
+  "privateRootResolution": "Original evidence-owning Codebook checkout, not the documentation worktree.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/terminal-signals-v11/red-before.log",
+      "bytes": 4506,
+      "sha256": "a9855d7ea17c79fe485e48810fab3bff4b480327977d5ba8110847c7411952a0"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/terminal-signals-v11/green-focused.log",
+      "bytes": 760,
+      "sha256": "4a8555c24b1312509c0ab6df6ec9e58697432b08e6694d5f0d032485ae99ff95"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/terminal-signals-v11/package-full.log",
+      "bytes": 9205,
+      "sha256": "6b3ab65976e80b372d4a8ab7d1d2428a8cc222f600a02bc016654e26c2abd845"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/terminal-signals-v11/installed-v10-manifest-before-root-sanitization.json",
+      "bytes": 15227,
+      "sha256": "4ea28d2ef99ebe298715365ebcc1e54a62c670c9f11cc7b682a75dfd5bc133cc"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/terminal-signals-v11/v10-manifest-root-sanitization.json",
+      "bytes": 320,
+      "sha256": "290486eedf72c3c3a12d63276a502cf9a57c7130f69b159097d26aa4f12e45cd"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/terminal-signals-v11/late-signal-red.log",
+      "bytes": 1120,
+      "sha256": "378bf2b7c7955dc8a94acc7640de54534d0d5f4f98de115d5bc35873c900b948"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/terminal-signals-v11/late-signal-green.log",
+      "bytes": 240,
+      "sha256": "5bda81602364205ac3b9310ef8b04cb65080e59affb5e94a88407927e3ba41f8"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/terminal-signals-v11/package-final.log",
+      "bytes": 9332,
+      "sha256": "f31faca2320da25e3fa9f4dc0d1ed0b712bd4624f8f36559cf97c0ef600c6da9"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/terminal-boundary/reviewer1-original-finding.json",
+      "bytes": 1145,
+      "sha256": "266c23dd445ebdcf1014db42dd3d452d9c13d9acdb8dd31318ab73a757fa810c"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/terminal-boundary/reviewer1-fix-probe.mjs",
+      "bytes": 3204,
+      "sha256": "67593f90cb7103a2c670bd1972758bcd31296855875d1faf3788427454f485bf"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/terminal-boundary/reviewer1-fix-probe-result.json",
+      "bytes": 1665,
+      "sha256": "a93d64fe4f5e2a41fc794d137465d6b1a46c03b0a93fbb88e545c7b89b17e512"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/terminal-boundary/reviewer1-fix-review.json",
+      "bytes": 3510,
+      "sha256": "28d52d53497f5f5d73e7631b05eeddbe383764973cd1d2d666be9b79bb9b9d04"
+    }
+  ],
+  "counts": {
+    "red": {
+      "tests": 5,
+      "pass": 1,
+      "fail": 4
+    },
+    "focused": {
+      "tests": 5,
+      "pass": 5,
+      "fail": 0
+    },
+    "earlierPackage": {
+      "tests": 88,
+      "pass": 88,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "package": {
+      "tests": 89,
+      "pass": 89,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "lateSignal": {
+      "before": {
+        "tests": 1,
+        "fail": 1
+      },
+      "after": {
+        "tests": 1,
+        "pass": 1
+      }
+    }
+  },
+  "earlierSourceFiles": [
+    {
+      "path": "extension/scripts/utils/runPackageCommand.mjs",
+      "sha256": "4c00c8d12a83a5bb4f65e5f43973b6d4c714ceb56fba992a6e2aad439de6bf55"
+    },
+    {
+      "path": "extension/scripts/utils/buildPackage.mjs",
+      "sha256": "3f07a12cc66c447d7fc1379d0da3690e2a090539cd0313c30d9f63567a939702"
+    },
+    {
+      "path": "extension/scripts/tests/runPackageCommand.test.mjs",
+      "sha256": "40da8e288c966d31c3bafbae4e05d569e36b080857f14d72ff54a95d17b4acdf"
+    },
+    {
+      "path": "extension/scripts/tests/packageIO.test.mjs",
+      "sha256": "96c0ff3ca8f636f167011a0a1a0e57f867c171d542d0ca16feda03268b034fae"
+    },
+    {
+      "path": "extension/README.md",
+      "sha256": "80dd15a737f9aa538f1e40e82306a52b38546db31fd3c1c39eeec0c0eb3d30c5"
+    }
+  ],
+  "sourceFiles": [
+    {
+      "path": "extension/scripts/utils/runPackageCommand.mjs",
+      "sha256": "63f4c02621a36ec8eeaf7342d1d4d35f86841f2d77bcaf60af3757555819c79d"
+    },
+    {
+      "path": "extension/scripts/utils/buildPackage.mjs",
+      "sha256": "3f07a12cc66c447d7fc1379d0da3690e2a090539cd0313c30d9f63567a939702"
+    },
+    {
+      "path": "extension/scripts/tests/runPackageCommand.test.mjs",
+      "sha256": "d685b4f8f6299ee510b13c2d0c81a597d33a5e9e5cc7fcd1f0670e11e8e38176"
+    },
+    {
+      "path": "extension/scripts/tests/packageIO.test.mjs",
+      "sha256": "96c0ff3ca8f636f167011a0a1a0e57f867c171d542d0ca16feda03268b034fae"
+    },
+    {
+      "path": "extension/README.md",
+      "sha256": "80dd15a737f9aa538f1e40e82306a52b38546db31fd3c1c39eeec0c0eb3d30c5"
+    }
+  ]
+}
