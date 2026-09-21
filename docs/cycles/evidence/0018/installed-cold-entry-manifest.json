@@ -1,0 +1,152 @@
+{
+  "scope": "Cycle 0018 development native failures; not final acceptance",
+  "sourceRevision": "102df84e10055d6fe94dcbd691c36e0291b0c6d6",
+  "vsixSha256": "771776a0d7e50b80ed5e8b045f03d0a42949d91d66abb23e9d798abf3769d901",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/installed-development/candidate.json",
+      "bytes": 32643,
+      "sha256": "5f0e28577d68fd941b37bf93dcf307f2bf6ea56a1a41245eecab8b17f89cd290"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/schedule-v1.json",
+      "bytes": 4007,
+      "sha256": "fbd23ac34d7531b9c8a09dffd6c9ab14845c10398175c0d6373b0ca0b514c48a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/host-preflight.json",
+      "bytes": 706,
+      "sha256": "1a7ec68bfae447358879532d324da2449eeb0e2e1ecb295709436e6e41698494"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/package-build.log",
+      "bytes": 32673,
+      "sha256": "ece8ee8f58e4f7dc5f24120e77420380407d4362a4df2c7453c146edb82ecf18"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/profile-preparation.json",
+      "bytes": 23360,
+      "sha256": "a8a6e1d4a3b993c8252757f203643e9ee213fee82503b905df3e9b63d4d0a3ec"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/installation.json",
+      "bytes": 7087,
+      "sha256": "2e1633376a817ba1b9d4063f66322e25f64f32bd230d37c53548f80400b2569d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/initial-bootstrap.json",
+      "bytes": 157807,
+      "sha256": "36aa79f368839918dfb7a4c129e6e970b4ea8f8e6a511da67f69a761de0d9bef"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/initial-launch.json",
+      "bytes": 1479,
+      "sha256": "94db725c157f45ee972f3dfd06058f543d193aa48be7914441839163cdf7496f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/initial-exit.json",
+      "bytes": 61,
+      "sha256": "dec0704ef07012f0b5882cbbf00d84cffe358b309671dbbda02066028e5fcdf5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/initial-shutdown.json",
+      "bytes": 512,
+      "sha256": "43413b981f0d035d9b31eb4f5d6065a30174de49be408b48b49627c786be7dc5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/initial-native.webm",
+      "bytes": 8229996,
+      "sha256": "c6dbfb7ee6a8d98b2210274fd98d761c7a01e141680728bbc5cd07f598be51fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/profile-preparation.json",
+      "bytes": 23507,
+      "sha256": "c3766f8a4e2e4dd0f1f2cb50fd6b61081790be323a9b130ab70eb453d6ec711a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/installation.json",
+      "bytes": 7097,
+      "sha256": "658f125377017f45c34a110e2201f74b5d77912bab61ebf6956d1639122008b8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "778c7d5bb57ebecac285da16638e99243ba1b7e10a439ff1be545c86acfb5a0c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/initial-launch.json",
+      "bytes": 1464,
+      "sha256": "b2e3627331dbed7c3de2141d42fed2df76bf74176118d252466c3966eff3aa71"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/initial-exit.json",
+      "bytes": 61,
+      "sha256": "d68c9ac09e7295977bf7e04541f84fb112f809e52767e0e4aa0db1d697a5e3ae"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/initial-shutdown.json",
+      "bytes": 465,
+      "sha256": "8c9192bded4847b0071318a098dfe5c507ab518656f66794688d13a87bedf8d9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/initial-native.webm",
+      "bytes": 1717334,
+      "sha256": "1795ce50999fbc2708c8521c0fc3c5d65060d03a92d59157d460f7b5cae50b9d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/pre-trial-state.json",
+      "bytes": 1209,
+      "sha256": "f23a705bff15b4aeb1d13ef6878b99e5e57b4880b3e6ab146e678e854d07428f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/initial-replay-receipt.json",
+      "bytes": 120005,
+      "sha256": "b0db5325faa213d5da665de2e1baf9039622f9f0794c5a30c839cfc9ba4bc6d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/initial-native-alerts.json",
+      "bytes": 904,
+      "sha256": "379e3b96a6db25992fd0d8071bfc1330e4428f230ea47f9b7372d63c99761b0b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/initial-cold-wiki.png",
+      "bytes": 196707,
+      "sha256": "ce2b7acbed4ba71fc2941cc7b0b7186c7b50a86eb9dbcac358b53df3b98c8cc9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/initial-layout-unconfirmed.png",
+      "bytes": 147230,
+      "sha256": "a2b95f41921019d775a10ffb48b2be94877287f3c5a67861164117e490c99eae"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/initial-frames/contact-sheet.png",
+      "bytes": 557893,
+      "sha256": "8d43fbba5f418dabbed0c81848cf0f02082ba2a796d9dee8c7d2a91f5462cbc9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/schedule-v2.json",
+      "bytes": 4490,
+      "sha256": "5607d1d7660c541b53a2f7e4ee2c4030f82cdfd7d588eb10759d4391c7abd063"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/first-study-read-only.json",
+      "bytes": 55743,
+      "sha256": "fc4a34162099aa0e5876fdc8f8e725b9cf0fabab10b2964bc08c7e05c4bc4ed9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/result.json",
+      "bytes": 1970,
+      "sha256": "bc1edc6d63a49d8badc6a9cc965b0b57fdedca9f8723e2136b18ffb5bb5f5bdc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/first-study-failed.png",
+      "bytes": 93443,
+      "sha256": "9342e275c2d97031030174eb508d88ec75a0b1cf2470f2581de90e24c7379efa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-serialized-entry/initial-frames/cold-study-transition.png",
+      "bytes": 282730,
+      "sha256": "b7f2887629d07a634e0128a794d74da58ca74f95756b067af5e68bf7695bac52"
+    }
+  ]
+}
