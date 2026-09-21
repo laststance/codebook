@@ -98,7 +98,7 @@ export class StudyWorkspace {
   private readonly documents = new Map<string, string>();
   private readonly runtimeSourcePaths = new Set<string>();
   private app?: vscode.WebviewPanel;
-  private initialAppPlacement?: { panel: vscode.WebviewPanel; column: vscode.ViewColumn | undefined };
+  private initialAppPlacement?: { panel: vscode.WebviewPanel; column: vscode.ViewColumn | undefined; registration?: { ready(): boolean; dispose(): void; error?: unknown } };
   private contextPanel?: vscode.WebviewPanel;
   private moments?: vscode.WebviewView;
   private viewport?: BrowserViewport;
@@ -659,6 +659,7 @@ export class StudyWorkspace {
       const reentry = origin === 'repository' ? await this.captureRepositoryLayout(signal) : undefined;
       this.assertLifetime(lifetime); signal?.throwIfAborted();
       this.installReaders(); this.ensureApp();
+      await this.settleInitialApp(signal, lifetime);
       // A learner move after failed entry releases our unfinished placement, even when the same app panel survives.
       if (this.initialAppPlacement?.panel !== this.app || this.initialAppPlacement?.column !== this.app?.viewColumn) this.initialAppPlacement = undefined;
       let initialLayoutFailed = false;
@@ -1407,20 +1408,65 @@ export class StudyWorkspace {
   /** Retains new app placement for {@link open}, including panels created earlier by an MCP-first runtime. @example this.ensureApp() */
   private ensureApp(): vscode.WebviewPanel {
     if (this.app) return this.app;
+    const owned = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputWebview && ['codebook.scopedBrowser', 'mainThreadWebview-codebook.scopedBrowser'].includes(tab.input.viewType);
+    const contents = (group: vscode.TabGroup) => JSON.stringify(group.tabs.filter(tab => !owned(tab)).map(tab => [tab.label, tab.input, tab.isDirty, tab.isPreview, tab.isPinned]));
+    const previous = vscode.window.tabGroups.all.map(group => ({ column: group.viewColumn, contents: contents(group) }));
+    const focusedColumn = vscode.window.tabGroups.activeTabGroup.viewColumn, focusedSource = vscode.window.activeTextEditor?.document.uri.toString();
+    const openedGroups: vscode.TabGroup[] = [], closedGroups: vscode.TabGroup[] = [];
+    const changes = vscode.window.tabGroups.onDidChangeTabGroups(event => { openedGroups.push(...event.opened); closedGroups.push(...event.closed); this.confirmInitialAppRegistration(); });
     const panel = vscode.window.createWebviewPanel('codebook.scopedBrowser', 'codebook · Application', { viewColumn: STUDY_PRESENTATIONS[this.presentationMode].appColumn, preserveFocus: true }, { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true });
     this.app = panel;
     // MCP can create the app before Open reserves its destination; retain that unfinished placement across callers.
-    this.initialAppPlacement = { panel, column: panel.viewColumn };
+    this.initialAppPlacement = { panel, column: panel.viewColumn, registration: { dispose: () => changes.dispose(), ready: () => {
+      const current = vscode.window.tabGroups.all, appGroups = current.filter(group => group.tabs.some(owned));
+      const appGroup = appGroups.length === 1 ? appGroups[0] : undefined;
+      const extra = current.filter(group => !previous.some(entry => entry.column === group.viewColumn));
+      // Only the newly requested app may add a group; closed/replaced groups and foreign tab changes retire creation ownership.
+      const retained = previous.every(entry => current.some(group => group.viewColumn === entry.column && contents(group) === entry.contents))
+        && extra.every(group => group === appGroup && contents(group) === '[]') && !closedGroups.length
+        && openedGroups.every(group => !previous.some(entry => entry.column === group.viewColumn) && group.viewColumn === appGroup?.viewColumn);
+      const active = vscode.window.tabGroups.activeTabGroup, currentSource = vscode.window.activeTextEditor?.document.uri.toString();
+      const sameFocus = active.viewColumn === focusedColumn && (currentSource === focusedSource
+        || active === appGroup && active.activeTab && owned(active.activeTab) && panel.active && currentSource === undefined);
+      if (!retained || !sameFocus) throw new Error('Native panes or learner focus changed while the new application registered; the arrangement was preserved.');
+      // Wrapper flags are optimistic: await the actual tab, column and text-focus acknowledgement before passive layout guards.
+      return Boolean(appGroup && appGroup.activeTab && owned(appGroup.activeTab) && panel.viewColumn === appGroup.viewColumn && panel.visible
+        && (active !== appGroup || !vscode.window.activeTextEditor));
+    } } };
     this.lastApplicationKey = undefined;
-    panel.onDidDispose(() => { if (this.app === panel) { this.app = undefined; this.replayViewport = undefined; if (this.recordingActive) this.playback?.hide(); } });
+    panel.onDidDispose(() => { changes.dispose(); if (this.app === panel) { this.app = undefined; this.replayViewport = undefined; if (this.recordingActive) this.playback?.hide(); } });
     let visible = panel.visible;
     panel.onDidChangeViewState(() => {
+      this.confirmInitialAppRegistration();
       if (panel.active) this.lastActiveRegion = 'app';
       if (visible === panel.visible) return; visible = panel.visible;
       // Only visibility of the replay surface pauses playback; runtime/debugger exit is unrelated.
       if (this.recordingActive && !this.placingPresentation) { this.replayNeedsReveal = true; if (visible) this.playback?.reveal(); else this.playback?.hide(); }
     });
+    this.confirmInitialAppRegistration();
     return panel;
+  }
+
+  /** Finishes the owned creation receipt on native events so later MCP-first learner moves remain manual. @example this.confirmInitialAppRegistration() */
+  private confirmInitialAppRegistration(): void {
+    const placement = this.initialAppPlacement, registration = placement?.registration;
+    if (!placement || !registration || registration.error) return;
+    try {
+      if (!registration.ready()) return;
+      registration.dispose(); placement.registration = undefined; placement.column = placement.panel.viewColumn;
+    } catch (error) { registration.error = error; registration.dispose(); }
+  }
+
+  /** Drains owned app creation for {@link open} before passive layout reads, retaining cancellation and learner-change checks. @example await this.settleInitialApp(signal, lifetime) */
+  private async settleInitialApp(signal: AbortSignal | undefined, lifetime: number): Promise<void> {
+    const placement = this.initialAppPlacement, registration = placement?.registration;
+    if (!placement || !registration) return;
+    await waitUntil(() => {
+      this.assertLifetime(lifetime); this.confirmInitialAppRegistration();
+      if (registration.error) { this.initialAppPlacement = undefined; throw registration.error; }
+      return !placement.registration;
+    }, 'new application native registration', PRESENTATION_READY_TIMEOUT_MS, signal);
+    this.assertLifetime(lifetime); signal?.throwIfAborted();
   }
 
   /** Creates context controls without embedding executable runtime data into HTML. @example this.ensureContext() */
@@ -1470,6 +1516,7 @@ export class StudyWorkspace {
       view.webview.onDidReceiveMessage(message => { void this.receive(message, 'moments').catch(error => this.report('control', error)); }); this.publish();
     } }, { webviewOptions: { retainContextWhenHidden: true } }));
     this.disposables.push(vscode.window.onDidChangeActiveTextEditor(editor => {
+      this.confirmInitialAppRegistration();
       if (editor?.document.uri.scheme === STUDY_SOURCE_SCHEME) this.lastActiveRegion = 'source';
       if (!this.opened || !editor || !this.runtimeSourcePaths.has(editor.document.uri.fsPath) || this.restoringSource || this.presentationTransition || !this.sourceUri) return;
       const region = this.lastActiveRegion; this.restoringSource = true;

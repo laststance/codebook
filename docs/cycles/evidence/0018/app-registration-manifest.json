@@ -1,0 +1,40 @@
+{
+  "scope": "Diagnostic modified bundle and source regression; not clean VSIX acceptance",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-registration-trace/schedule.json",
+      "sha256": "74b5dfff4351414a1ae9e8edcfb93cbb6678a2cf19f37dfb888ca05073de7387",
+      "bytes": 637
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-registration-trace/diagnostic-bundle.json",
+      "sha256": "c466df9b2fa762afab26964ee5045bf8a2212a5e7bb25910e676e117a45b6ffb",
+      "bytes": 450
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-registration-trace/initial-bootstrap.json",
+      "sha256": "9c12c442c743b914b16d171c382b9618712cfeb07244585616834f9d2a5c1cd3",
+      "bytes": 157816
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-registration-trace/guard-fields.json",
+      "sha256": "f8a9e2ebcb834e4403bf88ff1de9e15f100fc19c6afbb95b27bd88cc312a9d0f",
+      "bytes": 626
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-registration-trace/initial-native.webm",
+      "sha256": "662f62dd7af546f9584cf9c38fef9476f618fe3eab91f06b78eff1b69b07a5b4",
+      "bytes": 834126
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-registration-trace/application-transition.png",
+      "sha256": "456a7c753a7f191dacf1d540d42daf83fdf718250366b4a78e5bb44390816b99",
+      "bytes": 287143
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor-registration-trace/initial-shutdown.json",
+      "sha256": "214e2525a68a1633f5fd9a833e111210ba2faee254fc94026be414963d2d1061",
+      "bytes": 434
+    }
+  ]
+}

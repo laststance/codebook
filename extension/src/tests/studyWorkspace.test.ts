@@ -88,6 +88,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const changedGroups = (event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => { for (const listener of groupChangeListeners) listener(event); };
   let sourceProvider = async (_uri: Uri) => '';
   let delayedPanelKind: string | undefined;
+  let deferredPanelRegistration = false;
   let registerDelayedPanel = () => {};
   let nextOpen: { wait: Promise<void>; entered(): void } | undefined;
   let nextCommand: { name: string; wait: Promise<void>; entered(): void } | undefined;
@@ -185,7 +186,10 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     // Both hosts initialize optimistic panel flags before the native tab/view-state acknowledgement arrives.
     const register = () => { registered = true; const group = nativeGroup(value.viewColumn ?? 1); if (!group.tabs.includes(nativeTab)) group.tabs.push(nativeTab); group.activeTab = nativeTab; };
     if (registered) register();
-    else { delayedPanelKind = undefined; registerDelayedPanel = register; }
+    else {
+      delayedPanelKind = undefined; registerDelayedPanel = register;
+      if (deferredPanelRegistration) { deferredPanelRegistration = false; setImmediate(register); }
+    }
     panels.add(value); return value;
   }
   const initialSelection: string[] = [];
@@ -304,7 +308,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     coverSourceWhenContextFocused() { contextCoversSource = true; },
     panelColumn: (kind: string) => [...panels].find(panel => panel.kind === kind)?.viewColumn,
     panelReveals: () => [...panelReveals],
-    delayPanelRegistration(kind: string) { delayedPanelKind = kind; return () => registerDelayedPanel(); },
+    delayPanelRegistration(kind: string, deferred = false) { delayedPanelKind = kind; deferredPanelRegistration = deferred; asynchronousLayoutReads ||= deferred; return () => registerDelayedPanel(); },
     deferPanelFocus(kind: string, reveal: number) { deferredPanelFocus = { kind, remaining: reveal }; },
     deferMovedPanelFocus(kind: string) { deferredMovedPanelFocus = kind; asynchronousLayoutReads = true; },
     focusedPanel: () => activeTabGroup.activeTab?.input instanceof TabInputWebview ? activeTabGroup.activeTab.input.viewType : undefined,
@@ -918,6 +922,27 @@ test('first Study entry reserves all three main panes when a separate chat part 
   } finally { await harness.close(); }
 });
 
+test('first Study entry accepts its application tab registering during the initial native layout read', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.delayPanelRegistration('codebook.scopedBrowser', true);
+  try {
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.groups.length, 4);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
 test('first Study entry does not resize chat while a new application panel only reports optimistic focus', async () => {
   // Arrange
   const harness = await workspaceHarness(false);
@@ -929,17 +954,86 @@ test('first Study entry does not resize chat while a new application panel only 
   const opening = harness.reader.open(); void opening.catch(() => undefined);
   try {
     // Act
-    await waitUntil(() => harness.commands.some(command => ['workbench.action.focusFirstEditorGroup', 'vscode.setEditorLayout'].includes(command)), 'native focus or layout request', 1_000);
+    await waitUntil(() => harness.panelColumn('codebook.scopedBrowser') !== undefined, 'pending native application', 1_000);
     // Assert: provisional wrapper flags must not authorize a layout command against the still-focused chat part.
-    assert.equal(harness.commands.includes('workbench.action.focusFirstEditorGroup'), true);
+    assert.equal(harness.commands.includes('workbench.action.focusFirstEditorGroup'), false);
     assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
     assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
-    registerPanel(); focus.release(); await opening;
+    registerPanel(); await focus.started; focus.release(); await opening;
     assert.equal(harness.panelColumn('codebook.studyContext'), 3);
     assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
     assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true);
     assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
   } finally { registerPanel(); focus.release(); await opening.catch(() => undefined); await harness.close(); }
+});
+
+test('chat focus acquired during application registration prevents first Study from arranging either editor part', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
+  const opening = harness.reader.open();
+  const rejected = assert.rejects(opening, /learner focus changed while the new application registered/);
+  try {
+    // Act
+    await waitUntil(() => harness.panelColumn('codebook.scopedBrowser') !== undefined, 'pending native application', 1_000);
+    chat.focus(); registerPanel(); await rejected;
+    // Assert
+    assert.equal(chat.focused(), true);
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(harness.commands.includes('workbench.action.focusFirstEditorGroup'), false);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true);
+  } finally { registerPanel(); await opening.catch(() => undefined); await harness.close(); }
+});
+
+for (const change of ['foreign tab', 'replacement group'] as const) test(`a ${change} during application registration prevents first Study from adopting the changed layout`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
+  const opening = harness.reader.open();
+  const rejected = assert.rejects(opening, /Native panes or learner focus changed/);
+  try {
+    // Act
+    await waitUntil(() => harness.panelColumn('codebook.scopedBrowser') !== undefined, 'pending native application', 1_000);
+    if (change === 'foreign tab') harness.addForeignDraft(1);
+    else harness.resyncEditorGroups('replace');
+    registerPanel(); await rejected;
+    // Assert
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { registerPanel(); await opening.catch(() => undefined); await harness.close(); }
+});
+
+for (const retirement of ['cancel', 'Close'] as const) test(`${retirement} during application registration cannot reserve panes after the late native tab appears`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false), cancellation = new AbortController();
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
+  const opening = harness.reader.open(cancellation.signal);
+  const rejected = assert.rejects(opening, retirement === 'cancel' ? /abort/i : /closed/i);
+  try {
+    // Act
+    await waitUntil(() => harness.panelColumn('codebook.scopedBrowser') !== undefined, 'pending native application', 1_000);
+    if (retirement === 'cancel') cancellation.abort();
+    const closing = retirement === 'Close' ? harness.reader.close() : Promise.resolve();
+    registerPanel(); await rejected; await closing;
+    // Assert
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+  } finally { await opening.catch(() => undefined); await harness.close(); }
 });
 
 test('an existing three-pane Study can restore its presentation while preserving a separate chat part', async () => {
