@@ -1,6 +1,6 @@
 # Installed Wiki-to-Study reentry failures and repair
 
-Scope: Cycle 0018 development validation and investigation, not final editor-AI acceptance. The [isolated first-Study results](installed-first-study-v4.md) remain valid for their bounded action in both hosts. This report records the subsequent Cursor failure; it does not extend those results to replay, restart or the full product. G12 remains required and unimplemented. Final reviewers remain 0/10.
+Scope: Cycle 0018 development validation and investigation, not final editor-AI acceptance. The [isolated first-Study results](installed-first-study-v4.md) remain valid for their bounded action in both hosts. This report retains subsequent Cursor failures, root-cause repairs and separately identified v9 replay/restart observations. It does not establish the complete product. G12 remains required and unimplemented. Final reviewers remain 0/10.
 
 ## Original ordinary-install failure
 
@@ -57,7 +57,7 @@ The source path distinguishes the two entries: only a repository-origin call con
 
 Development v7 freezes the 597,302-byte VSIX SHA-256 `e2c166793100882c22fbb4b4df5379f39698c1e40f14c026904e440d56859000` from that clean source with the unchanged original sequence. Its complete sequence remains unverified; the trial result below retains the next failure. These development archives do not contain G12 and cannot start final acceptance.
 
-## v7 current result and exact next investigation
+## v7 failed result and subsequent investigation
 
 The frozen v7 archive is normally installed in fresh ordinary Cursor 3.21.16 / API 1.128.0, with all 29 files and loaded source/build identity verified. Initial Study, saved Wiki, explicit Study and exact ready paused replay before any seek pass. Both Study-mode observation/Return and recording/Return preserve the article/citation/test-progress state and original evidence-control position (0 px delta). **Explicit Open Study after actual Return now passes** at 16:47:21.326 UTC, with confirmed app/source/context 1/2/3. This is bounded installed evidence for the two repaired Return paths, not a pass for the remaining schedule.
 
@@ -65,4 +65,66 @@ The next public presentation selection requests Living book. It fails at 16:47:2
 
 **FAIL — native presentation integration.** Living book/Guided walkthrough returns, restart, fourth-main-group refusal and VS Code v7 remain unexecuted. The 134.160-second 1280×800, 25-fps video and inspected 18-frame sheet (35–53 seconds, 1 fps) preserve the successful prior paths, transition and failed placement. These observations do not establish complete motion quality. Normal exit 0 retains the original 62 files' bytes/mtimes and unsaved draft, with zero owned editor processes and zero connection descriptors. Prepared VS Code profiles have not been launched for v5–v7.
 
-Next, trace the expected and actual pane/group/focus identities at `retainPresentationPlacement` during the same Living book transition. Distinguish an accepted Codebook move's late native event from a real manual change before changing the guard. Add a failing-before regression and retain manual-group/draft/focus protections; then recheck source/package suites, refreeze, and repeat the complete original schedule in both ordinary hosts. Keep all v4–v7 results at their own source cuts. The three-pass development review remains non-converged; fresh CodeRabbit delivery review, actual CI and merge are still pending. G12 is specified only, and the final ten-reviewer campaign remains unstarted.
+The v7 checkpoint required tracing expected and actual pane/group/focus identities at `retainPresentationPlacement` during the same Living book transition before changing the guard. That investigation and its subsequent regressions follow below. All v4–v7 results retain their source cuts. The three-pass development review remains non-converged; fresh CodeRabbit delivery review, actual CI and merge are still pending. G12 is specified only, and the final ten-reviewer campaign remains unstarted.
+
+## Native group contraction during presentation transfer
+
+The v7 follow-up uses a fresh ordinary Cursor profile and the same installed archive, with a separately identified logging-only bundle. Original bundle SHA-256 is `5cc442a5f8cdf413fa2d171688a8c4d01debe3fef588471f0a7622798b744654`; diagnostic SHA-256 is `439a19032c33a1ef63faeeb9779d2171a14071f5e4aaa41f09a178b9705a9ba9`. It cannot provide unchanged-VSIX acceptance evidence. At 17:02:22.501 UTC, moving the only context tab out of main group 3 closes that group. The host renumbers the remaining groups before the source move has settled. At .557 the placement guard records the intended columns 2/3/1; at .571 the actual source has moved to column 1. Group and focus comparisons still match, while the pane comparison fails. This is Codebook's intermediate placement ordering, not a learner action or another unproven empty-wrapper cause.
+
+The repair places the source at its final destination before moving the panels. It then moves the panel occupying that destination first. This keeps the three owned native groups occupied during the transfer, without weakening group, focus, pane or manual-layout guards. Four unchanged-product regressions reproduce native empty-group contraction across draft/app-only origins and ordinary/separate-part cases. Thirteen focused checks pass after repair. Clean source `3ba4f111e7cec1fbd8e3324a5375305ee7b21d5a`, fingerprint `86ef8c6a90fcd0cff700552bff07af6c29b1dd9b8e1c7a5a40f8f47c2c020887`, passes **758/758 product/shared + 96/96 package** checks, with zero failures, skips or cancellations. The first focused rerun's fixture-shape and deferred-focus assumptions remain recorded separately from the final passing controls.
+
+The 46.240-second diagnostic video and inspected 20–38-second, 1-fps contact sheet show the contraction. Normal exit 0 preserves all 62 original profile files' bytes/mtimes and the unsaved draft; cleanup leaves no owned process or connection descriptor.
+
+## v8 retained groups and replay-readiness failure
+
+Development v8 freezes that clean source and the 597,336-byte VSIX SHA-256 `3c3834db6b0c90fd2e440fb347099480df7d0154a647439f841847604fc2e9d0`. Ordinary Cursor installation and loaded identity match all 29 files. Initial entry and exact retained paused replay pass. Both Study and Living book observation/recording Return routes pass, retaining source, progress and control position with **0 px** displacement. This confirms the bounded native group-retention repair.
+
+The following explicit Open Study at 17:11:50.364 UTC remains unconfirmed at the observer's 17:12:00.919 deadline, despite correct Living book columns 2/3/1. Guided walkthrough and restart are not attempted. **The full v8 trial is FAIL.** No hidden restore, corrective seek or changed timeout rescues it. Its 96.720-second video and inspected 25–49-second contact sheet retain the successful prior routes and failed reentry.
+
+Two fresh diagnostic profiles reproduce that stage using logging-only modifications of the v8 bundle. Original bundle SHA-256 is `4f9b859596cf3cf6d05d64923b815fd9737c5c3a0537291620f9fb08f78e77d0`; the diagnostic hashes are `968e298cb0225ff817166205fa65065f999e625762f456973beeea314c382037` and `95a2d029df108181fa92b0d02684d70a151d72f793669b7c78a2b6edacf72c8b`. A malformed second instrumentation script fails syntax validation before launch; it is restored and corrected before the recorded diagnostic, not represented as product evidence.
+
+The refined trace isolates a different cause. At 17:17:38.057 UTC, Open has a valid restored Study receipt and correct panes but playback revision 37 has not acknowledged its source. Codebook latches `presentationConfirmed: false`. At .159, source rehydration is complete at revision 38 and `sourceReady: true`, while that false confirmation remains latched. No learner group, layout or focus change occurred. The first trace also retains matching reading/restored layout and pane ownership. Their 97.000-second and 86.760-second videos have separately inspected 30–54-second and 41–59-second contact sheets. All three v8 owned windows close normally, preserve original profile bytes/mtimes and drafts, and leave zero owned processes/descriptors.
+
+## Readiness projection repair
+
+Clean source `1e8aab0d1572932cfe3515036b0c9399ec4c6317` keeps verified layout ownership separate from current source readiness. Open retains its verified layout receipt; the public presentation state requires both that ownership and current source readiness, correct mode/pane destinations and an active Study receipt. A temporary playback reload therefore reports unconfirmed while pending and becomes confirmed when its source is ready. Waiting for playback settlement inside Open would risk reentrant playback work; the repair does not add a timing delay or bypass the ownership guards.
+
+Three unchanged-product controls reproduce the readiness race in all three modes. Two manual resize/group-replacement controls already pass and continue to refuse confirmation after source readiness returns. After repair, **19/19 focused checks** and **763/763 product/shared + 96/96 package** checks pass, with zero failures, skips or cancellations. The 269 selected inputs and compiled metadata share fingerprint `afe4ef64dfeca5da32f13bc928ceb929a3a6c3de7d50e70150393c8326dfebe5`. Development v9 freezes the 597,330-byte VSIX SHA-256 `1f4fa8784931ae80acd18ea0771d1adde2cbad8f1d00eeddff71ca2dfced3f1f` from this clean source before ordinary installation. These source checks and development archives do not implement G12 or start the final campaign.
+
+## v9 ordinary installation, returns and restart
+
+The frozen v9 schedule runs Cursor first, then VS Code, using new copies of the original dedicated development profiles. Both normally install the **same archive bytes**, verify all 29 installed files, and report clean build `1e8aab0` with the exact source fingerprint above. There is no development host, direct source loading, logging injection or runtime run. The target remains the unchanged Laststance.io commit `43d039938287ed494a66f4fad198da2464a9e7b0`; this known development target is not a random final-acceptance selection.
+
+| Observation | Cursor 3.21.16 / API 1.128.0 | VS Code 1.138.0 |
+| --- | --- | --- |
+| First Study, saved Wiki and explicit Study | PASS, actual app/source/context 1/2/3 | PASS, actual app/source/context 1/2/3 |
+| First ready paused replay, before any seek | PASS, 11453.2425 ms | PASS, 11405.3895 ms |
+| Initial observation/recording Return in all three modes | 6/6 PASS, exact focus and 0 px x/y displacement | 6/6 PASS, exact focus and 0 px x/y displacement |
+| Normal restart, cold Wiki, Study and exact ready replay before any corrective seek | PASS, 11429.631958 ms, matching the state frozen immediately before close | PASS, 11358.763459 ms, matching the state frozen immediately before close |
+| Restarted observation/recording Return in all three modes | 6/6 PASS, exact focus and 0 px x/y displacement | 6/6 PASS, exact focus and 0 px x/y displacement |
+| Real fourth main group | Correct `PRESENTATION_UNAVAILABLE`; all four measured groups/tabs unchanged | Correct `PRESENTATION_UNAVAILABLE`; all four measured groups/tabs unchanged |
+| Runtime execution / learning decisions | Zero runs; existing explicit test decisions unchanged | Zero runs; existing explicit test decisions unchanged |
+| Original profile and draft | 62 files retain exact bytes/mtimes; unsaved draft retained | 115 files retain exact bytes/mtimes; unsaved draft retained |
+| Both normal window exits and cleanup | Exit 0; zero owned processes/descriptors | Exit 0; zero owned processes/descriptors |
+
+Normal recording links deliberately select their linked moment. The schedule therefore freezes each host's actual paused state immediately before normal close and compares restart with that state, rather than forcing a corrective seek back to an earlier moment. Cursor retains observation `aa7e6f60-f81f-4214-9e8a-8f4b7ebb18aa:1` and frame SHA-256 `df07b0674ff55aaea34831e2ae6604611072bd4aa1c9378b04833a5a7b11b575`. VS Code retains observation `710cbb54-8ddc-481b-8b68-585d74eef29a:1` and frame SHA-256 `3847be932c8b1584dda1d7da7f8b58977d974f23bc45081b65e95bd34819f44b`. Restart uses a new verified instance in each host. Article, revision, citation, existing test understanding, control focus and position remain tied to their individual receipts.
+
+The fourth-group control uses the ordinary **View: Grid Editor Layout (2x2)** command. Visible main-group rectangles, all tab identities, saved presentation preference, paused recording/frame and zero-run state are checked before and after the rejected public restore. Two Cursor observer failures are retained: the first snapshot payload had a syntax error after the grid command; the second restore omitted the schema-required mode and was rejected before product execution. After correcting the observer and using the mode from current discovery, the same unchanged four-group layout is preserved by the actual refusal. Neither failed observer attempt is relabeled PASS. VS Code executes the corrected control directly. These are development controls, not final reviewers.
+
+Cursor's native renderer viewport is 1280×800 with configured `Default Dark Modern`; VS Code's is 1440×900 with configured `Dark Modern`. Both screencasts are 1280×800 at 25 fps, so VS Code's video is scaled. Cursor initial/restart durations are **62.320 / 343.840 seconds**; VS Code initial/restart durations are **124.880 / 142.760 seconds**. Fifteen contact sheets contain 1-fps samples of initial entry, rehydration, all three mode geometries, actual Wiki returns and the fourth-group refusal; their per-host indexes identify the sampled ranges. All fifteen sheets were visually inspected. Temporary loading and unconfirmed states are visible while entering playback or reading Wiki, followed by the completed Study geometry. This is bounded native transition evidence, not complete theme, 200%-zoom, reduced-motion or overall visual acceptance. An initial timestamp-overlay extraction failed because the installed ffmpeg lacks `drawtext`; plain indexed frame extraction succeeded, with the failure recorded.
+
+Host console summaries retain startup registration/TrustedScript notices, iframe/feature warnings, deprecations, shutdown warnings and unauthenticated AI-service errors in the copied development profiles. This is not a zero-console-error or editor-chat claim. The `no composite descriptor` startup notice remains qualified despite the subsequent visible Codebook outline/reader. No authentication workaround was used.
+
+**Current bounded result:** the source repair and the installed positive/restart/fourth-main-group observations above are demonstrated separately in both hosts. T3 is implemented; T4 remains open for its planned **separate-part focus negative control on this candidate**, and T5 remains open for fresh current-diff reviews including CodeRabbit CLI, CI, PR and merge. Do not substitute older diagnostic source cuts for that remaining native control. All owned native windows/processes/descriptors are now stopped. G12 remains specified, not implemented or verified; final candidate, random draw and reviewers remain unstarted, **0/10 and 0/at least 20**. The owner-requested specification consistency check preserves all eleven G01–G11 rows and the prior seven final-acceptance steps verbatim, with 199 local documentation links resolving.
+
+## Debug report
+
+| Field | Bounded investigation result |
+| --- | --- |
+| Symptom | Living book placement failed; after that repair, explicit Study reentry stayed unconfirmed despite restored geometry. |
+| Root cause | Vacating the only tab closed a main group before source placement; a separate replay rehydration interval latched temporary source unreadiness into persistent layout confirmation. |
+| Fix | Source-first destination placement in `extension/src/studyWorkspace.ts:485`; current-readiness projection at `:169` and retained layout ownership at `:728`. |
+| Evidence | Four contraction controls and three readiness controls fail before their fixes; final clean suites pass 763 + 96. Frozen v9 reproduces the repaired flows in both ordinary installed hosts with native video/frame evidence. |
+| Regression tests | `extension/src/tests/studyWorkspace.test.ts:3793`, `:3822` and `:3850`; the last group retains manual layout/group protection. |
+| Related | Earlier v4–v7 Return/scope regressions above, Cycle 0018 T4/T5 and the separately required G12 development plan. |
+| Status | **DONE_WITH_CONCERNS** for this investigation: original failures are repaired and natively verified; the separate-part focus negative control, fresh delivery review/CI/merge and complete-product acceptance remain open. |
