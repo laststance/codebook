@@ -1,7 +1,7 @@
 # Cycle 0017 — Packaged real-repository study
 
 Type: experiment\
-Status: planning\
+Status: validating\
 Result: pending\
 Delivery: local-only\
 Goal version: 3\
@@ -53,7 +53,38 @@ Versioned execution schedule, exact scripts, command budgets and source hashes a
 
 ## Attempts and evidence
 
-No native Cycle 0017 run yet. Cycle 0016's main artifact passes 680 product/shared and 96 package tests; its 267 selected inputs and 29 non-metadata archive entries match installed v16. New native evidence is still required for the selected main artifact and real repository.
+P01 passes exact ordinary installation/reinstallation in both isolated profiles: the main-CI archive has SHA-256 `6abd3c665e7f3610040860ff45c22eecf1947499f5cd08654a7b3f5ba5f9a0dc`; all 29 installed files match. VS Code 1.138.0 / js-debug 1.117.0 and Cursor 3.21.16 / VS Code API 1.128.0 / js-debug 1.93.0 remain separate environments. Each target is a detached local clone of `43d039938287ed494a66f4fad198da2464a9e7b0` with frozen dependencies and no copied environment files.
+
+VS Code public discovery, exact source reads and a two-article book publication pass. The first configured run at 08:42:16 UTC on 2026-09-21 sealed the selected source, JavaScript/map and exact line-19 breakpoint, then failed the **before** image acknowledgement before dispatching any click. It reports `not-demonstrated`, zero observations, saved history and a retained partial recording (six frames). Owned application/browser/debugger resources were released; all ten recorded PIDs and the application port were independently absent. Cursor had not yet been launched at this checkpoint.
+
+`/investigate` identified a testable native visibility condition: Chromium reported the whole VS Code window and its webviews as hidden. A read-only double-animation-frame probe timed out in every frame; raising this same native window changed the main window and application/context renderers to visible and completed their probes in 12–20 ms. Full event pagination shows the required image waiting behind unacknowledged live delivery, then expiring 48 ms after actual transmission. This is evidence for a hidden-window cause, not yet a successful repeat of the configured workflow. No timeout or product code has been changed. Prior hidden-panel learnings informed the investigation, but their source-tab/replay causes are not assumed here.
+
+Private evidence: `artifacts/cycle-0017/native/vscode/{start-v1.json,failed-final.json,failed-events-complete.json,initial-setup-and-failure.webm,paint-probe-before-raise.log,paint-probe-after-raise.log}`. Extracted video frames were inspected; the recording retained stale Wiki pixels during the failed run and later showed its terminal state, so wall-clock-to-video alignment is not asserted. The separate bootstrap newline error remains a setup-script failure. P03–P07 were not passed at this checkpoint. The following attempts retain the exact installed archive and all first-attempt evidence.
+
+
+### VS Code continued attempts and result
+
+- V2 restores native visibility under a new frozen cold-start schedule. The before/pause acknowledgements, exact breakpoint and actual values pass. A fixture-specific QA assertion expected a runtime UUID in configured Study prose; the product does not render that fixture detail. The helper safely stops the run before continuation, so this is not a completed action.
+- V3 reaches the same correct pause but a mode change rejects a foreign debugger preview in the destination group. This is the existing editor-ownership guard, not permission to close or move that source. Explicit native Keep Editor followed by public Restore succeeds. The host's stale preview ARIA label is not used as authoritative product state. Focus Explanation is required before claiming that the context pane is visible.
+- V4 executes the complete configured flow: one click, one real line-19 pause with `otherTheme = dark` and `typeof setTheme = function`, three live modes, one explicit QA understanding action, one continuation, and verified dark DOM. The result and Study outcome are `demonstrated`. Recording finalizes with 14 frames / 1,419,770 PNG bytes and all three required phase receipts. All ten owned runtime PIDs are absent. The successful run uses the retained warm build cache; cold V2/V3 already established pause/binding but are not relabeled successful complete runs.
+- Replay V4 exposes another fixture-specific QA oracle: a later raw stream frame is correctly selected after the paused phase image. Replay V5 checks the approved latest-frame semantics separately from observation/interpretation availability; an adjacent stream never gains a verified-phase badge. Exact source, values, explanation, selection and 1/1 progress remain across all three replay modes. Inspected native-rendered video frames show the light-to-dark transition after the application/debugger have exited.
+- Wiki revision 2 links the actual successful observation. Six returns (three modes × observation/recording) retain the same article/citation/progress and exact x/y position, with no additional run. Video frames are inspected separately; intermediate loading/geometry concerns remain qualified.
+- Ordinary restart creates a fresh server identity and zero application runs. Opening playback restores the exact paused 11405.3895 ms, frame hash and observation **before any seek**. All three restarted modes retain that bundle and 1/1 explicit understanding. The original saved file and exact unsaved learner note survive both normal exits; all owned VS Code processes and connection descriptors are absent after final cleanup.
+
+The complete successful run is `bfa22981-ac58-410c-a656-d404edaa0d2b`, with observation `710cbb54-8ddc-481b-8b68-585d74eef29a:1`. Main-CI archive/build identity remains unchanged. Private evidence includes `native/vscode/{live-v4.json,live-v4-cleanup.json,v5-replay-receipt.json,wiki-v4-roundtrip-receipt.json,before-restart.json,v4-restart-receipt.json,initial-shutdown.json,restart-shutdown.json}` below `artifacts/cycle-0017/`; each stage has its own video and screenshots. Native workbench renderer imagery is not independent OS-pixel evidence. Large bottom-panel consumption, clipped application space, transition motion and remaining constrained/accessibility checks prevent claiming complete visual usability. The scripted understanding action is not owner learning feedback.
+
+
+### Cursor configured workflow and unresolved restart
+
+Cursor independently passes the same action in successful V5 run `5aa1eb7f-1aed-4cca-85f1-fff90b17e1ec`, observation `aa7e6f60-f81f-4214-9e8a-8f4b7ebb18aa:1`: exact original source, one click/pause/continuation, three phase captures, actual dark/function values, shared live/replay modes and 1/1 explicit QA understanding. Its 14-frame finalized recording contains 1,476,441 PNG bytes. All nine captured owned runtime PIDs are absent. Six Wiki returns preserve exact x/y position; offline video shows the light-to-dark result. The successful run uses the warm cache left by its first pre-input check.
+
+That first check correctly rejected copied VS Code emitted hashes before clicking. Byte comparison proves the only JavaScript differences are three JSX development `fileName` paths and the inline map; the map differs only in its absolute clone path. Cursor-specific hashes were frozen before V5. This is a QA environment-identity correction, not a source change or a reason to remove byte verification.
+
+Cursor's ordinary restart restores its exact unsaved draft, fresh server identity, saved article and learner progress, but **P06 is not passed**. The first direct Wiki discovery exhausts a three-second helper loop. Study-first recovery later exposes the article but leaves a layout error. Subsequent helper errors include matching workbench sidebar text as Wiki content, a missing required restore mode, and an overbroad draft selector. Each is preserved as QA failure rather than product proof. Corrected, element-scoped checks find the saved article. The public restore then rejects four groups; explicit native Join All Editor Groups retains tabs but the next public restore still cannot confirm placement. A separate no-seek persistence probe reads the finalized recording/context, opens it, and observes `loading` → `idle` with cleared presentation rather than a ready image. This does not establish data loss. A native paint probe confirms the top-level Cursor window is visible and responsive, distinguishing this from the earlier hidden VS Code window.
+
+Private restart V4–V9 receipts, `restart-persistence-only.json`, `restart-paint-probe.log`, screenshots and the 501.25-second native-rendered video retain the sequence. Some early helper timeouts mean this is not a clean single-variable root-cause reproduction. Do not attribute it to the old V3-I1 native ordering hypothesis without further evidence. Both normal Cursor closes confirm through its actual Close dialog. Final independent shutdown checks retain the exact saved draft plus one exact unsaved backup and zero owned processes/descriptors. A late final draft-UI command overlaps Close after a yielded poll; that UI check is not a pass and cannot explain the earlier completed failures. The independent filesystem/backup result remains valid.
+
+See [the interim QA and investigation record](evidence/0017/native-validation.md). The next bounded investigation captures actual native grid/group state under a corrected serialized schedule before selecting any product repair.
 
 ## Result and decision
 
@@ -64,6 +95,6 @@ No native Cycle 0017 run yet. Cycle 0016's main artifact passes 680 product/shar
 
 ## Handoff
 
-- Exact next action: prepare the isolated target and host profiles, freeze P01–P07 schedule, then execute the installed configured workflow in VS Code followed by Cursor.
-- No owned native process is running at selection. Frozen Cycle 0016 review worktrees and private evidence remain untouched; Claude automatic retries remain disabled.
+- Exact next action: freeze an isolated Cursor restart diagnostic with actual native grid/group receipts and element-scoped readiness. Reproduce the failure under that changed hypothesis before proposing a fix. The installed original attempt remains failed/unverified.
+- The isolated VS Code editor, MCP and owned runtimes are stopped, with the exact unsaved QA draft preserved in its profile backup. Cursor has completed its bounded live/replay/Wiki run and failed the restart sequence; its editor/MCP/runtime processes are now stopped with exact draft backup retained. Frozen Cycle 0016 review worktrees and private evidence remain untouched; Claude automatic retries remain disabled.
 - PRODUCT_GOAL.md and accepted design decisions are unchanged. Only this cycle is active.
