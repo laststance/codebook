@@ -1,0 +1,624 @@
+{
+  "schemaVersion": 1,
+  "cycle": "0016",
+  "candidate": "installed-v16",
+  "createdAt": "2026-09-21T08:02:33.273946+00:00",
+  "privateRoot": ".",
+  "resolution": "Resolve artifact paths from the canonical Codebook checkout; raw videos/messages/logs stay private. Missing files require revalidation.",
+  "build": {
+    "revision": "cc36836263c11058e36378da2a85d2a129424024",
+    "dirty": false,
+    "sourceHash": "a852a1935b37e1161eaa8a32ea08352650e10fcb084f0b0ca5583f5cbcb911b4",
+    "vsixSha256": "2e2359ec604ae70931929d6199e07cb00cff2b763a641df0ea092699eff52ed5"
+  },
+  "result": "Both ordinary hosts install/reinstall exact reviewed artifact and pass six original-sequence Wiki returns with zero displacement; exact draft and process cleanup retained. Runtime bytes match v14/v15; current PR CI passes 680 + 96 and matches selected inputs and runtime entries. Remaining frozen Claude reconciliation, merge and main-CI comparison are pending.",
+  "artifactCount": 121,
+  "artifactBytes": 36523975,
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0016/attach-wiki-v16.mjs",
+      "bytes": 3807,
+      "sha256": "7fedd8ef244e8249c8cc6d723109d020317b3d14e513cc78d568ca3e9ac6109b"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16/SHA256SUMS",
+      "bytes": 80,
+      "sha256": "ab5573e6ccbdead95f0e83e4fa5c5ce58eab3aa25da3a40659cf9608eb375371"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16/artifact-metadata.json",
+      "bytes": 962,
+      "sha256": "6e52d4025ea1a5d0677d02befc03dd23f782ace21597f269dc6293e3bd123112"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16/build-receipt.json",
+      "bytes": 32215,
+      "sha256": "057b05127cb5211c8f2a9d0d71ca00b91dc2430a181ee62f072145973631d390"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16/codebook.vsix",
+      "bytes": 590378,
+      "sha256": "612970eb4f7ba5c9ccdb8212605c25ad38e8a9a8a6a6fc2702f5756cd7594247"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16/comparison.json",
+      "bytes": 6355,
+      "sha256": "36a6f1687a299275eacd58208da265495f76c47e9aca96415c1f4c91cba41a1d"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16/complete-job.log",
+      "bytes": 202552,
+      "sha256": "fb3121c1b7874074a2cd200e84ede3c4ab30c52241204e2f4e624a318d7d8862"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16/download-receipt.json",
+      "bytes": 1051,
+      "sha256": "c4611ecfde2b60a2d537975b22379604e4fd9990f0b3153d1b0d566c12c573e1"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16/github-artifact.zip",
+      "bytes": 654922,
+      "sha256": "5871afe2abf437153f0a9e08b0b6d0c1393fd0235647e26d8835d78b5e0a334b"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16/run.json",
+      "bytes": 4435,
+      "sha256": "75871195b6d1d19c0284ae255a9972ec09bccc2e413d96c8d753d09a57b75f8a"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16/verification.json",
+      "bytes": 31743,
+      "sha256": "811170d86d445f0105d4a3df2c8ffa7bca252d96bd052c31f63ec57ba0984a76"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-v16-download.log",
+      "bytes": 887,
+      "sha256": "7961252627fb4bb3e1b6028fdb7e9dcb38f413b0db54628c77218f6cfa344292"
+    },
+    {
+      "path": "artifacts/cycle-0016/fetch-ci-evidence-v16.py",
+      "bytes": 3063,
+      "sha256": "a8a3e78f35375a638af44b41a645684fef8d017fedf0fb9ec4508ac7ffdf24a0"
+    },
+    {
+      "path": "artifacts/cycle-0016/inspect-native-motion-wiki-v16.mjs",
+      "bytes": 1207,
+      "sha256": "7fa46d183502f0a78fe9e0dfa2b81d4afe1070e79279f89e5524cf7463491481"
+    },
+    {
+      "path": "artifacts/cycle-0016/install-v16.log",
+      "bytes": 864,
+      "sha256": "9a48426bcc4df8c11a9929890cc831788713b7a693ced9c5464d0445baa645e8"
+    },
+    {
+      "path": "artifacts/cycle-0016/install-v16.mjs",
+      "bytes": 3380,
+      "sha256": "31a758d6758afd1e4109bdfe6a3c77cfb74df10334bacd9fb0a1fa89e7aabe64"
+    },
+    {
+      "path": "artifacts/cycle-0016/installations-v16.json",
+      "bytes": 1012,
+      "sha256": "5a0f4fae282ef4f97c29f959c9345b0385de32c47ecd09dfe695679556ed48f8"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-candidate-v16-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-candidate-v16-check.json",
+      "bytes": 31743,
+      "sha256": "9342b9e3578383a8ededf4d739ae09e51febd87b054687a200f771d7c1e1ebfe"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-candidate-v16-check.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-candidate-v16.json",
+      "bytes": 32256,
+      "sha256": "6c039f5bdc0beb6aa9acd74016137b6147e91ab0a1efe30886044e769162f69e"
+    },
+    {
+      "path": "artifacts/cycle-0016/launch-wiki-v16.mjs",
+      "bytes": 1988,
+      "sha256": "d64a61758379c0f17516dc4bb85ba50db9568cb2e534b729c69855957a71d365"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/installation-v16.json",
+      "bytes": 8568,
+      "sha256": "ffb73afbbc2db7146b87d637dab03dd94fdd2d92a0289c6b360ac071d1e94647"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-attach.log",
+      "bytes": 1617,
+      "sha256": "e1891a9cb3c68b7bf246b15223797f232910f437c173ab9a945e0a2913dad61f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-complete-console.log",
+      "bytes": 28564,
+      "sha256": "9692a7dbe370c6d8af20302b036b1821cd965f3582c2443e2b6fa45861ace359"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-console-receipt.json",
+      "bytes": 380,
+      "sha256": "6c71b7c013d958d08d05704d0c9aefa3d5ac07f83379bff9ca9a660aac484010"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-discovery-timing.json",
+      "bytes": 777,
+      "sha256": "e5afe5e5bf4508f3ca4fd7d645a79ffc1c0b506d30bd014ce48c8bac21715405"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-draft-visible.log",
+      "bytes": 1088,
+      "sha256": "008bdd3ec301883c63ff86a8f2567582a43a3ce860940f5868b0e171934c2651"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-draft.png",
+      "bytes": 76538,
+      "sha256": "d90e53c012efebfbfa7a9e80cb70f4eaf9cdd22fe8e7908b08d592314197bb1e"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-exit.json",
+      "bytes": 61,
+      "sha256": "2f58079dcb8999f8b5c0562e03db108f34242edb03eb131622a8d4057c404467"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-guided-walkthrough-observation-before.png",
+      "bytes": 216202,
+      "sha256": "f54ffdf16955448f03bbb8226c841aaa39bc7f12950c8aa05e2fae67f7c03720"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-guided-walkthrough-observation-return.png",
+      "bytes": 229242,
+      "sha256": "59094167359325590d612004d234e7e57d401b35953700a7facf18894eddb8e8"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-guided-walkthrough-observation-study.png",
+      "bytes": 167049,
+      "sha256": "3918bc3a6ad1711a0bdc3e2535d030a6a4d2d11c8efbedb1961c49ca5bdb68b3"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-guided-walkthrough-recording-before.png",
+      "bytes": 229221,
+      "sha256": "b64f44937478a1c343f9aac49ebe816f5a2ae48acae1134a2dead650c2d0f34e"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-guided-walkthrough-recording-return.png",
+      "bytes": 220849,
+      "sha256": "d585432d9d921535d1b395db1ace3e7bbaa3ff24a0af96d05f5995adf15ded63"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-guided-walkthrough-recording-study.png",
+      "bytes": 164183,
+      "sha256": "4bd8336157cc6acd6f84ab666cda835e47060d1f8166c791222a9a23f85f8c8a"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-human-visual-inspection.json",
+      "bytes": 1768,
+      "sha256": "86a5f81da1399e3c568ea8bea1ffde18e7cc9d5a0d27473ee1c87fd859658fcb"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-launch.json",
+      "bytes": 1320,
+      "sha256": "84c36cebf665c9796d076ff48f00fb53cdf9209221484c3e0579be8651ed81f4"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-living-book-observation-before.png",
+      "bytes": 259147,
+      "sha256": "dfd07afa223aeb8319fac08a7f97599675300f605b3ea27939da981c8b86978f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-living-book-observation-return.png",
+      "bytes": 257533,
+      "sha256": "d64231786024d66de69f7a4834287e50641bccc8f1fc5b855cbde4ce1feb6272"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-living-book-observation-study.png",
+      "bytes": 195954,
+      "sha256": "5423eb984d4a6191021acce9925d5987689d52c0f87182f18a930485d4708a73"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-living-book-recording-before.png",
+      "bytes": 261816,
+      "sha256": "7a123ce1518ce42bc5cbe5bebe66e4855c8e7332c7c0a6b74721b3d66ecec702"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-living-book-recording-return.png",
+      "bytes": 269714,
+      "sha256": "893daf26499801dfd624f22ec70603290e82cb72a1e02f48ffccc73c344328af"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-living-book-recording-study.png",
+      "bytes": 167653,
+      "sha256": "768f715ca216cf7f83539398cd49cb08449e2befe64efda1de08c3d3ba52bc27"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-motion-inspection.json",
+      "bytes": 1108,
+      "sha256": "e0a7b05b6ad36a99fac0971c039dadc5a3f5c3d01dbc0ace9fc66e9c5c163cf4"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-native-frames/frame-1.png",
+      "bytes": 402200,
+      "sha256": "3740dc466475b454f7d8fa8324e395bf85891522c70038d7e04fc81d893ee0d3"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-native-frames/frame-2.png",
+      "bytes": 555510,
+      "sha256": "62268c55cb71b5421d35c4c85dc9588e56a41db2d830136087107c5bbb1295ad"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-native-frames/frame-3.png",
+      "bytes": 503619,
+      "sha256": "a34c3b29d539934adb54e3232bb5f525ec5f0c2c9c4ceec202d7daa6d68b5604"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-native-frames/frame-4.png",
+      "bytes": 487245,
+      "sha256": "9d2964a89fdbd0c77be0e85af3a46817451b121c63dba237a16c44bfafa54e12"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-native-frames/transition-10s.png",
+      "bytes": 497764,
+      "sha256": "85ab98836dc28d965d26b758517ffce37ac1dd40d69231cf219eb5fb888b3ecb"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-native-frames/transition-20s.png",
+      "bytes": 640948,
+      "sha256": "e0a89db80a05770f84be44421b68f53a6ff06d1eda127336e26dd6d2e4e9272f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-native-frames/transition-30s.png",
+      "bytes": 555563,
+      "sha256": "0b145c2173ecbfaf827dfc1f524fd966346c205aabf288739784e3f55eab643e"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-native-frames/transition-6s.png",
+      "bytes": 333716,
+      "sha256": "57e2a5a56a344382666e6e761f1fe5b7970dcef471b9a15e528e0f1654d16c16"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-native.webm",
+      "bytes": 6415111,
+      "sha256": "f68412c1bb97624f8591026de3a63a6e6eeb1136ba3f11fd385d5211d88e8e90"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-roundtrip-receipt.json",
+      "bytes": 595211,
+      "sha256": "9724557334d130a7ef6d4dc9cbc7d3b0056b8f7c7c90ff15b64be1c91524ada1"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-roundtrip.log",
+      "bytes": 610,
+      "sha256": "7a3fb6456270773e06ced46ca47aabcdd7eebd8135c4fa249e3da84805fcb033"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-shutdown.json",
+      "bytes": 973,
+      "sha256": "92bd49c7bc1fa17a223215a37f6c3a601264e379255850fcf3d0ba43efe4decf"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-study-workspace-observation-before.png",
+      "bytes": 227465,
+      "sha256": "066a9b4ee284672bc2dc09b6d4987117e6c2e26bc426d81adad3ef852426463e"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-study-workspace-observation-return.png",
+      "bytes": 224677,
+      "sha256": "344cbb64f7f5d9aa59e7a7c4a1b74956290f908731fc4f1d4795bbbccea743db"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-study-workspace-observation-study.png",
+      "bytes": 189847,
+      "sha256": "06c2546588eb0c77c535fb33ab0b902b13acbc97de3658a68236592eeedf4be9"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-study-workspace-recording-before.png",
+      "bytes": 225387,
+      "sha256": "83e360decb73c12c6bf4f4f0236cd0da8a688b5acdeae99c00dcafea0dbef725"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-study-workspace-recording-return.png",
+      "bytes": 216942,
+      "sha256": "fb6e232c69cea21bc071c7cf0d4c6f7d2e3eea1b7a808daa126c96e5b0920381"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-study-workspace-recording-study.png",
+      "bytes": 171864,
+      "sha256": "0a2cff81260258f68f655faf850293a2c01ea7015745361e1e931ee385174dba"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/wiki-v16-transition-frames.json",
+      "bytes": 477,
+      "sha256": "000e01d0dc262c90b9da1ba95be5c8db4feb6e677f38bcda6f68aacc3c9ac817"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/installation-v16.json",
+      "bytes": 8597,
+      "sha256": "d15647e48972926ed8a2ed47d3f8e63a7df8b2602bcd6b09ae1b1a0521998f0c"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-attach.log",
+      "bytes": 1316,
+      "sha256": "5dc39733bfe04eeb6cc735408a6de7f5c2ab8ab7f218d30993198295f2d46793"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-complete-console.log",
+      "bytes": 13502,
+      "sha256": "99a781349746427fe59330439469b0b387c59aaa4630d7e6813cf2c69f13c986"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-console-receipt.json",
+      "bytes": 379,
+      "sha256": "201115564e9dea116e0a95a828beee7809412fbece3a4df1ed180db4f78ba33b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-discovery-timing.json",
+      "bytes": 777,
+      "sha256": "754e66ce23f2891cedbb8fba75c198f92d6d830ae653b0335f14bb9a92b10f48"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-draft-visible.log",
+      "bytes": 1193,
+      "sha256": "042f22a06359d36e3b00ebf2e97a8d8f5597e07b30ee512901915a7198deff80"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-draft.png",
+      "bytes": 87049,
+      "sha256": "ed8e29b33a73d47e06c631b9135599f7e57216bc7270125a715ecc3b73ac2fe6"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-exit.json",
+      "bytes": 61,
+      "sha256": "1fde24c5b37897489bf620bbceb3ffa7f06a2af90b008c04137adb16322c68dd"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-guided-walkthrough-observation-before.png",
+      "bytes": 280227,
+      "sha256": "f95ae2d9660bed59d635f4d983ccb98316231d9a629708e898b7d759f49ccc1f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-guided-walkthrough-observation-return.png",
+      "bytes": 301773,
+      "sha256": "bc8c4e1f12001301fddef26353d1a9d5af0fed4c918063aa1985b6ac179e2496"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-guided-walkthrough-observation-study.png",
+      "bytes": 238818,
+      "sha256": "a7903bbb1e892525d1744722b332585f6f6fb504fa13613ddfdc3d9379ef2a41"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-guided-walkthrough-recording-before.png",
+      "bytes": 303955,
+      "sha256": "ad24bbaa74016aabd8e9e0d66592d76f22b1abd8b57b9c3301b167f8a663289d"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-guided-walkthrough-recording-return.png",
+      "bytes": 281727,
+      "sha256": "7e66ec25ed8903fbf665e1d1ae8e1a00c67990be52a271f5d309f2e540105025"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-guided-walkthrough-recording-study.png",
+      "bytes": 222805,
+      "sha256": "995d6030a2b3e486e6de525ccd0ee5008251522dab1e2170d819211f45fc588b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-human-visual-inspection.json",
+      "bytes": 1578,
+      "sha256": "332821024c1d407d0b014636c2a2324ff4f337e93dcac352e7edcb970ea43302"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-launch.json",
+      "bytes": 1305,
+      "sha256": "f6976f726ba4859e3097c54e35357cc9371cf89c13afcf5ee3d3ebf280ffa152"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-living-book-observation-before.png",
+      "bytes": 357012,
+      "sha256": "22678e23cb1681eab103d4cb73984e268e5bde0521f3a1ee3f89420710d67cbe"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-living-book-observation-return.png",
+      "bytes": 347868,
+      "sha256": "78bd0592f8e13adf5eb8897d65833d49f3be3a16fdca0d5b15c508432a558a0d"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-living-book-observation-study.png",
+      "bytes": 253318,
+      "sha256": "347aaeef3a520a1a5007377a6a84b805e83629fd81d05f21f4e8ffb76a323cf0"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-living-book-recording-before.png",
+      "bytes": 345366,
+      "sha256": "6768b168bf5b98eb45f4f277fbf4ec763a0e7892e681d7ba501e317a49a4e321"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-living-book-recording-return.png",
+      "bytes": 354223,
+      "sha256": "a451e4e650441755853cec76c6102b83e42b1e5d28898e4938aa7fa68852ce35"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-living-book-recording-study.png",
+      "bytes": 221755,
+      "sha256": "295cc784c988dfb538f192461095fa279958e466f86d22cf1f2c73d72343d301"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-motion-inspection.json",
+      "bytes": 1107,
+      "sha256": "064a740803e8becae1483b1128bee9e209a0d6aab09edadb16d61298a68332b5"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-native-frames/frame-1.png",
+      "bytes": 679291,
+      "sha256": "d1929b5f8b95675e989d12c6e80ceab08723ceab3610cfb2e02355318a454872"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-native-frames/frame-2.png",
+      "bytes": 862669,
+      "sha256": "09bef0be6b46f942740063aaa877edf1e2731fb1425366fc8035015bb8877984"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-native-frames/frame-3.png",
+      "bytes": 649539,
+      "sha256": "4cfac5c19428f25ed2902a17bd99301d0c698c9803f62d803e15fea597c9f14d"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-native-frames/frame-4.png",
+      "bytes": 599650,
+      "sha256": "07cab24abda51999dbbf83c342ef12bb6ac654cf5c096d8c2b7e3a26a2e3a64c"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-native-frames/transition-10s.png",
+      "bytes": 705180,
+      "sha256": "e6c1af626b30537b1091522e317dd79a0932f2c4390751c7f4fb0bcf2102f4f4"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-native-frames/transition-20s.png",
+      "bytes": 781901,
+      "sha256": "24f96e2c316efa5231fcf472974bf4720850228757e8155f31d46ed00a77eb8b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-native-frames/transition-30s.png",
+      "bytes": 602022,
+      "sha256": "0518a5f1791131bca7a96e7cf312170c8261104446b2e3c704f2273458f77636"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-native-frames/transition-6s.png",
+      "bytes": 563332,
+      "sha256": "e53a08f8f3586728b1545acf7ce29ac6b84646d99f9be20deeb26b4bff60a173"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-native.webm",
+      "bytes": 7854730,
+      "sha256": "086effcfab9d2302611446c48f195e3e1312e85c0b2e7fae07439c79aeb75422"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-roundtrip-receipt.json",
+      "bytes": 594833,
+      "sha256": "e414f6fe9a2c70bbdfcc75a69f8a7633dd1b4a919727c5302cf56fdba2569134"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-roundtrip.log",
+      "bytes": 610,
+      "sha256": "07be65549d40a22d7205a85527ece35dd1057ba0a1bb4316b41e8b3577be84cd"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-shutdown.json",
+      "bytes": 1127,
+      "sha256": "e99ee170471994c786de24755c2978e8541d8fe4c5a452cb342b649927759c8b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-study-workspace-observation-before.png",
+      "bytes": 309100,
+      "sha256": "6251f401a31f9813f2bb5f7f1882d86565494acddec8dc70349fa5ee76815a89"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-study-workspace-observation-return.png",
+      "bytes": 305435,
+      "sha256": "2ce66117eacc8436ffa37e58a634662b4c8e7313fb6c54b5b257b2f5f42560e9"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-study-workspace-observation-study.png",
+      "bytes": 269170,
+      "sha256": "0faf4bb7c100a718f4ce069b2aee8f105caa263431f537806880e71e03e75588"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-study-workspace-recording-before.png",
+      "bytes": 304051,
+      "sha256": "27e69abd1795d3e88803824215f64744a7699d5c57dc297d60a09e7b16f49159"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-study-workspace-recording-return.png",
+      "bytes": 282638,
+      "sha256": "90e6b018a01769fd9b2104b6a8e54e619da4f49cdcf96dbbfbabbfbee0c09e05"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-study-workspace-recording-study.png",
+      "bytes": 236648,
+      "sha256": "e84d373959fa2e67ed8d864dcb8656ac972c286172e5c685a2d2893e1c2e8865"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/wiki-v16-transition-frames.json",
+      "bytes": 477,
+      "sha256": "d22b446db3c0835f45c3235b8eece81ffa8485e5ef87dfcda00fa67434841b0e"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/coderabbit-v16-cleanup-receipt.json",
+      "bytes": 929,
+      "sha256": "38e4856199cb28e6dec5171487f36c399d6a630306c9ed0c3472748a0603b0f0"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/coderabbit-v16-cleanup.log",
+      "bytes": 792,
+      "sha256": "7b5746948d88716e3d83f1c572d14b00256ed0f5eaf37b05420801c34ca75ec8"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/native-v16-cleanup.json",
+      "bytes": 712,
+      "sha256": "eb923595348088e3ac478bee8025de7eb6480017e64c679219f3db4bf42c7e64"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/v16-pushed-redaction-triage.json",
+      "bytes": 395,
+      "sha256": "8bf81b100167d38ac4f33440e4c7822a5e7550b95686072bb9e524ed6d185de6"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/v16-pushed-redaction.json",
+      "bytes": 1839,
+      "sha256": "c10a4aa27493ada6034a0fe66b613bdfe2e177bff91ac3e49dd0dd60f82aae45"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/v16-pushed.diff",
+      "bytes": 61865,
+      "sha256": "625efc7354d9b0e4446f428744a6987527ab58ba68c8cf141961352a9a52464f"
+    },
+    {
+      "path": "artifacts/cycle-0016/roundtrip-wiki-v16.mjs",
+      "bytes": 10507,
+      "sha256": "e36e9a0c865b504049e0ca90c82d9984527ff3c5ae54344e97167ef6e7151f77"
+    },
+    {
+      "path": "artifacts/cycle-0016/save-video-wiki-v16.mjs",
+      "bytes": 679,
+      "sha256": "cf3f78274f7d617b7da11515c9fafa1112d1c04dab2e70fd1399c2df05fda72d"
+    },
+    {
+      "path": "artifacts/cycle-0016/verify-main-ci-v16.mjs",
+      "bytes": 3826,
+      "sha256": "ca747d1ad3bd2fe4d4f47e5212bc6d061f6bf9d840be613d779d43424a5bcff5"
+    },
+    {
+      "path": "artifacts/cycle-0016/verify-owned-shutdown-wiki-v16.mjs",
+      "bytes": 2738,
+      "sha256": "35d0d00e8e1cf12832dc889434823069753dc6a4bcbbaabcb001effd05e16c65"
+    },
+    {
+      "path": "artifacts/cycle-0016/wiki-v16/archive-comparison.json",
+      "bytes": 8682,
+      "sha256": "3f318b782499001287c35cebfe26003fc219e430867d4b34f32a98ea42076957"
+    },
+    {
+      "path": "artifacts/cycle-0016/wiki-v16/driver-freeze.json",
+      "bytes": 1691,
+      "sha256": "4ec44aaed2c63b699cff53fe0ff7f7d09d95d0a70c7b64f3a3526675975f046b"
+    },
+    {
+      "path": "artifacts/packages/codebook-0.2.1-installed-v16.vsix",
+      "bytes": 590383,
+      "sha256": "2e2359ec604ae70931929d6199e07cb00cff2b763a641df0ea092699eff52ed5"
+    }
+  ]
+}
