@@ -67,6 +67,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let sourceFocusOnArrange: SourceEditor | undefined;
   let reportedSourceColumn: number | undefined;
   let nextSourceDisplay: (() => void) | undefined;
+  let nextReadingReveal: (() => void) | undefined;
   const visibleSourceEditors: (SourceEditor & { group: typeof groups[number] })[] = [], decoratedColumns: number[] = [];
   let retainedReadingRange: Range | undefined;
   /** Models native surrounding-line padding so workspace transfers expose lost reading positions. @example const editor = sourceEditor(document, group) */
@@ -74,6 +75,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     document, get viewColumn() { return reportedColumn ?? group.viewColumn; }, setDecorations() { decoratedColumns.push(reportedColumn ?? group.viewColumn); }, selections: [{ active: new Position(22, 0) }],
     get visibleRanges() { return [retainedReadingRange ?? new Range(new Position(0, 0), new Position(100, 0))]; },
     revealRange(range, revealType) {
+      const revealed = nextReadingReveal; nextReadingReveal = undefined; revealed?.();
       if (!retainedReadingRange) return;
       // Native AtTop includes five surrounding lines; revealing the whole old viewport repeatedly drifts upward.
       if (revealType === 3) { const first = Math.max(0, range.start.line - 5); retainedReadingRange = new Range(new Position(first, 0), new Position(first + 11, 0)); }
@@ -289,6 +291,17 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     },
     showTransientNativeSizes() { transientLayout = true; },
     failNextCommand(name: string) { failingCommand = name; },
+    /** Gives presentation regressions a learner-owned mutable document whose edits do not move its tab. @example const draft = harness.focusMutableDraft(); draft.replaceContent('new text'); */
+    focusMutableDraft() {
+      let text = 'Original learner draft.\n';
+      const document = { uri: Uri.file(join(harness.directory, 'mutable-notes.txt')), version: 1, getText: () => text };
+      const group = groups[0]!, tab = { input: new TabInputText(document.uri), isPreview: false, isDirty: true };
+      const editor = Object.assign(sourceEditor(document, group), { group });
+      group.tabs.push(tab); group.activeTab = tab; activeTabGroup = group; visibleSourceEditors.push(editor);
+      return { document, tab, replaceContent(value: string) { text = value; document.version++; } };
+    },
+    changeAfterNextSourceDisplay(change: () => void) { nextSourceDisplay = change; },
+    changeAfterNextReadingReveal(change: () => void) { nextReadingReveal = change; },
     addForeignDraft(column = groups[0]!.viewColumn) { const tab = { input: new TabInputText(Uri.file(join(harness.directory, 'notes.txt'))), isDirty: true }; groups.find(group => group.viewColumn === column)!.tabs.push(tab); return tab; },
     addTextPreview(path: string, column: number, dirty = false) { const tab = { input: new TabInputText(Uri.file(path)), isPreview: true, isDirty: dirty }; groups.find(group => group.viewColumn === column)!.tabs.push(tab); return tab; },
     resyncEditorGroups(change?: 'move' | 'replace' | 'append' | 'unannounced' | 'remove' | 'reorder' | 'empty') {
@@ -2943,7 +2956,7 @@ test('switching presentation waits for restored application focus before confirm
   } finally { await harness.close(); }
 });
 
-test('a missing final application-focus receipt rejects presentation without saving or losing retained evidence', async context => {
+test('a missing final application-focus receipt rejects once without retrying focus or losing retained evidence', async context => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
@@ -2955,7 +2968,7 @@ test('a missing final application-focus receipt rejects presentation without sav
     const app = harness.reader['app']; assert.ok(app);
     const reveal = app.reveal.bind(app); let focusRequests = 0, placedLayout: unknown;
     context.mock.method(app, 'reveal', (...args: Parameters<typeof reveal>) => {
-      // Keep both earlier owned-tab receipts; the final focus receipt and its recovery retry never arrive.
+      // Keep both earlier owned-tab receipts; no final focus receipt arrives, so a failed transfer must not retry it.
       if (!args[1] && ++focusRequests >= 3) { placedLayout ??= harness.editorLayout(); return; }
       reveal(...args);
     });
@@ -2965,6 +2978,7 @@ test('a missing final application-focus receipt rejects presentation without sav
       code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Timed out waiting for restored presentation pane focus',
     });
     // Assert: an applied grid remains unconfirmed; failure cannot claim the new mode or rewrite learner evidence.
+    assert.equal(focusRequests, 3, 'Two Keep Editor receipts and one failed final restore must not trigger a second full focus wait');
     assert.equal(harness.reader.presentationState().mode, 'study-workspace');
     assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().state, 'open');
     assert.equal(harness.reader.presentationState().reason, 'Error: Timed out waiting for restored presentation pane focus');
@@ -2975,6 +2989,43 @@ test('a missing final application-focus receipt rejects presentation without sav
     assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true);
     assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
   } finally { context.mock.restoreAll(); await harness.close(); }
+});
+
+for (const editStage of ['before focus restoration', 'during native source display', 'during reading reveal'] as const) test(`a draft edited ${editStage} rejects its obsolete reading pose without overwriting the new text`, async () => {
+  // Arrange: the same native tab survives a document edit, so group ownership alone cannot validate its old pose.
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open();
+    const draft = harness.focusMutableDraft(); harness.retainReadingRange(84, 96);
+    const restoreFocus = harness.reader['capturePresentationFocus']();
+    await harness.reader.action('focus-app');
+    const edit = () => draft.replaceContent('New first line.\nNew last line.\n');
+    if (editStage === 'before focus restoration') edit();
+    else if (editStage === 'during native source display') harness.changeAfterNextSourceDisplay(edit);
+    else harness.changeAfterNextReadingReveal(edit);
+    // Act
+    await assert.rejects(restoreFocus(), /document changed during presentation/);
+    // Assert: changed text and its learner-owned dirty tab remain untouched; no new mode can be saved.
+    assert.equal(draft.document.getText(), 'New first line.\nNew last line.\n');
+    assert.equal(draft.document.version, 2); assert.equal(draft.tab.isDirty, true);
+    assert.equal(harness.groups.some(group => group.tabs.includes(draft.tab)), true);
+    assert.equal(harness.presentationPreferences.size, 0);
+  } finally { await harness.close(); }
+});
+
+test('an unchanged learner draft restores its reading pose and remains dirty', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); const draft = harness.focusMutableDraft(); harness.retainReadingRange(84, 96);
+    const restoreFocus = harness.reader['capturePresentationFocus'](); await harness.reader.action('focus-app');
+    // Act
+    await restoreFocus();
+    // Assert
+    assert.equal(draft.document.getText(), 'Original learner draft.\n'); assert.equal(draft.document.version, 1);
+    assert.equal(draft.tab.isDirty, true); assert.equal(harness.isReadingLineVisible(90), true);
+    assert.equal(harness.focusedPanel(), undefined);
+  } finally { await harness.close(); }
 });
 
 test('a retained source hidden after replay refresh rejects presentation without replacing the foreign draft', async () => {
@@ -3139,7 +3190,7 @@ test('Close retires the reader identity immediately and waits for an already acc
   } finally { held.release(); await harness.close(); }
 });
 
-for (const trigger of ['native layout read failure', 'final focus timeout'] as const) test(`Close cancels a pending focus recovery after ${trigger} without losing the draft or original failure`, async context => {
+test('Close cancels pending focus recovery after a native layout failure without losing the draft or original failure', async context => {
   // Arrange: earlier owned-panel focus receipts succeed; failure recovery receives no final focus receipt.
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   let recoveryEntered = () => {};
@@ -3152,17 +3203,15 @@ for (const trigger of ['native layout read failure', 'final focus timeout'] as c
     context.mock.method(app, 'reveal', (...args: Parameters<typeof reveal>) => {
       if (!args[1]) {
         focusRequests++;
-        // Early layout failure recovers after one Keep Editor; final-focus timeout recovers after two keeps and one failed restore.
-        const recoveryRequest = trigger === 'native layout read failure' ? 2 : 4;
-        if (focusRequests >= recoveryRequest) { recoveryEntered(); return; }
-        if (trigger === 'final focus timeout' && focusRequests === 3) return;
+        // Layout failure recovers after one Keep Editor; normal final-focus failure is no longer retried.
+        if (focusRequests >= 2) { recoveryEntered(); return; }
       }
       reveal(...args);
     });
-    if (trigger === 'native layout read failure') harness.failNextCommand('vscode.getEditorLayout');
+    harness.failNextCommand('vscode.getEditorLayout');
     const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
     const rejected = assert.rejects(transfer, {
-      code: 'PRESENTATION_UNAVAILABLE', causeDetail: trigger === 'native layout read failure' ? 'Error: Native layout command failed' : 'Error: Timed out waiting for restored presentation pane focus',
+      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native layout command failed',
     });
     await recoveryStarted;
     const cancellation = harness.reader['presentationTransition']?.cancellation.signal; assert.ok(cancellation);

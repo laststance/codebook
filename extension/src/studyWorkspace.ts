@@ -289,13 +289,16 @@ export class StudyWorkspace {
     }
     const editor = vscode.window.activeTextEditor;
     if (editor) {
-      const document = editor.document, group = vscode.window.tabGroups.activeTabGroup, selections = editor.selections, restoreReadingPosition = retainEditorReadingPosition(editor), preview = group.activeTab?.isPreview ?? false;
+      const document = editor.document, documentVersion = document.version, group = vscode.window.tabGroups.activeTabGroup, selections = editor.selections, restoreReadingPosition = retainEditorReadingPosition(editor), preview = group.activeTab?.isPreview ?? false;
       return async signal => {
         if (!this.app?.active && !this.contextPanel?.active) throw new Error('Focus changed outside Codebook during placement; it was preserved.');
+        // Edits can retain the same tab/group while invalidating its captured selections and reading position.
+        if (document.version !== documentVersion) throw new Error('The previously focused document changed during presentation; its current reading position was preserved.');
         const currentGroup = document.uri.toString() === this.sourceUri?.toString() ? this.studyPanePositions().sourceGroup
           : vscode.window.tabGroups.all.find(candidate => candidate === group || this.editorGroupIdentities.get(candidate) === this.editorGroupIdentities.get(group));
         if (!currentGroup?.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === document.uri.toString())) throw new Error('The previously focused source group changed; focus was not guessed.');
         const restored = await vscode.window.showTextDocument(document, { viewColumn: currentGroup.viewColumn, preserveFocus: false, preview });
+        if (document.version !== documentVersion) throw new Error('The previously focused document changed during presentation; its current selections were preserved.');
         restored.selections = selections; await restoreReadingPosition(restored, signal);
       };
     }
@@ -308,7 +311,7 @@ export class StudyWorkspace {
   private async performPresentation(input: PresentationIntent, transition: NonNullable<StudyWorkspace['presentationTransition']>, restoreFocus?: ReturnType<StudyWorkspace['capturePresentationFocus']>): Promise<PresentationState> {
     const signal = transition.cancellation.signal, lifetime = this.lifetime;
     const previousMode = this.presentationMode;
-    let evidenceConfirmed = false;
+    let evidenceConfirmed = false, restoreFocusAttempted = false;
     let assertRetainedPlacement = this.opened ? this.retainPresentationPlacement() : undefined;
     this.presentationMovedFocus = false;
     const assertCurrent = () => {
@@ -356,7 +359,7 @@ export class StudyWorkspace {
           if (retainedSelections) restoredSource.selections = retainedSelections;
           await restoreSourceReading(restoredSource, signal); assertCurrent(); assertRetainedPlacement();
         }
-        await restoreFocus?.(signal); assertCurrent();
+        restoreFocusAttempted = true; await restoreFocus?.(signal); assertCurrent();
         assertRetainedPlacement = this.retainPresentationPlacement();
         const receipt = this.layoutReceipt, actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent();
         assertRetainedPlacement();
@@ -372,8 +375,8 @@ export class StudyWorkspace {
       this.errors.delete('presentation');
       return { ...this.presentationState(), state: this.opened ? 'open' : 'closed' };
     } catch (error) {
-      // Restore owned focus only; Close can cancel a recovery that is already awaiting its native receipt.
-      if (this.presentationMovedFocus && !this.closing && lifetime === this.lifetime && (this.app?.active || this.contextPanel?.active)) await restoreFocus?.(signal).catch(() => undefined);
+      // Recover only before normal restoration was attempted; a failed receipt must not incur a second full wait.
+      if (!restoreFocusAttempted && this.presentationMovedFocus && !this.closing && lifetime === this.lifetime && (this.app?.active || this.contextPanel?.active)) await restoreFocus?.(signal).catch(() => undefined);
       if (transition.id === this.presentationId) { if (!this.presentationConfirmed) this.presentationMode = previousMode; this.presentationReason = String(error); this.publish(); }
       if (error instanceof StudyError) throw error;
       throw new StudyError('PRESENTATION_UNAVAILABLE', 'The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.', String(error));

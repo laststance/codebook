@@ -2,7 +2,7 @@
 
 ## [0.2.1.0] - 2026-09-21
 
-Private extension preview 0.2.1 / MCP API 1.5. Ordinary installed checkout and replay have bounded evidence in both editors; full real-repository usefulness and final product acceptance remain open.
+Private extension preview 0.2.1 / MCP API 1.5. Ordinary installed checkout and replay have bounded evidence in both editors. V5 exposes an unexplained Cursor owned-tab timeout during manual reading; the latest recovery guards await installed revalidation. Full real-repository usefulness and final product acceptance remain open.
 
 ### Added
 
@@ -14,6 +14,7 @@ Private extension preview 0.2.1 / MCP API 1.5. Ordinary installed checkout and r
 
 - Hash the same bounded archive bytes that were validated, even when another process atomically replaces the input path during checking.
 - Cancel a pending focus-recovery receipt when the learner closes Study, preserving the original transfer failure and unrelated draft.
+- Avoid retrying an already-failed final focus wait. Reject an obsolete reading pose when the learner document changes during transfer, preserving edited text and the dirty tab.
 - Wait for the native focus receipt before confirming a presentation transfer. Preserve the visible source reading position after final pane placement and across paused replay refresh, including manual reading away from the selected stop.
 - Exclude only the current package operation's untracked scratch files from its final source-state comparison so a clean checkout can use a custom in-repository output path. Unrelated files and actual source changes still invalidate the applicable identity checks.
 - Reject accidental test, SDK-client and native-runner inputs before they enter the shipped runtime bundle. Regressions preserve evidence and unrelated drafts when final focus or source restoration cannot complete.
