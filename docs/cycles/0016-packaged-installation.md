@@ -55,6 +55,8 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 
 ## Attempts and evidence
 
+- [V8 delivery supplement](evidence/0016/installed-validation-v8.md): clean `5111cb9`, fresh **680/680 + 65/65** tests, runtime/demo equality to v7 (28 unchanged archive entries), and independently verified exact new installation identity, saved Wiki/replay/progress, native frames and cleanup in both hosts. Metadata/README and archive hashes differ; v7 remains the full live/replay/manual workflow evidence. Review/CI/merge remain pending.
+
 - [Selected-input provenance](evidence/0016/selected-input-provenance.md): seven red-before hidden-input cases, repaired exact HEAD membership/content comparison, 11/11 focused and 65/65 full package checks. SHA-256 Git and literal tab/Unicode paths have an additional regression. Runtime code is unchanged from v7; fresh delivery identity and review/CI remain separate.
 
 - [V7](evidence/0016/installed-validation-v7.md): clean `24e64b1`, fresh **680/680 + 57/57** tests, exact 29-file installation equality and complete bounded ordinary checkout/replay/manual-reading/restart independently in both hosts. Three preserved protocol failures have explicit corrected full reruns. Existing learner decisions and exact drafts survive; all owned processes/descriptors are gone. Native motion and console qualifications remain. Independent review confirms all 265 actual v7 inputs match HEAD, while reproducing a general ignored/index-hidden-input clean-provenance defect that must be repaired before delivery.
@@ -218,7 +220,7 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 ## Handoff
 
 - Clean installed repair check: six transfers after a 32.5-second current pause pass with unchanged run/snapshot and restored Application/source focus. The earlier cold-reader check remains qualified because it displayed old history. Native dimensions and inspected frames are recorded in the investigation.
-- Exact next action: repair ignored/index-hidden selected-input provenance, then freeze fresh tests/package and review evidence. Compare all shipped runtime/assets against v7 and independently verify the new installation/build identity in both hosts. Complete fresh CI and merge PR #20 closing Issue #19. Keep v7 full native proof and all earlier failures under their exact identities.
+- Exact next action: complete current source/documentation reviews and fresh CI after the verified v8 delivery supplement; merge PR #20 closing Issue #19. Keep v7 full native proof, v8 unchanged-runtime/new-build evidence and all earlier failures under their exact identities.
 - Active processes: none owned by Cycle 0016. Both final ordinary profiles exited normally; exact remaining idle shells were retired, descriptors reached zero and original unsaved drafts retained their hashes. Branch: codex/cycle-0016-packaged-installation.
 - PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
 - Select a single next cycle only after this cycle's evidence identifies the next uncertainty.
