@@ -1,8 +1,13 @@
 {
   "scope": "Cycle 0018 v11 clean package, source equivalence and normal installation preparation; not actual extension loading or final acceptance",
   "availability": "Private local artifacts. Preserve or copy to durable private storage before moving this checkout. Profiles, raw runtime data and credentials are not public repository files.",
-  "updatedAt": "2026-09-21T19:25:58.367190+00:00",
+  "updatedAt": "2026-09-21T19:33:12.919828+00:00",
   "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/blocked-audit-native-visibility.json",
+      "bytes": 2276,
+      "sha256": "a69f0339546d4cd7a35a601c8db982e71218287df3b686e664331c5397aa1509"
+    },
     {
       "path": "artifacts/cycle-0018/coderabbit-candidate-v11-receipt.json",
       "bytes": 522,
@@ -17,6 +22,11 @@
       "path": "artifacts/cycle-0018/delivery-review-3-full-validation.json",
       "bytes": 32003,
       "sha256": "7064628b23c8996a20261f1e5f55f0cc38a4532d70c113ef654c7b953f911bc9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v10/cursor-full/blocked-audit-1931-visibility.json",
+      "bytes": 7082,
+      "sha256": "62c80182825a87393d7e84515b9b1a2e169c06e1f813ab0023ffc7f17f0e4f8e"
     },
     {
       "path": "artifacts/cycle-0018/installed-development-v10/cursor-full/continuation-1916-visibility.json",

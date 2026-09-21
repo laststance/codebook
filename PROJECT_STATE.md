@@ -10,6 +10,8 @@ Last cycle issue: [#21](https://github.com/laststance/codebook/issues/21) — cl
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 5
 
+Current blocker: on 2026-09-22 JST, three consecutive goal turns retain the same hidden/unfocused v10 Cursor window with no animation callbacks. Its launcher is confirmed live; the existing manual-foreground request remains unanswered. Independent source, package, normal-installation and provider-review preparation is complete. Goal execution is blocked pending visible foreground of `codebook · Study — laststance-io-cursor`; T4/T5 and full-product acceptance remain incomplete. The [v11 report and blocked audit](docs/cycles/evidence/0018/candidate-v11-preparation.md#review-and-next-action) record the resume boundary.
+
 ## Verified facts
 
 The [v11 development candidate](docs/cycles/evidence/0018/candidate-v11-preparation.md) checkpoints the four source repairs at clean `7f95ada` and freezes VSIX `c0ec9648…`. Its 269 selected inputs exactly match the 773 + 96 tested working tree. Both ordinary editor CLIs install that same archive into new owned profiles and all 29 extension files match; the original 62 Cursor / 115 VS Code state files retain exact bytes/mtimes. Neither new workbench is launched, so loaded identity and all v11 native outcomes remain unverified. The failed hidden v10 Cursor window stays open for the pending foreground comparison. The bounded CodeRabbit supplement completes on all seven checkpoint files with zero findings in 188.818 seconds; the earlier native workflow remains non-converged. T3 source implementation/checks are complete; T4/T5 remain pending.
