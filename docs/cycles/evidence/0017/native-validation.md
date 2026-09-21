@@ -1,6 +1,22 @@
-# Installed real-repository validation — interim
+# Installed real-repository validation
 
-Date: 2026-09-21. Cycle: [0017](../../0017-packaged-repository-study.md). Status: **investigation continues; Cursor restart is not verified**. Goal #1 stays open; final reviews 0/10. No product source or installed extension was edited during this report-only QA. Claude Code reviews are skipped by explicit owner direction.
+Date: 2026-09-21. Cycle: [0017](../../0017-packaged-repository-study.md). Status: **bounded QA complete with an open high-severity Cursor restart failure**. Goal #1 stays open; final reviews 0/10. No product source or installed extension was edited during this report-only QA. Claude Code reviews are skipped by explicit owner direction.
+
+## Report metadata
+
+- Scope: Cycle 0017 P01–P07, ordinary installed native extension in two hosts; diagnostic supplement remains separate.
+- Branch: `codex/cycle-0017-packaged-repository-study`; installed revision/VSIX listed below.
+- Framework: VS Code API/webviews, Node MCP, configured Next/React target.
+- Pages: six native surface types per host (workbench, app, source, context, Wiki, timeline); no general web crawl.
+- Screenshots: 121 PNG artifacts in the frozen original manifest; only the enumerated inspected frames count as visual review.
+- Duration: native QA plus investigation spanned approximately 08:30–10:03 UTC, including agent/tool idle time; this is not execution performance.
+- Severity: 1 High, 1 Medium, 2 Low; 1 additional qualified console finding without product attribution.
+
+## Top 3 things to fix
+
+1. C17-QA-001: correct Cursor cold editor-group scope/reservation and revalidate restart.
+2. C17-QA-002: restore useful app/source/reading space at constrained sizes.
+3. C17-QA-003: validate and reduce intermediate pane movement across transfers.
 
 ## Candidate and environment
 
@@ -47,13 +63,13 @@ Inspected frame sets: VS Code live 1/3/5, replay 0/1/2, Wiki 0/1/2/3 and restart
 
 | ID | Severity / category | Observation and disposition |
 | --- | --- | --- |
-| C17-QA-001 | High / functional | Cursor configured restart sequence cannot confirm Study placement; retained replay transitions loading→idle without a ready image. Recording/context and learner bytes remain present. Further native diagnostics required; no product fix claimed. |
+| C17-QA-001 | High / functional | Cursor configured restart sequence cannot confirm Study placement; retained replay transitions loading→idle without a ready image. Recording/context and learner bytes remain present. Separate diagnostic reproduces global tab-group/active-grid scope mismatch; no product fix claimed. |
 | C17-QA-002 | Medium / visual | Duplicated lower controls consume reading height; source/application panes clip content and recorded app becomes small. Scroll/focus workarounds permit the tested tasks, not full design acceptance. |
 | C17-QA-003 | Low / visual | Intermediate mode/return frames show moving or unconfirmed panes and loading copy before settled success. Full motion/accessibility obligations remain. |
 | C17-QA-004 | Low / UX | Raw debugger source can cover the explanation; explicit Focus Explanation is needed. Foreign preview protection correctly refuses automatic relocation until an explicit Keep Editor. |
 | C17-QA-005 | Qualified / console | Startup, host-service, deprecation and cleanup diagnostics are retained; no fresh extension-disabled attribution control in this cycle. Do not infer a quiet console or assign every host error to Codebook. |
 
-Cursor restart detail: the initial helper has only a three-second Wiki discovery window. Later generic body-text matching mistakes workbench sidebar text for the Wiki frame, and another request omits the required restore mode. Those are harness errors, not product regressions. Correct element-scoped inspection finds the saved article. Public Restore then rejects four groups; explicit native Join All Editor Groups retains tabs, but subsequent Restore still cannot confirm layout. The separate playback probe reads finalized context, opens it and remains idle with cleared presentation. A native RAF probe confirms the top-level window is visible/responsive, so the earlier hidden-window explanation does not resolve this case. The original chain is retained; a corrected isolated diagnostic must establish a precise cause before any repair.
+Cursor restart detail: the initial helper has only a three-second Wiki discovery window. Later generic body-text matching mistakes workbench sidebar text for the Wiki frame, and another request omits the required restore mode. Those are harness errors, not product regressions. Correct element-scoped inspection finds the saved article. Public Restore then rejects four groups; explicit native Join All Editor Groups retains tabs, but subsequent Restore still cannot confirm layout. The separate playback probe reads finalized context, opens it and remains idle with cleared presentation. A native RAF probe confirms the top-level window is visible/responsive, so the earlier hidden-window explanation does not resolve this case. The original chain is retained. The [separate diagnostic](cursor-layout-investigation.md) reproduces an extra hidden empty API group outside the measured active grid, implicating cold reservation and ownership checks. Correct settled ratios disprove the original fractional-sizing hypothesis for this case; no repair is claimed.
 
 The final Cursor draft-UI attempt did not settle before its command budget, and Close was submitted while that CLI call was pending. It is not a visible-draft pass. Independent post-exit verification compares exact saved text and a complete matching unsaved backup, plus zero owned processes/descriptors. The late overlap cannot explain earlier separately completed failures.
 
@@ -79,6 +95,6 @@ For only the tested native scope, the provisional combined score is **76/100**: 
 
 ## Evidence and next action
 
-Private scripts, frozen schedules, transcripts, videos, frames, installation identities and cleanup receipts live under `artifacts/cycle-0017/`. The [original-attempt manifest](installed-attempt-manifest.json) freezes this pre-diagnostic evidence; new diagnostic evidence will have its own manifest. Keep that store and both preserved profiles available; missing artifacts require revalidation. Ordinary installed evidence is tied to the main-CI VSIX; any added diagnostic extension/profile must be labeled separately.
+Private scripts, frozen schedules, transcripts, videos, frames, installation identities and cleanup receipts live under `artifacts/cycle-0017/`. The [original-attempt manifest](installed-attempt-manifest.json) freezes this pre-diagnostic evidence; the [diagnostic manifest](diagnostic-manifest.json) identifies the later isolated investigation. A [fresh manifest audit](manifest-audit.json) matches 329/330 original entries, all 57 diagnostic entries and all 27 Cycle 0016 delivery entries. The sole drift is a checkpoint redaction-triage note overwritten after the original manifest was frozen; its original 4,212-byte identity is retained but those old bytes are no longer present. Current 258-byte content and hash are recorded separately. No native execution, screenshot/video, source, recording, installation or shutdown artifact differs. Keep that store and both preserved profiles available; missing artifacts require revalidation. Ordinary installed evidence is tied to the main-CI VSIX; any added diagnostic extension/profile must be labeled separately.
 
-Next: capture actual native editor grid/group and public playback state during an isolated Cursor cold restart with URI/element-scoped readiness and strictly serialized commands. Do not rerun the failed recovery chain with longer arbitrary waits. Do not infer source ordering, corruption or a product fix from the current evidence.
+Next: deliver this falsified unchanged-package experiment, then repair the measured native editor-group scope/reservation mismatch with preserved foreign state and new ordinary packaged restart evidence in both hosts. No data-loss or general reliability claim follows from this diagnosis.

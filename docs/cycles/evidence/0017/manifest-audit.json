@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-21T10:10:05.902096+00:00",
+  "manifests": [
+    {
+      "path": "docs/cycles/evidence/0016/delivery-manifest.json",
+      "total": 27,
+      "matching": 27,
+      "currentBytes": 3055485
+    },
+    {
+      "path": "docs/cycles/evidence/0017/installed-attempt-manifest.json",
+      "total": 330,
+      "matching": 329,
+      "currentBytes": 95137338
+    },
+    {
+      "path": "docs/cycles/evidence/0017/diagnostic-manifest.json",
+      "total": 57,
+      "matching": 57,
+      "currentBytes": 7456676
+    }
+  ],
+  "mismatches": [
+    {
+      "manifest": "docs/cycles/evidence/0017/installed-attempt-manifest.json",
+      "path": "artifacts/cycle-0017/checkpoint-redaction-triage.json",
+      "expected": {
+        "bytes": 4212,
+        "sha256": "00f14f8ccdb757d3783f71a536f911654df0f3c7967a4595d79f03711c35933d"
+      },
+      "actual": {
+        "bytes": 258,
+        "sha256": "120f47580ee718e47babce268f21d0531a7bde645f3c8fac817f2785820483c8"
+      },
+      "modifiedAt": "2026-09-21T09:47:47.424470+00:00"
+    }
+  ]
+}

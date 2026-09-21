@@ -2,8 +2,8 @@
 
 Type: experiment\
 Status: validating\
-Result: pending\
-Delivery: local-only\
+Result: falsified\
+Delivery: committed; final delivery pending\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/21\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -84,17 +84,21 @@ Cursor's ordinary restart restores its exact unsaved draft, fresh server identit
 
 Private restart V4–V9 receipts, `restart-persistence-only.json`, `restart-paint-probe.log`, screenshots and the 501.25-second native-rendered video retain the sequence. Some early helper timeouts mean this is not a clean single-variable root-cause reproduction. Do not attribute it to the old V3-I1 native ordering hypothesis without further evidence. Both normal Cursor closes confirm through its actual Close dialog. Final independent shutdown checks retain the exact saved draft plus one exact unsaved backup and zero owned processes/descriptors. A late final draft-UI command overlaps Close after a yielded poll; that UI check is not a pass and cannot explain the earlier completed failures. The independent filesystem/backup result remains valid.
 
-See [the interim QA and investigation record](evidence/0017/native-validation.md). The next bounded investigation captures actual native grid/group state under a corrected serialized schedule before selecting any product repair.
+The [QA and investigation record](evidence/0017/native-validation.md) retains that failed checkpoint. It led to the corrected, serialized native grid/group investigation completed below before selecting any product repair.
+
+## Completed diagnostic
+
+The [isolated Cursor investigation](evidence/0017/cursor-layout-investigation.md) reproduces a native scope mismatch: one visible editor leaf has two API groups; three visible leaves have four. The extra empty group belongs outside the measured grid. Cold Wiki/Study column reservation and later group-count/ownership checks use the global list. The measured split ratios are correct. Reopening Wiki after the actual three-leaf grid exists succeeds, while Study Restore still rejects the fourth API group. The original profile remains unchanged across all 62 User/Backups files; both auxiliary profiles close normally with exact drafts and zero owned resources. No product change or repaired restart is claimed.
 
 ## Result and decision
 
-- Result: pending.
+- Result: **falsified** for the unchanged-package hypothesis through ordinary restart. The configured action, live/replay modes and Wiki returns remain demonstrated separately in both hosts; VS Code restart passes and Cursor restart fails.
 - Keep: the existing configured adapter, immutable recording model and shared presentations.
 - Carried obligations: all prior unresolved native ordering, geometry/focus/accessibility/motion, service/SDK/interleaving, actual-agent/timing, broad review and final integrated acceptance requirements remain active.
-- Delivery: not yet reviewed or merged. Goal #1 remains open; final reviewers 0/10.
+- Delivery: local builds and serial regressions pass 680 product/shared + 96 package tests. The initial CodeRabbit CLI and independent adversarial passes find no new defects; final documentation synchronization, current-diff review, PR/CI, merge and Issue #21 closure remain delivery steps. Goal #1 remains open; final reviewers 0/10.
 
 ## Handoff
 
-- Exact next action: freeze an isolated Cursor restart diagnostic with actual native grid/group receipts and element-scoped readiness. Reproduce the failure under that changed hypothesis before proposing a fix. The installed original attempt remains failed/unverified.
+- Exact next action: complete the bounded evidence/documentation review, coderabbit-cli, cycle PR and merge/Issue #21 closure. Then select a compatibility cycle for native editor-group scope/reservation with focused red controls and both-host packaged restart. The original Cursor restart remains failed/unverified.
 - The isolated VS Code editor, MCP and owned runtimes are stopped, with the exact unsaved QA draft preserved in its profile backup. Cursor has completed its bounded live/replay/Wiki run and failed the restart sequence; its editor/MCP/runtime processes are now stopped with exact draft backup retained. Frozen Cycle 0016 review worktrees and private evidence remain untouched; Claude automatic retries remain disabled.
 - PRODUCT_GOAL.md and accepted design decisions are unchanged. Only this cycle is active.
