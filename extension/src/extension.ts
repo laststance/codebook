@@ -85,7 +85,13 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     vscode.commands.registerCommand('codebook.openStudyWorkspace', () => workspace().open()),
     vscode.commands.registerCommand('codebook.selectPresentation', () => workspace().selectPresentation()),
     vscode.commands.registerCommand('codebook.closeStudyWorkspace', () => reader?.close()),
-    vscode.commands.registerCommand('codebook.openRepositoryWiki', (input?: unknown) => repository().open(input === undefined ? undefined : repositorySelectionSchema.parse(input))),
+    vscode.commands.registerCommand('codebook.openRepositoryWiki', async (input?: unknown) => {
+      try { await repository().open(input === undefined ? undefined : repositorySelectionSchema.parse(input)); }
+      catch (error) {
+        // Cold failures have no Wiki panel; report them without waiting for notification dismissal or swallowing rejection.
+        void vscode.window.showErrorMessage(`Codebook could not open Repository Wiki: ${String(error)}`); throw error;
+      }
+    }),
     vscode.commands.registerCommand('codebook.closeRepositoryWiki', () => repositoryReader?.close()),
     vscode.commands.registerCommand('codebook.repository.action', (action: unknown) => repository().action(repositoryActionSchema.parse(action))),
     vscode.commands.registerCommand('codebook.repository.understand', (understood: unknown) => { if (typeof understood !== 'boolean') throw new Error('Understanding requires a boolean learner choice.'); return repository().understand(understood); }),
