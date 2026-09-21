@@ -97,6 +97,16 @@ for (const [label, revision] of [['short-sha1', 'a'.repeat(39)], ['long-sha1', '
   });
 }
 
+test('a duplicate dependency notice is rejected before checking its repeated content', async () => {
+  // Arrange: the duplicate also has a wrong hash, so rejection must precede another content check.
+  const entries = new Map(original), manifest = JSON.parse(entries.get('extension/package-manifest.json'));
+  manifest.dependencies[0].notices.push({ ...manifest.dependencies[0].notices[0], sha256: '0'.repeat(64) });
+  replaceFile(entries, 'package-manifest.json', Buffer.from(JSON.stringify(manifest)));
+  const path = await writeArchive(entries, 'duplicate-dependency-notice');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /Duplicate dependency notice/);
+});
+
 test('the standalone checker reports the actual VSIX checksum without executing its extension code', async () => {
   // Arrange: a coherent archive contains a throwing entry, which the checker must never run.
   const entries = new Map(original); replaceFile(entries, 'dist/extension.js', Buffer.from('throw new Error("must not execute checker input");'));

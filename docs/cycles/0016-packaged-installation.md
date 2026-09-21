@@ -221,9 +221,9 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 
 ## Handoff
 
-- Clean installed repair check: six transfers after a 32.5-second current pause pass with unchanged run/snapshot and restored Application/source focus. The earlier cold-reader check remains qualified because it displayed old history. Native dimensions and inspected frames are recorded in the investigation.
-- Exact next action: complete current source/documentation reviews and fresh CI after the verified v8 delivery supplement; merge PR #20 closing Issue #19. Keep v7 full native proof, v8 unchanged-runtime/new-build evidence and all earlier failures under their exact identities.
-- Active processes: none owned by Cycle 0016. Both final ordinary profiles exited normally; exact remaining idle shells were retired, descriptors reached zero and original unsaved drafts retained their hashes. Branch: codex/cycle-0016-packaged-installation.
+- Latest native evidence: v7 completes the bounded fixture in each host; v8 separately verifies unchanged runtime/assets, exact new installation and retained state. V9 is package-only and held before installation after the interruption finding. Earlier failed candidates remain separate.
+- Exact next action: pass current-source interruption/duplicate-notice checks, freeze and run the v10 supplement in both editors, finish fresh reviews/CI and merge PR #20 closing Issue #19. Compare the main CI artifact with the installed candidate before distribution claims.
+- Native profiles are stopped: both v8 windows exited normally, owned idle shells were retired, descriptors reached zero and exact original drafts remain. Build/review processes are separate. Branch: codex/cycle-0016-packaged-installation.
 - PROJECT_STATE.md selects this cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged.
 - Select a single next cycle only after this cycle's evidence identifies the next uncertainty.
 
@@ -268,3 +268,7 @@ The [delivery-hardening follow-up](evidence/0016/delivery-hardening.md) supersed
 ## Recovery-edge checkpoint
 
 [Bounded investigation](evidence/0016/recovery-edge-investigation.md) leaves C16-QA-006 inconclusive: 18 observer transfers and 72 owned-tab receipts pass, with the exact original installed bundle restored and owned processes/descriptors zero. Two independent P3 error paths reproduce at the isolated production-method boundary: duplicate final-focus waiting and an obsolete reading anchor after a document edit. Their minimal guards have meaningful red/green regressions (4 failures / 1 pass before, 6/6 after). The alleged stale-editor final false confirmation remains unproven. [Schedule v6](evidence/0016/installed-schedule-v6.md) is frozen before the new candidate; current full suites, installed evidence, reviews and delivery are pending.
+
+## Package interruption checkpoint
+
+[The interruption follow-up](evidence/0016/package-interruption-hardening.md) keeps clean `9434324` / v9 as a verified archive held before installation. Independent foreground-signal controls reproduce detached writers, then expose and reject a first repair that bypassed outer scratch cleanup. The revised repair propagates an interruption error after retiring the group; actual pnpm controls cover prior-artifact preservation, zero scratch, owned PIDs and caller listeners. A small real-archive duplicate-notice regression checks validation order. [Schedule v10](evidence/0016/installed-schedule-v10.md) is prepared before clean delivery; fresh source suites, native results, reviews and CI remain separate pending gates. The old `a02ef7f` Claude adversarial review completed on attempt 3 after 24-, 29- and 34-minute timeout limits; its three P3 topics are triaged, including an explicit final CI archive byte-comparison gate.

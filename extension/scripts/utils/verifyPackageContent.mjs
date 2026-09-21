@@ -19,12 +19,14 @@ export async function verifyPackageContent(entries, expectedFiles) {
   assert.ok(Array.isArray(manifest.externals) && manifest.externals.every(name => typeof name === 'string' && (name === 'vscode' || isBuiltin(name))), 'Unresolved runtime import.');
   assert.ok(Array.isArray(manifest.inputs) && manifest.inputs.length > 0, 'Missing bundle input inventory.');
   for (const input of manifest.inputs) assert.ok(typeof input.path === 'string' && /^[a-f0-9]{64}$/.test(input.sha256) && Number.isSafeInteger(input.bytes) && input.bytes > 0, 'Invalid bundle input.');
-  const requiredFiles = [...REQUIRED_PACKAGE_FILES];
+  const requiredFiles = [...REQUIRED_PACKAGE_FILES], noticeFiles = new Set();
   for (const dependency of manifest.dependencies) {
     assert.ok(typeof dependency.name === 'string' && typeof dependency.version === 'string' && typeof dependency.license === 'string' && dependency.license, 'Missing dependency license/version.');
     assert.ok(Array.isArray(dependency.notices) && dependency.notices.length > 0, `Missing dependency notice: ${dependency.name}`);
     for (const notice of dependency.notices) {
       assert.ok(typeof notice.file === 'string' && /^notices\/[a-zA-Z0-9_.+~-]+\/[a-zA-Z0-9_.-]+$/.test(notice.file), 'Unsafe dependency notice path.');
+      // A duplicate is already invalid; reject before hashing the same notice bytes again.
+      assert.ok(!noticeFiles.has(notice.file), `Duplicate dependency notice: ${notice.file}`); noticeFiles.add(notice.file);
       assert.equal(createHash('sha256').update(bytes(notice.file)).digest('hex'), notice.sha256, `Dependency notice mismatch: ${dependency.name}`);
       requiredFiles.push(notice.file);
     }
