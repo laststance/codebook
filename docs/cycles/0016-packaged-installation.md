@@ -1,9 +1,9 @@
 # Cycle 0016 — Packaged installation
 
 Type: product-increment\
-Status: validating\
+Status: closed\
 Result: bounded installed workflow demonstrated with concerns\
-Delivery: PR-open\
+Delivery: merged; privately packaged; bounded installed-verified\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/19\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -55,6 +55,8 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 
 ## Attempts and evidence
 
+The [final delivery report](evidence/0016/delivery-20260921.md) supersedes the pending-delivery status in historical checkpoints below. PR #20 merged at `8e266548`; Issue #19 closed at merge. Final PR and main CI pass 680 + 96 tests, and downloaded main bytes match all 267 selected inputs and 29 non-metadata entries of installed v16.
+
 - [Installed v16](evidence/0016/installed-validation-v16.md) fixes the final reviewed candidate at clean `cc36836`: exact both-host installation/reinstallation, 12/12 original Wiki returns at zero displacement, native motion inspection, exact drafts and complete cleanup. All 267 selected inputs and 29 non-metadata archive entries match downloaded PR CI `35575032097` (680 + 96 passing tests); runtime bytes match v14/v15. The final QA-only CodeRabbit rereview has zero findings. Docs/PR completion, merge and main-CI comparison remain open. At 08:06 UTC the owner stopped/skipped the remaining frozen ba192ace/deb5335 Claude adversarial reviews after repeated timeouts; no completed result is inferred. The private receipt `artifacts/cycle-0016/review/claude-owner-skip.json` records six owned processes stopped, zero remaining and automatic retries disabled. Historical timeout records and completed reviews retain their source/coverage identities.
 - Documentation sync v16 audits delivery head `064a646` against `3149e75`: all ten root/usage documents and the active cycle retain accurate installation, build, verification and presentation contracts. All 121 v16 evidence artifacts, 267 selected source inputs and the exact VSIX checksum match; package verification passes. All 295 scoped local links resolve and all 62 scoped documents are reachable from README/AGENTS. Root README and current handoffs now identify v16 and the owner-requested review skip. Packaged README and selected build inputs remain unchanged. Private coverage map, checks and completion receipt: `artifacts/cycle-0016/document-release-v16/`. CHANGELOG/release metadata and final PR composition remain with the driving agent.
 - [Installed v15](evidence/0016/installed-validation-v15.md) preserves v14 runtime bytes while binding the first QA-script cleanup repair to a new exact archive: 12/12 native Return cases across both ordinary hosts, exact drafts/cleanup and source-equal current CI (680 + 96). Two CodeRabbit notifications identify one remaining combined-error diagnostic concern. Three red/green transport controls, four actual-browser cases and a zero-finding exact one-file rereview validate the final QA-only repair before [schedule v16](evidence/0016/installed-schedule-v16.md).
@@ -100,7 +102,7 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 - Result: clean `24e64b1` [v7](evidence/0016/installed-validation-v7.md) completes the bounded ordinary installed workflow independently in VS Code and Cursor, including the original live/manual focus cases, offline replay, all three layouts, restart and exact drafts. All three harness amendments and historical source-cut failures remain explicit. Console and intermediate-motion concerns remain qualified; whole-product acceptance is not claimed.
 - Keep the shared runtime, recording, reader and presentation ownership. Do not widen the configured repository-browser adapter to disguise packaging work as arbitrary-repository support.
 - All eleven carried Cycle 0014 obligations remain active, including native Wiki ordering (Cycle 0015 inconclusive), all-mode Wiki Return, complete service/SDK/interleaving coverage, full native focus/keyboard/geometry and uncropped/reduced-motion checks, actual-agent evaluation/timing, broad review convergence and integrated final acceptance.
-- Delivery: historical candidates retain their exact tests/reviews/CI. V16 is the latest installed both-host candidate with successful current-source PR CI and complete selected-input/non-metadata-entry comparison; v9/v12 remain package-only/held. Native whole-branch review, CodeRabbit full-branch/delta records and the final QA-only zero-finding rereview retain their distinct scopes. The owner stopped/skipped the remaining ba192ace/deb5335 adversarial reviews, preserving earlier timeouts and completed reports without inferring missing completion. Documentation/PR synchronization, current PR checks, PR #20 merge and actual main-CI comparison remain pending. Final product reviews: 0/10.
+- Delivery: [PR #20](https://github.com/laststance/codebook/pull/20) merged at `8e266548`; Issue #19 closed at merge. [Final delivery](evidence/0016/delivery-20260921.md) verifies actual main CI and 267 selected-input / 29 non-metadata-entry equality to installed v16. Prior v7/v14/v16 native evidence and all failed cuts retain their source identities. The owner skipped the two unfinished Claude adversarial reviews; no missing pass is inferred. Native motion/console concerns and complete product acceptance remain open. Final product reviews: 0/10.
 
 ## Engineering review — Step 0 and architecture
 
@@ -240,9 +242,9 @@ This is native fallback evidence only. No cross-model agreement or final accepta
 
 - Latest native evidence: v7 retains the bounded full fixture proof per host. V14 separately owns the Wiki Return repair and 24/24 original/restarted checks. V16 at clean `cc36836` / VSIX `2e2359ec…` supplies exact both-host installation/reinstallation, 12/12 original-sequence returns at zero displacement, inspected native frames and exact draft/owned-process cleanup. Current-source PR CI passes 680 + 96 tests and matches all 267 selected inputs / 29 non-metadata archive entries; those entries match installed v14/v15. V9/v12 remain package-only/held; original native failures remain separate.
 - Completed reviews: retain the native whole-branch source review, CodeRabbit full-branch/14-file delta reports and final QA-only zero-finding rereview at their own source/coverage identities. The original 479dd29 adversarial report, ba192ace structured report, independent descriptor/admission reviews and deb5335 structured report remain completed historical evidence. The two later frozen adversarial retries were stopped/skipped at the owner's request and supply no completed outside coverage.
-- Exact next action: finish documentation/PR synchronization and current PR checks, merge PR #20 with Closes #19, then compare actual main-CI bytes against the frozen installed v16 archive. At 08:06 UTC the owner stopped/skipped the frozen ba192ace/deb5335 Claude adversarial reviews; no retry or completed outside result is inferred. The cancellation receipt is `artifacts/cycle-0016/review/claude-owner-skip.json`, and each review retains its `status-before-owner-skip.json`. This waives only that review gate; all remaining delivery and final-product gates stay active.
+- Exact next action: Cycle 0016 delivery is complete. Proceed to [Cycle 0017](0017-packaged-repository-study.md) for the installed configured real-repository workflow. Claude reviews remain skipped, automatic retries disabled; preserve the cancellation receipt and prior timeout history.
 - Both native profiles are stopped after v16 with exact drafts and zero owned processes/descriptors. The Cursor close-confirmation and corrected console capture are recorded. Frozen clean worktrees retain ba192ace and deb5335 as review evidence; preserve their HEAD and tracked files until the driving agent performs delivery cleanup.
-- PROJECT_STATE.md retains this one active cycle; PRODUCT_GOAL.md and accepted product behavior are unchanged. Goal #1 stays open and final reviews are 0/10.
+- PROJECT_STATE.md records Cycle 0016 closed and Cycle 0017 as the sole active cycle. PRODUCT_GOAL.md and accepted product behavior are unchanged. Goal #1 stays open and final reviews are 0/10.
 
 ## GSTACK REVIEW REPORT
 
