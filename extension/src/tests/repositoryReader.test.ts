@@ -26,6 +26,15 @@ async function readerHarness(context: TestContext) {
     static file(path: string) { return new Uri('file', '', path); }
     toString() { return `${this.scheme}://${this.authority}${this.path}?${this.query}`; }
   }
+  class TabInputText { constructor(readonly uri: Uri) {} }
+  type NativeDocument = { uri: Uri; getText(): string };
+  let activeEditor: { document: NativeDocument; viewColumn: number } | undefined;
+  const focusListeners = new Set<() => void>();
+  const sourceGroup: { viewColumn: number; tabs: { input: TabInputText }[]; activeTab?: { input: TabInputText } } = { viewColumn: 1, tabs: [] };
+  let requiresSourceFocus = false, arrangements = 0;
+  let sourceDocumentGate: { entered(): void; wait: Promise<void> } | undefined;
+  let arrangementGate: { entered(): void; wait: Promise<void> } | undefined;
+  const panelColumns: number[] = [], reveals: number[] = [];
   let provider = async (_uri: Uri) => '', workspace = source.directory, connections = 0;
   let receive = (_message: unknown) => {};
   const shown: { uri: Uri; text: string }[] = [], panels = new Set<object>(), linked: { binding: BookObservationBinding; recording: boolean }[] = [];
@@ -33,20 +42,40 @@ async function readerHarness(context: TestContext) {
   const watchers: { pattern: RelativePattern; listeners: ((uri: Uri) => void)[] }[] = [];
   const boundary = await loadModule<typeof import('../repositoryReader')>(resolve(__dirname, '../repositoryReader.js'), {
     './environment': { requireWorkspace: () => workspace },
-    vscode: { EventEmitter, Uri, ViewColumn: { One: 1, Two: 2 }, RelativePattern, Range: class {},
+    vscode: { EventEmitter, Uri, TabInputText, ViewColumn: { One: 1, Two: 2 }, RelativePattern, Range: class {},
       workspace: { textDocuments, registerTextDocumentContentProvider: (_scheme: string, value: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { provider = value.provideTextDocumentContent; return disposable(); },
         onDidChangeTextDocument: disposable, createFileSystemWatcher: (pattern: RelativePattern) => {
           const watcher = { pattern, listeners: Array<(uri: Uri) => void>() }; watchers.push(watcher);
           const listen = (callback: (uri: Uri) => void) => { watcher.listeners.push(callback); return disposable(); };
           return { dispose() { watcher.listeners = []; }, onDidChange: listen, onDidCreate: listen, onDidDelete: listen };
         },
-        openTextDocument: async (uri: Uri) => { const text = uri.scheme === 'file' ? await readFile(uri.fsPath, 'utf8') : await provider(uri); return { uri, getText: () => text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n') }; } },
-      window: { registerTreeDataProvider: disposable, showTextDocument: async (document: { uri: Uri; getText(): string }) => { shown.push({ uri: document.uri, text: document.getText() }); },
-        createWebviewPanel: () => { let disposed = () => {}; const panel = { title: '', reveal() {}, dispose() { panels.delete(panel); disposed(); }, onDidDispose(callback: () => void) { disposed = callback; },
+        openTextDocument: async (uri: Uri) => {
+          const text = uri.scheme === 'file' ? await readFile(uri.fsPath, 'utf8') : await provider(uri);
+          const held = sourceDocumentGate; sourceDocumentGate = undefined; if (held) { held.entered(); await held.wait; }
+          return { uri, getText: () => text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n') };
+        } },
+      window: { registerTreeDataProvider: disposable, get activeTextEditor() { return activeEditor; }, tabGroups: { all: [sourceGroup], activeTabGroup: sourceGroup, onDidChangeTabs: disposable, onDidChangeTabGroups: disposable },
+        onDidChangeActiveTextEditor(callback: () => void) { focusListeners.add(callback); return { dispose() { focusListeners.delete(callback); } }; },
+        showTextDocument: async (document: NativeDocument, options?: { viewColumn?: number; preserveFocus?: boolean }) => {
+          shown.push({ uri: document.uri, text: document.getText() });
+          const editor = { document, viewColumn: options?.viewColumn ?? 1 }, tab = { input: new TabInputText(document.uri) };
+          sourceGroup.tabs.push(tab); sourceGroup.activeTab = tab;
+          if (!options?.preserveFocus) { activeEditor = editor; for (const listener of focusListeners) listener(); }
+          return editor;
+        },
+        createWebviewPanel: (_kind: string, _title: string, options: number | { viewColumn: number; preserveFocus?: boolean }) => {
+          const column = typeof options === 'number' ? options : options.viewColumn; panelColumns.push(column);
+          if (typeof options === 'number' || !options.preserveFocus) { activeEditor = undefined; for (const listener of focusListeners) listener(); }
+          let disposed = () => {}; const panel = { title: '', reveal(column: number) { reveals.push(column); }, dispose() { panels.delete(panel); disposed(); }, onDidDispose(callback: () => void) { disposed = callback; },
           webview: { html: '', postMessage: async () => true, onDidReceiveMessage: (callback: (value: unknown) => void) => { receive = callback; return disposable(); } } }; panels.add(panel); return panel; } },
     },
   });
-  const createReader = () => new boundary.RepositoryReader({ storage: async () => library, connect: async () => { connections++; }, arrange: async () => {}, evidence: async (binding, recording) => { linked.push({ binding, recording }); } });
+  const createReader = () => new boundary.RepositoryReader({ storage: async () => library, connect: async () => { connections++; }, arrange: async (_signal, _selection, focus) => {
+    arrangements++;
+    const held = arrangementGate; arrangementGate = undefined; if (held) { held.entered(); await held.wait; }
+    focus?.begin();
+    if (requiresSourceFocus) { assert.ok(focus?.acquireSourceFocus, 'Ambiguous main focus requires the actual selected citation.'); const assertFocused = await focus.acquireSourceFocus(); assertFocused(); }
+  }, evidence: async (binding, recording) => { linked.push({ binding, recording }); } });
   const reader = createReader(), store = await reader.storage(); context.after(() => reader.dispose());
   const first = await source.sources.read('src/cart.ts'), second = await source.sources.read('src/order.ts');
   const document: BookDocument = { title: 'Architecture', summary: 'Source-derived architecture.', nodes: [
@@ -55,7 +84,12 @@ async function readerHarness(context: TestContext) {
   ], edges: [{ from: 'cart', to: 'order', relationship: 'related', explanation: 'Both export pricing values.' }] };
   await store.publish({ bookId: 'architecture', key: 'first', expectedRevision: 0, document });
   const selection: RepositorySelection = { bookId: 'architecture', revision: 1, nodeId: 'cart', anchorIndex: 0 };
-  return { ...source, library, reader, store, selection, document, shown, panels, linked, textDocuments, Uri, createReader, receive: (message: unknown) => receive(message),
+  return { ...source, library, reader, store, selection, document, shown, panels, linked, textDocuments, Uri, createReader, panelColumns, reveals, receive: (message: unknown) => receive(message),
+    requireSourceFocus() { requiresSourceFocus = true; }, arrangements: () => arrangements,
+    holdArrangement() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); arrangementGate = { entered, wait }; return { started, release }; },
+    holdSourceDocument() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); sourceDocumentGate = { entered, wait }; return { started, release }; },
+    focusChat() { activeEditor = undefined; for (const listener of focusListeners) listener(); },
+    focusUnrelatedDraft() { const document = { uri: Uri.file(join(root, 'unrelated-draft.txt')), getText: () => 'Keep my draft.' }, tab = { input: new TabInputText(document.uri) }; activeEditor = { document, viewColumn: 1 }; sourceGroup.tabs.push(tab); sourceGroup.activeTab = tab; for (const listener of focusListeners) listener(); },
     connections: () => connections, changeWorkspace: () => { workspace = '/another/workspace'; }, provider: (uri: Uri) => provider(uri),
     fileEvent: (path: string, kind: number) => { for (const watcher of watchers) if (matchesGlob(relative(watcher.pattern.base, path), watcher.pattern.pattern)) watcher.listeners[kind]?.(Uri.file(path)); } };
 }
@@ -70,6 +104,94 @@ test('repository articles open retained source without connecting an agent or ma
   assert.equal(harness.shown[0]?.text, 'export const price = 24;\n'); assert.equal(harness.connections(), 0);
   assert.equal(state.view.sources[0]?.status, 'current'); assert.equal((await harness.library.readProgress()).decisions.length, 0);
   assert.equal('sources' in state.view.book!.revision, false);
+});
+
+test('Wiki opens its real retained citation before resolving an otherwise ambiguous primary pane', async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.requireSourceFocus();
+  // Act
+  await harness.reader.open(harness.selection);
+  // Assert
+  assert.deepEqual(harness.panelColumns, [2]); assert.deepEqual(harness.reveals, [2]);
+  assert.equal(harness.shown.length, 1); assert.equal(harness.shown[0]!.text, 'export const price = 24;\n');
+  assert.equal(harness.reader.inspect().sourceUri, harness.shown[0]!.uri.toString());
+  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'cart'); assert.equal(harness.reader.inspect().view.loading, false);
+  assert.equal(harness.connections(), 0); assert.equal((await harness.library.readProgress()).decisions.length, 0);
+});
+
+test('an unavailable Wiki citation cannot acquire native layout or focus as a temporary anchor', async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.requireSourceFocus();
+  // Act
+  await assert.rejects(harness.reader.open({ ...harness.selection, revision: 9 }), /revision 9 is unavailable/);
+  // Assert
+  assert.equal(harness.arrangements(), 0); assert.equal(harness.shown.length, 0); assert.equal(harness.panels.size, 0);
+});
+
+test('chat focus during Wiki progress storage prevents the old Open from revealing its reader again', async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.requireSourceFocus();
+  const save = harness.library.selectRepository.bind(harness.library);
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  harness.library.selectRepository = async selection => { entered(); await held; await save(selection); };
+  const opening = harness.reader.open(harness.selection); void opening.catch(() => undefined);
+  try {
+    // Act
+    await Promise.race([started, opening]); harness.focusChat(); release();
+    await assert.rejects(opening, /focus changed/);
+    // Assert
+    assert.deepEqual(harness.reveals, []); assert.equal(harness.shown.length, 1);
+    assert.equal((await harness.library.readProgress()).decisions.length, 0);
+  } finally { release(); await opening.catch(() => undefined); }
+});
+
+test('manual draft focus while the Wiki catalog loads prevents later source focus acquisition', async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.requireSourceFocus();
+  const list = harness.store.list.bind(harness.store);
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  harness.store.list = async () => { entered(); await held; return list(); };
+  const opening = harness.reader.open(harness.selection), rejected = assert.rejects(opening, /focus changed/);
+  try {
+    // Act
+    await started; harness.focusUnrelatedDraft(); release(); await rejected;
+    // Assert
+    assert.equal(harness.arrangements(), 0); assert.equal(harness.shown.length, 0); assert.equal(harness.panels.size, 0);
+    assert.equal((await harness.library.readProgress()).repositorySelection, undefined);
+  } finally { release(); await opening.catch(() => undefined); }
+});
+
+for (const primary of ['opaque', 'text'] as const) test(`manual draft focus while ${primary}-primary Wiki layout waits prevents a later citation or reader reveal`, async context => {
+  // Arrange
+  const harness = await readerHarness(context);
+  if (primary === 'opaque') harness.requireSourceFocus();
+  const held = harness.holdArrangement();
+  const opening = harness.reader.open(harness.selection), rejected = assert.rejects(opening, /focus changed/);
+  try {
+    // Act
+    await held.started; harness.focusUnrelatedDraft(); held.release(); await rejected;
+    // Assert
+    assert.equal(harness.shown.length, 0); assert.equal(harness.panels.size, 0); assert.deepEqual(harness.reveals, []);
+    assert.equal((await harness.library.readProgress()).repositorySelection, undefined);
+  } finally { held.release(); await opening.catch(() => undefined); }
+});
+
+for (const interruption of ['manual focus', 'Close'] as const) test(`${interruption} during actual citation acquisition prevents a late native source or Wiki reveal`, async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.requireSourceFocus(); const held = harness.holdSourceDocument();
+  const opening = harness.reader.open(harness.selection), rejected = assert.rejects(opening, /focus changed|superseded or closed/);
+  try {
+    // Act
+    await held.started;
+    if (interruption === 'Close') harness.reader.close();
+    else harness.focusUnrelatedDraft();
+    held.release(); await rejected;
+    // Assert
+    assert.equal(harness.shown.length, 0); assert.equal(harness.panels.size, 0); assert.deepEqual(harness.reveals, []);
+    assert.equal((await harness.library.readProgress()).repositorySelection, undefined);
+  } finally { held.release(); await opening.catch(() => undefined); }
 });
 
 test('publishing clearer prose advertises a newer revision without replacing the selected historical article or its understanding', async context => {

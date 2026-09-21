@@ -35,6 +35,7 @@ async function feedbackHarness(context: TestContext) {
         openTextDocument: async (uri: Uri) => { const text = await provider(uri); return { uri, getText: () => text }; },
       },
       window: {
+        tabGroups: { activeTabGroup: { viewColumn: 1 }, onDidChangeTabs: disposable, onDidChangeTabGroups: disposable }, onDidChangeActiveTextEditor: disposable,
         registerTreeDataProvider: disposable, showTextDocument: async () => {},
         showErrorMessage: async (message: string) => { notifications.push(message); },
         createWebviewPanel: () => {

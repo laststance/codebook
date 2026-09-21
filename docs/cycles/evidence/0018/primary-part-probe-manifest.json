@@ -1,0 +1,283 @@
+{
+  "sourceRevision": "8e2665489a48103d3bf60b1906397bf0b6883ccc",
+  "vsixSha256": "6abd3c665e7f3610040860ff45c22eecf1947499f5cd08654a7b3f5ba5f9a0dc",
+  "type": "development diagnostic",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/chat-focused.json",
+      "sha256": "567f52fb9ce26c2c3be3472f4c1ca231be1e7b3219f61a25652b412549a0a809",
+      "bytes": 4524,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/chat-focused.png",
+      "sha256": "f1a0a3eeafae984db13170f17ea8d3da2573bd3dc42c616a3d14ee106a68ee9f",
+      "bytes": 268425,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/chat-hidden.json",
+      "sha256": "b95bc1e43c9a80c3461daaaa5c47e4ab0da136b52552b53d46328e00eb92f393",
+      "bytes": 7080,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/chat-hidden.png",
+      "sha256": "cf71d402d8bdd93ce069cc8480914b5f5b06bee539831a6aee68334b06013cf2",
+      "bytes": 241552,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/chat-with-main-three.json",
+      "sha256": "c6f840e9d6a613bb68504a3726e1cacb12cab7a9e86b1b56af0c460733aaa7aa",
+      "bytes": 5499,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/chat-with-main-three.png",
+      "sha256": "f19645bb39ac759b578e8d2ca759183bb25f256a4d57f9308d44a608df29f567",
+      "bytes": 259278,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/console.log",
+      "sha256": "b8cfce7ad0ed7569f22f1b3ec4a737857ae8b1ad4708ef277205ceab2e7ef639",
+      "bytes": 24078,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/first-from-chat.json",
+      "sha256": "b249b5f1207e1f33468f6ff3209df322e15f0c7d5755f605a37bf720c38c72e1",
+      "bytes": 4673,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/first-from-chat.png",
+      "sha256": "8f4ff652091c0c85bccb7ad232cc77671d2d23e109807d8d0505ed50ed5c6c4e",
+      "bytes": 268858,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/first-group.json",
+      "sha256": "688765c0869826fa204a54a452ad44d10f40f08cfdfd30d80dcf30ae0ab50bd6",
+      "bytes": 5320,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/first-group.png",
+      "sha256": "dad0bc21239158320cd924dc5af8f9bc96ca0e301be8e082a47e2873566f170b",
+      "bytes": 254706,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/focus-cli.json",
+      "sha256": "67daa3790f713b5827730af32ee9400c6949137351fb8f3e6639a1eb6f84f2fd",
+      "bytes": 43,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frame-inspection.json",
+      "sha256": "0ad9d17d43530d6890dd84b9de49ce9f736841390f8fd215867523cde61f3492",
+      "bytes": 921,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/041.png",
+      "sha256": "1b7ba2bc2fda5abfc335f8c7387ba1ee9bcd215a8396e61b9a636b9fe617f010",
+      "bytes": 262782,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/044.png",
+      "sha256": "ba823c8a76605e4b69d9bd8ca7266c0fd4e1522664d79abc468a618b8159f268",
+      "bytes": 277334,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/073.png",
+      "sha256": "92940576a2a8b67482dd9c8be68760bc5654b9696bd854512f82c2abcad1cf6f",
+      "bytes": 275582,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/074.png",
+      "sha256": "812f75cb451434c894413fbbcaeb5a74496f2ded42126664c066d42806195ffc",
+      "bytes": 275676,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/077.png",
+      "sha256": "bdd104f1208d5b8ad921df3ef3384306b6918d7136a10ebb5d54920e381edb0d",
+      "bytes": 275104,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/078.png",
+      "sha256": "542a8978594d727e2fb235b11c24133a02bdfbfb24307b335053e027be82257a",
+      "bytes": 275263,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/097.png",
+      "sha256": "e161428782c7efdfbfdc0aee6bbb46a7330c77f26a6ce9bf4b4a4c6c644f8e11",
+      "bytes": 258593,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/100.png",
+      "sha256": "50fd75210288584ef12f7b91c7d41d14baacc50231a04c74544e6b409b39d9fd",
+      "bytes": 258691,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/103.png",
+      "sha256": "b7a4add5484558dca53e143cf55a4acc80961ea74985775caaaf51d45a809dbd",
+      "bytes": 258988,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/105.png",
+      "sha256": "8e1a8f4e4e44a7ee5941feba130612a3594a2ba242cbbe801ec5291fef2527f4",
+      "bytes": 258936,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/107.png",
+      "sha256": "30384e9b5621b88cb751849a15380474ac0480ae7aad92ac3e71e5c0ceed213b",
+      "bytes": 249917,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/164.png",
+      "sha256": "c64c37c9f95075c7e4c2df81a0aef767bad77857555f16fc05cbe13e8617701f",
+      "bytes": 247540,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/frames/167.png",
+      "sha256": "3b3a40542abc2333789e18859b8be87ca5e7b8f7c5661793e5bc2bdb140a2e20",
+      "bytes": 233972,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/initial-editor.log",
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc",
+      "bytes": 221,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/initial-exit.json",
+      "sha256": "f846569fcc7c0317b9022ea7c5356307b3da30b386909ca49c9fdd27b886c67b",
+      "bytes": 61,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/initial-launch.json",
+      "sha256": "6b26376a7865b55e8a2dac7f1757660ceb856950cf8dadd78d56019dd06ad707",
+      "bytes": 1459,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/initial-shutdown.json",
+      "sha256": "7ddda48b5bbf6ab8457da87134a911bd2f16196779c4c876cf19854bbe2b848a",
+      "bytes": 845,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/installation.json",
+      "sha256": "a11087d0f2f3dea31b3de73376cf8a2a445c2e4df9ad9ad827bd02853d5dbe97",
+      "bytes": 42929,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/layout-probe.vsix",
+      "sha256": "5118f67bd8fd5cbb25c7dfbd5f09fad8b2115fd98997d61cc6d40a653b107ed9",
+      "bytes": 3072,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/main-three-restored.json",
+      "sha256": "96a532be69997a57bfb4d067b30d882213d0e713ca4a58d645d877ec2d615d0e",
+      "bytes": 5726,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/main-three-restored.png",
+      "sha256": "63804ffc9bf4d386885ba4f6cd5f71d3fba3d5d0998cc01d6b16e26b2f0df092",
+      "bytes": 259717,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/main-three.json",
+      "sha256": "647a912c8fd68cc71267e115214a1f80cebc0f31bffee858d3c569635956ce9d",
+      "bytes": 5708,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/main-three.png",
+      "sha256": "46bff1139743ad7de627a33164d0f6be91e4ec25e6bce6bc0a9c560f378dbc5a",
+      "bytes": 259720,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/native-layout.jsonl",
+      "sha256": "1d613880552f5a943ab8f95584c51ed8cb528a0384659e3e7b9c58befdd6aa28",
+      "bytes": 30981,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/original-preservation.json",
+      "sha256": "da18948aa278df758ec70026bbc6e6d55143eb3b74386de136ac19c9579cf939",
+      "bytes": 265,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/original-state-manifest.json",
+      "sha256": "f9487b3b9717d48e98ff6cd1e7f6dc0d97231f65c8220a1152bcc51c2847b1af",
+      "bytes": 24513,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/real-four.json",
+      "sha256": "fb8a8e21c40c887df80a4d1173263316ac33913fc733ae570fc36bae0788400c",
+      "bytes": 6213,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/real-four.png",
+      "sha256": "f080aa28ca5978744a188ae03ca482be83e762fe50939093d4cf4a5221fc4318",
+      "bytes": 253376,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/schedule.json",
+      "sha256": "f37618754a5225fea38840cac2ca5c50921a9a92491a7f060a4bf6e8b013c395",
+      "bytes": 34556,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/scope-contact-sheet.png",
+      "sha256": "34a37be9be9beed15574f437967d200d1702d30de9f7a497ab17c53bf95648f9",
+      "bytes": 798729,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/scope.webm",
+      "sha256": "1f91c838503863b45d867953795651019c1b3860b87db09ad6a60f7ac05bac56",
+      "bytes": 3953364,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/second-group.json",
+      "sha256": "a8f72fbfed92a908448e78f3bb665a00d4391a4e4d60487606f7e922508fefa7",
+      "bytes": 5322,
+      "availability": "private local artifact; not committed"
+    },
+    {
+      "path": "artifacts/cycle-0018/primary-part-probe/second-group.png",
+      "sha256": "6f14d536715a8dfcf71fa1afa133af4c7b7648f8e53ca2dd8c602e9bb3c57788",
+      "bytes": 256957,
+      "availability": "private local artifact; not committed"
+    }
+  ]
+}

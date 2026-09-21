@@ -47,6 +47,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const watchedPatterns: RelativePattern[] = [];
   const textDocuments: { uri: Uri; getText(): string }[] = [];
   class TabInputWebview { constructor(readonly viewType: string) {} }
+  class TabInputUnknown {}
   /** Supplies native position operations to the editor boundary fake used by workspace tests. @example new Position(22, 0).with(40, 0) */
   class Position {
     constructor(readonly line: number, readonly character: number) {}
@@ -58,9 +59,10 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     contains(value: Position | Range): boolean { return value instanceof Range ? this.contains(value.start) && this.contains(value.end) : value.line >= this.start.line && value.line <= this.end.line; }
     with(start = this.start, end = this.end) { return new Range(start, end); }
   }
-  type Tab = { input: TabInputText | TabInputWebview; label?: string; isPreview?: boolean; isDirty?: boolean };
+  type Tab = { input: TabInputText | TabInputWebview | TabInputUnknown; label?: string; isPreview?: boolean; isDirty?: boolean };
   const groups: { viewColumn: number; tabs: Tab[]; activeTab?: Tab }[] = [{ viewColumn: 2, tabs: [] }];
   let activeTabGroup = groups[0]!;
+  let separateEditorPart: { group: typeof groups[number]; layout: unknown; focused: boolean } | undefined;
   type SourceEditor = { document: { uri: Uri; getText(): string }; readonly viewColumn: number; setDecorations(): void; selections: { active: Position }[]; visibleRanges: Range[]; revealRange(range: Range, revealType?: number): void };
   let activeTextEditorChanged = (_editor: SourceEditor | undefined) => {};
   let lastSourceEditor: SourceEditor | undefined;
@@ -82,14 +84,17 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       else if (!retainedReadingRange.contains(range)) { const first = Math.max(0, range.start.line - 6); retainedReadingRange = new Range(new Position(first, 0), new Position(first + 11, 0)); }
     },
   });
-  let changedGroups = (_event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => {};
+  const groupChangeListeners = new Set<(event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => void>();
+  const changedGroups = (event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => { for (const listener of groupChangeListeners) listener(event); };
   let sourceProvider = async (_uri: Uri) => '';
+  let delayedPanelKind: string | undefined;
+  let registerDelayedPanel = () => {};
   let nextOpen: { wait: Promise<void>; entered(): void } | undefined;
   let nextCommand: { name: string; wait: Promise<void>; entered(): void } | undefined;
   const commands: string[] = [];
   let editorLayout: unknown = { orientation: 0, groups: [{}] };
   let nextMovedPanelLayout: unknown;
-  let nativeLayout = false, cursorGroupWrappers = false, cursorTwoEventContraction = false;
+  let nativeLayout = false, cursorGroupWrappers = false, cursorTwoEventContraction = false, explicitEditorLayout = false;
   let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined, settlementPending = false;
   const panels = new Set<ReturnType<typeof panel>>();
   const panelReveals: { kind: string; column?: number; preserveFocus?: boolean }[] = [];
@@ -101,13 +106,21 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let automaticContextReceipt = false, contextCoversSource = false, displayedImage: string | undefined, sourceColumn = 2;
   let nextImage: { wait: Promise<void>; entered(): void } | undefined;
   /** Mirrors native group creation for the layout-return regressions without changing older fixtures. @example nativeGroup(3).viewColumn // 3 */
-  function nativeGroup(column: number) {
-    const existing = groups.find(group => group.viewColumn === column); if (existing) return existing;
+  function nativeGroup(column: number, preserveLayout = false) {
+    const existing = groups.find(group => group !== separateEditorPart?.group && group.viewColumn === column); if (existing) return existing;
     const group: typeof groups[number] = { viewColumn: column, tabs: [], activeTab: undefined };
     // Cursor replaces surviving wrappers in the same event that announces an opened group.
     const retained = cursorGroupWrappers ? groups.map(previous => ({ ...previous, tabs: [...previous.tabs] })) : [];
-    if (cursorGroupWrappers) groups.splice(0, groups.length, ...retained);
-    groups.push(group); if (nativeLayout) groups.sort((left, right) => left.viewColumn - right.viewColumn);
+    if (cursorGroupWrappers) {
+      if (separateEditorPart) separateEditorPart.group = retained[groups.indexOf(separateEditorPart.group)]!;
+      groups.splice(0, groups.length, ...retained);
+    }
+    groups.push(group);
+    // A separate part follows the main grid in global columns without becoming one of its leaves.
+    if (separateEditorPart) separateEditorPart.group.viewColumn = Math.max(...groups.filter(candidate => candidate !== separateEditorPart?.group).map(candidate => candidate.viewColumn)) + 1;
+    if (nativeLayout) groups.sort((left, right) => left.viewColumn - right.viewColumn);
+    // Creating a native pane also grows the measured grid; a supplied layout batch retains its own geometry.
+    if (!preserveLayout && (nativeLayout || !explicitEditorLayout)) editorLayout = { orientation: 0, groups: groups.filter(candidate => candidate !== separateEditorPart?.group).map(() => ({})) };
     changedGroups({ opened: [group], closed: [], changed: retained }); return group;
   }
   /** Counts native layout leaves so shrinking a grid merges only its removed groups in these tests. @example nativeGroupCount({ groups: [{}, {}] }) // 2 */
@@ -115,11 +128,18 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     const children = value && typeof value === 'object' ? Reflect.get(value, 'groups') : undefined;
     return Array.isArray(children) ? children.reduce((total: number, child: unknown) => total + nativeGroupCount(child), 0) : 1;
   }
+  /** Models Cursor's refusal to place a normal reader in its separate chat part; panel and text opens share this boundary. @example nativeReaderColumn(2) // 1 when only main column one and chat column two exist */
+  function nativeReaderColumn(requested: number): number {
+    if (!nativeLayout) return requested;
+    if (separateEditorPart?.group.viewColumn === requested) return activeTabGroup.viewColumn;
+    return Math.min(requested, groups.filter(group => group !== separateEditorPart?.group).length + 1);
+  }
   function panel(kind: string, _title?: string, options?: { viewColumn: number }) {
     const nativeTab = { input: new TabInputWebview(kind), isPreview: false };
+    let registered = delayedPanelKind !== kind;
     const disposed: (() => void)[] = [], viewChanged: (() => void)[] = [];
     // Native webviews create only one missing group, even when a later column was requested.
-    const viewColumn = nativeLayout && options?.viewColumn ? Math.min(options.viewColumn, groups.length + 1) : options?.viewColumn;
+    const viewColumn = options?.viewColumn ? nativeReaderColumn(options.viewColumn) : options?.viewColumn;
     const value = { webview: { html: '', postMessage: async (message: StudyViewMessage) => {
       postedMessages.push(message);
       const held = heldPresentationMessage;
@@ -132,10 +152,10 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, presentationControlRevision: message.presentation?.presentationControlRevision, presentationMode: message.presentation?.mode, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
       }
       return true;
-    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, kind, nativeTab, viewColumn, title: '', get active() { return activeTabGroup.activeTab === nativeTab; }, get visible() { return groups.some(group => group.activeTab === nativeTab); }, reveal(column?: number, preserveFocus?: boolean) {
+    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, kind, nativeTab, viewColumn, title: '', get active() { return !registered || !separateEditorPart?.focused && activeTabGroup.activeTab === nativeTab; }, get visible() { return !registered || groups.some(group => group.activeTab === nativeTab); }, reveal(column?: number, preserveFocus?: boolean) {
       panelReveals.push({ kind, column, preserveFocus });
       const previousColumn = value.viewColumn;
-      if (column !== undefined) value.viewColumn = column;
+      if (column !== undefined) value.viewColumn = nativeReaderColumn(column);
       if (column !== undefined && previousColumn !== column && nextMovedPanelLayout) { editorLayout = nextMovedPanelLayout; nextMovedPanelLayout = undefined; }
       {
         for (const group of groups) { group.tabs = group.tabs.filter(tab => tab !== nativeTab); if (group.activeTab === nativeTab) group.activeTab = undefined; }
@@ -144,6 +164,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         group.tabs.push(nativeTab); group.activeTab = nativeTab;
         if (column !== undefined && previousColumn !== column) nativeTab.isPreview = true;
         if (!preserveFocus) {
+          if (separateEditorPart) separateEditorPart.focused = false;
           // Native webview reveal returns before its focus notification reaches the extension host.
           if (deferredPanelFocus?.kind === kind && --deferredPanelFocus.remaining === 0) {
             deferredPanelFocus = undefined;
@@ -161,7 +182,10 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       }
       if (contextCoversSource && kind === 'codebook.studyContext') groups[0]!.activeTab = undefined;
     }, onDidDispose(callback: () => void) { disposed.push(callback); return disposable(); }, onDidChangeViewState(callback: () => void) { viewChanged.push(callback); return disposable(); }, dispose() { panels.delete(value); for (const group of groups) { group.tabs = group.tabs.filter(tab => tab !== nativeTab); if (group.activeTab === nativeTab) group.activeTab = undefined; } for (const listener of disposed) listener(); } };
-    { const group = nativeGroup(value.viewColumn ?? 1); group.tabs.push(nativeTab); group.activeTab = nativeTab; }
+    // Both hosts initialize optimistic panel flags before the native tab/view-state acknowledgement arrives.
+    const register = () => { registered = true; const group = nativeGroup(value.viewColumn ?? 1); if (!group.tabs.includes(nativeTab)) group.tabs.push(nativeTab); group.activeTab = nativeTab; };
+    if (registered) register();
+    else { delayedPanelKind = undefined; registerDelayedPanel = register; }
     panels.add(value); return value;
   }
   const initialSelection: string[] = [];
@@ -183,25 +207,33 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           return;
         }
         if (name === 'workbench.action.keepEditor' && activeTabGroup.activeTab) activeTabGroup.activeTab.isPreview = false;
+        if (name === 'workbench.action.focusFirstEditorGroup') {
+          activeTabGroup = groups.find(group => group.viewColumn === 1)!;
+          if (separateEditorPart) separateEditorPart.focused = false;
+          activeTextEditorChanged(visibleSourceEditors.find(editor => editor.group === activeTabGroup));
+        }
         if (name === 'vscode.getEditorLayout') {
           if (asynchronousLayoutReads) await new Promise<void>(resolve => setImmediate(resolve));
-          const layout = JSON.parse(JSON.stringify(editorLayout, (key, value) => key === 'groups' && Array.isArray(value) ? value.map(group => ({ size: 1, ...group })) : value));
+          const layout = JSON.parse(JSON.stringify(separateEditorPart?.focused ? separateEditorPart.layout : editorLayout, (key, value) => key === 'groups' && Array.isArray(value) ? value.map(group => ({ size: 1, ...group })) : value));
           // The accepted grid settles without a second mutation; its first read can still contain native transient pixels.
           if (settlementPending) { editorLayout = structuredClone(settledLayout); settlementPending = false; }
           return layout;
         }
         if (name === 'vscode.setEditorLayout') {
+          explicitEditorLayout = true;
+          // The public layout command changes the active part even while TabGroups still reports the old main active group.
+          if (separateEditorPart?.focused) { separateEditorPart.layout = structuredClone(layout); return; }
           settledLayout = structuredClone(layout);
           editorLayout = transientLayout ? { orientation: 0, groups: [{ size: 0.5, groups: [{ size: 0.5 }, { size: 475.83333333333326 }] }, { size: 659.5 }] } : structuredClone(layout);
           settlementPending = transientLayout;
           if (nativeLayout) {
             const count = nativeGroupCount(layout);
-            for (let column = 1; column <= count; column++) nativeGroup(column);
-            let removed = groups.filter(group => group.viewColumn > count);
+            for (let column = 1; column <= count; column++) nativeGroup(column, true);
+            let removed = groups.filter(group => group !== separateEditorPart?.group && group.viewColumn > count);
             // Preserve the old wrappers' pre-merge tabs so exact-equality matching cannot pass accidentally.
             if (cursorGroupWrappers && removed.length) {
-              groups.splice(0, groups.length, ...groups.filter(group => cursorTwoEventContraction || group.viewColumn <= count).map(group => ({ ...group, tabs: [...group.tabs] })));
-              if (cursorTwoEventContraction) removed = groups.filter(group => group.viewColumn > count);
+              groups.splice(0, groups.length, ...groups.filter(group => group === separateEditorPart?.group || cursorTwoEventContraction || group.viewColumn <= count).map(group => group === separateEditorPart?.group ? group : ({ ...group, tabs: [...group.tabs] })));
+              if (cursorTwoEventContraction) removed = groups.filter(group => group !== separateEditorPart?.group && group.viewColumn > count);
             }
             const destination = nativeGroup(count);
             for (const group of removed) { destination.tabs.push(...group.tabs); if (group.activeTab) destination.activeTab = group.activeTab; for (const view of panels) if (group.tabs.includes(view.nativeTab)) view.viewColumn = count; }
@@ -209,10 +241,11 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
             if (cursorTwoEventContraction && removed.length) {
               changedGroups({ opened: [], closed: [], changed: [...groups] });
               for (const group of removed) { group.tabs = []; group.activeTab = undefined; }
-              groups.splice(0, groups.length, ...groups.filter(group => group.viewColumn <= count).map(group => ({ ...group, tabs: [...group.tabs] })));
+              groups.splice(0, groups.length, ...groups.filter(group => group === separateEditorPart?.group || group.viewColumn <= count).map(group => group === separateEditorPart?.group ? group : ({ ...group, tabs: [...group.tabs] })));
             }
             if (sourceColumn > count) sourceColumn = count;
-            groups.splice(0, groups.length, ...groups.filter(group => group.viewColumn <= count));
+            groups.splice(0, groups.length, ...groups.filter(group => group === separateEditorPart?.group || group.viewColumn <= count));
+            if (separateEditorPart) separateEditorPart.group.viewColumn = count + 1;
             if (removed.length) changedGroups({ opened: [], closed: removed, changed: cursorGroupWrappers ? [...groups] : [destination] });
           } else {
             const opened: typeof groups = [];
@@ -222,12 +255,13 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         }
         if (name === 'workbench.action.evenEditorWidths') editorLayout = structuredClone(settledLayout);
       } },
-      window: { get activeTextEditor() { return visibleSourceEditors.find(editor => activeTabGroup === editor.group && activeTabGroup.activeTab?.input instanceof TabInputText && activeTabGroup.activeTab.input.uri.toString() === editor.document.uri.toString()); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeTextEditorChanged = callback; return disposable(); }, createWebviewPanel: panel,
+      window: { get activeTextEditor() { return separateEditorPart?.focused ? undefined : visibleSourceEditors.find(editor => activeTabGroup === editor.group && activeTabGroup.activeTab?.input instanceof TabInputText && activeTabGroup.activeTab.input.uri.toString() === editor.document.uri.toString()); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeTextEditorChanged = callback; return disposable(); }, createWebviewPanel: panel,
         get visibleTextEditors() { return visibleSourceEditors.filter(editor => editor.group.activeTab?.input instanceof TabInputText && editor.group.activeTab.input.uri.toString() === editor.document.uri.toString()); },
         showTextDocument: async (document: { uri: Uri; getText(): string }, options?: { viewColumn: number; preserveFocus?: boolean; preview?: boolean; selection?: Range }) => {
-          sourceColumn = options?.viewColumn ?? sourceColumn;
+          sourceColumn = options?.viewColumn === undefined ? sourceColumn : nativeReaderColumn(options.viewColumn);
           const group = groups.find(candidate => candidate.viewColumn === sourceColumn) ?? groups[0]!, tab = group.tabs.find(tab => tab.input instanceof TabInputText && tab.input.uri.toString() === document.uri.toString()) ?? { input: new TabInputText(document.uri) };
-          if (!group.tabs.includes(tab)) group.tabs.push(tab); group.activeTab = tab; if (!options?.preserveFocus) activeTabGroup = group;
+          if (!group.tabs.includes(tab)) group.tabs.push(tab); group.activeTab = tab;
+          if (!options?.preserveFocus) { activeTabGroup = group; if (separateEditorPart) separateEditorPart.focused = false; }
           if (options?.preview !== undefined) tab.isPreview = options.preview;
           const editor = sourceEditor(document, group, reportedSourceColumn);
           // An explicit native selection reveals its statement even when playback reopens the same document.
@@ -236,7 +270,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           const displayed = nextSourceDisplay; nextSourceDisplay = undefined; displayed?.();
           return lastSourceEditor = editor;
         },
-        tabGroups: { all: groups, get activeTabGroup() { return activeTabGroup; }, onDidChangeTabGroups: (callback: typeof changedGroups) => { changedGroups = callback; return disposable(); }, close: async (tabs: Tab[]) => { for (const group of groups) group.tabs = group.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
+        tabGroups: { all: groups, get activeTabGroup() { return activeTabGroup; }, onDidChangeTabGroups: (callback: typeof changedGroups) => { groupChangeListeners.add(callback); return { dispose() { groupChangeListeners.delete(callback); } }; }, close: async (tabs: Tab[]) => { for (const group of groups) group.tabs = group.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
       workspace: { textDocuments, registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
         openTextDocument: async (uri: Uri) => { const held = nextOpen; nextOpen = undefined; if (held) { held.entered(); await held.wait; } const text = uri.scheme === 'file' ? await readFile(uri.fsPath, 'utf8') : await sourceProvider(uri); return { uri, getText: () => text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n') }; },
         onDidChangeTextDocument: disposable, createFileSystemWatcher: (pattern: RelativePattern) => { watchedPatterns.push(pattern); return watcher; } } },
@@ -270,6 +304,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     coverSourceWhenContextFocused() { contextCoversSource = true; },
     panelColumn: (kind: string) => [...panels].find(panel => panel.kind === kind)?.viewColumn,
     panelReveals: () => [...panelReveals],
+    delayPanelRegistration(kind: string) { delayedPanelKind = kind; return () => registerDelayedPanel(); },
     deferPanelFocus(kind: string, reveal: number) { deferredPanelFocus = { kind, remaining: reveal }; },
     deferMovedPanelFocus(kind: string) { deferredMovedPanelFocus = kind; asynchronousLayoutReads = true; },
     focusedPanel: () => activeTabGroup.activeTab?.input instanceof TabInputWebview ? activeTabGroup.activeTab.input.viewType : undefined,
@@ -289,15 +324,25 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       sourceColumn = column;
       lastSourceEditor = { ...editor, get viewColumn() { return destination.viewColumn; } }; activeTextEditorChanged(lastSourceEditor);
     },
-    editorLayout: () => structuredClone(editorLayout), changeEditorLayout(layout: unknown) { editorLayout = structuredClone(layout); },
+    editorLayout: () => structuredClone(editorLayout), changeEditorLayout(layout: unknown) { explicitEditorLayout = true; editorLayout = structuredClone(layout); },
     flattenOnNextPanelMove(layout: unknown) { nextMovedPanelLayout = structuredClone(layout); },
     useCursorGroupWrappers(twoEventContraction = false) { cursorGroupWrappers = true; cursorTwoEventContraction = twoEventContraction; },
     useNativeLayout(layout: unknown) {
-      nativeLayout = true; const previous = [...groups]; groups.splice(0); editorLayout = structuredClone(layout);
-      for (let column = 1; column <= nativeGroupCount(layout); column++) nativeGroup(column);
+      nativeLayout = true; separateEditorPart = undefined; const previous = [...groups]; groups.splice(0); editorLayout = structuredClone(layout);
+      for (let column = 1; column <= nativeGroupCount(layout); column++) nativeGroup(column, true);
       groups[0]!.tabs.push({ input: new TabInputText(Uri.file(join(harness.directory, 'article-source.ts'))) });
       groups[1]?.tabs.push({ input: new TabInputWebview('codebook.repositoryWiki') });
+      activeTabGroup = groups[0]!; activeTabGroup.activeTab = activeTabGroup.tabs[0];
       changedGroups({ opened: [...groups], closed: previous, changed: [] });
+    },
+    /** Adds a real separate-part boundary without changing the main leaf count, matching the recorded Cursor probe. @example const chat = harness.addSeparateEditorPart(); chat.focus(); */
+    addSeparateEditorPart() {
+      assert.equal(nativeLayout, true); assert.equal(separateEditorPart, undefined);
+      const chatTab = { input: new TabInputUnknown(), label: 'New Agent', isPreview: false, isDirty: false };
+      const group = { viewColumn: groups.length + 1, tabs: [chatTab], activeTab: chatTab };
+      separateEditorPart = { group, layout: { orientation: 1, groups: [{ size: 743 }] }, focused: false };
+      groups.push(group); changedGroups({ opened: [group], closed: [], changed: [] });
+      return { tab: chatTab, layout: () => structuredClone(separateEditorPart?.layout), focused: () => separateEditorPart?.focused, focus() { separateEditorPart!.focused = true; activeTextEditorChanged(undefined); } };
     },
     showTransientNativeSizes() { transientLayout = true; },
     failNextCommand(name: string) { failingCommand = name; },
@@ -308,7 +353,13 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       const group = groups[0]!, tab = { input: new TabInputText(document.uri), isPreview: false, isDirty: true };
       const editor = Object.assign(sourceEditor(document, group), { group });
       group.tabs.push(tab); group.activeTab = tab; activeTabGroup = group; visibleSourceEditors.push(editor);
+      if (separateEditorPart) separateEditorPart.focused = false;
       return { document, tab, replaceContent(value: string) { text = value; document.version++; } };
+    },
+    useOpaquePrimary(kind: 'blank' | 'settings') {
+      const group = groups.find(group => group.viewColumn === 1)!;
+      const tab = kind === 'settings' ? { input: new TabInputUnknown(), label: 'Settings', isPreview: false, isDirty: false } : undefined;
+      group.tabs = tab ? [tab] : []; group.activeTab = tab; return tab;
     },
     changeAfterNextSourceDisplay(change: () => void) { nextSourceDisplay = change; },
     changeAfterNextReadingReveal(change: () => void) { nextReadingReveal = change; },
@@ -318,7 +369,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       // Give each fake group a distinct stable input, like the actual singleton panels/native source tabs.
       for (const group of groups) if (!group.tabs.length && change !== 'empty') group.tabs.push({ input: new TabInputText(Uri.file(`/group-${group.viewColumn}`)) });
       const previous = [...groups];
-      groups.splice(0, groups.length, ...groups.map(group => ({ ...group, tabs: group.tabs.map(tab => ({ ...tab, label: 'Recorded application', input: tab.input instanceof TabInputText ? new TabInputText(tab.input.uri) : new TabInputWebview(tab.input.viewType) })) })));
+      groups.splice(0, groups.length, ...groups.map(group => ({ ...group, tabs: group.tabs.map(tab => ({ ...tab, label: 'Recorded application', input: tab.input instanceof TabInputText ? new TabInputText(tab.input.uri) : tab.input instanceof TabInputWebview ? new TabInputWebview(tab.input.viewType) : new TabInputUnknown() })) })));
       if (change === 'move') { const first = groups[0]!.tabs; groups[0]!.tabs = groups[1]!.tabs; groups[1]!.tabs = first; }
       if (change === 'append') groups[0]!.tabs.splice(1, 0, { input: new TabInputText(Uri.file('/learner-added-notes.txt')) });
       if (change === 'remove') groups[0]!.tabs.pop();
@@ -721,7 +772,7 @@ test('explicit Arrange separates moved application, source and context while pre
     harness.movePanel('codebook.scopedBrowser', 2); harness.movePanel('codebook.studyContext', 2);
     const sourceGroup = harness.groups.find(group => group.viewColumn === 2)!, contextGroup = harness.groups.find(group => group.viewColumn === 3)!;
     sourceGroup.viewColumn = 3; contextGroup.viewColumn = 2;
-    harness.changeEditorLayout({ orientation: 0, groups: [{}, {}] });
+    harness.changeEditorLayout({ orientation: 0, groups: [{}, {}, {}] });
     harness.restoreSourceFocusOnArrange();
     harness.reportSourceEditorInColumn(3);
     harness.clearDecorations();
@@ -825,6 +876,468 @@ test('first Study entry from one editor group keeps empty Context separate from 
     assert.equal(harness.reader.inspect().view!.errors.length, 0);
     assert.equal(harness.runtimes.length, 0);
   } finally { await harness.close(); }
+});
+
+test('cold Wiki entry reserves a second main pane without treating the separate chat part as its destination', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  try {
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal);
+
+    // Assert
+    assert.equal(harness.groups.length, 3);
+    assert.deepEqual(harness.groups[1]!.tabs, []);
+    assert.equal(harness.groups[2]!.tabs.includes(chat.tab), true);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('first Study entry reserves all three main panes when a separate chat part already occupies a global column', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  try {
+    // Act
+    await harness.reader.open();
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.groups.length, 4);
+    assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.tab.isDirty, true);
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('first Study entry does not resize chat while a new application panel only reports optimistic focus', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
+  const focus = harness.holdNextCommand('workbench.action.focusFirstEditorGroup');
+  chat.focus();
+  const opening = harness.reader.open(); void opening.catch(() => undefined);
+  try {
+    // Act
+    await waitUntil(() => harness.commands.some(command => ['workbench.action.focusFirstEditorGroup', 'vscode.setEditorLayout'].includes(command)), 'native focus or layout request', 1_000);
+    // Assert: provisional wrapper flags must not authorize a layout command against the still-focused chat part.
+    assert.equal(harness.commands.includes('workbench.action.focusFirstEditorGroup'), true);
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    registerPanel(); focus.release(); await opening;
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { registerPanel(); focus.release(); await opening.catch(() => undefined); await harness.close(); }
+});
+
+test('an existing three-pane Study can restore its presentation while preserving a separate chat part', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] });
+  const chat = harness.addSeparateEditorPart();
+  try {
+    await harness.reader.open();
+    const presentation = harness.reader.presentationState();
+
+    // Act
+    const result = await harness.reader.changePresentation({ presentationId: presentation.presentationId, expectedRevision: presentation.presentationControlRevision, mode: 'living-book', action: 'restore' });
+
+    // Assert
+    assert.equal(result.mode, 'living-book'); assert.equal(result.layoutConfirmed, true);
+    assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('a real fourth main pane remains learner-owned even when its tab list is empty and a separate chat part exists', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 220 }, { size: 220 }, { size: 220 }, { size: 220 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft(), originalLayout = harness.editorLayout();
+  try {
+    // Act
+    await harness.reader.open();
+
+    // Assert
+    assert.deepEqual(harness.editorLayout(), originalLayout);
+    assert.equal(harness.groups.length, 5); assert.deepEqual(harness.groups[3]!.tabs, []);
+    assert.equal(harness.groups[4]!.tabs.includes(chat.tab), true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(harness.reader.inspect().view!.errors.some(error => error.includes('Existing editor groups were preserved')), true);
+  } finally { await harness.close(); }
+});
+
+test('cold Wiki entry from the focused chat measures and reserves only the main editor grid', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  chat.focus();
+  try {
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal);
+    // Assert
+    assert.equal(harness.groups.length, 3); assert.equal(harness.groups[2]!.tabs.includes(chat.tab), true);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.commands.filter(command => command === 'workbench.action.focusFirstEditorGroup').length, 1);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+for (const primary of ['blank', 'settings'] as const) test(`cold Wiki resolves ${primary} primary focus through its real citation while retaining the draft and chat part`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 1, groups: [{ size: 330 }, { size: 330 }] });
+  const original = harness.groups[0]!, opaqueTab = harness.useOpaquePrimary(primary), draft = harness.addForeignDraft(2);
+  const chat = harness.addSeparateEditorPart(); chat.focus(); let acquisitions = 0;
+  try {
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal, undefined, { begin() {}, acquireSourceFocus: async () => {
+      acquisitions++; harness.focusMutableDraft(); return () => { assert.equal(chat.focused(), false); };
+    } });
+    // Assert
+    assert.equal(acquisitions, 1); assert.equal(harness.groups[0], original);
+    if (opaqueTab) assert.equal(original.tabs.includes(opaqueTab), true);
+    assert.equal(harness.groups[1]!.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
+    assert.equal(harness.groups[2]!.tabs.includes(chat.tab), true); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false); assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('opening Wiki after Study acquires its citation from a Settings-focused main pane without changing chat or drafts', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  await harness.reader.open();
+  const retainedTabs = [...harness.groups[0]!.tabs], settings = harness.useOpaquePrimary('settings');
+  harness.groups[0]!.tabs.push(...retainedTabs); chat.focus();
+  let acquisitions = 0;
+  try {
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal, undefined, { begin() {}, acquireSourceFocus: async () => {
+      acquisitions++; harness.focusMutableDraft(); return () => { assert.equal(chat.focused(), false); };
+    } });
+    // Assert
+    assert.equal(acquisitions, 1); assert.equal(harness.groups.length, 4);
+    assert.equal(harness.groups[0]!.tabs.includes(settings!), true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{}, {}, {}] }); assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('a queued Wiki after Study preserves later learner focus before measuring an owned layout', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const draft = harness.focusMutableDraft(), chat = harness.addSeparateEditorPart();
+  await harness.reader.open(); const original = harness.editorLayout(), mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+  const held = harness.holdNextCommand('vscode.getEditorLayout');
+  const earlier = harness.reader.arrangeRepository(new AbortController().signal), earlierRejected = assert.rejects(earlier, /changed/);
+  await held.started; let retained = true, starts = 0;
+  const queued = harness.reader.arrangeRepository(new AbortController().signal, undefined, { begin() { starts++; if (!retained) throw new Error('Original learner focus changed.'); } });
+  const queuedRejected = assert.rejects(queued, /Original learner focus changed/);
+  try {
+    // Act
+    retained = false; chat.focus(); held.release(); await earlierRejected; await queuedRejected;
+    // Assert
+    assert.equal(starts, 1); assert.equal(chat.focused(), true); assert.deepEqual(harness.editorLayout(), original);
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, mutations);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); await Promise.allSettled([earlier, queued]); await harness.close(); }
+});
+
+test('cold Wiki retains ordinary text focus without invoking the optional cited-source acquisition', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  harness.focusMutableDraft(); const chat = harness.addSeparateEditorPart(); let acquisitions = 0;
+  try {
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal, undefined, { begin() {}, acquireSourceFocus: async () => { acquisitions++; return () => {}; } });
+    // Assert
+    assert.equal(acquisitions, 0); assert.equal(harness.groups.length, 3); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { await harness.close(); }
+});
+
+test('a queued cold Wiki checks its original learner focus before any native scope work', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  harness.focusMutableDraft(); const chat = harness.addSeparateEditorPart(), held = harness.holdNextCommand('vscode.getEditorLayout');
+  const earlier = harness.reader.arrangeRepository(new AbortController().signal), earlierRejected = assert.rejects(earlier, /changed/);
+  await held.started; let starts = 0, retained = true;
+  const queued = harness.reader.arrangeRepository(new AbortController().signal, undefined, { begin() { starts++; if (!retained) throw new Error('Original learner focus changed.'); } });
+  const rejected = assert.rejects(queued, /Original learner focus changed/);
+  try {
+    // Act
+    await new Promise<void>(resolve => setImmediate(resolve)); assert.equal(starts, 0);
+    retained = false; chat.focus(); held.release(); await earlierRejected; await rejected;
+    // Assert
+    assert.equal(starts, 1); assert.deepEqual(harness.commands, ['vscode.getEditorLayout']);
+    assert.equal(chat.focused(), true); assert.equal(harness.groups.length, 2);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { held.release(); await Promise.allSettled([earlier, queued]); await harness.close(); }
+});
+
+test('chat focus after cited-source acquisition prevents cold Wiki from reserving a late native pane', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] }); harness.useOpaquePrimary('settings');
+  const chat = harness.addSeparateEditorPart(); chat.focus();
+  let held: ReturnType<typeof harness.holdNextCommand> | undefined, acquired!: () => void;
+  const started = new Promise<void>(resolve => { acquired = resolve; });
+  const opening = harness.reader.arrangeRepository(new AbortController().signal, undefined, { begin() {}, acquireSourceFocus: async () => {
+    harness.focusMutableDraft(); held = harness.holdNextCommand('vscode.getEditorLayout'); acquired();
+    return () => { if (chat.focused()) throw new Error('Citation focus changed.'); };
+  } }), rejected = assert.rejects(opening, /focus changed/);
+  try {
+    // Act
+    await started; await held!.started; chat.focus(); held!.release(); await rejected;
+    // Assert
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false); assert.equal(harness.groups.length, 2);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); assert.equal(chat.focused(), true);
+  } finally { held?.release(); await opening.catch(() => undefined); await harness.close(); }
+});
+
+test('moving focus to chat during the cold Wiki measurement preserves both parts without a late layout mutation', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft(), original = harness.editorLayout();
+  const held = harness.holdNextCommand('vscode.getEditorLayout');
+  try {
+    // Act
+    const opening = harness.reader.arrangeRepository(new AbortController().signal), rejected = assert.rejects(opening, /focus changed/);
+    await held.started; chat.focus(); held.release(); await rejected;
+    // Assert
+    assert.deepEqual(harness.editorLayout(), original); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(chat.focused(), true); assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(harness.commands.includes('workbench.action.focusFirstEditorGroup'), false);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+  } finally { held.release(); await harness.close(); }
+});
+
+for (const retirement of ['cancel', 'Close'] as const) test(`${retirement} during cold Wiki scope measurement cannot mutate the main or chat part`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false), cancellation = new AbortController();
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft(), original = harness.editorLayout();
+  const held = harness.holdNextCommand('vscode.getEditorLayout');
+  try {
+    // Act
+    const opening = harness.reader.arrangeRepository(cancellation.signal), rejected = assert.rejects(opening, /abort|closed/i);
+    await held.started;
+    if (retirement === 'cancel') cancellation.abort();
+    const closing = retirement === 'Close' ? harness.reader.close() : undefined;
+    held.release(); await rejected; await closing;
+    // Assert
+    assert.deepEqual(harness.editorLayout(), original); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false); assert.equal(harness.counts().panels, 0);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); await harness.close(); }
+});
+
+test('cold Study reservation retains Cursor wrapper replacements without adopting the separate chat pane', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.useCursorGroupWrappers();
+  try {
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { await harness.close(); }
+});
+
+test('cold Study reserves a third main pane before Context can target the existing chat column', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  try {
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { await harness.close(); }
+});
+
+test('a restored Living book preference positions its new application in the reserved main pane rather than the chat column', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.presentationPreferences.set('codebook.presentation.v1', { version: 1, mode: 'living-book' });
+  const restored = harness.createReader();
+  try {
+    // Act
+    await restored.open();
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 1);
+    assert.equal(harness.sourceColumn(), 3); assert.equal(restored.presentationState().layoutConfirmed, true);
+    assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { await restored.dispose(); await harness.close(); }
+});
+
+test('Living book adopts an MCP-first application into its reserved main pane before confirming the initial layout', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.presentationPreferences.set('codebook.presentation.v1', { version: 1, mode: 'living-book' });
+  const reader = harness.createReader(), viewport = reader.presentation.createViewport!('mcp-first-run', () => {}, () => {}, 'normal');
+  try {
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    // Act
+    await reader.open();
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 1);
+    assert.equal(harness.sourceColumn(), 3); assert.equal(reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); assert.equal(harness.runtimes.length, 0);
+  } finally { viewport.close(); await reader.dispose(); await harness.close(); }
+});
+
+test('Living book preserves a learner move of its MCP-first application before the initial Open', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 320 }, { size: 320 }, { size: 340 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.presentationPreferences.set('codebook.presentation.v1', { version: 1, mode: 'living-book' });
+  const reader = harness.createReader(), viewport = reader.presentation.createViewport!('mcp-first-run', () => {}, () => {}, 'normal');
+  harness.movePanel('codebook.scopedBrowser', 1);
+  try {
+    // Act
+    await reader.open();
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.panelColumn('codebook.studyContext'), 1);
+    assert.equal(harness.sourceColumn(), 3); assert.equal(harness.groups.length, 4);
+    assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { viewport.close(); await reader.dispose(); await harness.close(); }
+});
+
+test('Living book retry after an accepted reservation is cancelled separates its application from the explanation', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.presentationPreferences.set('codebook.presentation.v1', { version: 1, mode: 'living-book' });
+  const reader = harness.createReader(), cancellation = new AbortController(), held = harness.holdNextCommand('runCommands');
+  const opening = reader.open(cancellation.signal), rejected = assert.rejects(opening, /abort/i);
+  try {
+    // Act
+    await held.started; cancellation.abort(); held.release(); await rejected;
+    assert.equal(reader.inspect().opened, false); assert.equal(harness.groups.length, 4);
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    await reader.open();
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 1);
+    assert.equal(harness.sourceColumn(), 3); assert.equal(reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); await opening.catch(() => undefined); await reader.dispose(); await harness.close(); }
+});
+
+for (const mode of ['study-workspace', 'living-book'] as const) test(`an explicit ${mode} Open retry after a failed passive scope read still reserves separate main Study panes`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.presentationPreferences.set('codebook.presentation.v1', { version: 1, mode });
+  const reader = harness.createReader();
+  harness.failNextCommand('vscode.getEditorLayout');
+  try {
+    // Act
+    await assert.rejects(reader.open(), /Native layout command failed/);
+    assert.equal(reader.inspect().opened, false);
+    await reader.open();
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), mode === 'living-book' ? 2 : 1); assert.equal(harness.panelColumn('codebook.studyContext'), mode === 'living-book' ? 1 : 3);
+    assert.equal(harness.sourceColumn(), mode === 'living-book' ? 3 : 2); assert.equal(reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await reader.dispose(); await harness.close(); }
+});
+
+for (const operation of ['read', 'reselect'] as const) test(`a presentation ${operation} from chat reports unverified scope without stealing focus or invalidating the retained main grid`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(); harness.focusMutableDraft();
+  try {
+    await harness.reader.open(); const state = harness.reader.presentationState(), layout = harness.editorLayout();
+    assert.equal(state.layoutConfirmed, true); chat.focus();
+    // Act
+    if (operation === 'read') {
+      const result = await harness.reader.readPresentationState();
+      assert.equal(result.layoutConfirmed, false); assert.match(result.reason!, /without changing focus/);
+      assert.equal(result.presentationControlRevision, 0); assert.equal(result.presentationId, state.presentationId);
+    } else await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'select' }), /cannot be checked from the current editor part/);
+    // Assert
+    assert.equal(chat.focused(), true); assert.deepEqual(harness.reader.presentationState(), state);
+    assert.deepEqual(harness.editorLayout(), layout); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.runtimes.length, 0); assert.equal(harness.groups.length, 4);
+    harness.movePanel('codebook.studyContext', 3);
+    assert.equal((await harness.reader.readPresentationState()).layoutConfirmed, true);
+    // Actual main geometry changes still invalidate confirmation after focus returns to the measured part.
+    harness.changeEditorLayout({ orientation: 0, groups: [{ size: 0.2 }, { size: 0.2 }, { size: 0.6 }] });
+    assert.equal((await harness.reader.readPresentationState()).layoutConfirmed, false);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+  } finally { await harness.close(); }
+});
+
+test('a presentation read preserves changed learner focus and does not certify the returned editor part', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(); harness.focusMutableDraft();
+  let release = () => {};
+  try {
+    await harness.reader.open(); const state = harness.reader.presentationState();
+    const held = harness.holdNextCommand('vscode.getEditorLayout'); release = held.release;
+    // Act
+    const reading = harness.reader.readPresentationState(); await held.started; chat.focus(); release();
+    const result = await reading;
+    // Assert
+    assert.equal(result.layoutConfirmed, false); assert.equal(chat.focused(), true);
+    assert.deepEqual(harness.reader.presentationState(), state); assert.equal(harness.runtimes.length, 0);
+  } finally { release(); await harness.close(); }
 });
 
 test('first configured Study pause keeps captured source visible beside Context without manual Arrange', async () => {
@@ -2157,6 +2670,64 @@ async function articleRecordingLayoutHarness(capturedApplication = false) {
   } catch (error) { await harness.close(); throw error; }
 }
 
+for (const cursor of [false, true]) for (const shuffled of [false, true]) test(`${cursor ? 'Cursor' : 'VS Code'} Wiki and recording round trips preserve the separate chat part and original two-row article with ${shuffled ? 'reordered' : 'ordered'} API groups`, async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(), chat = harness.addSeparateEditorPart();
+  if (cursor) harness.useCursorGroupWrappers(true);
+  const draft = harness.focusMutableDraft();
+  if (shuffled) harness.groups.reverse();
+  try {
+    // Act
+    await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
+    await harness.reader.action('return-wiki');
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
+    assert.equal(harness.groups.length, 3); assert.equal(harness.groups.find(group => group.viewColumn === 3)!.tabs.includes(chat.tab), true);
+    assert.equal(harness.groups.find(group => group.viewColumn === 1)!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
+    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+  } finally { await harness.close(); }
+});
+
+for (const next of ['Return', 'retry', 'Close'] as const) test(`${next} after interrupted main-part reservation preserves the original article, chat and draft`, async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(), chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.useCursorGroupWrappers(true);
+  let releaseLayout = () => {}, releaseReceipt = () => {};
+  try {
+    await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
+    await harness.reader.action('return-wiki');
+    const cancellation = new AbortController(), layout = harness.holdNextCommand('vscode.setEditorLayout'); releaseLayout = layout.release;
+    const opening = harness.reader.openRepositoryEvidence(harness.binding, true, cancellation.signal, harness.origin), rejected = assert.rejects(opening, /abort|closed/i);
+    await layout.started;
+    const receipt = harness.holdNextCommand('vscode.getEditorLayout'); releaseReceipt = receipt.release;
+    layout.release(); await receipt.started;
+    // Act: the grid is accepted, but no Context relocation has been issued yet.
+    if (next !== 'Close') cancellation.abort();
+    const closing = next === 'Close' ? harness.reader.close() : undefined;
+    receipt.release(); await rejected; await closing;
+    // Assert
+    if (next === 'Close') { assert.equal(harness.counts().panels, 0); assert.equal(harness.reader.inspect().opened, false); }
+    else {
+      assert.equal(harness.panelColumn('codebook.studyContext'), 2);
+      if (next === 'Return') {
+        await harness.reader.action('return-wiki');
+        assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
+        assert.equal(harness.groups.length, 3);
+      }
+      await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
+      assert.equal(harness.panelColumn('codebook.studyContext'), 3); assert.equal(harness.sourceColumn(), 2);
+      assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    }
+    assert.equal(harness.groups.at(-1)!.tabs.includes(chat.tab), true); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+  } finally { releaseLayout(); releaseReceipt(); await harness.close(); }
+});
+
 for (const corrupt of [false, true]) test(`returning from ${corrupt ? 'a failed' : 'a healthy'} recording restores the article's two stacked groups and permits another evidence visit`, async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(), { library, binding, origin } = harness;
@@ -3233,10 +3804,11 @@ test('Close cancels pending focus recovery after a native layout failure without
         focusRequests++;
         // Layout failure recovers after one Keep Editor; normal final-focus failure is no longer retried.
         if (focusRequests >= 2) { recoveryEntered(); return; }
+        // Fail after focus was actually borrowed, rather than during the earlier read-only scope measurement.
+        harness.failNextCommand('vscode.getEditorLayout');
       }
       reveal(...args);
     });
-    harness.failNextCommand('vscode.getEditorLayout');
     const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
     const rejected = assert.rejects(transfer, {
       code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native layout command failed',

@@ -65,6 +65,7 @@ export const MAX_LIBRARY_FILES = 16;
 export const MAX_SOURCE_DOCUMENTS = 34;
 export const STUDY_REFRESH_INTERVAL_MS = 250;
 export const STUDY_EDITOR_GROUP_COUNT = 3;
+export const REPOSITORY_MIN_EDITOR_GROUP_COUNT = 2;
 export const HORIZONTAL_EDITOR_ORIENTATION = 0;
 export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1';
 export const PRESENTATION_PREFERENCE_VERSION = 1;
