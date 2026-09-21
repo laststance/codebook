@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.1.1] - 2026-09-21
+
+Documentation and validation update; the extension remains private preview 0.2.1 / MCP API 1.5. The actual main-CI package now has separate real-repository evidence in both editors. Cursor cold restart still fails; this entry does not announce a repaired package.
+
+### Added
+
+- Follow one unchanged Laststance.io theme action through an installed extension: actual source/value pause, continuation, recorded light-to-dark result, three shared live/replay modes and six exact Wiki returns per editor. VS Code also restores the paused recording and learner progress after normal restart. This familiar example does not establish all intended uses or owner learning acceptance.
+- Identify the reproduced Cursor restart limitation: global tab groups include a hidden empty group outside the active editor grid, defeating cold pane reservation and restoration checks. Preserve successful checks, failed attempts, diagnostic controls and exact cleanup separately; compatibility repair remains pending.
+
+### Changed
+
+- Confirm the previous preview's merged private package delivery and retain its CI/archive identities. Preserve the owner's decision to skip unfinished Claude Code reviews after repeated timeouts.
+
 ## [0.2.1.0] - 2026-09-21
 
 Private extension preview 0.2.1 / MCP API 1.5. The self-contained VSIX supports ordinary installation in VS Code and Cursor. Source-qualified native checks demonstrate the bounded checkout, offline replay, shared layouts, manual-reading retention and restart independently in both editors. Packaging and native regressions found during delivery are repaired, with their original failures retained in Cycle 0016. Clean v16 binds the reviewed package to exact both-host installation, 12/12 Wiki observation/recording returns, retained drafts and complete owned cleanup; its runtime/assets match v14, which separately demonstrates 24/24 original/restarted Wiki returns. Current v16 PR CI passes 680 + 96 tests and matches all 267 selected inputs and 29 non-metadata archive entries. The two remaining frozen Claude Code reviews were stopped at the owner’s request after repeated timeouts; no completed result is inferred. Merge and main-CI comparison remain pending. Real-repository usefulness and complete product acceptance remain open.
