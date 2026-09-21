@@ -19,6 +19,8 @@ import { PACKAGE_MANIFEST_PATH } from './packageConstants.mjs';
 
 /** Clean-builds and validates one self-contained private VSIX before replacing the requested output. @example await buildPackage(repository, '/tmp/codebook.vsix') */
 export async function buildPackage(repository, output, runCommand = runPackageCommand) {
+  // Reject unsupported process ownership before Git, output preparation or destructive compiler cleanup.
+  if (process.platform === 'win32') throw new Error('Package builds require POSIX process-group cleanup; Windows builds are unsupported.');
   const started = performance.now(), extensionRoot = join(repository, 'extension');
   const destination = await resolvePackageDestination(repository, output), before = await readBuildIdentity(repository);
   return withPackageOutput(destination, async ({ directory, candidate, stage }) => {

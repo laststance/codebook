@@ -6,7 +6,7 @@ import { PACKAGE_COMMAND_OUTPUT_BYTES, PACKAGE_COMMAND_TIMEOUT_MS, PACKAGE_COMMA
 export async function runPackageCommand(executable, arguments_, cwd) {
   if (process.platform === 'win32') throw new Error('Package builds require POSIX process-group cleanup; Windows builds are unsupported.');
   let interruption;
-  const signals = ['SIGINT', 'SIGTERM'];
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'];
   let rejectInterrupted;
   const interrupted = new Promise((_, reject) => { rejectInterrupted = reject; });
   const handlers = signals.map(signal => [signal, () => {
@@ -36,7 +36,7 @@ export async function runPackageCommand(executable, arguments_, cwd) {
       });
       child.once('close', resolve);
     });
-    let timer, failure;
+    let timer, failure, cleanupFailure;
     const deadline = new Promise((_, reject) => {
       timer = setTimeout(() => reject(Object.assign(new Error('Package command exceeded its time limit.'), { code: 'ETIMEDOUT' })), PACKAGE_COMMAND_TIMEOUT_MS);
     });
@@ -55,12 +55,14 @@ export async function runPackageCommand(executable, arguments_, cwd) {
         }
       }
     } catch (cleanupError) {
-      failure = failure ? new AggregateError([failure, cleanupError], 'Package command failed and owned process cleanup could not be confirmed.') : cleanupError;
+      cleanupFailure = cleanupError;
     }
     // Close owned pipes even when an escaped or unkillable process retains an inherited descriptor.
     child.stdout.destroy(); child.stderr.destroy(); await Promise.allSettled(readers);
     const result = { stdout: Buffer.concat(chunks.stdout).toString('utf8'), stderr: Buffer.concat(chunks.stderr).toString('utf8') };
     failure ??= interruption;
+    // Settle diagnostics after cleanup and pipe draining so a late owned-phase signal keeps its identity.
+    if (cleanupFailure) failure = failure ? Object.assign(new AggregateError([failure, cleanupFailure], 'Package command failed and owned process cleanup could not be confirmed.'), { code: failure.code, signal: failure.signal }) : cleanupFailure;
     if (failure) throw Object.assign(failure, result);
     return result;
   } finally {

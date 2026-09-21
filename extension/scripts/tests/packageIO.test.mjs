@@ -89,6 +89,25 @@ test('a compilation failure stops packaging without replacing the previous VSIX'
   assert.deepEqual((await readdir(fixture.directory)).sort(), ['existing.vsix', 'repository']);
 });
 
+test('Windows package rejection preserves compiler outputs and the previous archive before any tool starts', async context => {
+  // Arrange: this simulates only platform admission, not a native Windows build.
+  const fixture = await sourceFixture(context);
+  for (const path of COMPILED_DIRECTORIES) { await mkdir(join(fixture.repository, path)); await writeFile(join(fixture.repository, path, 'keep.js'), 'previous compiled output'); }
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  let commands = 0, failure;
+  // Act
+  Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+  try { await buildPackage(fixture.repository, fixture.output, async () => { commands++; throw new Error('Unexpected tool invocation'); }); }
+  catch (error) { failure = error; }
+  finally { Object.defineProperty(process, 'platform', platform); }
+  // Assert
+  for (const path of COMPILED_DIRECTORIES) assert.equal(await readFile(join(fixture.repository, path, 'keep.js'), 'utf8'), 'previous compiled output');
+  assert.equal(commands, 0);
+  assert.match(failure.message, /Package builds require POSIX process-group cleanup/);
+  assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact');
+  assert.deepEqual((await readdir(fixture.directory)).sort(), ['existing.vsix', 'repository']);
+});
+
 test('source changes during compilation invalidate the artifact instead of labeling it with an earlier snapshot', async context => {
   // Arrange
   const fixture = await sourceFixture(context);

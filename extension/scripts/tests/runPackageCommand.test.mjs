@@ -10,7 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 const utilitySource = new URL('../utils/', import.meta.url);
 
 /** Isolates real lifecycle descendants with a shorter test-only deadline while preserving the runner and output limit. @example const fixture = await commandFixture(context, 'overflow') */
-async function commandFixture(context, scenario) {
+async function commandFixture(context, scenario, cleanupTimeoutMs = 5000) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-command-'));
   context.after(async () => {
     // A red-before run can leave the recorded fixture writer alive; never clean up by process name.
@@ -25,7 +25,9 @@ async function commandFixture(context, scenario) {
   await mkdir(join(directory, 'utils'));
   await writeFile(join(directory, 'utils/runPackageCommand.mjs'), await readFile(new URL('runPackageCommand.mjs', utilitySource)));
   await writeFile(join(directory, 'utils/withPackageOutput.mjs'), await readFile(new URL('withPackageOutput.mjs', utilitySource)));
-  const constants = (await readFile(new URL('packageConstants.mjs', utilitySource), 'utf8')).replace(/(export const PACKAGE_COMMAND_TIMEOUT_MS = )[\d_]+;/, '$15000;');
+  const constants = (await readFile(new URL('packageConstants.mjs', utilitySource), 'utf8'))
+    .replace(/(export const PACKAGE_COMMAND_TIMEOUT_MS = )[\d_]+;/, '$15000;')
+    .replace(/(export const PACKAGE_COMMAND_EXIT_TIMEOUT_MS = )[\d_]+;/, (_, declaration) => `${declaration}${cleanupTimeoutMs};`);
   assert.match(constants, /PACKAGE_COMMAND_TIMEOUT_MS = 5000;/);
   await writeFile(join(directory, 'utils/packageConstants.mjs'), constants);
   await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'codebook-command-fixture', private: true, scripts: { build: 'node parent.mjs' } }));
@@ -128,7 +130,7 @@ catch(error) { writeFileSync('interrupt-result.json',JSON.stringify({code:error.
   return await exited;
 }
 
-for (const signal of ['SIGINT', 'SIGTERM']) {
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT']) {
   test(`interrupting the package foreground group with ${signal} retires descendants and package scratch while preserving the previous archive`, { timeout: 15_000 }, async context => {
     // Arrange
     const fixture = await commandFixture(context, 'timeout');
@@ -142,6 +144,32 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     for (const name of ['lifecycle.json', 'writer.json']) {
       const { pid } = JSON.parse(await readFile(join(fixture.directory, name), 'utf8'));
       assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+    }
+  });
+}
+
+for (const scenario of ['exit', 'success']) {
+  test(`unconfirmed cleanup after command ${scenario} rejects without losing the original failure identity`, async context => {
+    // Arrange: stop the real group, but inject an inconclusive existence probe at a zero cleanup deadline.
+    const fixture = await commandFixture(context, scenario, 0);
+    const sendSignal = process.kill.bind(process);
+    const killMock = context.mock.method(process, 'kill', (pid, signal) => pid < 0 && signal === 0 ? true : sendSignal(pid, signal));
+    // Act
+    let failure;
+    try { await fixture.runPackageCommand('pnpm', ['build'], fixture.directory); } catch (error) { failure = error; }
+    finally { killMock.mock.restore(); }
+    // Assert
+    assert.ok(failure);
+    if (scenario === 'exit') {
+      assert.ok(failure instanceof AggregateError);
+      assert.equal(failure.code, 2);
+      assert.equal(failure.signal, null);
+      assert.equal(failure.errors[0].code, 2);
+      assert.match(failure.errors[1].message, /did not exit before cleanup deadline/);
+      assert.match(failure.stderr, /ELIFECYCLE|exit code 2/);
+    } else {
+      assert.match(failure.message, /did not exit before cleanup deadline/);
+      assert.match(failure.stdout, /fixture finished\n/);
     }
   });
 }
@@ -160,4 +188,30 @@ test('a caller-owned interrupt handler runs once and survives package descendant
     const { pid } = JSON.parse(await readFile(join(fixture.directory, name), 'utf8'));
     assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
   }
+});
+
+test('an interruption during cleanup retains its identity when the successful command cannot confirm group exit', async context => {
+  // Arrange: a real successful child reaches a failing cleanup probe while its signal ownership is still active.
+  const fixture = await commandFixture(context, 'success');
+  const sendSignal = process.kill.bind(process);
+  const existingListeners = process.listeners('SIGHUP');
+  const killMock = context.mock.method(process, 'kill', (pid, signal) => {
+    if (pid < 0 && signal === 0) {
+      process.emit('SIGHUP');
+      throw Object.assign(new Error('Injected cleanup probe denial'), { code: 'EPERM' });
+    }
+    return sendSignal(pid, signal);
+  });
+  // Act
+  let failure;
+  try { await fixture.runPackageCommand('pnpm', ['build'], fixture.directory); } catch (error) { failure = error; }
+  finally { killMock.mock.restore(); }
+  // Assert
+  assert.ok(failure instanceof AggregateError);
+  assert.equal(failure.code, 'ABORT_ERR');
+  assert.equal(failure.signal, 'SIGHUP');
+  assert.equal(failure.errors[0].code, 'ABORT_ERR');
+  assert.equal(failure.errors[1].code, 'EPERM');
+  assert.match(failure.stdout, /fixture finished\n/);
+  assert.deepEqual(process.listeners('SIGHUP'), existingListeners);
 });
