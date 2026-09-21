@@ -84,6 +84,13 @@ test('a coherent SHA-256 Git revision survives real archive checking', async () 
   assert.equal(checked.build.revision, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
 });
 
+test('the packaged tool inventory records actual pnpm and resolved compiler versions', () => {
+  // Arrange / Act
+  const inventory = JSON.parse(original.get('extension/package-manifest.json'));
+  // Assert
+  assert.deepEqual(inventory.tools, { node: process.versions.node, pnpm: '12.4.2', esbuild: '0.28.2', vsce: '4.0.0', typescript: '5.9.3' });
+});
+
 for (const [label, revision] of [['short-sha1', 'a'.repeat(39)], ['long-sha1', 'a'.repeat(41)], ['short-sha256', 'a'.repeat(63)], ['long-sha256', 'a'.repeat(65)], ['uppercase', 'A'.repeat(64)], ['non-hex', 'g'.repeat(40)]]) {
   test(`a coherent archive with a ${label} Git revision is rejected before installation`, async () => {
     // Arrange

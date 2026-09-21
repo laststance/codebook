@@ -22,6 +22,8 @@ export async function buildPackage(repository, output, runCommand = runPackageCo
   // Reject unsupported process ownership before Git, output preparation or destructive compiler cleanup.
   if (process.platform === 'win32') throw new Error('Package builds require POSIX process-group cleanup; Windows builds are unsupported.');
   const started = performance.now(), extensionRoot = join(repository, 'extension');
+  // Fail unavailable package-manager startup before deleting any compiler output; retain the executable's actual version.
+  const { stdout: pnpmVersion } = await runCommand('pnpm', ['--version'], extensionRoot);
   const destination = await resolvePackageDestination(repository, output), before = await readBuildIdentity(repository);
   return withPackageOutput(destination, async ({ directory, candidate, stage }) => {
     // Source snapshot -> clean compilation -> closed stage -> real archive -> isolated load -> atomic publication.
@@ -55,13 +57,17 @@ export async function buildPackage(repository, output, runCommand = runPackageCo
       files.set(file, await readFile(source));
     }
     for (const [file, content] of inventory.noticeFiles) files.set(file, content);
+    const requireTool = createRequire(import.meta.url), vsceManifestPath = requireTool.resolve('@vscode/vsce/package.json');
+    // Describe resolved tool packages rather than package.json requirements; source cleanliness is a separate assertion.
+    const vsceManifest = JSON.parse(await readFile(vsceManifestPath, 'utf8'));
+    const typescriptManifest = JSON.parse(await readFile(requireTool.resolve('typescript/package.json'), 'utf8'));
     const manifest = { schemaVersion: 1, extension: { name: installedManifest.name, publisher: installedManifest.publisher, version: installedManifest.version, apiVersion: compiled.API_VERSION }, build,
-      tools: { node: process.versions.node, pnpm: developmentManifest.packageManager, esbuild: esbuildVersion, vsce: developmentManifest.devDependencies['@vscode/vsce'] },
+      tools: { node: process.versions.node, pnpm: pnpmVersion.trim(), esbuild: esbuildVersion, vsce: vsceManifest.version, typescript: typescriptManifest.version },
       inputs: inventory.inputs, dependencies: inventory.dependencies, externals: inventory.externals,
       files: Object.fromEntries([...files].sort(([left], [right]) => left.localeCompare(right)).map(([file, content]) => [file, { bytes: content.length, sha256: createHash('sha256').update(content).digest('hex') }])) };
     files.set(PACKAGE_MANIFEST_PATH, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
     for (const [file, content] of files) { const path = join(stage, file); await mkdir(dirname(path), { recursive: true }); await writeFile(path, content); }
-    const requireTool = createRequire(import.meta.url), vsce = join(dirname(requireTool.resolve('@vscode/vsce/package.json')), 'vsce');
+    const vsce = join(dirname(vsceManifestPath), 'vsce');
     await runCommand(process.execPath, [vsce, 'package', '--out', candidate, '--no-dependencies', '--skip-license', '--no-rewrite-relative-links', '--no-gitHubIssueLinking', '--no-gitLabIssueLinking'], stage);
     const archiveBytes = await readVsixBytes(candidate);
     const entries = await readVsixEntries(archiveBytes), checked = await verifyPackageContent(entries, files);

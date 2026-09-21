@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: package-${{ github.workflow }}-${{ github.ref }}
+  # Supersede old PR runs, but preserve package evidence for every distinct non-PR commit.
+  group: package-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -80,13 +80,48 @@ test('build output destinations are rejected through both literal paths and dire
   assert.equal(await readFile(join(compiled, 'keep.vsix'), 'utf8'), 'previous');
 });
 
+test('case-variant compiler destinations are rejected before missing output directories can be created', async context => {
+  // Arrange: reserve the same compiler names on case-sensitive and case-insensitive filesystems.
+  const fixture = await sourceFixture(context);
+  // Act / Assert
+  for (const path of ['extension/DIST', 'experiments/cycle-0001/BUILD', 'experiments/cycle-0004/Dist']) {
+    await assert.rejects(resolvePackageDestination(fixture.repository, join(fixture.repository, path, 'candidate.vsix')), /overlaps/);
+  }
+  const literal = join(await realpath(fixture.directory), 'Package Output.vsix');
+  assert.equal(await resolvePackageDestination(fixture.repository, literal), literal);
+  assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact');
+});
+
 test('a compilation failure stops packaging without replacing the previous VSIX', async context => {
   // Arrange
-  const fixture = await sourceFixture(context); let commands = 0;
+  const fixture = await sourceFixture(context), commands = [];
   // Act / Assert
-  await assert.rejects(buildPackage(fixture.repository, fixture.output, async () => { commands++; throw new Error('Compilation failed'); }), /Compilation failed/);
-  assert.equal(commands, 1); assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact');
+  await assert.rejects(buildPackage(fixture.repository, fixture.output, async (executable, arguments_) => {
+    commands.push([executable, ...arguments_]);
+    if (arguments_[0] === '--version') return { stdout: '12.4.2\n', stderr: '' };
+    throw new Error('Compilation failed');
+  }), /Compilation failed/);
+  assert.deepEqual(commands, [['pnpm', '--version'], ['pnpm', '--dir', join(fixture.repository, 'extension'), 'build']]);
+  assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact');
   assert.deepEqual((await readdir(fixture.directory)).sort(), ['existing.vsix', 'repository']);
+});
+
+test('a missing pnpm executable preserves compiler outputs and the previous archive before cleanup', async context => {
+  // Arrange: the isolated child can execute Git, but its PATH contains no pnpm executable.
+  const fixture = await sourceFixture(context), executableDirectory = join(fixture.directory, 'executables');
+  await mkdir(executableDirectory);
+  await symlink(execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim(), join(executableDirectory, 'git'));
+  for (const path of COMPILED_DIRECTORIES) { await mkdir(join(fixture.repository, path)); await writeFile(join(fixture.repository, path, 'keep.js'), 'previous compiled output'); }
+  const script = `import { buildPackage } from ${JSON.stringify(new URL('../utils/buildPackage.mjs', import.meta.url).href)};
+try { await buildPackage(process.argv[1], process.argv[2]); throw new Error('Unexpected successful package'); }
+catch (error) { if (error.code !== 'ENOENT' || error.path !== 'pnpm') throw error; process.stdout.write(JSON.stringify({ code: error.code, path: error.path })); }`;
+  // Act
+  const result = execFileSync(process.execPath, ['--input-type=module', '-e', script, fixture.repository, fixture.output], { encoding: 'utf8', env: { ...process.env, PATH: executableDirectory } });
+  // Assert
+  assert.deepEqual(JSON.parse(result), { code: 'ENOENT', path: 'pnpm' });
+  for (const path of COMPILED_DIRECTORIES) assert.equal(await readFile(join(fixture.repository, path, 'keep.js'), 'utf8'), 'previous compiled output');
+  assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact');
+  assert.deepEqual((await readdir(fixture.directory)).sort(), ['executables', 'existing.vsix', 'repository']);
 });
 
 test('Windows package rejection preserves compiler outputs and the previous archive before any tool starts', async context => {
@@ -112,7 +147,10 @@ test('source changes during compilation invalidate the artifact instead of label
   // Arrange
   const fixture = await sourceFixture(context);
   // Act / Assert
-  await assert.rejects(buildPackage(fixture.repository, fixture.output, async () => { await writeFile(join(fixture.repository, 'extension/src/main.ts'), 'export const source = 2;'); }), /Source inputs changed during compilation/);
+  await assert.rejects(buildPackage(fixture.repository, fixture.output, async (_executable, arguments_) => {
+    if (arguments_[0] === '--version') return { stdout: '12.4.2\n', stderr: '' };
+    await writeFile(join(fixture.repository, 'extension/src/main.ts'), 'export const source = 2;');
+  }), /Source inputs changed during compilation/);
   assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact'); assert.deepEqual((await readdir(fixture.directory)).sort(), ['existing.vsix', 'repository']);
 });
 
@@ -227,6 +265,20 @@ test('ambient Git overrides cannot label dirty package sources with another repo
   assert.equal(actual.dirty, true); assert.equal(actual.revision, expected.revision);
   assert.deepEqual(actual.sourceHashes, expected.sourceHashes); assert.equal(actual.sourceHash, expected.sourceHash);
   assert.equal((await readBuildIdentity(decoy.repository)).dirty, false);
+});
+
+test('reading package provenance preserves the Git index when only source timestamps change', async context => {
+  // Arrange: timestamp drift normally makes git status write a refreshed index under an optional lock.
+  const fixture = await sourceFixture(context), indexPath = join(fixture.repository, '.git/index');
+  const before = await readFile(indexPath);
+  const timestamp = new Date('2001-01-01T00:00:00.000Z');
+  await utimes(join(fixture.repository, 'extension/src/main.ts'), timestamp, timestamp);
+  // Act
+  const identity = await readBuildIdentity(fixture.repository);
+  // Assert
+  assert.equal(identity.dirty, false);
+  assert.deepEqual(await readFile(indexPath), before);
+  await assert.rejects(readFile(join(fixture.repository, '.git/index.lock')), { code: 'ENOENT' });
 });
 
 test('package provenance remains readable when unrelated untracked paths exceed the default Git output buffer', async context => {

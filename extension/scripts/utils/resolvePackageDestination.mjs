@@ -1,5 +1,5 @@
 import { lstat, realpath } from 'node:fs/promises';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { BUILD_PACKAGES, COMPILED_DIRECTORIES } from './packageConstants.mjs';
 
 /** Rejects package destinations that cleaning could erase or source snapshots could consume, including directory aliases. @example await resolvePackageDestination(repository, '/tmp/Codebook build.vsix') */
@@ -17,6 +17,8 @@ export async function resolvePackageDestination(repository, destination) {
   const canonical = join(await realpath(ancestor), ...unresolved), root = await realpath(repository);
   const forbidden = [...COMPILED_DIRECTORIES, ...BUILD_PACKAGES.flatMap(name => ['src', 'fixture', 'scripts', 'patches', 'node_modules'].map(part => `${name}/${part}`))];
   if (!canonical.endsWith('.vsix')) throw new Error('The package destination must end in .vsix.');
-  if (forbidden.some(part => canonical === join(root, part) || canonical.startsWith(`${join(root, part)}${sep}`))) throw new Error('The VSIX destination overlaps owned build/source directories.');
+  // Reserve owned names across filesystem casing rules even when the compiler directory does not exist yet.
+  const comparison = relative(root, canonical).split(sep).join('/').toLowerCase();
+  if (forbidden.some(part => comparison === part || comparison.startsWith(`${part}/`))) throw new Error('The VSIX destination overlaps owned build/source directories (including case variants).');
   return canonical;
 }

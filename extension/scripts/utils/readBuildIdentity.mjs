@@ -46,7 +46,8 @@ export async function readBuildIdentity(repository, ownedScratchDirectory) {
   }
   // Ignore only this publication's untracked scratch; tracked changes and other untracked files still count.
   const scratchPrefix = ownedScratchDirectory === undefined ? undefined : `?? ${relative(await realpath(repository), await realpath(ownedScratchDirectory)).split('\\').join('/')}/`;
-  const status = execFileSync('git', ['--no-replace-objects', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], gitOptions);
+  // Reading provenance must not refresh the index or leave an optional write lock after interruption.
+  const status = execFileSync('git', ['--no-optional-locks', '--no-replace-objects', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], gitOptions);
   const dirty = selectedInputsDifferFromHead || status.split('\0').some(entry => entry && !(scratchPrefix && entry.startsWith(scratchPrefix)));
   return {
     revision,
