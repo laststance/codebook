@@ -1,0 +1,386 @@
+{
+  "recordedAt": "2026-09-21T04:11:50.470025+00:00",
+  "source": "479dd29709b738e05db695e317ee2cdca02938cc",
+  "sourceHash": "60e2a1c6bf77b44111f30bedf5d845ee830ebb0196593f102806788300b0e49f",
+  "candidateSha256": "91c264ee7b7329bc99e930f058eae712432b417180928580d3081a4be35a6a65",
+  "privateRoot": "/Users/ryotamurakami/laststance/vscode-extension/codebook",
+  "availability": "Local private evidence; sanitized locations and hashes do not imply public access or full product acceptance.",
+  "scope": "V10 ordinary installed saved-state supplement, exact package and current test/repair receipts; v7 full workflow and v8 retained-state artifacts keep their own manifests.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0016/attach-v10.mjs",
+      "bytes": 3782,
+      "sha256": "4f01a5690f7f981afdcd2e1c90ace4d264ae935d76da096a37106aca94179449"
+    },
+    {
+      "path": "artifacts/cycle-0016/compare-v10-v8.mjs",
+      "bytes": 2453,
+      "sha256": "a8fa965099781244f789d08ac728e53e46415897e5e4fbf96e76a937297ba66e"
+    },
+    {
+      "path": "artifacts/cycle-0016/complete-v10-timing.mjs",
+      "bytes": 2339,
+      "sha256": "205d4874b8969ede7510d562f64036b8e3d39509b5d56bd2a42e756c3d7d30d0"
+    },
+    {
+      "path": "artifacts/cycle-0016/inspect-native-motion-v10.mjs",
+      "bytes": 1192,
+      "sha256": "0a65a535139396efdc030feb0495b6c48514c3d744eac715d86195a098737e73"
+    },
+    {
+      "path": "artifacts/cycle-0016/install-v10.mjs",
+      "bytes": 3379,
+      "sha256": "0f2d30b845470e24fd87ff887fe9b779ed62f9e18d475570fddf8b9c20ad2ef2"
+    },
+    {
+      "path": "artifacts/cycle-0016/installations-v10.json",
+      "bytes": 1012,
+      "sha256": "da29b820887f56a49296f28b11ee0c98a3c598052ff4368eb7691b34f2e2d34a"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-candidate-v10.json",
+      "bytes": 32139,
+      "sha256": "0771e89ce60838cba1d4d63c4bcfe77cc339d4e30ad3e33cc9fba45ed333dda5"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-schedule-v10.md",
+      "bytes": 2941,
+      "sha256": "d0263760ecc665a70f324a7d21baf99216e620b5e3ef156a3b870ce60da3a829"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-smoke-v10.mjs",
+      "bytes": 6781,
+      "sha256": "a32809e9c88b8403cf6e2a8c61ea1adb7c28bef6ceeac82bfcd1ec92c9a540c6"
+    },
+    {
+      "path": "artifacts/cycle-0016/launch-v10.mjs",
+      "bytes": 2003,
+      "sha256": "e7bb5d537147e07967f9a8e90e984f751f94ea257e884d442be71fb9f95b4d74"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/installation-v10.json",
+      "bytes": 8567,
+      "sha256": "a13a999ae27f6a2790a8096b642cc81e69e8092e3717047c44c6e93bf47fb9fd"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-complete-console.log",
+      "bytes": 15149,
+      "sha256": "242eb501ecd2a20b51d6109c253dd3f5bf02d724a23f6a99af063594047336d6"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-console.json",
+      "bytes": 550,
+      "sha256": "e754f2ad95f2233918a9063dac7f72843a664c30880c753adb9f013835754d61"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-discovery-timing.json",
+      "bytes": 1422,
+      "sha256": "6b13877cf238764f22d9074c35ec01a002755bc7310f6c8b73d2410beca99a09"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-draft-visible.log",
+      "bytes": 760,
+      "sha256": "071327cac3798f123c799d17d85ab3a755dcd87b3160be9177de194e6846df7c"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-draft.png",
+      "bytes": 77960,
+      "sha256": "89591bfe6b61a6a4c6038bdeee2b00357410fd114424060d0a04330952341e81"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-exit.json",
+      "bytes": 61,
+      "sha256": "3f80665ae7f058b2a5cbb7a885d0a96b4fa84efb76d5beb83f51f9aa850fb56d"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-launch.json",
+      "bytes": 1315,
+      "sha256": "053ef924e9774bda049a62c498c4a4cdbf73547260672eb958e5e31e4b2355a0"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-motion-inspection.json",
+      "bytes": 1760,
+      "sha256": "abd58ba0af39af41a125d39c503c23641f04e477c214d6dc4089df584e0a86bf"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-native-frames/frame-1.png",
+      "bytes": 226341,
+      "sha256": "9f034981f3217f6a0c1766dc12d69d1f28e75402a292afa57c97c9cc507c5d89"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-native-frames/frame-2.png",
+      "bytes": 312547,
+      "sha256": "ad82600499f56223ea957868f520e4ec3086f820a1e514bd9a679ee80b8b35e6"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-native-frames/frame-3.png",
+      "bytes": 214836,
+      "sha256": "a42c48880ca828559ea633076cf9716acf05a67bd63611d8f842d9b56b16e86f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-native-frames/frame-4.png",
+      "bytes": 422874,
+      "sha256": "c3f05ccb8e50f9a67c76d761f62ec7f5e2a8c4097e0867fbcd0ba0f86acfa1ce"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-native.webm",
+      "bytes": 780174,
+      "sha256": "83ae4ed63f7baa2bea654b74bfa1085ff5f79045a047a5d1bd9d538877f5d6f5"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-shutdown.json",
+      "bytes": 973,
+      "sha256": "2ba04a9f536cd786617238314c9addafc419cbb69edd958038643d2ff81e5e5c"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-smoke-playback.png",
+      "bytes": 164138,
+      "sha256": "eddc61ef3c723014bdbc1ba723288b16451d85d7eb1f2502b2145067ab4c2d61"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-smoke-receipt.json",
+      "bytes": 297760,
+      "sha256": "d3667c40cca6db03217df166a199e3003cb10731c20634708cb1137f2e165041"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/v10-smoke-wiki.png",
+      "bytes": 125766,
+      "sha256": "5253ed69dba393583db44d9f0fe5158dc87a2c0d8d98d19b22192020e107e6ec"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/installation-v10.json",
+      "bytes": 8601,
+      "sha256": "a5335eba4c88811c2b696057fdc7870038826ab9000beeb0bf8020bc6d2d81bc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-complete-console.log",
+      "bytes": 7248,
+      "sha256": "74283ece7ef7af53016c781ad7f40c5db2e6b8bccf80ff20e7f4526ee2738320"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-console.json",
+      "bytes": 439,
+      "sha256": "e27bf45475db49ff7e39af4cf21665931cfb98894926fdd04fea4ec14471f4f6"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-discovery-timing.json",
+      "bytes": 1422,
+      "sha256": "1741c4558768c1c4ec6dce0cfc23317c7049426e0317907616dcf187a5d21252"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-draft-visible.log",
+      "bytes": 850,
+      "sha256": "9e6b7949014f3dc1de97ae4a2978c2124da333f49909826f604446752a08c710"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-draft.png",
+      "bytes": 94177,
+      "sha256": "e35071dadb5506c2dc473f83faaebaf6bb91eaa560219e884e07061c4cd1dd67"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-exit.json",
+      "bytes": 61,
+      "sha256": "db22b2b48dedd0df91de4eed8282964d86be565e10ba9adfff061a042e2476e6"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-launch.json",
+      "bytes": 1300,
+      "sha256": "d180d83871934c49f1953986d7bd248df5f4f4c6e2cf84711d638cb8363cd391"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-motion-inspection.json",
+      "bytes": 1740,
+      "sha256": "7dd9300d94444ba5043ebca778527be4653221936b7cbdb7606a5c342257b0a2"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-native-frames/frame-1.png",
+      "bytes": 361005,
+      "sha256": "67ef64d52f5a0ea680f422852ec51b4e7801d1d15e8158c6d8b4653e7fe0bae8"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-native-frames/frame-2.png",
+      "bytes": 461689,
+      "sha256": "dba4eb6f5ca0dc4fe56812d5630e6ccc5975b39f3047195009e8cd4c02e479b4"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-native-frames/frame-3.png",
+      "bytes": 634682,
+      "sha256": "a9ede4662ae476d52ee5f962520ff82ff1fa284ba06e0c722c4e84e5cba43b98"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-native-frames/frame-4.png",
+      "bytes": 566821,
+      "sha256": "c849e81722ff3737b51c63d823f4233557334c02a6f042f2b145657b83f1f080"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-native.webm",
+      "bytes": 1085972,
+      "sha256": "cbd0a95c6a84ae2ed968ebd9f2ec72e27929d83c7c6b67f8197b45f944074dee"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-shutdown-driver-correction.json",
+      "bytes": 535,
+      "sha256": "d7a38a30df611962b448149e5ba3f382a07044297a0a6b4310a04f0e710cf8db"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-shutdown.json",
+      "bytes": 1074,
+      "sha256": "5d24e56b8617600850639d9bc5a0ee62f43951cfd33e968f8ce6464aa43a5378"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-smoke-playback.png",
+      "bytes": 229940,
+      "sha256": "d747ef3b4459b25e168c4810fa2ba8d8053db8ed2dfba3df218bb12353e3f771"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-smoke-receipt.json",
+      "bytes": 293398,
+      "sha256": "5ff97ab50f1a6a1853bc5716034c06f447befbe71d9691d2aa108362000f4491"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v10-smoke-wiki.png",
+      "bytes": 179761,
+      "sha256": "73892673343c0aa23a86c407eaca06e6e16f90e3ba600bdefcdf648c502bcfaf"
+    },
+    {
+      "path": "artifacts/cycle-0016/package-v10.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/package-lifetime-native/parent-signal-probe.json",
+      "bytes": 2969,
+      "sha256": "108fa780c8c3e7719da434154c4774062782fba97155e1df091b045b2ac3fa74"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/package-lifetime-specialists/red-team/outer-cleanup-probe.json",
+      "bytes": 3272,
+      "sha256": "b848324269e34ec4e27c16f196b4c309c749515a1978f4e598250dad4045e0ba"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/package-lifetime-specialists/red-team/outer-cleanup-probe.mjs",
+      "bytes": 7278,
+      "sha256": "a637f95c8d3f38c8118d1a4025c885194f2ca91379e2cb1a120aceb8e4c71533"
+    },
+    {
+      "path": "artifacts/cycle-0016/save-v10-video.mjs",
+      "bytes": 669,
+      "sha256": "5c85a09529957b06f06c8401b1a1af703fa99b4c129ceda85de63a9d209cdcae"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/duplicate-notice-small.json",
+      "bytes": 471,
+      "sha256": "a71e1d65754987d3d13dbfd211d86da712ec7e0b4b81ea8736f244f41004e564"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/frozen-interruption-package-tests.log",
+      "bytes": 8697,
+      "sha256": "bf007ca630768606f2119964a5c6c487c0d422ca121fcfa11d45b188db145368"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/frozen-interruption-tests.log",
+      "bytes": 78553,
+      "sha256": "5d0a2ccca480bf59573a765854418c9db3d0f4949a973458ee379a414a3c21f6"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/overflow-diagnostic.log",
+      "bytes": 229,
+      "sha256": "ff424269f58ddf47a745c7a1c41f402a336a1fd3331f6516156a84d6c789ac29"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/overflow-race-01.log",
+      "bytes": 229,
+      "sha256": "f78826b748b7dae82f21d51b79f2862b0e1a1907cd082f67d839ed3cc47d2f43"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/overflow-race-02.log",
+      "bytes": 229,
+      "sha256": "3c7ad4a982beb884423f18f346b36b815574bb567bbdaca93dbdb0a3eee033d0"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/overflow-race-03.log",
+      "bytes": 229,
+      "sha256": "c29f48c4d05ba336fdf4c896efc9ae9135caa080a8582a5fd620b588a0e88af3"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/overflow-race-04.log",
+      "bytes": 229,
+      "sha256": "29cd1e3fb24c489a810f450d817421ef9d19809e49a3a5d1f386597fb2739b17"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/overflow-race-05.log",
+      "bytes": 228,
+      "sha256": "fddcc47cd7ab3a2a459af2cf8cfc02d8a500c71161f9f7d4c11ba84e138a3327"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/proposed-tests-with-diagnostics.log",
+      "bytes": 1166,
+      "sha256": "d2838b225a1a32790516441f92dee86ce1b9de0ba4540cfa33fe4d1d78202ec7"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/proposed-tests.log",
+      "bytes": 2077,
+      "sha256": "0085ff701eb839542cab223dcc16198f156e7b5e989105e34231c811433454e8"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/runPackageCommand.test.mjs",
+      "bytes": 10700,
+      "sha256": "3befbd1b4d1c7b96afda7589ceda19b658667a37dc8bad8c190f9481030228c2"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/utils/packageConstants.mjs",
+      "bytes": 645,
+      "sha256": "f7cf4a0118f881066367b9cf7b93f7686b4ccbd300651f7adc6452991d952ed3"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/utils/runPackageCommand.mjs",
+      "bytes": 4386,
+      "sha256": "577f7981a9db8c802009e42176eed20e79beddaa883627d34ebd3f4a9656d13e"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/process-signal-cleanup-v2/utils/withPackageOutput.mjs",
+      "bytes": 1220,
+      "sha256": "2e6c843d7bae3783ddfe39eba64e6b1ca824eb16a6d94ba69971dfa5bcad4019"
+    },
+    {
+      "path": "artifacts/cycle-0016/v10-driver-freeze.json",
+      "bytes": 2556,
+      "sha256": "71643d4a831a77cc58751518a27c592e24c233d9d38a4fcdc76612fbd93b3fce"
+    },
+    {
+      "path": "artifacts/cycle-0016/v10-v8-archive-comparison.json",
+      "bytes": 5782,
+      "sha256": "3dc30a33381f64a9ad8db459067c9ec6475c45413b27caadf56bd4454f147e31"
+    },
+    {
+      "path": "artifacts/cycle-0016/v10-verification.json",
+      "bytes": 31626,
+      "sha256": "1be6f1ba3c467e6f66fc911c458ed594439bea7118be65c6d7019f5021c09e96"
+    },
+    {
+      "path": "artifacts/cycle-0016/v9-status.json",
+      "bytes": 590,
+      "sha256": "caf3d475fbc61f7acaf767c8492f8e941538363b54e5994fa315a5b875d7c89e"
+    },
+    {
+      "path": "artifacts/cycle-0016/verify-owned-shutdown-v10.mjs",
+      "bytes": 2733,
+      "sha256": "9df875c5b28281e45e8d8ed1fdd848d8ab32a16289b12bd2b7c4354a3ab2a210"
+    },
+    {
+      "path": "artifacts/packages/codebook-0.2.1-installed-v10.vsix",
+      "bytes": 589925,
+      "sha256": "91c264ee7b7329bc99e930f058eae712432b417180928580d3081a4be35a6a65"
+    }
+  ]
+}
