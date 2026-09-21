@@ -1,7 +1,7 @@
 {
   "scope": "Cycle 0018 v11 clean package, source equivalence and normal installation preparation; not actual extension loading or final acceptance",
   "availability": "Private local artifacts. Preserve or copy to durable private storage before moving this checkout. Profiles, raw runtime data and credentials are not public repository files.",
-  "updatedAt": "2026-09-21T23:09:06.569601+00:00",
+  "updatedAt": "2026-09-21T23:15:47.569083+00:00",
   "artifacts": [
     {
       "path": "artifacts/cycle-0018/blocked-audit-native-visibility.json",
@@ -47,6 +47,16 @@
       "path": "artifacts/cycle-0018/installed-development-v10/cursor-full/resumed-2308-raised-visibility.json",
       "bytes": 7034,
       "sha256": "443b4e8d6a25df63470babb5fb10f72f2904f61aa9536adb31d5205772424201"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v10/cursor-full/resumed-turn2-visibility.json",
+      "bytes": 7118,
+      "sha256": "f700a24d5adc4925cc010d87628dc73b9da57d7aa251bd04787b486b1b8dcc51"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v10/cursor-full/resumed-turn3-visibility.json",
+      "bytes": 7088,
+      "sha256": "16cd1323f4415181f9a3b704523f55a3be48edc18ac32b5ebd4c2745d0cbb122"
     },
     {
       "path": "artifacts/cycle-0018/installed-development-v11/before-restart.mjs",
@@ -169,9 +179,19 @@
       "sha256": "2de5f00f56cbfea368ee78ac201a48296d4b5eb04a3f7965ce907b381a9aafd9"
     },
     {
+      "path": "artifacts/cycle-0018/resumed-blocked-audit-native-visibility.json",
+      "bytes": 2870,
+      "sha256": "efaa22a8a17e24b020c50a6e7763996759edb01e66eeaf5ef0ed89b5bbcb034c"
+    },
+    {
       "path": "artifacts/cycle-0018/resumed-native-visibility-20260922.json",
       "bytes": 2282,
       "sha256": "22c9d9e9406781fc25335e680b7c06d463165753c73b309d48a386e11f1644a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/resumed-native-visibility-turn2.json",
+      "bytes": 1654,
+      "sha256": "80f70fa7e78d03ee42272c706f4feeed7bc53bff7e7734a82b85bbb65079f627"
     },
     {
       "path": "artifacts/cycle-0018/skill-specification/documentation-resume-check-20260922.json",
