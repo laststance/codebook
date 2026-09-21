@@ -140,7 +140,7 @@ These are project tracking operations within the authorized development work. Re
 
 ## Completion and restart
 
-The product is complete only under PRODUCT_GOAL.md's final acceptance, including both additional modes. Completing one cycle, one plan review, or the default layout is progress, not that acceptance.
+The product is complete only under PRODUCT_GOAL.md's final acceptance, including both additional modes and the [D022 end-user trial protocol](docs/acceptance/FINAL_REVIEW.md). Once the complete candidate exists, freeze its source/VSIX/support/criteria and eligible random target pool. Ten fresh reviewers must each operate the same installed artifact through actual AI chats in both ordinary editors, sequentially, with no hidden reviewer MCP substitution. Every FAIL or candidate change resets the streak; failed repository/question pairs remain regression obligations. Existing checkout, G01–G11, intended-use and owner-acceptance conditions remain required. Development code reviews and direct-MCP diagnostic runs never count toward the ten. Completing one cycle, one plan review, or the default layout is progress, not that acceptance.
 
 A new chat must be able to answer from the repository alone: the final experience, what is proven, what is not, which cycle is active, what failed, and the next executable action. Check that read path at handoff. Context-save is an optional accelerator, not the only continuity mechanism.
 

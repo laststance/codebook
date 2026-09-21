@@ -1,0 +1,159 @@
+{
+  "at": "2026-09-21T11:11:45.192987+00:00",
+  "cycle": "0017",
+  "mergeRevision": "c3cee826ea6e7c25e835b381a320bcd39ec477d9",
+  "scope": "Selected private delivery and final review receipts; separate from immutable original native and diagnostic manifests",
+  "count": 30,
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0017/ci-pr-final/SHA256SUMS",
+      "bytes": 80,
+      "sha256": "844cbc6787cf15068b9741b653578616b18d6e3d804c61fd7a09af10a12707cd"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-pr-final/artifact-metadata.json",
+      "bytes": 966,
+      "sha256": "ff6accb8388de0982de387d50bff5cd9ff0994fef5386f07ef26876944898ef5"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-pr-final/build-receipt.json",
+      "bytes": 32215,
+      "sha256": "ca06ed64c36951dc69a8a70e160d2a0a88bda8bebc5cb91b15394aefeee650cb"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-pr-final/codebook.vsix",
+      "bytes": 590904,
+      "sha256": "491bc38886d71fd0d962441e92d0aaef8b67dbce03e97d94ebbaa80aa20a496e"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-pr-final/comparison.json",
+      "bytes": 6713,
+      "sha256": "fad8194a115f53a71ea0e262147ea1d9833fa1cedfd5fdc45c41fef7e5bda60b"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-pr-final/complete-job.log",
+      "bytes": 202696,
+      "sha256": "9751b0005bd5bd1a9ba29151d5610c2a847ae7e34722f94ce86f0eaaf03cfc91"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-pr-final/download-receipt.json",
+      "bytes": 1086,
+      "sha256": "c0289fb7b8319e1dc4b06a43225c9a72d04463ee456cf827799f5ed693a7107c"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-pr-final/github-artifact.zip",
+      "bytes": 655448,
+      "sha256": "9d0581e406f467ec142d21b9b18370dab07afa6d5def47a291eb32a92bf74427"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-pr-final/run.json",
+      "bytes": 4435,
+      "sha256": "ee98892609d46f1d53a6af966b4c18e5e149f1a18782f2b40b6b073ad41e6015"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-pr-final/verification.json",
+      "bytes": 31743,
+      "sha256": "68938464d5de9642861cc4535a9dbd496757bd00a456376822b3c2f600769c6e"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-main/SHA256SUMS",
+      "bytes": 80,
+      "sha256": "5d98cb53db8a38c5db3a637f0cbe90cdd53fe2307cb738307ac378779a7ace9e"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-main/artifact-metadata.json",
+      "bytes": 928,
+      "sha256": "080ebc2429e4f871e8ec532de97e631109fb1930707a52f9a8708c02e1c6071c"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-main/build-receipt.json",
+      "bytes": 32215,
+      "sha256": "88a672c05cb159bdc17181814f5417f892da7e5f3d453568eb79ddff966a9936"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-main/codebook.vsix",
+      "bytes": 590905,
+      "sha256": "e41595459bdff54dced02755216fe8dc90bccf808e2b601cac3fee727024cf9d"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-main/comparison.json",
+      "bytes": 6709,
+      "sha256": "8b4043f84361276d9e8edb94e6365bb459c70eca3b83b81f9cdb08599c21de84"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-main/complete-job.log",
+      "bytes": 200941,
+      "sha256": "5ee8e0117ac095d5f770e3db0138ffbdb62617ae7294e9cc03e2cfbf795549e2"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-main/download-receipt.json",
+      "bytes": 1078,
+      "sha256": "2e8d3402c7d80ff8f820ef8de57b3e59bf7d0b12497869a05456749b19b5c0c6"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-main/github-artifact.zip",
+      "bytes": 655449,
+      "sha256": "4f9200213cb096df30618696530a39997622ba03e57e1ac27c2903418a060ff4"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-main/run.json",
+      "bytes": 4427,
+      "sha256": "f3aca7cc02a8f96abf1008fbf3576abb9f075d951b38f63b9fa50346e1a91dea"
+    },
+    {
+      "path": "artifacts/cycle-0017/ci-main/verification.json",
+      "bytes": 31743,
+      "sha256": "662b41de88fd59aa874e9b828e00e1c3d5462b1b1019427c81d089ac9e2151bd"
+    },
+    {
+      "path": "artifacts/cycle-0017/merge.json",
+      "bytes": 241,
+      "sha256": "7d61887424448016f6071d7876e923f298ec72e847d03ff82ff424e3b441e822"
+    },
+    {
+      "path": "artifacts/cycle-0017/issue-closed.json",
+      "bytes": 122,
+      "sha256": "650a315afb1cc3cab52f693e45ab4f594c77a9b7ac387c5501090edb78f65de9"
+    },
+    {
+      "path": "artifacts/cycle-0017/premerge-review-state.json",
+      "bytes": 334,
+      "sha256": "3fea9ea81c15da3c0a2056e455d51b6390bac198a8630bd2579e5a6dd0cfe9b7"
+    },
+    {
+      "path": "artifacts/cycle-0017/land-review-readiness.txt",
+      "bytes": 9117,
+      "sha256": "89781360094522095882924dbeadd0a719215c20062062efcec7d88e396cb976"
+    },
+    {
+      "path": "artifacts/cycle-0017/coderabbit-final-review.jsonl",
+      "bytes": 4487,
+      "sha256": "8deec682d3c59dd00758ca20117b01437d7010251ccc7e45100a6c398b85e044"
+    },
+    {
+      "path": "artifacts/cycle-0017/coderabbit-final-triage.json",
+      "bytes": 1492,
+      "sha256": "f9609b2ccddb62c898e3514fe80153e66c4958a98dff354e1c99413b6a9fb40d"
+    },
+    {
+      "path": "artifacts/cycle-0017/coderabbit-prose-rereview.jsonl",
+      "bytes": 4365,
+      "sha256": "cb6a154104b5ee021aab4e0be160f20e6a2505713cf11ba1016e2d0ec3f21823"
+    },
+    {
+      "path": "artifacts/cycle-0017/coderabbit-prose-triage.json",
+      "bytes": 2154,
+      "sha256": "3ce5a64d884bc91199a28f892a0726e7b31a219236c7b6a0731123972d167226"
+    },
+    {
+      "path": "artifacts/cycle-0017/adversarial-prose-rereview.json",
+      "bytes": 636,
+      "sha256": "e59894282ffe2403488303ec4e3f9ce8b3280bb19fa91e72c81af4267e96d53c"
+    },
+    {
+      "path": "artifacts/cycle-0017/delivery-report.md",
+      "bytes": 2546,
+      "sha256": "598a5806cf43583057e4e7ee797824b3473734af1557cd7bf27cf22c2cc634b6"
+    }
+  ]
+}

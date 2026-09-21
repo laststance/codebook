@@ -23,6 +23,7 @@
 - Goal or accepted-product-behavior changes need explicit user direction. Routine implementation choices, cycle selection, and follow-up experiments within that goal can be decided from evidence and recorded without repeated permission requests.
 - Keep implementation, live validation, review, merge, packaging, publication, and installed-extension verification distinct. A completed skill, screenshot mockup, green test, or merged PR alone is not product completion.
 - Product completion requires every final capability and the integrated final acceptance in PRODUCT_GOAL.md. A fixture success does not establish real-repository support.
+- Apply [docs/acceptance/FINAL_REVIEW.md](docs/acceptance/FINAL_REVIEW.md) only after the complete candidate exists: ten fresh sequential reviewers each perform actual AI-chat end-user trials in both ordinary editors using the same frozen VSIX. Development reviews never count; any FAIL or source/VSIX change resets the streak. Preserve owner acceptance separately and keep Claude Code CLI reviews skipped under the owner's instruction.
 - Preserve other people's edits. Keep recordings and sensitive runtime data out of public changes; store a sanitized evidence manifest with stable artifact locations and source/version identifiers.
 
 ## Working conventions

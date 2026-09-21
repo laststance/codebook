@@ -15,6 +15,7 @@ This is a private preview, not a Marketplace or Open VSX release. Earlier fixtur
 | Question | Source of truth |
 | --- | --- |
 | What product are we trying to reach? | [PRODUCT_GOAL.md](PRODUCT_GOAL.md) |
+| What must pass before the product is complete? | [Ten independent end-user trials in both editor AI chats](docs/acceptance/FINAL_REVIEW.md) |
 | What is actually proven, and what is next? | [PROJECT_STATE.md](PROJECT_STATE.md) |
 | How do I install and use the current preview? | [Private VSIX installation and MCP tutorial](extension/README.md), [development changes](CHANGELOG.md) |
 | How do we use GStack and choose the next cycle? | [DEVELOPMENT.md](DEVELOPMENT.md) |

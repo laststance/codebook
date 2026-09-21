@@ -1,6 +1,6 @@
 # Product goal
 
-Goal version: 3\
+Goal version: 4\
 Product design approved: 2026-09-18  
 Development structure requested: 2026-09-18  
 Owner: Raphtalia
@@ -60,7 +60,9 @@ Individual capability checks are necessary but not sufficient. Before declaring 
 5. Switch among all three layouts during a live session and during replay without losing state. Verify each layout's intended use.
 6. Exercise interruption/recovery and unrelated-target cases; validate real-repository use and the declared support matrix.
 7. Link current, reproducible evidence for G01–G11, identified by host and version, in PROJECT_STATE.md and obtain Raphtalia's acceptance that the tool supports the intended understanding experience in both VS Code and Cursor.
-8. Complete [ten consecutive independent sequential subagent reviews](docs/acceptance/FINAL_REVIEW.md) of the frozen complete product and its evidence. Any failed review requires fixes and a restart at reviewer 1. Development reviews do not count toward this final gate.
+8. Complete [ten consecutive independent end-user acceptance trials](docs/acceptance/FINAL_REVIEW.md) on the same frozen complete candidate. Each fresh subagent must normally install the same VSIX and actually use both VS Code and Cursor AI chats, sequentially, with the same preregistered question and randomly selected eligible real repository in both hosts. The chat AI must drive Codebook's application operation, real pause, source/value explanation and continuation without the reviewer supplying hidden MCP work or correct per-stop instructions. Each reviewer also verifies the full checkout scenario and all requirements, saved replay after app exit, connected learning views, explicit test progress, three modes, restart and visible usability through video and inspected frames. At least 20 editor-specific trials are required. Any FAIL, timeout or unverifiable mandatory item resets the streak to zero; source/VSIX changes also reset it. Preserve failed targets/questions as regressions, refreeze after remedies and restart with a new reviewer 1. Development reviews never count, and test understanding checks never substitute for Raphtalia's acceptance.
+
+The [final-trial protocol](docs/acceptance/FINAL_REVIEW.md) fixes support/selection criteria before random sampling, requires independent verdicts and complete per-host records, protects authorized logged-in profiles, and prohibits narrowing support or replacing a failed target to obtain success. Goal version 4 strengthens this final gate under D022; G01–G11 and acceptance steps 1–7 remain unchanged. Claude Code CLI review remains owner-skipped, separate from actual editor AI chat acceptance.
 
 There is no automatic percentage-complete claim based on task counts. Evidence that has been invalidated by a source, adapter, or environment change must be revalidated before final acceptance.
 
