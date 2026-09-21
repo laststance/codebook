@@ -18,4 +18,4 @@ The two deterministic Close-during-recovery negatives exercise an isolated nativ
 
 ## Result
 
-Pending execution. This frozen schedule will link the v5 result after both hosts finish.
+[V5 results](installed-validation-v5.md): VS Code passes the bounded schedule with retained concerns. Cursor passes live/replay/restart but its original manual-reading sequence fails after six transfers; separately frozen restarted focus controls pass. Preserve C16-QA-006 and investigate before claiming the complete schedule.
