@@ -70,6 +70,33 @@ test('a real VSIX loads outside the checkout and preserves exact fixture maps, p
   assert.deepEqual(original.get('extension/src/assets/book.svg'), await readFile(join(repository, 'extension/src/assets/book.svg')));
 });
 
+test('a coherent SHA-256 Git revision survives real archive checking', async () => {
+  // Arrange
+  const entries = new Map(original), build = JSON.parse(entries.get('extension/dist/build.json'));
+  build.revision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  replaceFile(entries, 'dist/build.json', Buffer.from(JSON.stringify(build)));
+  const manifest = JSON.parse(entries.get('extension/package-manifest.json')); manifest.build = build;
+  replaceFile(entries, 'package-manifest.json', Buffer.from(JSON.stringify(manifest)));
+  const path = await writeArchive(entries, 'sha256-revision');
+  // Act
+  const checked = await verifyPackageContent(await readVsixEntries(path));
+  // Assert
+  assert.equal(checked.build.revision, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
+});
+
+for (const [label, revision] of [['short-sha1', 'a'.repeat(39)], ['long-sha1', 'a'.repeat(41)], ['short-sha256', 'a'.repeat(63)], ['long-sha256', 'a'.repeat(65)], ['uppercase', 'A'.repeat(64)], ['non-hex', 'g'.repeat(40)]]) {
+  test(`a coherent archive with a ${label} Git revision is rejected before installation`, async () => {
+    // Arrange
+    const entries = new Map(original), build = JSON.parse(entries.get('extension/dist/build.json')); build.revision = revision;
+    replaceFile(entries, 'dist/build.json', Buffer.from(JSON.stringify(build)));
+    const manifest = JSON.parse(entries.get('extension/package-manifest.json')); manifest.build = build;
+    replaceFile(entries, 'package-manifest.json', Buffer.from(JSON.stringify(manifest)));
+    const path = await writeArchive(entries, `invalid-revision-${label}`);
+    // Act / Assert
+    await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /Invalid Git revision/);
+  });
+}
+
 test('the standalone checker reports the actual VSIX checksum without executing its extension code', async () => {
   // Arrange: a coherent archive contains a throwing entry, which the checker must never run.
   const entries = new Map(original); replaceFile(entries, 'dist/extension.js', Buffer.from('throw new Error("must not execute checker input");'));

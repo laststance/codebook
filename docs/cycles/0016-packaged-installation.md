@@ -55,6 +55,8 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 
 ## Attempts and evidence
 
+- [Package review hardening](evidence/0016/package-review-hardening.md): isolated real reproductions and proposed controls for replacement-ref provenance, Git revision format and descendant process cleanup. Applied suites pass **680/680 + 79/79**; the separately frozen [v9 schedule](evidence/0016/installed-schedule-v9.md) are the next gates; earlier archives and proof remain immutable.
+
 - [V8 delivery supplement](evidence/0016/installed-validation-v8.md): clean `5111cb9`, fresh **680/680 + 65/65** tests, runtime/demo equality to v7 (28 unchanged archive entries), and independently verified exact new installation identity, saved Wiki/replay/progress, native frames and cleanup in both hosts. Metadata/README and archive hashes differ; v7 remains the full live/replay/manual workflow evidence. Review/CI/merge remain pending.
 
 - [Selected-input provenance](evidence/0016/selected-input-provenance.md): seven red-before hidden-input cases, repaired exact HEAD membership/content comparison, 11/11 focused and 65/65 full package checks. SHA-256 Git and literal tab/Unicode paths have an additional regression. Runtime code is unchanged from v7; fresh delivery identity and review/CI remain separate.

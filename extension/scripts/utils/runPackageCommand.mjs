@@ -1,8 +1,54 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { PACKAGE_COMMAND_OUTPUT_BYTES, PACKAGE_COMMAND_TIMEOUT_MS } from './packageConstants.mjs';
+import { spawn } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
+import { PACKAGE_COMMAND_OUTPUT_BYTES, PACKAGE_COMMAND_TIMEOUT_MS, PACKAGE_COMMAND_EXIT_TIMEOUT_MS, PACKAGE_COMMAND_EXIT_POLL_MS } from './packageConstants.mjs';
 
-/** Runs package tools with literal arguments and bounded output/time for the build pipeline. @example await runPackageCommand('pnpm', ['build'], extensionRoot) */
+/** Runs literal package tools and retires their owned POSIX process group before the pipeline resumes. @example await runPackageCommand('pnpm', ['build'], extensionRoot) */
 export async function runPackageCommand(executable, arguments_, cwd) {
-  return promisify(execFile)(executable, arguments_, { cwd, encoding: 'utf8', timeout: PACKAGE_COMMAND_TIMEOUT_MS, maxBuffer: PACKAGE_COMMAND_OUTPUT_BYTES });
+  if (process.platform === 'win32') throw new Error('Package builds require POSIX process-group cleanup; Windows builds are unsupported.');
+  // execFile does not forward detached; spawn establishes the group whose lifetime this helper owns.
+  const child = spawn(executable, arguments_, { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const chunks = { stdout: [], stderr: [] };
+  // Drain both pipes concurrently, retaining at most the existing limit for each diagnostic channel.
+  const readers = ['stdout', 'stderr'].map(async channel => {
+    let bytes = 0;
+    for await (const chunk of child[channel]) {
+      chunks[channel].push(chunk.subarray(0, Math.max(0, PACKAGE_COMMAND_OUTPUT_BYTES - bytes)));
+      bytes += chunk.length;
+      if (bytes > PACKAGE_COMMAND_OUTPUT_BYTES) throw Object.assign(new Error(`${channel} maxBuffer length exceeded`), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
+    }
+  });
+  const closed = new Promise((resolve, reject) => {
+    child.once('error', reject);
+    // Detect leader failure before inherited descendant pipes can postpone the close event.
+    child.once('exit', (code, signal) => {
+      if (code !== 0 || signal !== null) reject(Object.assign(new Error(`Package command failed: ${executable} (${signal ?? code})`), { code, signal }));
+    });
+    child.once('close', resolve);
+  });
+  let timer, failure;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error('Package command exceeded its time limit.'), { code: 'ETIMEDOUT' })), PACKAGE_COMMAND_TIMEOUT_MS);
+  });
+  try { await Promise.race([Promise.all([closed, ...readers]), deadline]); }
+  catch (error) { failure = error; }
+  finally { clearTimeout(timer); }
+  try {
+    if (child.pid) {
+      // A failed pnpm leader can leave compilers writing; stop its separate group before returning either outcome.
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      const cleanupDeadline = Date.now() + PACKAGE_COMMAND_EXIT_TIMEOUT_MS;
+      for (;;) {
+        try { process.kill(-child.pid, 0); } catch (error) { if (error.code === 'ESRCH') break; throw error; }
+        if (Date.now() >= cleanupDeadline) throw new Error('Package process group did not exit before cleanup deadline.');
+        await delay(PACKAGE_COMMAND_EXIT_POLL_MS);
+      }
+    }
+  } catch (cleanupError) {
+    failure = failure ? new AggregateError([failure, cleanupError], 'Package command failed and owned process cleanup could not be confirmed.') : cleanupError;
+  }
+  // Close owned pipes even when an escaped or unkillable process retains an inherited descriptor.
+  child.stdout.destroy(); child.stderr.destroy(); await Promise.allSettled(readers);
+  const result = { stdout: Buffer.concat(chunks.stdout).toString('utf8'), stderr: Buffer.concat(chunks.stderr).toString('utf8') };
+  if (failure) throw Object.assign(failure, result);
+  return result;
 }

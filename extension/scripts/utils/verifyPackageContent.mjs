@@ -49,7 +49,7 @@ export async function verifyPackageContent(entries, expectedFiles) {
   assert.equal(build.extensionVersion, extension.version, 'Build version mismatch.');
   assert.match(build.apiVersion, /^\d+\.\d+$/, 'Missing API version.');
   assert.deepEqual(manifest.build, build, 'Build identity mismatch.');
-  assert.match(build.revision, /^[a-f0-9]{40}$/); assert.equal(typeof build.dirty, 'boolean');
+  assert.match(build.revision, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/, 'Invalid Git revision.'); assert.equal(typeof build.dirty, 'boolean');
   assert.ok(Array.isArray(build.sourceHashes) && build.sourceHashes.length > 0, 'Missing source provenance.');
   assert.equal(createHash('sha256').update(build.sourceHashes.join('\n')).digest('hex'), build.sourceHash, 'Source provenance mismatch.');
   assert.ok(build.sourceHashes.some(value => value.startsWith('extension/patches/@modelcontextprotocol__sdk@')), 'Missing SDK patch provenance.');

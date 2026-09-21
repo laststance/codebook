@@ -2,7 +2,7 @@
 
 ## [0.2.1.0] - 2026-09-21
 
-Private extension preview 0.2.1 / MCP API 1.5. V7 demonstrates bounded ordinary installed checkout, offline replay, shared layouts, manual-reading retention and restart independently in both editors. Earlier v5/v6 focus failures remain recorded; the original cases now pass after the native-focus ordering repair. Package provenance hardening and final delivery checks remain in progress. Full real-repository usefulness and final product acceptance remain open.
+Private extension preview 0.2.1 / MCP API 1.5. V7 demonstrates bounded ordinary installed checkout, offline replay, shared layouts, manual-reading retention and restart independently in both editors. Earlier v5/v6 focus failures remain recorded; the original cases now pass after the native-focus ordering repair. V8 separately verifies selected-input provenance, exact installation and retained state with the same runtime/assets as v7. The current delivery repairs isolate replacement refs, accept both Git revision formats and retire package subprocess descendants; fresh package/native checks and delivery remain in progress. Full real-repository usefulness and final product acceptance remain open.
 
 ### Added
 
@@ -12,9 +12,11 @@ Private extension preview 0.2.1 / MCP API 1.5. V7 demonstrates bounded ordinary 
 
 ### Fixed
 
+- Accept coherent SHA-1 and SHA-256 Git revision formats in package metadata while rejecting malformed identities. Full SHA-256 repository builds remain outside demonstrated coverage.
+- Retire owned POSIX package process groups after success, failure, timeout or output overflow so failed builds cannot leave descendant compilers writing after cleanup. Windows package builds fail before tool execution.
 - Hash the same bounded archive bytes that were validated, even when another process atomically replaces the input path during checking.
 - Await each moved pane’s actual native focus before observing the new grid, preserving strict later learner-focus checks.
-- Isolate package Git provenance from inherited `GIT_*` overrides, compare actual selected inputs directly with HEAD despite ignore rules/index hints, detect hidden deletions, bound Git output and reject explicitly empty `--out` values.
+- Isolate package Git provenance from inherited `GIT_*` overrides, compare actual selected inputs directly with the stored HEAD tree despite ignore rules/index hints/replacement refs, detect hidden deletions, bound Git output and reject explicitly empty `--out` values.
 - Cancel a pending focus-recovery receipt when the learner closes Study, preserving the original transfer failure and unrelated draft.
 - Avoid retrying an already-failed final focus wait. Reject an obsolete reading pose when the learner document changes during transfer, preserving edited text and the dirty tab.
 - Wait for the native focus receipt before confirming a presentation transfer. Preserve the visible source reading position after final pane placement and across paused replay refresh, including manual reading away from the selected stop.

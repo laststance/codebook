@@ -268,6 +268,26 @@ for (const flag of ['assume-unchanged', 'skip-worktree']) {
   }
 }
 
+test('Git replacement objects cannot label different selected source bytes as the original clean revision', async context => {
+  // Arrange
+  const fixture = await sourceFixture(context), original = await readBuildIdentity(fixture.repository);
+  assert.equal(original.dirty, false);
+  await writeFile(join(fixture.repository, 'extension/src/main.ts'), 'export const source = 2;');
+  await runPackageCommand('git', ['add', '.'], fixture.repository);
+  await runPackageCommand('git', ['-c', 'user.name=Codebook Test', '-c', 'user.email=codebook-test@example.invalid', 'commit', '--quiet', '-m', 'replacement source'], fixture.repository);
+  const replacement = await readBuildIdentity(fixture.repository);
+  await runPackageCommand('git', ['replace', original.revision, replacement.revision], fixture.repository);
+  await runPackageCommand('git', ['update-ref', 'HEAD', original.revision], fixture.repository);
+  assert.equal(execFileSync('git', ['status', '--porcelain=v1'], { cwd: fixture.repository, encoding: 'utf8' }), '');
+  assert.equal(execFileSync('git', ['--no-replace-objects', 'show', `${original.revision}:extension/src/main.ts`], { cwd: fixture.repository, encoding: 'utf8' }), 'export const source = 1;');
+  // Act
+  const actual = await readBuildIdentity(fixture.repository);
+  // Assert
+  assert.equal(actual.revision, original.revision); assert.equal(actual.dirty, true);
+  assert.notEqual(actual.sourceHash, original.sourceHash);
+  assert.deepEqual(actual.sourceHashes, replacement.sourceHashes); assert.equal(actual.sourceHash, replacement.sourceHash);
+});
+
 test('SHA-256 repositories preserve clean input identity for literal tabs and Unicode in source paths', async context => {
   // Arrange
   const fixture = await sourceFixture(context, 'sha256'), path = 'extension/src/雪\tinput.ts';

@@ -6,14 +6,14 @@ import { BUILD_PACKAGES, PACKAGE_COMMAND_OUTPUT_BYTES, PACKAGE_COMMAND_TIMEOUT_M
 
 /** Captures source provenance for metadata and {@link buildPackage}; the final check excludes only its owned untracked scratch. @example await readBuildIdentity(repository) // { revision, dirty, sourceHash, sourceHashes } */
 export async function readBuildIdentity(repository, ownedScratchDirectory) {
-  // Hook/worktree overrides must not redirect provenance; ignore rules and index hints cannot hide selected inputs.
+  // Ignore ambient Git overrides and replacement objects: recorded revisions must name their stored source tree.
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
   const gitOptions = { cwd: repository, env: environment, encoding: 'utf8', timeout: PACKAGE_COMMAND_TIMEOUT_MS, maxBuffer: PACKAGE_COMMAND_OUTPUT_BYTES };
-  const revision = execFileSync('git', ['rev-parse', 'HEAD'], gitOptions).trim();
-  const objectFormat = execFileSync('git', ['rev-parse', '--show-object-format'], gitOptions).trim();
+  const revision = execFileSync('git', ['--no-replace-objects', 'rev-parse', 'HEAD'], gitOptions).trim();
+  const objectFormat = execFileSync('git', ['--no-replace-objects', 'rev-parse', '--show-object-format'], gitOptions).trim();
   if (!['sha1', 'sha256'].includes(objectFormat)) throw new Error(`Unsupported Git object format: ${objectFormat}`);
   const headInputs = new Map();
-  for (const entry of execFileSync('git', ['ls-tree', '-r', '-z', '--full-tree', revision, '--', ...BUILD_PACKAGES], gitOptions).split('\0')) {
+  for (const entry of execFileSync('git', ['--no-replace-objects', 'ls-tree', '-r', '-z', '--full-tree', revision, '--', ...BUILD_PACKAGES], gitOptions).split('\0')) {
     if (!entry) continue;
     const separator = entry.indexOf('\t'), [mode, type, object] = entry.slice(0, separator).split(' ');
     headInputs.set(entry.slice(separator + 1), type === 'blob' && ['100644', '100755'].includes(mode) ? object : undefined);
@@ -46,7 +46,7 @@ export async function readBuildIdentity(repository, ownedScratchDirectory) {
   }
   // Ignore only this publication's untracked scratch; tracked changes and other untracked files still count.
   const scratchPrefix = ownedScratchDirectory === undefined ? undefined : `?? ${relative(await realpath(repository), await realpath(ownedScratchDirectory)).split('\\').join('/')}/`;
-  const status = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], gitOptions);
+  const status = execFileSync('git', ['--no-replace-objects', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], gitOptions);
   const dirty = selectedInputsDifferFromHead || status.split('\0').some(entry => entry && !(scratchPrefix && entry.startsWith(scratchPrefix)));
   return {
     revision,
