@@ -1,0 +1,143 @@
+{
+  "recordedAt": "2026-09-21T08:30:20.878951+00:00",
+  "root": ".",
+  "availability": "Private local artifacts; copy before moving/deleting the checkout. No credentials or raw private recordings are published.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0016/ci-main-v16/SHA256SUMS",
+      "bytes": 80,
+      "sha256": "5c6726c380eab2f0a00cdbcbe5da821d9bb6aad04d479a2dfb2dc5a97c874776"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-main-v16/artifact-metadata.json",
+      "bytes": 928,
+      "sha256": "e1e61ce6458b6aa487086fb6878ac69d6a4c496935fc3fcd24da9f80e230a8b3"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-main-v16/build-receipt.json",
+      "bytes": 32215,
+      "sha256": "8586a8fca69650483a915ab60c1fe495b052001f3fb69b3f0dca9d72cf844645"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-main-v16/codebook.vsix",
+      "bytes": 590378,
+      "sha256": "6abd3c665e7f3610040860ff45c22eecf1947499f5cd08654a7b3f5ba5f9a0dc"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-main-v16/comparison.json",
+      "bytes": 6357,
+      "sha256": "2c9e77892475fe0181c2c5f606ab4ab642683db51420151b258b73818ce0fbfa"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-main-v16/complete-job.log",
+      "bytes": 200833,
+      "sha256": "f1e1d1712d77c52473ba1bac963cbf641e3bbe10274588fe67381d250dd12111"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-main-v16/download-receipt.json",
+      "bytes": 1045,
+      "sha256": "c9fc8240695b69a6862f6919119f61dcc752ca64f7ecc28f8fdd71de93c1d0d8"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-main-v16/github-artifact.zip",
+      "bytes": 654922,
+      "sha256": "b026b7514f4ab7d4316bc0054e3926bd3588e9b5f347413e035561cfab5dfa05"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-main-v16/run.json",
+      "bytes": 4427,
+      "sha256": "b15c567e3f8ee992a0dd1020f6501e3e9ed3fc227081abaf795c8b923d080289"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-main-v16/verification.json",
+      "bytes": 31743,
+      "sha256": "137e3ee5da34ff82847d4a68d4776a31f1ee149d1388c0e4ba14baba3ccd70d6"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-final-v16/SHA256SUMS",
+      "bytes": 80,
+      "sha256": "f9e64c07cb71245abecfc0e177abef4b4dec9f4ae6e4db211c41edf386245fce"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-final-v16/artifact-metadata.json",
+      "bytes": 962,
+      "sha256": "9e3e5aacc7326017d0ca823e174dc62fd83eae9cb1c59000839c8f4c88c4fb7f"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-final-v16/build-receipt.json",
+      "bytes": 32215,
+      "sha256": "7905a72272fcbc034fc99b2989956c411f80d5bbe0ab1006ad946adba79cbc1e"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-final-v16/codebook.vsix",
+      "bytes": 590381,
+      "sha256": "cfe73f5249081de9fe541a6fad24bad51b260ad113f75f86ca6b23a3e8ce8737"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-final-v16/comparison.json",
+      "bytes": 6361,
+      "sha256": "2430dbd2731c69c644aa6ac278d734ad8b5db5d66046c4f4cb3e22ef45cd2bee"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-final-v16/complete-job.log",
+      "bytes": 202883,
+      "sha256": "ca01516caef3ef8c15030753ba69725e856f46aea68f96e9d8d276f0ac66ae3c"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-final-v16/download-receipt.json",
+      "bytes": 1052,
+      "sha256": "761e502326533129289d696cb001bd47bec085d6d54c7fc12a6b25116fe0f620"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-final-v16/github-artifact.zip",
+      "bytes": 654925,
+      "sha256": "81ee940c57e94b468e9ce7c1dfe6673da566133fc308b8d3ebcb89193c801115"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-final-v16/run.json",
+      "bytes": 4435,
+      "sha256": "c56936d9de8f4dc6c74d95fa0763a89df3fc489ddb696d9eab107c1c62359bb3"
+    },
+    {
+      "path": "artifacts/cycle-0016/ci-pr-final-v16/verification.json",
+      "bytes": 31743,
+      "sha256": "efcac8190074dde7facd4620c30e5852f2205151905d3ff9769077c1d013acb5"
+    },
+    {
+      "path": "artifacts/cycle-0016/delivery-v16/issue-1-after-merge.json",
+      "bytes": 102,
+      "sha256": "a32caa7e4cd0fceca9a05fd64b7c3f66f98ccb717b6520c353898eae0cbab8da"
+    },
+    {
+      "path": "artifacts/cycle-0016/delivery-v16/issue-19-after-merge.json",
+      "bytes": 123,
+      "sha256": "dd061445cbea78040ff8a89ad3b0947c8a7e86c0f9752a40331cd4e14a2fd009"
+    },
+    {
+      "path": "artifacts/cycle-0016/delivery-v16/land-completion.json",
+      "bytes": 738,
+      "sha256": "807b1ac5a6b60a9e072fd6a30ffaef41e37ca59e4e8a971f728373dbdd1bb1b6"
+    },
+    {
+      "path": "artifacts/cycle-0016/delivery-v16/merge.json",
+      "bytes": 388,
+      "sha256": "6f54b3feac5e637179b718de9cae802c5ba1ce64fdf0737c3900e6ae697fd997"
+    },
+    {
+      "path": "artifacts/cycle-0016/delivery-v16/premerge-review-readback.json",
+      "bytes": 428,
+      "sha256": "594ee195ad953e7ddc0c035ba02f52f1d490443d631bb4129ab3e30bae3f990b"
+    },
+    {
+      "path": "artifacts/cycle-0016/delivery-v16/readiness.json",
+      "bytes": 3018,
+      "sha256": "424ac7c48e48c22bb5d930d621638e81d92835d8b0225be53d4bc3a6aeb7f28b"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/claude-owner-skip.json",
+      "bytes": 2723,
+      "sha256": "e733eb2d7fe302d93ea48a519bcd737aabb236e4e21fa1d80b17fa661189305b"
+    }
+  ],
+  "totalBytes": 3055485
+}
