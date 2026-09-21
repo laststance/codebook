@@ -55,6 +55,8 @@ The implementation review will refine the test map. Exact versions, artifact/sou
 
 ## Attempts and evidence
 
+- [V6](evidence/0016/installed-validation-v6.md): clean `361209f`, fresh 679/679 + 49/49 tests and 29-file install equality per host. Ordinary VS Code remains failed/partial under three distinct focus-admission measurements; Cursor native v6 is unexecuted. [The native move-focus investigation](evidence/0016/move-focus-investigation.md) reproduces late owned focus after position notification. Its modified native control completes six live transfers and checkout; minimal production repair has a red regression and nine green focused runtime checks. Ambient Git identity, status-buffer and empty-output fixes have three corrected red cases and eight green package boundary checks. [V7](evidence/0016/installed-schedule-v7.md), full suites, current review, CI and merge remain pending.
+
 - Baseline: PR #18 merged at 3149e75; its tree matches head 65a78b3 and Issue #17 is closed. Cycle 0015 remains inconclusive for the modeled late native Wiki effect; it made no product repair.
 - Packaging discovery: four production asset references currently point to the sibling cycle-0004 checkout. `checkDemoFiles` omits HTML consumed by `sealFixture`. Existing linked packages are build inputs, not installable runtime dependencies.
 - Context7 monthly quota is exhausted and Serena is absent from the tool inventory. Use official library/platform documentation as fallback and retain these coverage limitations.

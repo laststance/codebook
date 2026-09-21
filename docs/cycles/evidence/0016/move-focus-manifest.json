@@ -1,0 +1,357 @@
+{
+  "recordedAt": "2026-09-21T01:39:35.063826+00:00",
+  "source": "Diagnostic baselines 361209f; repaired source and tests included in this commit. No ordinary candidate pass yet.",
+  "availability": "Local private artifacts; hashes do not imply public access or native acceptance.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0016/live-focus-control/expectation.json",
+      "bytes": 1443,
+      "sha256": "40d68ceced5da7813ffdd9fbae8229a64d8fa331cda6787423932c1e05ba5791"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-focus-control/installed-extension-original.js",
+      "bytes": 2913365,
+      "sha256": "017743b253a034c7b372489c911d610b9da2f11d090a0583eef129446e947284"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-focus-control/motion-contact.png",
+      "bytes": 1908697,
+      "sha256": "d86231a2c769844d03b8c3a9746b53f233d43d18db1e37041e7f3a8212c0a914"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-focus-control/native-events.ndjson",
+      "bytes": 600639,
+      "sha256": "ea2da9f875fb446d44354ce768b1e00d0dd2666839bc631e830c41e2cbf86c86"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-focus-control/regression-green-build.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-focus-control/regression-green.log",
+      "bytes": 1189,
+      "sha256": "3e3769bc0503ef460b47f49018d6c58e25115c92ed851137ca699c8c099c698e"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-focus-control/regression-red-build.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-focus-control/regression-red.log",
+      "bytes": 1168,
+      "sha256": "aeb4ab9aa06abfd820544a4b411362a141c43af36c1669583cb2dec475a455ec"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-focus-control/restoration.json",
+      "bytes": 195,
+      "sha256": "f06df1203725c62b8e9189c2fe81d610431d3fc6a002e8cb4d01f4a6322893ca"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-focus-control/transition-53s-contact.png",
+      "bytes": 1253581,
+      "sha256": "eed0a99e1f541eea976772cb3cb487251b47da6ecb7e3d934daa4d2a93cd28e2"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-tab-investigation/expectation.json",
+      "bytes": 1307,
+      "sha256": "6fbbaa97e60188b889cf0c971d1ee005f58aad5f87aeffa88dd739fe3869eba3"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-tab-investigation/failure.png",
+      "bytes": 211816,
+      "sha256": "96cdcd78fc96236ac29da09fe051ab86bad1d6d6a2842fa9d691d8d02c5bed1b"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-tab-investigation/installed-extension-original.js",
+      "bytes": 2913365,
+      "sha256": "017743b253a034c7b372489c911d610b9da2f11d090a0583eef129446e947284"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-tab-investigation/native-events.ndjson",
+      "bytes": 115993,
+      "sha256": "d013107bbb4ef5449a97dc8839a0a292dda61286d82df79aad44258294e0892e"
+    },
+    {
+      "path": "artifacts/cycle-0016/live-tab-investigation/restoration.json",
+      "bytes": 283,
+      "sha256": "3b2842090b9ae3c04d34ae066d27bf55d4ab5a0598e4142260deffd9d892b547"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-app-living-book.png",
+      "bytes": 245097,
+      "sha256": "b8035602d84cbdab702af98561c518ea4c3851e7e713bfa24cec3a45a19ad330"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-attach.log",
+      "bytes": 1331,
+      "sha256": "20f2afb70aa19142bbba8e1c5034a8e42e67736deb30d5fb14df439da1291051"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-cart-mutation.png",
+      "bytes": 240513,
+      "sha256": "5d9d1f3c661163c6644d54ad1454e342eb6d223a234aec7730bb7ec5b0a68d59"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-discovery-timing.json",
+      "bytes": 778,
+      "sha256": "b1f3356a91af5828d6f5792cc3618dc6943ba2250a461e156b7db72734c93a46"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-draft-visible.log",
+      "bytes": 862,
+      "sha256": "54245bf5f1852ee4dcd2ff724af3e37340f63fd9d3d5f89a8019fc55ae63c76c"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-draft.png",
+      "bytes": 87857,
+      "sha256": "01dfa66f8bf6717ac8d313d4c438bda19c7c0c7984e0d616d7a96c1476900533"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-exit.json",
+      "bytes": 61,
+      "sha256": "a2080e66962754b420311d769ea00bbceeaa399448bfdd0f088086d02c110502"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-launch.json",
+      "bytes": 1311,
+      "sha256": "d5e928c9cd707e57050808290e592c94ffa0099242b8fa3130e5fdfc20d40c20"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-live-native.webm",
+      "bytes": 13965222,
+      "sha256": "9fe7f566421424d2ed80042552c23005b3899f85df1bfd813e0935d15f2945a3"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-live-receipt.json",
+      "bytes": 387183,
+      "sha256": "a5cc45d4b6af377a763f69f912aa49509f774dd98c1e22cf0f9dd7515c0544e0"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-live.log",
+      "bytes": 804,
+      "sha256": "76c3383b5fe3692c5db0c245307ff801ca4f060126114eb1e1a127eb3b5d10b2"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-shutdown.json",
+      "bytes": 1055,
+      "sha256": "c4d0d2854aa4d89e323f4b623ed06d60555e0df8ec7f0589cedd0b338c591b71"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-diagnostic-wiki.png",
+      "bytes": 239248,
+      "sha256": "b2d0f9eb977444a2f9cb2ae84549b74b4414df7a9a3617681a69bf5cf153377f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-app-guided-walkthrough.png",
+      "bytes": 231552,
+      "sha256": "b201d56e43ccbb44eb2472b33d0ab4ca07277057db71b2d1abca03a4f59513a0"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-app-living-book.png",
+      "bytes": 247600,
+      "sha256": "5321e4d9c869dad015a074ce3f84586f5bc85251af8386b9690f8593f8df1e95"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-app-study-workspace.png",
+      "bytes": 243029,
+      "sha256": "813ebef5db9ce7346a040c6126875c71f77acdd130fc1494dc138771e75e7e5b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-attach.log",
+      "bytes": 1337,
+      "sha256": "f432d38a86ed09409a5b7b8dc53268195cc5174cc21cfe9beeeeeb35eb1f0e5e"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-cart-mutation.png",
+      "bytes": 247825,
+      "sha256": "1f9c61b328487efa953538d0bf5139c4d374ab273b831fbc830c668013b44321"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-cart-update.png",
+      "bytes": 253867,
+      "sha256": "dd7c65f950f910cb53f437b2c6c9d54708ee90a18be1717770afadd0a5a40582"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-confirmation.png",
+      "bytes": 258111,
+      "sha256": "f0a04feb5f57a30f5e4cd99e45459d9d50f1280f426bdabf8291c689c4178135"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-discovery-timing.json",
+      "bytes": 778,
+      "sha256": "beabaab17ca9db1673911e683dd9a0768dba1e2e151e2b729c07a6c9a5ec843f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-draft-visible.log",
+      "bytes": 865,
+      "sha256": "2509e1249b714749ad3bea0088e4f175cbf3e0c807e060997ab39d9627dc9bc0"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-draft.png",
+      "bytes": 68028,
+      "sha256": "d5c8540a149d80fc092fe8db5867a6aa9f3d1257a6d603355287261356a8fcdf"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-exit.json",
+      "bytes": 61,
+      "sha256": "3c825bc253d54083ae385781e1d4c76e0e4c101c530a352fc8a4b29f8f479b26"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-launch.json",
+      "bytes": 1314,
+      "sha256": "f213ea86b95a8da215fe66280e3ae593a024bf422c554509ebb4bc26c851551f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-live-native.webm",
+      "bytes": 9941182,
+      "sha256": "e7c12393144ba805a9d9442b00c9c022747002ddffe167073410b36a5712d873"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-live-receipt.json",
+      "bytes": 1022378,
+      "sha256": "77d77600e7d9bbd257b94d14119167b834a0b26c46d1b3c0a52c85104be5750f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-live.log",
+      "bytes": 1094,
+      "sha256": "f0a4a2b5bcaa8a26c0fdea202cb9c6c7395ad527100d6975c8e88d24e2950f7c"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-order-creation.png",
+      "bytes": 249923,
+      "sha256": "de95ac012367e00f11f697a94c2a3f279af054ba1277ab50391b87d5b292ee2a"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-purchase-confirmation.png",
+      "bytes": 253112,
+      "sha256": "c06870c6017e461d676e19750ae37f816184832f5c6862bfe83eabcea8f720e5"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-shutdown.json",
+      "bytes": 1106,
+      "sha256": "69ceb0c95f125cc4c549727ce64414beb1cb193256dff0c2d265df530ba84438"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-source-guided-walkthrough.png",
+      "bytes": 234696,
+      "sha256": "fd878ed39858cbea4eb457649eceabbb6e242dca457ed094e935a6757c4b2cd9"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-source-living-book.png",
+      "bytes": 250576,
+      "sha256": "7eb1468185d707195d39cb949ccb2d5bc96c5996b1ab7646bae33473a97ac756"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-source-study-workspace.png",
+      "bytes": 245740,
+      "sha256": "f9ca89ae8d039d9c269441a2cafe2a7752cdcd734d3212aad2ec8c5ce2415df8"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-understood.png",
+      "bytes": 245740,
+      "sha256": "f9ca89ae8d039d9c269441a2cafe2a7752cdcd734d3212aad2ec8c5ce2415df8"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/live-focus-control-wiki.png",
+      "bytes": 155787,
+      "sha256": "40f9ea3469132c7152eabbabc95855cc138a8d7d3b75d140991c9ae1831fee7a"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/empty-output-triage/result.json",
+      "bytes": 7778,
+      "sha256": "7dd888f23650c89f2cb9cfbdae40c1d2f07f6832470eab9c671096b0a95a5384"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-adversarial/attempt-01-receipt.json",
+      "bytes": 515,
+      "sha256": "cebf5846de5f13c9e103a70e8389e3961cada943e96ffb84d92027e22f387786"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-adversarial/attempt-01-text.md",
+      "bytes": 15231,
+      "sha256": "0d31bcead31913b9017e452f62b98e1370c144f605ad93e25078f5d0e6e3b53b"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-primary-incomplete.json",
+      "bytes": 554,
+      "sha256": "eecfc98987acde4c6e7d17ac87016a1b61269aa9e39b63d69038875e2963c57a"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-provider-triage/probe-result.json",
+      "bytes": 10016,
+      "sha256": "f04ca7954784f9f7807f3dac646d471b661d37d02d0a6b296a5455a29ab42cc0"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-provider-triage/probe.mjs",
+      "bytes": 6378,
+      "sha256": "22c86080551e6abbfc63963b0c8e28aa807a86784b9ce152abf2d37d0ed36424"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-provider-triage/proposed-command-bounds.patch",
+      "bytes": 1615,
+      "sha256": "2df04b2465f4eb5323f9a794ea0e0a9c97934c15b93f5a1e40113fdc88b269c4"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-provider-triage/proposed-provenance.patch",
+      "bytes": 1378,
+      "sha256": "ff843455f9676a8df03ee4315fdcb4224436e7a56129030b8a8edfe748974f5e"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-provider-triage/report.md",
+      "bytes": 27681,
+      "sha256": "1c4f21761d7ca2cb8fc2d1a6002a46462d2c7eac03d415406ee251f4bbf94ce1"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-provider-triage/result.json",
+      "bytes": 55947,
+      "sha256": "e873c141ad93ef33559a064340e549bf424f8fd1dcc37123ea309320121b3f93"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-provider-triage/source-evidence.json",
+      "bytes": 68895,
+      "sha256": "19023a4b33a67d49c194d3eac44e2ed47e69ce5ae8f9a37402fd8adb83a35936"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-structured/attempt-01-receipt.json",
+      "bytes": 514,
+      "sha256": "75333768e010d9fd91906675765582aacc98cf7d61a09cb00d7247cadd1060e9"
+    },
+    {
+      "path": "artifacts/cycle-0016/review/recovery-structured/attempt-01-text.md",
+      "bytes": 10040,
+      "sha256": "b6cc85988525020b7dd80936733b344323600313fc20d942fa4b6e9d379c168c"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/provenance-cli-corrected-green.log",
+      "bytes": 840,
+      "sha256": "767fe4f6cf6ff245c599cddffa6b046d7d816cf2f137afcd9774b8ea7755bd57"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/provenance-cli-corrected-red.log",
+      "bytes": 24347,
+      "sha256": "ebca94061d67f96e44a4d95a4352a8a6f576237a5242722376666b6c67c1d9bb"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/provenance-cli-green.log",
+      "bytes": 3300,
+      "sha256": "1733dce9bcb68ff6f221647d3d9b74650d7a5cdf23b5fc435f968b5931754865"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/provenance-cli-red.log",
+      "bytes": 26791,
+      "sha256": "62a86a7a8a585293bcb6eea6fe6eeaa04414118e6675f289ca20610a2bca2809"
+    }
+  ]
+}

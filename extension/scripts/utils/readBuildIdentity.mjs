@@ -2,7 +2,7 @@ import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join, relative } from 'node:path';
-import { BUILD_PACKAGES } from './packageConstants.mjs';
+import { BUILD_PACKAGES, PACKAGE_COMMAND_OUTPUT_BYTES, PACKAGE_COMMAND_TIMEOUT_MS } from './packageConstants.mjs';
 
 /** Captures source provenance for metadata and {@link buildPackage}; the final check excludes only its owned untracked scratch. @example await readBuildIdentity(repository) // { revision, dirty, sourceHash, sourceHashes } */
 export async function readBuildIdentity(repository, ownedScratchDirectory) {
@@ -26,10 +26,13 @@ export async function readBuildIdentity(repository, ownedScratchDirectory) {
   }
   // Ignore only this publication's untracked scratch; tracked changes and other untracked files still count.
   const scratchPrefix = ownedScratchDirectory === undefined ? undefined : `?? ${relative(await realpath(repository), await realpath(ownedScratchDirectory)).split('\\').join('/')}/`;
-  const status = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { cwd: repository, encoding: 'utf8' });
+  // Hook/worktree Git overrides must not redirect provenance away from the source root being hashed.
+  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+  const gitOptions = { cwd: repository, env: environment, encoding: 'utf8', timeout: PACKAGE_COMMAND_TIMEOUT_MS, maxBuffer: PACKAGE_COMMAND_OUTPUT_BYTES };
+  const status = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], gitOptions);
   const dirty = status.split('\0').some(entry => entry && !(scratchPrefix && entry.startsWith(scratchPrefix)));
   return {
-    revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim(),
+    revision: execFileSync('git', ['rev-parse', 'HEAD'], gitOptions).trim(),
     dirty,
     sourceHash: createHash('sha256').update(sourceHashes.join('\n')).digest('hex'), sourceHashes,
   };

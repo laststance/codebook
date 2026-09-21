@@ -2,7 +2,7 @@
 
 ## [0.2.1.0] - 2026-09-21
 
-Private extension preview 0.2.1 / MCP API 1.5. Ordinary installed checkout and replay have bounded evidence in both editors. V5 exposes an unexplained Cursor owned-tab timeout during manual reading; the latest recovery guards await installed revalidation. Full real-repository usefulness and final product acceptance remain open.
+Private extension preview 0.2.1 / MCP API 1.5. Ordinary installed checkout and replay have bounded evidence in both editors. V5 exposes a Cursor owned-tab timeout during manual reading and v6 also fails a VS Code live transfer. A reproduced late native-focus ordering repair awaits v7 installed validation. Full real-repository usefulness and final product acceptance remain open.
 
 ### Added
 
@@ -13,6 +13,8 @@ Private extension preview 0.2.1 / MCP API 1.5. Ordinary installed checkout and r
 ### Fixed
 
 - Hash the same bounded archive bytes that were validated, even when another process atomically replaces the input path during checking.
+- Await each moved pane’s actual native focus before observing the new grid, preserving strict later learner-focus checks.
+- Isolate package Git provenance from inherited `GIT_*` overrides, bound status output and reject explicitly empty `--out` values.
 - Cancel a pending focus-recovery receipt when the learner closes Study, preserving the original transfer failure and unrelated draft.
 - Avoid retrying an already-failed final focus wait. Reject an obsolete reading pose when the learner document changes during transfer, preserving edited text and the dirty tab.
 - Wait for the native focus receipt before confirming a presentation transfer. Preserve the visible source reading position after final pane placement and across paused replay refresh, including manual reading away from the selected stop.

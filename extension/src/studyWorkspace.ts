@@ -470,8 +470,9 @@ export class StudyWorkspace {
       for (const [panel, column] of [[app, descriptor.appColumn], [context, descriptor.contextColumn]] as const) {
         // Native movement yields between panes; recheck previews immediately before each destination reveal.
         assertPreviewOwnership();
-        panel.reveal(column, true);
-        await waitUntil(() => panel.viewColumn === column && panel.visible, 'presentation pane placement', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
+        // Position can arrive before native focus; settle each owned move before capturing a passive layout baseline.
+        panel.reveal(column, false);
+        await waitUntil(() => panel.viewColumn === column && panel.visible && panel.active && vscode.window.tabGroups.activeTabGroup.viewColumn === column, 'presentation pane placement', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
         if (this.app !== app || this.contextPanel !== context) throw new Error('A retained presentation panel was disposed.');
       }
       assertPreviewOwnership();

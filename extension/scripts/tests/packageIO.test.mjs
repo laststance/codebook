@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } f
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { buildPackage } from '../utils/buildPackage.mjs';
 import { BUILD_PACKAGES, COMPILED_DIRECTORIES } from '../utils/packageConstants.mjs';
 import { withPackageOutput } from '../utils/withPackageOutput.mjs';
@@ -189,6 +190,34 @@ test('excluding owned package scratch still detects unrelated files and changed 
     assert.equal(changed.dirty, true); assert.notEqual(changed.sourceHash, before.sourceHash);
   });
   assert.equal(await readFile(join(fixture.repository, '.codebook-package-unrelated/keep.txt'), 'utf8'), 'unrelated');
+});
+
+test('ambient Git overrides cannot label dirty package sources with another repository identity', async context => {
+  // Arrange
+  const fixture = await sourceFixture(context), decoy = await sourceFixture(context);
+  await runPackageCommand('git', ['-c', 'user.name=Codebook Test', '-c', 'user.email=codebook-test@example.invalid', 'commit', '--allow-empty', '--quiet', '-m', 'decoy'], decoy.repository);
+  await writeFile(join(fixture.repository, 'extension/src/main.ts'), 'export const source = 2;');
+  const expected = await readBuildIdentity(fixture.repository);
+  const helper = new URL('../utils/readBuildIdentity.mjs', import.meta.url).href;
+  const script = `import { readBuildIdentity } from ${JSON.stringify(helper)}; console.log(JSON.stringify(await readBuildIdentity(process.argv[1])));`;
+  // Act: only the child inherits the decoy overrides; concurrent tests retain their environment.
+  const actual = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script, fixture.repository], {
+    encoding: 'utf8', env: { ...process.env, GIT_DIR: join(decoy.repository, '.git'), GIT_WORK_TREE: decoy.repository, GIT_INDEX_FILE: join(decoy.repository, '.git/index') },
+  }));
+  // Assert
+  assert.equal(actual.dirty, true); assert.equal(actual.revision, expected.revision);
+  assert.deepEqual(actual.sourceHashes, expected.sourceHashes); assert.equal(actual.sourceHash, expected.sourceHash);
+  assert.equal((await readBuildIdentity(decoy.repository)).dirty, false);
+});
+
+test('package provenance remains readable when unrelated untracked paths exceed the default Git output buffer', async context => {
+  // Arrange
+  const fixture = await sourceFixture(context), before = await readBuildIdentity(fixture.repository), files = join(fixture.repository, 'untracked'); await mkdir(files);
+  for (let index = 0; index < 6000; index++) await writeFile(join(files, `${String(index).padStart(4, '0')}-${'x'.repeat(180)}.txt`), 'unrelated');
+  // Act
+  const actual = await readBuildIdentity(fixture.repository);
+  // Assert
+  assert.equal(actual.dirty, true); assert.equal(actual.revision, before.revision); assert.equal(actual.sourceHash, before.sourceHash);
 });
 
 // Each accidental development entry must be rejected before the dependency inventory can accept it.

@@ -4,7 +4,7 @@ Learn an unfamiliar codebase by connecting what an application does on screen wi
 
 The destination is a chat-driven, recorded walkthrough from adding a product to the cart through checkout, linked to a wiki, codemap, and personal learning progress. Study workspace is the default; Living book and Guided walkthrough provide alternative presentations of the same learning state.
 
-The complete product must work in **both VS Code and Cursor**. The [v4 private package](docs/cycles/evidence/0016/installed-validation-v4.md) demonstrates bounded checkout, offline replay, shared layouts and restart in both ordinary editors. The newer [v5 run](docs/cycles/evidence/0016/installed-validation-v5.md) retains those core flows but exposes an unexplained Cursor tab-focus timeout during manual reading. Current recovery guards await fresh installed validation. Full real-repository usefulness and integrated product acceptance remain open.
+The complete product must work in **both VS Code and Cursor**. The [v4 private package](docs/cycles/evidence/0016/installed-validation-v4.md) demonstrates bounded checkout, offline replay, shared layouts and restart in both ordinary editors. The newer [v5 run](docs/cycles/evidence/0016/installed-validation-v5.md) retains those core flows but exposes an unexplained Cursor tab-focus timeout during manual reading. [V6](docs/cycles/evidence/0016/installed-validation-v6.md) also fails a VS Code live transfer. A reproduced late native-focus ordering defect and package provenance issues are repaired in source; fresh ordinary v7 validation is pending. Full real-repository usefulness and integrated product acceptance remain open.
 
 ## Start here
 

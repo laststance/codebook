@@ -1,0 +1,307 @@
+{
+  "recordedAt": "2026-09-21T01:39:35.045784+00:00",
+  "source": "361209f54b525494ef0633906d8a0ac649f75905",
+  "availability": "Local private artifacts; hashes do not imply public access or native acceptance.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0016/installations-v6.json",
+      "bytes": 1012,
+      "sha256": "88570931a5b9715d8ed6f15c1a0c92c661c04aa75dd02939332621ab092fb5c4"
+    },
+    {
+      "path": "artifacts/cycle-0016/installed-candidate-v6.json",
+      "bytes": 31895,
+      "sha256": "f1b2f0bd29171b8c006e7389d012fd3192172054b50a7fa5914fe33c57ba29d2"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/cursor/installation-v6.json",
+      "bytes": 8574,
+      "sha256": "eba871d3da4f7f9175567456e989801bb335b64770f5d26ac1cfb98abd108d17"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/installation-v6.json",
+      "bytes": 8604,
+      "sha256": "6d52b65a101d481072d9845dd05278b670bbaddaf189fdd7843a52f8f85fe667"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-app-guided-walkthrough.png",
+      "bytes": 219257,
+      "sha256": "2271a1750e067baa222a58d67c95bf028be2b77ece550e61e2471de9128e1db3"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-app-living-book.png",
+      "bytes": 236630,
+      "sha256": "5dcd93aa35c553fd128c98586ab54eedd28e7d9566bfa2b4b7a92b009081f010"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-app-study-workspace.png",
+      "bytes": 231297,
+      "sha256": "e02f8aeb5abef9c92454de280e995664a4201501819e240b8aa7d50d948ca601"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-attach.log",
+      "bytes": 1298,
+      "sha256": "f871c357624a455439e5f84176a2ff0251470a78d4de28e5f7abfdcdeb32ab4c"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-cart-mutation.png",
+      "bytes": 237066,
+      "sha256": "0d17b482a23898971691dd745ac13db430ba0057d15fcde0b3231e02d637250f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-discovery-timing.json",
+      "bytes": 1416,
+      "sha256": "72292ca499997c2ad8e9f517d2ac8e8ccda67894b39ac9fb19b022cc69cf3bf4"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-draft-visible.log",
+      "bytes": 849,
+      "sha256": "b8fc51f0cd8977068ab487ac091bc299fb011469c2a86ebe7b7b0c608f8f68cd"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-draft.png",
+      "bytes": 96411,
+      "sha256": "bc31947586a062306b4bb10d0e0a3086da8962dc49eaf32320b521290420de90"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-exit.json",
+      "bytes": 61,
+      "sha256": "a94691f337c1c928582b2327ca90ddea5f41364a592a91aa3718943c251d52d4"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-launch.json",
+      "bytes": 1299,
+      "sha256": "e672248fa0d78dc1c1b615da7b7105da54dd6f1ed000c6ba7ff21b902abd6a94"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-live-failure.png",
+      "bytes": 213734,
+      "sha256": "265e189823bdc2722893d81f79de9aa40892d7576acee71ed0a5e0ee0c0e1e64"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-live-native.webm",
+      "bytes": 6533351,
+      "sha256": "77e2b5703b9e9d082b05837cbc00d070dd54ba92810309a3a0a30416f65d3ff2"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-live-receipt.json",
+      "bytes": 438160,
+      "sha256": "d4550a100bff93b5206e3143dee00a6c4105904f247e5943908c7724c6c149b4"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-live.log",
+      "bytes": 1009,
+      "sha256": "d092ae9930c08a3d8e8b60e4e3733d5f76ca5358f02035874b9b96f59dd69fd7"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-shutdown.json",
+      "bytes": 1180,
+      "sha256": "84484805a663061e4c65803c812b30aeb0364afde712164fb161e9b208e9dfa5"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6-wiki.png",
+      "bytes": 247858,
+      "sha256": "de3424012e7e497951a35792ff323ca70610868c8a1cc83ac38ad1a567b5bd0b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6b-app-living-book.png",
+      "bytes": 261952,
+      "sha256": "0c204a44c0abe3cc6bf2abc112cb735cf5612ef6ae6890f21f4eee72cdaf8b60"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6b-cart-mutation.png",
+      "bytes": 262048,
+      "sha256": "fa2f90fe1d85345ce70225b0daaf23bdc62a48c2582fe88d21605a34f2d793fa"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6b-live-failure.png",
+      "bytes": 224771,
+      "sha256": "0e873045e82dcf46fe1831f7233d6f5a3bb21f22b724f34568f3417f48672201"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6b-live-native.webm",
+      "bytes": 4568282,
+      "sha256": "67f72eeaecb855ab704a9b7d4498b96aed9f189d33c427c70097fa8e9d892350"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6b-live-receipt.json",
+      "bytes": 404697,
+      "sha256": "b230a0babd87d6e4411800a385bdd5bfd99e8e9f8401392001a92eede7242ac9"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6b-live.log",
+      "bytes": 846,
+      "sha256": "f86c48caa2eee18071875ac11b0addf7039fb16b4154c3cce8e95a15f6bde30f"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6b-wiki.png",
+      "bytes": 317562,
+      "sha256": "c07db81b189f8ff6a1ad8f00971bb026e16f7551d349a02120d93b80a802ac40"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6c-cart-mutation.png",
+      "bytes": 274471,
+      "sha256": "f6e7c42ed80cea56c442926d442b5ef2b078cb2a4f1693fc397793e3e32da8dc"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6c-live-failure.png",
+      "bytes": 263612,
+      "sha256": "87c706f98bbaee56a0deab5761d5b97452e598bd5ae03c46e982c34c6c3b7d5e"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6c-live-native.webm",
+      "bytes": 4768839,
+      "sha256": "0a03b494d431e49a8f0ae877d0185104d42d60bee7693524e8b495d327c66f64"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6c-live-receipt.json",
+      "bytes": 375974,
+      "sha256": "a515ce7a22d4f6c7f88b91a2b7cef844b51e654cad8350986c0bb1ea4404468b"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6c-live.log",
+      "bytes": 804,
+      "sha256": "a07062103870391d05ad0e5e73ddb047e13462f9b814b1b2a9b3f8b9f7ce1501"
+    },
+    {
+      "path": "artifacts/cycle-0016/native/vscode/v6c-wiki.png",
+      "bytes": 305281,
+      "sha256": "c30c187405799a7f4a2ef90b63fe3d4439f5fd074f64dac94e174a5e19df7b67"
+    },
+    {
+      "path": "artifacts/cycle-0016/package-v6.log",
+      "bytes": 32038,
+      "sha256": "d64dc67c216f4b739f25684443e202a0786ff3c9e7308a53ef8b5fc87f95a6ed"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/baseline.json",
+      "bytes": 759,
+      "sha256": "b79137856a5e97585e896cc7d825c217268936d153f376fd91c8498ef047536c"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/focus-command-control.json",
+      "bytes": 19483,
+      "sha256": "26f3fffd1bbfe2b6453a92cf4799427e8f02faa1cd657a8ba49453496a688452"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/focus-control-expectation.json",
+      "bytes": 496,
+      "sha256": "2d15792157c98b89e4c25a59bc2b19ad7dd9f65227c9451f4e0f9e7295ac5be0"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/focus-receipt-control-expectation.json",
+      "bytes": 484,
+      "sha256": "1ed966eb59c8cdbb1ced04487d04968a27b02162ec22f954df1c2888184f8a47"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/focus-receipt-control-outer-expectation.json",
+      "bytes": 501,
+      "sha256": "282219cf2d7bdd54bae6825cc4bfb94a60c83757533593478ea864a82c798809"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/focus-receipt-control-outer.json",
+      "bytes": 105697,
+      "sha256": "6a3d2b05f2b196294649df98b34c91c9267a26f6c38a7a15c8f9dff4b242c6ed"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/focus-receipt-control.json",
+      "bytes": 48655,
+      "sha256": "3d4db7dfff43678396383b1022c0b97f1bb985ecf1a00bc41aa05bc2dff3470f"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/native-focus-expectation-v6c.json",
+      "bytes": 833,
+      "sha256": "c58b36fac7b276642f567d418d11a20602e1ca96a6ed36a88dab0a0b2e6214f6"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/report.md",
+      "bytes": 5440,
+      "sha256": "828e9783ba0b42aeca38aa3074705e87f3858c7121abc0b22de9b041f179c686"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/scope.json",
+      "bytes": 593,
+      "sha256": "33a0fdd44e031d30d0e485780c436a3475ba270d1926ed6d3dbce782640e9450"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/settled-focus-expectation.json",
+      "bytes": 1175,
+      "sha256": "a5a1ef4590c1b62532e18ae3af0ba54a60dc4b6fc3846dc2725b7e6fe18b9b8e"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/v6-video.json",
+      "bytes": 195,
+      "sha256": "6d61b930497eb55d78051dcba54e4772b698109d344f75390b7dfa47cf634870"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/v6b-motion-contact.png",
+      "bytes": 857815,
+      "sha256": "39ff19f461b9366d3726e3bc7cf385a31dd3edb7e88e64d9fe18316c7f529ddd"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/v6b-video.json",
+      "bytes": 194,
+      "sha256": "c0be5a11e0e436bd5ded5a5c31c936c80ccf56e720affad484163b108a21aa01"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/v6c-motion-contact.png",
+      "bytes": 871201,
+      "sha256": "589f5694b7bc5dad670a5f433f0c3bd26de1f8f7b44a2d6ecd15dd7ab1868f47"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/v6c-video.json",
+      "bytes": 194,
+      "sha256": "8bd5b05adb57e7e4928216e31a4d996ae6584cb3a6b6d9c336160b3e3a77a851"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/vscode-complete-console.log",
+      "bytes": 21625,
+      "sha256": "db98a261d3d2dab5d8780450e1411f68a581501285b62c6c331aec4a95145153"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/vscode-live-59.5.png",
+      "bytes": 593610,
+      "sha256": "ce3eb01630566aa4f2abfcd082eee8c0cd072df4b18349e70bfe6c04133f5074"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/vscode-live-61.5.png",
+      "bytes": 610154,
+      "sha256": "829aa373de81451357580f953014110cd7b090b911735b6868d0420b542acc0a"
+    },
+    {
+      "path": "artifacts/cycle-0016/qa-v6/vscode-pre-exit-console.txt",
+      "bytes": 1852,
+      "sha256": "2905e44fcd46ae19c94c50f65bef483d2af36444503dcf976d67711804bdf7ad"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/frozen-recovery-edge-package-tests.log",
+      "bytes": 5191,
+      "sha256": "d7daf0867a4d3c0712452575ec6ab0f0446dc85fb347ee097a8789cfc79e5a40"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/frozen-recovery-edge-tests.log",
+      "bytes": 78415,
+      "sha256": "54729325f7262ceeedc2dbef36a3e7937e00af46f1cd278cfe249f00d282820c"
+    },
+    {
+      "path": "artifacts/cycle-0016/ship-fixes/frozen-recovery-edge-verification.json",
+      "bytes": 531,
+      "sha256": "e7ea088208d01357d5ed470ffc0d37a43f1ad44c1b3b97d4d15bc26898c03cc8"
+    },
+    {
+      "path": "artifacts/cycle-0016/versions-v6.json",
+      "bytes": 309,
+      "sha256": "55b75412be659c5e7a5ed422d3debc140c2c6f5a269f30b1cc3521493630bf27"
+    },
+    {
+      "path": "artifacts/packages/codebook-0.2.1-installed-v6.vsix",
+      "bytes": 589105,
+      "sha256": "8344080f337a4140a0900e4bda112762f43ae9113c4dd2de85e37c4c298a7119"
+    }
+  ]
+}
