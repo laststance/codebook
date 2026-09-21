@@ -1,0 +1,38 @@
+# V11 development candidate preparation
+
+Date: 2026-09-22 JST / 2026-09-21 UTC. Scope: Cycle 0018's four source ownership repairs. This is package and installation evidence, not loaded-extension runtime proof, G12 validation or final acceptance.
+
+## Source and artifact identity
+
+The local checkpoint is `7f95ada6b8700f80111bf183c20d54e9fde38536`, following the [three fixing delivery-review passes](scope-refusal-and-visibility.md#delivery-review-and-remaining-work). It rejects an unconfirmed required reservation before Context/source creation, carries original focus through actual Return, preserves a newer primary-tab selection during borrowed focus, and rejects duplicate cold Open before initialization can bypass reservation. That review workflow remains non-converged; checkpointing and packaging do not change its result.
+
+The complete **773/773 product/shared + 96/96 package** suites ran on the preceding dirty `ee4cfaa` working tree, with zero failures/skips/cancellations. The new clean checkpoint and package contain exactly the same **269 selected input files**, SHA-256 `160d0137c6c69266284127442b472dfa34b0b8773ba35a5271b6a3009ea4b130`. The equivalence receipt compares the complete per-file inventory, not only a version string. These tests were not rerun merely because the unchanged input bytes were committed.
+
+The ordinary package builder cleans its owned build outputs, rebuilds, verifies the archive and loads the bundled module in isolation. The resulting development VSIX is frozen before installation:
+
+| Identity | Value |
+| --- | --- |
+| Extension / MCP API | 0.2.1 / 1.5 |
+| Source commit | `7f95ada6b8700f80111bf183c20d54e9fde38536` |
+| Selected source SHA-256 | `160d0137c6c69266284127442b472dfa34b0b8773ba35a5271b6a3009ea4b130` |
+| VSIX SHA-256 | `c0ec96482f933676fbe3a4e944e82501ee95d8b0754c666bcfed5e6b103bdc7c` |
+| VSIX size / archive entries | 597,557 bytes / 31 |
+| Provenance | Clean checkpoint; no development-host substitution |
+
+The private `schedule.json` retains the original both-host cold entry, saved Wiki, exact paused replay before seeking, all-mode Returns, restart, fourth-group and preservation obligations. It adds a visibility preflight and the duplicate cold-entry control. A hidden workbench cannot establish native rendering proof. The schedule cannot convert a timeout into PASS or retroactively repair a failed attempt.
+
+## Ordinary installation and preserved work
+
+The same VSIX is installed through each editor's normal CLI into a fresh owned copy of the original dedicated development profile. Cursor 3.21.16 / API 1.128.0 and VS Code 1.138.0 are checked against their actual CLI identities before installation. Both installations verify all **29 extension files** against the archive; installer-added `package.json` metadata is separated before comparison. Each CLI lists `laststance.codebook@0.2.1`.
+
+The original Cursor profile's 62 recorded files and VS Code profile's 115 files retain exact bytes and modification times, including preserved draft backups. At 19:20:50 UTC, neither new workbench is launched, neither has an owned editor process, and neither has a connection descriptor. Therefore actual extension loading, new-instance identity, replay and all other native outcomes for v11 remain **unverified**.
+
+The failed v10 Cursor window is a separate retained instance. At 19:16:17 UTC its launcher is live and all six renderer frames remain hidden, unfocused and without animation callbacks. A second read-only check at 2026-09-21T19:24:44.975Z confirms the same hidden state and zero callbacks. Its unavailable-recording screen is unchanged. The pending manual-foreground request is still unresolved; no product retry, corrective seek or visibility override has been issued. Do not launch competing v11 UI operations while preserving that comparison.
+
+## Review and next action
+
+One bounded CodeRabbit provider supplement completes in **188.818 seconds**, exit 0, against all seven checkpoint files relative to `ee4cfaa`, with **zero findings**. It includes both repaired source/tests and their evidence/state records. This is current-checkpoint provider coverage, not a fourth native review pass or a new full-baseline review; the completed three-fixing-pass native workflow remains non-converged. T3 source implementation/checks are complete at this checkpoint. T4 runtime proof and T5 delivery remain pending. Claude Code CLI remains owner-skipped.
+
+After actual visibility is restored, capture that condition and compare unchanged v10 against the same saved recording/sequence. Then close and verify cleanup of the owned v10 window, launch v11 in one host at a time, verify the actually loaded build and execute the frozen schedule with video/frame evidence. Product and environment failures retain separate classifications. CI, PR, merge and cycle issue closure remain pending.
+
+G12's bundled skill and unified onboarding are still absent. The full product goal and every final criterion remain open. Final counts stay **0/10 reviewers and 0/at least 20 editor trials**, not started. See the [private-artifact manifest](candidate-v11-preparation-manifest.json) for hashes and availability.
