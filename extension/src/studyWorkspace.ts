@@ -692,7 +692,17 @@ export class StudyWorkspace {
       this.assertLifetime(lifetime); signal?.throwIfAborted();
       // Only the current explicit observation entry fronts the app; learner columns and final context focus stay intact.
       if (origin === 'repository' && !this.recordingActive && request === this.openRequest && historyRequest === this.historyRequest) this.app?.reveal(undefined, true);
-      if (origin !== 'presentation') this.contextPanel?.reveal(undefined, false);
+      if (origin !== 'presentation' && this.contextPanel) {
+        const panel = this.contextPanel, assertPlacement = this.retainPresentationPlacement(false);
+        panel.reveal(undefined, false);
+        // Drain the requested native focus change before the final layout read starts a passive ownership guard.
+        await waitUntil(() => {
+          this.assertLifetime(lifetime); assertPlacement();
+          const group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
+          return this.contextPanel === panel && panel.active && group.viewColumn === panel.viewColumn && input instanceof vscode.TabInputWebview
+            && ['codebook.studyContext', 'mainThreadWebview-codebook.studyContext'].includes(input.viewType);
+        }, 'Study explanation native focus', PRESENTATION_READY_TIMEOUT_MS, signal);
+      }
       if (this.recordingActive && (firstOpen || !this.replayViewport)) this.playback?.reveal();
       // Capture ownership after explicit view reveals finish resizing the native workbench.
       if (!initialLayoutFailed) await this.arrange(signal, 'study', !firstOpen);

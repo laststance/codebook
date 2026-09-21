@@ -309,7 +309,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     panelColumn: (kind: string) => [...panels].find(panel => panel.kind === kind)?.viewColumn,
     panelReveals: () => [...panelReveals],
     delayPanelRegistration(kind: string, deferred = false) { delayedPanelKind = kind; deferredPanelRegistration = deferred; asynchronousLayoutReads ||= deferred; return () => registerDelayedPanel(); },
-    deferPanelFocus(kind: string, reveal: number) { deferredPanelFocus = { kind, remaining: reveal }; },
+    deferPanelFocus(kind: string, reveal: number) { deferredPanelFocus = { kind, remaining: reveal }; asynchronousLayoutReads = true; },
     deferMovedPanelFocus(kind: string) { deferredMovedPanelFocus = kind; asynchronousLayoutReads = true; },
     focusedPanel: () => activeTabGroup.activeTab?.input instanceof TabInputWebview ? activeTabGroup.activeTab.input.viewType : undefined,
     movePanel(kind: string, column: number) { const panel = [...panels].find(panel => panel.kind === kind); assert.ok(panel); panel.reveal(column); },
@@ -919,6 +919,26 @@ test('first Study entry reserves all three main panes when a separate chat part 
     assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.tab.isDirty, true);
     assert.equal(harness.reader.inspect().view!.errors.length, 0);
     assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('first Study entry waits for its explanation focus before confirming the final native layout', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.deferPanelFocus('codebook.studyContext', 1);
+  try {
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
   } finally { await harness.close(); }
 });
 
