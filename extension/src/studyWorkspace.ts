@@ -110,6 +110,7 @@ export class StudyWorkspace {
   private sourceUri?: vscode.Uri;
   private sourceGroup?: vscode.TabGroup;
   private opened = false;
+  private sourceEntryPending = false;
   private closing = false;
   private closingPromise?: Promise<void>;
   private arranging?: Promise<void>;
@@ -160,10 +161,12 @@ export class StudyWorkspace {
 
   /** Projects mode control independently of content/playback revisions; MCP reads never open the reader. @example workspace.presentationState().presentationId */
   presentationState(): PresentationState {
-    const panes = this.studyPanePositions();
+    const panes = this.studyPanePositions(), descriptor = STUDY_PRESENTATIONS[this.presentationMode];
+    // A stable receipt may describe a learner collision; only the mode's distinct destinations qualify as confirmed.
+    const matchingColumns = panes.appColumn === descriptor.appColumn && panes.sourceColumn === descriptor.sourceColumn && panes.contextColumn === descriptor.contextColumn;
     return { presentationId: this.presentationId, presentationControlRevision: this.presentationControlRevision, mode: this.presentationMode,
       requestedMode: this.requestedPresentation, state: this.presentationTransition ? 'applying' : this.opened && !this.closing ? 'open' : 'closed',
-      layoutConfirmed: this.presentationConfirmed && this.opened && !this.closing && Boolean(this.layoutReceipt && this.sameStudyPanePositions(this.layoutReceipt.panes)),
+      layoutConfirmed: this.presentationConfirmed && this.opened && !this.closing && matchingColumns && Boolean(this.layoutReceipt && this.sameStudyPanePositions(this.layoutReceipt.panes)),
       preference: { ...this.presentationPreference }, reason: this.presentationReason, playbackRevision: this.recordingActive ? this.playback?.state().revision : undefined,
       panes: { appColumn: panes.appColumn, sourceColumn: panes.sourceColumn, contextColumn: panes.contextColumn } };
   }
@@ -649,7 +652,10 @@ export class StudyWorkspace {
     const request = ++this.openRequest, historyRequest = this.historyRequest;
     await this.initialize(); this.assertLifetime(lifetime); signal?.throwIfAborted();
     await this.refreshProgress(); this.assertLifetime(lifetime); signal?.throwIfAborted();
-    const firstOpen = !this.opened; this.opened = true; this.closing = false;
+    const firstOpen = !this.opened;
+    // Polling and source watchers cannot reveal a reader until cold entry has reserved its native destinations.
+    if (firstOpen) this.sourceEntryPending = true;
+    this.opened = true; this.closing = false;
     const cancel = () => {
       // A cancelled first entry cannot let background refresh finish its UI, or retire a newer explicit Open.
       if (firstOpen && request === this.openRequest) this.opened = false;
@@ -680,6 +686,7 @@ export class StudyWorkspace {
         this.assertLifetime(lifetime); signal?.throwIfAborted();
       }
       this.ensureContext();
+      if (request === this.openRequest) this.sourceEntryPending = false;
       if (firstOpen && this.currentRecord() && this.selection.follow) this.selection = { ...this.selection, follow: true, tab: 'live' };
       await this.refresh(signal); signal?.throwIfAborted(); await this.renderSelection(true, reentry?.sourceTargetColumn !== undefined, signal, reentry ? { kind: 'reentry', receipt: reentry } : undefined);
       this.assertLifetime(lifetime); signal?.throwIfAborted();
@@ -715,7 +722,7 @@ export class StudyWorkspace {
       // A failed first entry remains retryable without retiring a newer Open or discarding accepted native effects.
       if (firstOpen && request === this.openRequest && lifetime === this.lifetime && !this.closing) this.opened = false;
       throw error;
-    } finally { signal?.removeEventListener('abort', cancel); }
+    } finally { if (request === this.openRequest) this.sourceEntryPending = false; signal?.removeEventListener('abort', cancel); }
   }
 
   /** Explicitly checkpoints final service state after accepted runtime/explanation cleanup has completed. @example await workspace.retire(service) */
@@ -1324,7 +1331,7 @@ export class StudyWorkspace {
   /** Serializes source opens and invalidates obsolete selection work before it can qualify context/app correspondence. @example await this.renderSelection() */
   private async renderSelection(preserveFocus = true, forceSource = false, signal?: AbortSignal, placement?: { kind: 'arrange'; column: vscode.ViewColumn } | { kind: 'reentry'; receipt: NonNullable<StudyWorkspace['layoutReceipt']> }): Promise<void> {
     signal?.throwIfAborted();
-    if (!this.opened || this.closing || !this.baselines || this.pendingHistory !== undefined) return Promise.resolve();
+    if (!this.opened || this.closing || this.sourceEntryPending || !this.baselines || this.pendingHistory !== undefined) return Promise.resolve();
     const lifetime = this.lifetime;
     await this.refreshCitations();
     // Citation I/O can outlive Close or a later Open; it cannot create a new rendering revision afterward.

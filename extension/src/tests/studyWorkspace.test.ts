@@ -922,6 +922,51 @@ test('first Study entry reserves all three main panes when a separate chat part 
   } finally { await harness.close(); }
 });
 
+test('background refresh cannot open captured source into Application before cold Study reserves its panes', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  const arrange = harness.reader['arrange'].bind(harness.reader);
+  let refreshed = false;
+  harness.reader['arrange'] = async (...arguments_: Parameters<typeof arrange>) => {
+    // Run the ordinary polling callback after admission but before the initial native reservation.
+    if (!refreshed) { refreshed = true; await harness.reader['refresh'](); }
+    return arrange(...arguments_);
+  };
+  try {
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.deepEqual({ ...harness.reader.presentationState().panes }, { appColumn: 1, sourceColumn: 2, contextColumn: 3 });
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.runtimes.length, 0);
+  } finally { harness.reader['arrange'] = arrange; await harness.close(); }
+});
+
+test('first Study cannot confirm a learner source move that covers Application during final arrangement', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] });
+  const arrange = harness.reader['arrange'].bind(harness.reader);
+  harness.reader['arrange'] = async (...arguments_: Parameters<typeof arrange>) => {
+    // The source is rendered before the final grid receipt; a learner move must not become successful placement.
+    harness.moveSource(1);
+    return arrange(...arguments_);
+  };
+  try {
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.deepEqual({ ...harness.reader.presentationState().panes }, { appColumn: 1, sourceColumn: 1, contextColumn: 3 });
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { harness.reader['arrange'] = arrange; await harness.close(); }
+});
+
 test('first Study entry waits for its explanation focus before confirming the final native layout', async () => {
   // Arrange
   const harness = await workspaceHarness(false);

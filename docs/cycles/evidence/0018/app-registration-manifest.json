@@ -195,6 +195,111 @@
       "path": "artifacts/cycle-0018/installed-development-v3/cursor/ui-commands.log",
       "bytes": 2918,
       "sha256": "e1f34cd20b415151a5b94e5a856f464ae72ca4df1840fd55abf00e43cd7a9af9"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-source-collision-red.tap",
+      "bytes": 2641,
+      "sha256": "215902ad6f72bab8ff49c0bd9731ba5bc0d5d8a36c2b63ba7c67ebf318e3a290"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-source-collision-confirmed-red.tap",
+      "bytes": 2355,
+      "sha256": "badb3fc7d2e4ee6cf8ce1e23f1ff0cc94f5c66a4304be8ff4a9f26e4b953fdad"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-source-collision-valid-red.tap",
+      "bytes": 2169,
+      "sha256": "cdc8d6794a6647e0e2ab804d690afc0bcab3e1a71c3d09c0c49d878cc8cb75ee"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-source-collision-green.tap",
+      "bytes": 651,
+      "sha256": "0e4cfda0f912efe19ab5e13d401e50807c43a1cfba80c56adf9337cc56d156ca"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-source-collision-workspace-reader.tap",
+      "bytes": 72156,
+      "sha256": "f5b5d3d480b52cf84c63fb6dcc97b79c475ab0491a52f1fd7d299f21710b1f57"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace/schedule.json",
+      "bytes": 585,
+      "sha256": "772e6bf5cf23c3cf3c0fcee255e249877945876585d1f2a72d997cd0601aee7d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace/diagnostic-bundle.json",
+      "bytes": 470,
+      "sha256": "da9ad66f52bbf67a5dce7c63613b052a8ffc2af34e9ab21a9ce1574981f1e827"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace/source-trace.json",
+      "bytes": 3,
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace/first-study.png",
+      "bytes": 339135,
+      "sha256": "bb13d3c46757f982cf81888ec2a90bce63a91860ace1299b3004f1ad028d1cf2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace/first-study-transition.png",
+      "bytes": 466598,
+      "sha256": "d31b65eb8e9d9d330b1e79c59a7a4b074f263292ece82e0ce32cb91f39e5c362"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace/initial-native.webm",
+      "bytes": 957517,
+      "sha256": "64a3afe7d4c1dbc53a6d2c9063f013a44076f350565403c465003210dc3cc883"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace/video-info.json",
+      "bytes": 194,
+      "sha256": "a9f2d2c602be0cdac57fbd35a32add05cc59e6ec31a52a8b8e2b0e7090625982"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "5b81abf910b1b09dcced4afed84517e855506e2fdf15c39399799d9fde211f40"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace2/schedule.json",
+      "bytes": 337,
+      "sha256": "afe79c5db15544712362f825ef88b2fbe739ac4cc0a4c50581959b0b16479a1f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace2/diagnostic-bundle.json",
+      "bytes": 249,
+      "sha256": "9970de65c31933da01afd99aa87f427138ebe53b1eeccca155ffca91c3c8b53b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace2/source-trace.json",
+      "bytes": 224793,
+      "sha256": "33315c27769a9d4fffdefb10e1010bbc654014e1b36e7214ddc14f4dd2709102"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace2/first-study.png",
+      "bytes": 339135,
+      "sha256": "bb13d3c46757f982cf81888ec2a90bce63a91860ace1299b3004f1ad028d1cf2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace2/first-study-transition.png",
+      "bytes": 342361,
+      "sha256": "36f3d895e159a4a2e5d2c76a27e2f85c0aa868e8fa62d6e5e19fc97e1d997e6e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace2/initial-native.webm",
+      "bytes": 1440122,
+      "sha256": "a3eff8512b1e84e6f645b09fa94fb9354c79be2fbab23c3e8cfe855ab91e04d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace2/video-info.json",
+      "bytes": 194,
+      "sha256": "4ece85eb0e85d87c9c0d73eabf30ade7c4e1b32e691f42f938b10f92162566c7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v3/cursor-source-trace2/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "d28dc8583aa2e2765ae22098a59f74f428e085e303b30c58dbb98e47145b26f0"
     }
   ]
 }
