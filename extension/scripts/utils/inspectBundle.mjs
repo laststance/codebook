@@ -4,7 +4,7 @@ import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { COMPILED_DIRECTORIES } from './packageConstants.mjs';
 
-/** Inventories actual emitted inputs, bundled dependency notices and native externals before a VSIX can be staged. @example await inspectBundle(metafile, repository) */
+/** Inventories actual emitted inputs, bundled dependency notices and native externals before a VSIX can be staged. @example await inspectBundle(metafile, repository, capturedInputs) */
 export async function inspectBundle(metafile, repository, capturedInputs) {
   const outputs = Object.values(metafile.outputs);
   if (outputs.length !== 1) throw new Error('The extension must produce one JavaScript bundle.');

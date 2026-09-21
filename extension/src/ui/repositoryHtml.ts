@@ -101,7 +101,8 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     choose(element('nodes'), book.revision.document.nodes.map(value => ({ value: value.id, label: value.title })), node.id);
     const key = `${selection.bookId}/${selection.revision}/${node.id}`, changed = key !== contentKey;
     if (changed) {
-      contentKey = key; location = saved?.key === key && saved.location ? saved.location : selection.location; saved = undefined;
+      // Explicit Study Return wins over viewport state saved while native panes moved.
+      contentKey = key; location = selection.location ?? (saved?.key === key ? saved.location : undefined); saved = undefined;
       text('article-title', node.title); text('summary', book.revision.document.summary);
       element('sections').replaceChildren(...node.sections.map((part, index) => { const section = document.createElement('section'); section.dataset.readingRegion = ''; section.id = `section-${index}`; section.tabIndex = -1; const heading = document.createElement('h2'); heading.textContent = `${index + 1}. ${part.title}`; const paragraph = document.createElement('p'); paragraph.className = 'interpretation'; paragraph.textContent = part.text; section.append(heading, paragraph); return section; }));
       document.querySelectorAll<HTMLElement>('[data-reading-region]').forEach((region, index) => { region.dataset.section = String(index); });
