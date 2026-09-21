@@ -96,6 +96,8 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let editorLayout: unknown = { orientation: 0, groups: [{}] };
   let nextMovedPanelLayout: unknown;
   let nativeLayout = false, cursorGroupWrappers = false, cursorTwoEventContraction = false, explicitEditorLayout = false;
+  let closeEmptyGroupsOnMove = false;
+  const automaticallyClosedColumns: number[] = [];
   let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined, settlementPending = false;
   const panels = new Set<ReturnType<typeof panel>>();
   const panelReveals: { kind: string; column?: number; preserveFocus?: boolean }[] = [];
@@ -155,7 +157,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       return true;
     }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, kind, nativeTab, viewColumn, title: '', get active() { return !registered || !separateEditorPart?.focused && activeTabGroup.activeTab === nativeTab; }, get visible() { return !registered || groups.some(group => group.activeTab === nativeTab); }, reveal(column?: number, preserveFocus?: boolean) {
       panelReveals.push({ kind, column, preserveFocus });
-      const previousColumn = value.viewColumn;
+      const previousColumn = value.viewColumn, previousFocusedGroup = activeTabGroup;
       if (column !== undefined) value.viewColumn = nativeReaderColumn(column);
       if (column !== undefined && previousColumn !== column && nextMovedPanelLayout) { editorLayout = nextMovedPanelLayout; nextMovedPanelLayout = undefined; }
       {
@@ -164,6 +166,16 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         if (nativeLayout && previousColumn !== value.viewColumn && group.activeTab?.isPreview) { const replaced = [...panels].find(panel => panel.nativeTab === group.activeTab); replaced?.dispose(); }
         group.tabs.push(nativeTab); group.activeTab = nativeTab;
         if (column !== undefined && previousColumn !== column) nativeTab.isPreview = true;
+        // Normal editors remove a vacated last-tab group and renumber later main and foreign columns.
+        const emptied = groups.find(candidate => candidate !== separateEditorPart?.group && candidate.viewColumn === previousColumn && !candidate.tabs.length);
+        if (closeEmptyGroupsOnMove && previousColumn !== value.viewColumn && emptied) {
+          automaticallyClosedColumns.push(emptied.viewColumn);
+          groups.splice(groups.indexOf(emptied), 1);
+          for (const remaining of groups) if (remaining.viewColumn > emptied.viewColumn) remaining.viewColumn--;
+          for (const retained of panels) retained.viewColumn = groups.find(candidate => candidate.tabs.includes(retained.nativeTab))?.viewColumn;
+          editorLayout = { orientation: 0, groups: groups.filter(candidate => candidate !== separateEditorPart?.group).map(() => ({})) };
+          changedGroups({ opened: [], closed: [emptied], changed: [...groups] });
+        }
         if (!preserveFocus) {
           if (separateEditorPart) separateEditorPart.focused = false;
           // Native webview reveal returns before its focus notification reaches the extension host.
@@ -175,8 +187,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         // A native move can report its destination before delivering the resulting owned focus event.
         if (previousColumn !== value.viewColumn && deferredMovedPanelFocus === kind) {
           deferredMovedPanelFocus = undefined;
-          const application = [...panels].find(panel => panel.kind === 'codebook.scopedBrowser');
-          activeTabGroup = groups.find(candidate => candidate.activeTab === application?.nativeTab)!;
+          activeTabGroup = previousFocusedGroup;
           setImmediate(() => { activeTabGroup = group; for (const listener of viewChanged) listener(); });
         }
         for (const listener of viewChanged) listener();
@@ -330,6 +341,8 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     },
     editorLayout: () => structuredClone(editorLayout), changeEditorLayout(layout: unknown) { explicitEditorLayout = true; editorLayout = structuredClone(layout); },
     flattenOnNextPanelMove(layout: unknown) { nextMovedPanelLayout = structuredClone(layout); },
+    closeEmptyGroupsAfterPanelMove() { closeEmptyGroupsOnMove = true; },
+    automaticallyClosedColumns: () => [...automaticallyClosedColumns],
     useCursorGroupWrappers(twoEventContraction = false) { cursorGroupWrappers = true; cursorTwoEventContraction = twoEventContraction; },
     useNativeLayout(layout: unknown) {
       nativeLayout = true; separateEditorPart = undefined; const previous = [...groups]; groups.splice(0); editorLayout = structuredClone(layout);
@@ -3775,6 +3788,35 @@ for (const newer of ['selection', 'Open'] as const) test(`a newer ${newer} preve
     const visible = harness.groups.find(group => group.viewColumn === 1)!.activeTab?.input;
     assert.ok(visible && 'uri' in visible); assert.equal(visible.uri.path.endsWith('/article-source.ts'), true);
   } finally { release(); await harness.close(); }
+});
+
+for (const separatePart of [false, true]) for (const primaryContent of ['application only', 'unrelated draft'] as const) test(`mode transfers retain native destination groups with ${primaryContent} and ${separatePart ? 'a separate chat part' : 'one editor part'}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const chat = separatePart ? harness.addSeparateEditorPart() : undefined;
+  try {
+    await harness.reader.open(); await harness.reader.understand(true);
+    const primary = harness.groups.find(group => group.viewColumn === 1)!;
+    primary.tabs = primary.tabs.filter(tab => 'viewType' in tab.input);
+    const draft = primaryContent === 'unrelated draft' ? harness.addForeignDraft(1) : undefined;
+    const source = harness.reader.inspect().sourceUri, decisions = await (await harness.reader.learningStorage()).readProgress(), chatLayout = chat?.layout();
+    harness.closeEmptyGroupsAfterPanelMove();
+    // Act
+    for (const mode of ['living-book', 'guided-walkthrough', 'study-workspace', 'living-book'] as const) {
+      const state = harness.reader.presentationState();
+      await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' });
+      // Assert: each destination remains in the original main part throughout the transfer.
+      assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+      assert.deepEqual({ ...harness.reader.presentationState().panes }, mode === 'living-book' ? { appColumn: 2, sourceColumn: 3, contextColumn: 1 } : { appColumn: 1, sourceColumn: 2, contextColumn: 3 });
+      assert.deepEqual(harness.automaticallyClosedColumns(), []);
+      assert.equal(harness.groups.length, separatePart ? 4 : 3);
+      assert.equal(harness.reader.inspect().sourceUri, source);
+      if (draft) { assert.equal(primary.tabs.includes(draft), true); assert.equal(draft.isDirty, true); }
+      if (chat) { assert.deepEqual(harness.groups.find(group => group.viewColumn === 4)!.tabs, [chat.tab]); assert.deepEqual(chat.layout(), chatLayout); assert.equal(chat.focused(), false); }
+    }
+    assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), decisions);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
 });
 
 test('all three presentation modes retain the exact panels, source, learning item and learner decisions', async () => {

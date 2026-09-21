@@ -478,7 +478,13 @@ export class StudyWorkspace {
       const retainedLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertBeforeMove();
       assertPreviewOwnership();
       this.layoutReceipt = undefined;
-      for (const [panel, column] of [[app, descriptor.appColumn], [context, descriptor.contextColumn]] as const) {
+      // Keep the destination source group occupied before its current webview leaves; empty native groups close and renumber later columns.
+      const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: true, preview: false }); assertPlacement();
+      this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
+      // Move out of the source destination first so the arriving panel retains the next vacated group.
+      const panelMoves: [vscode.WebviewPanel, vscode.ViewColumn][] = context.viewColumn === descriptor.sourceColumn
+        ? [[context, descriptor.contextColumn], [app, descriptor.appColumn]] : [[app, descriptor.appColumn], [context, descriptor.contextColumn]];
+      for (const [panel, column] of panelMoves) {
         // Native movement yields between panes; recheck previews immediately before each destination reveal.
         assertPreviewOwnership();
         // Position can arrive before native focus; settle each owned move before capturing a passive layout baseline.
@@ -487,7 +493,6 @@ export class StudyWorkspace {
         if (this.app !== app || this.contextPanel !== context) throw new Error('A retained presentation panel was disposed.');
       }
       assertPreviewOwnership();
-      const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: true, preview: false }); assertPlacement();
       if (selections) editor.selections = selections;
       if (this.highlight) for (const visible of vscode.window.visibleTextEditors) if (visible.document.uri.toString() === sourceUri.toString()) visible.setDecorations(this.highlight, [new vscode.Range(new vscode.Position(this.message().model.source.line - 1, 0), new vscode.Position(this.message().model.source.line - 1, 0))]);
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
