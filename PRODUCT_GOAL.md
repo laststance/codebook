@@ -1,6 +1,6 @@
 # Product goal
 
-Goal version: 4\
+Goal version: 5\
 Product design approved: 2026-09-18  
 Development structure requested: 2026-09-18  
 Owner: Raphtalia
@@ -36,8 +36,40 @@ These IDs are stable and used by cycles and evidence records. They are not miles
 | G09 | Guided walkthrough is a selectable presentation of the same product. | Switch to and from it with the same preserved state; verify its app/code-focused walkthrough UX. |
 | G10 | The tool is installable and useful beyond a prepared demonstration. | Install the packaged extension in the declared environment and exercise the supported core workflow on real repository examples representing the three intended uses. Record compatibility and observed learning feedback. |
 | G11 | The complete required product experience works in both VS Code and Cursor. | Install the packaged extension and run final acceptance separately in each actual editor. Record host/version, debugger/browser integration, MCP control, recording/replay, three-mode behavior, and any limitations. VS Code evidence or presumed extension compatibility alone does not verify Cursor. |
+| G12 | A bundled common thin skill lets users explicitly request Codebook with `/codebook` in standard VS Code Copilot Chat and Cursor Agent, with ordinary setup establishing the correct MCP connection. | Verify the same VSIX's skill version/content against the actually loaded skill in each host, slash discovery and explicit invocation, the chat AI's own Codebook MCP use and actual results, truthful unavailable/disconnected guidance, restart/reconnection, and protection of existing skills/settings/work. Registration alone is not execution evidence. |
 
 G08 and G09 are later implementation work, not optional final features. A working default mode or core walkthrough is a meaningful intermediate delivery, not the complete product.
+
+## Bundled thin skill and explicit chat entry
+
+G12 is mandatory under [D023](DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21). It adds to every existing capability and acceptance condition; it does not replace any runtime, learning, recording, presentation or owner-acceptance requirement. The standard chat surfaces are **Copilot Chat in VS Code** and **Agent in Cursor**. Users must be able to explicitly invoke the common skill with a natural request, without depending on automatic skill selection:
+
+> /codebook ログイン処理を解説して
+>
+> /codebook このボタンを押してから画面が変わるまで、関係するコードと実際の値を見ながら説明して
+
+The invocation must place Codebook's usage guidance in the chat AI's context so that the AI itself can use Codebook's MCP capabilities. Discovering or loading the skill and successfully performing the requested Codebook workflow are separate acceptance checks.
+
+**One versioned artifact.** Bundle a common `SKILL.md` with frontmatter `name: codebook` in the same VSIX as the extension. Track and distribute its version and content with the extension; do not maintain different procedure bodies for the two editors. VS Code must register the bundled skill through the official `contributes.chatSkills` contribution. The primary Cursor route is a Codebook setup operation in the ordinary onboarding flow that installs the bundled skill into Cursor's officially supported user skill directory (`~/.cursor/skills/codebook/SKILL.md`, subject to verification in the declared target version). Users must not have to find, author or manually copy the skill body.
+
+Track installed-file ownership, originating extension/skill version and content identity. Provide documented update, removal and restoration procedures. Never overwrite or delete a pre-existing same-name user skill or later manual edits without the user's informed choice; conflicts must preserve those bytes and expose an actionable resolution. A Cursor plugin-registration API is an alternative only after its normal installed target version demonstrates skill discovery, `/codebook` visibility and actual invocation. An API name in documentation is not compatibility proof.
+
+**Thin shared procedure.** The skill connects the user's request to public Codebook capabilities. Its required guidance is:
+
+- Begin with `codebook_status` to establish the current workspace, connected instance, available capabilities and prerequisites. If the tool/connection is unavailable, disclose that condition instead of pretending this check succeeded.
+- Follow the public usage instructions and the state returned at that moment to select tools and resources; refer to the existing MCP descriptions and public help for detailed contracts instead of duplicating them in the skill.
+- According to the request, proceed through source inspection, application operation, real execution pauses, actual values, explanation, continuation and recording/replay using the existing product capabilities.
+- Distinguish observed facts, reasoning from source and unverified boundaries. Obtain continuation arguments from the current execution state; do not guess or reuse stale arguments.
+- Leave understanding checks to the learner; the AI must never mark them complete on the learner's behalf.
+- State missing connections, unavailable capabilities and unmet prerequisites accurately. General source commentary is not a successful Codebook execution or observation.
+
+Do not embed repository-specific answers, correct stopping locations, expected variable values or test-only recipes in the skill. The skill is guidance, not an additional execution engine or an answer key.
+
+**One onboarding experience.** Public setup must prepare both skill availability and MCP connectivity. Registration alone does not establish a connection. Bind the dedicated work window and selected repository to the correct current Codebook instance, and verify that restart retains a valid connection or follows the documented reconnection flow. Keep credentials and ephemeral connection details out of `SKILL.md`, the distributed VSIX, public documentation and chat explanations. Use the supported private connection mechanism and record only sanitized identity evidence.
+
+**Optional future transport.** Record MCP Skills Extension / SEP-2640, introduced in the [requested background article](https://azukiazusa.dev/blog/mcp-skills-extension/), as an additional possible distribution route for this same skill. At this decision's research checkpoint, acquisition, host activation and slash-command availability through that extension have not been demonstrated in both required editors. Product completion must not wait for that route. Any later MCP distribution must share the bundled skill's body/version and prove host recognition and activation as a skill; exposing text as an MCP resource alone is insufficient.
+
+The [implementation and validation plan](docs/plans/bundled-codebook-skill.md) tracks this added work. Specification, upstream documentation and registration metadata do not count as implementation or ordinary-install validation.
 
 ## Product constraints
 
@@ -60,9 +92,10 @@ Individual capability checks are necessary but not sufficient. Before declaring 
 5. Switch among all three layouts during a live session and during replay without losing state. Verify each layout's intended use.
 6. Exercise interruption/recovery and unrelated-target cases; validate real-repository use and the declared support matrix.
 7. Link current, reproducible evidence for G01–G11, identified by host and version, in PROJECT_STATE.md and obtain Raphtalia's acceptance that the tool supports the intended understanding experience in both VS Code and Cursor.
-8. Complete [ten consecutive independent end-user acceptance trials](docs/acceptance/FINAL_REVIEW.md) on the same frozen complete candidate. Each fresh subagent must normally install the same VSIX and actually use both VS Code and Cursor AI chats, sequentially, with the same preregistered question and randomly selected eligible real repository in both hosts. The chat AI must drive Codebook's application operation, real pause, source/value explanation and continuation without the reviewer supplying hidden MCP work or correct per-stop instructions. Each reviewer also verifies the full checkout scenario and all requirements, saved replay after app exit, connected learning views, explicit test progress, three modes, restart and visible usability through video and inspected frames. At least 20 editor-specific trials are required. Any FAIL, timeout or unverifiable mandatory item resets the streak to zero; source/VSIX changes also reset it. Preserve failed targets/questions as regressions, refreeze after remedies and restart with a new reviewer 1. Development reviews never count, and test understanding checks never substitute for Raphtalia's acceptance.
+8. Complete [ten consecutive independent end-user acceptance trials](docs/acceptance/FINAL_REVIEW.md) on the same frozen complete candidate. Each fresh subagent must normally install the same VSIX, complete public skill/MCP onboarding and actually use standard VS Code Copilot Chat and Cursor Agent, sequentially, with `/codebook` prefixed to the same preregistered question and the same randomly selected eligible real repository in both hosts. The chat AI must drive Codebook's application operation, real pause, source/value explanation and continuation without the reviewer supplying hidden MCP work or correct per-stop instructions. Each reviewer also verifies the full checkout scenario and all requirements, saved replay after app exit, connected learning views, explicit test progress, three modes, restart and visible usability through video and inspected frames. At least 20 editor-specific trials are required. Any FAIL, timeout or unverifiable mandatory item resets the streak to zero; source/VSIX changes, including the skill body and registration/setup implementation, also reset it. Preserve failed targets/questions as regressions, refreeze after remedies and restart with a new reviewer 1. Development reviews never count, and test understanding checks never substitute for Raphtalia's acceptance.
+9. Verify G12 in every reviewer's two host trials: bundled-versus-loaded skill version/content, `/codebook` discovery and explicit context loading, AI-owned Codebook MCP calls and results, truthful disconnected/unavailable behavior, restart with skill availability and correct instance/repository connection, and preservation of pre-existing skills, later edits, settings and work. Include skill/setup identity in the frozen candidate and evidence. Skill loading alone, generic explanation or reviewer-assisted hidden MCP work cannot pass. Keep all earlier acceptance and Raphtalia's separate acceptance mandatory.
 
-The [final-trial protocol](docs/acceptance/FINAL_REVIEW.md) fixes support/selection criteria before random sampling, requires independent verdicts and complete per-host records, protects authorized logged-in profiles, and prohibits narrowing support or replacing a failed target to obtain success. Goal version 4 strengthens this final gate under D022; G01–G11 and acceptance steps 1–7 remain unchanged. Claude Code CLI review remains owner-skipped, separate from actual editor AI chat acceptance.
+The [final-trial protocol](docs/acceptance/FINAL_REVIEW.md) fixes support/selection criteria before random sampling, requires independent verdicts and complete per-host records, protects authorized logged-in profiles, and prohibits narrowing support or replacing a failed target to obtain success. Goal version 4 strengthened this final gate under D022; version 5 adds G12 and its bundled-skill obligations under D023. G01–G11 and acceptance steps 1–7 remain unchanged. Claude Code CLI review remains owner-skipped, separate from actual editor AI chat acceptance. Do not start the ten final reviewers before the complete candidate, including G12, exists.
 
 There is no automatic percentage-complete claim based on task counts. Evidence that has been invalidated by a source, adapter, or environment change must be revalidated before final acceptance.
 

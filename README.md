@@ -10,6 +10,8 @@ The complete product must work in **both VS Code and Cursor**. The current priva
 
 This is a private preview, not a Marketplace or Open VSX release. Earlier fixture results and failed attempts remain in the [Cycle 0016 record](docs/cycles/0016-packaged-installation.md). Native motion/geometry/accessibility, all intended real-repository uses, owner learning feedback and integrated product acceptance remain open. See [current state](PROJECT_STATE.md) for the next bounded repair and the owner-requested Claude Code review skip.
 
+[Goal version 5](PRODUCT_GOAL.md#bundled-thin-skill-and-explicit-chat-entry) additionally requires a common thin `codebook` skill bundled in the VSIX, explicit `/codebook` entry in standard Copilot Chat and Cursor Agent, and ordinary setup for both skill availability and the correct MCP connection. **This entry and setup are not implemented or validated in the current preview.** The [required development plan](docs/plans/bundled-codebook-skill.md) covers host registration, safe skill updates/removal/restoration and both-host actual-chat evidence. The [final ten-reviewer protocol](docs/acceptance/FINAL_REVIEW.md) now includes this requirement; it preserves all earlier capabilities and remains unstarted.
+
 ## Start here
 
 | Question | Source of truth |

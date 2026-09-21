@@ -4,12 +4,14 @@ This is the stable entry point for GStack design-document discovery. Follow the 
 
 ## Product and current scope
 
-- [PRODUCT_GOAL.md](PRODUCT_GOAL.md) defines the final experience and G01–G11 acceptance in VS Code and Cursor.
+- [PRODUCT_GOAL.md](PRODUCT_GOAL.md) defines the final experience and G01–G12 acceptance in VS Code and Cursor.
 - [PROJECT_STATE.md](PROJECT_STATE.md) identifies current evidence and the active cycle.
 - [DECISIONS.md](DECISIONS.md) records later decisions and supersession.
 - [Approved product design](docs/designs/codebook.md) supplies architectural and behavioral context.
 
 The approved destination is a chat-driven application walkthrough with actual debugger stops, source and runtime-value explanations, recording/replay, a connected wiki/codemap, and learner-owned progress. Architecture B makes the extension the owner of runtime state and evidence while external agents plan and explain through MCP.
+
+[D023](DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21) adds a common thin bundled skill and explicit `/codebook` entry in standard Copilot Chat and Cursor Agent, with safe skill/MCP onboarding. This later requirement supplements the approved baseline and all three layouts. Its [development contract](docs/plans/bundled-codebook-skill.md) remains unimplemented/unverified; do not treat discovery or skill loading as proof of the AI's runtime results.
 
 ## Visual direction
 

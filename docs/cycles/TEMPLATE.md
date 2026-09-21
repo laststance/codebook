@@ -4,7 +4,7 @@ Type: experiment | product-increment | hardening
 Status: ready  
 Result: pending  
 Delivery: not-applicable  
-Goal version: 1  
+Goal version: copy the current PRODUCT_GOAL.md version\
 Tracking issue: link after cycle selection  
 Goal issue: https://github.com/laststance/codebook/issues/1  
 Goal links: Gxx  
