@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-22T22:59:56.467958+00:00",
+  "recordedAt": "2026-09-22T23:09:26.188556+00:00",
   "scope": "Cycle 0018 cold Wiki focus source repair, development only; native candidate not yet built",
   "sourceBase": "6eb84358fe7ae20087bf9cb08de4bc020d9967d8",
   "checkedSourceHash": "e20e54836b179b3203eea1ee6dbe02379435a6893faf8fc63b7da81fbf063732",
@@ -38,6 +38,11 @@
       "path": "artifacts/cycle-0018/cold-wiki-focus/adversarial/scope-focus-probe.json",
       "bytes": 6665,
       "sha256": "56acd2ba492b4720a6278cc6b1fd69f10616e4df1f60ea44b467c96fbe7e1531"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-focus/adversarial-acquisition/log-receipt.json",
+      "bytes": 833,
+      "sha256": "33cf739ea5de523048c1e1c8490e8174fff39f4e3f6d6611e44485ee12f7f871"
     },
     {
       "path": "artifacts/cycle-0018/cold-wiki-focus/adversarial-acquisition/probe-results.json",
@@ -444,5 +449,7 @@
       "bytes": 32,
       "sha256": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630"
     }
-  ]
+  ],
+  "sourceCheckpoint": "06e08d27f5505d331ffae6cbfd61cc8607a16c0c",
+  "documentationCheckpoint": "d7b3e76ba245889075f987921d8376aeb284d68f"
 }
