@@ -1,6 +1,7 @@
-import { PLAYBACK_PAGE_STEP_MS, PLAYBACK_SECOND_MS, PRESENTATION_MODE_IDS, STUDY_PRESENTATIONS } from '../constants';
+import { PLAYBACK_PAGE_STEP_MS, PLAYBACK_SECOND_MS, PRESENTATION_MODE_IDS, STUDY_PRESENTATIONS, PRESENTATION_READING_ANCHORS, PRESENTATION_READING_DETAILS, PRESENTATION_READING_VISITED, PRESENTATION_FOCUS_IDS, PRESENTATION_FOCUS_ACTIONS } from '../constants';
 const STUDY_FOCUS_MARGIN_PX = 4;
 export const STUDY_UI_OPTIONS = { maxStickyFraction: 0.35, secondMs: PLAYBACK_SECOND_MS, pageStepMs: PLAYBACK_PAGE_STEP_MS,
+  readingAnchors: PRESENTATION_READING_ANCHORS, readingDetails: PRESENTATION_READING_DETAILS, readingVisited: PRESENTATION_READING_VISITED, focusIds: PRESENTATION_FOCUS_IDS, focusActions: PRESENTATION_FOCUS_ACTIONS,
   presentations: PRESENTATION_MODE_IDS.map(mode => ({ mode, title: STUDY_PRESENTATIONS[mode].title, description: STUDY_PRESENTATIONS[mode].description })),
   playbackFailureRecovery: 'Reload the saved recording to try again. If it still fails, ask your agent for a new recording.' };
 export const STUDY_STYLES = `

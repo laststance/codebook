@@ -11,6 +11,7 @@ import { PROFILE_ID } from '../constants';
 import { LearningLibrary } from '../learningLibrary';
 import { RecordingStore } from '../recordingStore';
 import type { StudyViewMessage } from '../ui/studyHtml';
+import type { PresentationPoseCapture, PresentationPoseRestore } from '../presentationSchemas';
 import { ControlledRuntime, createHarness } from './helpers';
 import { loadModule } from './utils/loadModule';
 import { bookObservationHash } from '../utils/bookObservationHash';
@@ -177,7 +178,12 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     const disposed: (() => void)[] = [], viewChanged: (() => void)[] = [];
     // Native webviews create only one missing group, even when a later column was requested.
     const viewColumn = options?.viewColumn ? nativeReaderColumn(options.viewColumn) : options?.viewColumn;
-    const value = { webview: { html: '', postMessage: async (message: StudyViewMessage | { type: 'codebook-focus'; phase: string; requestId: string; epoch?: string }) => {
+    const value = { webview: { html: '', postMessage: async (message: StudyViewMessage | PresentationPoseCapture | PresentationPoseRestore | { type: 'codebook-focus'; phase: string; requestId: string; epoch?: string }) => {
+      if (message.type === 'capture-presentation-pose') {
+        receivers.get(kind)?.({ ...message, type: 'presentation-pose', pose: { anchorId: 'title', fraction: 0, leadingOffsetPx: 16, scrollY: 0, valuesScrollLeft: 0, expanded: [], visited: [] } });
+        return true;
+      }
+      if (message.type === 'restore-presentation-pose') { receivers.get(kind)?.({ type: 'presentation-pose-restored', captureId: message.captureId }); return true; }
       if (message.type === 'codebook-focus') {
         if (message.phase === 'prepare') receivers.get(kind)?.({ type: 'codebook-focus-receipt', phase: 'prepared', requestId: message.requestId, epoch, focused: innerFocusedPanel === kind });
         if (message.phase === 'commit' && message.epoch === epoch) {
@@ -202,7 +208,6 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         held.entered(); await held.wait;
         if (heldPresentationMessage === held) heldPresentationMessage = undefined;
       }
-      if (kind === 'codebook.studyContext' && message.presentation?.state === 'applying') receivers.get(kind)?.({ type: 'presentation-pose', presentationId: message.presentation.presentationId, expectedRevision: message.presentation.presentationControlRevision });
       if ((automaticContextReceipt || message.presentation?.state === 'applying') && kind === 'codebook.studyContext' && message.type === 'study' && !message.loading) {
         receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, presentationControlRevision: message.presentation?.presentationControlRevision, presentationMode: message.presentation?.mode, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
       }
@@ -5358,4 +5363,90 @@ for (const dirty of [false, true]) test(`a ${dirty ? 'learner-edited' : 'clean'}
     if (dirty) assert.deepEqual(harness.commands, commands);
     else { assert.equal(harness.reader.presentationState().mode, 'study-workspace'); assert.equal(harness.reader.presentationState().layoutConfirmed, true); }
   } finally { await harness.close(); }
+});
+
+for (const corruption of ['capture identity', 'learning item', 'source hash', 'observation', 'content tab', 'oversized scroll'] as const) test(`presentation waits for a valid reading capture after rejecting a wrong ${corruption}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let releaseCapture: (() => void) | undefined;
+  try {
+    await harness.reader.open();
+    const panel = harness.reader['contextPanel']; assert.ok(panel);
+    const originalPost = panel.webview.postMessage.bind(panel.webview), state = harness.reader.presentationState();
+    let capture!: PresentationPoseCapture, observed!: () => void;
+    const requested = new Promise<void>(resolve => { observed = resolve; });
+    panel.webview.postMessage = message => {
+      if (message.type !== 'capture-presentation-pose') return originalPost(message);
+      capture = message; releaseCapture = () => { void originalPost(capture); }; observed(); return Promise.resolve(true);
+    };
+    const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await requested;
+    const nativeRequests = harness.panelReveals();
+    // Act
+    harness.receive({ ...capture, type: 'presentation-pose',
+      ...(corruption === 'capture identity' ? { captureId: '33333333-3333-4333-8333-333333333333' } : {}),
+      ...(corruption === 'learning item' ? { itemId: 'checkout-demo/order-confirmation' } : {}),
+      ...(corruption === 'source hash' ? { sourceHash: 'f'.repeat(64) } : {}),
+      ...(corruption === 'observation' ? { observationId: 'browser-session:999' } : {}),
+      ...(corruption === 'content tab' ? { contentTab: 'recording' } : {}),
+      pose: { anchorId: 'title', fraction: 0, leadingOffsetPx: 16, scrollY: corruption === 'oversized scroll' ? 10_000_001 : 0, valuesScrollLeft: 0, expanded: [], visited: [] } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Assert
+    assert.deepEqual(harness.panelReveals(), nativeRequests); assert.equal(harness.presentationPreferences.size, 0);
+    assert.ok(releaseCapture); releaseCapture(); await changing;
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
+  } finally { releaseCapture?.(); await harness.close(); }
+});
+
+test('presentation cannot save its mode from a stale reading restoration receipt', async () => {
+  // Arrange
+  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let releaseRestore: (() => void) | undefined;
+  try {
+    await harness.reader.open();
+    const panel = harness.reader['contextPanel']; assert.ok(panel);
+    const originalPost = panel.webview.postMessage.bind(panel.webview), state = harness.reader.presentationState();
+    let observed!: () => void; const requested = new Promise<void>(resolve => { observed = resolve; });
+    panel.webview.postMessage = message => {
+      if (message.type !== 'restore-presentation-pose') return originalPost(message);
+      releaseRestore = () => { void originalPost(message); }; observed(); return Promise.resolve(true);
+    };
+    const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await requested;
+    // Act
+    harness.receive({ type: 'presentation-pose-restored', captureId: '33333333-3333-4333-8333-333333333333' });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Assert
+    assert.equal(harness.presentationPreferences.size, 0); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    releaseRestore?.(); await changing;
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+  } finally { releaseRestore?.(); await harness.close(); }
+});
+
+test('learner input after reading capture cancels placement without saving or restoring the obsolete pose', async () => {
+  // Arrange
+  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    const panel = harness.reader['contextPanel']; assert.ok(panel);
+    const originalPost = panel.webview.postMessage.bind(panel.webview), state = harness.reader.presentationState();
+    let capture: PresentationPoseCapture | undefined, restorations = 0;
+    panel.webview.postMessage = message => {
+      if (message.type === 'capture-presentation-pose') capture = message;
+      if (message.type === 'restore-presentation-pose') restorations++;
+      return originalPost(message);
+    };
+    const held = harness.holdNextCommand('vscode.getEditorLayout'); release = held.release;
+    const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const rejected = assert.rejects(changing, /newer learner input was preserved/);
+    await held.started; assert.ok(capture);
+    // Act
+    harness.receive({ type: 'presentation-pose-invalidated', captureId: capture.captureId });
+    await new Promise<void>(resolve => setImmediate(resolve)); held.release(); await rejected;
+    // Assert
+    assert.equal(restorations, 0); assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+  } finally { release(); await harness.close(); }
 });

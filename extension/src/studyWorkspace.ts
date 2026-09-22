@@ -43,7 +43,7 @@ import { describeStudy } from './utils/describeStudy';
 import { selectStudy } from './utils/selectStudy';
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText';
 import { PRESENTATION_MODE_IDS, PRESENTATION_PREFERENCE_KEY, PRESENTATION_PREFERENCE_VERSION, PRESENTATION_READY_TIMEOUT_MS, STUDY_PRESENTATIONS } from './constants';
-import { presentationModeSchema, presentationPreferenceSchema, type PresentationIntent, type PresentationMode, type PresentationState } from './presentationSchemas';
+import { presentationModeSchema, presentationPreferenceSchema, presentationPoseSchema, presentationPoseRestoredSchema, presentationPoseInvalidatedSchema, type PresentationIntent, type PresentationMode, type PresentationState, type PresentationPose, type PresentationPoseCapture } from './presentationSchemas';
 
 const actionSchema = z.enum(['run', 'click', 'continue', 'stop', 'connect', 'return-current', 'return-wiki', 'open-article', 'source', 'current-file', 'focus-app', 'focus-context', 'enlarge-context', 'outline', 'arrange', 'retry', 'reload-recording']);
 const revisionShape = { revision: z.number().int().nonnegative() };
@@ -51,7 +51,7 @@ const messageSchema = z.discriminatedUnion('type', [
   webviewFocusReceiptSchema,
   z.strictObject({ type: z.literal('ready') }),
   z.strictObject({ type: z.literal('rendered'), ...revisionShape, itemId: learningItemSchema, snapshotUri: z.string().optional(), presentationRevision: z.number().int().nonnegative().optional(), presentationControlRevision: z.number().int().nonnegative().optional(), presentationMode: presentationModeSchema.optional() }),
-  z.strictObject({ type: z.literal('presentation-pose'), presentationId: z.uuid(), expectedRevision: z.number().int().nonnegative() }),
+  presentationPoseSchema, presentationPoseRestoredSchema, presentationPoseInvalidatedSchema,
   z.strictObject({ type: z.literal('action'), ...revisionShape, action: actionSchema }),
   z.strictObject({ type: z.literal('select'), ...revisionShape, itemId: learningItemSchema }),
   z.strictObject({ type: z.literal('profile'), ...revisionShape, profile: profileSchema.or(z.literal(REPOSITORY_BROWSER_PROFILE)) }),
@@ -158,7 +158,9 @@ export class StudyWorkspace {
   private presentationWrite?: Promise<void>;
   private placingPresentation = false;
   private presentationMovedFocus = false;
-  private presentationPoseRevision?: number;
+  private presentationPoseRequest?: PresentationPoseCapture;
+  private presentationPose?: PresentationPose;
+  private presentationPoseRestored?: string;
 
   constructor(private readonly context: WorkspaceContext, private readonly controls: { start(): Promise<StudyService>; connect(): Promise<void>; returnToRepository?(selection: RepositorySelection): Promise<void>; openArticle?(selection: RepositorySelection): Promise<void> }) { this.readPresentationPreference(); this.installReaders(); }
 
@@ -350,8 +352,8 @@ export class StudyWorkspace {
         await this.initialize(); assertCurrent(); assertRetainedPlacement?.();
         if (!this.opened) await this.open(signal, 'presentation'); assertCurrent();
         assertRetainedPlacement ??= this.retainPresentationPlacement();
-        this.presentationPoseRevision = undefined; this.lastPublished = undefined; this.publish();
-        await waitUntil(() => this.presentationPoseRevision === this.presentationControlRevision, 'retained reading position', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertRetainedPlacement();
+        this.presentationPoseRequest = undefined; this.presentationPose = undefined; this.presentationPoseRestored = undefined;
+        this.lastRendered = undefined; this.lastPublished = undefined; this.publish();
         const retainedSource = this.sourceReady() ? vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === this.sourceUri?.toString() && editor.viewColumn === this.studyPanePositions().sourceColumn) : undefined;
         const retainedObservation = this.message(true).model.observation?.id, retainedSelections = retainedSource?.selections;
         const restoreSourceReading = retainEditorReadingPosition(retainedSource);
@@ -363,6 +365,10 @@ export class StudyWorkspace {
           if (this.playback!.state().readiness !== 'ready' || !this.playback!.bundle()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'No confirmed replay position is available for transfer.');
         }
         await this.refreshing; await this.rendering; assertCurrent();
+        // Pending replay work can revise the reader while restoring confirmed A; capture only that settled context.
+        this.lastRendered = undefined; this.lastPublished = undefined; this.publish();
+        await waitUntil(() => this.lastRendered?.revision === this.revision && this.lastRendered.presentationControlRevision === this.presentationControlRevision, 'reading context before capture', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertRetainedPlacement();
+        await this.captureReadingPose(signal); assertCurrent(); assertRetainedPlacement();
         const selection = JSON.stringify(this.selection), bundle = this.recordingActive ? this.playback?.bundle() : undefined;
         const viewport = this.recordingActive ? this.replayViewport : this.viewport;
         releaseViewport = await viewport?.holdPlacement(signal); assertCurrent();
@@ -395,6 +401,7 @@ export class StudyWorkspace {
         this.lastRendered = undefined; this.lastPublished = undefined; this.publish();
         await waitUntil(() => this.lastRendered?.revision === this.revision && this.lastRendered.presentationControlRevision === this.presentationControlRevision && this.lastRendered.presentationMode === input.mode,
           'matching presentation context', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertRetainedPlacement();
+        await this.restoreReadingPose(signal); assertCurrent(); assertRetainedPlacement();
         evidenceConfirmed = true;
         this.presentationConfirmed = true; this.requestedPresentation = undefined; this.presentationReason = undefined;
       }
@@ -407,7 +414,31 @@ export class StudyWorkspace {
       if (transition.id === this.presentationId) { if (!this.presentationConfirmed) this.presentationMode = previousMode; this.presentationReason = String(error); this.publish(); }
       if (error instanceof StudyError) throw error;
       throw new StudyError('PRESENTATION_UNAVAILABLE', 'The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.', String(error));
-    } finally { windowFocus?.dispose(); releaseViewport?.(); this.placingPresentation = false; this.presentationMovedFocus = false; }
+    } finally { windowFocus?.dispose(); releaseViewport?.(); this.placingPresentation = false; this.presentationMovedFocus = false; this.presentationPoseRequest = undefined; this.presentationPose = undefined; this.presentationPoseRestored = undefined; }
+  }
+
+  /** Captures only the displayed item's bounded reading state for {@link performPresentation}; it owns no runtime controls. @example await this.captureReadingPose(signal) */
+  private async captureReadingPose(signal: AbortSignal): Promise<void> {
+    const view = this.message(), model = view.model, panel = this.contextPanel;
+    const request: PresentationPoseCapture = { type: 'capture-presentation-pose', captureId: randomUUID(), presentationId: this.presentationId, expectedRevision: this.presentationControlRevision,
+      revision: this.revision, itemId: model.selection.itemId, sourceHash: model.source.hash,
+      studyId: model.selection.studyId, observationId: model.observation?.id, contentTab: view.contentTab ?? model.selection.tab };
+    this.presentationPoseRequest = request;
+    if (!panel || !await panel.webview.postMessage(request)) throw new Error('Reading position capture could not reach the current explanation.');
+    await waitUntil(() => this.presentationPose?.captureId === request.captureId, 'retained reading position', PRESENTATION_READY_TIMEOUT_MS, signal);
+    if (panel !== this.contextPanel) throw new Error('Explanation ownership changed during reading position capture.');
+  }
+
+  /** Requires an explicit restoration receipt from the current explanation before {@link performPresentation} commits its mode. @example await this.restoreReadingPose(signal) */
+  private async restoreReadingPose(signal: AbortSignal): Promise<void> {
+    const pose = this.presentationPose, panel = this.contextPanel, view = this.message(), model = view.model;
+    if (!pose || pose.itemId !== model.selection.itemId || pose.sourceHash !== model.source.hash || pose.studyId !== model.selection.studyId
+      || pose.observationId !== model.observation?.id || pose.contentTab !== (view.contentTab ?? model.selection.tab)) throw new Error('The selected reading context changed before restoration.');
+    this.presentationPoseRestored = undefined;
+    // Rehydrating the same confirmed replay advances UI revisions; authorize only the unchanged evidence at its new revision.
+    if (!panel || !await panel.webview.postMessage({ ...pose, type: 'restore-presentation-pose', revision: this.revision })) throw new Error('Reading position restoration could not reach the current explanation.');
+    await waitUntil(() => this.presentationPoseRestored === pose.captureId, 'restored reading position', PRESENTATION_READY_TIMEOUT_MS, signal);
+    if (panel !== this.contextPanel) throw new Error('Explanation ownership changed during reading position restoration.');
   }
 
   /** Requires both document and native owned-tab focus for {@link keepPresentationPanel} and final reading restoration. @example await this.focusPresentationPanel(panel, signal) */
@@ -1603,8 +1634,8 @@ export class StudyWorkspace {
     this.contextPanel = panel; panel.webview.html = studyHtml('context');
     this.lastPublished = undefined;
     panel.onDidDispose(() => { if (this.contextPanel === panel) this.contextPanel = undefined; });
-    panel.onDidChangeViewState(() => { if (panel.active) { this.lastActiveRegion = 'context'; void this.refreshProgress().then(() => this.publish()); } });
-    panel.webview.onDidReceiveMessage(message => { void this.receive(message, 'context').catch(error => this.report('control', error)); });
+    panel.onDidChangeViewState(() => { if (this.contextPanel === panel && panel.active) { this.lastActiveRegion = 'context'; void this.refreshProgress().then(() => { if (this.contextPanel === panel) this.publish(); }); } });
+    panel.webview.onDidReceiveMessage(message => { void this.receive(message, 'context', panel).catch(error => { if (this.contextPanel === panel) this.report('control', error); }); });
   }
 
   /** Registers native readers once, keeping checkbox persistence under explicit learner control. @example this.installReaders() */
@@ -2009,14 +2040,32 @@ export class StudyWorkspace {
   }
 
   /** Accepts only bounded named UI messages, rejecting stale controls before dispatch. @example await this.receive(message) */
-  private async receive(value: unknown, origin: 'context' | 'moments'): Promise<void> {
+  private async receive(value: unknown, origin: 'context' | 'moments', owner?: vscode.WebviewPanel): Promise<void> {
+    if (owner && owner !== this.contextPanel) return;
     const parsed = messageSchema.safeParse(value); if (!parsed.success) throw new Error('Unsupported reader message.'); const message = parsed.data;
     // Only an operation-local listener can accept these validated receipts; they never acknowledge rendering or a learner action.
     if (message.type === 'codebook-focus-receipt') return;
     await this.initialize();
+    // Initialization can outlive a panel handoff; retired renderers never acknowledge or control its successor.
+    if (owner && owner !== this.contextPanel) return;
     if (message.type === 'ready') { this.lastPublished = undefined; this.publish(); return; }
     if (message.type === 'presentation-pose') {
-      if (origin === 'context' && this.presentationTransition && message.presentationId === this.presentationId && message.expectedRevision === this.presentationControlRevision) this.presentationPoseRevision = message.expectedRevision;
+      const request = this.presentationPoseRequest, view = this.message(), model = view.model;
+      if (origin === 'context' && this.presentationTransition && request && message.captureId === request.captureId && message.presentationId === request.presentationId && message.expectedRevision === request.expectedRevision
+        && message.revision === request.revision && message.revision === this.revision && message.itemId === request.itemId && message.itemId === model.selection.itemId && message.sourceHash === request.sourceHash && message.sourceHash === model.source.hash
+        && message.studyId === request.studyId && message.studyId === model.selection.studyId && message.observationId === request.observationId && message.observationId === model.observation?.id
+        && message.contentTab === request.contentTab && message.contentTab === (view.contentTab ?? model.selection.tab)) this.presentationPose = message;
+      return;
+    }
+    if (message.type === 'presentation-pose-restored') {
+      if (origin === 'context' && this.presentationTransition && message.captureId === this.presentationPose?.captureId) this.presentationPoseRestored = message.captureId;
+      return;
+    }
+    if (message.type === 'presentation-pose-invalidated') {
+      if (origin === 'context' && this.presentationTransition && message.captureId === this.presentationPoseRequest?.captureId) {
+        this.presentationMovedFocus = false;
+        this.presentationTransition.cancellation.abort(new StudyError('PRESENTATION_UNAVAILABLE', 'The explanation reading position changed during placement; the newer learner input was preserved.'));
+      }
       return;
     }
     if (message.type === 'rendered') {

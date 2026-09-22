@@ -1,0 +1,533 @@
+{
+  "scope": "Cycle 0018 H3 bounded reading-pose capture and restoration",
+  "base": "5d483614fd455aecd2ddac2893128b02dfafe13b",
+  "inputSnapshot": "artifacts/cycle-0018/reading-pose-controls/final-checks/inputs.json",
+  "changedInputs": {
+    "extension/src/constants.ts": "9c14a17edab166a12ea1df49073c72ee9fc49fe883040823487eded0ab6f0a44",
+    "extension/src/presentationSchemas.ts": "bef21bd92ea859f727b3f85d8fbcdd2234b25906255d86bdf633cb3161a6fad6",
+    "extension/src/studyWorkspace.ts": "a642abc97044948437a412b801d7f715dbf8ac67750dfb68b77a1ca3920156ce",
+    "extension/src/tests/studyWorkspace.test.ts": "0e5e5b8a1496f07d732d4e185eb50938e7a78220fd6d531a76f5f3accf428016",
+    "extension/src/tests/presentationReadingPose.test.ts": "0902152c7b1ca7305c478ae348e1c8e8edd5a294e829b88c08b7dc81b9f98cdf",
+    "extension/src/ui/constants.ts": "a1fcf77c63430c07e9e5b78467df4fbcf1e17a5f06b38d8a76dd17f2b4bdad0e",
+    "extension/src/ui/studyHtml.ts": "39bb050a506e28d9c10d4ba7d850b7eb9e7d55d79acc4b4b42e10cd353691085",
+    "extension/scripts/study-reading-pose-qa.mjs": "332cc4a0b7fe7f46e75e2ea9e8bc0b5207451aeee1f04e354aaebb2b37f012b4"
+  },
+  "availability": "Private ignored artifacts in this checkout; preserve before moving or deleting it.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/after-replacement.png",
+      "bytes": 41199,
+      "sha256": "8cb679a0d3341c6ec6aaea819a7ddf8373efb063344506be0ce38a64bc0e47cf"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/before-replacement.png",
+      "bytes": 41515,
+      "sha256": "2582dffd416daabd4d62434bf8886026b4e82adda6818a9501ebde7c59e17257"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/close.log",
+      "bytes": 41,
+      "sha256": "18b6d05c7f17b8910f1a8ec56773e4a8dff4c2ea3ef58e73f4522b9b6d28e919"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/flow.log",
+      "bytes": 72279,
+      "sha256": "53aad359720e3d9c43bca609acd9a459e230d4ff80bd4dcc82ddee93662e3a50"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/flow.webm",
+      "bytes": 640605,
+      "sha256": "18f430e3136b842c377f80b33ca13e52c585c373bf0e8b44647238b34761003c"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/inspection.json",
+      "bytes": 1146,
+      "sha256": "72ef0ee313514180346107e75eab9ccc78f0dee47dbf7f5ea0e652affb7a0bed"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/open.log",
+      "bytes": 236,
+      "sha256": "e7d2a62b3a7bbdacd2cc51f6e700a961a0a1a971b295bdab2b0bc0b32936e97e"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/result.json",
+      "bytes": 5426,
+      "sha256": "91398efd6aa60859997da7aace43ae2854e5cf18d1e7385df0d212948edaf76d"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/sheet-01.png",
+      "bytes": 599630,
+      "sha256": "14f8fe9e391e2f2a379f7762d4927fbb707af4d9149dbdfabcaacffc8412f6a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/sheet-02.png",
+      "bytes": 1370297,
+      "sha256": "ce57ea1c4cea5fc00bbc21eff71f3708e8b6483d1dd534b4c37ed5d88a7993d1"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/sheet-03.png",
+      "bytes": 694887,
+      "sha256": "21972b80541704921245968a6c504175713b9de0a267dfaa8de86bbff859a0bc"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/video-metadata.json",
+      "bytes": 192,
+      "sha256": "80189841b23b2182f9ce493b5bbdd73c2ff739edffa9b815cd5d179fda596fdf"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/video-start.log",
+      "bytes": 326,
+      "sha256": "c61d10bb4130e1a398e11aa2dd8d65d1caff76d83aaa1d2f22084a1e1b9f18cd"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-browser/video-stop.log",
+      "bytes": 92,
+      "sha256": "3f554eee5424f809c7a2f615d78b8cf5783d1331a2060426a2638797fa07d5a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-checks/build.json",
+      "bytes": 144,
+      "sha256": "523f8b98cc2f366676d22d3437c81338a4af7ae7deee7d71bb4941f18aa6ff7d"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-checks/build.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-checks/inputs.json",
+      "bytes": 17904,
+      "sha256": "e221787e78f84c8b1e9c9af2bac396783c43cdc35c662a5d15572ae827838720"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-checks/typecheck.json",
+      "bytes": 148,
+      "sha256": "5c746d022d19884d8ba17800ed4d0ec1a9f1883772bff4378fdd7bc98ce5271f"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-checks/typecheck.log",
+      "bytes": 15,
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-checks/workspace.json",
+      "bytes": 226,
+      "sha256": "3d70f94bf36a8e66450c713ebae94a6c9389b750bef8a3944941c9398c7d0049"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/final-checks/workspace.log",
+      "bytes": 39423,
+      "sha256": "5b9f2e116bce8ab055c39ddd893351c0fb2223b2c64115f49efc6fc9a214d7cc"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/focused.json",
+      "bytes": 336,
+      "sha256": "3039ad9a7a21e57fb2a8174d8c3d55bdd726a3626a018d4464074dfdc76a5a5b"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/focused.log",
+      "bytes": 1874,
+      "sha256": "5ca7fce4084e13ece097c0fcddb1355420264ac0da2b8091ddb49b316f0d1fe9"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/inspection-receipt-prior.json",
+      "bytes": 2109,
+      "sha256": "50211767bcbb5d2fea92bffbfa31a50a35915c7503b81e80e150277dd70df689"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser/close.log",
+      "bytes": 38,
+      "sha256": "a7a952b685747f493ad01d124a5b43727a6104a935fc5dd772eb66f8dde2cf32"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser/flow.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser/open.log",
+      "bytes": 233,
+      "sha256": "a525e7d19b4205cde23d93e1f6e18d7882fe2482520f1a4591c1f873285cb368"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser/result.json",
+      "bytes": 323,
+      "sha256": "66a32a7a6b2f5d3bfa261edca84a49a4a3e07327fb369d449ba01f45e41f80df"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser/video-start.log",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-diagnostic/close.log",
+      "bytes": 38,
+      "sha256": "a7a952b685747f493ad01d124a5b43727a6104a935fc5dd772eb66f8dde2cf32"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-diagnostic/flow.log",
+      "bytes": 193,
+      "sha256": "3800f38250b8f11ddd1171fcc957539a6e34e48ae2c065ab9fe36214bea07c91"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-diagnostic/open.log",
+      "bytes": 233,
+      "sha256": "d7f07e20be1e310999356810991d77270377c0a93cdf789eb26ca5d5714dfab1"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-diagnostic/result.json",
+      "bytes": 323,
+      "sha256": "66a32a7a6b2f5d3bfa261edca84a49a4a3e07327fb369d449ba01f45e41f80df"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-diagnostic/video-start.log",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-loopback/close.log",
+      "bytes": 38,
+      "sha256": "a7a952b685747f493ad01d124a5b43727a6104a935fc5dd772eb66f8dde2cf32"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-loopback/failure-video-stop.log",
+      "bytes": 190,
+      "sha256": "8d75bd2f5e414b9811baa11f0aa2421c7df78ecb9f9170a2c3ddeb5ad6a45035"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-loopback/flow.log",
+      "bytes": 146,
+      "sha256": "88bfa82233ead9f70d20ba504fabf9993f13812675fab1f74fedb1835d84183f"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-loopback/flow.webm",
+      "bytes": 27219,
+      "sha256": "3f247d42c37d191bfe48615a694b4fdb0e3b38be63f9d7548fe4cedef27982c2"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-loopback/open.log",
+      "bytes": 233,
+      "sha256": "baf5b207b9ca4dc1cc7f2c82845f4f65aed5b653887e3d70e9c6da363d2e18c1"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-loopback/result.json",
+      "bytes": 323,
+      "sha256": "66a32a7a6b2f5d3bfa261edca84a49a4a3e07327fb369d449ba01f45e41f80df"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-loopback/video-start.log",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/after-replacement.png",
+      "bytes": 53095,
+      "sha256": "364ff9d5c9fbfc74672445bb59785a8a8927acecbe93ab66fca7a99625f0ab84"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/before-replacement.png",
+      "bytes": 41515,
+      "sha256": "2582dffd416daabd4d62434bf8886026b4e82adda6818a9501ebde7c59e17257"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/close.log",
+      "bytes": 38,
+      "sha256": "a7a952b685747f493ad01d124a5b43727a6104a935fc5dd772eb66f8dde2cf32"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/flow.log",
+      "bytes": 61400,
+      "sha256": "97d15d9a352d5c69d6d6de0c94e510cb68a6832a240f27fbb14cda50bab859ad"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/flow.webm",
+      "bytes": 212195,
+      "sha256": "045bd9470b55eee02ab14a1af5f4af9076db874efe03c7aba036e2f04c721687"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/open.log",
+      "bytes": 233,
+      "sha256": "886e781a4b0d8e9632f32292d9b4cf97e9adb6caee4eb21e2f262098ede57e90"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/result.json",
+      "bytes": 1186,
+      "sha256": "4eb691d14f68d60aa92b7d2251674da197a3ab7e9a3850566500c178b6552bff"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/sheet-01.png",
+      "bytes": 833657,
+      "sha256": "244dbf004afa8b70fb3caddacc10b565e9d6d2fa38e5fe37c4db7b77493dc576"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/sheet-02.png",
+      "bytes": 210052,
+      "sha256": "e3527c3bac9f087f512c171745e247cb395db42cffc60167b088b36d99fa56ff"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/video-metadata.json",
+      "bytes": 192,
+      "sha256": "33b7696245c829d360112cd1bd3088f166a6fd4048f5992b3197f631f8bff9f7"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/video-start.log",
+      "bytes": 335,
+      "sha256": "234ec9f5c6c5717a6c831df3ecb93f4436cff4572920dd1fb93bcb9911b1ab2e"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-paced/video-stop.log",
+      "bytes": 92,
+      "sha256": "3f554eee5424f809c7a2f615d78b8cf5783d1331a2060426a2638797fa07d5a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/after-replacement.png",
+      "bytes": 53095,
+      "sha256": "364ff9d5c9fbfc74672445bb59785a8a8927acecbe93ab66fca7a99625f0ab84"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/before-replacement.png",
+      "bytes": 41515,
+      "sha256": "2582dffd416daabd4d62434bf8886026b4e82adda6818a9501ebde7c59e17257"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/close.log",
+      "bytes": 38,
+      "sha256": "a7a952b685747f493ad01d124a5b43727a6104a935fc5dd772eb66f8dde2cf32"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/contact-sheet.png",
+      "bytes": 154508,
+      "sha256": "fdb178ac20d0a175599f6467ffe3ddb0ec7744729fcbe862326c105030d668a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/flow.log",
+      "bytes": 60355,
+      "sha256": "b6cfb07a50b8f946233a6a803934899d5ccb6f2c96403ae0e3a99c50338435d4"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/flow.webm",
+      "bytes": 104044,
+      "sha256": "57366388fd6418d12a28584bb6b0ecf94af0f66ef12e44e9e3b413fa64044444"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/open.log",
+      "bytes": 233,
+      "sha256": "7fc36677ebbb8d4a3cad12efa7385a3f416c15850643b126c24ed92d2118d83e"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/result.json",
+      "bytes": 1186,
+      "sha256": "4eb691d14f68d60aa92b7d2251674da197a3ab7e9a3850566500c178b6552bff"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/video-metadata.json",
+      "bytes": 192,
+      "sha256": "6c3e88924ccfc2d8d04343610b9fd67b3e60ed76d6aaea9fdd53ef7ff141dc05"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/video-start.log",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-browser-verified/video-stop.log",
+      "bytes": 101,
+      "sha256": "a50c431db3f135ff32651bac4231bdd040865de736da142257b27b3d52f3c87b"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-studyHtml.js",
+      "bytes": 37815,
+      "sha256": "3f7ff97d4caa32ab691a562a4f4ce4ea9e39c13e13e6cf5a5dbbbd7cf645fc57"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/original-ui-constants.js",
+      "bytes": 6699,
+      "sha256": "113224efa08c5389992598715fe0fa46b08fd0559cd570013d8ea6413207ddbd"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/after-replacement.png",
+      "bytes": 41199,
+      "sha256": "8cb679a0d3341c6ec6aaea819a7ddf8373efb063344506be0ce38a64bc0e47cf"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/before-replacement.png",
+      "bytes": 41515,
+      "sha256": "2582dffd416daabd4d62434bf8886026b4e82adda6818a9501ebde7c59e17257"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/close.log",
+      "bytes": 41,
+      "sha256": "18b6d05c7f17b8910f1a8ec56773e4a8dff4c2ea3ef58e73f4522b9b6d28e919"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/contact-sheet.png",
+      "bytes": 170995,
+      "sha256": "d1bb44160331217d31654edcca9a002e08a11b4631c860aa10c7263ae3524a56"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/flow.log",
+      "bytes": 70684,
+      "sha256": "877d805c15e20bedc4df9a326fe1803d84f20d6841dcc21c76dc50202bfa60eb"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/flow.webm",
+      "bytes": 142262,
+      "sha256": "3834d9864f34d9e9ac831b4bbc7076ae9be7b6856a6b36481dbfc6d2dd2be8d3"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/open.log",
+      "bytes": 236,
+      "sha256": "95622bb50cbe1aae035f02858df16635f7698c8ba32ef67bc822b8681a664c1a"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/result.json",
+      "bytes": 4868,
+      "sha256": "a5d942dc285d8ea7eecbc59894fb06a8354cdc891abbae91a5c197a3f795245c"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/video-metadata.json",
+      "bytes": 192,
+      "sha256": "fb4eca550a66c97b8595ab175bd3d6d1ddfb2593c1d7160c233e67424e5eef9d"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/video-start.log",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-final/video-stop.log",
+      "bytes": 98,
+      "sha256": "ce391b2b10c055094886b61df54dc72ec7fe027afb9b2557a49992b4d1d3bcac"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/after-replacement.png",
+      "bytes": 41199,
+      "sha256": "8cb679a0d3341c6ec6aaea819a7ddf8373efb063344506be0ce38a64bc0e47cf"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/before-replacement.png",
+      "bytes": 41515,
+      "sha256": "2582dffd416daabd4d62434bf8886026b4e82adda6818a9501ebde7c59e17257"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/close.log",
+      "bytes": 41,
+      "sha256": "18b6d05c7f17b8910f1a8ec56773e4a8dff4c2ea3ef58e73f4522b9b6d28e919"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/contact-sheet.png",
+      "bytes": 178557,
+      "sha256": "9e034b4187ea0b2de03dd06886ba298fd6b7e2bd02edf3867c151becf577ddca"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/flow.log",
+      "bytes": 69399,
+      "sha256": "aec8e1a9976eba0014c6a42e4759cdf63f30b863acc70818c3b6506002d103c0"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/flow.webm",
+      "bytes": 119125,
+      "sha256": "8d3aac1c93aebb8ffc40d433d072d52cd0abdf89bbd51f17bcf6616836dcea17"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/open.log",
+      "bytes": 236,
+      "sha256": "e45d8504679680463193c7a8b0e2bcd56449800609e2c62df35e4eaf1d241e0e"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/result.json",
+      "bytes": 4301,
+      "sha256": "059c166e42f973a424178fe79691289b380c5383a3e2dc0cccd7b412bc6a0f41"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/video-metadata.json",
+      "bytes": 192,
+      "sha256": "fc35c473772e55d26726e539954459a975b27ed1024564c346634990626a2bd2"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/video-start.log",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-first/video-stop.log",
+      "bytes": 98,
+      "sha256": "2df94b2455ee86f4a182cd41608f8e23bda13ce469bda8df349616449c79a8de"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/after-replacement.png",
+      "bytes": 41199,
+      "sha256": "8cb679a0d3341c6ec6aaea819a7ddf8373efb063344506be0ce38a64bc0e47cf"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/before-replacement.png",
+      "bytes": 41515,
+      "sha256": "2582dffd416daabd4d62434bf8886026b4e82adda6818a9501ebde7c59e17257"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/close.log",
+      "bytes": 41,
+      "sha256": "18b6d05c7f17b8910f1a8ec56773e4a8dff4c2ea3ef58e73f4522b9b6d28e919"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/flow.log",
+      "bytes": 71011,
+      "sha256": "64d6909920130627a594d565cb509ed71707fb089d47c4aea4dfdac5ebb7a6a6"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/flow.webm",
+      "bytes": 583592,
+      "sha256": "552ebc5f2e825b9ba79481e2e3fd603e8cfe4c20fce64a83089f9781d9cf9474"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/open.log",
+      "bytes": 236,
+      "sha256": "4d3e6232692575facc9b0b595ea8e1edc9c318db3090a3cac8ca52164d260da3"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/result.json",
+      "bytes": 4868,
+      "sha256": "a5d942dc285d8ea7eecbc59894fb06a8354cdc891abbae91a5c197a3f795245c"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/sheet-01.png",
+      "bytes": 563573,
+      "sha256": "614dd6f4cdf75ff530875ac0da2c0aed3c1bef9edb7e505a523e3120fcdf17b9"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/sheet-02.png",
+      "bytes": 1410855,
+      "sha256": "6b7ad96c6aec1efd41142ee1c9b5c81b2b343f120a9a48c8fd48c1f8ca42bdd7"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/sheet-03.png",
+      "bytes": 340168,
+      "sha256": "6b679f301a0dc202e9932912a7d6e9e820ace2e72233e0586708f2959b265df9"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/video-metadata.json",
+      "bytes": 192,
+      "sha256": "62b95db29d40f053ae755bb061917be2d0d17e27c5e1cf5022cfb6b319db03f7"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/video-start.log",
+      "bytes": 335,
+      "sha256": "5fe49680801bd3cdb2c60f5ac4c3596334f8d97cf60791f9b16e246a820e53db"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/repaired-browser-paced/video-stop.log",
+      "bytes": 92,
+      "sha256": "3f554eee5424f809c7a2f615d78b8cf5783d1331a2060426a2638797fa07d5a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/workspace-after.json",
+      "bytes": 222,
+      "sha256": "371cb990880738577e904d1e436fdd6e76fc1087dae85fef2c3eec5406504204"
+    },
+    {
+      "path": "artifacts/cycle-0018/reading-pose-controls/workspace-after.log",
+      "bytes": 46123,
+      "sha256": "6ed30b9932da655ce1e4fbac0b609597a2a14b64c8c67494054343c23b16d544"
+    }
+  ]
+}
