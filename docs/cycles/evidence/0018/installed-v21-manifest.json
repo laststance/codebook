@@ -1,0 +1,831 @@
+{
+  "schemaVersion": 1,
+  "scope": "Cycle0018 unchanged v21 installed development trial; FAIL in Cursor, VSCode native unexecuted; not final acceptance",
+  "recordedAt": "2026-09-22T10:27:36.039726+00:00",
+  "source": {
+    "revision": "9a9fd7cf50ed9c64f912048d5556a41407ddbc14",
+    "dirty": false,
+    "sha256": "de89f86635d3d0228d4ed9d48794db5153de41276424947688e9891b266793bb",
+    "sourceHash": "a76bbfb6cffd6321645786e86cf3a7642f1207f04dd931f4d0d7fd625c62d211",
+    "inputCount": 273,
+    "bytes": 600940
+  },
+  "availability": "Private artifacts remain in this checkout under artifacts/cycle-0018/installed-development-v21/. Missing artifacts require revalidation. No credentials or runtime payloads are embedded in this manifest.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/build-execution.json",
+      "bytes": 283,
+      "sha256": "4da797d5e3f9042ada68cc65ec86f1bb090be585242db7904cf8bbfc33049304"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/candidate-command.stdout",
+      "bytes": 32989,
+      "sha256": "631f6ef6c8885abc632fe10d3513c38168b12adcfd773087571ec6b400e6a2bd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/candidate.json",
+      "bytes": 32989,
+      "sha256": "631f6ef6c8885abc632fe10d3513c38168b12adcfd773087571ec6b400e6a2bd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/codebook-cycle0018-v21.vsix",
+      "bytes": 600940,
+      "sha256": "de89f86635d3d0228d4ed9d48794db5153de41276424947688e9891b266793bb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/before-restart.json",
+      "bytes": 56551,
+      "sha256": "d6ae9bfba1118f4345913d6f15ce91cad0f4bb6b79141d2d74486f9a81ef9422"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/connection-location.json",
+      "bytes": 174,
+      "sha256": "97a677982b6ea28bc4f121b1cd7ee083f2ef57cb1bd59bb383fa3e15d8ae1b09"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-before-close.png",
+      "bytes": 340719,
+      "sha256": "691bc91aadc8689f5ed4ee0dcb4b3394e21ac2924253b07865c5b1015ade7246"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-bootstrap.json",
+      "bytes": 157807,
+      "sha256": "0731e342df732f46413ed4f4208e11a680010a6db499668fbba1b7c4177d1502"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-bootstrap.stdout",
+      "bytes": 2563,
+      "sha256": "d21027facb8eff489dc88af7c63dc892158d0e2184087dcb626d4f7929c34d48"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-entry-receipt.json",
+      "bytes": 180947,
+      "sha256": "2bfff47ae1a7deeb795d13022013eaac84103eaa1ece740c6b902f67d56f6a52"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "5cfa7f113d6df107663eb2d071172fb360816cd626eb9456e6a29220518e64ff"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-frame-extraction.json",
+      "bytes": 2338,
+      "sha256": "1dfaaea3f6500a5ce126ecf82e8b8fb58740f72be5d787404a423c13f674e0d9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-frames-000.png",
+      "bytes": 141640,
+      "sha256": "acb37dcea92e19378f9a47a08951b3e6df3eba7168b254d4a091ec1e8706d6d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-frames-012.png",
+      "bytes": 210708,
+      "sha256": "19b4065e06bb7634c8c6b8c478ffa854fb3e99c6499ce9b225923e0a6bde98fe"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-frames-024.png",
+      "bytes": 153949,
+      "sha256": "d1bac059a81d9731d406d25cfa38556c064df8a9a311f19adf9e50cbf6a6c4ac"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-frames-036.png",
+      "bytes": 261266,
+      "sha256": "a9e4fa5781589a56bd2f94aa3fc8df3f5626750ca6bb0d4a227e227f64a8531a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-frames-048.png",
+      "bytes": 318643,
+      "sha256": "4803f67bb3965af8eb1b292f5249b00d824b343af8929d2f4b2abde1250e61df"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-frames-060.png",
+      "bytes": 280389,
+      "sha256": "fd6f37e8fc664c1c930d3f7d1aa8a19fe35348e29b6bf5ae523acf4dc51af90a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-frames-072.png",
+      "bytes": 182086,
+      "sha256": "c2da8da0f22f01fccf76bdbbe1111eed55aa4f248b80f07b4f15e8eb47c44edc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-frames-084.png",
+      "bytes": 94166,
+      "sha256": "d47c2ab72758cc76f939453d79010cdfbce247f58ba64911fb97fcbed3f8e4fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-guided-walkthrough-observation-before.png",
+      "bytes": 394222,
+      "sha256": "7b8f02e3008f9dc3342d12aa62bd431f4f437172708246325f594cede3e0c53e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-guided-walkthrough-observation-return.png",
+      "bytes": 406345,
+      "sha256": "59007606826fb6bc1fa878f16ce23f79a0e18575e71b60579596c727bfde8054"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-guided-walkthrough-observation-study.png",
+      "bytes": 308674,
+      "sha256": "a5cf5a20c731b5c90e4199046a10cd2841912c5711bbe800cce209936837377b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-guided-walkthrough-recording-before.png",
+      "bytes": 405488,
+      "sha256": "03b98aede6f3a0a786ef5f70ded2e87f0d90069204cc6e7a1c6e6a58726603d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-guided-walkthrough-recording-return.png",
+      "bytes": 393460,
+      "sha256": "52ce550ababdefdbcc34aef65038ccd0088006a735476fc6112a5469605969d6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-guided-walkthrough-recording-study.png",
+      "bytes": 333174,
+      "sha256": "df90dd54a369855d9839bff3a95314239a6071eabb931427c365051a3f6de5c7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-launch.json",
+      "bytes": 1449,
+      "sha256": "b8ebe4907a498af1bd19e6376bb76bc782e8673a8758f43c584941e4ef0c843c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-living-book-observation-before.png",
+      "bytes": 426610,
+      "sha256": "9fd1bb247ac272b008a1731fc8b57b1e0e700e5cc8519f81d9e9cde3958c67eb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-living-book-observation-return.png",
+      "bytes": 425565,
+      "sha256": "6c844c7eec9060a81cb2b76a1b29ad72018ce292e3237e11a22069fd1b7219b4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-living-book-observation-study.png",
+      "bytes": 353529,
+      "sha256": "41a00a000cf5316408bb4abf8e55893e94d0231cceb6a96cf7e53ed5a9e82f7c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-living-book-recording-before.png",
+      "bytes": 432227,
+      "sha256": "0bed1ae409235f16cdc9a0882fa6558aa1ee550fb4cacd3fc9a42d25a03051c2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-living-book-recording-return.png",
+      "bytes": 439209,
+      "sha256": "652b9099bb0455134faa67dac4ffac7a876049b1c2f3a95b9474e5ed6d2a0662"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-living-book-recording-study.png",
+      "bytes": 329965,
+      "sha256": "ce1cd3eec070d3998cef3f4a46c1a95d4074efbb0a8f28bcab07e4f97a558fe5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-native.webm",
+      "bytes": 8009545,
+      "sha256": "aa1031dc62f5fbe7f725eeb2d6a971ca879fe2ab8ebf0b21e4c18e586cf640e3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-ready-replay.png",
+      "bytes": 143319,
+      "sha256": "0c7900af27dfbdf919b8d194c461780230fac6abae861c4e77a7f04278376eaa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-roundtrip-receipt.json",
+      "bytes": 670767,
+      "sha256": "cd48cce6fa8ae1cb4a6a51c6340b3be2bdc89554a7ef6e527981f1b06b650319"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-saved-wiki.png",
+      "bytes": 390711,
+      "sha256": "6173980031a6dbb953b92e26f0b266a1eaa6c2ede0a8fe09ce333d8298e2497e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "165ab431e8e3f38bc31537dbd6d41fb7bc5480f8f91560bdc5d8a3748ea766f5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-study-workspace-observation-before.png",
+      "bytes": 387310,
+      "sha256": "9b295151c91e05e0046394db0ceff54d62f30e7279608ed79a374f636961932c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-study-workspace-observation-return.png",
+      "bytes": 399474,
+      "sha256": "3dafe834688a1a2d72895c0fe5fde23e67005300ae726eb40eae3f7158b83d6d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-study-workspace-observation-study.png",
+      "bytes": 358740,
+      "sha256": "9fa5e7b8b9bd4404c6089267b6b949de30f2c0402dddedf76f4f4b7dc1d24c56"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-study-workspace-recording-before.png",
+      "bytes": 398135,
+      "sha256": "9b2a82326f0a83aa6f99c154c9a6a41fead8dbc403f939be619388e0a5b0876e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-study-workspace-recording-return.png",
+      "bytes": 385898,
+      "sha256": "b86d65d81a8c8a4029ea9a3642e48dc7ed6778afcb1f8ba6d9467984f6990695"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-study-workspace-recording-study.png",
+      "bytes": 338866,
+      "sha256": "ef56f27ca541b41e322a3328e659659b28ea0754f6dbb8a4b57ef02ac77adda5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-ui-close.json",
+      "bytes": 4016,
+      "sha256": "ebd38c8615842e465615b6ab86c302d587469d0e1fa337540b2b5060fe3fb5e1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/initial-ui-start.json",
+      "bytes": 5478,
+      "sha256": "8925e50cf74bec08cf461ab9a9c31ebad349d6858097c411db776205557a2c88"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/installation.json",
+      "bytes": 7078,
+      "sha256": "ba717d5a740af4264e666203509b6a888bcc1f613609fdf2d65f11f0622a37e6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/profile-preparation.json",
+      "bytes": 23475,
+      "sha256": "388000d3dd717e5c5a943abd839332f46e825057951e9ba60c4e8f40bf94ae32"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-before-close.png",
+      "bytes": 352355,
+      "sha256": "4f04cab8187275ff17f356c41aef09fb660ac512ae9bc4af677f82d2ad26c219"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-bootstrap.json",
+      "bytes": 157816,
+      "sha256": "9017e687e019c1c4d32876cdb0c90ac9124bf1bade5ff7323bb66bd6a7fab8be"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-bootstrap.stdout",
+      "bytes": 2563,
+      "sha256": "5a738d807b4174b3b19ab1f982c849c67cab17be0d6072799524a2ba699439c8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-cold-wiki.png",
+      "bytes": 431566,
+      "sha256": "5f50d6fe503bf4a8e749a5a4fac498d2418855ae14ed4c04c46593f59674b501"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-entry-receipt.json",
+      "bytes": 188488,
+      "sha256": "d85fb79d733465c967bf061ce29f6b6745cc7f3c8f14eee4769947a28311f532"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-exit.json",
+      "bytes": 61,
+      "sha256": "41d5be1dc35be45c316852657dd222d8a7c75d6e4fe364ca0ef69ee50b52a3de"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-failure-observation.json",
+      "bytes": 69330,
+      "sha256": "8336f197e43b68f5792af2a7e690650a93956fd7f4d4905ccb879c8449a3bfe2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-failure.png",
+      "bytes": 148751,
+      "sha256": "c72c51c9146c298d0b11f904f2277b2d0156a01252d69882bdb7da96545c0a1c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frame-extraction.json",
+      "bytes": 4114,
+      "sha256": "aa5bbd79c90e288f50d6df94f37126c5ad18014faad103edc1ee747ee353bd57"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-000.png",
+      "bytes": 138075,
+      "sha256": "110923b7ed47635c577bf0619c34c5cdf0a04f0dac888506f4ffa3d54e577265"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-012.png",
+      "bytes": 188599,
+      "sha256": "b1d37eaea5e8f9f8715567070d7c15a79c1b3d0cadf0d6679d5b70e4114c41b0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-024.png",
+      "bytes": 205000,
+      "sha256": "4cddd435725260dd728b19d37f1ee1602003fc5870989887f01c7f1df6402583"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-036.png",
+      "bytes": 167845,
+      "sha256": "7faba1b7a633a40d817bc788d4f27abb3ba1df950aa69efe213165c0f662318d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-048.png",
+      "bytes": 220898,
+      "sha256": "df38ecb5f1d257f689b6ae22f71fe0eed1a44ad294983896750a0d4084f34b99"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-060.png",
+      "bytes": 315692,
+      "sha256": "573575fc67d867daa142ee5e87d66d35d24fe0cdac4fb22e54a3a76e02087ca6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-072.png",
+      "bytes": 299845,
+      "sha256": "360e6ddff41a1601ed6483149758714d61bd70a0909e19a788f81961e081eb6b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-084.png",
+      "bytes": 231283,
+      "sha256": "933ad08c911bc1975baccd628fec08aaf882a32a9c16f8c883602c95d685f7c9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-096.png",
+      "bytes": 271002,
+      "sha256": "83797a581ea33aff4091465408e0be4df9be1c03b135e17ae1bbf54db2e6d668"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-108.png",
+      "bytes": 314427,
+      "sha256": "a931da949cba278ec75fccaaa783d51e81b986fef4117256cada09520dff4d44"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-120.png",
+      "bytes": 312473,
+      "sha256": "9612bd87972a72f7ba89cb9b4ea90e93aadea8f8cbc61fe88b4ab1fb619cbde0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-132.png",
+      "bytes": 247227,
+      "sha256": "5dd44f1773dad5bc786f3200de76ab8e38b5e6e496fd5357e84061fb5e4b9196"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-144.png",
+      "bytes": 147874,
+      "sha256": "aa07d570099233592fd87e417199198a8fbd809d3b39e4a164e5b62e19ed221e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-156.png",
+      "bytes": 125668,
+      "sha256": "b1c5eee9382689461f7205e8d9886008bf5b666d0b152771269eae6327bc545d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-168.png",
+      "bytes": 140532,
+      "sha256": "cf7ba196eb5c2422718946938526f826d2967eef4302f49962f139667bb68460"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-frames-180.png",
+      "bytes": 103854,
+      "sha256": "bf6ada3d0e9bd3bdd9a71237e7a96eb8044a51c32e219c7ddc319e33e2d4421e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-guided-walkthrough-observation-before.png",
+      "bytes": 397677,
+      "sha256": "ff5f7bc2cb6fcd672aa62edc32f36c25215bc1180c7c3e96f49c9a5592023892"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-guided-walkthrough-observation-return.png",
+      "bytes": 410224,
+      "sha256": "ea6880cb5080ec23360acb1944b6f88ae510ffe10b7988b412cf437c96836392"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-guided-walkthrough-observation-study.png",
+      "bytes": 308966,
+      "sha256": "762970801ffc4de725a9e939064ff63ac47deac6994f9740633d05f61763165e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-guided-walkthrough-recording-before.png",
+      "bytes": 414070,
+      "sha256": "91b18d5a240ab46901c4203ab5353cb090f0d0eb4da1a739b43682391bf4404b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-guided-walkthrough-recording-return.png",
+      "bytes": 398115,
+      "sha256": "ebd45add6a6bcbddbfa2b28cd6fb56ecb680264956f563041cac2ce066ccdc84"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-guided-walkthrough-recording-study.png",
+      "bytes": 334574,
+      "sha256": "ad3dc4a42485a8928c1957417ad15ec957865f152e671551cdc65d3e2da10b60"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-launch.json",
+      "bytes": 1449,
+      "sha256": "51acd2e15ba91917614db180ae15dbfcf474749c45d58cd7c76398341a89ae27"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-living-book-observation-before.png",
+      "bytes": 435383,
+      "sha256": "4385320e772f8178c56a6117699f963495ac6d215b6af000782c5e729d5b56fd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-living-book-observation-return.png",
+      "bytes": 434691,
+      "sha256": "57382dc2eb179bd6c533f2c7168ad53a1e4deda04ae185c09985a6ef932b4add"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-living-book-observation-study.png",
+      "bytes": 352717,
+      "sha256": "929507c08de1d5741fb21614bc44620d3de7729e86d6e5cb965f83a9037ec0fd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-living-book-recording-before.png",
+      "bytes": 437504,
+      "sha256": "04fce9ef1c4ef013bfca69681ccba2b93dbe3fb4defe1f72c244df6081aac525"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-living-book-recording-return.png",
+      "bytes": 444092,
+      "sha256": "2880ce83ad9a923534a31c5fc450f048fdb5910eb8c280b9c855bdc2064b0714"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-living-book-recording-study.png",
+      "bytes": 329076,
+      "sha256": "372ef9b964d48b13224c5092186e3535eaceb61796a6b1c5e74cb0ec62a9fc13"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-native.webm",
+      "bytes": 15555757,
+      "sha256": "7136bf6cf161ad0d072a9eeacdf79b8127f1f60e0cc04523072b4cd04a54d50e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-ready-replay.png",
+      "bytes": 143109,
+      "sha256": "aabf092cb974a6b3fc78fdcaeb1a106078e562865f3724160a84f3f050035ccb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-roundtrip-receipt.json",
+      "bytes": 668433,
+      "sha256": "4bfb8da3bd7334e6e242ddec78979ab808b1ab05c4547bde9540753fe45995a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-saved-wiki.png",
+      "bytes": 404296,
+      "sha256": "37a1333f9f9bf09348de339113645b6f436f2fcf2decf178ab90f986b6d28db0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-shutdown.json",
+      "bytes": 449,
+      "sha256": "a5692e735a6e35576ea77a20de6a692d5628904726a15b48e27fd5312989b33d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-study-workspace-observation-before.png",
+      "bytes": 391947,
+      "sha256": "be1a54e0035f1dfda4e92171849c90d4970dc590f11a8f6ce0c93791c937716b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-study-workspace-observation-return.png",
+      "bytes": 404192,
+      "sha256": "1fe1069a7f2c789c24f8da19f2127f3bf3aa22c071ce329c9dad6308cd73895c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-study-workspace-observation-study.png",
+      "bytes": 358752,
+      "sha256": "02a5ccb85402aeb11f1ddf82617f8a418f049a7cad0893c27ef8568404a154f7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-study-workspace-recording-before.png",
+      "bytes": 405244,
+      "sha256": "c94ed97bb78530085aaafa80c985a5d57cff559b74f7ae32dc0fe5901e7e7b8a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-study-workspace-recording-return.png",
+      "bytes": 392174,
+      "sha256": "5ac9e3c53164ef2c167ab38083f22da183332144ca2e0805d96adb7c6320730d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-study-workspace-recording-study.png",
+      "bytes": 338312,
+      "sha256": "2ede3fdadec3f2cf743d552288e2485abbc0dcf8db3d3d6cbb6c9a8a3500d836"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-ui-close.json",
+      "bytes": 4030,
+      "sha256": "5ae4a3e85d9c786453654467ec5e6344ddd1601612751760511f63c85245e47d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/restart-ui-start.json",
+      "bytes": 5478,
+      "sha256": "be78d27eccfd6403292e6a69c416fcd2d8ee66c82a066dcbefa34989c8106e3a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-full/timing-pairs.json",
+      "bytes": 154092,
+      "sha256": "6baf9d5e1e8b7d704b125f4989222aa1ea29a2643bd59d74fd6aacf9251e256d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/connection-location.json",
+      "bytes": 183,
+      "sha256": "e0abb80f361390deae88e11ab8e709273ed78271340a35c9c6d67f5ec65aca15"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-before-close.png",
+      "bytes": 294244,
+      "sha256": "a4ccbeaff9ca97a90a509e42279ae0efca6d98b8c7633d5b997dd19fc00f389e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "8c0fb8c5e113767e6e650fc50d1a9f4aa690ed6dc149fee86b7b96504d676bb9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-exit.json",
+      "bytes": 61,
+      "sha256": "278df82ccdb35bbdd829c30af24fe41ca30f5d56bc25e1288a57271ed10dc644"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-frame-extraction.json",
+      "bytes": 1735,
+      "sha256": "fe1213d3c14d330f5f8cc653e4489f73cb731d6a8a17fbeb73c69fd2d1dfe214"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-frames-000.png",
+      "bytes": 133229,
+      "sha256": "f057926caa87d38a0bb733232cf03dfdde1dc94b58cff3d15cdd7a80c1a86a9d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-frames-012.png",
+      "bytes": 118182,
+      "sha256": "c56f40a18d2c047cceb7201ee67160da17007f3e0be70befe371960bb7867563"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-frames-024.png",
+      "bytes": 124223,
+      "sha256": "4383f79cdc4f2b240a2a6eff020613129ff2504b95f57e14bc226c6f4c4f6151"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-frames-036.png",
+      "bytes": 135553,
+      "sha256": "8e312ec6730beba0f17406e832a4438276467e393a1b277bdf269ca56fa689a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-frames-048.png",
+      "bytes": 76038,
+      "sha256": "2e494437d7249d961a9d26dd5f12d5b6968b3714b48385df2cde507b2220800e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-launch.json",
+      "bytes": 1494,
+      "sha256": "ad8c03bc4d43038d58cef89c74d355fd00165471151d3962bd6acf8dbc249166"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-native.webm",
+      "bytes": 2035000,
+      "sha256": "b4a89ee84dca6e296ffdb00f68120c80519b716101109353beb479300ed0ba8c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-negative-after.png",
+      "bytes": 122138,
+      "sha256": "5d2d6e5f3f1ad3df39b3f3a77169c792deffc1cf497cf52af148b7ab4baa1748"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-negative-before.png",
+      "bytes": 119015,
+      "sha256": "3a15609f7ffb44a43cf5df17458158597affc7b762f45ecb7b7038527745dae3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-negative-control.json",
+      "bytes": 124257,
+      "sha256": "be13c12cb223e2e7bf532eeeaab43e9094dd9656253baf51eae7e0e321d12e23"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-negative-prepare.json",
+      "bytes": 81886,
+      "sha256": "2e1806dfdce4350faa974baa6bd980d94a9f53279d3e6fbe049bea8aac9628eb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "7dcce150ec692f8135447cfb6d28089c08c4f0664d8b160e55802ed6ea8cc351"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-ui-close.json",
+      "bytes": 4044,
+      "sha256": "9726279914f5691600289e01984fbd6ff7383994dea6e98e2878e38f2ad4519b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/initial-ui-start.json",
+      "bytes": 5508,
+      "sha256": "d199b5ca8f88a73a45f5df45a23b861e6c4524d73a158fea52f8290681fd89b5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/installation.json",
+      "bytes": 7133,
+      "sha256": "f15f2adbcc0c484cb95f61d630c5a6253e144cde46d56ebdfb0022a508ec66ce"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/profile-preparation.json",
+      "bytes": 23640,
+      "sha256": "c919ccd6a010b7cf5ae51b6a0a241b6fb54ea67e4728143e6354fbfef544a1a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/cursor-scope-negative/schedule.json",
+      "bytes": 1591,
+      "sha256": "aaf14f7b555f91a05d50d3857b7a96c6469939614f48fa0d371a7b0036b46d83"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/environment.json",
+      "bytes": 690,
+      "sha256": "493335e6be7c693d879cd77a6b9d1e0a1a6d5549671d88d38eefb03717345e53"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/extract-video.py",
+      "bytes": 1209,
+      "sha256": "cacbe631de1abddb526587d40b07e1d283a4a7cf4a119b2aec608c9b4858e362"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/final-profile-preservation.json",
+      "bytes": 807,
+      "sha256": "620edb178faa79dcb0c43ae073ab18399ef69900fb4b4fb94fc873e0f9657851"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/final-unchanged-verification.json",
+      "bytes": 18333,
+      "sha256": "3d50e16b04d69dac85bcc2526a0a8eba5ae1791184b92357b1910c74e77aa925"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/focus-timing-pairs.mjs",
+      "bytes": 2148,
+      "sha256": "8983f53eecf26bbd9d5acbaadea7296bca0aada8ae248c589e42dce5e1546cd3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/fourth-group.mjs",
+      "bytes": 4014,
+      "sha256": "f56cbe2039fe6b15ad5a699d57aa68a550e8a5dfb931a6a5b0d3120103a3fe6f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/frame-inspection.json",
+      "bytes": 1310,
+      "sha256": "44f325df2cf014a84cbdd7183d18dca1610abca1a67844b378065b398430738c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/observe-cursor-failure.mjs",
+      "bytes": 2419,
+      "sha256": "0cb10db098cd3406e6199f42ec9ea52ddf76ede1b8680bb2ab436ca713ef4663"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/placement-pairs.mjs",
+      "bytes": 2972,
+      "sha256": "c8d80cc2edad48fb75f1d0f31545c43915189100f8516e2e827b58f413541dc7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/prepare-profiles.py",
+      "bytes": 1565,
+      "sha256": "56fcff4a3b9e273b31237f7b940c66fb3fbc4d2b8e3c9fa0b06046b122955d64"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/prepare-scope-negative.py",
+      "bytes": 2988,
+      "sha256": "a7fdc4c975362be9e3ae5d4943e7fac7fdf2ba476171f42402ddda73a6aa386c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/rapid-mode-control.mjs",
+      "bytes": 2938,
+      "sha256": "814965f00c4e369d8830a3d6656ea4cbf3ec6218a21e6549b58f58ea754b90a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/schedule-draft.json",
+      "bytes": 4152,
+      "sha256": "9fb510099af97c17e1d590c1f14c5b060c202f2176ce4f68017ce7d523c83482"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/schedule.json",
+      "bytes": 12567,
+      "sha256": "5f24c35fc1335be46355531107c23c09160dced0e07165cb5dfb73b2b6f7970d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/scope-negative-control.mjs",
+      "bytes": 4293,
+      "sha256": "8d584665c7b48153cce4d228f5c65e3c9722c72570607b04df2e11129f9af607"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/scope-negative-prepare.mjs",
+      "bytes": 2017,
+      "sha256": "dffdd047b4a35f113dbac850d0d81eba196a595b8924ce38260b538a519261f8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/scope-negative-ui-visible.mjs",
+      "bytes": 3218,
+      "sha256": "d7be35b841aafe40f3a672039bae5d0a9798341a4299d2ff108f7c37f3a80fe0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/ui-phase.mjs",
+      "bytes": 1420,
+      "sha256": "7c341ef74b082785325bc3ac290ec1b9991af4b22fb62fc944034f1df7edd864"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/ui-recipes.json",
+      "bytes": 18195,
+      "sha256": "e172d0fb74b4c5cbfbc3e9a7830e16dbeb6c030c9411e7e7a438cdf38b76317f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/validation-summary.json",
+      "bytes": 4160,
+      "sha256": "e066a5e6edc4bd119c5247a3c671b3937719a88d110f17c93c92f47bfb529553"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/verification.json",
+      "bytes": 32454,
+      "sha256": "3c82257e546bc6d2825119c0b3103ed6f78d108eaf9d88dcdc9050c19e84cca0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/verification.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/verify-unchanged.mjs",
+      "bytes": 1980,
+      "sha256": "5dd48a7419b10f70cf6d3aa70900cf0d0ee93b6b0f46dee4306a02f081bcc391"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/vscode-full/installation.json",
+      "bytes": 7108,
+      "sha256": "a291e090fcc5dd833f41368c5f2bfcb19683eb4fca7dafb0297c9b842a4e8aa8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/vscode-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "a240ed5ac734c70b97dd8b2331f90c174678b60ff6b361029bc6b66809d884a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v21/vscode-full/profile-preparation.json",
+      "bytes": 43888,
+      "sha256": "1d55a66183fadfec8fd1448f71ac7dc135f83d688d6d9a9959f6195055e42840"
+    }
+  ]
+}
