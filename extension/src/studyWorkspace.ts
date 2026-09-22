@@ -1694,11 +1694,16 @@ export class StudyWorkspace {
     if (count < vscode.window.tabGroups.all.length && !firstFocused() && !retainedMainFocus) {
       const panel = this.app?.active ? this.app : this.contextPanel?.active ? this.contextPanel : undefined;
       const editor = vscode.window.activeTextEditor, documentVersion = editor?.document.version, selections = editor?.selections;
+      const retainedSelections = JSON.stringify(selections);
       const preview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview ?? false;
       const restoreReading = retainEditorReadingPosition(editor), assertGroups = this.retainPresentationPlacement(false);
       const firstInput = vscode.window.tabGroups.all.find(group => group.viewColumn === vscode.ViewColumn.One)?.activeTab?.input;
       const identifiableFirst = firstInput instanceof vscode.TabInputText || firstInput instanceof vscode.TabInputWebview
         && ['codebook.scopedBrowser', 'codebook.studyContext'].some(kind => [kind, `mainThreadWebview-${kind}`].includes(firstInput.viewType));
+      const primaryEditor = firstInput instanceof vscode.TabInputText ? vscode.window.visibleTextEditors.find(value => value.viewColumn === vscode.ViewColumn.One && value.document.uri.toString() === firstInput.uri.toString()) : undefined;
+      // Retain existing primary text before issuing focus; command response latency cannot adopt newer learner input.
+      if (firstInput instanceof vscode.TabInputText && !primaryEditor) throw new Error('The primary text editor could not be retained safely before scope measurement. Focus it explicitly and try again.');
+      const primaryVersion = primaryEditor?.document.version, primarySelections = JSON.stringify(primaryEditor?.selections);
       const useCitation = Boolean(acquireSourceFocus && !identifiableFirst);
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
       if (useCitation) { assertAcquiredFocus = await acquireSourceFocus!(); assertCurrent(); assertGroups(); assertAcquiredFocus(); }
@@ -1716,6 +1721,11 @@ export class StudyWorkspace {
       }, 'identifiable primary editor focus', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertGroups();
       const assertFocused = this.retainPresentationPlacement();
       layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent(); assertFocused(); assertAcquiredFocus();
+      // Same-file interaction is newer learner intent too; borrowed focus cannot outlive an edit or cursor selection.
+      if (primaryEditor && (primaryEditor.document.version !== primaryVersion || JSON.stringify(vscode.window.activeTextEditor?.selections) !== primarySelections)) {
+        this.presentationMovedFocus = false;
+        throw new Error('The primary editor content or selection changed during scope measurement; the newer learner focus was preserved.');
+      }
       count = editorLayoutGroupCount(layout);
       if (count === undefined || count > vscode.window.tabGroups.all.length) throw new Error('The primary editor grid could not be measured safely.');
       // Return only to a captured editor now proven to belong to this part; never guess a foreign chat/floating focus.
@@ -1726,6 +1736,13 @@ export class StudyWorkspace {
         if (editor.document.version !== documentVersion) throw new Error('The focused document changed during native scope measurement.');
         const restored = await vscode.window.showTextDocument(editor.document, { viewColumn: editor.viewColumn, preserveFocus: false, preview }); assertCurrent(); assertGroups();
         if (editor.document.version !== documentVersion) throw new Error('The focused document changed while its native focus was restored.');
+        const activeEditor = vscode.window.activeTextEditor;
+        // Native display and its response are separate; newer input retires the still-unissued selection/reading restoration.
+        if (activeEditor?.document.uri.toString() !== restored.document.uri.toString() || activeEditor.viewColumn !== restored.viewColumn
+          || JSON.stringify(activeEditor.selections) !== retainedSelections || JSON.stringify(restored.selections) !== retainedSelections) {
+          this.presentationMovedFocus = false;
+          throw new Error('Native focus or selection changed while the previous editor was restored; the newer learner state was preserved.');
+        }
         if (selections) restored.selections = selections;
         await restoreReading(restored, signal); assertCurrent(); assertGroups();
       }
