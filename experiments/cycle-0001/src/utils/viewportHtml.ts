@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { INJECTED_DELAY_MS, VIEWPORT_WIDTH_PX } from '../constants';
+import { installWebviewFocus } from './installWebviewFocus';
 
 /** Creates {@link BrowserViewport}'s isolated image renderer; app data enters only through messages, never HTML. @example viewportHtml() */
 export function viewportHtml(mode: 'live' | 'recording' = 'live'): string {
@@ -11,6 +12,7 @@ export function viewportHtml(mode: 'live' | 'recording' = 'live'): string {
 <body><header>codebook · ${mode === 'recording' ? 'recorded application' : 'actual page stream'} <span id="phase">Connecting…</span></header><img id="page" hidden alt="${mode === 'recording' ? 'Historical application pixels from the selected recording' : 'Application page from the owned browser'}">
 <script nonce="${nonce}">
 const api = acquireVsCodeApi();
+(${installWebviewFocus.toString()})(api);
 const epoch = crypto.randomUUID();
 const page = document.getElementById('page');
 const phase = document.getElementById('phase');

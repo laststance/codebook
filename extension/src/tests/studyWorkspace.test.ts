@@ -101,6 +101,8 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const automaticallyClosedColumns: number[] = [];
   let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined, settlementPending = false;
   const panels = new Set<ReturnType<typeof panel>>();
+  let suppressNativeInnerFocus = false, innerFocusedPanel: string | undefined;
+  const windowState = { focused: true, active: true }, windowListeners = new Set<(state: typeof windowState) => void>();
   const panelReveals: { kind: string; column?: number; preserveFocus?: boolean }[] = [];
   let deferredPanelFocus: { kind: string; remaining: number } | undefined;
   let deferPrimaryFocusEcho = false, pendingPrimaryFocusEcho: typeof activeTabGroup | undefined;
@@ -143,11 +145,22 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   }
   function panel(kind: string, _title?: string, options?: { viewColumn: number }) {
     const nativeTab = { input: new TabInputWebview(kind), isPreview: false };
+    const epoch = randomUUID(), messageListeners = new Set<(message: unknown) => void>();
     let registered = delayedPanelKind !== kind;
     const disposed: (() => void)[] = [], viewChanged: (() => void)[] = [];
     // Native webviews create only one missing group, even when a later column was requested.
     const viewColumn = options?.viewColumn ? nativeReaderColumn(options.viewColumn) : options?.viewColumn;
-    const value = { webview: { html: '', postMessage: async (message: StudyViewMessage) => {
+    const value = { webview: { html: '', postMessage: async (message: StudyViewMessage | { type: 'codebook-focus'; phase: string; requestId: string; epoch?: string }) => {
+      if (message.type === 'codebook-focus') {
+        if (message.phase === 'prepare') receivers.get(kind)?.({ type: 'codebook-focus-receipt', phase: 'prepared', requestId: message.requestId, epoch, focused: innerFocusedPanel === kind });
+        if (message.phase === 'commit' && message.epoch === epoch) {
+          const group = groups.find(group => group.activeTab === nativeTab); assert.ok(group);
+          activeTabGroup = group; innerFocusedPanel = kind;
+          for (const listener of viewChanged) listener();
+          receivers.get(kind)?.({ type: 'codebook-focus-receipt', phase: 'focused', requestId: message.requestId, epoch, focused: true });
+        }
+        return true;
+      }
       postedMessages.push(message);
       const held = heldPresentationMessage;
       if (held && kind === 'codebook.studyContext' && message.presentation?.state === 'applying' && (!held.mode || message.presentation.mode === held.mode)) {
@@ -159,7 +172,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, presentationControlRevision: message.presentation?.presentationControlRevision, presentationMode: message.presentation?.mode, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
       }
       return true;
-    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { receivers.set(kind, callback); return disposable(); } }, kind, nativeTab, viewColumn, title: '', get active() { return !registered || !separateEditorPart?.focused && activeTabGroup.activeTab === nativeTab; }, get visible() { return !registered || groups.some(group => group.activeTab === nativeTab); }, reveal(column?: number, preserveFocus?: boolean) {
+    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { messageListeners.add(callback); receivers.set(kind, message => { for (const listener of messageListeners) listener(message); }); return { dispose() { messageListeners.delete(callback); } }; } }, kind, nativeTab, viewColumn, title: '', get active() { return !registered || !separateEditorPart?.focused && activeTabGroup.activeTab === nativeTab; }, get visible() { return !registered || groups.some(group => group.activeTab === nativeTab); }, reveal(column?: number, preserveFocus?: boolean) {
       panelReveals.push({ kind, column, preserveFocus });
       const previousColumn = value.viewColumn, previousFocusedGroup = activeTabGroup;
       if (column !== undefined) value.viewColumn = nativeReaderColumn(column);
@@ -181,6 +194,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           changedGroups({ opened: [], closed: [emptied], changed: [...groups] });
         }
         if (!preserveFocus) {
+          if (!suppressNativeInnerFocus) innerFocusedPanel = kind;
           if (separateEditorPart) separateEditorPart.focused = false;
           // Refocusing an already kept Application can echo after the following Context acknowledgement.
           if (pendingKeptFocusEcho && kind === 'codebook.studyContext') {
@@ -309,13 +323,13 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         }
         if (name === 'workbench.action.evenEditorWidths') editorLayout = structuredClone(settledLayout);
       } },
-      window: { get activeTextEditor() { return separateEditorPart?.focused ? undefined : visibleSourceEditors.find(editor => activeTabGroup === editor.group && activeTabGroup.activeTab?.input instanceof TabInputText && activeTabGroup.activeTab.input.uri.toString() === editor.document.uri.toString()); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeTextEditorChanged = callback; return disposable(); }, createWebviewPanel: panel,
+      window: { state: windowState, onDidChangeWindowState: (callback: (state: typeof windowState) => void) => { windowListeners.add(callback); return { dispose() { windowListeners.delete(callback); } }; }, get activeTextEditor() { return separateEditorPart?.focused ? undefined : visibleSourceEditors.find(editor => activeTabGroup === editor.group && activeTabGroup.activeTab?.input instanceof TabInputText && activeTabGroup.activeTab.input.uri.toString() === editor.document.uri.toString()); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeTextEditorChanged = callback; return disposable(); }, createWebviewPanel: panel,
         get visibleTextEditors() { return visibleSourceEditors.filter(editor => editor.group.activeTab?.input instanceof TabInputText && editor.group.activeTab.input.uri.toString() === editor.document.uri.toString()); },
         showTextDocument: async (document: { uri: Uri; getText(): string }, options?: { viewColumn: number; preserveFocus?: boolean; preview?: boolean; selection?: Range }) => {
           sourceColumn = options?.viewColumn === undefined ? sourceColumn : nativeReaderColumn(options.viewColumn);
           const group = groups.find(candidate => candidate.viewColumn === sourceColumn) ?? groups[0]!, tab = group.tabs.find(tab => tab.input instanceof TabInputText && tab.input.uri.toString() === document.uri.toString()) ?? { input: new TabInputText(document.uri) };
           if (!group.tabs.includes(tab)) group.tabs.push(tab); group.activeTab = tab;
-          if (!options?.preserveFocus) { activeTabGroup = group; if (separateEditorPart) separateEditorPart.focused = false; }
+          if (!options?.preserveFocus) { activeTabGroup = group; innerFocusedPanel = undefined; if (separateEditorPart) separateEditorPart.focused = false; }
           if (options?.preview !== undefined) tab.isPreview = options.preview;
           const editor = sourceEditor(document, group, reportedSourceColumn);
           // An explicit native selection reveals its statement even when playback reopens the same document.
@@ -366,6 +380,10 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     coverSourceWhenContextFocused() { contextCoversSource = true; },
     panelColumn: (kind: string) => [...panels].find(panel => panel.kind === kind)?.viewColumn,
     panelReveals: () => [...panelReveals],
+    suppressNativeInnerFocus() { suppressNativeInnerFocus = true; innerFocusedPanel = undefined; },
+    innerFocusedPanel: () => innerFocusedPanel,
+    changeWindowFocus(focused: boolean) { windowState.focused = focused; for (const listener of windowListeners) listener(windowState); },
+    windowFocusListeners: () => windowListeners.size,
     delayPanelRegistration(kind: string, deferred = false) { delayedPanelKind = kind; deferredPanelRegistration = deferred; asynchronousLayoutReads ||= deferred; return () => registerDelayedPanel(); },
     deferPanelFocus(kind: string, reveal: number) { deferredPanelFocus = { kind, remaining: reveal }; asynchronousLayoutReads = true; },
     deferPrimaryFocusEcho() { deferPrimaryFocusEcho = true; asynchronousLayoutReads = true; },
@@ -374,6 +392,12 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     deferMovedPanelPlacement(kind: string) { deferredMovedPanelPlacement = kind; asynchronousLayoutReads = true; },
     focusedPanel: () => activeTabGroup.activeTab?.input instanceof TabInputWebview ? activeTabGroup.activeTab.input.viewType : undefined,
     movePanel(kind: string, column: number) { const panel = [...panels].find(panel => panel.kind === kind); assert.ok(panel); panel.reveal(column); },
+    /** Mirrors a native group reorder including each contained panel's new column, before an explicit Arrange request. @example harness.swapEditorGroups(sourceGroup, contextGroup) */
+    swapEditorGroups(first: typeof activeTabGroup, second: typeof activeTabGroup) {
+      [first.viewColumn, second.viewColumn] = [second.viewColumn, first.viewColumn];
+      for (const panel of panels) panel.viewColumn = groups.find(group => group.tabs.includes(panel.nativeTab))?.viewColumn;
+      changedGroups({ opened: [], closed: [], changed: [first, second] });
+    },
     sourceColumn: () => sourceColumn,
     restoreSourceFocusOnArrange() { sourceFocusOnArrange = lastSourceEditor; },
     reportSourceEditorInColumn(column: number) { reportedSourceColumn = column; },
@@ -935,7 +959,9 @@ test('explicit Arrange separates moved application, source and context while pre
     await harness.reader.open(); const draft = harness.addForeignDraft();
     harness.movePanel('codebook.scopedBrowser', 2); harness.movePanel('codebook.studyContext', 2);
     const sourceGroup = harness.groups.find(group => group.viewColumn === 2)!, contextGroup = harness.groups.find(group => group.viewColumn === 3)!;
-    sourceGroup.viewColumn = 3; contextGroup.viewColumn = 2;
+    // Both manually retained owned tabs coexist; a real group cannot retain two replacing preview tabs.
+    for (const tab of sourceGroup.tabs) if ('viewType' in tab.input) tab.isPreview = false;
+    harness.swapEditorGroups(sourceGroup, contextGroup);
     harness.changeEditorLayout({ orientation: 0, groups: [{}, {}, {}] });
     harness.restoreSourceFocusOnArrange();
     harness.reportSourceEditorInColumn(3);
@@ -945,6 +971,7 @@ test('explicit Arrange separates moved application, source and context while pre
     await harness.reader.action('arrange');
 
     // Assert
+    assert.deepEqual([...harness.reader.inspect().view!.errors], []);
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
     assert.equal(harness.sourceColumn(), 2);
     assert.equal(harness.panelColumn('codebook.studyContext'), 3);
@@ -964,7 +991,7 @@ for (const moveImmediately of [false, true]) test(`Arrange retains its source re
   try {
     await harness.reader.open(); const draft = harness.addForeignDraft();
     const original = harness.groups.find(group => group.viewColumn === 2)!, destination = harness.groups.find(group => group.viewColumn === 3)!;
-    original.viewColumn = 3; destination.viewColumn = 2;
+    harness.swapEditorGroups(original, destination);
     harness.invalidateNextSourceRender();
 
     // Act
@@ -973,7 +1000,7 @@ for (const moveImmediately of [false, true]) test(`Arrange retains its source re
     await harness.reader.action('source');
 
     // Assert
-    assert.equal(harness.sourceColumn(), moveImmediately ? 1 : 2);
+    assert.equal(harness.sourceColumn(), moveImmediately ? 1 : 2, harness.reader.inspect().view!.errors.join('\n'));
     assert.equal(original.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
     // A completed source render releases the explicit arrangement so later manual moves remain authoritative.
     harness.moveSource(1); await harness.reader.action('source');
@@ -988,7 +1015,7 @@ test('Arrange reports interrupted source placement and a later explicit retry re
   try {
     await harness.reader.open();
     const original = harness.groups.find(group => group.viewColumn === 2)!, destination = harness.groups.find(group => group.viewColumn === 3)!;
-    original.viewColumn = 3; destination.viewColumn = 2;
+    harness.swapEditorGroups(original, destination);
     const held = harness.holdNextSource(); release = held.release;
 
     // Act
@@ -998,7 +1025,7 @@ test('Arrange reports interrupted source placement and a later explicit retry re
     // Assert
     assert.equal(harness.reader.inspect().view!.errors.some(error => error.includes('The selected source changed before it could be arranged')), true);
     await harness.reader.action('arrange'); await harness.reader.action('source');
-    assert.equal(harness.sourceColumn(), 2);
+    assert.equal(harness.sourceColumn(), 2, harness.reader.inspect().view!.errors.join('\n'));
     assert.equal(harness.reader.inspect().view!.errors.length, 0);
   } finally { release(); await harness.close(); }
 });
@@ -1009,7 +1036,7 @@ test('Source follows a learner move after Arrange while preserving the earlier d
   try {
     await harness.reader.open(); const draft = harness.addForeignDraft();
     const original = harness.groups.find(group => group.viewColumn === 2)!, destination = harness.groups.find(group => group.viewColumn === 3)!;
-    original.viewColumn = 3; destination.viewColumn = 2;
+    harness.swapEditorGroups(original, destination);
     await harness.reader.action('arrange');
     const retainedTabs = [...original.tabs];
 
@@ -4418,22 +4445,22 @@ test('a missing final application-focus receipt rejects once without retrying fo
     const source = harness.reader.inspect().sourceUri, bundle = harness.controller.bundle(), library = await harness.reader.learningStorage();
     const decisions = (await library.readProgress()).decisions, draft = harness.addForeignDraft();
     const app = harness.reader['app']; assert.ok(app);
-    const reveal = app.reveal.bind(app); let focusRequests = 0, placedLayout: unknown;
-    context.mock.method(app, 'reveal', (...args: Parameters<typeof reveal>) => {
+    const post = app.webview.postMessage.bind(app.webview); let focusRequests = 0, placedLayout: unknown;
+    context.mock.method(app.webview, 'postMessage', (message: Record<string, unknown>) => {
       // Keep the moved preview's receipt; a missing final receipt must not trigger another retry.
-      if (!args[1] && ++focusRequests >= 2) { placedLayout ??= harness.editorLayout(); return; }
-      reveal(...args);
+      if (message.type === 'codebook-focus' && message.phase === 'commit' && ++focusRequests >= 2) { placedLayout ??= harness.editorLayout(); return Promise.resolve(true); }
+      return post(message);
     });
     const state = harness.reader.presentationState();
     // Act
     await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), {
-      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Timed out waiting for restored presentation pane focus',
+      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Timed out waiting for owned presentation inner focus',
     });
     // Assert: an applied grid remains unconfirmed; failure cannot claim the new mode or rewrite learner evidence.
     assert.equal(focusRequests, 2, 'One necessary Keep Editor receipt and one failed final restore must not trigger a second full focus wait');
     assert.equal(harness.reader.presentationState().mode, 'study-workspace');
     assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().state, 'open');
-    assert.equal(harness.reader.presentationState().reason, 'Error: Timed out waiting for restored presentation pane focus');
+    assert.equal(harness.reader.presentationState().reason, 'Error: Timed out waiting for owned presentation inner focus');
     assert.equal(harness.presentationPreferences.size, 0); assert.deepEqual(harness.editorLayout(), placedLayout);
     assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 100);
     assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.reader.inspect().sourceUri, source);
@@ -4651,16 +4678,16 @@ test('Close cancels pending focus recovery after a native layout failure without
     await harness.reader.open(); await harness.reader.action('focus-app');
     const draft = harness.addForeignDraft(), state = harness.reader.presentationState();
     const app = harness.reader['app']; assert.ok(app);
-    const reveal = app.reveal.bind(app); let focusRequests = 0;
-    context.mock.method(app, 'reveal', (...args: Parameters<typeof reveal>) => {
-      if (!args[1]) {
+    const post = app.webview.postMessage.bind(app.webview); let focusRequests = 0;
+    context.mock.method(app.webview, 'postMessage', (message: Record<string, unknown>) => {
+      if (message.type === 'codebook-focus' && message.phase === 'commit') {
         focusRequests++;
         // Layout failure recovers after one Keep Editor; normal final-focus failure is no longer retried.
-        if (focusRequests >= 2) { recoveryEntered(); return; }
+        if (focusRequests >= 2) { recoveryEntered(); return Promise.resolve(true); }
         // Fail after focus was actually borrowed, rather than during the earlier read-only scope measurement.
         harness.failNextCommand('vscode.getEditorLayout');
       }
-      reveal(...args);
+      return post(message);
     });
     const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
     const rejected = assert.rejects(transfer, {
@@ -4867,6 +4894,54 @@ test('mode transfer during a late replay image preserves the last confirmed time
     await harness.reader.changePresentation({ presentationId: next.presentationId, expectedRevision: next.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
     assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.reader.inspect().sourceUri, source);
   } finally { release(); await harness.close(); }
+});
+
+test('mode selection restores actual explanation focus when native activation suppresses the inner focus message', async () => {
+  // Arrange: H's native tab acknowledgment can succeed while the inner document never receives focus.
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open();
+    harness.movePanel('codebook.studyContext', 3);
+    harness.suppressNativeInnerFocus();
+    const state = harness.reader.presentationState();
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    // Assert: a successful mode transfer must restore the actual reading surface, not just its native tab flag.
+    assert.equal(harness.innerFocusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.reader.presentationState().preference.status, 'saved');
+  } finally { await harness.close(); }
+});
+
+test('leaving the native work window during presentation preserves the prior preference without recovering focus', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    const held = harness.holdPresentationMessage(); release = held.release;
+    const state = harness.reader.presentationState();
+    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const rejected = assert.rejects(transfer, /lost focus/); await held.started;
+    const reveals = harness.panelReveals();
+    // Act
+    harness.changeWindowFocus(false); held.release(); await rejected;
+    // Assert
+    assert.deepEqual(harness.panelReveals(), reveals); assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace'); assert.equal(harness.windowFocusListeners(), 0);
+  } finally { release(); await harness.close(); }
+});
+
+test('a background work window refuses a mode change before native effects', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); harness.changeWindowFocus(false);
+    const state = harness.reader.presentationState(), reveals = harness.panelReveals();
+    // Act / Assert
+    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), /Focus this Codebook work window/);
+    assert.deepEqual(harness.panelReveals(), reveals); assert.equal(harness.presentationPreferences.size, 0);
+  } finally { await harness.close(); }
 });
 
 for (const dirty of [false, true]) test(`a ${dirty ? 'learner-edited' : 'clean'} prepared debugger preview ${dirty ? 'rejects switching without keeping tabs' : 'survives all three presentations'}`, async () => {

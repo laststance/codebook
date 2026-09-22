@@ -23,6 +23,8 @@ import { LEARNING_ITEMS, participantSchema, projectStudy, studyIdSchema, type Le
 import type { StudyRecord, StudyService } from './service';
 import { captureStudy } from './utils/captureStudy';
 import { capturedAppHtml } from './utils/capturedAppHtml';
+import { focusWebview } from './utils/focusWebview';
+import { webviewFocusReceiptSchema } from './webviewFocusSchemas';
 import { studyHtml, type StudyViewMessage } from './ui/studyHtml';
 import { readBoundedFile } from './utils/readBoundedFile';
 import { createRecordingObserver } from './utils/createRecordingObserver';
@@ -46,6 +48,7 @@ import { presentationModeSchema, presentationPreferenceSchema, type Presentation
 const actionSchema = z.enum(['run', 'click', 'continue', 'stop', 'connect', 'return-current', 'return-wiki', 'open-article', 'source', 'current-file', 'focus-app', 'focus-context', 'enlarge-context', 'outline', 'arrange', 'retry', 'reload-recording']);
 const revisionShape = { revision: z.number().int().nonnegative() };
 const messageSchema = z.discriminatedUnion('type', [
+  webviewFocusReceiptSchema,
   z.strictObject({ type: z.literal('ready') }),
   z.strictObject({ type: z.literal('rendered'), ...revisionShape, itemId: learningItemSchema, snapshotUri: z.string().optional(), presentationRevision: z.number().int().nonnegative().optional(), presentationControlRevision: z.number().int().nonnegative().optional(), presentationMode: presentationModeSchema.optional() }),
   z.strictObject({ type: z.literal('presentation-pose'), presentationId: z.uuid(), expectedRevision: z.number().int().nonnegative() }),
@@ -201,6 +204,7 @@ export class StudyWorkspace {
     if (input.presentationId !== this.presentationId) throw new StudyError('PRESENTATION_INSTANCE_GONE', 'The named reader lifetime has ended.');
     if (input.expectedRevision !== this.presentationControlRevision) throw new StudyError('STALE_PRESENTATION', 'The presentation control revision changed.');
     this.assertPresentationIdle(); this.assertLifetime(this.lifetime);
+    if (input.action !== 'save-preference' && !vscode.window.state.focused) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Focus this Codebook work window before changing its presentation.');
     const state = this.presentationState();
     if (input.action === 'select' && input.mode === state.mode && state.layoutConfirmed && state.preference.status !== 'unknown') return this.confirmPresentationNoop(input);
     if (input.action === 'save-preference' && (input.mode !== state.mode || !state.layoutConfirmed)) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Only the current confirmed layout can save its preference. Restore the layout first.');
@@ -294,10 +298,7 @@ export class StudyWorkspace {
       return async (signal, assertSourceFocus) => {
         assertOwnedFocus(assertSourceFocus);
         if (panel !== this.app && panel !== this.contextPanel) throw new Error('The focused Codebook panel was closed.');
-        const assertRetained = this.retainPresentationPlacement(false);
-        panel.reveal(undefined, false);
-        // Native reveal is void; wait for its focus receipt before treating later focus changes as learner actions.
-        await waitUntil(() => { assertRetained(); return panel.active && panel.visible && vscode.window.tabGroups.activeTabGroup.viewColumn === panel.viewColumn; }, 'restored presentation pane focus', PRESENTATION_READY_TIMEOUT_MS, signal);
+        await this.focusPresentationPanel(panel, signal);
       };
     }
     const editor = vscode.window.activeTextEditor;
@@ -327,8 +328,18 @@ export class StudyWorkspace {
     let evidenceConfirmed = false, restoreFocusAttempted = false;
     let assertRetainedPlacement = this.opened ? this.retainPresentationPlacement() : undefined;
     this.presentationMovedFocus = false;
+    const windowFocus = input.action === 'save-preference' ? undefined : vscode.window.onDidChangeWindowState(state => {
+      if (state.focused || this.presentationTransition !== transition || this.lifetime !== lifetime) return;
+      // Leaving the work window revokes this operation, including catch-path focus recovery.
+      this.presentationMovedFocus = false;
+      transition.cancellation.abort(new StudyError('PRESENTATION_UNAVAILABLE', 'The Codebook work window lost focus; its presentation was not confirmed.'));
+    });
     const assertCurrent = () => {
       signal.throwIfAborted(); this.assertLifetime(lifetime);
+      if (input.action !== 'save-preference' && !vscode.window.state.focused) {
+        this.presentationMovedFocus = false;
+        throw new StudyError('PRESENTATION_UNAVAILABLE', 'The Codebook work window lost focus; its presentation was not confirmed.');
+      }
       if (transition.id !== this.presentationId) throw new StudyError('PRESENTATION_INSTANCE_GONE', 'The reader was closed during placement.');
       // Admission belongs to the original request; a later ready state or pause cannot become its new baseline.
       if (!evidenceConfirmed && transition.runtimeIdentity !== undefined && transition.runtimeIdentity !== this.assertPresentationAdmission()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The live pause changed during presentation placement.');
@@ -396,7 +407,29 @@ export class StudyWorkspace {
       if (transition.id === this.presentationId) { if (!this.presentationConfirmed) this.presentationMode = previousMode; this.presentationReason = String(error); this.publish(); }
       if (error instanceof StudyError) throw error;
       throw new StudyError('PRESENTATION_UNAVAILABLE', 'The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.', String(error));
-    } finally { releaseViewport?.(); this.placingPresentation = false; this.presentationMovedFocus = false; }
+    } finally { windowFocus?.dispose(); releaseViewport?.(); this.placingPresentation = false; this.presentationMovedFocus = false; }
+  }
+
+  /** Requires both document and native owned-tab focus for {@link keepPresentationPanel} and final reading restoration. @example await this.focusPresentationPanel(panel, signal) */
+  private async focusPresentationPanel(panel: vscode.WebviewPanel, signal?: AbortSignal): Promise<void> {
+    const lifetime = this.lifetime, transition = this.presentationTransition;
+    const assertPlacement = this.retainPresentationPlacement(false), assertInitialFocus = this.retainPresentationPlacement();
+    const kind = panel === this.app ? 'codebook.scopedBrowser' : panel === this.contextPanel ? 'codebook.studyContext' : undefined;
+    if (!kind) throw new Error('Presentation panel ownership was lost.');
+    const matches = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType);
+    const isActive = () => {
+      const group = vscode.window.tabGroups.activeTabGroup;
+      return panel.active && group.viewColumn === panel.viewColumn && Boolean(group.activeTab && matches(group.activeTab))
+        && vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(matches).length === 1;
+    };
+    const assertOwnedFocus = () => { if (!isActive()) assertInitialFocus(); };
+    await focusWebview(panel, { signal, timeoutMs: PRESENTATION_READY_TIMEOUT_MS, isActive, assertBeforeCommit: assertOwnedFocus, assertCurrent: () => {
+      this.assertLifetime(lifetime); assertPlacement();
+      if (transition !== this.presentationTransition || panel !== this.app && panel !== this.contextPanel) throw new Error('Presentation focus ownership changed.');
+      if (!vscode.window.state.focused) throw new Error('The Codebook work window lost focus.');
+      // The target may replace the original focus, but a third learner-owned target must survive without recovery.
+      assertOwnedFocus();
+    } });
   }
 
   /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @example const assertRetained = this.retainPresentationPlacement(); */
@@ -432,8 +465,8 @@ export class StudyWorkspace {
     // An exact non-preview tab already satisfies Keep Editor; redundant focus can echo after the next reveal.
     if (matchingTabs.length === 1 && retainedTab && !retainedTab.isPreview && destination?.tabs.includes(retainedTab)) return;
     const assertRetained = this.retainPresentationPlacement(false);
-    this.presentationMovedFocus = true; panel.reveal(undefined, false);
-    await waitUntil(owned, 'owned presentation tab active', PRESENTATION_READY_TIMEOUT_MS, signal).catch(error => { this.presentationMovedFocus = false; throw error; });
+    this.presentationMovedFocus = true;
+    await this.focusPresentationPanel(panel, signal).catch(error => { this.presentationMovedFocus = false; throw error; });
     assertRetained();
     signal.throwIfAborted(); if (!owned()) throw new Error('Active tab changed before Keep Editor; no foreign tab was kept.');
     const assertKept = this.retainPresentationPlacement();
@@ -1931,6 +1964,8 @@ export class StudyWorkspace {
   /** Accepts only bounded named UI messages, rejecting stale controls before dispatch. @example await this.receive(message) */
   private async receive(value: unknown, origin: 'context' | 'moments'): Promise<void> {
     const parsed = messageSchema.safeParse(value); if (!parsed.success) throw new Error('Unsupported reader message.'); const message = parsed.data;
+    // Only an operation-local listener can accept these validated receipts; they never acknowledge rendering or a learner action.
+    if (message.type === 'codebook-focus-receipt') return;
     await this.initialize();
     if (message.type === 'ready') { this.lastPublished = undefined; this.publish(); return; }
     if (message.type === 'presentation-pose') {

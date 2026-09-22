@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { installWebviewFocus } from 'codebook-cycle-0001/dist/utils/installWebviewFocus';
 import type { StudyCatalogEntry } from '../studySchemas';
 import type { LiveStudy, projectStudy } from '../studyModel';
 import type { RetainedStudy } from '../retainedStudySchemas';
@@ -38,12 +39,13 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite" hidden></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
 <section><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div><label for="studies">Saved studies</label><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select></section>
-<script nonce="${nonce}">(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)})</script></body></html>`;
+<script nonce="${nonce}">(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'})</script></body></html>`;
 }
 
 /** Keeps control DOM stable on state updates so native webview messages do not discard keyboard focus. @example studyClient() */
-function studyClient(options: typeof STUDY_UI_OPTIONS): void {
+function studyClient(options: typeof STUDY_UI_OPTIONS, installFocus?: typeof installWebviewFocus): void {
   const api = acquireVsCodeApi(), visited = new Set(api.getState()?.visited ?? []);
+  installFocus?.(api);
   let current: StudyViewMessage | undefined;
   let scrubbing = false;
   let readingPose: { presentationId: string; revision: number; anchorId?: string; fraction: number; leadingOffsetPx: number; scrollY: number; focused?: HTMLElement } | undefined;
