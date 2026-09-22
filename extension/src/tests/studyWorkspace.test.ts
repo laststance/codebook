@@ -436,6 +436,14 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       if (change === 'reorder') groups[0]!.tabs.reverse();
       changedGroups({ opened: change === 'replace' ? [...groups] : [], closed: change === 'replace' ? previous : [], changed: change === 'unannounced' ? [] : [...groups] });
     },
+    /** Resynchronizes only the focused source wrapper during placement tests, preserving native text focus and tab identity. @example harness.replaceFocusedSourceGroup('wrapper') */
+    replaceFocusedSourceGroup(change: 'wrapper' | 'opened' | 'unannounced') {
+      const previous = activeTabGroup, replacement = { ...previous, tabs: [...previous.tabs] };
+      groups[groups.indexOf(previous)] = replacement; activeTabGroup = replacement;
+      // Text-editor focus survives a wrapper refresh; opened and unannounced groups still require new ownership.
+      for (const editor of visibleSourceEditors) if (editor.group === previous) editor.group = replacement;
+      changedGroups({ opened: change === 'opened' ? [replacement] : [], closed: change === 'opened' ? [previous] : [], changed: change === 'unannounced' ? [] : [replacement] });
+    },
     seedPanelTabs(kind: 'known' | 'unknown' | 'duplicate' | 'ambiguous' | 'empty') {
       for (const group of groups) {
         const type = kind === 'ambiguous' || group.viewColumn === 1 ? 'codebook.scopedBrowser' : group.viewColumn === 2 ? 'codebook.repositoryWiki' : 'codebook.studyContext';
@@ -4249,6 +4257,36 @@ test('a learner source selection during delayed placement is preserved without l
     assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, layoutChanges);
     assert.equal(harness.reader.presentationState().mode, 'living-book'); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
     assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
+    assert.equal(harness.runtimes.length, 0);
+  } finally { context.mock.restoreAll(); await harness.close(); }
+});
+
+for (const replacement of ['wrapper', 'opened', 'unannounced'] as const) test(`source-group ${replacement} replacement during pane movement ${replacement === 'wrapper' ? 'retains' : 'invalidates'} presentation ownership`, async context => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); await harness.reader.understand(true);
+    const initial = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await harness.reader.action('focus-context');
+    const source = harness.reader.inspect().sourceUri, decisions = await (await harness.reader.learningStorage()).readProgress();
+    const target = harness.reader['app']; assert.ok(target);
+    const reveal = target.reveal.bind(target); let replaced = false;
+    context.mock.method(target, 'reveal', (...args: Parameters<typeof reveal>) => {
+      reveal(...args);
+      // Resync after the accepted move; source content, column and selection remain unchanged.
+      if (args[0] !== undefined && !replaced) { replaced = true; harness.replaceFocusedSourceGroup(replacement); }
+    });
+    const state = harness.reader.presentationState();
+    // Act
+    const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
+    if (replacement === 'wrapper') await changing;
+    else await assert.rejects(changing, { code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native focus changed while presentation panes moved; the learner focus was preserved.' });
+    // Assert
+    assert.equal(replaced, true); assert.equal(harness.reader.inspect().sourceUri, source);
+    assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), decisions);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, replacement === 'wrapper');
+    assert.equal(harness.reader.presentationState().mode, replacement === 'wrapper' ? 'guided-walkthrough' : 'living-book');
     assert.equal(harness.runtimes.length, 0);
   } finally { context.mock.restoreAll(); await harness.close(); }
 });

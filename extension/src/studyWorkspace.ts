@@ -481,10 +481,12 @@ export class StudyWorkspace {
       // Occupy the source destination to prevent empty-group renumbering and keep focus off moving webviews.
       const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: false, preview: false }); assertPlacement();
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
+      const sourceGroupIdentity = this.sourceGroup && this.editorGroupIdentities.get(this.sourceGroup);
       const sourceSelectionSnapshot = JSON.stringify(vscode.window.activeTextEditor?.selections);
       const assertSourceFocus = () => {
         const activeEditor = vscode.window.activeTextEditor;
-        const sameFocus = activeEditor?.document.uri.toString() === sourceUri.toString() && activeEditor.viewColumn === descriptor.sourceColumn && vscode.window.tabGroups.activeTabGroup === this.sourceGroup;
+        // Only a verified logical survivor may replace the focused group's native wrapper.
+        const sameFocus = activeEditor?.document.uri.toString() === sourceUri.toString() && activeEditor.viewColumn === descriptor.sourceColumn && sourceGroupIdentity !== undefined && this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup) === sourceGroupIdentity;
         if (sameFocus && JSON.stringify(activeEditor?.selections) === sourceSelectionSnapshot) return;
         // Later learner focus or selection ends ownership; do not move again or restore stale reading state.
         this.presentationMovedFocus = false;
