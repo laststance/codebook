@@ -2,7 +2,7 @@
 
 ## [0.2.2.0] - 2026-09-23
 
-Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. Ordinary installed 0.2.2 candidate v29 demonstrates the functional schedule and neutral bootstrap separately in both editors. A subsequent cold Wiki focus repair still requires its own same-candidate installed verification. The explicit `/codebook` skill, full real-repository usefulness, owner acceptance and final independent editor-AI trials remain unfinished.
+Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. Ordinary installed 0.2.2 candidate v29 demonstrates the functional schedule and neutral bootstrap separately in both editors. Its subsequent v30 cold Wiki trial fails on native activation notifications; the source correction still requires a new same-candidate installed verification. The explicit `/codebook` skill, full real-repository usefulness, owner acceptance and final independent editor-AI trials remain unfinished.
 
 ### Fixed
 
@@ -10,6 +10,7 @@ Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki en
 - Switch among all three presentations through pinned replacement panes, retaining the same viewport session, source, values, reading position, disclosures, visited links and recording position. Ordinary source-file opens preserve the existing owned panes.
 - Confirm native and inner-document focus before declaring a layout ready. Preserve newer learner navigation and selection, including tab/selection departures followed by return during cold Wiki scope acquisition. Cancel stale or failed handoffs, drain adopted renderer work, and bound pose delivery and recovery instead of waiting indefinitely.
 - Retain native group identity when Cursor refreshes wrappers during an exact, currently owned predecessor/successor overlap. Continue rejecting ambiguous, moved, additional and unowned tabs.
+- Accept the measured missing-editor and initial-caret stages when opening an exact copied Wiki citation, while preserving newer input and observed group/selection detours.
 - Show a visible failure when cold Wiki entry is refused. Keep replacement readers noninteractive with neutral loading guidance until their first complete snapshot, avoiding an unrelated checkout title and premature controls.
 
 ### Changed

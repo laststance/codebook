@@ -16,10 +16,15 @@ import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText';
 import type { LearningLibrary } from './learningLibrary';
 import type { z } from 'zod';
 
-/** Hands preparation focus from {@link RepositoryReader.open} to queued native layout work without a synthetic editor. */
 /** Separates the requested text and tab receipts so native notification order cannot admit another learner target. */
-export interface RepositoryFocusTarget { matchesEditor(): boolean; matchesGroup(): boolean }
+export interface RepositoryFocusTarget {
+  matchesEditor(): boolean;
+  matchesGroup(): boolean;
+  /** Lets citation display acquire its initial caret before the requested selection without changing layout targets. @example target.matchesEditorIdentity?.() */
+  matchesEditorIdentity?: () => boolean;
+}
 
+/** Hands preparation focus from {@link RepositoryReader.open} to queued native layout work without a synthetic editor. */
 export interface RepositoryLayoutFocus {
   begin(): void;
   acquireSourceFocus?: () => Promise<() => void>;
@@ -257,12 +262,16 @@ export class RepositoryReader {
     const uri = vscode.Uri.from({ scheme: REPOSITORY_SOURCE_SCHEME, authority: this.store!.library.workspaceKey,
       path: `/${selection.bookId}/${selection.revision}/${selection.nodeId}/${selection.anchorIndex}/${basename(anchor.path)}`, query: `hash=${anchor.hash}` });
     const document = await vscode.workspace.openTextDocument(uri); this.assertCurrent(generation); assertFocus?.();
-    const requestedSelection = document.validateRange(this.range(anchor.startLine, anchor.endLine));
-    // Observe the requested citation before display; a late response cannot adopt later learner input as its baseline.
-    const focus = preserveFocus ? undefined : this.retainNativeFocus({ matchesEditor: () => {
+    const documentVersion = document.version, requestedSelection = document.validateRange(this.range(anchor.startLine, anchor.endLine));
+    const matchesEditorIdentity = () => {
       const editor = vscode.window.activeTextEditor;
-      return editor?.document.uri.toString() === uri.toString() && editor.document.version === document.version && editor.viewColumn === vscode.ViewColumn.One
-        && editor.selections.length === 1 && Boolean(editor.selections[0]?.anchor.isEqual(requestedSelection.start) && editor.selections[0].active.isEqual(requestedSelection.end));
+      return editor?.document.uri.toString() === uri.toString() && editor.document.version === documentVersion && editor.viewColumn === vscode.ViewColumn.One;
+    };
+    // Observe the requested citation before display; a late response cannot adopt later learner input as its baseline.
+    const focus = preserveFocus ? undefined : this.retainNativeFocus({ matchesEditorIdentity, matchesEditor: () => {
+      const editor = vscode.window.activeTextEditor;
+      return matchesEditorIdentity() && editor?.selections.length === 1
+        && Boolean(editor.selections[0]?.anchor.isEqual(requestedSelection.start) && editor.selections[0].active.isEqual(requestedSelection.end));
     }, matchesGroup: () => {
       const group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
       return group.viewColumn === vscode.ViewColumn.One && input instanceof vscode.TabInputText && input.uri.toString() === uri.toString();
@@ -282,12 +291,27 @@ export class RepositoryReader {
     }; };
     const pending = snapshot();
     let initial = acquire ? undefined : pending, changed = false, editorAcquired = false, groupAcquired = false;
-    const observe = () => {
-      const current = snapshot();
+    let intermediateEditor = acquire?.matchesEditorIdentity?.() ? pending.editor : undefined, missingEditorObserved = false;
+    const observe = (event?: 'active-editor' | vscode.TextEditorSelectionChangeEvent) => {
+      const current = snapshot(), activeEditor = vscode.window.activeTextEditor, selectionEvent = typeof event === 'object' ? event : undefined;
+      // Explicit learner selection never proves ownership, even when it happens to match the requested range.
+      if (selectionEvent && activeEditor && selectionEvent.textEditor.document.uri.toString() === activeEditor.document.uri.toString()
+        && selectionEvent.textEditor.viewColumn === activeEditor.viewColumn
+        && (selectionEvent.kind === vscode.TextEditorSelectionChangeKind.Keyboard || selectionEvent.kind === vscode.TextEditorSelectionChangeKind.Mouse)) changed = true;
       if (initial === undefined && acquire) {
         const editorMatches = acquire.matchesEditor(), groupMatches = acquire.matchesGroup();
-        // Independent host notifications may advance either captured component first, but never visit a third state or retreat.
-        changed ||= !editorMatches && (editorAcquired || current.editor !== pending.editor)
+        let intermediateMatches = false;
+        // Native citation activation may briefly remove the editor, then expose its first caret before applying the range.
+        if (!editorMatches && !editorAcquired && acquire.matchesEditorIdentity) {
+          if (!activeEditor && groupMatches && intermediateEditor === undefined) { missingEditorObserved = true; intermediateMatches = true; }
+          else if (acquire.matchesEditorIdentity()) {
+            // Only the activation event can establish the initial caret; later selection events cannot replace it.
+            if (intermediateEditor === undefined && event === 'active-editor') intermediateEditor = current.editor;
+            intermediateMatches = intermediateEditor === current.editor;
+          }
+        }
+        // Each component advances once; observed third states, selection detours and retreats permanently retire navigation.
+        changed ||= !editorMatches && !intermediateMatches && (editorAcquired || missingEditorObserved || intermediateEditor !== undefined || current.editor !== pending.editor)
           || !groupMatches && (groupAcquired || current.group !== pending.group);
         editorAcquired ||= editorMatches; groupAcquired ||= groupMatches;
         if (editorMatches && groupMatches) initial = current;
@@ -295,7 +319,7 @@ export class RepositoryReader {
       }
       changed ||= current.editor !== initial?.editor || current.group !== initial?.group;
     };
-    const listeners = [vscode.window.onDidChangeActiveTextEditor(observe), vscode.window.onDidChangeTextEditorSelection(observe), vscode.window.tabGroups.onDidChangeTabs(observe), vscode.window.tabGroups.onDidChangeTabGroups(observe)];
+    const listeners = [vscode.window.onDidChangeActiveTextEditor(() => observe('active-editor')), vscode.window.onDidChangeTextEditorSelection(observe), vscode.window.tabGroups.onDidChangeTabs(() => observe()), vscode.window.tabGroups.onDidChangeTabGroups(() => observe())];
     observe();
     return { assertRetained() { observe(); if (initial === undefined || changed) throw new Error('Native focus changed during repository navigation; the newer learner focus was preserved.'); }, dispose() { for (const listener of listeners) listener.dispose(); } };
   }

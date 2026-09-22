@@ -36,16 +36,20 @@ async function readerHarness(context: TestContext) {
     readonly end: Position;
     constructor(startLine: number, startCharacter: number, endLine: number, endCharacter: number) { this.start = new Position(startLine, startCharacter); this.end = new Position(endLine, endCharacter); }
   }
-  type NativeDocument = { uri: Uri; getText(): string };
+  type NativeDocument = { uri: Uri; version: number; getText(): string };
   type NativeEditor = { document: NativeDocument; viewColumn: number; selections: { anchor: Position; active: Position }[] };
+  type NativeSelectionEvent = { kind: number; textEditor: NativeEditor };
   let activeEditor: NativeEditor | undefined;
-  const focusListeners = new Set<() => void>(), selectionListeners = new Set<() => void>(), tabListeners = new Set<() => void>();
+  const focusListeners = new Set<() => void>(), selectionListeners = new Set<(event?: NativeSelectionEvent) => void>(), tabListeners = new Set<() => void>(), groupListeners = new Set<() => void>();
   const sourceGroup: { viewColumn: number; tabs: { input: TabInputText }[]; activeTab?: { input: TabInputText } } = { viewColumn: 1, tabs: [] };
+  const otherGroup: typeof sourceGroup = { viewColumn: 2, tabs: [] }; let activeGroup = sourceGroup;
   let requiresSourceFocus = false, coldLayout = false, arrangements = 0;
   let sourceDocumentGate: { entered(): void; wait: Promise<void> } | undefined;
   let sourceDisplayGate: { entered(): void; wait: Promise<void> } | undefined;
   let arrangementGate: { entered(): void; wait: Promise<void> } | undefined;
   let layoutResponseGate: { entered(): void; wait: Promise<void> } | undefined;
+  let nativeCitationActivation = false;
+  let citationActivationGate: { stage: 'target tab' | 'text gap' | 'initial caret'; entered(): void; wait: Promise<void> } | undefined;
   const panelColumns: number[] = [], reveals: number[] = [];
   let provider = async (_uri: Uri) => '', workspace = source.directory, connections = 0;
   let receive = (_message: unknown) => {};
@@ -54,7 +58,7 @@ async function readerHarness(context: TestContext) {
   const watchers: { pattern: RelativePattern; listeners: ((uri: Uri) => void)[] }[] = [];
   const boundary = await loadModule<typeof import('../repositoryReader')>(resolve(__dirname, '../repositoryReader.js'), {
     './environment': { requireWorkspace: () => workspace },
-    vscode: { EventEmitter, Uri, TabInputText, ViewColumn: { One: 1, Two: 2 }, RelativePattern, Range,
+    vscode: { EventEmitter, Uri, TabInputText, ViewColumn: { One: 1, Two: 2 }, RelativePattern, Range, TextEditorSelectionChangeKind: { Keyboard: 1, Mouse: 2, Command: 3 },
       workspace: { textDocuments, registerTextDocumentContentProvider: (_scheme: string, value: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { provider = value.provideTextDocumentContent; return disposable(); },
         onDidChangeTextDocument: disposable, createFileSystemWatcher: (pattern: RelativePattern) => {
           const watcher = { pattern, listeners: Array<(uri: Uri) => void>() }; watchers.push(watcher);
@@ -65,20 +69,29 @@ async function readerHarness(context: TestContext) {
           const text = uri.scheme === 'file' ? await readFile(uri.fsPath, 'utf8') : await provider(uri);
           const held = sourceDocumentGate; sourceDocumentGate = undefined; if (held) { held.entered(); await held.wait; }
           const normalized = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'), lines = normalized.split('\n');
-          return { uri, getText: () => normalized, validateRange: (range: Range) => {
+          return { uri, version: 1, getText: () => normalized, validateRange: (range: Range) => {
             const startLine = Math.min(range.start.line, lines.length - 1), endLine = Math.min(range.end.line, lines.length - 1);
             return new Range(startLine, Math.min(range.start.character, lines[startLine]!.length), endLine, Math.min(range.end.character, lines[endLine]!.length));
           } };
         } },
-      window: { registerTreeDataProvider: disposable, get activeTextEditor() { return activeEditor; }, tabGroups: { all: [sourceGroup], activeTabGroup: sourceGroup,
-        onDidChangeTabs(callback: () => void) { tabListeners.add(callback); return { dispose() { tabListeners.delete(callback); } }; }, onDidChangeTabGroups: disposable },
+      window: { registerTreeDataProvider: disposable, get activeTextEditor() { return activeEditor; }, tabGroups: { all: [sourceGroup, otherGroup], get activeTabGroup() { return activeGroup; },
+        onDidChangeTabs(callback: () => void) { tabListeners.add(callback); return { dispose() { tabListeners.delete(callback); } }; },
+        onDidChangeTabGroups(callback: () => void) { groupListeners.add(callback); return { dispose() { groupListeners.delete(callback); } }; } },
         onDidChangeActiveTextEditor(callback: () => void) { focusListeners.add(callback); return { dispose() { focusListeners.delete(callback); } }; },
-        onDidChangeTextEditorSelection(callback: () => void) { selectionListeners.add(callback); return { dispose() { selectionListeners.delete(callback); } }; },
+        onDidChangeTextEditorSelection(callback: (event?: NativeSelectionEvent) => void) { selectionListeners.add(callback); return { dispose() { selectionListeners.delete(callback); } }; },
         showTextDocument: async (document: NativeDocument, options?: { viewColumn?: number; preserveFocus?: boolean; selection?: Range }) => {
           shown.push({ uri: document.uri, text: document.getText() });
           const editor = { document, viewColumn: options?.viewColumn ?? 1, selections: [{ anchor: options?.selection?.start ?? new Position(0, 0), active: options?.selection?.end ?? new Position(0, 0) }] }, tab = { input: new TabInputText(document.uri) };
           sourceGroup.tabs.push(tab); sourceGroup.activeTab = tab;
-          if (!options?.preserveFocus) { activeEditor = editor; for (const listener of focusListeners) listener(); }
+          if (!options?.preserveFocus && nativeCitationActivation) {
+            const pauseAt = async (stage: NonNullable<typeof citationActivationGate>['stage']) => { const held = citationActivationGate; if (held?.stage === stage) { citationActivationGate = undefined; held.entered(); await held.wait; } };
+            // Replay the ordinary Cursor trace: target tab, missing text editor, initial caret, requested command selection.
+            for (const listener of tabListeners) listener(); await pauseAt('target tab');
+            activeEditor = undefined; for (const listener of focusListeners) listener(); await pauseAt('text gap');
+            activeEditor = { ...editor, selections: [{ anchor: new Position(0, 0), active: new Position(0, 0) }] };
+            for (const listener of focusListeners) listener(); await pauseAt('initial caret');
+            activeEditor = editor; for (const listener of selectionListeners) listener({ kind: 3, textEditor: editor });
+          } else if (!options?.preserveFocus) { activeEditor = editor; for (const listener of focusListeners) listener(); }
           const held = sourceDisplayGate; sourceDisplayGate = undefined; if (held) { held.entered(); await held.wait; }
           return editor;
         },
@@ -109,15 +122,19 @@ async function readerHarness(context: TestContext) {
   return { ...source, library, reader, store, selection, document, shown, panels, linked, textDocuments, Uri, createReader, panelColumns, reveals, receive: (message: unknown) => receive(message),
     requireSourceFocus() { requiresSourceFocus = true; }, arrangements: () => arrangements,
     useColdLayout() { coldLayout = true; },
+    useNativeCitationActivation() { nativeCitationActivation = true; },
+    holdCitationActivation(stage: NonNullable<typeof citationActivationGate>['stage']) { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); citationActivationGate = { stage, entered, wait }; return { started, release }; },
     holdLayoutResponse() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); layoutResponseGate = { entered, wait }; return { started, release }; },
     holdArrangement() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); arrangementGate = { entered, wait }; return { started, release }; },
     holdSourceDocument() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); sourceDocumentGate = { entered, wait }; return { started, release }; },
     holdSourceDisplay() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); sourceDisplayGate = { entered, wait }; return { started, release }; },
-    focusedSource: () => activeEditor, focusListenerCount: () => focusListeners.size + selectionListeners.size + tabListeners.size,
-    selectSource(line: number, character: number) { assert.ok(activeEditor); activeEditor.selections = [{ anchor: new Position(line, character), active: new Position(line, character) }]; for (const listener of selectionListeners) listener(); },
+    focusedSource: () => activeEditor, focusListenerCount: () => focusListeners.size + selectionListeners.size + tabListeners.size + groupListeners.size,
+    selectSource(line: number, character: number, kind = 3) { assert.ok(activeEditor); activeEditor.selections = [{ anchor: new Position(line, character), active: new Position(line, character) }]; for (const listener of selectionListeners) listener({ kind, textEditor: activeEditor }); },
+    focusSourceEditor(editor: NativeEditor) { activeEditor = editor; for (const listener of focusListeners) listener(); },
     roundtripCitationTab() { const citation = sourceGroup.activeTab, editor = activeEditor; sourceGroup.activeTab = { input: new TabInputText(Uri.file(join(root, 'unrelated-draft.txt'))) }; for (const listener of tabListeners) listener(); activeEditor = editor; sourceGroup.activeTab = citation; for (const listener of tabListeners) listener(); },
+    switchTabGroup(toSource = false) { activeGroup = toSource ? sourceGroup : otherGroup; for (const listener of groupListeners) listener(); },
     focusChat() { activeEditor = undefined; for (const listener of focusListeners) listener(); },
-    focusUnrelatedDraft(filename = 'unrelated-draft.txt') { const document = { uri: Uri.file(join(root, filename)), getText: () => 'Keep my draft.' }, tab = { input: new TabInputText(document.uri) }; activeEditor = { document, viewColumn: 1, selections: [{ anchor: new Position(0, 0), active: new Position(0, 0) }] }; sourceGroup.tabs.push(tab); sourceGroup.activeTab = tab; for (const listener of focusListeners) listener(); },
+    focusUnrelatedDraft(filename = 'unrelated-draft.txt') { const document = { uri: Uri.file(join(root, filename)), version: 1, getText: () => 'Keep my draft.' }, tab = { input: new TabInputText(document.uri) }; activeEditor = { document, viewColumn: 1, selections: [{ anchor: new Position(0, 0), active: new Position(0, 0) }] }; sourceGroup.tabs.push(tab); sourceGroup.activeTab = tab; for (const listener of focusListeners) listener(); },
     connections: () => connections, changeWorkspace: () => { workspace = '/another/workspace'; }, provider: (uri: Uri) => provider(uri),
     fileEvent: (path: string, kind: number) => { for (const watcher of watchers) if (matchesGlob(relative(watcher.pattern.base, path), watcher.pattern.pattern)) watcher.listeners[kind]?.(Uri.file(path)); } };
 }
@@ -132,6 +149,61 @@ test('repository articles open retained source without connecting an agent or ma
   assert.equal(harness.shown[0]?.text, 'export const price = 24;\n'); assert.equal(harness.connections(), 0);
   assert.equal(state.view.sources[0]?.status, 'current'); assert.equal((await harness.library.readProgress()).decisions.length, 0);
   assert.equal('sources' in state.view.book!.revision, false);
+});
+
+for (const entry of ['cold ordinary text', 'ambiguous primary'] as const) test(`${entry} Wiki opens after native citation activation reports a missing editor and initial caret`, async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.focusUnrelatedDraft(); harness.useNativeCitationActivation();
+  if (entry === 'cold ordinary text') harness.useColdLayout();
+  if (entry === 'ambiguous primary') harness.requireSourceFocus();
+  const listeners = harness.focusListenerCount();
+  // Act
+  await harness.reader.open(harness.selection);
+  // Assert
+  assert.deepEqual(harness.reveals, [2]); assert.equal(harness.shown.length, 1); assert.equal(harness.reader.inspect().view.loading, false);
+  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'cart'); assert.equal(harness.reader.inspect().view.sources[0]?.status, 'current');
+  assert.equal(harness.focusListenerCount(), listeners); assert.equal((await harness.library.readProgress()).decisions.length, 0);
+});
+
+for (const interaction of ['selection', 'selection roundtrip', 'tab roundtrip', 'group', 'group roundtrip', 'editor retreat', 'text gap', 'Keyboard', 'Mouse', 'document version roundtrip'] as const) test(`cold Wiki preserves ${interaction} during native citation initial caret before the requested range arrives`, async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.useColdLayout(); harness.focusUnrelatedDraft(); harness.useNativeCitationActivation();
+  const original = harness.focusedSource()!, listeners = harness.focusListenerCount(), held = harness.holdCitationActivation('initial caret');
+  const opening = harness.reader.open(harness.selection), rejected = assert.rejects(opening, /focus changed/);
+  try {
+    await held.started;
+    // Act
+    if (interaction === 'selection' || interaction === 'selection roundtrip') harness.selectSource(0, 6);
+    if (interaction === 'selection roundtrip') harness.selectSource(0, 0);
+    if (interaction === 'tab roundtrip') harness.roundtripCitationTab();
+    if (interaction === 'group' || interaction === 'group roundtrip') harness.switchTabGroup();
+    if (interaction === 'group roundtrip') harness.switchTabGroup(true);
+    if (interaction === 'editor retreat') harness.focusSourceEditor(original);
+    if (interaction === 'text gap') harness.focusChat();
+    if (interaction === 'Keyboard' || interaction === 'Mouse') harness.selectSource(0, 0, interaction === 'Keyboard' ? 1 : 2);
+    if (interaction === 'document version roundtrip') { const editor = harness.focusedSource()!; editor.document.version = 2; harness.focusSourceEditor(editor); editor.document.version = 1; harness.focusSourceEditor(editor); }
+    held.release(); await rejected;
+    // Assert: the accepted host display can drain, but no later Wiki activation or learning-state write follows.
+    assert.deepEqual(harness.reveals, []); assert.equal(harness.panels.size, 0); assert.equal(harness.shown.length, 1);
+    assert.equal((await harness.library.readProgress()).repositorySelection, undefined); assert.equal(harness.focusListenerCount(), listeners);
+  } finally { held.release(); await opening.catch(() => undefined); }
+});
+
+for (const stage of ['target tab', 'text gap'] as const) test(`cold Wiki rejects newer editor input during citation ${stage} before the target editor appears`, async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.useColdLayout(); harness.focusUnrelatedDraft(); harness.useNativeCitationActivation();
+  const original = harness.focusedSource()!, held = harness.holdCitationActivation(stage), listeners = harness.focusListenerCount();
+  const opening = harness.reader.open(harness.selection), rejected = assert.rejects(opening, /focus changed/);
+  try {
+    await held.started;
+    // Act
+    if (stage === 'target tab') harness.selectSource(0, 6);
+    else harness.focusSourceEditor(original);
+    held.release(); await rejected;
+    // Assert
+    assert.deepEqual(harness.reveals, []); assert.equal(harness.panels.size, 0); assert.equal(harness.focusListenerCount(), listeners);
+    assert.equal((await harness.library.readProgress()).repositorySelection, undefined);
+  } finally { held.release(); await opening.catch(() => undefined); }
 });
 
 for (const interaction of ['different file', 'selection', 'tab roundtrip', 'none'] as const) test(`cold Wiki reservation ${interaction === 'none' ? 'opens the actual citation without losing navigation ownership' : `preserves newer ${interaction} instead of revealing stale Wiki`}`, async context => {

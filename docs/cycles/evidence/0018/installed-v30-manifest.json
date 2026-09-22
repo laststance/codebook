@@ -1,0 +1,992 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-22T23:39:24.324111+00:00",
+  "scope": "Unchanged v30 cold Wiki failure, successful negative control, same-source CI and separate logging-only native activation diagnostic",
+  "sourceRevision": "3d1fbab2b9796be17b1af27628713ed6f39eb607",
+  "sourceHash": "2d9e909b9a0a5b26cf85a7a356e06c10a1751a748c3a9d9f9ecd5fd1fe4864d0",
+  "vsixSha256": "b2607fd4ed3cce20fe97140667952e2f374f4858573c49ff636a88071c64fb4a",
+  "nativeResult": "Cursor cold Wiki FAIL; remaining Cursor and all VS Code positive phases unexecuted. Diagnostic is modified-runtime attribution only. All five overview sheets inspected.",
+  "availability": "Private ignored local artifacts; missing files require revalidation. Raw recordings, traces and profile data are not published.",
+  "files": [
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/after-cursor-unchanged-verification.json",
+      "bytes": 18333,
+      "sha256": "0616339759390da6c2f3300c89c7cc8357650301b97c52cafaf48c2a9372660f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/after-negative-unchanged-verification.json",
+      "bytes": 18333,
+      "sha256": "3b8aa8f8e3d536a42ca0694e3c86dbe7a1153dd2efe925e44804a74b09311b5a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/before-launch-unchanged-verification.json",
+      "bytes": 18333,
+      "sha256": "28ca6d661d8e1dd466c742c7f475be066cc1ed5c444ba36f90ce2cb63c0c09be"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/candidate.json",
+      "bytes": 33348,
+      "sha256": "b6d0c1a333f06e49121c507e03c3f79352e3eb6c3d792ba25b273450d3ea96b8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/check-capture-paths.mjs",
+      "bytes": 1158,
+      "sha256": "2f8b68b914c8e1e5776824c209ce497b29073106b83b408d81c07097b2ade3a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/checked-process.mjs",
+      "bytes": 1175,
+      "sha256": "04f09fc530296c557cd2790d3d48f73b4182503e04ab4b3f3508cceceb91aa55"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/ci-artifact/comparison.json",
+      "bytes": 628,
+      "sha256": "5dd4b24352b6e810cdc37b829fa0e0c4a2ec1016e5c67225829871b794baa048"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/ci-log.txt",
+      "bytes": 251564,
+      "sha256": "04eb967b374fa198f7d42cc176ef42d6cc2e9ffaa5c6acd9d92f2e31eb9a593b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/ci-run.json",
+      "bytes": 4408,
+      "sha256": "3a61a5facba2e9f593f63e925548d758087dc5c3709525b69f496166d640be20"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/close-partial.mjs",
+      "bytes": 1663,
+      "sha256": "3787852303f626e514ca6769dd221787163174b648502238787661294b99d2dd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/codebook-cycle0018-v30.vsix",
+      "bytes": 608095,
+      "sha256": "b2607fd4ed3cce20fe97140667952e2f374f4858573c49ff636a88071c64fb4a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-before-close.png",
+      "bytes": 386991,
+      "sha256": "89f84617c941551b4cbef680b9e41479127b3c816572fb3f38a56d22d2a904a6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-bootstrap.json",
+      "bytes": 157816,
+      "sha256": "a7a45f43767461c8aeea313b9c58e831f8a903602697f4244b60454e8c7da843"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-cdp-readiness.json",
+      "bytes": 1548,
+      "sha256": "c35c35bb7b1b65de29d57cec399e19d5c23f1a34480fbd5207b6c21abac30bdb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-entry-failure.png",
+      "bytes": 165640,
+      "sha256": "2b9babf69fe91fde6b69cb73d99835dd1d43c042c36029c0cdbf14d434eea34a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-entry-receipt.json",
+      "bytes": 63139,
+      "sha256": "b42ab38977a060a412d26da41bb694df294c1e55006594c4d02a71feca09561c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "320fa0f9b0efb695f0f757612828c8e4d7945a2be6df823c09f6c807aafc310c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-failure-observation.json",
+      "bytes": 65759,
+      "sha256": "bf4cd148c460fdc82b0a586d10d0ecee9a373be1fb6736bc7da92cae3dd27f86"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-failure.png",
+      "bytes": 165640,
+      "sha256": "2b9babf69fe91fde6b69cb73d99835dd1d43c042c36029c0cdbf14d434eea34a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-frame-extraction.json",
+      "bytes": 1186,
+      "sha256": "e5163dc1851d85d51bf7bfd7ed94564362330a40e6248b0d9e77c43f3cef647b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-frames-000.png",
+      "bytes": 227800,
+      "sha256": "f58558b952232324bac1015b9487ab64542e4a8a46b9e75007384f4b165d9866"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-frames-012.png",
+      "bytes": 117672,
+      "sha256": "f0cbbc6266bb53050130ba06577be77138d0ce8f4a6ae8b112297c694b4f26fd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-launch.json",
+      "bytes": 1448,
+      "sha256": "5ce307e0a36c769b5e6e8575ecf2cead488d976e78a8f0093e6c1ec9490fa848"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-native-admission.json",
+      "bytes": 5274,
+      "sha256": "070fad15ea63f5947130ebfda7debcecafd0b6aea0e1dc8d0ee8134cf501b5f9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-native.webm",
+      "bytes": 1058040,
+      "sha256": "df54723ed4a385d2a9adad21264e62333c2f2f276bd0fc98766059148c90410e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-shutdown.json",
+      "bytes": 448,
+      "sha256": "f307effa1e9cb0d6c0b1717191d8c6766ebed64e3b991e7f3ba0e9c46522cfde"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-ui-close.json",
+      "bytes": 4086,
+      "sha256": "b4ec52dac41192af30276af5b5a98665720208a854a8b4aedd42cede2f0d1a83"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/initial-ui-start.json",
+      "bytes": 6060,
+      "sha256": "fb50455e4e4ece0ed3dcc201fc9c40ad779e297062215168760a16d6b3095ebd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/installation.json",
+      "bytes": 7086,
+      "sha256": "4bb4601ee18e150be4ebb6c1494b6b7f3a9c88a0f1ae957bed85c4d2a99effa7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-full/profile-preparation.json",
+      "bytes": 23498,
+      "sha256": "2c6feb3c39cc57022def0e7a5bef68a09f32e2735229c7d5b6ca7f3c75811396"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-initial-launch-output.log",
+      "bytes": 1336,
+      "sha256": "de4fb6537ecc4dc16c9320448b0def68e030ffa14e78854fc1617cec6c6a61b0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-orchestration-result.json",
+      "bytes": 4461,
+      "sha256": "fa97e3039877036efd8022aeba382eb6780a97d778420689630ff2dff30c9f90"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-before-close.png",
+      "bytes": 302190,
+      "sha256": "2f8e68a01a8e34f0a8bb98fdde3609d81a2f83fa119d63f85bdcf40afc8e2ae2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-bootstrap.json",
+      "bytes": 157798,
+      "sha256": "d25dcc0f6b6e0e08d876e31b877c8a4db8d1c6f1d42c01379196697861623756"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-cdp-readiness.json",
+      "bytes": 1642,
+      "sha256": "47c69e3b6ef122b7d01af9d7a9cc4c068ac5a1b77d8660c37c5781127e4c4e4f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-exit.json",
+      "bytes": 61,
+      "sha256": "1c27176d66053de30d981f096c3f192de6207ae43dd612661f143761394cfa67"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-frame-extraction.json",
+      "bytes": 927,
+      "sha256": "252d84da11c18f3905e43fecff90945555805fcc155f66741be45e800c39f8cc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-frames-000.png",
+      "bytes": 152512,
+      "sha256": "40c9d6eff93c24d6c7b3f5916126571ee0f93c23eab87b24f4f19109daf22cef"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-launch.json",
+      "bytes": 1494,
+      "sha256": "168525165a35ca6e45c919549f767779fe16e3f678679b0dcb8f9b66f1f40c8a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-native-admission.json",
+      "bytes": 5302,
+      "sha256": "c07042b0a11d31cc0f06daec5670899ccb6db9ecc7360094fd582ce18296e4c3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-native.webm",
+      "bytes": 694169,
+      "sha256": "52d61b2bbaabdc3188091c947eeab3ba9df4b3eb7e21580c472a0bb32e0a4846"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-negative-after.png",
+      "bytes": 124340,
+      "sha256": "9fbdc307954ca423b76933f8d14c8185ac06ca20fb3526eec522d2fc6a044c50"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-negative-before.png",
+      "bytes": 123206,
+      "sha256": "061a0e5a09d64327e2c140a536fd5ff9752a3ae9e2c3474b59da035ad2a7aefa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-negative-control.json",
+      "bytes": 124578,
+      "sha256": "74852082a40c1c24ec805b0f47a36b5ab7ee8dd3a95be750fcffc35881b50df0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-negative-prepare.json",
+      "bytes": 83009,
+      "sha256": "b7ed04563a6f41c312103e50fbfd1f87209f0b3708e2929453d9d11b455b1818"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "9d8dfea0c0c5e993b7e5d90f5d9530651884ddb6b0afdc47a8f235c18bca8629"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-ui-close.json",
+      "bytes": 4118,
+      "sha256": "925f9e7a8bc6db808e8aba9742b1ca05c725c6887348cfe8d233919239f4036a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/initial-ui-start.json",
+      "bytes": 6090,
+      "sha256": "021035581714b3c4ec6bb7036044c27bf5644a6b07dd10714addd5e63b1b6bf9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/installation.json",
+      "bytes": 7141,
+      "sha256": "79d6e217ce272883f5ac692aad8778d617c9f01f0c63881cab8f02c454cc83df"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/profile-preparation.json",
+      "bytes": 23640,
+      "sha256": "1d4276d2888e051d614d6bb43a90aff96326d92a5494bf0ed526a9e15920ffd3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-scope-negative/schedule.json",
+      "bytes": 1591,
+      "sha256": "0c6c84a6dd6069909e89750eb48fad562902604e9a4558af06e2490259a13341"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-step-01-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "9fa2377c9659377be157e9d12ec50a673c88eba9e8f3f733e9ac4b10cd0b6458"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-step-02-bootstrap.mjs.log",
+      "bytes": 2563,
+      "sha256": "9dd6c954a3df1786c9188bc4decfb82ed905a75abc16a4902860dbd58e52afeb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-step-03-full-entry.mjs.log",
+      "bytes": 2166,
+      "sha256": "2e1e0ebf7e01d817a04f9ccda229cfb6dcf55098760d3ede9b74df850b403863"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-step-04-observe-cursor-failure.mjs.log",
+      "bytes": 940,
+      "sha256": "f8fe2425ce67beb3d6f5ce81b890c5f56e22b3fc77afc124f88ff96ee46f9b12"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-step-05-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "4e659e8361b9cf57045a141ec1dc58d0103db761c74c1b6ccf121c853b0a5987"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-step-06-cleanup-owned-profile.py.log",
+      "bytes": 389,
+      "sha256": "6e93551099063c661b18223a3f1b8a1318af27b81cdc3dd51c9d1fc13d3b8b2b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-step-07-extract-video.py.log",
+      "bytes": 181,
+      "sha256": "580dd20c0f9d1dad1c95a28996a6e38d5578ae5b72c79803fdcb8e20cfb93405"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/cursor-step-08-verify-unchanged.mjs.log",
+      "bytes": 305,
+      "sha256": "d77835b277e8097a47424548a5b194332d1338962366d85db1fe50c190125f19"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/documentation-input-bridge.json",
+      "bytes": 32377,
+      "sha256": "608df92331715da37dc7e5fb274730326a1220e5ac3a1c1d410996419cc4d66d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/extract-video.py",
+      "bytes": 1209,
+      "sha256": "cacbe631de1abddb526587d40b07e1d283a4a7cf4a119b2aec608c9b4858e362"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/focus-timing-pairs.mjs",
+      "bytes": 2148,
+      "sha256": "f687c54e23bc89c61756431334831db4e321020ec39a37ae076900197c5285ea"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/fourth-group.mjs",
+      "bytes": 4014,
+      "sha256": "f56cbe2039fe6b15ad5a699d57aa68a550e8a5dfb931a6a5b0d3120103a3fe6f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/freeze-schedule.py",
+      "bytes": 5358,
+      "sha256": "cf668c840d5a9345064d8d027027223689f3c0d702b673f6657f629949211fef"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/full-entry.mjs",
+      "bytes": 5402,
+      "sha256": "9158dd86d805f3c8fdddf6d10d276da1c927a17e84089f821dfe605d4c9532e6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/harness-controls.json",
+      "bytes": 659,
+      "sha256": "2fe961853f33af291de2abc7d86c03680ac69e4841b69cf128b2a4adf53ec735"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/harness-controls.log",
+      "bytes": 616,
+      "sha256": "2ac3ebe5204f129f31706af3fcee8d2f699be3a97776a6ad5153fa8345fea669"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/harness-controls.mjs",
+      "bytes": 3395,
+      "sha256": "d0d4e7793bc4f180e6c26134848b7e378ada02c62870c985b8f74c957f955d65"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/install.mjs",
+      "bytes": 3564,
+      "sha256": "72112c1557f2512a54be12d836e1abd4e6cfbb1481435916e870087354275a7b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/native-retention.mjs",
+      "bytes": 6105,
+      "sha256": "ab2415ac6c57d1c8615b323514d8018b58be558fb66d7eae82825d17a640ede3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/negative-launch-output.log",
+      "bytes": 1382,
+      "sha256": "a1bfaa1d3c133f4ee8a1028aa705936f3dcd3306ef1b17f53b29114c93c8ef32"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/negative-orchestration-result.json",
+      "bytes": 3712,
+      "sha256": "870288b1384448f079b6ec1970c12e4817fa48b1ea6b63e57b2168bdd3be7653"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/negative-step-01-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "9fa2377c9659377be157e9d12ec50a673c88eba9e8f3f733e9ac4b10cd0b6458"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/negative-step-02-bootstrap.mjs.log",
+      "bytes": 2563,
+      "sha256": "f2ffa7320121c36b9e71595109973dc2f0fa6270740eaf05dbb69941e610808d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/negative-step-03-scope-negative-prepare.mjs.log",
+      "bytes": 748,
+      "sha256": "5b5a5a0d9b1df05e39a685d38d0c36d29ad9e1893459e53ba7424056da9d30a8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/negative-step-04-scope-negative-control.mjs.log",
+      "bytes": 442,
+      "sha256": "b2eb0b12c14027051864b1219ce5e36bcf3278100cfe11aa85a9d573bbf8af21"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/negative-step-05-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "4e659e8361b9cf57045a141ec1dc58d0103db761c74c1b6ccf121c853b0a5987"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/negative-step-06-cleanup-owned-profile.py.log",
+      "bytes": 390,
+      "sha256": "3fbce9d35f948648fad75667521d75f771874022cf1943a6b95bac60947583d0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/negative-step-07-extract-video.py.log",
+      "bytes": 191,
+      "sha256": "1d35b8c5c98df9f435206816432b69b6378d5aa7e9ee9beb0324422e7eb1ba48"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/negative-step-08-verify-unchanged.mjs.log",
+      "bytes": 305,
+      "sha256": "d77835b277e8097a47424548a5b194332d1338962366d85db1fe50c190125f19"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/observe-cursor-failure.mjs",
+      "bytes": 2419,
+      "sha256": "0cb10db098cd3406e6199f42ec9ea52ddf76ede1b8680bb2ab436ca713ef4663"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/placement-pairs.mjs",
+      "bytes": 2972,
+      "sha256": "0f3b76574a64dfabe12f189049e1768ddd079fbaf43bd918aeac9322b21495e5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/prepare-profiles.py",
+      "bytes": 1588,
+      "sha256": "4d16baeb1222d3333cfeb94fa83532f89e174e34bbc599e757ecb50337054af8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/prepare-scope-negative.py",
+      "bytes": 2988,
+      "sha256": "859a907843e9a283d56aa533393bb1f341971eb26777101b9abe85936d04a269"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/profile-preparation.log",
+      "bytes": 229,
+      "sha256": "28f99698f56873f0a63b90ef2c78a46627c737ff5dfac513e9b8dcdefd5ad3e9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/rapid-mode-control.mjs",
+      "bytes": 2938,
+      "sha256": "814965f00c4e369d8830a3d6656ea4cbf3ec6218a21e6549b58f58ea754b90a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/retained-pairs.mjs",
+      "bytes": 3634,
+      "sha256": "29a0c56dc169475e4dd251a17a3ce9472a3d91089922f3a7193d12e947aeaf0c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/run-host.mjs",
+      "bytes": 4801,
+      "sha256": "a76b6ec9aefc87577345b742a28a59be63fa467f60ff11c2b0d3ddb2e5f0abd8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/run-negative.mjs",
+      "bytes": 3431,
+      "sha256": "cb5767385fc8bd5d4b7a66d95d4b18f15f8f7c3eccf1d2078d5fbce80c63c7ab"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/schedule-draft.json",
+      "bytes": 7001,
+      "sha256": "61b70aa33dc08eba72ffbb0978821883ca7a4d8020c8eada8b3e1c0312bd8936"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/schedule.json",
+      "bytes": 16555,
+      "sha256": "29e43290042e1fbede4e6ffc5e2298b8da0946e3261216b4eca2fef726d33590"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/schedule.sha256",
+      "bytes": 80,
+      "sha256": "71bc6fbf3501bde7ec969085d10bbb7414b44ad110d0757085e7df3a01482c84"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/scope-negative-control.mjs",
+      "bytes": 4385,
+      "sha256": "14cde9178a1d831d28ac95f905d7c733e9d4e3d652672a096129559b199df167"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/scope-negative-prepare.mjs",
+      "bytes": 2017,
+      "sha256": "dffdd047b4a35f113dbac850d0d81eba196a595b8924ce38260b538a519261f8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/scope-negative-ui-visible.mjs",
+      "bytes": 3218,
+      "sha256": "d7be35b841aafe40f3a672039bae5d0a9798341a4299d2ff108f7c37f3a80fe0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/ui-phase.mjs",
+      "bytes": 1420,
+      "sha256": "7c341ef74b082785325bc3ac290ec1b9991af4b22fb62fc944034f1df7edd864"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/ui-recipes.json",
+      "bytes": 18378,
+      "sha256": "5e09c89076aced606a991b7a85187b01cfd0bcc0117d16d004a86ced3d03c8aa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/verify-unchanged.mjs",
+      "bytes": 2077,
+      "sha256": "03bd3282063a37062d8e0196d3deee3c25cbef8c93e73bb8e7148eee19ccd9d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/vscode-full/installation.json",
+      "bytes": 7117,
+      "sha256": "ff6ffe5b69aa3c3a236bf665693013485e68d64c1c7e6038299bf3bcb121bac5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/vscode-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "a240ed5ac734c70b97dd8b2331f90c174678b60ff6b361029bc6b66809d884a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/vscode-full/profile-preparation.json",
+      "bytes": 43911,
+      "sha256": "f4404798c6f30f5e475bcf73e56b364993695d21f2eeadadd76fef2a6a91dc15"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/wait-for-native-admission.mjs",
+      "bytes": 3164,
+      "sha256": "3f96126288680f0067d46a3cdd9d6324895e2ada22701ab422b1a66b658f61d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v30/wait-for-workbench.mjs",
+      "bytes": 1722,
+      "sha256": "518c13e7a5d9b7aac97c26f5ef79385e2dd45d2b1e138f628d8edd04b7fb4400"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/after-cursor-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "1de9c9427c6c7fb6f9b11847466c954c6ae3e68cbb0a102839edaf3d0c9934f6"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/before-launch-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "1f2a4d45c0ccc3a8412cfce510aab20ab6e525f8ccf672f06160ac5cf3da87cc"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/candidate.json",
+      "bytes": 33348,
+      "sha256": "b6d0c1a333f06e49121c507e03c3f79352e3eb6c3d792ba25b273450d3ea96b8"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/check-capture-paths.mjs",
+      "bytes": 1158,
+      "sha256": "2f8b68b914c8e1e5776824c209ce497b29073106b83b408d81c07097b2ade3a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/checked-process.mjs",
+      "bytes": 1175,
+      "sha256": "04f09fc530296c557cd2790d3d48f73b4182503e04ab4b3f3508cceceb91aa55"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/close-partial.mjs",
+      "bytes": 1663,
+      "sha256": "3787852303f626e514ca6769dd221787163174b648502238787661294b99d2dd"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cold-wiki-once.mjs",
+      "bytes": 3102,
+      "sha256": "5f7629e70a9a39d8407a543514fab8ca132f8d01c39bcb0b4825174ce3d4937b"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/diagnostic-bundle.json",
+      "bytes": 663,
+      "sha256": "666a89dabab235073a1f9143fac8ffa3d124cf3d4edf153c79e553e4c213fb3f"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/focus-1-disposed.json",
+      "bytes": 12085,
+      "sha256": "ee68abf14426a5c6b589c7865bd5810095119990963b86bf2f780493e2267098"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/focus-2-disposed.json",
+      "bytes": 19584,
+      "sha256": "80e93b71bb3d9d0a22c52f05fd13d2c6096eee2c21a0728bce722aa38832ac5e"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/focus-3-disposed.json",
+      "bytes": 18159,
+      "sha256": "dde9ea07c3ec17bffea0803f43626cc8bc19d0e560e7c92f236e64317a514f89"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/focus-4-disposed.json",
+      "bytes": 14954,
+      "sha256": "3a2abc2d88d53b76917c453ce6667e80b0385827995bbec259d55dc65e781ce6"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/focus-4-failed.json",
+      "bytes": 14954,
+      "sha256": "3a2abc2d88d53b76917c453ce6667e80b0385827995bbec259d55dc65e781ce6"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-before-close.png",
+      "bytes": 386991,
+      "sha256": "89f84617c941551b4cbef680b9e41479127b3c816572fb3f38a56d22d2a904a6"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-bootstrap.json",
+      "bytes": 157816,
+      "sha256": "d492a3844874e027c40e6513422158b9e5523d3f5d507206f3b48b48c2fdb7d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-cdp-readiness.json",
+      "bytes": 1567,
+      "sha256": "9d08e3b464774e3ee642f0f0dc6c9cbd24944402710aca549e236bf7fdbb3b21"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-entry-failure.png",
+      "bytes": 165640,
+      "sha256": "2b9babf69fe91fde6b69cb73d99835dd1d43c042c36029c0cdbf14d434eea34a"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-entry-receipt.json",
+      "bytes": 63131,
+      "sha256": "1a9bea847c3b0de9cf530ec1f84567930aa64d81234a2631bb34af9a5f290ab6"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "b3a81b66fb430c25b179dcf1cc869de739c9fda8b12ce8ed00c3066bd083e7e7"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-failure-observation.json",
+      "bytes": 65747,
+      "sha256": "d05c52944dc16c360d3cec06202d04ca62fb38ec99339ae0d09fc75ed29441b3"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-failure.png",
+      "bytes": 165640,
+      "sha256": "2b9babf69fe91fde6b69cb73d99835dd1d43c042c36029c0cdbf14d434eea34a"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-frame-extraction.json",
+      "bytes": 1183,
+      "sha256": "0efcd917bd65e739d2488a08a6ef60b9e05f59723da5e1d484c05a3cebfc487b"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-frames-000.png",
+      "bytes": 226413,
+      "sha256": "6d0b1684b5715d1127e9b9eace67414502d6e828e7b35b756af390b5aaa709e6"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-frames-012.png",
+      "bytes": 115722,
+      "sha256": "df11e9a527cf0c92a42bd32109fd19340aaae2c305f0b6aee7c2362d8fba5118"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-launch.json",
+      "bytes": 1493,
+      "sha256": "4560a1158cd4230a80ec4561ba648296bfb23d638d383b122e1fb6bcb2fe57a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-native-admission.json",
+      "bytes": 5292,
+      "sha256": "90ac91ac76575bdd8dcee5b0f45dd51308490b7f4394d4886c1888ffa210d8c8"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-native.webm",
+      "bytes": 1041261,
+      "sha256": "39e730cbdb019fe2ea26f06ca98759bde3e2e2995bf2ddb702999b883e38d82f"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-shutdown.json",
+      "bytes": 448,
+      "sha256": "ee72e09501232b48d69224a315659236f8b1814e7fc7776d48dcd62c5d2453a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-ui-close.json",
+      "bytes": 4084,
+      "sha256": "17d6dcf420251066b64bc0f23e70303aa3789fb3b76b34848273c789ed591385"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/initial-ui-start.json",
+      "bytes": 6058,
+      "sha256": "cf959deebf97c6aaac70f2e6868735da9efdb206acc0cb1935883dfcfa94f2a1"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/installation.json",
+      "bytes": 7121,
+      "sha256": "3c31f80a85650bbd4009799f1494d7475f90e284979232ea4647616250f3fcd6"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-full/profile-preparation.json",
+      "bytes": 23505,
+      "sha256": "27d2cea529a60234b80b4aea52faa4e9e2605f3bd6fb6fb6dc1c5c11f56a8ddb"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-initial-launch-output.log",
+      "bytes": 1381,
+      "sha256": "43631624f96fbc1235d89cf86cb7f0f41447e3a2bf669c6691982783d8fd1aa6"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-orchestration-result.json",
+      "bytes": 4474,
+      "sha256": "cc5309ec3110fca10e1791cb864fb40661802562560b34aa0f3602526768f935"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-step-01-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "9fa2377c9659377be157e9d12ec50a673c88eba9e8f3f733e9ac4b10cd0b6458"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-step-02-bootstrap.mjs.log",
+      "bytes": 2563,
+      "sha256": "5e72ffca7bf73890abd230a5389ea06c7507b028a0d8ca8acdc67f1acad41dc3"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-step-03-cold-wiki-once.mjs.log",
+      "bytes": 2164,
+      "sha256": "fa1a00c7c6c41b51a008f25eff4acc9d759d2f640d5b0fbb28d44f75fd3cdae5"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-step-04-observe-cursor-failure.mjs.log",
+      "bytes": 940,
+      "sha256": "a3263e0203f4a6821a210f81095e4143e78a70965c4935ff9184c686187942ef"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-step-05-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "4e659e8361b9cf57045a141ec1dc58d0103db761c74c1b6ccf121c853b0a5987"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-step-06-cleanup-owned-profile.py.log",
+      "bytes": 389,
+      "sha256": "0658ceb4b6f38cdeb06f8c77c96e90a8450d12325cd8c0b9ed626b2d6e59ccfc"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-step-07-extract-video.py.log",
+      "bytes": 180,
+      "sha256": "3e95f8ec2a33a29247c094d58046290bac494a6a4b8c338d6e8fa829eb23d99d"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/cursor-step-08-verify-diagnostic.mjs.log",
+      "bytes": 221,
+      "sha256": "e311b38e1640de4482247cd3e45f64c9203874aef62155c285eb48391c5a2e3a"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/extract-video.py",
+      "bytes": 1209,
+      "sha256": "cacbe631de1abddb526587d40b07e1d283a4a7cf4a119b2aec608c9b4858e362"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/focus-timing-pairs.mjs",
+      "bytes": 2148,
+      "sha256": "f687c54e23bc89c61756431334831db4e321020ec39a37ae076900197c5285ea"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/fourth-group.mjs",
+      "bytes": 4014,
+      "sha256": "f56cbe2039fe6b15ad5a699d57aa68a550e8a5dfb931a6a5b0d3120103a3fe6f"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/freeze-schedule.py",
+      "bytes": 5358,
+      "sha256": "cf668c840d5a9345064d8d027027223689f3c0d702b673f6657f629949211fef"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/full-entry.mjs",
+      "bytes": 5402,
+      "sha256": "9158dd86d805f3c8fdddf6d10d276da1c927a17e84089f821dfe605d4c9532e6"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/harness-controls.mjs",
+      "bytes": 3395,
+      "sha256": "d0d4e7793bc4f180e6c26134848b7e378ada02c62870c985b8f74c957f955d65"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/install.mjs",
+      "bytes": 3564,
+      "sha256": "72112c1557f2512a54be12d836e1abd4e6cfbb1481435916e870087354275a7b"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/instrument-focus.py",
+      "bytes": 4833,
+      "sha256": "a385e06a54983f0711aab66e9d4dd29bbc5361257397dfee87260282509bf310"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/native-retention.mjs",
+      "bytes": 6105,
+      "sha256": "ab2415ac6c57d1c8615b323514d8018b58be558fb66d7eae82825d17a640ede3"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/observe-cursor-failure.mjs",
+      "bytes": 2419,
+      "sha256": "0cb10db098cd3406e6199f42ec9ea52ddf76ede1b8680bb2ab436ca713ef4663"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/placement-pairs.mjs",
+      "bytes": 2972,
+      "sha256": "0f3b76574a64dfabe12f189049e1768ddd079fbaf43bd918aeac9322b21495e5"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/plan.json",
+      "bytes": 1415,
+      "sha256": "1f06942c110064f4a4f60e00e82886447d3a0a9dced10305a0ad0615d252d29a"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/prepare-profiles.py",
+      "bytes": 1577,
+      "sha256": "443b266b0fbe5d2a7e74a14a24772c59f2d1990fa2b0679b8b9b9aad69a95788"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/prepare-scope-negative.py",
+      "bytes": 2997,
+      "sha256": "a92fa816de82b514585f65dcf492521eff8ab6683c85cf9d0e670da364b5d8aa"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/rapid-mode-control.mjs",
+      "bytes": 2938,
+      "sha256": "814965f00c4e369d8830a3d6656ea4cbf3ec6218a21e6549b58f58ea754b90a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/retained-pairs.mjs",
+      "bytes": 3634,
+      "sha256": "29a0c56dc169475e4dd251a17a3ce9472a3d91089922f3a7193d12e947aeaf0c"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/run-host.mjs",
+      "bytes": 4801,
+      "sha256": "a76b6ec9aefc87577345b742a28a59be63fa467f60ff11c2b0d3ddb2e5f0abd8"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/run-negative.mjs",
+      "bytes": 3431,
+      "sha256": "cb5767385fc8bd5d4b7a66d95d4b18f15f8f7c3eccf1d2078d5fbce80c63c7ab"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/run-single.mjs",
+      "bytes": 4308,
+      "sha256": "181b7c77e508d8d449c740877bcfd9a11db3d3e3f5298a40e91e2042d823c7fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/schedule.json",
+      "bytes": 7519,
+      "sha256": "f4144be3cc282c64b2b02b47a98ad703589d91dc4a25a366a5931b06ef44ca9c"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/schedule.sha256",
+      "bytes": 80,
+      "sha256": "f28a8368baf075cd44a15a728392dc9c34e63f6dee512a5e911fde472209a169"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/scope-negative-control.mjs",
+      "bytes": 4385,
+      "sha256": "14cde9178a1d831d28ac95f905d7c733e9d4e3d652672a096129559b199df167"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/scope-negative-prepare.mjs",
+      "bytes": 2017,
+      "sha256": "dffdd047b4a35f113dbac850d0d81eba196a595b8924ce38260b538a519261f8"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/scope-negative-ui-visible.mjs",
+      "bytes": 3218,
+      "sha256": "d7be35b841aafe40f3a672039bae5d0a9798341a4299d2ff108f7c37f3a80fe0"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/ui-phase.mjs",
+      "bytes": 1420,
+      "sha256": "7c341ef74b082785325bc3ac290ec1b9991af4b22fb62fc944034f1df7edd864"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/ui-recipes.json",
+      "bytes": 18368,
+      "sha256": "37458eb72651a38d9417db84bc4c55e54dc81d44e1094a2285e62881fbdc6919"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/verify-diagnostic.mjs",
+      "bytes": 2299,
+      "sha256": "e11eb485cb73249fe5189f5e0cc6692aa9a8e417e9ac8c48d24be94d353724b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/verify-unchanged.mjs",
+      "bytes": 2077,
+      "sha256": "03bd3282063a37062d8e0196d3deee3c25cbef8c93e73bb8e7148eee19ccd9d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/wait-for-native-admission.mjs",
+      "bytes": 3164,
+      "sha256": "3f96126288680f0067d46a3cdd9d6324895e2ada22701ab422b1a66b658f61d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-a/wait-for-workbench.mjs",
+      "bytes": 1722,
+      "sha256": "518c13e7a5d9b7aac97c26f5ef79385e2dd45d2b1e138f628d8edd04b7fb4400"
+    }
+  ]
+}
