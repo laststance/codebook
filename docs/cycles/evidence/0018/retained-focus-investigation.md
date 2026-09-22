@@ -1,0 +1,37 @@
+# Retained main-focus investigation
+
+Date: 2026-09-22. Scope: Cycle 0018's normally installed Cursor restart failure. Direct MCP/native development diagnostics do not establish G12 editor-chat use or final acceptance.
+
+## Failure and hypothesis
+
+The unchanged [v11 candidate](installed-v11-validation.md) fails `codebook_open_book` after cold Wiki and confirmed Study entry, before reopening saved replay. Its terminal cause is `Timed out waiting for retained main editor focus`, after 5,150.879708 ms. Unlike v10, the failed workbench and all frames remain visible. Normal close and preservation checks complete; the failure is not retried or relabeled PASS.
+
+`readMainEditorGrid` temporarily focuses the primary group when another editor part exists, measures it, then reveals the previously active Context panel. The initial hypothesis is that asynchronous group/webview focus notifications interfere with that restoration. Context7 resolves the official [WebviewPanel API](https://code.visualstudio.com/api/references/vscode-api#WebviewPanel), where omitted `viewColumn` retains the panel's column. The [upstream panel implementation](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/api/common/extHostWebviewPanels.ts) forwards reveal asynchronously and updates view state from host events; upstream code alone does not establish Cursor's actual behavior.
+
+## Controlled native diagnostics
+
+Each diagnostic normally installs and verifies all 29 v11 extension files in a new owned copy of the normally stopped failed profile. It then changes only the installed bundle's diagnostic logging and records its separate hash. Reported build metadata remains the v11 origin, so these changed bundles are explicitly **not unchanged-VSIX acceptance**. No timeout, return value, focus predicate or placement call changes. The original v11 archive/profile and the original dedicated profile retain exact bytes/mtimes.
+
+| Diagnostic | Observation | Interpretation |
+| --- | --- | --- |
+| Initial focus trace | Original cold restart order reaches exact paused replay at 11,429.631958 ms; 98 events captured. | Inconclusive for the failure. Normal notification ordering is asynchronous, but this successful trace cannot identify the failed interleaving. |
+| Bounded timing control | Five Wiki/Study pairs complete; the sixth `codebook_open_book` fails with the same retained-focus timeout after 5,141.549375 ms. The planned maximum was 12 pairs; execution stops at the first failure. | At 01:55:45.220 UTC, native group 3 and Context are active. At .225, native group 1/Application become active again, before the next wait predicate. The timeout is reproduced. |
+| Reveal-caller attribution | The original cold restart order fails again before the repeated-pair stage. Every owned panel reveal is logged with its caller. | Context reveal is requested at 01:59:49.912 UTC; group 3/Context acknowledge at .916; group 1/Application take focus at .918–.919. No later Application reveal is issued by Codebook. This supports a delayed native echo from the temporary primary-focus request; the host's internal scheduling source is not directly instrumented. |
+
+The defect at the product boundary is an unnecessary primary→Context focus round trip despite an already verified main grid and native current focus. A late primary focus acknowledgement can overtake the restoration and leave the operation waiting for a state that has already passed. Increasing its timeout or repeatedly stealing focus would not remove this race.
+
+All three diagnostic windows close normally with exit 0. Each verifies the 62 original profile files and 64 copied failed-candidate files unchanged, retained unsaved draft, zero owned processes and zero connection descriptors. Their videos are 97.000, 92.920 and 75.120 seconds at 1280×800 / 25 fps. Sixteen half-second frames from each are visually inspected. They show the successful paused state or failed visible pane arrangement; the 2–5 ms reversal is trace evidence, beyond the video's temporal resolution.
+
+## Scoped repair and checks
+
+The source repair reuses the retained main-part measurement only when its exact layout signature, every global group's logical identity/column and actual native text/owned-panel focus still match. A stale `TabGroups.activeTabGroup` alone cannot authorize it. Cold/unretained scope, changed geometry, replaced/moved groups and foreign-part focus retain the existing explicit measurement path. Existing cancellation, learner-focus and foreign-content protections remain.
+
+A permanent production-method regression models the observed delayed primary focus following Context acknowledgement. It fails before the change with the exact retained-focus timeout (5,057.261583 ms) and passes afterward. A separate hostile API-report control preserves the real one-group chat part even when its layout read returns stale main-shaped geometry. The first draft of this control conflated reported geometry with real geometry; the committed fixture separates them. The existing application/text-primary learner-interference controls now explicitly change geometry to invalidate retained scope before testing borrowed focus; their protection assertions remain.
+
+All **278/278 workspace checks pass**, zero failures/skips/cancellations, in 82.967 seconds. Full product/shared/package checks, clean packaging and unchanged installed revalidation remain pending at this checkpoint. The preliminary four-check green receipt precedes the final hostile-report fixture correction; the complete workspace run includes that correction.
+
+## Remaining evidence
+
+Freeze the repaired source and VSIX after complete checks, then repeat the original failing Cursor restart order and bounded timing control through a normal unmodified install. Complete the affected both-host schedule, all modes/Returns, exact saved replay, fourth-group/separate-part controls and native video/preservation evidence. Keep v11's original FAIL and the non-reproducing diagnostic distinct. Current-source CodeRabbit coverage and PR/merge remain separate requirements; Claude Code CLI stays skipped.
+
+G12 is specified only. Goal #1, G01–G12, owner acceptance and every final condition remain open. Final reviewers **0/10**, final editor trials **0/at least 20**, not started. The [sanitized artifact manifest](retained-focus-manifest.json) identifies private diagnostics, videos, inspected frames and regression logs.

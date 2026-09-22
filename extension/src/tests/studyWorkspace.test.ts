@@ -63,6 +63,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const groups: { viewColumn: number; tabs: Tab[]; activeTab?: Tab }[] = [{ viewColumn: 2, tabs: [] }];
   let activeTabGroup = groups[0]!;
   let separateEditorPart: { group: typeof groups[number]; layout: unknown; focused: boolean } | undefined;
+  let separatePartLayoutReport: unknown;
   type SourceEditor = { document: { uri: Uri; getText(): string }; readonly viewColumn: number; setDecorations(): void; selections: { active: Position }[]; visibleRanges: Range[]; revealRange(range: Range, revealType?: number): void };
   let activeTextEditorChanged = (_editor: SourceEditor | undefined) => {};
   let lastSourceEditor: SourceEditor | undefined;
@@ -102,6 +103,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const panels = new Set<ReturnType<typeof panel>>();
   const panelReveals: { kind: string; column?: number; preserveFocus?: boolean }[] = [];
   let deferredPanelFocus: { kind: string; remaining: number } | undefined;
+  let deferPrimaryFocusEcho = false, pendingPrimaryFocusEcho: typeof activeTabGroup | undefined;
   let deferredMovedPanelFocus: string | undefined, asynchronousLayoutReads = false;
   const postedMessages: StudyViewMessage[] = [];
   let heldPresentationMessage: { mode?: 'living-book'; wait: Promise<void>; entered(): void } | undefined;
@@ -178,6 +180,15 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         }
         if (!preserveFocus) {
           if (separateEditorPart) separateEditorPart.focused = false;
+          // The native primary webview can report focus again after a subsequent Context reveal has already acknowledged focus.
+          if (pendingPrimaryFocusEcho && kind === 'codebook.studyContext') {
+            const primary = pendingPrimaryFocusEcho; pendingPrimaryFocusEcho = undefined;
+            setImmediate(() => {
+              activeTabGroup = group; for (const listener of viewChanged) listener();
+              setImmediate(() => { activeTabGroup = primary; for (const listener of viewChanged) listener(); });
+            });
+            return;
+          }
           // Native webview reveal returns before its focus notification reaches the extension host.
           if (deferredPanelFocus?.kind === kind && --deferredPanelFocus.remaining === 0) {
             deferredPanelFocus = undefined;
@@ -224,12 +235,13 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         if (name === 'workbench.action.keepEditor' && activeTabGroup.activeTab) activeTabGroup.activeTab.isPreview = false;
         if (name === 'workbench.action.focusFirstEditorGroup') {
           activeTabGroup = groups.find(group => group.viewColumn === 1)!;
+          if (deferPrimaryFocusEcho) pendingPrimaryFocusEcho = activeTabGroup;
           if (separateEditorPart) separateEditorPart.focused = false;
           activeTextEditorChanged(visibleSourceEditors.find(editor => editor.group === activeTabGroup));
         }
         if (name === 'vscode.getEditorLayout') {
           if (asynchronousLayoutReads) await new Promise<void>(resolve => setImmediate(resolve));
-          const layout = JSON.parse(JSON.stringify(separateEditorPart?.focused ? separateEditorPart.layout : editorLayout, (key, value) => key === 'groups' && Array.isArray(value) ? value.map(group => ({ size: 1, ...group })) : value));
+          const layout = JSON.parse(JSON.stringify(separateEditorPart?.focused ? separatePartLayoutReport ?? separateEditorPart.layout : editorLayout, (key, value) => key === 'groups' && Array.isArray(value) ? value.map(group => ({ size: 1, ...group })) : value));
           // The accepted grid settles without a second mutation; its first read can still contain native transient pixels.
           if (settlementPending) { editorLayout = structuredClone(settledLayout); settlementPending = false; }
           return layout;
@@ -321,6 +333,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     panelReveals: () => [...panelReveals],
     delayPanelRegistration(kind: string, deferred = false) { delayedPanelKind = kind; deferredPanelRegistration = deferred; asynchronousLayoutReads ||= deferred; return () => registerDelayedPanel(); },
     deferPanelFocus(kind: string, reveal: number) { deferredPanelFocus = { kind, remaining: reveal }; asynchronousLayoutReads = true; },
+    deferPrimaryFocusEcho() { deferPrimaryFocusEcho = true; asynchronousLayoutReads = true; },
     deferMovedPanelFocus(kind: string) { deferredMovedPanelFocus = kind; asynchronousLayoutReads = true; },
     focusedPanel: () => activeTabGroup.activeTab?.input instanceof TabInputWebview ? activeTabGroup.activeTab.input.viewType : undefined,
     movePanel(kind: string, column: number) { const panel = [...panels].find(panel => panel.kind === kind); assert.ok(panel); panel.reveal(column); },
@@ -361,6 +374,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       groups.push(group); changedGroups({ opened: [group], closed: [], changed: [] });
       return { tab: chatTab, layout: () => structuredClone(separateEditorPart?.layout), focused: () => separateEditorPart?.focused, focus() { separateEditorPart!.focused = true; activeTextEditorChanged(undefined); } };
     },
+    reportSeparatePartLayout(layout: unknown) { separatePartLayoutReport = structuredClone(layout); },
     showTransientNativeSizes() { transientLayout = true; },
     failNextCommand(name: string) { failingCommand = name; },
     /** Gives presentation regressions a learner-owned mutable document whose edits do not move its tab. @example const draft = harness.focusMutableDraft(); draft.replaceContent('new text'); */
@@ -1298,6 +1312,47 @@ test('an existing three-pane Study can restore its presentation while preserving
   } finally { await harness.close(); }
 });
 
+test('Wiki entry from a retained Study keeps Context focus when the native primary webview emits a late focus event', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  await harness.reader.open();
+  harness.deferPrimaryFocusEcho();
+  try {
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal);
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{}, {}, {}] });
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('Wiki entry preserves focused chat when its layout read reports a stale matching main grid', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] });
+  const chat = harness.addSeparateEditorPart();
+  const draft = harness.focusMutableDraft();
+  await harness.reader.open(); chat.focus();
+  // Fault injection changes only the API report; the separate part still contains exactly one real native group.
+  harness.reportSeparatePartLayout({ orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+  try {
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal);
+    // Assert
+    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{}, {}, {}] });
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
 test('a real fourth main pane remains learner-owned even when its tab list is empty and a separate chat part exists', async () => {
   // Arrange
   const harness = await workspaceHarness(false);
@@ -1386,6 +1441,8 @@ for (const primary of ['application', 'text']) test(`a learner tab selected whil
   await harness.reader.open();
   if (primary === 'text') harness.focusMutableDraft('primary.ts');
   harness.movePanel('codebook.studyContext', 3);
+  // A manual geometry change invalidates the retained scope proof and requires an observable primary-focus measurement.
+  harness.changeEditorLayout({ orientation: 1, groups: [{ size: 200 }, { size: 300 }, { size: 400 }] });
   const original = harness.editorLayout(), mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
   const held = harness.holdNextCommand('workbench.action.focusFirstEditorGroup');
   const arranging = harness.reader.arrangeRepository(new AbortController().signal), rejected = assert.rejects(arranging, /primary editor selection changed/i);

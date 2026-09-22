@@ -1617,8 +1617,12 @@ export class StudyWorkspace {
     let count = editorLayoutGroupCount(layout);
     if (count === undefined || count > vscode.window.tabGroups.all.length) throw new Error('The editor did not expose a valid measured grid; existing panes were preserved.');
     const firstFocused = () => this.hasMainEditorFocus(vscode.ViewColumn.One);
+    const receipt = this.layoutReceipt;
+    // A retained measured grid plus native focus proves its part without a primary-webview focus echo overtaking restoration.
+    const retainedMainFocus = Boolean(receipt && receipt.signature === JSON.stringify(layout)
+      && this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) && this.hasMainEditorFocus(count));
     // A single part accounts for every group. With multiple parts, TabGroups.activeTabGroup alone can be stale.
-    if (count < vscode.window.tabGroups.all.length && !firstFocused()) {
+    if (count < vscode.window.tabGroups.all.length && !firstFocused() && !retainedMainFocus) {
       const panel = this.app?.active ? this.app : this.contextPanel?.active ? this.contextPanel : undefined;
       const editor = vscode.window.activeTextEditor, documentVersion = editor?.document.version, selections = editor?.selections;
       const preview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview ?? false;
