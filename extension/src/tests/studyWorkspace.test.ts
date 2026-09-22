@@ -621,10 +621,12 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       if (change === 'reorder') groups[0]!.tabs.reverse();
       changedGroups({ opened: change === 'replace' ? [...groups] : [], closed: change === 'replace' ? previous : [], changed: change === 'unannounced' ? [] : [...groups] });
     },
-    /** Resynchronizes only the focused source wrapper during placement tests, preserving native text focus and tab identity. @example harness.replaceFocusedSourceGroup('wrapper') */
-    replaceFocusedSourceGroup(change: 'wrapper' | 'opened' | 'unannounced') {
-      const previous = activeTabGroup, replacement = { ...previous, tabs: [...previous.tabs] };
-      groups[groups.indexOf(previous)] = replacement; activeTabGroup = replacement;
+    /** Models group-wrapper refresh during placement tests while retaining native panel/text ownership. @example harness.replaceEditorGroup('wrapper', 1) */
+    replaceEditorGroup(change: 'wrapper' | 'opened' | 'unannounced', column = activeTabGroup.viewColumn) {
+      const previous = groups.find(group => group.viewColumn === column); assert.ok(previous);
+      const replacement = { ...previous, tabs: [...previous.tabs] };
+      groups[groups.indexOf(previous)] = replacement;
+      if (activeTabGroup === previous) activeTabGroup = replacement;
       // Text-editor focus survives a wrapper refresh; opened and unannounced groups still require new ownership.
       for (const editor of visibleSourceEditors) if (editor.group === previous) editor.group = replacement;
       changedGroups({ opened: change === 'opened' ? [replacement] : [], closed: change === 'opened' ? [previous] : [], changed: change === 'unannounced' ? [] : [replacement] });
@@ -4710,7 +4712,7 @@ for (const replacement of ['wrapper', 'opened', 'unannounced'] as const) test(`s
     await harness.reader.action('focus-context');
     const source = harness.reader.inspect().sourceUri, decisions = await (await harness.reader.learningStorage()).readProgress();
     let replaced = false;
-    harness.onNextPanel('codebook.scopedBrowser', () => { replaced = true; harness.replaceFocusedSourceGroup(replacement); });
+    harness.onNextPanel('codebook.scopedBrowser', () => { replaced = true; harness.replaceEditorGroup(replacement); });
     const state = harness.reader.presentationState();
     // Act
     const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
@@ -5795,6 +5797,53 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`sa
     assert.equal(harness.reader['viewport'], live); assert.equal(harness.counts().panels, 2);
     assert.equal(harness.innerFocusedPanel(), 'codebook.studyContext');
   } finally { live?.close(); await harness.close(); }
+});
+
+for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`same-column ${kind} handoff survives a group-wrapper refresh while both owned tabs coexist`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
+  try {
+    await harness.reader.open();
+    live = harness.reader.presentation.createViewport!('group-resync', () => {}, () => {}, 'normal');
+    await harness.reader.action('focus-context');
+    const state = harness.reader.presentationState();
+    let refreshed = false;
+    harness.onNextPanel(kind, replacement => {
+      assert.equal(harness.nativePanels().filter(panel => panel.kind === kind).length, 2);
+      harness.replaceEditorGroup('wrapper', replacement.viewColumn); refreshed = true;
+    });
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
+    // Assert
+    assert.equal(refreshed, true); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.reader.presentationState().mode, 'guided-walkthrough');
+    assert.equal(harness.reader['viewport'], live); assert.equal(harness.counts().panels, 2);
+    assert.equal(harness.innerFocusedPanel(), 'codebook.studyContext');
+  } finally { live?.close(); await harness.close(); }
+});
+
+for (const change of ['opened', 'unannounced', 'third-tab', 'moved-group'] as const) test(`same-column handoff refuses a ${change} during owned tab overlap`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); await harness.reader.action('focus-context');
+    const state = harness.reader.presentationState();
+    let interrupted = false;
+    harness.onNextPanel('codebook.scopedBrowser', replacement => {
+      const group = harness.groups.find(candidate => candidate.viewColumn === replacement.viewColumn); assert.ok(group);
+      // A third lookalike tab and learner group movement cannot become an owned two-pane overlap.
+      if (change === 'third-tab') group.tabs.push({ ...replacement.nativeTab });
+      if (change === 'moved-group') harness.swapEditorGroups(group, harness.groups.find(candidate => candidate.viewColumn === 3)!);
+      harness.replaceEditorGroup(change === 'opened' || change === 'unannounced' ? change : 'wrapper', replacement.viewColumn);
+      interrupted = true;
+    });
+    // Act
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' }), { code: 'PRESENTATION_UNAVAILABLE' });
+    // Assert
+    assert.equal(interrupted, true); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace'); assert.equal(harness.presentationPreferences.size, 0);
+  } finally { await harness.close(); }
 });
 
 test('explicit same-mode restoration recovers inner-focus delivery without replacing the current viewport lease', async () => {

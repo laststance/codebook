@@ -1,0 +1,1192 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-22T20:48:43.510504+00:00",
+  "scope": "Unchanged v27 separate host results, completed provider/CI comparison, and logging-only Cursor overlap diagnosis; development only",
+  "sourceRevision": "9c697c997d45f698ee23b1ee7ab7bee784ef3b31",
+  "sourceHash": "ab1a9f75f382a15dc6a95abee37b7601d39bb7b24eac18780192888f26c9ccbe",
+  "vsixSha256": "73730ab2ff100288256072aabdab5880fdc138069dea5790314f3065cdad73a3",
+  "nativeResult": "VS Code expanded schedule PASS; Cursor FAIL final initial Guided-to-Study. Logging-only fresh copy reproduces identity loss during owned duplicate-tab overlap.",
+  "availability": "Private ignored local artifacts; missing files require revalidation. Raw recordings/transcripts/profile state are not published.",
+  "files": [
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/after-cursor-unchanged-verification.json",
+      "bytes": 18333,
+      "sha256": "51e1237c0548ab6e48c4435a72f10cd6773e05857847ea6ab951564d6357426b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/after-negative-unchanged-verification.json",
+      "bytes": 18333,
+      "sha256": "76f0b8015bbff126bbcb6a31cda2157f7bbc40f646e52f598b01937870eb007c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/after-vscode-unchanged-verification.json",
+      "bytes": 18333,
+      "sha256": "7baf2b25dcefe20d85f7dbee535fabbcf85cd02852b5cf2a36a1475be322aca3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/before-launch-unchanged-verification.json",
+      "bytes": 18333,
+      "sha256": "eac1e14c61d76735a7d7d6a68ef7ad9fe386310f3802b3db42e6c2e787bc4a6f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/candidate.json",
+      "bytes": 33233,
+      "sha256": "8898e3cf953e64706d6fb6576929969f6ff9b2e708d8b8525d51ee11efda1cfa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/ci-artifact/build-receipt.json",
+      "bytes": 33170,
+      "sha256": "82693d90a9f3c94e2cc4588755a8f957613702f2bb6af0ca444e3da0dcf6fb60"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/ci-artifact/comparison.json",
+      "bytes": 565,
+      "sha256": "43bdaaf89feed82e94dbd6109df1e15e1018afeb6d2da9e52c7edaadd22a6f5b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/ci-artifact/run.log",
+      "bytes": 243225,
+      "sha256": "e4a5e3bb465e1a3d8fedca9d620738fb42ff2d5e5b22b0dfb39422610146be93"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-budget-amendment.json",
+      "bytes": 3094,
+      "sha256": "1b6b05514186b10e50e3af2f89f05d853e09d7579eec12f6adb3cfafb6d57e79"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-before-close.png",
+      "bytes": 344569,
+      "sha256": "e13113ed030f5f773e8136d22441aaa363676e8e823be9919909cf72fcfebd8a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-cdp-readiness.json",
+      "bytes": 1548,
+      "sha256": "d8d39df3e5d2d87ee3aa2d64f0e929ccfefad8d7b68c3e71db9e002a2b75d851"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-entry-receipt.json",
+      "bytes": 180948,
+      "sha256": "d939fe1d405085775e5df6aa569c5511bee746915e5f17915c44d9caa5f6225b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "3fbdcd7c7111ff9f221c106cdbbd894d0909bee4a60989acae2962f481cd9832"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-failure-observation.json",
+      "bytes": 69276,
+      "sha256": "27205402ba3bdce55cbc6746eab3fb434f1843cf81773d5cc02bf878a7f16655"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-failure.png",
+      "bytes": 146273,
+      "sha256": "76a3c962dfac61906ad21836dfc375fee1ad463c1b6dea58b50d2e20a6f3c79c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-frame-extraction.json",
+      "bytes": 1744,
+      "sha256": "728a880197dc4e3e5aef07a7c0db3f0be29135db8f5b1f03ef64a81371dbc3cd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-frames-000.png",
+      "bytes": 281735,
+      "sha256": "d028f874f5258f907548f3cead94618449219c697a7473e1d3218b62b16120b6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-frames-012.png",
+      "bytes": 298574,
+      "sha256": "f5b1b601d4b18ebbb02bd9052e97988a4826396d9b0c5ad8c6102b5f7ca013a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-frames-024.png",
+      "bytes": 300937,
+      "sha256": "b4be65333d8818dcca6f79030b4f98d139c6f60e4c95f8e8cf846d2ab8cc5177"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-frames-036.png",
+      "bytes": 255823,
+      "sha256": "f9f940123c63d61be7bbe2276e9c306f63f597679b578a63a81ad61d68b60723"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-guided-walkthrough-observation-before.png",
+      "bytes": 394222,
+      "sha256": "7b8f02e3008f9dc3342d12aa62bd431f4f437172708246325f594cede3e0c53e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-guided-walkthrough-observation-return.png",
+      "bytes": 406345,
+      "sha256": "59007606826fb6bc1fa878f16ce23f79a0e18575e71b60579596c727bfde8054"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-guided-walkthrough-observation-study.png",
+      "bytes": 308119,
+      "sha256": "19095e4c78a55a8a79e7e397fc70b2d3bfb99b94a60659a9be810e9260b677c1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-guided-walkthrough-recording-before.png",
+      "bytes": 405488,
+      "sha256": "03b98aede6f3a0a786ef5f70ded2e87f0d90069204cc6e7a1c6e6a58726603d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-guided-walkthrough-recording-return.png",
+      "bytes": 393460,
+      "sha256": "52ce550ababdefdbcc34aef65038ccd0088006a735476fc6112a5469605969d6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-guided-walkthrough-recording-study.png",
+      "bytes": 333174,
+      "sha256": "df90dd54a369855d9839bff3a95314239a6071eabb931427c365051a3f6de5c7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-launch.json",
+      "bytes": 1449,
+      "sha256": "a1211bc1740eedbb16183a2dc424f8f48c6429c89bc5964fc4b8b883820cf2a1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-living-book-observation-before.png",
+      "bytes": 426610,
+      "sha256": "9fd1bb247ac272b008a1731fc8b57b1e0e700e5cc8519f81d9e9cde3958c67eb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-living-book-observation-return.png",
+      "bytes": 425565,
+      "sha256": "6c844c7eec9060a81cb2b76a1b29ad72018ce292e3237e11a22069fd1b7219b4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-living-book-observation-study.png",
+      "bytes": 353437,
+      "sha256": "ed8618e6951dfeee12bc860b3ec904800e1b6a7c708202925e3ce1a1f4f10e47"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-living-book-recording-before.png",
+      "bytes": 432227,
+      "sha256": "0bed1ae409235f16cdc9a0882fa6558aa1ee550fb4cacd3fc9a42d25a03051c2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-living-book-recording-return.png",
+      "bytes": 439209,
+      "sha256": "652b9099bb0455134faa67dac4ffac7a876049b1c2f3a95b9474e5ed6d2a0662"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-living-book-recording-study.png",
+      "bytes": 329965,
+      "sha256": "ce1cd3eec070d3998cef3f4a46c1a95d4074efbb0a8f28bcab07e4f97a558fe5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-native-admission.json",
+      "bytes": 5274,
+      "sha256": "783af8a7bd7d05aabbe586df30eb2fd4e7f3c9104e45664bc1d656c84fd670f5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-native.webm",
+      "bytes": 6544988,
+      "sha256": "6dccd94d3121b7131c5fab4804831d109990ad51280f610398267f7318dc0d96"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-ready-replay.png",
+      "bytes": 154357,
+      "sha256": "4354336b7597f9875c91b10b8121056f8d9bb51969d9bc27ce10f8264bfcf96c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-roundtrip-receipt.json",
+      "bytes": 668813,
+      "sha256": "0cc8e5a471d259543f32c963d65894a10c96a69a41bbd806f57a4cbc0517697c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-saved-wiki.png",
+      "bytes": 418762,
+      "sha256": "8af8c0ab00a83f17fa85a3b2a5f286ce81dde07b299018e434f839e78efc65a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "33afe1b7883e72cbb1153992cbba888a51ff283396190f0c00f0e3f332b7c111"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-study-workspace-observation-before.png",
+      "bytes": 414434,
+      "sha256": "3a88cebf2b5b96f0b11adcfad0bdc6539b9b11b53679a7e4b2bf1d0d5948e5e9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-study-workspace-observation-return.png",
+      "bytes": 399474,
+      "sha256": "3dafe834688a1a2d72895c0fe5fde23e67005300ae726eb40eae3f7158b83d6d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-study-workspace-observation-study.png",
+      "bytes": 386792,
+      "sha256": "ca5e16304839893cc69a6e175e0f1bda9c3ce3df55f6403d7a28eae4d15cb0db"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-study-workspace-recording-before.png",
+      "bytes": 398135,
+      "sha256": "9b2a82326f0a83aa6f99c154c9a6a41fead8dbc403f939be619388e0a5b0876e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-study-workspace-recording-return.png",
+      "bytes": 385898,
+      "sha256": "b86d65d81a8c8a4029ea9a3642e48dc7ed6778afcb1f8ba6d9467984f6990695"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-study-workspace-recording-study.png",
+      "bytes": 338866,
+      "sha256": "ef56f27ca541b41e322a3328e659659b28ea0754f6dbb8a4b57ef02ac77adda5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-ui-close.json",
+      "bytes": 4090,
+      "sha256": "396fe78b7895446b5132e7834c2eb22e22eb20e783c68a83b73571df52612d70"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-ui-start.json",
+      "bytes": 6060,
+      "sha256": "769a839fe3e5ab602ca778dd43c62b5ceff4c0120553ecbb428a6b6674385fb2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/initial-video-inspection.json",
+      "bytes": 1825,
+      "sha256": "d79f9ee9a752c77412265d495665fae045a9cf5caceb24dbc5633ae77341f5b0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-full/installation.json",
+      "bytes": 7078,
+      "sha256": "a76f1488ca5af8ef51d1bb18ad182c292a856af4a4e0f3b502067d5864f6e903"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-orchestration-result.json",
+      "bytes": 4935,
+      "sha256": "f6c835ba58af762898c45b99a1e005ab23bdf019fd3fa085b4b213a9c6f4bc09"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-before-close.png",
+      "bytes": 298479,
+      "sha256": "97d238b7bad64ccc402bc3c14fc3137d561447e54b0dacff8610d3db75913a90"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-cdp-readiness.json",
+      "bytes": 1567,
+      "sha256": "e4bbd79e87728605a23b189225eacf28adfbc9e107d5b2f6513df8c2ad06ec4d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-exit.json",
+      "bytes": 61,
+      "sha256": "e27049595c3e50a414a5d77ae56fe08732fd384b7c035d32e21c4375b93738b7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-frame-extraction.json",
+      "bytes": 1216,
+      "sha256": "c0daa61dd99dd115fbfe8f993958e138b03e6f9d71665960b8e91860ad900efc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-frames-000.png",
+      "bytes": 171782,
+      "sha256": "32a1d485c7337c121e8fe025218085914e05d6f54ea8c7771221ff5939095ee9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-frames-012.png",
+      "bytes": 36240,
+      "sha256": "c43e962962fedcc4e1e4321c9715cecb5c7d9381de4176ecc1efabe094f67a21"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-launch.json",
+      "bytes": 1494,
+      "sha256": "000d0e1b6ea3821c043dc43b1aa00fad91af060b1446d24a3e2dde57383e0134"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-native-admission.json",
+      "bytes": 5302,
+      "sha256": "6536c951badd87c68812749b81afedd334569cfb1e6b5e2149776a3b4a483fd7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-native.webm",
+      "bytes": 759508,
+      "sha256": "0c6fe6b040ad749dfdec08b3d77f49eeae771715acad0b06bac29e0a8f4671bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-negative-after.png",
+      "bytes": 124337,
+      "sha256": "ea603e7bcce1a45ee0fcf607a646748c355610340e2ac4e276274729d9327b54"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-negative-before.png",
+      "bytes": 123442,
+      "sha256": "9c775584cdc8ed7430f781b87bd8a13906f360cbd4040a25e67b238cf1dbc343"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-negative-control.json",
+      "bytes": 124931,
+      "sha256": "ef911cdb52ef6b72e267d03e07da03b3187d09c3c0681086dfc5bac324710828"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "e6378a15e02f634bf9b44c61bddb88246c6a14323e4fbcf1f2433db3b85a83be"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-ui-close.json",
+      "bytes": 4118,
+      "sha256": "65dd4d306e797f148953f4893d1ccf19bb4a59133581a5da585bb5e509e76d1b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/initial-ui-start.json",
+      "bytes": 6090,
+      "sha256": "7478cd6aac5ad02c1b2a8e8639d8d070dfe2003e453d4a2546fbd4f32d16d5d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/cursor-scope-negative/installation.json",
+      "bytes": 7133,
+      "sha256": "17a2d7c59e686f762e6700cee01341fc94f28b16dc314b7f6fc29aa03fe36bef"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/harness-controls-cqmZaa/cursor-full/initial.webm",
+      "bytes": 17,
+      "sha256": "94e9046705ccdb6b9829b504cc45b82c2e156baf5fe7c1cb3b67d541676fa4f4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/harness-controls-cqmZaa/cursor-scope-negative/initial.webm",
+      "bytes": 17,
+      "sha256": "94e9046705ccdb6b9829b504cc45b82c2e156baf5fe7c1cb3b67d541676fa4f4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/harness-controls-cqmZaa/vscode-full/initial.webm",
+      "bytes": 17,
+      "sha256": "94e9046705ccdb6b9829b504cc45b82c2e156baf5fe7c1cb3b67d541676fa4f4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/harness-controls.json",
+      "bytes": 659,
+      "sha256": "30dfb04a8e8d699da21a9963b885472d2357bc03b8126be151698d7e8d4caefa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/helper-syntax.json",
+      "bytes": 1012,
+      "sha256": "895d3f417759bb4f88db1bb33b61c68227ec902c6b35a90a59290f75b203f9fb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/negative-orchestration-result.json",
+      "bytes": 3712,
+      "sha256": "4b16c59748d3d6794f72a57521a57a88a7395052aa51b26aeb2681d37f0f3fb6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/schedule.json",
+      "bytes": 16131,
+      "sha256": "fabb4a2246f3fa60c910edebd50a0d8a7e1d6cae04f581c1de30555554c1014c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/schedule.sha256",
+      "bytes": 80,
+      "sha256": "26ef990d035bbc065df1ec74bb6fc0b752b6f0272748379a18e3e7cc5ecac3e1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/before-restart.json",
+      "bytes": 56544,
+      "sha256": "2ff3a94f5f786f49d353ebe39d765ea94c95c77d4e84617fab65c112dadc9a57"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-before-close.png",
+      "bytes": 419157,
+      "sha256": "64ea989404e58d0ffbd7c346a53b1e27f630379c56d49e963428014c60dd22a8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-cdp-readiness.json",
+      "bytes": 910,
+      "sha256": "e6b1bbd9caf0356b2ed14d9d33bac893ff82ea259dc01299639e9028bbbfc557"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-entry-receipt.json",
+      "bytes": 184825,
+      "sha256": "25132874e78eb23e76da1751300933202f28d37e4c74ae4c2f05b33b9e0474c4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "00ea2205373f0ccc47eaf35b244bbef39c287e3e97ceb52ef3154d598a2c0dc9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-frame-extraction.json",
+      "bytes": 1744,
+      "sha256": "5b3b6b0e7b3c8a891ccb36ab3a02cf9ad7c242f1ba29486888543f6e7fd0fe19"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-frames-000.png",
+      "bytes": 314207,
+      "sha256": "5a8d2f4e1902d098a694fecbee0cbc52547c9e8b2a200be8391ba67ef0cf0c92"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-frames-012.png",
+      "bytes": 307624,
+      "sha256": "0a34d12f43b538a29c4697d7f25c7f5891506bb3ca934c7923e44f042a59ea3b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-frames-024.png",
+      "bytes": 289011,
+      "sha256": "286cf6b2859f41288ff59e46fc66c89c781bbe71f8125bfef41dc198dbd497b0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-frames-036.png",
+      "bytes": 37029,
+      "sha256": "0b7fb9f7df4624208f7e6ca122e341b69c511b96395d4c09e0db2d30aae377be"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-guided-walkthrough-observation-before.png",
+      "bytes": 448185,
+      "sha256": "9bab84c37d6b898d00b2f97ee609ec8142711588e566236f8d9499de63e61b0b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-guided-walkthrough-observation-return.png",
+      "bytes": 483304,
+      "sha256": "8c8311025a885dd6be79bb28d4b07d69ec9c63c9821051eec805bc9aa09c5431"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-guided-walkthrough-observation-study.png",
+      "bytes": 376569,
+      "sha256": "d8265ab2650e5d6140e403cefcd536d5ac201ddf240c48275687ecde25289aba"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-guided-walkthrough-recording-before.png",
+      "bytes": 525929,
+      "sha256": "faf6f80dd6302edd92cf40e878f02d49244657274ded539e63900f6d054bcecb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-guided-walkthrough-recording-return.png",
+      "bytes": 460130,
+      "sha256": "38e8a7137876199614baf38d423a9e3631332f78d09450ed95e067773ba0d67c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-guided-walkthrough-recording-study.png",
+      "bytes": 396566,
+      "sha256": "1f7454cb8446fac84dbd781431e6bbf58ada5a97ac23e6315b8ae215edd8a319"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-launch.json",
+      "bytes": 1434,
+      "sha256": "4c1341147f1393a524cc6bd6ed08bccf14f17ff841c9a18554b02110b2f92717"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-living-book-observation-before.png",
+      "bytes": 522827,
+      "sha256": "b923aef22e528f2fe0dda1909471692b956587b3417e96ef60a1b767070c1585"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-living-book-observation-return.png",
+      "bytes": 529003,
+      "sha256": "202919245b17451d055669d2c3a468659a3398240cbfed49972d2439f518932e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-living-book-observation-study.png",
+      "bytes": 414026,
+      "sha256": "93a263cd2192dce99f500c39a4a0ca229a0532e2a8f4ad77cb6fd2af9e51c54e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-living-book-recording-before.png",
+      "bytes": 533787,
+      "sha256": "0f064dbb970efd0e29655ff2720388dbd9ede3bb67e31359352c8c5884d146a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-living-book-recording-return.png",
+      "bytes": 517694,
+      "sha256": "8bb7a78763652a2a67150d68ee9567064e2469349e66f3a12fa1ee56c573c5f3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-living-book-recording-study.png",
+      "bytes": 395111,
+      "sha256": "e132589134d8494ff6888099c45fd8db55fdbfffffba142560adefb67bee5e79"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-native-admission.json",
+      "bytes": 5382,
+      "sha256": "d23bb483b33b372e81ec9dcb050235d2612d295ca867eb8c8b6fb5efbac7db33"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-native.webm",
+      "bytes": 5873688,
+      "sha256": "220c51160346e0a41d45937b8dbe8c525a711b9569c5233d78383633f60e265e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-ready-replay.png",
+      "bytes": 172748,
+      "sha256": "a052222cd6edfb09512ad35782c8a414bebe8405cc12e93af917c6caa81b6896"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-roundtrip-receipt.json",
+      "bytes": 670553,
+      "sha256": "711f309d71d9eb8459893fd54abdfba809a04e220634da39dc2c461c95602976"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-saved-wiki.png",
+      "bytes": 502122,
+      "sha256": "f928dc1157994acc527997f15b657df234cfe66a88f0ed9c630950390ff78453"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "2c33a82ac893b9cb2ff936f99973a81e7f8781be26ef03b2a43d7454229f44db"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-study-workspace-observation-before.png",
+      "bytes": 453297,
+      "sha256": "49dabc645d57ac8bb2e2ff3a82a5421447859d683a6fe4b623c3c13c8343e59c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-study-workspace-observation-return.png",
+      "bytes": 489069,
+      "sha256": "3000aedf3ecb5aee646c57404b57519a47feffd637614094a908058cf172f781"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-study-workspace-observation-study.png",
+      "bytes": 422959,
+      "sha256": "a489900b089eb0a34643ed66ce14bbc0a676b8a9bf987e49922d85cf68b93002"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-study-workspace-recording-before.png",
+      "bytes": 494559,
+      "sha256": "146b4439786aceee0a75c4a47682a9d4b7114dab09fb14d05118690bb014f954"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-study-workspace-recording-return.png",
+      "bytes": 451449,
+      "sha256": "28352fc2945bef71ed1349318f20c12130d65523c8993ac17bfd8f450f758bbd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-study-workspace-recording-study.png",
+      "bytes": 412217,
+      "sha256": "e19cf4abfcf22f5f872bde52af2b26b72e2871826379b9a8a12e7dc321f3fa88"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-ui-close.json",
+      "bytes": 3814,
+      "sha256": "25b5fa8fb56eaee04104c4f678f45560cfc0ab41cf8ba8f83a6cbb0ab80c7d06"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-ui-start.json",
+      "bytes": 6253,
+      "sha256": "658facf1311cc36df1172c74d0a4f7294bab558885a85e84d84dd3a994fcad4c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/initial-video-inspection.json",
+      "bytes": 2455,
+      "sha256": "2bcfc7e534c6a898ff01e1ff2b15c234ce0b624982b2c6e0f836c8a42241f731"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/installation.json",
+      "bytes": 7109,
+      "sha256": "3dcbab2272b4e0c6585971dcbb9639ef71d42df19bdf3e1fc07011d7164300b3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/motion-extraction.json",
+      "bytes": 806,
+      "sha256": "36eb0ffa6d10cb5586f61c275395480d66b101ddc8b6debef9cf7cdcc0c6583d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/native-retention.json",
+      "bytes": 130345,
+      "sha256": "2299b279352ebeff06fe98726c468f09f3b24d0eeb1df5ce71c902e913963af4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/placement-pairs.json",
+      "bytes": 348103,
+      "sha256": "d00f47b0af51a9d8be1667aab4b67b23961798e951f5fbc1289a5db094936afc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/rapid-mode-control.json",
+      "bytes": 565119,
+      "sha256": "13a53a225303e98c85b47dc6f99c76d5922a263e1a028f3fb13a73c930dafff4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-before-close.png",
+      "bytes": 403259,
+      "sha256": "1f1e31b28e4b4d2f240fce65978f6a403d1b7bb66beedccb8dafbc0f7e80eb90"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-cdp-readiness.json",
+      "bytes": 760,
+      "sha256": "ab88832ed7b709c900b095c796d08564a1aa3d44cdd352bc903c8b12ae740516"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-cold-wiki.png",
+      "bytes": 527167,
+      "sha256": "8312a30663505ed18fb430ab1b2f8cfceca456b5484c7b9a565350cc9638fc87"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-entry-receipt.json",
+      "bytes": 192433,
+      "sha256": "a75c229510262b995705f618a9c21c4401e5a0c407e03af502cdf81226623f3b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-exit.json",
+      "bytes": 61,
+      "sha256": "f260612efc138a9adb9daf2900cc272a7bc6b678898c1150cb37ef2db9b53eea"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-fourth-group-after.png",
+      "bytes": 169015,
+      "sha256": "071026d944c99f5e9c8c63f48e3d2fc76b1b263c098d000e167c0a99f431791e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-fourth-group-before.png",
+      "bytes": 157086,
+      "sha256": "67f552662d0b00a875459519f4ca51cdfb4c5fb514e9ee4747f35df30b414206"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-fourth-group-verified.json",
+      "bytes": 166600,
+      "sha256": "a07c0ee331861f73c6d3f88b6aa8ac0562c300d8188fb4fec66cafd12d02c8de"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frame-extraction.json",
+      "bytes": 6500,
+      "sha256": "c261f7863bda2cd679d9125ea60da3587dc244181d5278b0fcfe1eec0fe78b79"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-000.png",
+      "bytes": 274290,
+      "sha256": "499c63a5ba1362604eda31614c9f27bd017e166dab215801a10f3aa44b510e81"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-012.png",
+      "bytes": 336435,
+      "sha256": "450cbe661d40972df6b2e633ed3a8424a7b2d3861f51f30cc59fde40429f4703"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-024.png",
+      "bytes": 302936,
+      "sha256": "8d3cfb4a21860a08ab346eb74bdea12dea7c8142d1613a6d59ec0e137368232f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-036.png",
+      "bytes": 258420,
+      "sha256": "9d8e2b32a471c1010c61a77118798b624c4171f51e5b2916918fc22c3ff2e174"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-048.png",
+      "bytes": 255766,
+      "sha256": "05da5a0cc22c02ce41e031de55a942994349b865a156d3535ebaa1232fa59295"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-060.png",
+      "bytes": 258769,
+      "sha256": "473c26b9b9eace698783b261b64658cbf791c1f49e011fc699ae4acd447e40d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-072.png",
+      "bytes": 268713,
+      "sha256": "5f3b62ac05f1b5039567bc97d2a91b0ac86b361b51bc308401b13879041f2a7d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-084.png",
+      "bytes": 275758,
+      "sha256": "18d61897efa5b8c474f9642baeb41d62bcc12ddcea896718aac6c4c321e5c36e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-096.png",
+      "bytes": 284802,
+      "sha256": "5cc4f91ac16046afea4304f88db1442dd33d79da201e883954440a76f71bd497"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-108.png",
+      "bytes": 274668,
+      "sha256": "8713ddc4a3c15235340d7076cb6944e0ddd695e531bc1808a4665bba3a6a3d19"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-120.png",
+      "bytes": 271218,
+      "sha256": "3ee913377a8d667e9003b0ef76e3dcf0849a71e67b4b3cd25ac32abc364071f3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-132.png",
+      "bytes": 282231,
+      "sha256": "d5c6a210eb0d43cbc6083cd46ba2803657ba2faf116045907d9b1f04032e917f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-144.png",
+      "bytes": 242556,
+      "sha256": "7650b3e192f52156020d5540f49b542b17c95cdaa3c2eef97227920fbd81c6ef"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-156.png",
+      "bytes": 251083,
+      "sha256": "aa22e3ac816fed120f75db3f91dbc42a9cb0f56b2422e48f8333eb080241bfd7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-168.png",
+      "bytes": 273978,
+      "sha256": "a011f66947dbe20f63b7fdecce6a0ee51ff6bc864a120e3b3cff1ee979b9b353"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-180.png",
+      "bytes": 268065,
+      "sha256": "dcfd97812fcc365bd6a12e610202a8bdab371c3163ed6079a04658c57f499bba"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-192.png",
+      "bytes": 257449,
+      "sha256": "ac4252294837e43375e2c6f1ca1abe7d1a2d21886f8a37e264af8377df457dca"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-204.png",
+      "bytes": 268681,
+      "sha256": "6169a053608497f07f2a7c10aaa90b90f875765eb9f9f6167da45ed42ba93781"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-216.png",
+      "bytes": 248103,
+      "sha256": "e5435716c7474b718a2f8bcaef76013ee0e25cb2531e869f84e201dc95457f14"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-228.png",
+      "bytes": 220985,
+      "sha256": "dbb123a16f3b0de2839c452fcf3d9cf2b8c00193a14de67b0c8b80a96d7db060"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-frames-240.png",
+      "bytes": 94202,
+      "sha256": "446eab3cd23d15f77fcf5a778b8879ffd6b7ef8165466c8bee0044958dfed2b0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-guided-walkthrough-observation-before.png",
+      "bytes": 463914,
+      "sha256": "043318663b677ecd20c5fb1667966d0e425e4fb44bf2a732ef910d0161b225ba"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-guided-walkthrough-observation-return.png",
+      "bytes": 500752,
+      "sha256": "0835051f37b166bee29e772f920bb8bfd0df6abcf5ae0e327e8468a327ea0f9f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-guided-walkthrough-observation-study.png",
+      "bytes": 375619,
+      "sha256": "a728cb460ffa1c432b321e5742da6840a2cd8cd57e82df74f4632ea238d3f4de"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-guided-walkthrough-recording-before.png",
+      "bytes": 509017,
+      "sha256": "b1f76f174baff0d3c4e38d6a9244b6ea561c6c0f440a54364a3ac054f422910a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-guided-walkthrough-recording-return.png",
+      "bytes": 474401,
+      "sha256": "193db19baf38fc88d5048923dce9f53e6346e7ef82275e38af5a817504da23fd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-guided-walkthrough-recording-study.png",
+      "bytes": 395813,
+      "sha256": "9a30cb88d474c3a5f542ebf0d8608dd4a57af1594fade5735027cc4d4332543a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-launch.json",
+      "bytes": 1434,
+      "sha256": "492241e6c323339729a1e99d7878fa6c11a90dca1eb2351058a1a8586480b6f1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-living-book-observation-before.png",
+      "bytes": 528532,
+      "sha256": "d1988fd3b78ee73bce431b2117a25cbdfb6de8b87c2fb7d41eca5ffa5d37fd45"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-living-book-observation-return.png",
+      "bytes": 534494,
+      "sha256": "047401a9b6ad2478478c7a3c7789504e569999c3f3416f505a5bfe93d53f26a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-living-book-observation-study.png",
+      "bytes": 412243,
+      "sha256": "1ce205ea937ffdb42b0070dbd68bcf9af283da11fd35fa38560bb9350625e5a4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-living-book-recording-before.png",
+      "bytes": 536889,
+      "sha256": "efc059f292b693c96243ecf045174003acbb4420070d750f99087d103e1d5182"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-living-book-recording-return.png",
+      "bytes": 534078,
+      "sha256": "5eec2070e982894a6bd95508ec3b9adbd268ce79a0f4a0b4ca776e98ab02ade3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-living-book-recording-study.png",
+      "bytes": 393618,
+      "sha256": "237558208cfdb87cc0280183ee712c97104e31f96fc71abd752ca3b05c762906"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-motion-140.png",
+      "bytes": 421560,
+      "sha256": "bc7d844f2642d5e2662bd5a5aea2063805cfd80930b32511b8a8d5b707b220ca"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-motion-222.png",
+      "bytes": 324227,
+      "sha256": "1a847671709ad5111a21cbb3a52f3b1ca41849344aa12a79405b41612f0116bd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-native-admission.json",
+      "bytes": 5382,
+      "sha256": "4ff281c8992e88a6c720f2feaf1eb2d9d263cd80a9428ceea6f483ce4c081618"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-native.webm",
+      "bytes": 47937467,
+      "sha256": "c0969e98285f23738cb8d9bf267a81b60b0530c1dc16b0f57f72717e3f839b1e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-ready-replay.png",
+      "bytes": 173049,
+      "sha256": "804445708346858ec522d5a2354e340343cbc677c015a295006df9b8ff66fbc3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-roundtrip-receipt.json",
+      "bytes": 670570,
+      "sha256": "349dafe2867f8d91f9128ef83cb7b545f28068cf74a1266a7bc4e1c378d98177"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-saved-wiki.png",
+      "bytes": 522947,
+      "sha256": "1042d1be574778fbbfd1b262a1d6ee972269ac13301d0f83ba2a8a3c9c462bf6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-shutdown.json",
+      "bytes": 450,
+      "sha256": "80726927bc207cbd91bc01a34b31320d49c00b81602c75e37cf96e243fbeb1ef"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-study-workspace-observation-before.png",
+      "bytes": 457307,
+      "sha256": "35a33806bc61f40bc608084e0a883a54459683a5eda78f4eac3211ad0f5538bc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-study-workspace-observation-return.png",
+      "bytes": 491136,
+      "sha256": "f4352c260000ab736ee8c32d9ef90caf1acee73c0fa848f810e4939db2d6c0aa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-study-workspace-observation-study.png",
+      "bytes": 422869,
+      "sha256": "261e66a24fdaab2bd38b24f6ecda85e14cbc754b3a70e70cb1c61c809710799a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-study-workspace-recording-before.png",
+      "bytes": 499988,
+      "sha256": "5b176aa71d64b8bc88a6c133ad81b2582412445564ad593c2d1aadcf52fc84bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-study-workspace-recording-return.png",
+      "bytes": 458357,
+      "sha256": "b0414fa8a649dc3ca63cbf57ae40de336aa020ad290986f6b167298d1af96ad9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-study-workspace-recording-study.png",
+      "bytes": 412023,
+      "sha256": "248d42843f9e0aacd8e9bfc03529eb33e0edb69b0ba3136519a35e4bbcdef2a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-ui-close.json",
+      "bytes": 3475,
+      "sha256": "21412394977b976ba82410c4d67e114d3a355285ef9e5ffdd9c6fe1a19375e20"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-ui-start.json",
+      "bytes": 5902,
+      "sha256": "c3d5c1d49b90cc067d14037fae50077c73ebe7cd1baad271f47bae261ec808d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/restart-video-inspection.json",
+      "bytes": 5350,
+      "sha256": "1af7d6df117caaab8a3184d17bd1aeed1ee37079624496c4524745102ad312a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/retained-pairs.json",
+      "bytes": 956953,
+      "sha256": "3ab223765b342c935d4634be1254473efb97513de3ae050a111c82f233cc23f2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/retention-application-file-open.png",
+      "bytes": 188068,
+      "sha256": "0675512342c0096ef5f8d378466ccf5ea6bda3135d0898e26b4a188680104491"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-full/retention-context-file-open.png",
+      "bytes": 235664,
+      "sha256": "a0c3b002cacd0430284582a24bbd8c96ec31170451feca6c1afb8b93f7d144d2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v27/vscode-orchestration-result.json",
+      "bytes": 9141,
+      "sha256": "420b4e34ed7cbefb08fb7b3773cdc65dc15cf5b648e7c7485630460952303711"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/after-cursor-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "ab06b27050af25ea8a0d2868a2cbdb3bdab04333c6e921beff73cbf384cdca64"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/before-launch-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "7ac88d844d180d2a04068022ab87d6705b6315f8a315b5c9795225b7a081fe9c"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/candidate.json",
+      "bytes": 33233,
+      "sha256": "8898e3cf953e64706d6fb6576929969f6ff9b2e708d8b8525d51ee11efda1cfa"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/group-trace.jsonl",
+      "bytes": 1317998,
+      "sha256": "86de972f07d5dcffa1f2c2aa8d689567bcfbcd6b72983a79d625df3e9426806a"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-before-close.png",
+      "bytes": 344569,
+      "sha256": "e13113ed030f5f773e8136d22441aaa363676e8e823be9919909cf72fcfebd8a"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-cdp-readiness.json",
+      "bytes": 1567,
+      "sha256": "ed74eb70593686737d4fdf5b94f1111235fd589f0c9bc890962c0eb24ec219db"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-entry-receipt.json",
+      "bytes": 180951,
+      "sha256": "cd14d2000c87b84673aa1eb8da89aa5d41bc952489a2344d26a0a279f1d76f1f"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "5aa0f657d52e645972561fd7d5b0c88ef2df1dbbf0b4af2a4db628af22bb9dd2"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-failure-observation.json",
+      "bytes": 69282,
+      "sha256": "dae0e5e25a6f0d4c2a1841585a00b2913fb8605214c2296daf42bcf1b7a975c7"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-failure.png",
+      "bytes": 146273,
+      "sha256": "76a3c962dfac61906ad21836dfc375fee1ad463c1b6dea58b50d2e20a6f3c79c"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-frame-extraction.json",
+      "bytes": 1739,
+      "sha256": "8ba67dc4dd1ee1c128f3ecd8c583a1ac3b1f93c376f9303ab0b860b0be363753"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-frames-000.png",
+      "bytes": 302424,
+      "sha256": "bf5153b1b954ddb511ceefae47c53a452426ce197f090233f397c412cfa1385e"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-frames-012.png",
+      "bytes": 289852,
+      "sha256": "60cd8c3cf0ded950ec831f3b5becd467546270e55ac6299a8ca4d8521964f763"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-frames-024.png",
+      "bytes": 295129,
+      "sha256": "81d1860e935ee4101a393936bb18aac47460b17338e9f26740d46d23a1c5f742"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-frames-036.png",
+      "bytes": 221121,
+      "sha256": "e55105dd315792d3fdc9ceac301621073ecdae4dd2a9fe449b7c72a6948c6fe5"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-guided-walkthrough-observation-before.png",
+      "bytes": 394222,
+      "sha256": "7b8f02e3008f9dc3342d12aa62bd431f4f437172708246325f594cede3e0c53e"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-guided-walkthrough-observation-return.png",
+      "bytes": 406345,
+      "sha256": "59007606826fb6bc1fa878f16ce23f79a0e18575e71b60579596c727bfde8054"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-guided-walkthrough-observation-study.png",
+      "bytes": 308119,
+      "sha256": "19095e4c78a55a8a79e7e397fc70b2d3bfb99b94a60659a9be810e9260b677c1"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-guided-walkthrough-recording-before.png",
+      "bytes": 405488,
+      "sha256": "03b98aede6f3a0a786ef5f70ded2e87f0d90069204cc6e7a1c6e6a58726603d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-guided-walkthrough-recording-return.png",
+      "bytes": 393460,
+      "sha256": "52ce550ababdefdbcc34aef65038ccd0088006a735476fc6112a5469605969d6"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-guided-walkthrough-recording-study.png",
+      "bytes": 333174,
+      "sha256": "df90dd54a369855d9839bff3a95314239a6071eabb931427c365051a3f6de5c7"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-launch.json",
+      "bytes": 1489,
+      "sha256": "6ee735dee85b33a0be6697abdfccb69e4e3a218f2b7a81493ddaff9708d1c973"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-living-book-observation-before.png",
+      "bytes": 426610,
+      "sha256": "9fd1bb247ac272b008a1731fc8b57b1e0e700e5cc8519f81d9e9cde3958c67eb"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-living-book-observation-return.png",
+      "bytes": 425565,
+      "sha256": "6c844c7eec9060a81cb2b76a1b29ad72018ce292e3237e11a22069fd1b7219b4"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-living-book-observation-study.png",
+      "bytes": 353437,
+      "sha256": "ed8618e6951dfeee12bc860b3ec904800e1b6a7c708202925e3ce1a1f4f10e47"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-living-book-recording-before.png",
+      "bytes": 432227,
+      "sha256": "0bed1ae409235f16cdc9a0882fa6558aa1ee550fb4cacd3fc9a42d25a03051c2"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-living-book-recording-return.png",
+      "bytes": 439209,
+      "sha256": "652b9099bb0455134faa67dac4ffac7a876049b1c2f3a95b9474e5ed6d2a0662"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-living-book-recording-study.png",
+      "bytes": 329965,
+      "sha256": "ce1cd3eec070d3998cef3f4a46c1a95d4074efbb0a8f28bcab07e4f97a558fe5"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-native-admission.json",
+      "bytes": 5290,
+      "sha256": "9e78676fac3f0df6990f8ab81de90477a4c2a5251037b515e9cea5f0610292f7"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-native.webm",
+      "bytes": 6344812,
+      "sha256": "f21bae990cf759af99935ac58994d344a5a61cbcf2bb4ff7aecb68c9c02db5cc"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-ready-replay.png",
+      "bytes": 154357,
+      "sha256": "4354336b7597f9875c91b10b8121056f8d9bb51969d9bc27ce10f8264bfcf96c"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-roundtrip-receipt.json",
+      "bytes": 668803,
+      "sha256": "b6f5cfeacbb76d0d83e525de2bd86a8ef706e541d0847b2b799b36465b7c2b92"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-saved-wiki.png",
+      "bytes": 418762,
+      "sha256": "8af8c0ab00a83f17fa85a3b2a5f286ce81dde07b299018e434f839e78efc65a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "ecbafc92f63c73fab285800b38fc12376ba94b5fc0eadf2d01c4d8b57db6cc19"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-study-workspace-observation-before.png",
+      "bytes": 414434,
+      "sha256": "3a88cebf2b5b96f0b11adcfad0bdc6539b9b11b53679a7e4b2bf1d0d5948e5e9"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-study-workspace-observation-return.png",
+      "bytes": 399474,
+      "sha256": "3dafe834688a1a2d72895c0fe5fde23e67005300ae726eb40eae3f7158b83d6d"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-study-workspace-observation-study.png",
+      "bytes": 386792,
+      "sha256": "ca5e16304839893cc69a6e175e0f1bda9c3ce3df55f6403d7a28eae4d15cb0db"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-study-workspace-recording-before.png",
+      "bytes": 398135,
+      "sha256": "9b2a82326f0a83aa6f99c154c9a6a41fead8dbc403f939be619388e0a5b0876e"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-study-workspace-recording-return.png",
+      "bytes": 385898,
+      "sha256": "b86d65d81a8c8a4029ea9a3642e48dc7ed6778afcb1f8ba6d9467984f6990695"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-study-workspace-recording-study.png",
+      "bytes": 338866,
+      "sha256": "ef56f27ca541b41e322a3328e659659b28ea0754f6dbb8a4b57ef02ac77adda5"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-ui-close.json",
+      "bytes": 4088,
+      "sha256": "12b1a1fd074f07fb571465525ec6f2acfafcb1401f49810c0fc1d4f188f7f27c"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-ui-start.json",
+      "bytes": 6058,
+      "sha256": "fed706d07b3dc6fbad6603ec3ee0be9e92afa64b42af936a93edc9815798b5a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/initial-video-inspection.json",
+      "bytes": 1544,
+      "sha256": "024493b86423f769642aab7362fc2aaec9e4abb11f23b8ab486995b62f8480e4"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-full/installation.json",
+      "bytes": 7115,
+      "sha256": "763e6bfc7a560afd493bd65360255d5020c73ca38a830b2cde5fbe53ba62a9a8"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/cursor-orchestration-result.json",
+      "bytes": 4884,
+      "sha256": "e6736f64eb7e7cd919ed237eccc78e8b887c037e87aea4b283d8ab69759d9658"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/group-identity-diagnosis.json",
+      "bytes": 8959,
+      "sha256": "0a63e3ec3420f26f285cc581fae98378556e3ebe18ba5ce0c45f00c2fbb26c66"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/harness-controls-YZLJNu/cursor-full/initial.webm",
+      "bytes": 17,
+      "sha256": "94e9046705ccdb6b9829b504cc45b82c2e156baf5fe7c1cb3b67d541676fa4f4"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/harness-controls-YZLJNu/cursor-scope-negative/initial.webm",
+      "bytes": 17,
+      "sha256": "94e9046705ccdb6b9829b504cc45b82c2e156baf5fe7c1cb3b67d541676fa4f4"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/harness-controls-YZLJNu/vscode-full/initial.webm",
+      "bytes": 17,
+      "sha256": "94e9046705ccdb6b9829b504cc45b82c2e156baf5fe7c1cb3b67d541676fa4f4"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/harness-controls.json",
+      "bytes": 658,
+      "sha256": "36282e46726a511ed057db2afbfc167aecfa285321fb9bd0f39fa6a965fb2ced"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/instrumentation.json",
+      "bytes": 816,
+      "sha256": "cf31e2ac7377663c095686f17c7f7c2a6770f34288a3c2bfd5b7a7fa2936483b"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/schedule.json",
+      "bytes": 40912,
+      "sha256": "3b121ce3a4703e15d0a9cf03c6ddca6c4b80f0cff6e5724a10d2223256ea6e37"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-document-repair/review-wrapper-fixed/coderabbit-receipt.json",
+      "bytes": 608,
+      "sha256": "2cc49892b9c053766f8b3708d20e020e389a7410d210968009e68af6f652cbeb"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-document-repair/review-wrapper-fixed/coderabbit-triage.json",
+      "bytes": 1340,
+      "sha256": "27f87662fd4907040d29169a45ce9b089e664dc8abb82268d816cd4076aeeab0"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-document-repair/review-wrapper-fixed/coderabbit.log",
+      "bytes": 2093,
+      "sha256": "0750f8584cd2ff61bca7cce36a2043c345627f6548ae4347b96d5000d451539b"
+    }
+  ]
+}

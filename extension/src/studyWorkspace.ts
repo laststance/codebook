@@ -157,7 +157,7 @@ export class StudyWorkspace {
   private presentationOperation?: Promise<PresentationState>;
   private presentationWrite?: Promise<void>;
   private placingPresentation = false;
-  private presentationEditorScope?: { signal: AbortSignal; lifetime: number; mainCount: number };
+  private presentationEditorScope?: { signal: AbortSignal; lifetime: number; mainCount: number; overlappingPanes: Map<string, { column: vscode.ViewColumn; tabCount: number }> };
   private presentationMovedFocus = false;
   private presentationPoseRequest?: PresentationPoseCapture;
   private presentationPose?: PresentationPose;
@@ -545,6 +545,7 @@ export class StudyWorkspace {
     const expectedPinnedTabCounts = new Map(roles.map(role => [role.region,
       (vscode.window.tabGroups.all.find(group => group.viewColumn === role.column)?.tabs.filter(tab => matches(tab, role.kind) && !tab.isPreview).length ?? 0) + 1,
     ]));
+    const editorScope = this.presentationEditorScope;
     const isRegistered = (role: typeof roles[number], panel: vscode.WebviewPanel) => {
       const destination = vscode.window.tabGroups.all.find(group => group.viewColumn === role.column);
       // Same-column overlap adds one pinned tab; native panel visibility identifies it across host wrapper resyncs.
@@ -568,6 +569,10 @@ export class StudyWorkspace {
         assertRetained();
         const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => matches(tab, role.kind));
         if (tabs.length !== 1) throw new Error('The current presentation tab is not unique.');
+        // Only this owned same-column creation may temporarily duplicate an otherwise unique pinned role.
+        if (role.previousColumn === role.column) for (const kind of [role.kind, `mainThreadWebview-${role.kind}`]) {
+          editorScope?.overlappingPanes.set(`webview:${kind}`, { column: role.column, tabCount: expectedPinnedTabCounts.get(role.region)! });
+        }
         // Actual layout transactions need fresh documents; same-column reuse can omit native inner-focus delivery.
         const replacement = vscode.window.createWebviewPanel(role.kind, role.panel.title, { viewColumn: role.column, preserveFocus: true }, { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true });
         replacements.set(role.region, replacement);
@@ -606,6 +611,7 @@ export class StudyWorkspace {
         });
       }, 'unique pinned presentation panes', PRESENTATION_READY_TIMEOUT_MS, signal);
     } finally {
+      editorScope?.overlappingPanes.clear();
       for (const subscription of subscriptions) subscription.dispose();
       // Failed creation removes only unadopted owned panes; adopted state never rolls back over newer learner input.
       for (const [region, replacement] of replacements) if (this[region] !== replacement) replacement.dispose();
@@ -663,7 +669,7 @@ export class StudyWorkspace {
       const retainedLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertBeforeMove();
       assertPreviewOwnership();
       // Scope remains verified while geometry is provisional; empty foreign wrappers must not acquire a new identity.
-      this.presentationEditorScope = { signal, lifetime: this.lifetime, mainCount: grid.groups.length };
+      this.presentationEditorScope = { signal, lifetime: this.lifetime, mainCount: grid.groups.length, overlappingPanes: new Map() };
       this.layoutReceipt = undefined;
       // Occupy the source destination to prevent empty-group renumbering and keep focus off moving webviews.
       this.presentationMovedFocus = true;
@@ -2130,7 +2136,21 @@ export class StudyWorkspace {
     const key = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputText ? `text:${tab.input.uri.toString()}`
       : tab.input instanceof vscode.TabInputWebview && ['codebook.scopedBrowser', 'codebook.studyContext', 'codebook.repositoryWiki'].some(kind => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType)) ? `webview:${tab.input.viewType}` : undefined;
     const previous = before.tabs.map(key), current = after.tabs.map(key);
-    if (!previous.length || previous.includes(undefined) || current.includes(undefined) || new Set(previous).size !== previous.length || new Set(current).size !== current.length) return false;
+    if (!previous.length || previous.includes(undefined) || current.includes(undefined)) return false;
+    if (new Set(previous).size !== previous.length || new Set(current).size !== current.length) {
+      const scope = this.presentationEditorScope;
+      // Cursor rebuilds wrappers while predecessor and successor coexist; only an exact owned overlap may survive.
+      if (!scope || !this.placingPresentation || scope.lifetime !== this.lifetime || scope.signal !== this.presentationTransition?.cancellation.signal || scope.signal.aborted
+        || previous.length !== current.length || previous.some((value, index) => value !== current[index])) return false;
+      return [...new Set(previous)].every(value => {
+        const count = previous.filter(candidate => candidate === value).length;
+        if (count === 1) return true;
+        const overlap = value && scope.overlappingPanes.get(value);
+        return Boolean(overlap && before.viewColumn === overlap.column && after.viewColumn === overlap.column && count === overlap.tabCount
+          && before.tabs.every(tab => key(tab) !== value || !tab.isPreview) && after.tabs.every(tab => key(tab) !== value || !tab.isPreview)
+          && vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => key(tab) === value).length === overlap.tabCount);
+      });
+    }
     let retained = 0;
     // Added tabs may interleave, but deleting or reordering any prior tab releases the old group identity.
     for (const value of current) if (value === previous[retained]) retained++;

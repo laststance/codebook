@@ -3,7 +3,7 @@
 Type: hardening\
 Status: validating\
 Result: pending\
-Delivery: v26 installed FAIL reopens T3/T4; retained-document repair investigation and T5/H6 delivery pending\
+Delivery: v27 VS Code PASS / Cursor FAIL; scoped overlap repair verification and T3/T4/T5 delivery pending\
 Goal version: 5 (started under version 4)\
 Tracking issue: https://github.com/laststance/codebook/issues/23\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -187,6 +187,8 @@ No new tasks from Performance. No TODOs proposed: carried product obligations al
 Suppressed findings: none. The public focus command's exact cross-host behavior is an explicit experiment, not an asserted portable fix. Further runtime evidence may require a revised implementation hypothesis and updated plan.
 
 ## Result and handoff
+
+Latest checkpoint: [unchanged v27 and Cursor overlap diagnosis](evidence/0018/installed-v27-validation.md) records complete expanded VS Code PASS and Cursor final-initial-Study FAIL. A logging-only copy reproduces a logical-identity loss when Cursor refreshes wrappers during the owned two-tab overlap. The narrow repair has two failing-before cases and 27 focused passing checks; full 909/96 checks, builds and all four typechecks pass on unchanged inputs. The exact two-file CodeRabbit supplement completes with zero findings; a clean v28 both-host trial remains pending. CI 903/96 and unpacked artifact equivalence do not override native FAIL. T3/T4 stay open; T5 delivery pending; G12/final reviewers unstarted.
 
 Current native checkpoint: [v26 installed validation and diagnosis](evidence/0018/installed-v26-validation.md) fails VS Code's final Guided-to-Study restoration after exact restart/replay, twelve Returns and 24 Living/Guided transfers. Cursor's negative passes, full positive and remaining VS Code controls are unexecuted. The retained-column stress reproduces missing inner focus despite acquired native focus. The private E replacement intervention passes 120 transfers, with all eleven video sheets inspected and original profile/draft preservation verified. The source repair now replaces documents for actual transactions, retains validated same-mode Select, and fixes the stale focus fake. Changed-mode, explicit Restore and provider-identified wrapper-refresh regressions fail before repair; focused controls pass after correction. Earlier full runs expose stale test seams, which now target adopted documents. The final cut passes 903 product/shared + 96 package checks, both builds and four typechecks on 275 unchanged inputs (`ab1a9f75…`). Final provider review precedes clean v27 and unchanged both-host native verification. T3/T4 are open; CI's 900/96 PASS and identical unpacked artifact contents do not supersede native FAIL. T5/G12/final acceptance remain incomplete.
 
