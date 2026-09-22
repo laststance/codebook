@@ -3,7 +3,7 @@
 Type: hardening\
 Status: validating\
 Result: pending\
-Delivery: D022 pushed; D023 and notification repair checkpointed locally; v10 negative passes but positive replay transfer fails; four repairs checkpointed at 7f95ada; v11 normally installed in owned profiles but not launched; native review non-converged; runtime validation and delivery pending\
+Delivery: pushed through 04e2aad with passing branch CI; v11 Cursor negative and initial returns pass, restart fails at retained-focus restoration; scoped investigation, both-host native validation and PR/merge remain pending\
 Goal version: 5 (started under version 4)\
 Tracking issue: https://github.com/laststance/codebook/issues/23\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -153,6 +153,8 @@ No new tasks from Performance. No TODOs proposed: carried product obligations al
 Suppressed findings: none. The public focus command's exact cross-host behavior is an explicit experiment, not an asserted portable fix. Further runtime evidence may require a revised implementation hypothesis and updated plan.
 
 ## Result and handoff
+
+Latest resume: [ordinary v11 validation and branch CI](evidence/0018/installed-v11-validation.md) supersede the execution blocker below. The old v10 GUI has ended independently; its exact failure stays recorded and the foreground comparison remains unavailable. After retiring only its verified orphan CLI, fresh v11 Cursor passes visibility and the separate-part negative with native video/cleanup. Initial full entry and six all-mode Returns pass with inspected video. Restart fails on the subsequent Wiki open with a retained-main-editor-focus timeout despite visible rendering. Exact replay restart, restarted returns, fourth-group and VS Code remain unexecuted. Both Cursor phases close normally with preservation/cleanup; investigate a separately identified logging copy before repair. GitHub Actions run 35675136705 passes 773 + 96 checks on pushed `04e2aad`, with 269 identical selected inputs and 29 identical non-provenance archive entries compared with unchanged native v11. T4/T5 stay open, and final trials remain zero.
 
 Execution blocker: after the 23:01 UTC goal resume, three consecutive resumed turns retain the same hidden/unfocused Cursor state. The newly readable accessibility tree did not unblock rendering; native Raise left visibility unchanged and a title-bar click returned `Computer Use server error -10005: noWindowsAvailable`. Read-only probes at 23:12:14 and 23:13:54 UTC again observe zero animation callbacks in all six frames. The exact launcher session 92612 and PID 20886 remain live, and the failed screen is unchanged. The goal is blocked again after the fresh three-turn audit. The already-pending manual foreground action remains necessary for T4; source/package/installation/provider preparation is complete. Retain the unchanged failed v10 state and unlaunched v11 profiles, then perform the controlled comparison and sequential native schedules. This does not close the cycle or Goal #1. The [resumed audit](evidence/0018/candidate-v11-preparation.md#review-and-next-action) also rechecks the requested G12 documentation: G01–G11 and prior final steps 1–7 are unchanged, all 203 local links resolve, and no bundled skill or chat-skill registration is implemented.
 

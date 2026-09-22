@@ -2,6 +2,8 @@
 
 Date: 2026-09-22 JST / 2026-09-21 UTC. Scope: Cycle 0018's four source ownership repairs. This is package and installation evidence, not loaded-extension runtime proof, G12 validation or final acceptance.
 
+Later status: [ordinary v11 validation and current branch CI](installed-v11-validation.md) supersede the historical execution blocker below. They retain that failure, record Cursor initial success and a distinct visible restart focus failure, and leave VS Code / delivery pending.
+
 ## Source and artifact identity
 
 The local checkpoint is `7f95ada6b8700f80111bf183c20d54e9fde38536`, following the [three fixing delivery-review passes](scope-refusal-and-visibility.md#delivery-review-and-remaining-work). It rejects an unconfirmed required reservation before Context/source creation, carries original focus through actual Return, preserves a newer primary-tab selection during borrowed focus, and rejects duplicate cold Open before initialization can bypass reservation. That review workflow remains non-converged; checkpointing and packaging do not change its result.
