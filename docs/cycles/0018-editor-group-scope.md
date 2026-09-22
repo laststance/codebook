@@ -1,9 +1,9 @@
 # Cycle 0018 — Native editor scope on cold study entry
 
 Type: hardening\
-Status: validating\
+Status: implementing\
 Result: pending\
-Delivery: clean `92b3a29` source unchanged; v17 native/inner-focus investigation and unsuccessful intervention recorded; PR/merge pending native repair\
+Delivery: clean `5812e16` packaged as v18; VS Code native guard failure; Cursor unlaunched; PR/merge pending diagnosis\
 Goal version: 5 (started under version 4)\
 Tracking issue: https://github.com/laststance/codebook/issues/23\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -153,6 +153,8 @@ No new tasks from Performance. No TODOs proposed: carried product obligations al
 Suppressed findings: none. The public focus command's exact cross-host behavior is an explicit experiment, not an asserted portable fix. Further runtime evidence may require a revised implementation hypothesis and updated plan.
 
 ## Result and handoff
+
+Latest installed checkpoint: [unchanged v18 validation](evidence/0018/installed-v18-validation.md) freezes clean `5812e16` / VSIX `14b4a826…` after the 808 + 96 checks. Ordinary VS Code passes both exact replay entries, twelve Wiki Returns and the first added Study-to-Living transfer, then fails Living-to-Guided with a retained pane/group/focus refusal after 468 ms. The partial Guided-shaped grid stays unconfirmed; prior Living preference and exact paused replay remain. No corrective action follows. Remaining VS Code controls and both Cursor profiles are unexecuted. Eighteen video sheets are inspected, twenty-two restart sheets remain uninspected, and all original files/drafts plus zero owned PIDs/descriptors are verified. T3 reopens for a baseline/actual guard trace; T4 FAIL, T5 incomplete. G12 and final acceptance remain specified-only/unstarted. The earlier source checkpoint below does not imply native repair.
 
 Latest source checkpoint: the [document-bound focus implementation](evidence/0018/owned-focus-implementation.md) completes T3 source work under the [engineering amendment](../plans/cycle-0018-owned-focus-handoff.md). It follows separately recorded G/H failures and I's private 90-transition pass, covers all owned renderer forms, and invalidates stale positive focus receipts on blur/hidden transitions. Two meaningful regressions fail before their repairs. Final checks pass **808/808 + 96/96**, plus eight real Chromium cases with inspected frames. Final CodeRabbit review covers fourteen files with one minor provenance finding, clarified without invented historical status. No fresh independent native reviewer is claimed. T4 retains the previous FAIL until a new clean unchanged archive passes both ordinary-host schedules; T5 remains incomplete. Three owned profiles are prepared but unlaunched; prior diagnostic cleanup remains verified. G12 and final acceptance remain unimplemented/unstarted.
 

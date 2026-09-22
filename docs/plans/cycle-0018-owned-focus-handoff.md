@@ -108,6 +108,8 @@ The [source verification report](../cycles/evidence/0018/owned-focus-implementat
 
 CodeRabbit completes the final fourteen-file review with one minor evidence-provenance finding, addressed without inventing historical checkout status. No new independent native subagent review is claimed. Source input hash `fd4b8d3302c3571860e3757b11a621dd4972b22032e0d801330e0fdd129b2db7` spans 273 inputs. F4 and T5 still require a new unchanged both-host archive, native video/frames, current-head review/CI and delivery.
 
+The later [unchanged v18 native trial](../cycles/evidence/0018/installed-v18-validation.md) fails the first additional Living-to-Guided transfer after exact replay and all twelve VS Code Wiki Returns pass. F4 is **FAIL**, not complete; the other controls and both Cursor profiles are unexecuted. Source F1–F3 results remain recorded, but a distinct retained-placement guard diagnosis is required before another implementation or installed schedule. All three owned profiles are cleaned and protected. Do not infer the root cause from the new protocol alone.
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs for this amendment | Status | Findings |
