@@ -1,0 +1,610 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-22T13:43:10.749566+00:00",
+  "scope": "Cycle 0018 host-message attribution: F admission prerequisite failure; G prepared and unlaunched. Logging-only installed diagnostics, no product or final-acceptance proof.",
+  "source": {
+    "revision": "64c762939ea3c03f6f6cea2b18f3b1ce618ebd77",
+    "dirty": false,
+    "vsixSha256": "2a656c6e90d05c9d027fca741c8e30350d2e4af5b78ff9a89e99843a46805358",
+    "sourceHash": "f6c3d17c2d6ee2ad2d70a00f8b7a849e93c085c40347d53deae354edac35d1cd",
+    "inputCount": 273
+  },
+  "availability": "Private local artifacts in this checkout; hashes and relative paths only. G includes preparation artifacts only at this checkpoint. Preserve before moving the checkout.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/after-cursor-diagnostic-verification.json",
+      "bytes": 5558,
+      "sha256": "caf718cc775927f2bebae834469ba5f6a26b127694bad6da2c0711ad932fcc15"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/before-diagnostic-verification.json",
+      "bytes": 5558,
+      "sha256": "263ae1fec2f98ed835b1f2cc67f4f5801d789be931781fa01f9cae9d484a864f"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/candidate.json",
+      "bytes": 32991,
+      "sha256": "cefc7a3451efb6fc487884fdc2146aaad7ff0bccb18cd61af9c150d88bb1b01e"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/check-capture-paths.mjs",
+      "bytes": 1158,
+      "sha256": "2f8b68b914c8e1e5776824c209ce497b29073106b83b408d81c07097b2ade3a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/checked-process.mjs",
+      "bytes": 1175,
+      "sha256": "04f09fc530296c557cd2790d3d48f73b4182503e04ab4b3f3508cceceb91aa55"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/classification.json",
+      "bytes": 439,
+      "sha256": "c27c041b483fc2d89f38a87db7e0f5ead60ef923aede41f6b35a72c66bd55ae1"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/close-partial.mjs",
+      "bytes": 1663,
+      "sha256": "3787852303f626e514ca6769dd221787163174b648502238787661294b99d2dd"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/diagnostic-bundle.json",
+      "bytes": 1122,
+      "sha256": "1d693affb924b474e321b79a59edeb06d41f13740c8f67bd930e422df3497ac5"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/initial-awaiting-native-admission.json",
+      "bytes": 254,
+      "sha256": "2bf33be42f1ee7170ed7c6954310f3eeb084a5392cc951b4fdb98c913295c48a"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/initial-cdp-readiness.json",
+      "bytes": 1567,
+      "sha256": "3ff4bf458325443e82bb25a43bda069bdea58cdd08c3e67409d5c2bedf7b4d7c"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "d92fb68b7a5f4a62c30cc808ee6c2570707519b77ba947e482e54f2970379419"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/initial-launch.json",
+      "bytes": 1504,
+      "sha256": "891cfc2717fd326e355af64686f1b1f17e2a9c0d67471a21756e5f13b0a80646"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/initial-partial-before-close.png",
+      "bytes": 254038,
+      "sha256": "5a023bff5c5b082fd64ed1467712065b669055f98b3fdce4ee31fbd51398456b"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/initial-partial-cleanup.json",
+      "bytes": 2765,
+      "sha256": "a5f8537a935d53c13b5be43ab17beba945cf9f5ec239f5dacce06c6dd4d34ae4"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "f36ab59ab2a8acbcf83696ac855470d7834b443eed58d3ab34a6f83353694df0"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/installation.json",
+      "bytes": 7141,
+      "sha256": "3a47658686345b0fec260c7f237730a53562dd5ee339c6d08c40bcd204b3479d"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/native-state.json",
+      "bytes": 227,
+      "sha256": "01377161eeece3fe2c3be9e82497e85954243dcf35cc36d2904aa69db1089503"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-full/profile-preparation.json",
+      "bytes": 23520,
+      "sha256": "522cd26c4bf28562f2a5078098249898693306386005812025345b9a663791ba"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-initial-launch-output.log",
+      "bytes": 1392,
+      "sha256": "ef182277273ae0d16f32cec50686df617796d87d982356a276159d3e64bad741"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-orchestration-result.json",
+      "bytes": 1823,
+      "sha256": "b1f6c378be359a115c941e3c618960e6c1fe6476762e19ed454da7df264368cb"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-orchestration.log",
+      "bytes": 1111,
+      "sha256": "6b3dbf9876f9eefc0e6a77de51da7c508454487c6d0d38063856c7b980683eca"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-step-01-close-partial.mjs.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-step-02-cleanup-owned-profile.py.log",
+      "bytes": 390,
+      "sha256": "cbcc7be22339fe7a6a2ecb4448dba721284e97b5cf3aa8c6f485a813c5b22c02"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/cursor-step-03-verify-diagnostic.mjs.log",
+      "bytes": 61,
+      "sha256": "70442508b883625583cda8227d71fb20c2ac54ebe972806cce4073562cf120d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/extract-video.py",
+      "bytes": 1209,
+      "sha256": "cacbe631de1abddb526587d40b07e1d283a4a7cf4a119b2aec608c9b4858e362"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/focus-timing-pairs.mjs",
+      "bytes": 2148,
+      "sha256": "f687c54e23bc89c61756431334831db4e321020ec39a37ae076900197c5285ea"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/fourth-group.mjs",
+      "bytes": 4014,
+      "sha256": "f56cbe2039fe6b15ad5a699d57aa68a550e8a5dfb931a6a5b0d3120103a3fe6f"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/harness-controls.mjs",
+      "bytes": 3395,
+      "sha256": "d0d4e7793bc4f180e6c26134848b7e378ada02c62870c985b8f74c957f955d65"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/host-focus-attribution.mjs",
+      "bytes": 2506,
+      "sha256": "08243843dc9e181abc69f7198c726667734b9cbe1e812ffa0e20791556bafb56"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/hypothesis.json",
+      "bytes": 845,
+      "sha256": "07e0ecfd109558de0b7e27592c6c681bcc9ead6dbd538e2ecbc5562213e47760"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/instrument-focus.py",
+      "bytes": 4698,
+      "sha256": "94143321608c035b6109b63aeacf03be039a0cb910f8641cb648a1e0cbc35df7"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/instrument-journal.py",
+      "bytes": 6539,
+      "sha256": "f705b410be823b4e4bfe2820a1531cdc4237e3364167e97be02eb5b5128a9ca9"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/logging-only.diff",
+      "bytes": 32137,
+      "sha256": "dc76db9f19678b81b9203ae228909d4431782ba9ad860fb8eec67715eaf5259c"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/observe-cursor-failure.mjs",
+      "bytes": 2419,
+      "sha256": "0cb10db098cd3406e6199f42ec9ea52ddf76ede1b8680bb2ab436ca713ef4663"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/observer-controls.json",
+      "bytes": 373,
+      "sha256": "fc75673653c8534588286ffe69b5fd42b18c2dbeba85064821844c68ecd21de9"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/observer-controls.mjs",
+      "bytes": 3566,
+      "sha256": "5d2b2f33bce2ef60b8134f42d261e8985e795c2628b8958a1166b5c153a35ec9"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/outer-focus-observer.js",
+      "bytes": 3320,
+      "sha256": "a6987a3038dfba73208f63dbd6da912f9aa06cb54b8da6bd643de862d6ffa546"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/passive-pulse-patch.txt",
+      "bytes": 980,
+      "sha256": "86b2a11fc7f3723b64ecb0724b3d513d2267d16071aa5f230eecfcc1d446a354"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/placement-pairs.mjs",
+      "bytes": 2972,
+      "sha256": "0f3b76574a64dfabe12f189049e1768ddd079fbaf43bd918aeac9322b21495e5"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/post-attempt-checkpoint.json",
+      "bytes": 319,
+      "sha256": "adcb8252c02e12da0f48e1090d8b97df4f0f96ec9de06acf8e42da3aa4c99dd2"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/prelaunch-controls.json",
+      "bytes": 419,
+      "sha256": "7352ab588133ee64dc74e528d0b9d2b417335272f4c196484871e25b5a8844d4"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/prepare-profiles.py",
+      "bytes": 1590,
+      "sha256": "3c3b4bfd35b0fc9b3dd155be4e5648d46bf719da4b611915658a4d01ffbda838"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/prepare-scope-negative.py",
+      "bytes": 2989,
+      "sha256": "e754c7fa214f1b5dfe432c100ede23d30e5a2a1870e66fbb2f34ac462af2d33a"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/rapid-mode-control.mjs",
+      "bytes": 2938,
+      "sha256": "814965f00c4e369d8830a3d6656ea4cbf3ec6218a21e6549b58f58ea754b90a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/run-diagnostic.mjs",
+      "bytes": 4973,
+      "sha256": "bcfd4bfa36a48a6027767750f3c214421b665c4887fab2d7f8cec6f895ace948"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/run-host.mjs",
+      "bytes": 4627,
+      "sha256": "2c736365066fdfd4d922e1a477c2f7b480741954fb04dd0e1388aa9563ae2a80"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/run-negative.mjs",
+      "bytes": 3431,
+      "sha256": "cb5767385fc8bd5d4b7a66d95d4b18f15f8f7c3eccf1d2078d5fbce80c63c7ab"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/schedule.json",
+      "bytes": 9038,
+      "sha256": "c83c7338678380455869d981951cd032f924fbd7bc02405c52ca99f0fb1ffb66"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/scope-negative-control.mjs",
+      "bytes": 4293,
+      "sha256": "8d584665c7b48153cce4d228f5c65e3c9722c72570607b04df2e11129f9af607"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/scope-negative-prepare.mjs",
+      "bytes": 2017,
+      "sha256": "dffdd047b4a35f113dbac850d0d81eba196a595b8924ce38260b538a519261f8"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/scope-negative-ui-visible.mjs",
+      "bytes": 3218,
+      "sha256": "d7be35b841aafe40f3a672039bae5d0a9798341a4299d2ff108f7c37f3a80fe0"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/ui-phase.mjs",
+      "bytes": 1420,
+      "sha256": "7c341ef74b082785325bc3ac290ec1b9991af4b22fb62fc944034f1df7edd864"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/ui-recipes.json",
+      "bytes": 18165,
+      "sha256": "96cdf63ae611e6d26ce4a612e9663913563d3d2ca58fe54a91b7d573703daf2a"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/verify-diagnostic.mjs",
+      "bytes": 2283,
+      "sha256": "b4f1d9397ab4eeeec656100f4e68080364866a663410f3fc46de53d8db81b437"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/verify-unchanged.mjs",
+      "bytes": 2077,
+      "sha256": "03bd3282063a37062d8e0196d3deee3c25cbef8c93e73bb8e7148eee19ccd9d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/wait-for-native-admission.mjs",
+      "bytes": 1527,
+      "sha256": "1c90e1c08d5177d897af0f24704764b574e0b91daa02ec8ad0348a857d9251bd"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-f/wait-for-workbench.mjs",
+      "bytes": 1722,
+      "sha256": "518c13e7a5d9b7aac97c26f5ef79385e2dd45d2b1e138f628d8edd04b7fb4400"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/before-diagnostic-verification.json",
+      "bytes": 5558,
+      "sha256": "1875398f76b323286fd8a26b1be92fef57976b8b699cfe989d64bf8236a751d0"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/candidate.json",
+      "bytes": 32991,
+      "sha256": "cefc7a3451efb6fc487884fdc2146aaad7ff0bccb18cd61af9c150d88bb1b01e"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/check-capture-paths.mjs",
+      "bytes": 1158,
+      "sha256": "2f8b68b914c8e1e5776824c209ce497b29073106b83b408d81c07097b2ade3a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/checked-process.mjs",
+      "bytes": 1175,
+      "sha256": "04f09fc530296c557cd2790d3d48f73b4182503e04ab4b3f3508cceceb91aa55"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/close-partial.mjs",
+      "bytes": 1663,
+      "sha256": "3787852303f626e514ca6769dd221787163174b648502238787661294b99d2dd"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/cursor-full/diagnostic-bundle.json",
+      "bytes": 1123,
+      "sha256": "f60f93c25b5e9570b93f03a02877899dc82a01d3449269dbb55ecfec3b550c91"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/cursor-full/installation.json",
+      "bytes": 7141,
+      "sha256": "82ee51f16cac0b60c7168b0e3a49cfd66508e97de61338c17c58e6d1ed7a6f30"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/cursor-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/cursor-full/profile-preparation.json",
+      "bytes": 23520,
+      "sha256": "dfea589304092de64e7f7f3c3df44f022168f30f0caa31068cac560980428892"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/extract-video.py",
+      "bytes": 1209,
+      "sha256": "cacbe631de1abddb526587d40b07e1d283a4a7cf4a119b2aec608c9b4858e362"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/focus-timing-pairs.mjs",
+      "bytes": 2148,
+      "sha256": "f687c54e23bc89c61756431334831db4e321020ec39a37ae076900197c5285ea"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/fourth-group.mjs",
+      "bytes": 4014,
+      "sha256": "f56cbe2039fe6b15ad5a699d57aa68a550e8a5dfb931a6a5b0d3120103a3fe6f"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/harness-controls.mjs",
+      "bytes": 3395,
+      "sha256": "d0d4e7793bc4f180e6c26134848b7e378ada02c62870c985b8f74c957f955d65"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/host-focus-attribution.mjs",
+      "bytes": 2506,
+      "sha256": "08243843dc9e181abc69f7198c726667734b9cbe1e812ffa0e20791556bafb56"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/hypothesis.json",
+      "bytes": 1262,
+      "sha256": "6c604a3712e5f3e8327b7092e8474ec331655d1c23daf6b34a62dede8a1d8aa6"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/instrument-focus.py",
+      "bytes": 4698,
+      "sha256": "94143321608c035b6109b63aeacf03be039a0cb910f8641cb648a1e0cbc35df7"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/instrument-journal.py",
+      "bytes": 6539,
+      "sha256": "f705b410be823b4e4bfe2820a1531cdc4237e3364167e97be02eb5b5128a9ca9"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/logging-only.diff",
+      "bytes": 33123,
+      "sha256": "c2a2909f7ef2f71cd4a2301b25a169c2a7f689395b048235045eb1d7d16a403b"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/observe-cursor-failure.mjs",
+      "bytes": 2419,
+      "sha256": "0cb10db098cd3406e6199f42ec9ea52ddf76ede1b8680bb2ab436ca713ef4663"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/observer-controls.json",
+      "bytes": 373,
+      "sha256": "9af947d86a4cd5efd84ffd15b6c10c1c1784525b29e381b110da34d18fc4cdb7"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/observer-controls.mjs",
+      "bytes": 3566,
+      "sha256": "5d2b2f33bce2ef60b8134f42d261e8985e795c2628b8958a1166b5c153a35ec9"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/outer-focus-observer.js",
+      "bytes": 3320,
+      "sha256": "a6987a3038dfba73208f63dbd6da912f9aa06cb54b8da6bd643de862d6ffa546"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/passive-pulse-patch.txt",
+      "bytes": 980,
+      "sha256": "5d9417d922a289a2720896f3730a26ea9ff87874d9b87cf1ecd6f3bf405d6a98"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/placement-pairs.mjs",
+      "bytes": 2972,
+      "sha256": "0f3b76574a64dfabe12f189049e1768ddd079fbaf43bd918aeac9322b21495e5"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/prepare-profiles.py",
+      "bytes": 1590,
+      "sha256": "db147ba009c8a9e2d19debf16a7f0967dea88fd8b1dcfc847429c0b6fd461f4f"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/prepare-scope-negative.py",
+      "bytes": 2989,
+      "sha256": "e754c7fa214f1b5dfe432c100ede23d30e5a2a1870e66fbb2f34ac462af2d33a"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/rapid-mode-control.mjs",
+      "bytes": 2938,
+      "sha256": "814965f00c4e369d8830a3d6656ea4cbf3ec6218a21e6549b58f58ea754b90a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/run-diagnostic.mjs",
+      "bytes": 4973,
+      "sha256": "bcfd4bfa36a48a6027767750f3c214421b665c4887fab2d7f8cec6f895ace948"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/run-host.mjs",
+      "bytes": 4627,
+      "sha256": "2c736365066fdfd4d922e1a477c2f7b480741954fb04dd0e1388aa9563ae2a80"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/run-negative.mjs",
+      "bytes": 3431,
+      "sha256": "cb5767385fc8bd5d4b7a66d95d4b18f15f8f7c3eccf1d2078d5fbce80c63c7ab"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/schedule.json",
+      "bytes": 9641,
+      "sha256": "366ed011c3aa7658149967c186ebf60b12710895bed621947578bbcba63a253a"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/scope-negative-control.mjs",
+      "bytes": 4293,
+      "sha256": "8d584665c7b48153cce4d228f5c65e3c9722c72570607b04df2e11129f9af607"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/scope-negative-prepare.mjs",
+      "bytes": 2017,
+      "sha256": "dffdd047b4a35f113dbac850d0d81eba196a595b8924ce38260b538a519261f8"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/scope-negative-ui-visible.mjs",
+      "bytes": 3218,
+      "sha256": "d7be35b841aafe40f3a672039bae5d0a9798341a4299d2ff108f7c37f3a80fe0"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/ui-phase.mjs",
+      "bytes": 1420,
+      "sha256": "7c341ef74b082785325bc3ac290ec1b9991af4b22fb62fc944034f1df7edd864"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/ui-recipes.json",
+      "bytes": 18165,
+      "sha256": "54938b031572f025b3f5ec89b281cc1f8f3f7a48096110765e84466c48b4e12d"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/verify-diagnostic.mjs",
+      "bytes": 2283,
+      "sha256": "b4f1d9397ab4eeeec656100f4e68080364866a663410f3fc46de53d8db81b437"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/verify-unchanged.mjs",
+      "bytes": 2077,
+      "sha256": "03bd3282063a37062d8e0196d3deee3c25cbef8c93e73bb8e7148eee19ccd9d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/wait-for-native-admission.mjs",
+      "bytes": 1710,
+      "sha256": "4dc9f8057e76cf0259be4cda78910917810b57f3c84dbbf2154912585c099855"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-departure-v22-g/wait-for-workbench.mjs",
+      "bytes": 1722,
+      "sha256": "518c13e7a5d9b7aac97c26f5ef79385e2dd45d2b1e138f628d8edd04b7fb4400"
+    }
+  ]
+}
