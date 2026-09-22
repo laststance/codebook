@@ -334,6 +334,14 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
   return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, articleOpens, articleReturns, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
     retainReadingRange(first: number, last: number) { retainedReadingRange = new Range(new Position(first, 0), new Position(last, 0)); },
+    /** Models a learner selecting source during native placement, letting preservation tests inspect the retained cursor. @example harness.changeFocusedSourceSelection(46).selections[0].active.line // 46 */
+    changeFocusedSourceSelection(line: number) {
+      const editor = lastSourceEditor; assert.ok(editor);
+      const selection = [{ active: new Position(line, 0) }]; editor.selections = selection;
+      // Native wrappers for the same visible document share the changed selection.
+      for (const visible of visibleSourceEditors) if (visible.group === activeTabGroup && visible.document.uri.toString() === editor.document.uri.toString()) visible.selections = selection;
+      return editor;
+    },
     isReadingLineVisible(line: number) { return retainedReadingRange?.contains(new Position(line, 0)); },
     addOpenSource(file: string, text: string) { textDocuments.push({ uri: Uri.file(join(fixture, file)), getText: () => text }); },
     outlineItem: (itemId: string) => outlineItem(itemId), changeOutlineCheckbox: (itemId: string, checked: boolean) => outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
@@ -4206,6 +4214,38 @@ for (const pane of ['app', 'contextPanel'] as const) test(`a learner draft focus
     // Assert
     assert.equal(changedFocus, true); assert.equal(harness.groups[0]!.activeTab, draft.tab);
     assert.equal(harness.focusedPanel(), undefined); assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, layoutChanges);
+    assert.equal(harness.reader.presentationState().mode, 'living-book'); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
+    assert.equal(harness.runtimes.length, 0);
+  } finally { context.mock.restoreAll(); await harness.close(); }
+});
+
+test('a learner source selection during delayed placement is preserved without later movement or preference changes', async context => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open();
+    const initial = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await harness.reader.action('focus-context');
+    const target = harness.reader['app']; assert.ok(target);
+    const reveal = target.reveal.bind(target), layoutChanges = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+    let selected: ReturnType<typeof harness.changeFocusedSourceSelection> | undefined, revealCount = 0;
+    harness.deferMovedPanelPlacement('codebook.scopedBrowser');
+    context.mock.method(target, 'reveal', (...args: Parameters<typeof reveal>) => {
+      reveal(...args);
+      // The source remains focused; only the learner's selection changes while the move receipt is pending.
+      if (args[0] !== undefined && !selected) { selected = harness.changeFocusedSourceSelection(46); revealCount = harness.panelReveals().length; }
+    });
+    const state = harness.reader.presentationState();
+    // Act
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' }), {
+      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native source selection changed while presentation panes moved; the learner selection was preserved.',
+    });
+    // Assert
+    assert.ok(selected); assert.deepEqual(selected.selections.map(selection => selection.active.line), [46]);
+    assert.equal(harness.panelReveals().length, revealCount); assert.equal(harness.focusedPanel(), undefined);
     assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, layoutChanges);
     assert.equal(harness.reader.presentationState().mode, 'living-book'); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
     assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });

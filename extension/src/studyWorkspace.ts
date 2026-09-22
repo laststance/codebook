@@ -481,12 +481,14 @@ export class StudyWorkspace {
       // Occupy the source destination to prevent empty-group renumbering and keep focus off moving webviews.
       const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: false, preview: false }); assertPlacement();
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
+      const sourceSelectionSnapshot = JSON.stringify(vscode.window.activeTextEditor?.selections);
       const assertSourceFocus = () => {
         const activeEditor = vscode.window.activeTextEditor;
-        if (activeEditor?.document.uri.toString() === sourceUri.toString() && activeEditor.viewColumn === descriptor.sourceColumn && vscode.window.tabGroups.activeTabGroup === this.sourceGroup) return;
-        // A later learner focus change ends placement ownership; neither the next move nor recovery may reclaim it.
+        const sameFocus = activeEditor?.document.uri.toString() === sourceUri.toString() && activeEditor.viewColumn === descriptor.sourceColumn && vscode.window.tabGroups.activeTabGroup === this.sourceGroup;
+        if (sameFocus && JSON.stringify(activeEditor?.selections) === sourceSelectionSnapshot) return;
+        // Later learner focus or selection ends ownership; do not move again or restore stale reading state.
         this.presentationMovedFocus = false;
-        throw new Error('Native focus changed while presentation panes moved; the learner focus was preserved.');
+        throw new Error(sameFocus ? 'Native source selection changed while presentation panes moved; the learner selection was preserved.' : 'Native focus changed while presentation panes moved; the learner focus was preserved.');
       };
       assertSourceFocus();
       // Move out of the source destination first so the arriving panel retains the next vacated group.
@@ -497,7 +499,7 @@ export class StudyWorkspace {
         assertPreviewOwnership(); assertSourceFocus();
         // Confirm position and visibility without moving focus away from the retained source anchor.
         panel.reveal(column, true);
-        await waitUntil(() => { assertSourceFocus(); return panel.viewColumn === column && panel.visible; }, 'presentation pane placement', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
+        await waitUntil(() => { assertSourceFocus(); return panel.viewColumn === column && panel.visible; }, 'presentation pane placement', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement(); assertSourceFocus();
         if (this.app !== app || this.contextPanel !== context) throw new Error('A retained presentation panel was disposed.');
       }
       assertPreviewOwnership();
