@@ -90,11 +90,13 @@ context capture/restore [GAP -> real-browser]              same scroll anchor/de
 workspace adoption and cleanup [GAP -> integration]       live, history, paused replay, missing frame
   before adoption -> discard new only [GAP]               failed creation preserves old session
   after adoption -> unconfirmed, no focus retry [GAP]     failure keeps learner arrangement
-same-column/no replacement [existing + regression]        Study <-> Guided keeps retained panes
+same-column handoff [v26 amendment + regression]          Study <-> Guided and explicit Restore keep the lease
 ordinary installed candidate [GAP -> E2E]                 restart + Wiki returns + all modes
 ```
 
 New handoff paths are **not covered yet**. Existing tests are supporting regression coverage, not proof of proposed behavior. Planned observable tests must assert hard-coded effects: no additional CDP attach/continue/recorder closure; required old paint settles before rebind; old epoch cannot acknowledge a new paint; current-pixel hash and confirmed playhead remain equal; old-panel disposal does not fail the runtime while current-panel disposal does; late callbacks and cancellation cannot publish success or restore old focus. Cover live/history/replay/missing-image variants and the no-move path. The same ordinary installed artifact must pass each host independently with restart, Wiki returns, 90 transfers, foreign-preview/fourth-group/manual-focus negatives and cleanup. Inspect the recorded transitions and preserve failed attempts.
+
+**V26 evidence amendment, 2026-09-23:** the earlier same-column document-retention optimization is invalidated by the [reproduced native/inner-focus disagreement](../cycles/evidence/0018/installed-v26-validation.md). Every actual layout transaction now uses fresh pinned documents and the existing bounded lease/reading-pose handoff. This includes explicit same-mode Restore; confirmed same-mode Select retains its validated no-op. During overlap, require exactly one added pinned tab for the destination/role plus the new panel's native visibility and selected role; this survives host wrapper regeneration. Then require exactly one final tab for each role. A private 120-transfer intervention and failing-before source regressions support this route; full new unchanged-VSIX verification in both hosts remains mandatory. Observation-only renderer focus, existing time bounds and interruption guards remain required. The original planning coverage labels above are historical, with completed evidence recorded below.
 
 ## 4. Performance review
 

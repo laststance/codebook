@@ -542,10 +542,15 @@ export class StudyWorkspace {
     const replacements = new Map<typeof roles[number]['region'], vscode.WebviewPanel>();
     const registered = new Set<typeof roles[number]['region']>();
     const closed = new Set<vscode.WebviewPanel>(), subscriptions: vscode.Disposable[] = [];
+    const expectedPinnedTabCounts = new Map(roles.map(role => [role.region,
+      (vscode.window.tabGroups.all.find(group => group.viewColumn === role.column)?.tabs.filter(tab => matches(tab, role.kind) && !tab.isPreview).length ?? 0) + 1,
+    ]));
     const isRegistered = (role: typeof roles[number], panel: vscode.WebviewPanel) => {
       const destination = vscode.window.tabGroups.all.find(group => group.viewColumn === role.column);
+      // Same-column overlap adds one pinned tab; native panel visibility identifies it across host wrapper resyncs.
       const pinned = destination?.tabs.filter(tab => matches(tab, role.kind) && !tab.isPreview) ?? [];
-      return panel.viewColumn === role.column && panel.visible && !panel.active && pinned.length === 1 && destination?.activeTab === pinned[0];
+      return panel.viewColumn === role.column && panel.visible && !panel.active && pinned.length === expectedPinnedTabCounts.get(role.region)
+        && Boolean(destination?.activeTab && pinned.includes(destination.activeTab));
     };
     const assertRetained = () => {
       signal.throwIfAborted(); assertCurrent();
@@ -563,11 +568,7 @@ export class StudyWorkspace {
         assertRetained();
         const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => matches(tab, role.kind));
         if (tabs.length !== 1) throw new Error('The current presentation tab is not unique.');
-        // A same-column retained tab needs no new renderer; a moved or preview tab must be replaced.
-        if (role.panel.viewColumn === role.column && !tabs[0]!.isPreview) {
-          if (!role.panel.visible) role.panel.reveal(undefined, true);
-          continue;
-        }
+        // Actual layout transactions need fresh documents; same-column reuse can omit native inner-focus delivery.
         const replacement = vscode.window.createWebviewPanel(role.kind, role.panel.title, { viewColumn: role.column, preserveFocus: true }, { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true });
         replacements.set(role.region, replacement);
         subscriptions.push(replacement.onDidDispose(() => closed.add(replacement)));
