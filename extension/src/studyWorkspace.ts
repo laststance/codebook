@@ -478,18 +478,26 @@ export class StudyWorkspace {
       const retainedLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertBeforeMove();
       assertPreviewOwnership();
       this.layoutReceipt = undefined;
-      // Keep the destination source group occupied before its current webview leaves; empty native groups close and renumber later columns.
-      const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: true, preview: false }); assertPlacement();
+      // Occupy the source destination to prevent empty-group renumbering and keep focus off moving webviews.
+      const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: false, preview: false }); assertPlacement();
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
+      const assertSourceFocus = () => {
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor?.document.uri.toString() === sourceUri.toString() && activeEditor.viewColumn === descriptor.sourceColumn && vscode.window.tabGroups.activeTabGroup === this.sourceGroup) return;
+        // A later learner focus change ends placement ownership; neither the next move nor recovery may reclaim it.
+        this.presentationMovedFocus = false;
+        throw new Error('Native focus changed while presentation panes moved; the learner focus was preserved.');
+      };
+      assertSourceFocus();
       // Move out of the source destination first so the arriving panel retains the next vacated group.
       const panelMoves: [vscode.WebviewPanel, vscode.ViewColumn][] = context.viewColumn === descriptor.sourceColumn
         ? [[context, descriptor.contextColumn], [app, descriptor.appColumn]] : [[app, descriptor.appColumn], [context, descriptor.contextColumn]];
       for (const [panel, column] of panelMoves) {
         // Native movement yields between panes; recheck previews immediately before each destination reveal.
-        assertPreviewOwnership();
-        // Position can arrive before native focus; settle each owned move before capturing a passive layout baseline.
-        panel.reveal(column, false);
-        await waitUntil(() => panel.viewColumn === column && panel.visible && panel.active && vscode.window.tabGroups.activeTabGroup.viewColumn === column, 'presentation pane placement', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
+        assertPreviewOwnership(); assertSourceFocus();
+        // Confirm position and visibility without moving focus away from the retained source anchor.
+        panel.reveal(column, true);
+        await waitUntil(() => { assertSourceFocus(); return panel.viewColumn === column && panel.visible; }, 'presentation pane placement', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
         if (this.app !== app || this.contextPanel !== context) throw new Error('A retained presentation panel was disposed.');
       }
       assertPreviewOwnership();
