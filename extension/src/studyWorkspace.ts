@@ -424,14 +424,31 @@ export class StudyWorkspace {
     };
     // Tab, panel and text-focus updates arrive separately; await all before capturing a passive focus baseline.
     const isActive = () => panel.active && hasTargetTabFocus() && vscode.window.activeTextEditor === undefined;
-    const assertOwnedFocus = () => { if (!hasTargetTabFocus()) assertInitialFocus(); };
-    await focusWebview(panel, { signal, timeoutMs: PRESENTATION_READY_TIMEOUT_MS, isActive, assertBeforeCommit: assertOwnedFocus, assertCurrent: () => {
-      this.assertLifetime(lifetime); assertPlacement();
-      if (transition !== this.presentationTransition || panel !== this.app && panel !== this.contextPanel) throw new Error('Presentation focus ownership changed.');
-      if (!vscode.window.state.focused) throw new Error('The Codebook work window lost focus.');
-      // The target may replace the original focus, but a third learner-owned target must survive without recovery.
-      assertOwnedFocus();
-    } });
+    let targetAcquired = false, focusDeparted = false;
+    const observeFocus = () => {
+      const targetFocused = hasTargetTabFocus();
+      // A return to the original editor is new learner intent, even if it ends before the next awaited response.
+      if (targetAcquired && !targetFocused) focusDeparted = true;
+      targetAcquired ||= targetFocused;
+    };
+    const focusChanges = [panel.onDidChangeViewState(observeFocus), vscode.window.tabGroups.onDidChangeTabGroups(observeFocus), vscode.window.tabGroups.onDidChangeTabs(observeFocus)];
+    const assertOwnedFocus = () => {
+      observeFocus();
+      if (focusDeparted) {
+        if (transition === this.presentationTransition && lifetime === this.lifetime) this.presentationMovedFocus = false;
+        throw new Error('Native focus left the owned presentation target; the newer learner choice was preserved.');
+      }
+      if (!targetAcquired) assertInitialFocus();
+    };
+    try {
+      await focusWebview(panel, { signal, timeoutMs: PRESENTATION_READY_TIMEOUT_MS, isActive, assertBeforeCommit: assertOwnedFocus, assertCurrent: () => {
+        this.assertLifetime(lifetime); assertPlacement();
+        if (transition !== this.presentationTransition || panel !== this.app && panel !== this.contextPanel) throw new Error('Presentation focus ownership changed.');
+        if (!vscode.window.state.focused) throw new Error('The Codebook work window lost focus.');
+        // Original focus is admissible only before acquisition; later departure permanently ends this handoff.
+        assertOwnedFocus();
+      } });
+    } finally { for (const subscription of focusChanges) subscription.dispose(); }
   }
 
   /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @example const assertRetained = this.retainPresentationPlacement(); */
@@ -530,7 +547,16 @@ export class StudyWorkspace {
       this.layoutReceipt = undefined;
       // Occupy the source destination to prevent empty-group renumbering and keep focus off moving webviews.
       this.presentationMovedFocus = true;
-      const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: false, preview: false }); assertPlacement();
+      const requestedSourcePosition = selections?.[0]?.active ?? document.validatePosition(new vscode.Position(this.message().model.source.line - 1, 0));
+      const requestedSourceSelection = new vscode.Range(requestedSourcePosition, requestedSourcePosition);
+      const editor = await vscode.window.showTextDocument(document, { viewColumn: descriptor.sourceColumn, preserveFocus: false, preview: false, selection: requestedSourceSelection }); assertPlacement();
+      const matchesRequestedSelection = (current: readonly vscode.Selection[]) => current.length === 1
+        && Boolean(current[0]?.anchor.isEqual(requestedSourcePosition) && current[0].active.isEqual(requestedSourcePosition));
+      // Bind the display to a known cursor before awaiting it; later learner input cannot become our restoration baseline.
+      if (!matchesRequestedSelection(editor.selections) || !matchesRequestedSelection(vscode.window.activeTextEditor?.selections ?? [])) {
+        this.presentationMovedFocus = false;
+        throw new Error('Native source selection changed before its display response; the newer learner selection was preserved.');
+      }
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
       const sourceGroupIdentity = this.sourceGroup && this.editorGroupIdentities.get(this.sourceGroup);
       let sourceSelectionSnapshot = JSON.stringify(vscode.window.activeTextEditor?.selections);
@@ -563,15 +589,17 @@ export class StudyWorkspace {
       if (this.highlight) for (const visible of vscode.window.visibleTextEditors) if (visible.document.uri.toString() === sourceUri.toString()) visible.setDecorations(this.highlight, [new vscode.Range(new vscode.Position(this.message().model.source.line - 1, 0), new vscode.Position(this.message().model.source.line - 1, 0))]);
       this.sourceGroup = vscode.window.tabGroups.all.find(group => group.viewColumn === descriptor.sourceColumn);
       const assertAfterMove = this.retainPresentationPlacement();
-      const measuredLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertAfterMove();
+      const measuredLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertAfterMove(); assertSourceFocus();
       // Minimum-size native groups may opt out of proportional expansion; supply actual pixels when both axes are measured.
-      await vscode.commands.executeCommand('vscode.setEditorLayout', toPixelEditorLayout(descriptor.layout, measuredLayout) ?? toPixelEditorLayout(descriptor.layout, retainedLayout) ?? descriptor.layout); assertPlacement();
+      await vscode.commands.executeCommand('vscode.setEditorLayout', toPixelEditorLayout(descriptor.layout, measuredLayout) ?? toPixelEditorLayout(descriptor.layout, retainedLayout) ?? descriptor.layout); assertPlacement(); assertSourceFocus();
       const assertSettling = this.retainPresentationPlacement();
-      await waitUntil(async () => { const actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertSettling(); return isProportionalEditorLayout(descriptor.layout, actual); }, 'presentation grid proportions', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement();
+      await waitUntil(async () => { const actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertSettling(); assertSourceFocus(); return isProportionalEditorLayout(descriptor.layout, actual); }, 'presentation grid proportions', PRESENTATION_READY_TIMEOUT_MS, signal); assertPlacement(); assertSourceFocus();
       await this.keepPresentationPanel(app, signal); assertPlacement(); await this.keepPresentationPanel(context, signal); assertPlacement();
       const assertConfirmed = this.retainPresentationPlacement();
       // Relocation and resizing can replace the native view state; restore a visible anchor only after both settle.
+      if (!app.active && !context.active) assertSourceFocus();
       await restoreReadingPosition(editor, signal); assertPlacement(); assertConfirmed();
+      if (!app.active && !context.active) assertSourceFocus();
       const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertConfirmed();
       if (!app.active && !context.active) assertSourceFocus();
       if (!isProportionalEditorLayout(descriptor.layout, layout) || !grid.preservesOtherParts(STUDY_EDITOR_GROUP_COUNT)) throw new Error('Native layout or another editor part changed while retaining presentation panels.');

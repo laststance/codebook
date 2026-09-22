@@ -108,11 +108,11 @@ export class RepositoryReader {
         let opened: Awaited<ReturnType<RepositoryReader['openSource']>>;
         try { opened = await this.openSource(selection, book, generation, false, () => preparingFocus.assertRetained()); }
         finally { preparingFocus.dispose(); }
+        sourceFocus?.dispose(); sourceFocus = opened.focus;
         this.assertCurrent(generation);
         const editor = vscode.window.activeTextEditor, group = vscode.window.tabGroups.activeTabGroup, nativeInput = group.activeTab?.input;
         if (editor !== opened.editor || editor.viewColumn !== vscode.ViewColumn.One || group.viewColumn !== vscode.ViewColumn.One
           || !(nativeInput instanceof vscode.TabInputText) || nativeInput.uri.toString() !== opened.uri.toString()) throw new Error('The selected citation did not acquire identifiable primary editor focus.');
-        sourceFocus?.dispose(); sourceFocus = this.retainNativeFocus();
         const assertFocused = () => { this.assertCurrent(generation); sourceFocus!.assertRetained(); };
         anchoredSource = { uri: opened.uri, assertFocused }; return assertFocused;
       } : undefined;
@@ -234,18 +234,33 @@ export class RepositoryReader {
     const uri = vscode.Uri.from({ scheme: REPOSITORY_SOURCE_SCHEME, authority: this.store!.library.workspaceKey,
       path: `/${selection.bookId}/${selection.revision}/${selection.nodeId}/${selection.anchorIndex}/${basename(anchor.path)}`, query: `hash=${anchor.hash}` });
     const document = await vscode.workspace.openTextDocument(uri); this.assertCurrent(generation); assertFocus?.();
+    const requestedSelection = document.validateRange(this.range(anchor.startLine, anchor.endLine));
+    // Observe the requested citation before display; a late response cannot adopt later learner input as its baseline.
+    const focus = preserveFocus ? undefined : this.retainNativeFocus(() => {
+      const editor = vscode.window.activeTextEditor, group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
+      return editor?.document.uri.toString() === uri.toString() && editor.viewColumn === vscode.ViewColumn.One && group.viewColumn === vscode.ViewColumn.One
+        && input instanceof vscode.TabInputText && input.uri.toString() === uri.toString() && editor.selections.length === 1
+        && Boolean(editor.selections[0]?.anchor.isEqual(requestedSelection.start) && editor.selections[0].active.isEqual(requestedSelection.end));
+    });
     // Native editors may normalize BOM/CRLF in getText; the provider/hash seal retains original bytes.
-    const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false, preserveFocus, selection: this.range(anchor.startLine, anchor.endLine) }); this.assertCurrent(generation);
-    return { uri, editor };
+    try {
+      const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false, preserveFocus, selection: requestedSelection }); this.assertCurrent(generation);
+      focus?.assertRetained(); return { uri, editor, focus };
+    } catch (error) { focus?.dispose(); throw error; }
   }
 
-  /** Retires observable focus changes during {@link open} I/O so late completion cannot steal newer learner focus. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
-  private retainNativeFocus() {
+  /** Retains initial or explicitly acquired citation focus for {@link open}; later observed departures irrevocably retire it. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
+  private retainNativeFocus(acquire?: () => boolean) {
     const snapshot = () => { const editor = vscode.window.activeTextEditor, group = vscode.window.tabGroups.activeTabGroup; return JSON.stringify([editor?.document.uri.toString(), editor?.document.version, editor?.viewColumn, editor?.selections, group.viewColumn, group.activeTab?.label, group.activeTab?.input]); };
-    const initial = snapshot(); let changed = false;
-    const observe = () => { changed ||= snapshot() !== initial; };
-    const listeners = [vscode.window.onDidChangeActiveTextEditor(observe), vscode.window.tabGroups.onDidChangeTabs(observe), vscode.window.tabGroups.onDidChangeTabGroups(observe)];
-    return { assertRetained() { observe(); if (changed) throw new Error('Native focus changed during repository navigation; the newer learner focus was preserved.'); }, dispose() { for (const listener of listeners) listener.dispose(); } };
+    let initial = acquire ? undefined : snapshot(), changed = false;
+    const observe = () => {
+      // Acquisition permits only the requested native target, never arbitrary response-time state.
+      if (initial === undefined) { if (acquire?.()) initial = snapshot(); return; }
+      changed ||= snapshot() !== initial;
+    };
+    const listeners = [vscode.window.onDidChangeActiveTextEditor(observe), vscode.window.onDidChangeTextEditorSelection(observe), vscode.window.tabGroups.onDidChangeTabs(observe), vscode.window.tabGroups.onDidChangeTabGroups(observe)];
+    observe();
+    return { assertRetained() { observe(); if (initial === undefined || changed) throw new Error('Native focus changed during repository navigation; the newer learner focus was preserved.'); }, dispose() { for (const listener of listeners) listener.dispose(); } };
   }
 
   /** Validates every restored source URI against its exact book, workspace and hash before exposing copied text. @example await this.sourceText(uri) */

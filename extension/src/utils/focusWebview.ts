@@ -33,7 +33,8 @@ export async function focusWebview(panel: Pick<vscode.WebviewPanel, 'visible' | 
     if (!result.accepted) throw new Error('The presentation focus message was not delivered.');
   };
   try {
-    assertCurrent(); options.assertBeforeCommit(); panel.reveal(undefined, true);
+    // Inner document focus does not reliably select the native editor; request both parts of the owned handoff.
+    assertCurrent(); options.assertBeforeCommit(); panel.reveal(undefined, false);
     await wait(() => panel.visible, 'visible presentation focus target');
     options.assertBeforeCommit();
     await post({ type: 'codebook-focus', phase: 'prepare', requestId, expiresAt });

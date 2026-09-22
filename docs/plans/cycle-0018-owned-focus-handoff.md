@@ -118,6 +118,8 @@ Three later [pre-landing reviews](../cycles/evidence/0018/prelanding-primary-int
 
 The subsequent [unchanged v21 trial](../cycles/evidence/0018/installed-v21-validation.md) fails Cursor's restarted final Guided-to-Study restoration with an inner-focus timeout. This archive is clean `9a9fd7c`, VSIX `de89f866…`, with the exact 825 + 96 tested inputs. Twelve Wiki/Study pairs, twelve Wiki Returns and exact replay restart pass; remaining Cursor controls and all VS Code native phases are unexecuted. Original profiles/drafts are protected and all owned resources closed. **F4/T4 reopens as FAIL; T3 diagnosis and T5 delivery remain incomplete.** Trace the matching focus request/epoch, delivery/receipt and native completion predicates before selecting a fix; a later focused screenshot alone does not establish the failed predicate.
 
+The [explicit native activation amendment](cycle-0018-explicit-native-activation.md) supersedes this plan's preserved-native-focus assumption after [diagnostics D/E](../cycles/evidence/0018/native-activation-investigation.md). Inner document focus does not reliably select the native editor. Request native activation once, retain the matching inner handshake, and retire authority irreversibly after observable learner departures. [The source repair](../cycles/evidence/0018/explicit-native-activation-repair.md) also protects presentation and cold-Wiki display-response selections, with 841 + 96 passing checks. The three-fixing-pass review ends non-converged; the final CodeRabbit supplement reports zero findings, while a new unchanged both-host archive remains pending; F4/T4 are not cleared by modified-bundle diagnostics.
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs for this amendment | Status | Findings |

@@ -1,0 +1,898 @@
+{
+  "schemaVersion": 1,
+  "scope": "Functional native-activation intervention: scheduled sequence passed; unchanged candidate verification still required",
+  "recordedAt": "2026-09-22T11:21:58.420607+00:00",
+  "availability": "Private artifacts in the current checkout. No credentials or runtime payloads embedded. Diagnostic copies are modified and do not prove unchanged installation.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/after-diagnostic-verification.json",
+      "bytes": 5286,
+      "sha256": "fce61f0d5b97a97f9ac989342cfc81721bfc1caaf48dc2687756642e2cf6d6d0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/before-diagnostic-verification.json",
+      "bytes": 5287,
+      "sha256": "c2bce7151daaacd4fd70a20351ed0f03fa72b5bda8808fc4edff80b9a8a8a6e6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/candidate.json",
+      "bytes": 32989,
+      "sha256": "631f6ef6c8885abc632fe10d3513c38168b12adcfd773087571ec6b400e6a2bd"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/check-capture-paths.mjs",
+      "bytes": 1117,
+      "sha256": "7158cb203126c68da7ce6adbbaa7f3448d58c77486a498ba3110f3af42221996"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/check-native-focus.mjs",
+      "bytes": 1237,
+      "sha256": "6621c4b471a105593ba2ad1429000df16221ace0cac11297a4ac73549288ed3e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/checked-process.mjs",
+      "bytes": 1175,
+      "sha256": "04f09fc530296c557cd2790d3d48f73b4182503e04ab4b3f3508cceceb91aa55"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/close-partial.mjs",
+      "bytes": 1580,
+      "sha256": "1b99c468b6c3aae55804deb9c84972504c9ff89adbdbbb5b7a028096c2010fc4"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/before-restart.json",
+      "bytes": 56553,
+      "sha256": "91aba059fe5dc344f4b6da8089a469ff66e1c94e8579d9a1d87ce09e237c0c0d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/connection-location.json",
+      "bytes": 181,
+      "sha256": "08e7dcf3a3df2f5bf7bc605b58b9c518aae694c5e647397b507303d3571b4ec8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/diagnostic-bundle.json",
+      "bytes": 2092,
+      "sha256": "1fb3be4a463466e48f105cdc0dd248b4ae338c45feb1cc2c04221087a22830b4"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/diagnostic-guard-bundle.json",
+      "bytes": 961,
+      "sha256": "ed13f8cdf9595bed7d41ef7a3f87eab69fa9333c62a657490c19fefb8307febd"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/focus-trace-2026-09-22T11-13-02.098Z.json",
+      "bytes": 2183913,
+      "sha256": "533e21b022d24ec5591d6400add636c704c0ff7f2f849b86fd0fd1860239a880"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/focus-trace-2026-09-22T11-16-05.997Z.json",
+      "bytes": 13776338,
+      "sha256": "8639615ebb9499369b51d01fda2996bb070c6f5e70cf3038bd39e6ec7af5b1c3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-after-phase-trace-save.json",
+      "bytes": 1582,
+      "sha256": "1ef2adc35c9fffe8f6ab908ac1f4164759c349a477be8675e0bc29564575cadc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-before-close.png",
+      "bytes": 348783,
+      "sha256": "375e3e135999310099311d1355cb008d499e12d2ff923741ecda0618c0f5566f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-before-entry-native-preflight.json",
+      "bytes": 440,
+      "sha256": "960cef5bb8a27503bfa216b09b305ad73583d366176bdc81946a2866dcab8344"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-before-roundtrip-native-preflight.json",
+      "bytes": 446,
+      "sha256": "b453580361669573c5e1cdb918a7843f78238ed08478f1afb1289ad5262d9feb"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-bootstrap.json",
+      "bytes": 157816,
+      "sha256": "06f78f7222e3896fde36167481e17bd55c7bfa9eb0ca301207ec3c8e53e13355"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-cdp-readiness.json",
+      "bytes": 1473,
+      "sha256": "d42cadf327379ff7fce85d84e44f5585fe053b907c9429f20f73000276fdf4e3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-entry-receipt.json",
+      "bytes": 180931,
+      "sha256": "e0415428bc374bd50b30e7e441cba609100376eb168f4bdf81ce8c155ab94c47"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "530fac66bbfefa8f29369bc5bd5022cf4fcc344c05953329a111b637c35b0d4a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-frame-extraction.json",
+      "bytes": 1734,
+      "sha256": "5b98c3ec762b58ca2ab6220c681ee3cf55266341b52860ad245797dd1781c62d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-frames-000.png",
+      "bytes": 319690,
+      "sha256": "c06740e654b2fe63ceec500d6f56bbe765042cf0e0ef5bd71b96708834e45d51"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-frames-012.png",
+      "bytes": 332117,
+      "sha256": "3185ecba3feaa776a1e3679928d070ac1c13f6bc2e369789cd1a43f399c3a3ab"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-frames-024.png",
+      "bytes": 315280,
+      "sha256": "ba3127993cf333c8845e90e770525428e830d762caf5deca719e37f5aef29d23"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-frames-036.png",
+      "bytes": 157106,
+      "sha256": "6fbd1d8ff1a59fe48e31881e5f455d315ef4783d41371e2fbdea2264e393786b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-guided-walkthrough-observation-before.png",
+      "bytes": 394222,
+      "sha256": "7b8f02e3008f9dc3342d12aa62bd431f4f437172708246325f594cede3e0c53e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-guided-walkthrough-observation-return.png",
+      "bytes": 406345,
+      "sha256": "59007606826fb6bc1fa878f16ce23f79a0e18575e71b60579596c727bfde8054"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-guided-walkthrough-observation-study.png",
+      "bytes": 308674,
+      "sha256": "a5cf5a20c731b5c90e4199046a10cd2841912c5711bbe800cce209936837377b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-guided-walkthrough-recording-before.png",
+      "bytes": 405488,
+      "sha256": "03b98aede6f3a0a786ef5f70ded2e87f0d90069204cc6e7a1c6e6a58726603d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-guided-walkthrough-recording-return.png",
+      "bytes": 393460,
+      "sha256": "52ce550ababdefdbcc34aef65038ccd0088006a735476fc6112a5469605969d6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-guided-walkthrough-recording-study.png",
+      "bytes": 333174,
+      "sha256": "df90dd54a369855d9839bff3a95314239a6071eabb931427c365051a3f6de5c7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-launch.json",
+      "bytes": 1484,
+      "sha256": "ef66e3930339f9a39fd806f24521304d017eac13ea3b9bceed2466371786dd4f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-living-book-observation-before.png",
+      "bytes": 426610,
+      "sha256": "9fd1bb247ac272b008a1731fc8b57b1e0e700e5cc8519f81d9e9cde3958c67eb"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-living-book-observation-return.png",
+      "bytes": 425565,
+      "sha256": "6c844c7eec9060a81cb2b76a1b29ad72018ce292e3237e11a22069fd1b7219b4"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-living-book-observation-study.png",
+      "bytes": 353529,
+      "sha256": "41a00a000cf5316408bb4abf8e55893e94d0231cceb6a96cf7e53ed5a9e82f7c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-living-book-recording-before.png",
+      "bytes": 432227,
+      "sha256": "0bed1ae409235f16cdc9a0882fa6558aa1ee550fb4cacd3fc9a42d25a03051c2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-living-book-recording-return.png",
+      "bytes": 439209,
+      "sha256": "652b9099bb0455134faa67dac4ffac7a876049b1c2f3a95b9474e5ed6d2a0662"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-living-book-recording-study.png",
+      "bytes": 329965,
+      "sha256": "ce1cd3eec070d3998cef3f4a46c1a95d4074efbb0a8f28bcab07e4f97a558fe5"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-native.webm",
+      "bytes": 6376241,
+      "sha256": "53dc31441816484003442734be18d97ff917789c6ef53a70e2211415c2097e06"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-ready-replay.png",
+      "bytes": 154357,
+      "sha256": "4354336b7597f9875c91b10b8121056f8d9bb51969d9bc27ce10f8264bfcf96c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-roundtrip-receipt.json",
+      "bytes": 670686,
+      "sha256": "4e446001500d57288548f13d16dbffcabbddc5af37824564cdec9c40eda342ce"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-saved-wiki.png",
+      "bytes": 418731,
+      "sha256": "b30e17e6d1810a479b89904dac96ed2f7b248274ba39ba7bb1d1f93f69ad7ce0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "ed23751e994edd42062f545e5b8f54ffb4da5d26a7a082798bbb76ccaa95643c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-study-workspace-observation-before.png",
+      "bytes": 414434,
+      "sha256": "3a88cebf2b5b96f0b11adcfad0bdc6539b9b11b53679a7e4b2bf1d0d5948e5e9"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-study-workspace-observation-return.png",
+      "bytes": 426816,
+      "sha256": "a92a4325a7ba0ac6e5a4a80f4c938bad9a30190eee0f2ecf5562124c0c2c0dbe"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-study-workspace-observation-study.png",
+      "bytes": 386792,
+      "sha256": "ca5e16304839893cc69a6e175e0f1bda9c3ce3df55f6403d7a28eae4d15cb0db"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-study-workspace-recording-before.png",
+      "bytes": 425406,
+      "sha256": "de8537cf0318dddd7aa702d0c1a48b4c266da521ee37cfda4d6ca9caf50bb0d6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-study-workspace-recording-return.png",
+      "bytes": 385898,
+      "sha256": "b86d65d81a8c8a4029ea9a3642e48dc7ed6778afcb1f8ba6d9467984f6990695"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-study-workspace-recording-study.png",
+      "bytes": 338866,
+      "sha256": "ef56f27ca541b41e322a3328e659659b28ea0754f6dbb8a4b57ef02ac77adda5"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-ui-close.json",
+      "bytes": 4012,
+      "sha256": "c23c2c004b07844a15fbdccce0616e78508546ab59a1f70bcccefbd523263162"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/initial-ui-start.json",
+      "bytes": 5810,
+      "sha256": "2f4205ce93dea285bf58ab2cdda5ed26a701b5a4d1b2f2530c08c828b3244b3b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/installation.json",
+      "bytes": 7108,
+      "sha256": "3e067107dbb2084ad7488fcdc00cf2c9bb34a22d6cbdccc9c1036e7179040e39"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/native-state.json",
+      "bytes": 314,
+      "sha256": "777a99a21a4ff86dc90a7a0fba3987c7db0da93e28a2f9a56fbc50404d426c36"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/placement-pairs.json",
+      "bytes": 339558,
+      "sha256": "7269771a57b4673deea441aae7ff0633007f3246f7e37b7c681f73216299fc0a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/profile-preparation.json",
+      "bytes": 23595,
+      "sha256": "e396992390ddaddcd30f244ad61585b035a060a1728e0fc33b747b5e5ddc66df"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/rapid-mode-control.json",
+      "bytes": 565033,
+      "sha256": "42fc2f9dd197030298e0564ed41ac1565d40a5bd1631df3a3427444c8e670df0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-after-phase-trace-save.json",
+      "bytes": 1924,
+      "sha256": "abae942e584350ae3cb6afeab34844d7c081c632f8b76280acbbca4fcd688fef"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-before-close.png",
+      "bytes": 348993,
+      "sha256": "b5bff086323387f62fd253c08492af71e146a1d2b401410e1b40a7615711e8cb"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-before-entry-native-preflight.json",
+      "bytes": 440,
+      "sha256": "de4b831d4ec92e6f70a482e969ad472bbf76f93c9dc01fab552652047a0c84a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-before-placement-pairs-native-preflight.json",
+      "bytes": 453,
+      "sha256": "ae9807fb5c3b13dc0a5a4a1899e5a4c665b9d9ed54c23ac72b3ed55511182d99"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-before-rapid-modes-native-preflight.json",
+      "bytes": 449,
+      "sha256": "8712643285934ff33a5c5cea8316cafc81aa045fe7dfa9a8bebd2df1844e3837"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-before-roundtrip-native-preflight.json",
+      "bytes": 446,
+      "sha256": "df46c9445f0ba42647787a71016e01c7a3f62b32b3844c6bdef506b4c8cc30f8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-before-wiki-pairs-native-preflight.json",
+      "bytes": 447,
+      "sha256": "cd7528582555d5bcca2e0c8e1feff7a1982b543dce3259d633bf5bd850086425"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "86ca83d5dcc386974d56f7659a074676dc853e1e4143a3604ee5bb15bf1f9ec6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-cdp-readiness.json",
+      "bytes": 1023,
+      "sha256": "15747549aaad7313050af921124689d30bafd4594d5fdbb484531d99b319fd78"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-cold-wiki.png",
+      "bytes": 442386,
+      "sha256": "a21143f0f6cbb57bd80afc98714e71ea90f32fa5f9da780142730dc38d9f987c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-entry-receipt.json",
+      "bytes": 188717,
+      "sha256": "1ebc4c3b2e4576fdf8779a445e4ee3a968e6419a34146fc786de878c59f68fb5"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-exit.json",
+      "bytes": 61,
+      "sha256": "84976f82289a94795af537368f1595efd43a4b0c7471a10a583de92861cdc6e4"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frame-extraction.json",
+      "bytes": 4788,
+      "sha256": "34e04db405223c0bc5a6b79f84593c0ef06205dd9b0c24103f84d835bc19998a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-000.png",
+      "bytes": 298129,
+      "sha256": "9b4506670d8a106ef79533d70eb2dbc1e81f73dc2660f2a956ea9351c66eda9e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-012.png",
+      "bytes": 300543,
+      "sha256": "1ae42a911230b0728ba74f9753f581df253dfb2f5377bba0de95334070dd519e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-024.png",
+      "bytes": 276236,
+      "sha256": "260386e02690bcd19792587e45be1d1c653da84e1dff05b2eca4ee06372c3fb7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-036.png",
+      "bytes": 289372,
+      "sha256": "4b61c3ceb8e23d0f061b44834a14863685c839dc9b4be345ca74a892d481ff82"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-048.png",
+      "bytes": 286705,
+      "sha256": "a74eb9ce7ec8bfc4611f06d07c081aadd5fc2e2eab0bafc6d28a46b95217089e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-060.png",
+      "bytes": 352028,
+      "sha256": "83c1f44e10f02f7ba75b16afeb78b8deee641ccfa67b396075265935608e0dbc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-072.png",
+      "bytes": 308093,
+      "sha256": "841327e47b2d54bc2aa125ba9293b4566eb50104c57d534862c38b9188abc2e6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-084.png",
+      "bytes": 254563,
+      "sha256": "e86bd44df7cd8745787221f567ac11e1f09a390c66fdce20c85c5526e3dfd679"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-096.png",
+      "bytes": 266483,
+      "sha256": "453e9186367b7bed83e5eba195382ccffcd69025bdb60845630355640715e38c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-108.png",
+      "bytes": 265658,
+      "sha256": "2fab5475a665d426d173193f411ceb43936f9313f3d19958e2928e5570382452"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-120.png",
+      "bytes": 297493,
+      "sha256": "e0d7703a46f24efe4f9aad4f75c9326944ee67bae660ef55ab840c45b63a74b0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-132.png",
+      "bytes": 295870,
+      "sha256": "9ecff7a9980a81098e8d01dbfe6e5ef7eac3b2224acbfd0c5f4cd037c9fea294"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-144.png",
+      "bytes": 270034,
+      "sha256": "108d16bcc0b219b23129b8884fd0eb15a4d00a5f3927f8ee457040612db97884"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-156.png",
+      "bytes": 302618,
+      "sha256": "dbed99a92c33b1e9570a82f8cc19c79531b623f1d16612ebd0c1c4f417ed6683"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-frames-168.png",
+      "bytes": 257897,
+      "sha256": "ff442b644258f80c623101a1df41655f2d96f1f23bc0464bef967400fb6017ed"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-guided-walkthrough-observation-before.png",
+      "bytes": 397677,
+      "sha256": "ff5f7bc2cb6fcd672aa62edc32f36c25215bc1180c7c3e96f49c9a5592023892"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-guided-walkthrough-observation-return.png",
+      "bytes": 410224,
+      "sha256": "ea6880cb5080ec23360acb1944b6f88ae510ffe10b7988b412cf437c96836392"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-guided-walkthrough-observation-study.png",
+      "bytes": 308966,
+      "sha256": "762970801ffc4de725a9e939064ff63ac47deac6994f9740633d05f61763165e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-guided-walkthrough-recording-before.png",
+      "bytes": 414070,
+      "sha256": "91b18d5a240ab46901c4203ab5353cb090f0d0eb4da1a739b43682391bf4404b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-guided-walkthrough-recording-return.png",
+      "bytes": 398115,
+      "sha256": "ebd45add6a6bcbddbfa2b28cd6fb56ecb680264956f563041cac2ce066ccdc84"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-guided-walkthrough-recording-study.png",
+      "bytes": 334574,
+      "sha256": "ad3dc4a42485a8928c1957417ad15ec957865f152e671551cdc65d3e2da10b60"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-launch.json",
+      "bytes": 1484,
+      "sha256": "076a736f778cd9ba6cfa9fa9a87b77857eaabb2c5904ea05ea588dbc52539b18"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-living-book-observation-before.png",
+      "bytes": 435383,
+      "sha256": "4385320e772f8178c56a6117699f963495ac6d215b6af000782c5e729d5b56fd"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-living-book-observation-return.png",
+      "bytes": 434691,
+      "sha256": "57382dc2eb179bd6c533f2c7168ad53a1e4deda04ae185c09985a6ef932b4add"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-living-book-observation-study.png",
+      "bytes": 352708,
+      "sha256": "4175f554e5acae5c8f7c18718800f57b23cd335d8a1b3576951eb486f2fd8635"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-living-book-recording-before.png",
+      "bytes": 437504,
+      "sha256": "04fce9ef1c4ef013bfca69681ccba2b93dbe3fb4defe1f72c244df6081aac525"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-living-book-recording-return.png",
+      "bytes": 444092,
+      "sha256": "2880ce83ad9a923534a31c5fc450f048fdb5910eb8c280b9c855bdc2064b0714"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-living-book-recording-study.png",
+      "bytes": 329076,
+      "sha256": "372ef9b964d48b13224c5092186e3535eaceb61796a6b1c5e74cb0ec62a9fc13"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-native.webm",
+      "bytes": 34996516,
+      "sha256": "975b826ea4462cac13075882e187a89a09f9bd962dc1c1bf5194f1afe5ce247a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-ready-replay.png",
+      "bytes": 154119,
+      "sha256": "b8934aae522973ba8e80ad58b54a770106f28df3106f30674043fc1ff74b282d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-roundtrip-receipt.json",
+      "bytes": 670072,
+      "sha256": "7f8636e6be47cf7c3691ad191a4dfa15ed82c44e7b0ef467b647a362deee129d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-saved-wiki.png",
+      "bytes": 431484,
+      "sha256": "782e133c8284fc274401feae897114e1b8a33a03dd6fe6224a952ff92cdc7162"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-shutdown.json",
+      "bytes": 449,
+      "sha256": "b82bfccd4b758abe4b50b796fe22055728e70f3f8ab45674438b6f56b3901626"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-study-workspace-observation-before.png",
+      "bytes": 391947,
+      "sha256": "be1a54e0035f1dfda4e92171849c90d4970dc590f11a8f6ce0c93791c937716b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-study-workspace-observation-return.png",
+      "bytes": 404192,
+      "sha256": "1fe1069a7f2c789c24f8da19f2127f3bf3aa22c071ce329c9dad6308cd73895c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-study-workspace-observation-study.png",
+      "bytes": 358752,
+      "sha256": "02a5ccb85402aeb11f1ddf82617f8a418f049a7cad0893c27ef8568404a154f7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-study-workspace-recording-before.png",
+      "bytes": 405244,
+      "sha256": "c94ed97bb78530085aaafa80c985a5d57cff559b74f7ae32dc0fe5901e7e7b8a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-study-workspace-recording-return.png",
+      "bytes": 392174,
+      "sha256": "5ac9e3c53164ef2c167ab38083f22da183332144ca2e0805d96adb7c6320730d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-study-workspace-recording-study.png",
+      "bytes": 338312,
+      "sha256": "2ede3fdadec3f2cf743d552288e2485abbc0dcf8db3d3d6cbb6c9a8a3500d836"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-ui-close.json",
+      "bytes": 4012,
+      "sha256": "d4e21835df14d9f13fc0c43fec53f433e5509a70d522b0deab886098ebd2d9e5"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/restart-ui-start.json",
+      "bytes": 6150,
+      "sha256": "25fb934ac42a9bce910d4375c355eb5d6f2a16d3830fe40907145c8f4fba197b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/cursor-full/timing-pairs.json",
+      "bytes": 154113,
+      "sha256": "828b5268d90bae4e75b07473b14bf1b9ce1a232032220468ad325a4572abf9c9"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/diagnostic-result.json",
+      "bytes": 5421,
+      "sha256": "c95efac18b6a0983aeea95a38b34142f2fb65a6dd06a258e028faf20b480ce41"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/environment.json",
+      "bytes": 690,
+      "sha256": "493335e6be7c693d879cd77a6b9d1e0a1a6d5549671d88d38eefb03717345e53"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/extract-video.py",
+      "bytes": 1209,
+      "sha256": "cacbe631de1abddb526587d40b07e1d283a4a7cf4a119b2aec608c9b4858e362"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/focus-timing-pairs.mjs",
+      "bytes": 2148,
+      "sha256": "8983f53eecf26bbd9d5acbaadea7296bca0aada8ae248c589e42dce5e1546cd3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/frame-inspection.json",
+      "bytes": 621,
+      "sha256": "2802edeb5a4c5902aeb24d90c70af608cafc99c70ee67b226f315c34805362b2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/harness-controls-30lXrZ/cursor-full/false-control-native-preflight.json",
+      "bytes": 505,
+      "sha256": "7f4cf804ca39de31a43ad8bda5512eecd2360717343e2a77b8dab6d7043be7bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/harness-controls-30lXrZ/cursor-full/installation.json",
+      "bytes": 303,
+      "sha256": "162a80933227dc397062b2de471241693ab2d19b40ddfd13b6199104465b9348"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/harness-controls-30lXrZ/cursor-full/native-state.json",
+      "bytes": 382,
+      "sha256": "acc7cef1ae70be4bc9461a9ff59f5e04d393bf071353256b4e9389601a7542c9"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/harness-controls-30lXrZ/cursor-full/true-control-native-preflight.json",
+      "bytes": 503,
+      "sha256": "3e01319a833166c097dc5d22af0a9d46a6cd6bb444f5c83d0319fbcc656ff318"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/harness-controls-30lXrZ/failed-child.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/harness-controls-30lXrZ/initial.webm",
+      "bytes": 17,
+      "sha256": "37a084be87246ef17563f0337770335bf02cd3d9cccb623b02e6b70d973ef74b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/harness-controls.json",
+      "bytes": 472,
+      "sha256": "4d8a5abb92c5d2ae9fd8ebb301ccc15bb01cf738da85d8008b961a52c2209f9c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/harness-controls.mjs",
+      "bytes": 3246,
+      "sha256": "59078614737a57dae0f291eecdd27e3cdf4fdd317099a20e54ae6af890cbba9f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/helper-hashes.json",
+      "bytes": 6666,
+      "sha256": "ae9df7e650b5e385d4ea01f3ff92bbaeacbcc380699694cbd774311c755e0169"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/initial-launch-output.log",
+      "bytes": 1372,
+      "sha256": "30e0ed21bee85f87ce646c355c97fff6b89d8b207195b921d43e1ce6458d4e3e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/instrument-guard.log",
+      "bytes": 640,
+      "sha256": "3ab187568ca2616c135d4d1790dddf5ce1946f3d941dc0af139ce6db7eb3e785"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/instrument-guard.py",
+      "bytes": 9828,
+      "sha256": "e04c6ab5968663f115e5c823f7b3000163c15a71ffb722c15abd32d5ac8c9992"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/instrument-inner.log",
+      "bytes": 1328,
+      "sha256": "b79a8f2e8aa165fdbc56c8e4b9df04c822e5764ee941cc219f9bbaa87ec41c38"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/instrument-inner.py",
+      "bytes": 5252,
+      "sha256": "eed8bfff0fd41261733e76427ff051a7aa9457f3f59b2b0b3b266d3f519f32b2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/instrument-native-activation.py",
+      "bytes": 1372,
+      "sha256": "47b15e5091e97d424fa6de04489294c28df61f31f0bada38d4e29bdd363c2b19"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/instrument-passive.py",
+      "bytes": 1983,
+      "sha256": "1bd78f341e988777bf7bf88aaec3d21997bd514a486d67e47f786f5ded84574d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/observe-cursor-failure.mjs",
+      "bytes": 2419,
+      "sha256": "0cb10db098cd3406e6199f42ec9ea52ddf76ede1b8680bb2ab436ca713ef4663"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/orchestration-result.json",
+      "bytes": 9106,
+      "sha256": "0a7b028963a4baa9498b76b1f9f6177a70466b87c5e676529d59dea3ddaa38df"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/placement-pairs.mjs",
+      "bytes": 2972,
+      "sha256": "c8d80cc2edad48fb75f1d0f31545c43915189100f8516e2e827b58f413541dc7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/prepare-profiles.py",
+      "bytes": 1669,
+      "sha256": "d240a710080a28d3a52e558057001197694e68e64194aa5484622526d6fc405f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/rapid-mode-control.mjs",
+      "bytes": 2938,
+      "sha256": "814965f00c4e369d8830a3d6656ea4cbf3ec6218a21e6549b58f58ea754b90a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/restart-launch-output.log",
+      "bytes": 1372,
+      "sha256": "9ed3fe341583f672f9fbc69c73a6bea3ffcf463165f69e0b658debf0968938d2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/run-diagnostic.mjs",
+      "bytes": 4846,
+      "sha256": "ec37abd9c9f68e54b294a89a22d0e308f543515f004643b1f3a158624e9c9bdb"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/save-trace.mjs",
+      "bytes": 1182,
+      "sha256": "ce67a6ac001c40efdf887150310c2d545856794eb2cda96f0e60621fcd96f447"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/schedule.json",
+      "bytes": 11353,
+      "sha256": "4fcfb7a00e088c06eefac437b0cbaa6873e73e13d24f94782c2a9fcd3b431110"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-01-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "9fa2377c9659377be157e9d12ec50a673c88eba9e8f3f733e9ac4b10cd0b6458"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-02-bootstrap.mjs.log",
+      "bytes": 2563,
+      "sha256": "953d5d5f761d2236745e8dbc24d0a3adef252674fe97f7e7737958cc913f56e6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-03-full-entry.mjs.log",
+      "bytes": 1052,
+      "sha256": "5982cd0f39872278d0801a8936ba719c09d489ce3e5a4b848612d6b2f3ed55bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-04-full-roundtrip.mjs.log",
+      "bytes": 610,
+      "sha256": "7a3fb6456270773e06ced46ca47aabcdd7eebd8135c4fa249e3da84805fcb033"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-05-before-restart.mjs.log",
+      "bytes": 388,
+      "sha256": "59300bef28b65af277cb435a23cd23f45697d214f063781342b0a5b9bd0c92e2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-06-save-trace.mjs.log",
+      "bytes": 128,
+      "sha256": "0a5d9d2a8c4cc100800c9faf5fa3d76c38fbb92c47356cbb807c6a8abb168c63"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-07-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "4e659e8361b9cf57045a141ec1dc58d0103db761c74c1b6ccf121c853b0a5987"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-08-cleanup-owned-profile.py.log",
+      "bytes": 390,
+      "sha256": "800ca3375aab5117cce1314727af24841d0046feb4a13e338ced88ea3800d666"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-09-extract-video.py.log",
+      "bytes": 179,
+      "sha256": "b836141ca12734e69c79755812f398e624f13209fe874603db91cad65274c726"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-10-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "abdd9b038d45a5e3d0421e2179cee4bb249222a2c63d5ee9770fa8a53d38d0a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-11-bootstrap.mjs.log",
+      "bytes": 2563,
+      "sha256": "2013a3d5604b7fc023b25aa9bc17bbeae32371f5b9ae7026eee6b95f2e04d4d3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-12-full-entry.mjs.log",
+      "bytes": 1054,
+      "sha256": "fced2c8b7e40b69d344acd59a205ad520d4092c0c251f6fb15a150b9dff82156"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-13-focus-timing-pairs.mjs.log",
+      "bytes": 788,
+      "sha256": "789a3d60b718d64ffc2c71ca366d39d46422e2137591b04c46d4de23ce58c955"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-14-full-roundtrip.mjs.log",
+      "bytes": 610,
+      "sha256": "7a3fb6456270773e06ced46ca47aabcdd7eebd8135c4fa249e3da84805fcb033"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-15-placement-pairs.mjs.log",
+      "bytes": 629,
+      "sha256": "f1ba78b707b4ff24b4b331bbfb0e34f769f12cee1628f67b6f0487f2428ff477"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-16-rapid-mode-control.mjs.log",
+      "bytes": 1207,
+      "sha256": "051a4b671af4d50c335b6bf99e4b90a075fa0154ac6cdf1695d185d40d2b6bc0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-17-save-trace.mjs.log",
+      "bytes": 129,
+      "sha256": "0de3348d9bd80fe0761826d576f464a8fa2d822a49903b0722dca4abd63e7fdd"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-18-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "98aa5cc8890c2ad58ee98a833c4093911e592f437839a3669940421e44a605f9"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-19-cleanup-owned-profile.py.log",
+      "bytes": 390,
+      "sha256": "b4025af797abfb0e5a9635ad5fddeda219a7f96a653192998a77a3d3d49fa35a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-20-extract-video.py.log",
+      "bytes": 181,
+      "sha256": "db3ceff7b2c7c5c5f666f1c7cbc2c74bd9c84f9c3cec74b00c2a74b0695ecd74"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/step-21-verify-diagnostic.mjs.log",
+      "bytes": 51,
+      "sha256": "92a99b4b986a191bed9973762a72ab19441412c5ff4b06b77d67fac3c8e7888e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/ui-phase.mjs",
+      "bytes": 1420,
+      "sha256": "7c341ef74b082785325bc3ac290ec1b9991af4b22fb62fc944034f1df7edd864"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/ui-recipes.json",
+      "bytes": 18175,
+      "sha256": "c93607febc90f8d73942ce5be605fb441d9dfbadc5226603b4c2d26a729ee47b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/verify-diagnostic.mjs",
+      "bytes": 1713,
+      "sha256": "8429a571f537b1f845b4a57cb5871655732ba7927c0e8ff4e8df433ef8dba170"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-e/wait-for-workbench.mjs",
+      "bytes": 1680,
+      "sha256": "d3e06abd80003f456f52fcdc5823e162350043b70c8acc936040f87e47e8cef7"
+    }
+  ]
+}

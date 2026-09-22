@@ -26,11 +26,14 @@ function focusRenderer(emit: (message: unknown) => void = () => {}) {
 function focusHarness() {
   const listeners = new Set<(value: unknown) => void>(), disposals = new Set<() => void>();
   const emit = (value: unknown) => { for (const listener of listeners) listener(value); };
-  let renderer = focusRenderer(emit), nativeActive = true, guard = () => {}, beforeCommit = () => {};
+  let renderer = focusRenderer(emit), nativeActive = true, rejectNativeActivation = false, guard = () => {}, beforeCommit = () => {};
   let onPost = (_message: Record<string, unknown>): Promise<boolean> | undefined => undefined;
   const controller = new AbortController(), messages: Record<string, unknown>[] = [], reveals: boolean[] = [];
   const panel = {
-    visible: true, reveal(_column?: number, preserveFocus?: boolean) { reveals.push(Boolean(preserveFocus)); },
+    visible: true, reveal(_column?: number, preserveFocus?: boolean) {
+      reveals.push(Boolean(preserveFocus));
+      if (!preserveFocus && !rejectNativeActivation) nativeActive = true;
+    },
     onDidDispose(listener: () => void) { disposals.add(listener); return { dispose() { disposals.delete(listener); } }; },
     webview: { onDidReceiveMessage(listener: (value: unknown) => void) { listeners.add(listener); return { dispose() { listeners.delete(listener); } }; },
       postMessage(message: Record<string, unknown>) { messages.push(message); const intercepted = onPost(message); if (intercepted) return intercepted; renderer.send(message); return Promise.resolve(true); } },
@@ -38,7 +41,8 @@ function focusHarness() {
   return { panel, messages, reveals, emit, controller, renderer: () => renderer,
     run: (timeoutMs = 1_000) => focusWebview(panel, { timeoutMs, signal: controller.signal, assertCurrent: () => guard(), assertBeforeCommit: () => beforeCommit(), isActive: () => nativeActive }),
     intercept(value: typeof onPost) { onPost = value; }, setGuard(value: typeof guard) { guard = value; }, beforeCommit(value: typeof beforeCommit) { beforeCommit = value; },
-    replaceRenderer() { renderer = focusRenderer(emit); }, nativeInactive() { nativeActive = false; },
+    replaceRenderer() { renderer = focusRenderer(emit); }, nativeInactive() { nativeActive = false; rejectNativeActivation = true; },
+    requireNativeActivation() { nativeActive = false; }, nativeIsActive: () => nativeActive,
     disposePanel() { for (const listener of disposals) listener(); }, listenerCount: () => listeners.size + disposals.size };
 }
 
@@ -49,7 +53,28 @@ test('owned focus completes only after the current document confirms focus and c
   await harness.run();
   // Assert
   assert.deepEqual(harness.messages.map(message => message.phase), ['prepare', 'commit', 'cancel']);
-  assert.deepEqual(harness.reveals, [true]); assert.equal(harness.renderer().calls(), 1); assert.equal(harness.listenerCount(), 0);
+  assert.deepEqual(harness.reveals, [false]); assert.equal(harness.renderer().calls(), 1); assert.equal(harness.listenerCount(), 0);
+});
+
+test('owned focus selects the native editor even when inner focus alone cannot activate its group', async () => {
+  // Arrange
+  const harness = focusHarness(); harness.requireNativeActivation();
+  // Act
+  await harness.run(250);
+  // Assert
+  assert.equal(harness.nativeIsActive(), true); assert.equal(harness.renderer().calls(), 1);
+  assert.deepEqual(harness.messages.map(message => message.phase), ['prepare', 'commit', 'cancel']);
+  assert.equal(harness.listenerCount(), 0);
+});
+
+test('lost ownership before native activation leaves the learner editor untouched', async () => {
+  // Arrange
+  const harness = focusHarness(); harness.requireNativeActivation();
+  harness.beforeCommit(() => { throw new Error('learner owns focus'); });
+  // Act / Assert
+  await assert.rejects(harness.run(), /learner owns focus/);
+  assert.equal(harness.nativeIsActive(), false); assert.deepEqual(harness.reveals, []);
+  assert.deepEqual(harness.messages, []); assert.equal(harness.listenerCount(), 0);
 });
 
 for (const failure of ['not delivered', 'rejected', 'stalled'] as const) test(`a ${failure} focus transport fails within its deadline without focusing or retaining listeners`, async () => {

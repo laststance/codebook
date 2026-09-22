@@ -3,7 +3,7 @@
 Type: hardening\
 Status: validating\
 Result: pending\
-Delivery: unchanged v21 fails Cursor restart; source diagnosis, both-host installed validation, current-head review and delivery remain incomplete\
+Delivery: native activation/source-ownership repair passes source checks; final review, new unchanged both-host validation and delivery remain incomplete\
 Goal version: 5 (started under version 4)\
 Tracking issue: https://github.com/laststance/codebook/issues/23\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -55,6 +55,8 @@ During the blank-primary diagnostic, the owner added [D023 / goal version 5](../
 Exact target revisions, host versions, hashes and execution schedule must be frozen before native runs. These are development checks; direct MCP diagnostics do not satisfy the final editor-AI trials.
 
 ## Attempts and evidence
+
+The [C/D/E investigation](evidence/0018/native-activation-investigation.md) reproduces matching inner focus without native editor activation; explicit native reveal passes a separate modified-bundle experiment. The [bounded amendment](../plans/cycle-0018-explicit-native-activation.md) and [source repair](evidence/0018/explicit-native-activation-repair.md) retain the protocol/deadline while retiring learner ownership after observed departures and late source/citation selections. Current dirty `dffed5f` passes **841/841 product/shared + 96/96 package and TypeScript**, with 273 selected inputs SHA-256 `f6c3d17c…`. Three fresh reviews have actual-caller red/green controls and end non-converged at the fixing-pass limit. The latest CodeRabbit supplement completes with zero findings on all seven source/test files. Two native event-ordering concerns remain unconfirmed. The next development archive/helpers are being prepared, but no new VSIX or native trial exists. **T3 source checks demonstrated; T4 remains FAIL for unchanged v21; T5 pending.** G12 remains unimplemented and final acceptance stays unstarted.
 
 [Diagnostic A](evidence/0018/inner-focus-diagnostic-a.md) cannot reach the v21 inner-focus boundary because native window focus is absent. [Diagnostic B](evidence/0018/inner-focus-diagnostic-b.md) records manual activation followed by blur, an unmet native-focus checkpoint and a harness fail-fast omission; its subsequent initial-entry PASS is excluded. No new round-trip, restart or mode sequence runs. The copied capture destination collision is disclosed: A's full video is recovered by exact hash, one before-close screenshot remains unavailable, and original v21 evidence is unaffected. Both diagnostic profiles are closed with original files/drafts preserved; source remains unchanged. Before another attempt, require checked sequential exits, exclusive attempt-owned outputs and a passive native-focus preflight. **T3 diagnosis / T4 FAIL / T5 pending** remain unchanged.
 
