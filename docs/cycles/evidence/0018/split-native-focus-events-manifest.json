@@ -1,0 +1,761 @@
+{
+  "createdAt": "2026-09-22T07:42:53.402286+00:00",
+  "scope": "Logging-only diagnostic copies J/K and split-notification source regression. No unchanged-install or final-acceptance pass inferred.",
+  "baseProductCommit": "5812e1685e0e8801aa964554c7ca478bb6ffd90d",
+  "repairCommit": "d660d25ded1d2195ddda40cb12160d5c46ddb4fc",
+  "sourceDirty": true,
+  "sourceStatus": "?? docs/cycles/evidence/0018/split-native-focus-events.md",
+  "availability": "Ignored private local artifacts; preserve before workspace deletion. Missing artifact means needs-revalidation.",
+  "files": [
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/candidate.json",
+      "bytes": 32989,
+      "sha256": "55a2ba5b6fd76964da482f4563dd24f231f9884d24e3c656ac2bfcdf0c4e19e5"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/diagnostic-plan.json",
+      "bytes": 1697,
+      "sha256": "fa7f808f995133dec0a62554f8cb7d69df489d512bdb5ed2d75a02a129ffc977"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/helper-hashes.json",
+      "bytes": 3364,
+      "sha256": "fb737aa108659eb3b59beb2925db2e8fd3690144371766564b0ec98edbc6e3de"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/instrument-guard.py",
+      "bytes": 9763,
+      "sha256": "4594b39f00d904f95ada3c11fd0afeba9a2f79d113f0a95af9eb90342bc513da"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/observer-preflight.json",
+      "bytes": 259,
+      "sha256": "e137320a0214c6b4a06115fd9589a03b06a4f43ca08bf74a0d7ef1421b876ad4"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/placement-pairs.mjs",
+      "bytes": 2972,
+      "sha256": "67d2bce096bdde56c6be3705d5d8b37137771fc7259563a6719c7d8122952bd7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/prepare-profiles.py",
+      "bytes": 1566,
+      "sha256": "cdc8be79d5949053b70a3d94590682df387b514f710a3acd161332d61e2ded0b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/save-trace.mjs",
+      "bytes": 1153,
+      "sha256": "09163b704e22fbcb5c98022cc9ea52b7d39949a7b80ba6ce4dfc8e34eca89482"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/after-trial-trace-save.json",
+      "bytes": 1655,
+      "sha256": "4ffeac952ad182530408a78f1dd0441f1faa06757871c5e5321b355c18be4926"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/before-trial-trace-save.json",
+      "bytes": 1639,
+      "sha256": "dff325220a3045f04c57ccf3e3ea183c27a2f332b4424b7c899ba8f28ba3bba9"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/connection-location.json",
+      "bytes": 190,
+      "sha256": "5c686f14fc1587ca0ee06dc893d5bff0475c616dc4e6f6e181c125ec73686e58"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/diagnostic-bundle.json",
+      "bytes": 954,
+      "sha256": "0b3e745d168dee5c909956d9e9138318c865624bc1c94dd882ab7ec1e34873b2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/focus-trace-2026-09-22T07-23-53.123Z.json",
+      "bytes": 98392,
+      "sha256": "2dd82a2dfe30cffafe922e8b089a99226ed3574f9a1bfc0b0de990dcbcaacdcf"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/focus-trace-2026-09-22T07-25-46.095Z.json",
+      "bytes": 1937843,
+      "sha256": "9b7268b7d88760752bb3af800c1a1a086d2ea1edf776c46601b0af2604de2bf9"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/frame-inspection.json",
+      "bytes": 1592,
+      "sha256": "f0c6ad06efd1cfab964ae18c53f948758252dab5320f38aa0fffb2152565e1a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/guard-failure-first.json",
+      "bytes": 1919843,
+      "sha256": "293eaacaf2ffc5fd26ca284e280d8057b0a487ea5c50797a89dffd489a0ec1a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-before-close.png",
+      "bytes": 426367,
+      "sha256": "afd8c823aabe2bbbd6ae2a55a255a7073b9a54fffd2970168260230d094f86d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-bootstrap.json",
+      "bytes": 157807,
+      "sha256": "0c9eb9fa950eec76eea3a6cbb8a176d44536f09a3589dd8964c218be8e940e64"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-entry-receipt.json",
+      "bytes": 184828,
+      "sha256": "00d4c043dd7f9f6bad6588f15f380f91790f49d49cfadc87ef0cc8e9feb38389"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "9c9ecf4df648ebf834956505c52a9b19364aef121587235618cc8d3c6e2442da"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-failure-observation.json",
+      "bytes": 68517,
+      "sha256": "10baad96b9f5e79f6cc9215e4ee5d8feba45edf8fb894d5b67945affbc43aa4f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-failure.png",
+      "bytes": 182222,
+      "sha256": "c130322bfa89cce2c5816d32186d237b2a0120602f96c798540592911055371d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frame-extraction.json",
+      "bytes": 3318,
+      "sha256": "bcf3e0f902ba72bdbecc764e3ea4f90969fe8b471113101159238a27c7c79bd1"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-000.png",
+      "bytes": 565118,
+      "sha256": "591bd7df5c95ad116c154481088ba2d3c574d1034c4c0a2d7d893a5ed5c1445c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-012.png",
+      "bytes": 350110,
+      "sha256": "153a7092f5d4e2c6d9122e69260fe0705ce0fc057c66859173b2833de1f10a75"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-024.png",
+      "bytes": 478884,
+      "sha256": "e1dbdc8c5b50438304e8fad79136d165b134bef662a4fb809c563242ace1f899"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-036.png",
+      "bytes": 637114,
+      "sha256": "74b5123065dfab81a2ca747fbef97133263f514aa2f09674fde5a10218c038bb"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-048.png",
+      "bytes": 647496,
+      "sha256": "f970c84455285b258680712c1091e5acb026a2c036c553b288ed18c64bc5ff16"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-060.png",
+      "bytes": 419480,
+      "sha256": "9b6d12d374366cf14e8ec0ad673f90d6454f7bd5e7ece6c0aa1468b0c1e9c29a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-072.png",
+      "bytes": 357921,
+      "sha256": "dde5a37055487cdd9d77bff2c93ac020d7ba0378d76bddf37c76c45f521e35e7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-084.png",
+      "bytes": 301189,
+      "sha256": "1b9edb0a0c8b0e8db139b46cc04329464e97d6230fe9aa9a7bec7a75147d10e3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-096.png",
+      "bytes": 384852,
+      "sha256": "76caca0cb2dcb56da89b21907d3ef05e788ac0035522304dba3643c20759f648"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-108.png",
+      "bytes": 246286,
+      "sha256": "0662f32b946676f6351ed1925f23f0888a25618212d6affbd1a008d6c29103ff"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-frames-120.png",
+      "bytes": 84027,
+      "sha256": "97eec8bf02a8d580d2b2cc5797b62a0c1306cb6b6ffdb544fef19aa9064a61ec"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-guided-walkthrough-observation-before.png",
+      "bytes": 447673,
+      "sha256": "647f5c1c22e2a12ec60758f17a400ac19545d716ca7873a8919f053ebd93edc2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-guided-walkthrough-observation-return.png",
+      "bytes": 483415,
+      "sha256": "69dd2298ee522110baf7346f8c645d53edf9c55b58c37cd98cd84afccaff3950"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-guided-walkthrough-observation-study.png",
+      "bytes": 376383,
+      "sha256": "047e1c08fd094489a39fe909c405f141531287ac7173717e43eccaeb1c7d4b0c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-guided-walkthrough-recording-before.png",
+      "bytes": 526655,
+      "sha256": "7580b0f9289ae1e315f3452b41e83a977648b335abfe588aacd01635161a7b13"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-guided-walkthrough-recording-return.png",
+      "bytes": 460142,
+      "sha256": "9f7035e89a8685c2c6ebb1ced0a58304c976d778c2d516acb865187ad6c2dcee"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-guided-walkthrough-recording-study.png",
+      "bytes": 396548,
+      "sha256": "8af93a1e3977f1d322a598c8add458b5adb5de3cc189ece14063ca40b45d1414"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-launch.json",
+      "bytes": 1514,
+      "sha256": "d2039fa9ad2a86f0b7eedc8ce28370a87beeb66aba895ef8d0c2907750e410c8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-living-book-observation-before.png",
+      "bytes": 522827,
+      "sha256": "b923aef22e528f2fe0dda1909471692b956587b3417e96ef60a1b767070c1585"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-living-book-observation-return.png",
+      "bytes": 529052,
+      "sha256": "2c64e03a1e48a970d88bc896246c449a253facd1c3ec53b1c498a62954b88bab"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-living-book-observation-study.png",
+      "bytes": 414033,
+      "sha256": "2979201bf3e9e239ba36667cf4869e86a30b150030e8eeea6b0c6d25980a694f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-living-book-recording-before.png",
+      "bytes": 533787,
+      "sha256": "0f064dbb970efd0e29655ff2720388dbd9ede3bb67e31359352c8c5884d146a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-living-book-recording-return.png",
+      "bytes": 517689,
+      "sha256": "920fd934f5895ff9e032ddf365390201a9dc8f09679d93d750566a26b83a0786"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-living-book-recording-study.png",
+      "bytes": 395111,
+      "sha256": "e132589134d8494ff6888099c45fd8db55fdbfffffba142560adefb67bee5e79"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-native.webm",
+      "bytes": 9544871,
+      "sha256": "1fc67e3824b397b21c018b4098e73043d99fcd6557432c608a74cec5c621fd6d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-ready-replay.png",
+      "bytes": 172748,
+      "sha256": "a052222cd6edfb09512ad35782c8a414bebe8405cc12e93af917c6caa81b6896"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-roundtrip-receipt.json",
+      "bytes": 670564,
+      "sha256": "b33d188c3dca323543c826d6c66007d6e957b0cfe4251c93a665d44166344162"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-saved-wiki.png",
+      "bytes": 470779,
+      "sha256": "fd784ef819d09ccb67f42e28660c79552a4f90bc0d28e19251ffe650aed7497c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "d76f24374d7a96e163ac9c2f3853ca37cdb295cdb37043483a146bc83b56f2d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-study-workspace-observation-before.png",
+      "bytes": 453297,
+      "sha256": "49dabc645d57ac8bb2e2ff3a82a5421447859d683a6fe4b623c3c13c8343e59c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-study-workspace-observation-return.png",
+      "bytes": 489096,
+      "sha256": "204d9e9d28200bf6e5c75b353775e4518f8edbe3e54a213e35f43e183d42ee80"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-study-workspace-observation-study.png",
+      "bytes": 422954,
+      "sha256": "a5109d6e4c0f9b81c5e236201d36ea80000261b25d9da1b2da094ab0fa230d5d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-study-workspace-recording-before.png",
+      "bytes": 522703,
+      "sha256": "8412dbd5deb22d312086cace573f2fcbcc4817bdb894ea95cd5b74eb6dcf2aec"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-study-workspace-recording-return.png",
+      "bytes": 451409,
+      "sha256": "ab79bb4487eea6a08ec7497c586cacc0ec716160bfea449b1e7c603b3d9fd43f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-study-workspace-recording-study.png",
+      "bytes": 412215,
+      "sha256": "53892f423850728d785b9014004a9a6a72e5d425ad82caf48241095f10bc2906"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-ui-close.json",
+      "bytes": 3302,
+      "sha256": "4a289524e6237c5246ab68e8d9fcbfd6c5e9013a1eeda8bc2b975a23e5512d99"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/initial-ui-start.json",
+      "bytes": 5450,
+      "sha256": "cbb601755538e9945b7c16c9583a83e84c98062965450df3399fea0b2da165ca"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/installation.json",
+      "bytes": 7197,
+      "sha256": "702e55673dd9458a2e0cbd7d177d924947a9d69108084d0950b2ff4fe16b9484"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/placement-pairs-failure.png",
+      "bytes": 177580,
+      "sha256": "6713e3fcd01d0221f360602d95affa257d6e2d967e1e998b29772858d5e0281c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/placement-pairs.json",
+      "bytes": 64358,
+      "sha256": "315596e3772dd38b74db39630e962fbd2c75823e22cd87811d967af98085fdea"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "a240ed5ac734c70b97dd8b2331f90c174678b60ff6b361029bc6b66809d884a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/presentation-error.json",
+      "bytes": 1928968,
+      "sha256": "fdb2efac6a7dc1a3de9b1ddeb2f48ded47acdb8abc775031e13817741a6d34b6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-focus-v18/vscode-full/profile-preparation.json",
+      "bytes": 43914,
+      "sha256": "658144e176955f1ba4126439b82ba8597b1076ab523bc5185ba0842c1f0195b2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/candidate.json",
+      "bytes": 32989,
+      "sha256": "55a2ba5b6fd76964da482f4563dd24f231f9884d24e3c656ac2bfcdf0c4e19e5"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/diagnostic-plan.json",
+      "bytes": 1444,
+      "sha256": "2c7eb3178d1de13461373bc0332f3c821282c0ef5215b8c400e800744d36bf33"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/helper-hashes.json",
+      "bytes": 3131,
+      "sha256": "4a6aa227dcef88a18c648476df9dedae4540a9cf81950e3c2766af7c8751c666"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/instrument-guard.py",
+      "bytes": 7538,
+      "sha256": "3b0b8f4332fb716794cf6ab06d059a494f3380ff1ec8a83ef2e7831052e4290c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/placement-pairs.mjs",
+      "bytes": 2972,
+      "sha256": "67d2bce096bdde56c6be3705d5d8b37137771fc7259563a6719c7d8122952bd7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/prepare-profiles.py",
+      "bytes": 1566,
+      "sha256": "61330948a205d68f80a047667c5e6694423d871bbebe6fe1c2f31ba56c16c846"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/connection-location.json",
+      "bytes": 190,
+      "sha256": "2e6c6c7cbc977a8d714c81546240af611206c16cebc6eade2363070ed296f23f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/diagnostic-bundle.json",
+      "bytes": 647,
+      "sha256": "6ebb623423012c55c1b60099772f6dd210abbe5641b91b3cc21d70ebe9cf5b0c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/frame-inspection.json",
+      "bytes": 1546,
+      "sha256": "d538b853c8769fcea3de34e22a27a2e0ce090235a269d331317702ceeafe3898"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-before-close.png",
+      "bytes": 430858,
+      "sha256": "49343ea15bb09149b7b464d6fbbe4aee63197ffcbd4177363269b30a72605ed6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-bootstrap.json",
+      "bytes": 157816,
+      "sha256": "9499f437244253f450e14c1abc0a8b9e6815eed5ed92da594edd9146ed0c6e2a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-entry-receipt.json",
+      "bytes": 184824,
+      "sha256": "b88b5c957f395be36273a9e3754e5e0c713340599daff995eeee8c5c084f7149"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "1e6f2666b0b54072c8dea398b70e229e444478aae7eb64092e767fda6fa15ab6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-failure-observation.json",
+      "bytes": 68693,
+      "sha256": "6c8e879bc61dc585cbf216fa9cb5559ae9d75ed3017ce3b3e25a2df3c7a03c99"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-failure.png",
+      "bytes": 180732,
+      "sha256": "3aa9aca827863347865c7d460281866083e710d706dfbdc59f4528b78971117f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-frame-extraction.json",
+      "bytes": 2329,
+      "sha256": "87800adf70dc873c8819f07a48c727855474305d6659564df539d7b480757c46"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-frames-000.png",
+      "bytes": 656787,
+      "sha256": "9c03d6ad27727e517048b21574a793fc7bd7f97080a11d639bc0590957ba0bf2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-frames-012.png",
+      "bytes": 731404,
+      "sha256": "0e19fcd981cb92c4d514523a84b71fa7d488520423f334a37c2cfcc40177ddcc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-frames-024.png",
+      "bytes": 646632,
+      "sha256": "d6ebf842f9fdc09b732dd16f6b7ca64b526db7644aa2205e4d70d4f41b9f0f06"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-frames-036.png",
+      "bytes": 398251,
+      "sha256": "cf7160907676d97bb41a93116e433733c54a954e507b91a772ff9a2c136caae8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-frames-048.png",
+      "bytes": 339419,
+      "sha256": "507c04e61033c900a544743c9d8a5e391578a890831e5615f0ef565f4b3cf631"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-frames-060.png",
+      "bytes": 388255,
+      "sha256": "f04f24783b187b92d59d007dc29c2275296a5d51db5c384b5aadf06d4bafe47e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-frames-072.png",
+      "bytes": 362563,
+      "sha256": "891d25acb98f5d1cd276c148453724701c9cc563a906d95a07babc84a695c1e8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-guided-walkthrough-observation-before.png",
+      "bytes": 447673,
+      "sha256": "647f5c1c22e2a12ec60758f17a400ac19545d716ca7873a8919f053ebd93edc2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-guided-walkthrough-observation-return.png",
+      "bytes": 483400,
+      "sha256": "6b2f77d887c69ad1beb8358194b23bd926d49caf7f87a47826b98dea84343943"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-guided-walkthrough-observation-study.png",
+      "bytes": 376388,
+      "sha256": "68d839b155f363bd7be28c1a167308fd9baa47133d843b6368dccd553e80a531"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-guided-walkthrough-recording-before.png",
+      "bytes": 531193,
+      "sha256": "d9f6a9a84ce34eb93ebb23099720d24f33ce4e6b54b1aa672cbbc1e0b3bdd716"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-guided-walkthrough-recording-return.png",
+      "bytes": 460154,
+      "sha256": "9e5d0b10b5e9c5de12a4b371a161e05599184d4b22d367cdd657d0ff96d4ea01"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-guided-walkthrough-recording-study.png",
+      "bytes": 396566,
+      "sha256": "1f7454cb8446fac84dbd781431e6bbf58ada5a97ac23e6315b8ae215edd8a319"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-launch.json",
+      "bytes": 1514,
+      "sha256": "ab5cd5aa0f29d98489681400942b4c4cc111e8126a0530d1000b4fcfd6265b56"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-living-book-observation-before.png",
+      "bytes": 522827,
+      "sha256": "b923aef22e528f2fe0dda1909471692b956587b3417e96ef60a1b767070c1585"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-living-book-observation-return.png",
+      "bytes": 529017,
+      "sha256": "86413131b5ec676f40305147a5446c0af2df6b8387834de6cebecd60addb8a52"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-living-book-observation-study.png",
+      "bytes": 414026,
+      "sha256": "537f2bd8584c09bb17c828159f44f433f9d0d4b6b9267181b87e56e62a38d5f6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-living-book-recording-before.png",
+      "bytes": 533787,
+      "sha256": "0f064dbb970efd0e29655ff2720388dbd9ede3bb67e31359352c8c5884d146a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-living-book-recording-return.png",
+      "bytes": 517689,
+      "sha256": "dee9caab1c08a23185049b64c4d51180150ebaab49791fbf0a6a01faac469f53"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-living-book-recording-study.png",
+      "bytes": 395115,
+      "sha256": "186e489d5f17a173e575e3fa128d07ebe851d3b8221e9523a49ed940382da19a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-native.webm",
+      "bytes": 7571964,
+      "sha256": "40d582f9c83f195a092444464718b8d9b9eb676e6da132ecd59cf13907690a24"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-ready-replay.png",
+      "bytes": 172748,
+      "sha256": "a052222cd6edfb09512ad35782c8a414bebe8405cc12e93af917c6caa81b6896"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-roundtrip-receipt.json",
+      "bytes": 668873,
+      "sha256": "428ba70338cd6b35a89f57f261b5e346df03190e37292f239fca33afb738fa2f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-saved-wiki.png",
+      "bytes": 470779,
+      "sha256": "fd784ef819d09ccb67f42e28660c79552a4f90bc0d28e19251ffe650aed7497c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "6d09e5473f635fd7d1115035cd71fc3ad9c2d30b511e60034565c84af5bff1da"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-study-workspace-observation-before.png",
+      "bytes": 453297,
+      "sha256": "49dabc645d57ac8bb2e2ff3a82a5421447859d683a6fe4b623c3c13c8343e59c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-study-workspace-observation-return.png",
+      "bytes": 489103,
+      "sha256": "c3559d4e8245dcac8faf780fe35e28667d19e22e91183ea2ec62768875383100"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-study-workspace-observation-study.png",
+      "bytes": 423013,
+      "sha256": "f1e85e561f473c9d70ff0c6e5b7dd26a00e6226f641db6330e11648ca8ee677d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-study-workspace-recording-before.png",
+      "bytes": 522074,
+      "sha256": "700f43aa8fd413d0de031cdea46ffdbf872a67e447497b69946a5ee1138f2b51"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-study-workspace-recording-return.png",
+      "bytes": 451423,
+      "sha256": "d617b7bb57a28a8522f1727f7fc5c18788770792a7959f53045ad16c6897c41f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-study-workspace-recording-study.png",
+      "bytes": 412215,
+      "sha256": "53892f423850728d785b9014004a9a6a72e5d425ad82caf48241095f10bc2906"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-ui-close.json",
+      "bytes": 3294,
+      "sha256": "9c497aa76c8ec4cef35e4e9bd4072d4c7680320cd0401d2f9d52caf76bf95628"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/initial-ui-start.json",
+      "bytes": 5450,
+      "sha256": "188caab5af093e4413f5b8272946479f6e49a7ea24ea819dcaadfcbb51021a17"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/installation.json",
+      "bytes": 7197,
+      "sha256": "fbe86bcc4f89d8a8073507ac02eb0f23094df04f7933d08a2593db4ce286bc99"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "a240ed5ac734c70b97dd8b2331f90c174678b60ff6b361029bc6b66809d884a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-placement-guard-v18/vscode-full/profile-preparation.json",
+      "bytes": 43914,
+      "sha256": "59531796faef50b9209ffd7a015cac876bd3b1f17ce0eb78159d6cf99b53fe1b"
+    },
+    {
+      "path": "artifacts/cycle-0018/split-panel-activity-build.log",
+      "bytes": 393,
+      "sha256": "e1de0ce10def961f0531e95f3e3c79935d0aca593a092f2ddcc101889971632c"
+    },
+    {
+      "path": "artifacts/cycle-0018/split-panel-activity-coderabbit-receipt.json",
+      "bytes": 876,
+      "sha256": "49797d2a1c789ef9edc03f2a7a51b2f5e021a0aac4da305c0431be08f6f82140"
+    },
+    {
+      "path": "artifacts/cycle-0018/split-panel-activity-coderabbit-v2-receipt.json",
+      "bytes": 951,
+      "sha256": "3a568e226e2877b3a583d291efecae6ee103ece90e03d9e03b92fa9232a50a9c"
+    },
+    {
+      "path": "artifacts/cycle-0018/split-panel-activity-coderabbit-v2.jsonl",
+      "bytes": 798,
+      "sha256": "2bb554a7822d66bdaceb20a789cfa646a995b754968b42482886cebe97619346"
+    },
+    {
+      "path": "artifacts/cycle-0018/split-panel-activity-coderabbit.log",
+      "bytes": 3096,
+      "sha256": "e99cc12b3f1c468881b2f896df1d524441c59bb8970af121b6c761912c20354d"
+    },
+    {
+      "path": "artifacts/cycle-0018/split-panel-activity-full.tap",
+      "bytes": 92943,
+      "sha256": "a4306beb169f146e2842643e9c237e2f32699cbcd334af1d102596e0bb7c7ab9"
+    },
+    {
+      "path": "artifacts/cycle-0018/split-panel-activity-green.tap",
+      "bytes": 1334,
+      "sha256": "c838338b547ace56548c7742bca51daffcea47f92ff534587a7ca167a0bd460e"
+    },
+    {
+      "path": "artifacts/cycle-0018/split-panel-activity-package.tap",
+      "bytes": 10066,
+      "sha256": "efbb8f6348a1f6cf5b22f886fced90f7a5a3c38af7a6acbfd5814e0edccc718e"
+    },
+    {
+      "path": "artifacts/cycle-0018/split-panel-activity-red.tap",
+      "bytes": 2091,
+      "sha256": "10a58b802d0aaa312943b18cc75535959ba0b9164276f5826265dfd0de807fc2"
+    },
+    {
+      "path": "artifacts/cycle-0018/split-panel-activity-tested-build.json",
+      "bytes": 32615,
+      "sha256": "4e737e693acbd70eca1e178d1bb350192f6086f852a2895dc45df0d0c26fd848"
+    }
+  ]
+}

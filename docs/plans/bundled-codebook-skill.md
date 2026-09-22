@@ -41,6 +41,6 @@ Research checkpoint: 2026-09-21. Official documentation provides candidate integ
 - [VS Code Agent Skills — extension contributions and slash commands](https://code.visualstudio.com/docs/agent-customization/agent-skills#contribute-skills-from-extensions).
 - [Cursor Agent Skills — supported locations and invocation](https://cursor.com/docs/skills).
 - [MCP Skills Extension overview](https://modelcontextprotocol.io/extensions/skills/overview) and [extension client support record](https://github.com/modelcontextprotocol/ext-skills/blob/main/docs/client-mcp-support.md).
-- [Owner-provided SEP-2640 article](https://azukiazusa.dev/blog/mcp-skills-extension/), retained as requested background. The browser research fetch failed; it is not evidence of host compatibility.
+- [Owner-provided SEP-2640 article](https://azukiazusa.dev/blog/mcp-skills-extension/), retained as requested background. The initial browser fetch failed; a follow-up read on 2026-09-22 succeeded. It distinguishes obtaining skill resources from the host's validation and activation of a skill. Its retrieval example does not establish Codebook compatibility or slash-command availability in either required editor.
 
 Recheck the target versions and official contracts when implementing. No plugin route or MCP-distributed host compatibility is certified by this plan.
