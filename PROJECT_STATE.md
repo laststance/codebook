@@ -2,7 +2,7 @@
 
 Updated: 2026-09-22\
 Product stage: configured core execution, offline replay and restart demonstrated separately in both editors; complete cross-host and installed usefulness unverified\
-Active cycle: [0018 — Native editor scope on cold study entry](docs/cycles/0018-editor-group-scope.md) — implementing\
+Active cycle: [0018 — Native editor scope on cold study entry](docs/cycles/0018-editor-group-scope.md) — validating\
 Last cycle: [0017 — Packaged real-repository study](docs/cycles/0017-packaged-repository-study.md) — falsified; merged and privately packaged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#23](https://github.com/laststance/codebook/issues/23) — open\
@@ -10,7 +10,7 @@ Last cycle issue: [#21](https://github.com/laststance/codebook/issues/21) — cl
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 5
 
-Current execution: the [moving-webview focus investigation](docs/cycles/evidence/0018/placement-focus-investigation.md) reproduces v12’s VS Code restart failure in a separately hashed logging copy. Application receives a late native focus change 5 ms after Context, without another Codebook reveal. The scoped repair holds stationary captured-source focus while relocating panels without focus, and rejects later learner focus changes. Its failing-before control, six focused checks and all 306 workspace/reader checks pass. Full source/package checks, a new frozen VSIX, both-host native repair proof and current-source delivery remain pending. T3 is implementing; T4/T5 remain incomplete. G12 is still specified only and final reviewers remain 0/10, not started. The older v10 foreground request is obsolete.
+Current execution: the [moving-webview focus repair](docs/cycles/evidence/0018/placement-focus-investigation.md) now also preserves learner selection and accepts only verified logical-group wrapper replacement. Source `d58d04a` passes 782 product/shared and 96 package checks, with zero failures/skips/cancellations; the clean-tree wrapper separately fails on four untracked evidence documents. Preserve that failure and verify exact selected-input equivalence after committing those records before packaging. The two-file CodeRabbit follow-up completes with zero findings in 231.285 s. [V13](docs/cycles/evidence/0018/installed-v13-validation.md) passes both VS Code phases; [v14](docs/cycles/evidence/0018/installed-v14-validation.md) passes its initial phase only. Valid review findings stop both schedules before Cursor runs. Neither partial candidate establishes both-host completion. T3 source checks are complete; new frozen packaging, the complete v15 native schedule and T5 delivery remain pending. G12 remains specified only; final reviewers are 0/10, not started.
 
 ## Verified facts
 

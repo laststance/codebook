@@ -1,6 +1,6 @@
 # Cycle 0018 — Moving-webview focus investigation
 
-Date: 2026-09-22. Status: root cause reproduced; source repair has focused coverage; complete new-package native validation pending.
+Date: 2026-09-22. Status: root cause reproduced and source repaired; 782 + 96 checks pass; complete current-package both-host native validation pending.
 
 ## Reproduction and artifact identity
 
@@ -47,3 +47,13 @@ Private base: `artifacts/cycle-0018/placement-investigation-v12/`. The [manifest
 Videos are 1280 × 800, 25 fps: initial 223.040 s; restart 96.960 s. Five contact sheets per phase sample 0–51 s with overlap (60 samples each), covering the actual interactions; all ten sheets and the full failure screenshot were visually inspected. Initial modes/Returns appear; restart shows the failed old-grid placement and persistent timeout after approximately five seconds. Retained bottom Codebook content restricts Guided Context height, so these frames do not establish full product usability. The dark appearance is observed; an exact theme ID is not independently inventoried. Capture dimensions must not be represented as a fixed native window size.
 
 Both owned windows close normally with exit 0. All 115 original profile files retain bytes and modification times; the unsaved draft backup is retained. Only owned background app processes are terminated after normal window closure. Final owned PID and connection-descriptor counts are zero. The diagnostic profile remains available for inspection; original user profiles are unchanged.
+
+## Selection, wrapper identity and current-source follow-up
+
+[V13](installed-v13-validation.md) passes both VS Code phases, twelve additional Living book/Guided pairs and the fourth-group protection. Its CodeRabbit supplement identifies one duplicated major selection-preservation gap. A learner can change the selection without changing the source editor; the unchanged-source control reproduces the missing rejection. `024f76a` snapshots the actually active editor selections and relinquishes placement ownership if they change. An intermediate returned-wrapper comparison fails four focused controls and remains preserved; the corrected five-control run passes.
+
+[V14](installed-v14-validation.md) passes initial VS Code entry/replay and all six Returns. Its two-file CodeRabbit follow-up identifies one minor false rejection when the native group observer verifies that a new wrapper represents the same group. A new control fails before the repair; actual opened-group and unannounced replacements remain correctly rejected. `d58d04a4b7fe367870ae8b8452c3a2bd050286ad` uses the existing non-undefined logical identity while retaining source URI, destination and immutable selection guards. Eight related controls pass. The final two-file CodeRabbit follow-up completes in 231.285 s with zero findings; its log SHA-256 is `47ef43f795b000c388f4f7a12fed451db40adb1c9d317f76c4d835ebc5664a46`. This supplements, rather than reclassifies, the historically non-converged review.
+
+The complete source/shared suite passes 782/782 in 86.799 s; serial package tests pass 96/96 in 20.696 s, with zero failures/skips/cancellations. The wrapper subsequently exits 1 because four new v13/v14 evidence documents are untracked. It is not a successful clean-tree wrapper run. The tested metadata records dirty `d58d04a`, selected-input SHA-256 `d64a9c331bf9c962288ae45a4f72d65f3a81fe0ed7be48a4bb51015df925d5bb` across 269 inputs. Preserve `v15-source-wrapper-failure.json`, `v15-source-tested-build.json` and both TAP files under `artifacts/cycle-0018/`; verify every selected input against a clean documentation checkpoint before packaging. No tests are reclassified or source differences excluded by this qualification.
+
+Both earlier native schedules stop for the reproduced review findings: v13 Cursor is unlaunched, and v14 restart plus all Cursor trials are unexecuted. Complete the new candidate's entire both-host schedule; do not combine their partial successes. All launched trial windows close normally with original profiles, drafts and complete cleanup preserved. G12 and final acceptance remain unstarted.
