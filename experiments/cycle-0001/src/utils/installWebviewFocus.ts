@@ -1,6 +1,6 @@
 export type WebviewFocusReceipt = { type: 'codebook-focus-receipt'; phase: 'prepared' | 'focused'; requestId: string; epoch: string; focused: boolean };
 
-/** Installs one document-bound focus handoff in owned Application/Context HTML; generators pass their existing API. @example installWebviewFocus(api) */
+/** Confirms native focus in owned Application/Context documents without issuing delayed focus effects; HTML generators pass their API. @example installWebviewFocus(api) */
 export function installWebviewFocus(api: { postMessage(message: WebviewFocusReceipt): unknown }): void {
   const epoch = crypto.randomUUID();
   let prepared: { requestId: string; expiresAt: number } | undefined;
@@ -10,12 +10,13 @@ export function installWebviewFocus(api: { postMessage(message: WebviewFocusRece
   const observe = () => {
     if (!committed || Date.now() >= committed.expiresAt) { committed = undefined; return; }
     if (document.visibilityState !== 'visible') { if (reportedFocus) receipt('focused', committed.requestId); committed = undefined; return; }
-    // A focus event can arrive after window.focus returns; acknowledge observation without issuing another request.
+    // Native activation may reach the inner document later; report its observation without issuing another focus effect.
     const focused = document.hasFocus();
     if (focused !== reportedFocus) { reportedFocus = focused; receipt('focused', committed.requestId); }
   };
   window.addEventListener('focus', observe);
-  window.addEventListener('blur', observe);
+  // Learner departure revokes queued focus authority locally before a delayed host cancel can arrive.
+  window.addEventListener('blur', () => { prepared = undefined; observe(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') { observe(); prepared = undefined; } });
   window.addEventListener('message', event => {
     const message: unknown = event.data;
@@ -36,7 +37,7 @@ export function installWebviewFocus(api: { postMessage(message: WebviewFocusRece
     if (message.phase !== 'commit' || !('epoch' in message) || message.epoch !== epoch || prepared?.requestId !== message.requestId) return;
     const authority = prepared; prepared = undefined;
     if (Date.now() >= authority.expiresAt || document.visibilityState !== 'visible') return;
-    // Consume once before the effect; duplicate commits and replaced documents cannot refocus the learner.
-    committed = authority; reportedFocus = false; window.focus(); observe();
+    // Only native reveal owns focus; an unfocused renderer cannot know whether a queued request outlived learner departure.
+    committed = authority; reportedFocus = false; observe();
   });
 }
