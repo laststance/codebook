@@ -417,12 +417,14 @@ export class StudyWorkspace {
     const kind = panel === this.app ? 'codebook.scopedBrowser' : panel === this.contextPanel ? 'codebook.studyContext' : undefined;
     if (!kind) throw new Error('Presentation panel ownership was lost.');
     const matches = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType);
-    const isActive = () => {
+    const hasTargetTabFocus = () => {
       const group = vscode.window.tabGroups.activeTabGroup;
-      return panel.active && group.viewColumn === panel.viewColumn && Boolean(group.activeTab && matches(group.activeTab))
+      return group.viewColumn === panel.viewColumn && Boolean(group.activeTab && matches(group.activeTab))
         && vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(matches).length === 1;
     };
-    const assertOwnedFocus = () => { if (!isActive()) assertInitialFocus(); };
+    // Native tab focus may arrive before panel.active; authorize that destination but await both for completion.
+    const isActive = () => panel.active && hasTargetTabFocus();
+    const assertOwnedFocus = () => { if (!hasTargetTabFocus()) assertInitialFocus(); };
     await focusWebview(panel, { signal, timeoutMs: PRESENTATION_READY_TIMEOUT_MS, isActive, assertBeforeCommit: assertOwnedFocus, assertCurrent: () => {
       this.assertLifetime(lifetime); assertPlacement();
       if (transition !== this.presentationTransition || panel !== this.app && panel !== this.contextPanel) throw new Error('Presentation focus ownership changed.');

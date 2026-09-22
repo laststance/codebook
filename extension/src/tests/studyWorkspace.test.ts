@@ -102,6 +102,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined, settlementPending = false;
   const panels = new Set<ReturnType<typeof panel>>();
   let suppressNativeInnerFocus = false, innerFocusedPanel: string | undefined;
+  let nextPanelActivity: { kind: string; wait: Promise<void>; entered(): void } | undefined, pendingPanelActivity: string | undefined;
   const windowState = { focused: true, active: true }, windowListeners = new Set<(state: typeof windowState) => void>();
   const panelReveals: { kind: string; column?: number; preserveFocus?: boolean }[] = [];
   let deferredPanelFocus: { kind: string; remaining: number } | undefined;
@@ -155,9 +156,16 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         if (message.phase === 'prepare') receivers.get(kind)?.({ type: 'codebook-focus-receipt', phase: 'prepared', requestId: message.requestId, epoch, focused: innerFocusedPanel === kind });
         if (message.phase === 'commit' && message.epoch === epoch) {
           const group = groups.find(group => group.activeTab === nativeTab); assert.ok(group);
+          const held = nextPanelActivity?.kind === kind ? nextPanelActivity : undefined;
+          // Native tab selection and document focus can precede the panel's active notification.
+          if (held) { nextPanelActivity = undefined; pendingPanelActivity = kind; }
           activeTabGroup = group; innerFocusedPanel = kind;
           for (const listener of viewChanged) listener();
           receivers.get(kind)?.({ type: 'codebook-focus-receipt', phase: 'focused', requestId: message.requestId, epoch, focused: true });
+          if (held) {
+            held.entered();
+            void held.wait.then(() => { pendingPanelActivity = undefined; for (const listener of viewChanged) listener(); });
+          }
         }
         return true;
       }
@@ -172,7 +180,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, presentationControlRevision: message.presentation?.presentationControlRevision, presentationMode: message.presentation?.mode, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
       }
       return true;
-    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { messageListeners.add(callback); receivers.set(kind, message => { for (const listener of messageListeners) listener(message); }); return { dispose() { messageListeners.delete(callback); } }; } }, kind, nativeTab, viewColumn, title: '', get active() { return !registered || !separateEditorPart?.focused && activeTabGroup.activeTab === nativeTab; }, get visible() { return !registered || groups.some(group => group.activeTab === nativeTab); }, reveal(column?: number, preserveFocus?: boolean) {
+    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { messageListeners.add(callback); receivers.set(kind, message => { for (const listener of messageListeners) listener(message); }); return { dispose() { messageListeners.delete(callback); } }; } }, kind, nativeTab, viewColumn, title: '', get active() { return !registered || pendingPanelActivity !== kind && !separateEditorPart?.focused && activeTabGroup.activeTab === nativeTab; }, get visible() { return !registered || groups.some(group => group.activeTab === nativeTab); }, reveal(column?: number, preserveFocus?: boolean) {
       panelReveals.push({ kind, column, preserveFocus });
       const previousColumn = value.viewColumn, previousFocusedGroup = activeTabGroup;
       if (column !== undefined) value.viewColumn = nativeReaderColumn(column);
@@ -381,6 +389,12 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     panelColumn: (kind: string) => [...panels].find(panel => panel.kind === kind)?.viewColumn,
     panelReveals: () => [...panelReveals],
     suppressNativeInnerFocus() { suppressNativeInnerFocus = true; innerFocusedPanel = undefined; },
+    /** Separates native tab focus from its panel notification for presentation ownership tests. @example const held = harness.holdPanelActivity('codebook.scopedBrowser'); await held.started; held.release(); */
+    holdPanelActivity(kind: string) {
+      let entered!: () => void, release!: () => void;
+      const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
+      nextPanelActivity = { kind, wait, entered }; return { started, release };
+    },
     innerFocusedPanel: () => innerFocusedPanel,
     changeWindowFocus(focused: boolean) { windowState.focused = focused; for (const listener of windowListeners) listener(windowState); },
     windowFocusListeners: () => windowListeners.size,
@@ -4265,6 +4279,62 @@ test('Living book to Guided walkthrough retains evidence and focus when native m
     assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), decisions);
     assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true); assert.equal(harness.runtimes.length, 0);
   } finally { await harness.close(); }
+});
+
+for (const [pane, kind] of [['app', 'codebook.scopedBrowser'], ['contextPanel', 'codebook.studyContext']] as const) test(`mode transfer waits for delayed ${pane} activity after its own native tab and document receive focus`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {}, transfer: Promise<unknown> | undefined;
+  try {
+    await harness.reader.open(); await harness.reader.understand(true);
+    const initial = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await harness.reader.action('focus-context');
+    const before = harness.reader.inspect(), decisions = await (await harness.reader.learningStorage()).readProgress(), draft = harness.addForeignDraft();
+    const held = harness.holdPanelActivity(kind); release = held.release;
+    const state = harness.reader.presentationState(); let completed = false;
+    // Act
+    transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
+    void transfer.then(() => { completed = true; }, () => { completed = true; });
+    await held.started; await new Promise<void>(resolve => setImmediate(resolve));
+    // Assert: partial native/document acknowledgement neither fails nor confirms the transfer.
+    assert.equal(harness.focusedPanel(), kind); assert.equal(harness.innerFocusedPanel(), kind);
+    assert.equal(harness.reader[pane]?.active, false); assert.equal(completed, false);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
+    held.release(); await transfer;
+    assert.equal(harness.reader.presentationState().mode, 'guided-walkthrough'); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext'); assert.equal(harness.reader.inspect().sourceUri, before.sourceUri);
+    assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), decisions);
+    assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true); assert.equal(harness.runtimes.length, 0);
+  } finally { release(); await transfer?.catch(() => undefined); await harness.close(); }
+});
+
+for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`a learner draft focus while ${kind} activity is delayed stops the transfer and preserves the prior preference`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {}, transfer: Promise<unknown> | undefined;
+  try {
+    await harness.reader.open();
+    const initial = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const draft = harness.focusMutableDraft(); await harness.reader.action('focus-context');
+    const held = harness.holdPanelActivity(kind); release = held.release;
+    const state = harness.reader.presentationState();
+    transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
+    const rejected = assert.rejects(transfer, { code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.' });
+    await held.started;
+    const commands = [...harness.commands], reveals = harness.panelReveals();
+    // Act
+    draft.focus(); held.release(); await rejected;
+    // Assert
+    assert.equal(harness.groups[0]!.activeTab, draft.tab); assert.equal(harness.focusedPanel(), undefined);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n'); assert.equal(draft.tab.isDirty, true);
+    assert.deepEqual(harness.commands, commands); assert.deepEqual(harness.panelReveals(), reveals);
+    assert.equal(harness.reader.presentationState().mode, 'living-book'); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
+    assert.equal(harness.runtimes.length, 0);
+  } finally { release(); await transfer?.catch(() => undefined); await harness.close(); }
 });
 
 for (const pane of ['app', 'contextPanel'] as const) test(`a learner draft focus during ${pane} placement stops later layout work and preserves that focus`, async context => {
