@@ -3,7 +3,7 @@
 Type: hardening\
 Status: validating\
 Result: pending\
-Delivery: v27 VS Code PASS / Cursor FAIL; scoped overlap repair verification and T3/T4/T5 delivery pending\
+Delivery: v28 both-host functional PASS; initial-state visual repair/revalidation and T5 delivery pending\
 Goal version: 5 (started under version 4)\
 Tracking issue: https://github.com/laststance/codebook/issues/23\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -55,6 +55,10 @@ During the blank-primary diagnostic, the owner added [D023 / goal version 5](../
 Exact target revisions, host versions, hashes and execution schedule must be frozen before native runs. These are development checks; direct MCP diagnostics do not satisfy the final editor-AI trials.
 
 ## Attempts and evidence
+
+[Unchanged v28](evidence/0018/installed-v28-validation.md), clean `82c8ea3` / VSIX `ef5f5787…`, **passes the full expanded functional schedule in both hosts**. All 74 contact sheets and five detail sheets are inspected; exact identities, preserved profiles/drafts and cleanup are verified. Same-source CI passes 909/96 checks with 275 inputs/31 unpacked entries equal. Video reveals an unrelated checkout title and premature controls before the first Context snapshot. This visible misinformation must be repaired and revalidated before integration; v28 functional evidence does not certify later source. T3 and T4 functional scope are demonstrated, while the new bootstrap amendment and T5 remain incomplete.
+
+[Neutral bootstrap repair](evidence/0018/bootstrap-loading.md) closes the source cause of v28's misleading first paint. Context/Moments pass 13/13 renderer cases and expanded reading pose passes 9/9; all current 909/96 checks, builds and four typechecks pass. The first package/version failure and invalid 96px harness assumptions are retained separately. T6 still requires normally installed same-candidate verification in both hosts; v29 preparation does not begin final acceptance.
 
 [Unchanged v25b](evidence/0018/installed-v25-validation.md), clean `d404bf6` / VSIX `e1fcfa5d…`, **passes the complete sequential schedule in both ordinary hosts**: exact restart/replay, twelve Wiki Returns, twelve Living/Guided pairs, 90 rapid transfers, ordinary-file tab/document retention and preserving fourth-group refusal. Cursor also passes scope-negative and twelve Wiki/Study pairs. V25's earlier selector failure remains separately recorded. All 66 contact sheets across both attempts plus four motion-detail sheets are inspected; blank/loading intervals and higher Cursor latency remain explicit reading-UX limitations. Artifact/source/install/helper identities, original profiles/drafts and zero owned resources are verified. **T3/T4-H5 complete; T5/H6 current diff/CodeRabbit/CI/artifact and PR/merge pending.** G12 and final acceptance remain unstarted.
 
@@ -178,9 +182,10 @@ Synthesized from the findings above. Estimates are planning bounds, not promised
 
 - [x] **T1 (P1, human: ~2h / Codex: ~20min)** — Native scope — Prove public main-group anchoring and record its separate-part/focus behavior. Finding 1. Files: private Cycle 0018 probe/schedule/evidence, then this cycle's sanitized evidence. Verify ordinary Cursor first, preserve copied profile and exact original files; do not change product source to force the result.
 - [x] **T2 (P1, human: ~3h / Codex: ~30min)** — Regression model — Reproduce cold entry and separate parts; retain real fourth-group, focus, preview and interruption controls. Finding 4. Files: `extension/src/tests/studyWorkspace.test.ts`, relevant RepositoryReader tests if necessary. Verify expected failures on the unchanged product and meaningful passing safety controls.
-- [ ] **T3 (P1, human: ~4h / Codex: ~45min)** — Reader scope — Implement validated target-grid reservation and shared admission/receipt rules. Findings 1–3. Files: `extension/src/studyWorkspace.ts`, one `extension/src/utils/` helper and focused tests; RepositoryReader only if required. Verify targeted suites, typecheck and full product/package suites serially; preserve all prior protections.
-- [ ] **T4 (P1, human: ~3h / Codex: ~45min)** — Installed validation — Freeze one new VSIX and execute the original restart sequence plus retained modes/returns/negative controls in both ordinary hosts. Finding 5. Files: Cycle 0018 schedule, validation report and sanitized manifest. Verify videos/frames, exact loaded source/hash, zero extra execution, preserved drafts and cleanup.
+- [x] **T3 (P1, human: ~4h / Codex: ~45min)** — Reader scope — Implement validated target-grid reservation and shared admission/receipt rules. Findings 1–3. Files: `extension/src/studyWorkspace.ts`, one `extension/src/utils/` helper and focused tests; RepositoryReader only if required. Verify targeted suites, typecheck and full product/package suites serially; preserve all prior protections.
+- [x] **T4 (P1, human: ~3h / Codex: ~45min)** — Installed validation — Freeze one new VSIX and execute the original restart sequence plus retained modes/returns/negative controls in both ordinary hosts. Finding 5. Files: Cycle 0018 schedule, validation report and sanitized manifest. Verify videos/frames, exact loaded source/hash, zero extra execution, preserved drafts and cleanup.
 - [ ] **T5 (P2, human: ~1h / Codex: ~20min)** — Delivery — Review current diff including CodeRabbit CLI; synchronize docs/Issue #23, ship and merge with required CI. Findings 3–5. Files: current implementation and cycle/state records. Verify current-head review, actual CI artifact, merge/issue closure separately; keep Issue #1 open and final trial count zero.
+- [ ] **T6 (P2)** — Truthful bootstrap — Keep replacement Context/Moments noninteractive with a neutral loading state until the first complete study snapshot; remove unrelated fallback titles. Evidence: v28 inspected Cursor video and initial `studyHtml` markup. Verify delayed initialization and real document replacement with renderer/video checks, then new fixed both-host VSIX regression. This does not change any ownership/focus deadline or final acceptance criterion.
 
 No new tasks from Performance. No TODOs proposed: carried product obligations already have authoritative records; these repair requirements belong in this cycle. Sequential implementation, no parallelization opportunity: the shared workspace controller, coupled fake and native screen are one workstream. T1 and T2 inform T3; T4 follows green implementation; T5 follows current evidence. Final reviewers must not be used for this work.
 

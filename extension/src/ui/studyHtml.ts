@@ -25,7 +25,8 @@ declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getS
 export function studyHtml(kind: 'context' | 'moments'): string {
   const nonce = randomUUID();
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${kind === 'moments' ? 'moments-only' : ''}">
-<header class="presentation-header" ${kind === 'moments' ? 'hidden' : ''}><h1 id="title">Study the checkout flow</h1><label for="presentation-mode"><span class="visually-hidden">Presentation</span><select id="presentation-mode" aria-label="Presentation mode"></select></label><details id="presentation-options"><summary>View options</summary><p id="presentation-caption" class="muted mode-caption"></p><div class="row presentation-tools"><button data-presentation="restore">Restore layout</button><button data-action="enlarge-context">Enlarge explanation</button><button data-presentation="save-preference" hidden>Save preference</button></div></details><p id="presentation-status" class="presentation-status" role="status" aria-live="polite"></p></header>
+<p id="bootstrap-status" class="status" role="status" aria-live="polite">Loading study…</p><main id="study-content" hidden inert>
+<header class="presentation-header" ${kind === 'moments' ? 'hidden' : ''}><h1 id="title">Codebook study</h1><label for="presentation-mode"><span class="visually-hidden">Presentation</span><select id="presentation-mode" aria-label="Presentation mode"></select></label><details id="presentation-options"><summary>View options</summary><p id="presentation-caption" class="muted mode-caption"></p><div class="row presentation-tools"><button data-presentation="restore">Restore layout</button><button data-action="enlarge-context">Enlarge explanation</button><button data-presentation="save-preference" hidden>Save preference</button></div></details><p id="presentation-status" class="presentation-status" role="status" aria-live="polite"></p></header>
 <button data-action="return-wiki" hidden>← Return to Wiki</button><button data-action="open-article" hidden>Open article</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite">No running study</div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
 <p id="errors" class="error" role="status" aria-live="polite"></p><button data-action="retry" hidden>Retry storage / refresh</button>
 <section id="recording-transport" aria-label="Recorded playback" hidden><h2>Recorded walkthrough</h2><p id="recording-status" role="status" aria-live="polite"></p><div class="row"><button class="primary" id="playback-toggle" data-playback="play">Play recording</button><button data-playback="start">Replay from start</button><button data-action="reload-recording">Reload saved recording</button></div><label for="playhead">Recorded position</label><input id="playhead" type="range" min="0" max="0" step="1" value="0"><p id="playback-position"></p><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details><p class="muted">Playback changes this reader only. It does not run application code or mark understanding.</p></section>
@@ -39,6 +40,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite" hidden></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
 <section><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div><label for="studies">Saved studies</label><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select></section>
+</main>
 <script nonce="${nonce}">(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'})</script></body></html>`;
 }
 
@@ -255,7 +257,7 @@ function studyClient(options: typeof STUDY_UI_OPTIONS, installFocus?: typeof ins
       }
     }
     const item = model.progressByItem.find(value => value.id === model.selection.itemId);
-    text('title', item?.title ?? 'Study the checkout flow');
+    text('title', item?.title ?? 'Codebook study');
     const selectedProfile = message.profiles.find(profile => profile.id === model.selection.profile), liveProfile = message.profiles.find(profile => profile.id === message.liveProfile);
     const profiles = element('profiles');
     if (profiles instanceof HTMLSelectElement) { replace('profiles', message.profiles, () => message.profiles.map(profile => { const option = document.createElement('option'); option.value = profile.id; option.textContent = profile.title; return option; })); profiles.value = model.selection.profile; profiles.disabled = message.busy || Boolean(message.liveState && message.liveState !== 'stopped'); }
@@ -328,6 +330,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS, installFocus?: typeof ins
       studies.value = model.selection.studyId ?? previous;
     }
     for (const link of Array.from(document.querySelectorAll<HTMLButtonElement>('.link[data-action]'))) link.classList.toggle('visited', visited.has(link.dataset.action ?? ''));
+    // A replacement must not expose placeholder facts or actions before its complete host snapshot.
+    element('study-content').inert = false; element('study-content').hidden = false; element('bootstrap-status').hidden = true;
     api.postMessage({ type: 'rendered', revision: message.revision, itemId: model.selection.itemId, snapshotUri: model.observation?.snapshotUri, ...(recording ? { presentationRevision: recording.presentationRevision } : {}), ...(message.presentation ? { presentationControlRevision: message.presentation.presentationControlRevision, presentationMode: message.presentation.mode } : {}) });
   });
   api.postMessage({ type: 'ready' });

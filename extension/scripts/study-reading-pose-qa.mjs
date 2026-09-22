@@ -25,6 +25,7 @@ if (mode === 'red') {
   html = originalHtml.studyHtml('context');
 }
 const study = createConfiguredStudy(), baseline = { text: '', hash: '0'.repeat(64), line: 1, path: '/fixture/unused.mts' };
+study.observations[0].values['value:document.activeElement.className'] = 'group min-h-11 min-w-11 rounded-full bg-white/90 px-3 py-2 shadow-lg shadow-zinc-800/5 ring-1 ring-zinc-900/5 backdrop-blur-sm transition dark:bg-zinc-800/90 dark:ring-white/10 dark:hover:ring-white/20';
 const model = projectStudy({ study, selection: { ...selectStudy(study), tab: 'live' },
   progress: decodeLearnerProgress({ version: 4, workspaceKey: study.workspaceKey, decisions: [] }, study.workspaceKey), baselines: { server: baseline, browser: baseline },
   citationSources: study.descriptor.sources.map(source => ({ path: source.path, hash: source.hash, currentHash: source.hash, status: 'current' })) });
@@ -35,9 +36,9 @@ const message = { type: 'study', revision: 1, model, busy: false, saving: false,
 /** Runs the owned Chromium session through the CLI and retains transport failures separately from assertions. @example command(['open', 'about:blank'], 'open') */
 async function command(arguments_, label) {
   const result = await new Promise(resolve => execFile('playwright-cli', [`-s=${session}`, ...arguments_], { encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
-    (error, stdout, stderr) => resolve({ status: error?.code ?? 0, stdout, stderr })));
-  await writeFile(`${output}/${label}.log`, result.stdout + result.stderr);
-  assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.includes('### Error'), false, result.stdout);
+    (error, stdout, stderr) => resolve({ error, stdout, stderr })));
+  await writeFile(`${output}/${label}.log`, result.stdout + result.stderr + (result.error ? `\n${String(result.error)}\n` : ''));
+  assert.equal(result.error, null, String(result.error)); assert.equal(result.stdout.includes('### Error'), false, result.stdout);
   return result.stdout;
 }
 
@@ -61,6 +62,10 @@ async function check(page, options) {
     invalidated: window.sent.filter(message => message.type === 'presentation-pose-invalidated').length,
     restored: window.sent.filter(message => message.type === 'presentation-pose-restored').length,
     understandingWrites: window.sent.filter(message => message.type === 'understanding').length,
+    actionWrites: window.sent.filter(message => message.type === 'action').length,
+    summaryFocused: document.activeElement === document.querySelector('#presentation-options > summary'),
+    tableFocused: document.activeElement === document.querySelector('.table-scroll'),
+    horizontal: document.querySelector('.table-scroll')?.scrollLeft,
   }));
   const applying = { ...options.message, presentation: { ...options.message.presentation, state: 'applying' } };
   const request = { type: 'capture-presentation-pose', captureId: '22222222-2222-4222-8222-222222222222',
@@ -121,6 +126,28 @@ async function check(page, options) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
   const differentObservation = await inspect(); await page.waitForTimeout(500);
   cases.push({ name: 'another observation of the same source cannot inherit the old reading receipt', differentObservation, passed: differentObservation.restored === 0 && differentObservation.scrollY === 0 });
+  await page.setViewportSize({ width: 330, height: 640 });
+  for (const focus of ['summary', 'table']) {
+    // Arrange: read a genuinely overflowing captured value with a disclosure or its table focused.
+    await render(options.message); await page.locator('#presentation-options > summary').click();
+    await page.locator('.table-scroll').evaluate(element => { if (element.scrollWidth - element.clientWidth <= 12) throw new Error(`The long value does not overflow: ${element.scrollWidth}/${element.clientWidth}.`); element.scrollLeft = 12; });
+    await page.locator(focus === 'summary' ? '#presentation-options > summary' : '.table-scroll').focus();
+    const beforeLongValue = await inspect(); await publish(applying); await publish(request);
+    const longValuePose = await page.evaluate(() => window.sent.findLast(message => message.type === 'presentation-pose'));
+    await page.screenshot({ path: `${options.output}/${focus}-before-replacement.png` }); await page.waitForTimeout(400);
+    // Act: replace the real document, then restore only its serialized host receipt.
+    await render(living); await publish({ ...longValuePose, type: 'restore-presentation-pose' });
+    await page.waitForFunction(() => window.sent.some(message => message.type === 'presentation-pose-restored'));
+    const afterLongValue = await inspect();
+    const value = page.getByRole('cell', { name: options.longValue, exact: true });
+    await page.screenshot({ path: `${options.output}/${focus}-after-replacement.png` }); await page.waitForTimeout(400);
+    // Assert: horizontal reading and keyboard ownership survive without runtime or learning writes.
+    cases.push({ name: `replacement retains long-value reading with ${focus} focus`, before: beforeLongValue, after: afterLongValue,
+      passed: beforeLongValue.horizontal === 12 && afterLongValue.horizontal === 12 && await value.isVisible()
+        && beforeLongValue[`${focus}Focused`] && afterLongValue[`${focus}Focused`] && afterLongValue.expanded.includes('presentation-options')
+        && afterLongValue.understood === beforeLongValue.understood && !afterLongValue.understood
+        && afterLongValue.understandingWrites === 0 && afterLongValue.actionWrites === 0 && afterLongValue.restored === 1 });
+  }
   return { captured, cases };
 }
 
@@ -134,7 +161,7 @@ let recording = false;
 try {
   await command(['open', 'about:blank'], 'open');
   await command(['run-code', `async page => { await page.setViewportSize({ width: 390, height: 640 }); await page.screencast.start({ path: ${JSON.stringify(`${output}/flow.webm`)}, size: { width: 390, height: 640 } }); }`], 'video-start'); recording = true;
-  const result = await command(['run-code', `async page => (${check.toString()})(page, ${JSON.stringify({ html, message, output, mode, url })})`], 'flow');
+  const result = await command(['run-code', `async page => (${check.toString()})(page, ${JSON.stringify({ html, message, output, mode, url, longValue: study.observations[0].values['value:document.activeElement.className'] })})`], 'flow');
   Object.assign(report, JSON.parse(result.split('### Result\n')[1].split('\n###')[0]));
   await command(['run-code', 'async page => await page.screencast.stop()'], 'video-stop'); recording = false;
   if (mode === 'red') { assert.equal(report.captured?.pose, undefined); assert.equal(report.cases[0].passed, false); assert.notEqual(report.cases[0].after.focus, 'understood'); }
