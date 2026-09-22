@@ -3,7 +3,7 @@
 Type: hardening\
 Status: validating\
 Result: pending\
-Delivery: native activation/source-ownership repair passes source checks; final review, new unchanged both-host validation and delivery remain incomplete\
+Delivery: H4 presentation handoff passes complete source/package checks; current review, new unchanged both-host validation and delivery remain incomplete\
 Goal version: 5 (started under version 4)\
 Tracking issue: https://github.com/laststance/codebook/issues/23\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -178,7 +178,7 @@ Suppressed findings: none. The public focus command's exact cross-host behavior 
 
 ## Result and handoff
 
-Latest checkpoint: H1 proves final-column pinned regular-pane replacement separately in both hosts; [H2](evidence/0018/viewport-handoff.md) implements and source-tests guarded viewport lifetime transfer. [H3](evidence/0018/reading-pose-handoff.md) now implements bounded reading transfer with 338 source checks and seven real browser controls. Next H4 integrates native workspace ownership, then full checks/new unchanged both-host VSIX validation. The original installed v22b FAIL and previous review non-convergence remain authoritative.
+Latest checkpoint: [H4 workspace integration](evidence/0018/workspace-presentation-handoff.md) now combines the both-host H1 prerequisite, H2 guarded viewport transfer and H3 bounded reading pose. Pinned final-column replacements remove intermediate Keep Editor focus; every attached lease moves before old-panel retirement. **877/877 product/shared + 96/96 package checks, builds and TypeScript pass**, with exact unchanged input inventories and preserved failed attempts. Next freeze and normally install a new unchanged both-host VSIX, using the prepared v23 schedule with actual tab retention, ordinary file opening, video/latency and cleanup. No v23 profile or launch exists yet. The original v22b FAIL, T4 FAIL and previous review non-convergence remain authoritative; T5 and G12 are incomplete and final acceptance stays unstarted.
 
 Earlier attribution checkpoint: [F–I attribution results](evidence/0018/host-focus-attribution.md) retain product source `64c7629` and the original v22 archive. F/H never start product work; G is withdrawn after a real-browser observer control fails. Corrected controls pass. I completes six Wiki Returns and seven rapid transfers, then fails Living-to-Guided transfer 8 with native window focus retained. Application's late `did-focus` is observed after Context selection and four milliseconds before native selection returns to Application. Installed host source supports that attribution; the receiving stack itself is not traced. All five video sheets are inspected and cleanup preserves original files/draft with zero owned resources. Next review retention without sequential intermediate webview activation, preserving preview/state/learner guards. The [v22b failure](evidence/0018/installed-v22b-validation.md) and [A–E intervention results](evidence/0018/native-departure-investigation.md) remain authoritative. **T3 diagnosis open, T4 FAIL, T5 pending; G12 and final acceptance unstarted.**
 

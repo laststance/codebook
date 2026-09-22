@@ -109,6 +109,9 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const automaticallyClosedColumns: number[] = [];
   let transientLayout = false, settledLayout: unknown, failingCommand: string | undefined, settlementPending = false;
   const panels = new Set<ReturnType<typeof panel>>();
+  let peakPanels = 0;
+  let nextPanelCreated: { kind: string; run(value: ReturnType<typeof panel>): void } | undefined;
+  let failedPanelKind: string | undefined;
   let suppressNativeInnerFocus = false, innerFocusedPanel: string | undefined;
   let nextPanelActivity: { kind: string; wait: Promise<void>; entered(): void } | undefined, pendingPanelActivity: string | undefined;
   let nextTextFocusClear: { kind: string; wait: Promise<void>; observed(): void } | undefined;
@@ -171,21 +174,23 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     nextTextFocusClear = undefined; retainedTextFocus = { kind, editor, observed: pending.observed };
     void pending.wait.then(() => { retainedTextFocus = undefined; activeTextEditorChanged(focusedSourceEditor()); });
   }
-  function panel(kind: string, _title?: string, options?: { viewColumn: number }) {
+  function panel(kind: string, _title?: string, options?: { viewColumn: number; preserveFocus?: boolean }) {
+    if (failedPanelKind === kind) { failedPanelKind = undefined; throw new Error('Injected native panel creation failure'); }
     const nativeTab = { input: new TabInputWebview(kind), isPreview: false };
     const epoch = randomUUID(), messageListeners = new Set<(message: unknown) => void>();
+    const emit = (message: unknown) => { for (const listener of messageListeners) listener(message); };
     let registered = delayedPanelKind !== kind;
     const disposed: (() => void)[] = [], viewChanged: (() => void)[] = [];
     // Native webviews create only one missing group, even when a later column was requested.
     const viewColumn = options?.viewColumn ? nativeReaderColumn(options.viewColumn) : options?.viewColumn;
     const value = { webview: { html: '', postMessage: async (message: StudyViewMessage | PresentationPoseCapture | PresentationPoseRestore | { type: 'codebook-focus'; phase: string; requestId: string; epoch?: string }) => {
       if (message.type === 'capture-presentation-pose') {
-        receivers.get(kind)?.({ ...message, type: 'presentation-pose', pose: { anchorId: 'title', fraction: 0, leadingOffsetPx: 16, scrollY: 0, valuesScrollLeft: 0, expanded: [], visited: [] } });
+        emit({ ...message, type: 'presentation-pose', pose: { anchorId: 'title', fraction: 0, leadingOffsetPx: 16, scrollY: 0, valuesScrollLeft: 0, expanded: [], visited: [] } });
         return true;
       }
-      if (message.type === 'restore-presentation-pose') { receivers.get(kind)?.({ type: 'presentation-pose-restored', captureId: message.captureId }); return true; }
+      if (message.type === 'restore-presentation-pose') { emit({ type: 'presentation-pose-restored', captureId: message.captureId }); return true; }
       if (message.type === 'codebook-focus') {
-        if (message.phase === 'prepare') receivers.get(kind)?.({ type: 'codebook-focus-receipt', phase: 'prepared', requestId: message.requestId, epoch, focused: innerFocusedPanel === kind });
+        if (message.phase === 'prepare') emit({ type: 'codebook-focus-receipt', phase: 'prepared', requestId: message.requestId, epoch, focused: innerFocusedPanel === kind });
         if (message.phase === 'commit' && message.epoch === epoch) {
           const group = groups.find(group => group.activeTab === nativeTab); assert.ok(group);
           const held = nextPanelActivity?.kind === kind ? nextPanelActivity : undefined;
@@ -194,7 +199,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           if (held) { nextPanelActivity = undefined; pendingPanelActivity = kind; }
           activeTabGroup = group; innerFocusedPanel = kind;
           for (const listener of viewChanged) listener();
-          receivers.get(kind)?.({ type: 'codebook-focus-receipt', phase: 'focused', requestId: message.requestId, epoch, focused: true });
+          emit({ type: 'codebook-focus-receipt', phase: 'focused', requestId: message.requestId, epoch, focused: true });
           if (held) {
             held.entered();
             void held.wait.then(() => { pendingPanelActivity = undefined; for (const listener of viewChanged) listener(); });
@@ -209,10 +214,10 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         if (heldPresentationMessage === held) heldPresentationMessage = undefined;
       }
       if ((automaticContextReceipt || message.presentation?.state === 'applying') && kind === 'codebook.studyContext' && message.type === 'study' && !message.loading) {
-        receivers.get(kind)?.({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, presentationControlRevision: message.presentation?.presentationControlRevision, presentationMode: message.presentation?.mode, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
+        emit({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, presentationControlRevision: message.presentation?.presentationControlRevision, presentationMode: message.presentation?.mode, ...(message.recording ? { presentationRevision: message.recording.presentationRevision } : {}) });
       }
       return true;
-    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { messageListeners.add(callback); receivers.set(kind, message => { for (const listener of messageListeners) listener(message); }); return { dispose() { messageListeners.delete(callback); } }; } }, kind, nativeTab, viewColumn, title: '', get active() { return !registered || pendingPanelActivity !== kind && !separateEditorPart?.focused && activeTabGroup.activeTab === nativeTab; }, get visible() { return !registered || groups.some(group => group.activeTab === nativeTab); }, reveal(column?: number, preserveFocus?: boolean) {
+    }, onDidReceiveMessage: (callback: (message: unknown) => void) => { messageListeners.add(callback); receivers.set(kind, message => { for (const listener of messageListeners) listener(message); }); return { dispose() { messageListeners.delete(callback); } }; } }, kind, nativeTab, emit, viewColumn, title: _title ?? '', get active() { return !registered || pendingPanelActivity !== kind && !separateEditorPart?.focused && activeTabGroup.activeTab === nativeTab; }, get visible() { return !registered || groups.some(group => group.activeTab === nativeTab); }, reveal(column?: number, preserveFocus?: boolean) {
       panelReveals.push({ kind, column, preserveFocus });
       const previousColumn = value.viewColumn, previousFocusedGroup = activeTabGroup;
       if (column !== undefined) value.viewColumn = nativeReaderColumn(column);
@@ -286,7 +291,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         for (const listener of viewChanged) listener();
       }
       if (contextCoversSource && kind === 'codebook.studyContext') groups[0]!.activeTab = undefined;
-    }, onDidDispose(callback: () => void) { disposed.push(callback); return disposable(); }, notifyViewState() { for (const listener of viewChanged) listener(); }, viewListenerCount: () => viewChanged.length, onDidChangeViewState(callback: () => void) { viewChanged.push(callback); return { dispose() { const index = viewChanged.indexOf(callback); if (index >= 0) viewChanged.splice(index, 1); } }; }, dispose() { panels.delete(value); for (const group of groups) { group.tabs = group.tabs.filter(tab => tab !== nativeTab); if (group.activeTab === nativeTab) group.activeTab = undefined; } for (const listener of disposed) listener(); } };
+    }, onDidDispose(callback: () => void) { disposed.push(callback); return { dispose() { const index = disposed.indexOf(callback); if (index >= 0) disposed.splice(index, 1); } }; }, notifyViewState() { for (const listener of viewChanged) listener(); }, viewListenerCount: () => viewChanged.length, onDidChangeViewState(callback: () => void) { viewChanged.push(callback); return { dispose() { const index = viewChanged.indexOf(callback); if (index >= 0) viewChanged.splice(index, 1); } }; }, dispose() { if (!panels.delete(value)) return; for (const group of groups) { group.tabs = group.tabs.filter(tab => tab !== nativeTab); if (group.activeTab === nativeTab) group.activeTab = undefined; } for (const listener of disposed) listener(); } };
     // Both hosts initialize optimistic panel flags before the native tab/view-state acknowledgement arrives.
     const register = () => { registered = true; const group = nativeGroup(value.viewColumn ?? 1); if (!group.tabs.includes(nativeTab)) group.tabs.push(nativeTab); group.activeTab = nativeTab; };
     if (registered) register();
@@ -294,7 +299,9 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       delayedPanelKind = undefined; registerDelayedPanel = register;
       if (deferredPanelRegistration) { deferredPanelRegistration = false; setImmediate(register); }
     }
-    panels.add(value); return value;
+    panels.add(value); peakPanels = Math.max(peakPanels, panels.size);
+    const created = nextPanelCreated; if (created?.kind === kind) { nextPanelCreated = undefined; created.run(value); }
+    return value;
   }
   const initialSelection: string[] = [];
   let outlineCheckbox = (_event: { items: [string, number][] }) => {};
@@ -302,6 +309,47 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const outline = { ...disposable(), visible: true, selection: initialSelection, onDidChangeCheckboxState: (callback: typeof outlineCheckbox) => { outlineCheckbox = callback; return disposable(); }, onDidChangeVisibility: disposable,
     reveal: async (participant: string, options: { select: boolean; focus: boolean }) => { assert.equal(options.focus, false); if (options.select) outline.selection = [participant]; } };
   const watcher = { onDidChange(callback: () => void) { changed = callback; return disposable(); }, onDidCreate: disposable, onDidDelete: disposable, dispose() {} };
+  const viewportEvents: string[] = [], viewportInstances: WorkspaceViewport[] = [];
+  /** Models the leased renderer contract so workspace tests fail when retirement precedes transfer. @example reader.presentation.createViewport('run', record, fail, 'normal') */
+  class WorkspaceViewport {
+    panel: ReturnType<typeof panel>;
+    historical = false;
+    private held = false;
+    private closed = false;
+    private listener?: { dispose(): void };
+    constructor(_runId: string, _record: unknown, private readonly fail: (reason: string) => void, _scenario: unknown,
+      private readonly lease: { panel: ReturnType<typeof panel>; released(): void }, _observer?: unknown, readonly mode = 'live') {
+      this.panel = lease.panel; viewportInstances.push(this); this.bind();
+    }
+    /** Tracks only the current simulated renderer so old disposal exposes a missing rebind. @example this.bind() */
+    private bind() {
+      const current = this.panel;
+      this.listener = current.onDidDispose(() => {
+        if (this.panel !== current || this.closed) return;
+        this.closed = true; viewportEvents.push(`unexpected-close:${this.mode}`); this.fail('Owned viewport closed before cleanup');
+      });
+    }
+    /** Refuses renderer use after genuine native closure during replay integration. @example await viewport.reveal() */
+    async reveal() { assert.equal(this.closed, false); viewportEvents.push(`reveal:${this.mode}`); }
+    /** Marks selected live presentation without starting another runtime. @example await viewport.showLive() */
+    async showLive() { this.historical = false; }
+    /** Retains the hidden live lease while the workspace reads recorded evidence. @example viewport.showHistory() */
+    showHistory() { this.historical = true; }
+    /** Ends this simulated lease during workspace cleanup, using its original release callback. @example viewport.close() */
+    close() { this.listener?.dispose(); this.closed = true; this.lease.released(); }
+    /** Reserves the simulated renderer so workspace tests enforce drain before adoption. @example const release = await viewport.holdPlacement() */
+    async holdPlacement() { assert.equal(this.closed, false); assert.equal(this.held, false); this.held = true; viewportEvents.push(`hold:${this.mode}`); return () => { this.held = false; viewportEvents.push(`release:${this.mode}`); }; }
+    /** Exposes retirement ordering bugs by requiring the current placement hold. @example viewport.rebindPanel(replacement) */
+    rebindPanel(replacement: ReturnType<typeof panel>) { assert.equal(this.held, true); assert.equal(this.closed, false); this.listener?.dispose(); this.panel = replacement; this.bind(); viewportEvents.push(`rebind:${this.mode}`); }
+    /** Confirms that selected pixels restore outside the native placement hold. @example await viewport.restorePlacement() */
+    async restorePlacement() { assert.equal(this.held, false); assert.equal(this.closed, false); viewportEvents.push(`restore:${this.mode}`); }
+    /** Clears unavailable recorded pixels for playback readiness tests. @example viewport.clearRecorded() */
+    clearRecorded() { displayedImage = undefined; }
+    /** Delays only the requested replay image so workspace tests can interrupt pending paints. @example await viewport.present(png) */
+    async present(image: string) { const held = nextImage; nextImage = undefined; if (held) { held.entered(); await held.wait; } displayedImage = image; }
+    /** Models a confirmed missing-frame interval without retaining previous pixels. @example await viewport.presentMissing() */
+    async presentMissing() { displayedImage = undefined; }
+  }
   const boundary = await loadModule<typeof import('../studyWorkspace')>(resolve(__dirname, '../studyWorkspace.js'), {
     vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position, Range, ViewColumn: { One: 1, Two: 2, Three: 3 }, TextEditorRevealType: { Default: 0, AtTop: 3 }, ThemeColor: class {}, RelativePattern,
       commands: { async executeCommand(name: string, layout?: unknown): Promise<unknown> {
@@ -378,7 +426,12 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           const editor = sourceEditor(document, group, reportedSourceColumn);
           // An explicit native selection reveals its statement even when playback reopens the same document.
           if (options?.selection) { editor.selections = [{ active: options.selection.start, anchor: options.selection.start }]; scrollReadingRange(options.selection); }
-          visibleSourceEditors.push(Object.assign(sourceEditor(document, group), { group, selections: editor.selections }));
+          // Native wrappers share selection state, while the deliberate stale-column control keeps its returned wrapper separate.
+          const previous = visibleSourceEditors.findIndex(value => value.group === group && value.document.uri.toString() === document.uri.toString());
+          if (previous >= 0) visibleSourceEditors.splice(previous, 1);
+          const visible = Object.assign(sourceEditor(document, group), { group });
+          Object.defineProperty(visible, 'selections', { get: () => editor.selections, set: (selections: SourceEditor['selections']) => { editor.selections = selections; } });
+          visibleSourceEditors.push(visible);
           const displayed = nextSourceDisplay; nextSourceDisplay = undefined; displayed?.(editor);
           return lastSourceEditor = editor;
         },
@@ -390,12 +443,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           return { uri, getText: () => normalized, validatePosition: (position: Position) => { const lines = normalized.split('\n'), line = Math.min(position.line, lines.length - 1); return new Position(line, Math.min(position.character, lines[line]!.length)); } };
         },
         onDidChangeTextDocument: disposable, createFileSystemWatcher: (pattern: RelativePattern) => { watchedPatterns.push(pattern); return watcher; } } },
-    './environment': { requireWorkspace: () => harness.directory }, 'codebook-cycle-0001/dist/browserViewport': { BrowserViewport: class {
-      async reveal() {} async showLive() {} showHistory() {} close() {} async holdPlacement() { return () => {}; } async restorePlacement() {}
-      clearRecorded() { displayedImage = undefined; }
-      async present(image: string) { const held = nextImage; nextImage = undefined; if (held) { held.entered(); await held.wait; } displayedImage = image; }
-      async presentMissing() { displayedImage = undefined; }
-    } },
+    './environment': { requireWorkspace: () => harness.directory }, 'codebook-cycle-0001/dist/browserViewport': { BrowserViewport: WorkspaceViewport },
   });
   const articleOpens: RepositorySelection[] = [], articleReturns: RepositorySelection[] = [];
   const controls = { start: async () => harness.service, connect: async () => {}, returnToRepository: async (selection: RepositorySelection) => { articleReturns.push(selection); }, openArticle: async (selection: RepositorySelection) => { articleOpens.push(selection); } };
@@ -407,7 +455,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const createReader = (extensionPath = join(harness.directory, 'extension')) => new boundary.StudyWorkspace({ extensionPath, globalStorageUri: { fsPath: join(harness.directory, 'storage') }, subscriptions: [], workspaceState }, controls);
   const reader = createReader();
   if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
-  return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, articleOpens, articleReturns, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), changed: () => changed(),
+  return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, articleOpens, articleReturns, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), peakPanels: () => peakPanels, onNextPanel(kind: string, run: (value: ReturnType<typeof panel>) => void) { nextPanelCreated = { kind, run }; }, failNextPanelCreation(kind: string) { failedPanelKind = kind; }, changed: () => changed(),
     retainReadingRange(first: number, last: number) { retainedReadingRange = new Range(new Position(first, 0), new Position(last, 0)); },
     /** Models a learner selecting source during native placement, letting preservation tests inspect the retained cursor. @example harness.changeFocusedSourceSelection(46).selections[0].active.line // 46 */
     changeFocusedSourceSelection(line: number) {
@@ -420,7 +468,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     isReadingLineVisible(line: number) { return retainedReadingRange?.contains(new Position(line, 0)); },
     addOpenSource(file: string, text: string) { textDocuments.push({ uri: Uri.file(join(fixture, file)), getText: () => text }); },
     outlineItem: (itemId: string) => outlineItem(itemId), changeOutlineCheckbox: (itemId: string, checked: boolean) => outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
-    postedMessages: () => postedMessages, presentationPreferences, watchedPatterns,
+    postedMessages: () => postedMessages, presentationPreferences, watchedPatterns, viewportEvents, viewportInstances, nativePanels: () => [...panels],
     holdPresentationMessage(mode?: 'living-book') { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); heldPresentationMessage = { mode, wait, entered }; return { started, release }; },
     failPresentationPreference(value: boolean) { preferenceFailure = value; },
     holdPresentationPreference() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); nextPreference = { wait, entered }; return { started, release }; },
@@ -1980,7 +2028,7 @@ test('a presentation read preserves changed learner focus and does not certify t
 });
 
 test('an older presentation read cannot suppress original focus recovery after a newer mode change fails', async () => {
-  // Arrange: an owned preview needs temporary application focus while its Keep Editor command is pending.
+  // Arrange: the owned replacement uses the source anchor while its final layout command is pending.
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   let releaseRead = () => {}, releaseKeep = () => {};
   try {
@@ -1991,14 +2039,14 @@ test('an older presentation read cannot suppress original focus recovery after a
     assert.equal(harness.focusedPanel(), 'codebook.studyContext');
     const heldRead = harness.holdNextCommand('vscode.getEditorLayout'); releaseRead = heldRead.release;
     const reading = harness.reader.readPresentationState(); await heldRead.started;
-    const heldKeep = harness.holdNextCommand('workbench.action.keepEditor'); releaseKeep = heldKeep.release;
+    const heldKeep = harness.holdNextCommand('vscode.setEditorLayout'); releaseKeep = heldKeep.release;
     // Act: the obsolete passive read settles after the newer transition has borrowed native focus.
     const changing = assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), {
       code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native layout command failed',
     });
-    await heldKeep.started; assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser');
+    await heldKeep.started; assert.equal(harness.focusedPanel(), undefined);
     releaseRead(); const result = await reading;
-    harness.failNextCommand('workbench.action.keepEditor'); releaseKeep(); await changing;
+    harness.failNextCommand('vscode.setEditorLayout'); releaseKeep(); await changing;
     // Assert: the failed mode leaves its original focus and evidence intact without saving a new preference.
     assert.equal(result.layoutConfirmed, false); assert.equal(harness.focusedPanel(), 'codebook.studyContext');
     assert.equal(harness.reader.presentationState().mode, 'study-workspace'); assert.equal(harness.presentationPreferences.size, 0);
@@ -4325,7 +4373,7 @@ for (const change of ['layout', 'groups'] as const) test(`replay readiness after
   } finally { releaseChrome(); releaseSource(); await harness.close(); }
 });
 
-test('all three presentation modes retain the exact panels, source, learning item and learner decisions', async () => {
+test('all three presentation modes retain source, learning item and learner decisions while replacing only moved panes', async () => {
   // Arrange
   const harness = await workspaceHarness(false);
   harness.useNativeLayout({ orientation: 0, groups: [{}] });
@@ -4345,7 +4393,8 @@ test('all three presentation modes retain the exact panels, source, learning ite
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     state = harness.reader.presentationState();
     await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'select' });
-    assert.equal(harness.reader['app'], app); assert.equal(harness.reader['contextPanel'], context);
+    assert.notEqual(harness.reader['app'], app); assert.notEqual(harness.reader['contextPanel'], context);
+    assert.equal(harness.counts().panels, 2); assert.equal(harness.peakPanels(), 4);
     assert.equal(harness.reader.inspect().sourceUri, initial.sourceUri); assert.deepEqual(harness.reader.inspect().view!.model.selection, initial.view!.model.selection);
     assert.deepEqual(await library.readProgress(), progress); assert.equal(harness.runtimes.length, 0);
     assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true);
@@ -4424,7 +4473,7 @@ for (const [pane, kind] of [['app', 'codebook.scopedBrowser'], ['contextPanel', 
     await harness.reader.open(); await harness.reader.understand(true);
     const initial = harness.reader.presentationState();
     await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
-    await harness.reader.action('focus-context');
+    await harness.reader.action(kind === 'codebook.scopedBrowser' ? 'focus-app' : 'focus-context');
     const before = harness.reader.inspect(), decisions = await (await harness.reader.learningStorage()).readProgress(), draft = harness.addForeignDraft();
     const held = harness.holdPanelActivity(kind); release = held.release;
     const state = harness.reader.presentationState(); let completed = false;
@@ -4439,7 +4488,7 @@ for (const [pane, kind] of [['app', 'codebook.scopedBrowser'], ['contextPanel', 
     assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
     held.release(); await transfer;
     assert.equal(harness.reader.presentationState().mode, 'guided-walkthrough'); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
-    assert.equal(harness.focusedPanel(), 'codebook.studyContext'); assert.equal(harness.reader.inspect().sourceUri, before.sourceUri);
+    assert.equal(harness.focusedPanel(), kind); assert.equal(harness.reader.inspect().sourceUri, before.sourceUri);
     assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), decisions);
     assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true); assert.equal(harness.runtimes.length, 0);
   } finally { release(); await transfer?.catch(() => undefined); await harness.close(); }
@@ -4453,7 +4502,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`a 
     await harness.reader.open();
     const initial = harness.reader.presentationState();
     await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
-    const draft = harness.focusMutableDraft(); await harness.reader.action('focus-context');
+    const draft = harness.focusMutableDraft(); await harness.reader.action(kind === 'codebook.scopedBrowser' ? 'focus-app' : 'focus-context');
     const held = harness.holdPanelActivity(kind); release = held.release;
     const state = harness.reader.presentationState();
     transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
@@ -4523,7 +4572,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`a 
   } finally { release(); await transfer?.catch(() => undefined); await harness.close(); }
 });
 
-for (const pane of ['app', 'contextPanel'] as const) test(`a learner draft focus during ${pane} placement stops later layout work and preserves that focus`, async context => {
+for (const pane of ['app', 'contextPanel'] as const) test(`a learner draft focus during ${pane} placement stops later layout work and preserves that focus`, async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
@@ -4531,14 +4580,9 @@ for (const pane of ['app', 'contextPanel'] as const) test(`a learner draft focus
     const initial = harness.reader.presentationState();
     await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
     const draft = harness.focusMutableDraft(); await harness.reader.action('focus-context');
-    const target = harness.reader[pane]; assert.ok(target);
-    const reveal = target.reveal.bind(target), layoutChanges = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+    const layoutChanges = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
     let changedFocus = false;
-    context.mock.method(target, 'reveal', (...args: Parameters<typeof reveal>) => {
-      reveal(...args);
-      // Interrupt the accepted move before its receipt; subsequent placement must leave the learner's draft active.
-      if (args[0] !== undefined && !changedFocus) { changedFocus = true; draft.focus(); }
-    });
+    harness.onNextPanel(pane === 'app' ? 'codebook.scopedBrowser' : 'codebook.studyContext', () => { changedFocus = true; draft.focus(); });
     const state = harness.reader.presentationState();
     // Act
     await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' }), {
@@ -4551,10 +4595,10 @@ for (const pane of ['app', 'contextPanel'] as const) test(`a learner draft focus
     assert.equal(harness.reader.presentationState().mode, 'living-book'); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
     assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
     assert.equal(harness.runtimes.length, 0);
-  } finally { context.mock.restoreAll(); await harness.close(); }
+  } finally { await harness.close(); }
 });
 
-test('a learner source selection during delayed placement is preserved without later movement or preference changes', async context => {
+test('a learner source selection during delayed placement is preserved without later movement or preference changes', async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
@@ -4562,15 +4606,10 @@ test('a learner source selection during delayed placement is preserved without l
     const initial = harness.reader.presentationState();
     await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
     await harness.reader.action('focus-context');
-    const target = harness.reader['app']; assert.ok(target);
-    const reveal = target.reveal.bind(target), layoutChanges = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+    const layoutChanges = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
     let selected: ReturnType<typeof harness.changeFocusedSourceSelection> | undefined, revealCount = 0;
-    harness.deferMovedPanelPlacement('codebook.scopedBrowser');
-    context.mock.method(target, 'reveal', (...args: Parameters<typeof reveal>) => {
-      reveal(...args);
-      // The source remains focused; only the learner's selection changes while the move receipt is pending.
-      if (args[0] !== undefined && !selected) { selected = harness.changeFocusedSourceSelection(46); revealCount = harness.panelReveals().length; }
-    });
+    harness.delayPanelRegistration('codebook.scopedBrowser', true);
+    harness.onNextPanel('codebook.scopedBrowser', () => { selected = harness.changeFocusedSourceSelection(46); revealCount = harness.panelReveals().length; });
     const state = harness.reader.presentationState();
     // Act
     await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' }), {
@@ -4583,10 +4622,10 @@ test('a learner source selection during delayed placement is preserved without l
     assert.equal(harness.reader.presentationState().mode, 'living-book'); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
     assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
     assert.equal(harness.runtimes.length, 0);
-  } finally { context.mock.restoreAll(); await harness.close(); }
+  } finally { await harness.close(); }
 });
 
-for (const replacement of ['wrapper', 'opened', 'unannounced'] as const) test(`source-group ${replacement} replacement during pane movement ${replacement === 'wrapper' ? 'retains' : 'invalidates'} presentation ownership`, async context => {
+for (const replacement of ['wrapper', 'opened', 'unannounced'] as const) test(`source-group ${replacement} replacement during pane movement ${replacement === 'wrapper' ? 'retains' : 'invalidates'} presentation ownership`, async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
@@ -4595,13 +4634,8 @@ for (const replacement of ['wrapper', 'opened', 'unannounced'] as const) test(`s
     await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
     await harness.reader.action('focus-context');
     const source = harness.reader.inspect().sourceUri, decisions = await (await harness.reader.learningStorage()).readProgress();
-    const target = harness.reader['app']; assert.ok(target);
-    const reveal = target.reveal.bind(target); let replaced = false;
-    context.mock.method(target, 'reveal', (...args: Parameters<typeof reveal>) => {
-      reveal(...args);
-      // Resync after the accepted move; source content, column and selection remain unchanged.
-      if (args[0] !== undefined && !replaced) { replaced = true; harness.replaceFocusedSourceGroup(replacement); }
-    });
+    let replaced = false;
+    harness.onNextPanel('codebook.scopedBrowser', () => { replaced = true; harness.replaceFocusedSourceGroup(replacement); });
     const state = harness.reader.presentationState();
     // Act
     const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
@@ -4613,16 +4647,16 @@ for (const replacement of ['wrapper', 'opened', 'unannounced'] as const) test(`s
     assert.equal(harness.reader.presentationState().layoutConfirmed, replacement === 'wrapper');
     assert.equal(harness.reader.presentationState().mode, replacement === 'wrapper' ? 'guided-walkthrough' : 'living-book');
     assert.equal(harness.runtimes.length, 0);
-  } finally { context.mock.restoreAll(); await harness.close(); }
+  } finally { await harness.close(); }
 });
 
-test('mode transfer waits for moved-pane placement before treating the new grid as a stable learner arrangement', async () => {
+test('mode transfer waits for replacement-pane registration before treating the new grid as a stable learner arrangement', async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
     await harness.reader.open(); await harness.reader.action('focus-app'); await harness.reader.understand(true);
     const before = harness.reader.inspect(), decisions = await (await harness.reader.learningStorage()).readProgress(), draft = harness.addForeignDraft();
-    harness.deferMovedPanelPlacement('codebook.studyContext');
+    harness.delayPanelRegistration('codebook.studyContext', true);
     const state = harness.reader.presentationState();
     // Act
     await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
@@ -4679,8 +4713,8 @@ test('switching presentation waits for restored application focus before confirm
   try {
     await harness.reader.open(); await harness.reader.action('focus-app');
     const state = harness.reader.presentationState();
-    // Only the moved preview needs Keep Editor before initiating application focus is restored.
-    harness.deferPanelFocus('codebook.scopedBrowser', 2);
+    // A single final focus request must await its delayed native notification.
+    harness.deferPanelFocus('codebook.scopedBrowser', 1);
     // Act
     await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
     // Assert
@@ -4700,12 +4734,13 @@ test('a missing final application-focus receipt rejects once without retrying fo
     await harness.reader.understand(true); await harness.reader.action('focus-app');
     const source = harness.reader.inspect().sourceUri, bundle = harness.controller.bundle(), library = await harness.reader.learningStorage();
     const decisions = (await library.readProgress()).decisions, draft = harness.addForeignDraft();
-    const app = harness.reader['app']; assert.ok(app);
-    const post = app.webview.postMessage.bind(app.webview); let focusRequests = 0, placedLayout: unknown;
-    context.mock.method(app.webview, 'postMessage', (message: Record<string, unknown>) => {
-      // Keep the moved preview's receipt; a missing final receipt must not trigger another retry.
-      if (message.type === 'codebook-focus' && message.phase === 'commit' && ++focusRequests >= 2) { placedLayout ??= harness.editorLayout(); return Promise.resolve(true); }
-      return post(message);
+    let focusRequests = 0, placedLayout: unknown;
+    harness.onNextPanel('codebook.scopedBrowser', app => {
+      const post = app.webview.postMessage.bind(app.webview);
+      context.mock.method(app.webview, 'postMessage', (message: Parameters<typeof post>[0]) => {
+        if (message.type === 'codebook-focus' && message.phase === 'commit') { focusRequests++; placedLayout ??= harness.editorLayout(); return Promise.resolve(true); }
+        return post(message);
+      });
     });
     const state = harness.reader.presentationState();
     // Act
@@ -4713,7 +4748,7 @@ test('a missing final application-focus receipt rejects once without retrying fo
       code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Timed out waiting for owned presentation inner focus',
     });
     // Assert: an applied grid remains unconfirmed; failure cannot claim the new mode or rewrite learner evidence.
-    assert.equal(focusRequests, 2, 'One necessary Keep Editor receipt and one failed final restore must not trigger a second full focus wait');
+    assert.equal(focusRequests, 1, 'One failed final restore must not trigger a second full focus wait');
     assert.equal(harness.reader.presentationState().mode, 'study-workspace');
     assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().state, 'open');
     assert.equal(harness.reader.presentationState().reason, 'Error: Timed out waiting for owned presentation inner focus');
@@ -4776,10 +4811,10 @@ test('a retained source hidden after replay refresh rejects presentation without
     const state = harness.reader.presentationState();
     const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
     const rejected = assert.rejects(transfer, {
-      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: The retained source is no longer visible after replay restoration.',
+      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
     });
     await layout.started;
-    // Hold the second replay paint, after its source reveal, without changing global Context focus.
+    // Hold the second replay paint, after its source reveal, while the owned source anchor remains focused.
     const image = harness.holdNextImage(); releaseImage = image.release; layout.release(); await image.started;
     const sourceGroup = harness.groups.find(group => group.viewColumn === harness.sourceColumn()); assert.ok(sourceGroup);
     const draft = harness.addForeignDraft(sourceGroup.viewColumn), placedLayout = harness.editorLayout();
@@ -4787,10 +4822,10 @@ test('a retained source hidden after replay refresh rejects presentation without
     sourceGroup.activeTab = draft; image.release(); await rejected;
     // Assert
     assert.equal(sourceGroup.activeTab, draft); assert.equal(sourceGroup.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
-    assert.deepEqual(harness.editorLayout(), placedLayout); assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.deepEqual(harness.editorLayout(), placedLayout); assert.equal(harness.focusedPanel(), undefined);
     assert.equal(harness.reader.presentationState().mode, 'study-workspace');
     assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().state, 'open');
-    assert.equal(harness.reader.presentationState().reason, 'Error: The retained source is no longer visible after replay restoration.');
+    assert.equal(harness.reader.presentationState().reason, 'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.');
     assert.equal(harness.presentationPreferences.size, 0);
     assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 100);
     assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.reader.inspect().sourceUri, source);
@@ -4799,13 +4834,13 @@ test('a retained source hidden after replay refresh rejects presentation without
   } finally { releaseLayout(); releaseImage(); await harness.close(); }
 });
 
-test('moving a presentation retains both measured axes when native tab relocation flattens the grid', async () => {
+test('moving a presentation retains both measured axes when native pane creation flattens the grid', async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
     await harness.reader.open();
     harness.changeEditorLayout({ orientation: 0, groups: [{ size: 352, groups: [{ size: 154 }, { size: 154 }] }, { size: 288 }] });
-    harness.flattenOnNextPanelMove({ orientation: 0, groups: [{ size: 220 }, { size: 220 }, { size: 220 }] });
+    harness.onNextPanel('codebook.scopedBrowser', () => harness.changeEditorLayout({ orientation: 0, groups: [{ size: 220 }, { size: 220 }, { size: 220 }] }));
     const state = harness.reader.presentationState();
     // Act
     await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'restore' });
@@ -4891,9 +4926,10 @@ test('a failed mode preference keeps the applied layout and save-only recovery d
 test('pending presentation placement rejects stale and competing controls before dispatching any runtime input', async () => {
   // Arrange
   const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
-  const held = harness.holdNextCommand('workbench.action.keepEditor');
+  let release = () => {};
   try {
     await harness.reader.open(); const state = harness.reader.presentationState();
+    const held = harness.holdNextCommand('vscode.setEditorLayout'); release = held.release;
     const pending = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
     await held.started;
     // Act / Assert
@@ -4903,7 +4939,7 @@ test('pending presentation placement rejects stale and competing controls before
     assert.equal(harness.runtimes.length, 0); assert.equal(harness.service.records.size, 0);
     held.release(); await pending;
     assert.equal(harness.reader.presentationState().mode, 'living-book');
-  } finally { held.release(); await harness.close(); }
+  } finally { release(); await harness.close(); }
 });
 
 test('Close retires the reader identity immediately and waits for an already accepted presentation preference write', async () => {
@@ -4933,17 +4969,15 @@ test('Close cancels pending focus recovery after a native layout failure without
   try {
     await harness.reader.open(); await harness.reader.action('focus-app');
     const draft = harness.addForeignDraft(), state = harness.reader.presentationState();
-    const app = harness.reader['app']; assert.ok(app);
-    const post = app.webview.postMessage.bind(app.webview); let focusRequests = 0;
-    context.mock.method(app.webview, 'postMessage', (message: Record<string, unknown>) => {
-      if (message.type === 'codebook-focus' && message.phase === 'commit') {
-        focusRequests++;
-        // Layout failure recovers after one Keep Editor; normal final-focus failure is no longer retried.
-        if (focusRequests >= 2) { recoveryEntered(); return Promise.resolve(true); }
-        // Fail after focus was actually borrowed, rather than during the earlier read-only scope measurement.
-        harness.failNextCommand('vscode.getEditorLayout');
-      }
-      return post(message);
+    let focusRequests = 0;
+    harness.onNextPanel('codebook.scopedBrowser', app => {
+      const post = app.webview.postMessage.bind(app.webview);
+      context.mock.method(app.webview, 'postMessage', (message: Parameters<typeof post>[0]) => {
+        if (message.type === 'codebook-focus' && message.phase === 'commit') { focusRequests++; recoveryEntered(); return Promise.resolve(true); }
+        return post(message);
+      });
+      // Fail the measured layout read after adoption and source anchoring; only error-path focus recovery follows.
+      harness.failNextCommand('vscode.getEditorLayout');
     });
     const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
     const rejected = assert.rejects(transfer, {
@@ -4959,6 +4993,7 @@ test('Close cancels pending focus recovery after a native layout failure without
     // Drain even a failing regression so no native operation outlives this test.
     await closing; await rejected;
     // Assert
+    assert.equal(focusRequests, 1);
     assert.equal(harness.reader.presentationState().state, 'closed'); assert.equal(harness.reader.inspect().opened, false);
     assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().mode, 'study-workspace');
     assert.notEqual(harness.reader.presentationState().presentationId, state.presentationId);
@@ -5412,7 +5447,7 @@ test('presentation cannot save its mode from a stale reading restoration receipt
       if (message.type !== 'restore-presentation-pose') return originalPost(message);
       releaseRestore = () => { void originalPost(message); }; observed(); return Promise.resolve(true);
     };
-    const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
     await requested;
     // Act
     harness.receive({ type: 'presentation-pose-restored', captureId: '33333333-3333-4333-8333-333333333333' });
@@ -5449,4 +5484,180 @@ test('learner input after reading capture cancels placement without saving or re
     assert.equal(restorations, 0); assert.equal(harness.presentationPreferences.size, 0);
     assert.equal(harness.reader.presentationState().mode, 'study-workspace');
   } finally { release(); await harness.close(); }
+});
+
+for (const positionMs of [0, 100]) test(`pane replacement transfers both live history and replay leases without changing the confirmed ${positionMs === 0 ? 'missing-frame' : 'captured-frame'} position`, async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const failures: string[] = [];
+  let live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
+  try {
+    live = harness.reader.presentation.createViewport!('handoff-live', () => {}, reason => failures.push(reason), 'normal');
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs }); await harness.controller.settle();
+    const app = harness.reader['app'], context = harness.reader['contextPanel'], replay = harness.reader['replayViewport'];
+    const bundle = harness.controller.bundle(), image = harness.displayedImage(), source = harness.reader.inspect().sourceUri;
+    const progress = await (await harness.reader.learningStorage()).readProgress();
+    harness.viewportEvents.length = 0;
+    const state = harness.reader.presentationState();
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    // Assert
+    assert.notEqual(harness.reader['app'], app); assert.notEqual(harness.reader['contextPanel'], context);
+    assert.equal(harness.reader['viewport'], live); assert.equal(harness.reader['replayViewport'], replay);
+    assert.equal(harness.viewportInstances.length, 2);
+    assert.equal(harness.viewportInstances[0]!.historical, true);
+    for (const viewport of harness.viewportInstances) assert.equal(viewport.panel, harness.reader['app']);
+    assert.deepEqual(harness.viewportEvents.filter(event => /^(hold|rebind|release|restore|unexpected-close):/.test(event)), ['hold:live', 'hold:recording', 'rebind:live', 'rebind:recording', 'release:live', 'release:recording']);
+    assert.deepEqual(failures, []); assert.equal(harness.counts().panels, 2); assert.equal(harness.peakPanels(), 4);
+    assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.controller.state().presentedMs, positionMs);
+    assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.displayedImage(), image);
+    assert.equal(harness.reader.inspect().sourceUri, source); assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
+    assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.commands.includes('workbench.action.keepEditor'), false);
+  } finally { live?.close(); await harness.close(); }
+});
+
+test('same-column presentation changes retain both documents and their current viewport lease', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
+  try {
+    await harness.reader.open();
+    live = harness.reader.presentation.createViewport!('same-column', () => {}, () => {}, 'normal');
+    const app = harness.reader['app'], context = harness.reader['contextPanel'];
+    harness.viewportEvents.length = 0;
+    // Act
+    for (const mode of ['guided-walkthrough', 'study-workspace'] as const) {
+      const state = harness.reader.presentationState();
+      await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' });
+    }
+    // Assert
+    assert.equal(harness.reader['app'], app); assert.equal(harness.reader['contextPanel'], context);
+    assert.equal(harness.reader['viewport'], live); assert.equal(harness.peakPanels(), 2);
+    assert.deepEqual(harness.viewportEvents, ['hold:live', 'release:live', 'restore:live', 'hold:live', 'release:live', 'restore:live']);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+  } finally { live?.close(); await harness.close(); }
+});
+
+for (const failure of ['creation throws', 'unretained tab'] as const) test(`a second replacement that ${failure} preserves the prior panes and live lease without saving the mode`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const failures: string[] = [];
+  let live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
+  try {
+    await harness.reader.open();
+    live = harness.reader.presentation.createViewport!('failed-handoff', () => {}, reason => failures.push(reason), 'normal');
+    const app = harness.reader['app'], context = harness.reader['contextPanel'], source = harness.reader.inspect().sourceUri;
+    const progress = await (await harness.reader.learningStorage()).readProgress();
+    if (failure === 'creation throws') harness.failNextPanelCreation('codebook.studyContext');
+    else harness.onNextPanel('codebook.studyContext', panel => { panel.nativeTab.isPreview = true; });
+    const state = harness.reader.presentationState();
+    // Act
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), { code: 'PRESENTATION_UNAVAILABLE' });
+    // Assert
+    assert.equal(harness.reader['app'], app); assert.equal(harness.reader['contextPanel'], context);
+    assert.equal(harness.reader['viewport'], live); assert.equal(harness.viewportInstances[0]!.panel, app);
+    assert.deepEqual(failures, []); assert.equal(harness.counts().panels, 2);
+    assert.equal(harness.reader.inspect().sourceUri, source); assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
+    assert.equal(harness.presentationPreferences.size, 0); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.equal(harness.viewportEvents.some(event => event.startsWith('rebind:')), false);
+  } finally { live?.close(); await harness.close(); }
+});
+
+test('retired application notifications and explanation controls cannot change the current replay or learner understanding', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    const previousApp = harness.nativePanels().find(panel => panel.kind === 'codebook.scopedBrowser')!;
+    const previousContext = harness.nativePanels().find(panel => panel.kind === 'codebook.studyContext')!;
+    const state = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const bundle = harness.controller.bundle(), progress = await (await harness.reader.learningStorage()).readProgress(), messages = harness.postedMessages().length;
+    // Act: already queued callbacks retain their old object even after disposal.
+    previousApp.notifyViewState(); previousContext.notifyViewState();
+    previousContext.emit({ type: 'ready' });
+    previousContext.emit({ type: 'understanding', revision: harness.reader.inspect().view!.revision, understood: true });
+    previousContext.emit({ type: 'presentation-pose-invalidated', captureId: '33333333-3333-4333-8333-333333333333' });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Assert
+    assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.controller.state().readiness, 'ready');
+    assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.postedMessages().length, messages);
+    assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true); assert.equal(harness.counts().panels, 2);
+  } finally { await harness.close(); }
+});
+
+test('closing the adopted application during native layout rejects the transition and fails its live lease exactly once', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const failures: string[] = [];
+  let release = () => {}, live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
+  try {
+    await harness.reader.open(); live = harness.reader.presentation.createViewport!('close-current', () => {}, reason => failures.push(reason), 'normal');
+    const held = harness.holdNextCommand('vscode.setEditorLayout'); release = held.release;
+    const state = harness.reader.presentationState();
+    const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const rejected = assert.rejects(changing, { code: 'PRESENTATION_UNAVAILABLE' }); await held.started;
+    const app = harness.reader['app']; assert.ok(app);
+    // Act
+    app.dispose(); app.dispose(); held.release(); await rejected;
+    // Assert
+    assert.deepEqual(failures, ['Owned viewport closed before cleanup']); assert.equal(harness.reader['app'], undefined);
+    assert.equal(harness.counts().panels, 1); assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace'); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+  } finally { release(); live?.close(); await harness.close(); }
+});
+
+test('a pending live renderer hold prevents pane creation even when replay is the visible presentation', async context => {
+  // Arrange
+  const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {}, live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
+  try {
+    live = harness.reader.presentation.createViewport!('drain-hidden-live', () => {}, () => {}, 'normal');
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const app = harness.reader['app'], explanation = harness.reader['contextPanel'];
+    const hold = live.holdPlacement.bind(live); let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; }), pending = new Promise<void>(resolve => { release = resolve; });
+    context.mock.method(live, 'holdPlacement', async (...args: Parameters<typeof hold>) => { const releaseHold = await hold(...args); entered(); await pending; return releaseHold; });
+    const state = harness.reader.presentationState();
+    // Act
+    const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await started;
+    // Assert
+    assert.equal(harness.reader['app'], app); assert.equal(harness.reader['contextPanel'], explanation);
+    assert.equal(harness.peakPanels(), 2); assert.equal(harness.presentationPreferences.size, 0);
+    release(); await changing;
+    assert.notEqual(harness.reader['app'], app); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+  } finally { release(); context.mock.restoreAll(); live?.close(); await harness.close(); }
+});
+
+for (const change of ['move', 'close'] as const) test(`a learner ${change} of the first replacement before the second registers prevents lease adoption`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const failures: string[] = [];
+  let live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
+  try {
+    await harness.reader.open(); live = harness.reader.presentation.createViewport!('interrupted-creation', () => {}, reason => failures.push(reason), 'normal');
+    const app = harness.reader['app'], explanation = harness.reader['contextPanel'];
+    const previousApp = harness.nativePanels().find(panel => panel.kind === 'codebook.scopedBrowser');
+    harness.onNextPanel('codebook.studyContext', () => {
+      const replacement = harness.nativePanels().find(panel => panel.kind === 'codebook.scopedBrowser' && panel !== previousApp); assert.ok(replacement);
+      if (change === 'move') replacement.reveal(1, true);
+      else replacement.dispose();
+    });
+    const state = harness.reader.presentationState();
+    // Act
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), { code: 'PRESENTATION_UNAVAILABLE' });
+    // Assert
+    assert.equal(harness.reader['app'], app); assert.equal(harness.reader['contextPanel'], explanation);
+    assert.equal(harness.viewportInstances[0]!.panel, app); assert.deepEqual(failures, []);
+    assert.equal(harness.viewportEvents.some(event => event.startsWith('rebind:')), false);
+    assert.equal(harness.counts().panels, 2); assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+  } finally { live?.close(); await harness.close(); }
 });
