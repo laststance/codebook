@@ -422,8 +422,8 @@ export class StudyWorkspace {
       return group.viewColumn === panel.viewColumn && Boolean(group.activeTab && matches(group.activeTab))
         && vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(matches).length === 1;
     };
-    // Native tab focus may arrive before panel.active; authorize that destination but await both for completion.
-    const isActive = () => panel.active && hasTargetTabFocus();
+    // Tab, panel and text-focus updates arrive separately; await all before capturing a passive focus baseline.
+    const isActive = () => panel.active && hasTargetTabFocus() && vscode.window.activeTextEditor === undefined;
     const assertOwnedFocus = () => { if (!hasTargetTabFocus()) assertInitialFocus(); };
     await focusWebview(panel, { signal, timeoutMs: PRESENTATION_READY_TIMEOUT_MS, isActive, assertBeforeCommit: assertOwnedFocus, assertCurrent: () => {
       this.assertLifetime(lifetime); assertPlacement();
