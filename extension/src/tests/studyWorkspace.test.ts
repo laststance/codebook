@@ -1332,7 +1332,7 @@ test('Wiki entry from a retained Study keeps Context focus when the native prima
   } finally { await harness.close(); }
 });
 
-test('Wiki entry preserves focused chat when its layout read reports a stale matching main grid', async () => {
+test('Wiki entry from focused chat preserves its separate pane when its layout read reports a stale matching main grid', async () => {
   // Arrange
   const harness = await workspaceHarness(false);
   harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] });
@@ -1346,6 +1346,8 @@ test('Wiki entry preserves focused chat when its layout read reports a stale mat
     await harness.reader.arrangeRepository(new AbortController().signal);
     // Assert
     assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{}, {}, {}] });
+    // Explicit Wiki navigation establishes main focus; foreign chat contents and geometry remain untouched.
+    assert.equal(chat.focused(), false);
     assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
     assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
     assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
