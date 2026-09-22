@@ -1,0 +1,447 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-22T15:18:29.313434+00:00",
+  "scope": "H1 separate normally installed regular-panel handoff probe: 90 transitions per host PASS, no product source/runtime/final acceptance proof.",
+  "source": {
+    "revision": "64c762939ea3c03f6f6cea2b18f3b1ce618ebd77",
+    "dirty": false,
+    "vsixSha256": "2a656c6e90d05c9d027fca741c8e30350d2e4af5b78ff9a89e99843a46805358",
+    "sourceHash": "f6c3d17c2d6ee2ad2d70a00f8b7a849e93c085c40347d53deae354edac35d1cd",
+    "inputCount": 273
+  },
+  "probe": {
+    "at": "2026-09-22T15:13:03.176Z",
+    "path": "artifacts/cycle-0018/native-pane-handoff-probe/layout-probe-0.0.4.vsix",
+    "sha256": "154bb8ee8beacd91e4e6101f44b46df1eff449563d9b1bf1a5e65e0393234796",
+    "bytes": 5965,
+    "scope": "Standalone public API probe artifact, not Codebook product"
+  },
+  "availability": "Private local evidence; sanitized paths, bytes and hashes only. Preserve these files before transferring/deleting the checkout.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/candidate.json",
+      "bytes": 32991,
+      "sha256": "cefc7a3451efb6fc487884fdc2146aaad7ff0bccb18cd61af9c150d88bb1b01e"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/check-capture-paths.mjs",
+      "bytes": 1158,
+      "sha256": "2f8b68b914c8e1e5776824c209ce497b29073106b83b408d81c07097b2ade3a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/checked-process.mjs",
+      "bytes": 1175,
+      "sha256": "04f09fc530296c557cd2790d3d48f73b4182503e04ab4b3f3508cceceb91aa55"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/close-partial.mjs",
+      "bytes": 1703,
+      "sha256": "75ff5d9314b4b08983a3ff9c73ec95ca14e8ddd2d2fb9d975af193d97e6f019f"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/1-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "9fa2377c9659377be157e9d12ec50a673c88eba9e8f3f733e9ac4b10cd0b6458"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/2-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "4e659e8361b9cf57045a141ec1dc58d0103db761c74c1b6ccf121c853b0a5987"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/3-cleanup-owned-profile.py.log",
+      "bytes": 390,
+      "sha256": "db2538356ebfaa0bdbddaf7ed96de571cc1b927568a27ec3bfcd094691410515"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/4-extract-video.py.log",
+      "bytes": 181,
+      "sha256": "c20cfe22f047fbbb11cbaf6b4a9e9e720283a160e272708a990ff7dd373aef9d"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/after-identity-verification.json",
+      "bytes": 8691,
+      "sha256": "aafcaf3893db84657444eaf3c7daef7e425b5fd08fdb05d3c0db7a418b171434"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/copied-settings-before.json",
+      "bytes": 527,
+      "sha256": "9b0fc03b5b5e7d80cbd19df4ff104df68b34869515c7f80148fdd3903cc88524"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-before-close.png",
+      "bytes": 301212,
+      "sha256": "abeaa0763470917558326d81f0abf931b2025ef30ba4a4b3cbd5b814d2c9157e"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-cdp-readiness.json",
+      "bytes": 1567,
+      "sha256": "92944eeddbcfec00262319b64c30723668b7907b93d3b4ba3b9de232c844e2e7"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "0b4efb007b0885835a09f5a4e6a8ee9756e569d7316d25c7fd000d465e6d5360"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-frame-extraction.json",
+      "bytes": 2302,
+      "sha256": "5a93f5d6eb812c55429a45c4904dcb141096a6fd4d384d83076b1fbaa062cb10"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-frame-inspection.json",
+      "bytes": 3172,
+      "sha256": "c2864f13a8922d08255b67b6211caf30090ba791fe5f2e62d7ebb869aeb1180a"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-frames-000.png",
+      "bytes": 170327,
+      "sha256": "f2eb66ca29ea3d206422340409aecb08b629c18c0166d15e48d6146b815a2871"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-frames-012.png",
+      "bytes": 149127,
+      "sha256": "18852e5d7afb81e2465b381114ce4bed62f0cfffb5d477d2bed7f4ddce3114fd"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-frames-024.png",
+      "bytes": 143173,
+      "sha256": "b4dd190fcd0789067ad23bc0c7daa0f4bcc285b964dc33bf9528b4310ae5e9a6"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-frames-036.png",
+      "bytes": 145637,
+      "sha256": "cfb17c1ffa45d0e7da9739a5d51036863a7823b4d0298df4d2a9fa90e765532b"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-frames-048.png",
+      "bytes": 144785,
+      "sha256": "a1bd8e58c44854eae1d68a4a7d013647dd9dc44e7c38fc93f954fada25c36872"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-frames-060.png",
+      "bytes": 154135,
+      "sha256": "deaa7bc88be2ab2f815f9f07d5c580eb3d784c35e1cb3ae988f28d64c07e4a8f"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-launch.json",
+      "bytes": 1524,
+      "sha256": "10510b9a45cf8667c5f92442a8b5d3560788751d0d235fc7331e828351a4a40f"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-native-admission.json",
+      "bytes": 4282,
+      "sha256": "23c2c8040d2528fe09193a6b2f54fa735967afae8dc2bd200242a55cd828d9f1"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-native.webm",
+      "bytes": 5683445,
+      "sha256": "6cc10b93214f1601ece86f2f9e57d4af4a3c2ad041b709b2338e2689aa3c1c82"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "b49cc05c64256c4deb6ae96ac20fc815506d0bc7b45e1ee5a5c9ff7c99f01bb1"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-ui-close.json",
+      "bytes": 3045,
+      "sha256": "0edc75da9a38da1a36c86a63e95a4b74992caecba0c1eff0801a1c49b80dbcb4"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/initial-ui-start.json",
+      "bytes": 4492,
+      "sha256": "e19784e17cfdd9289517fb4a7cafed24b76bb2829656dce8526f39a51f842779"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/installation.json",
+      "bytes": 7164,
+      "sha256": "dbf83b61729051961212b03e6243087fe0eeb08395bcc7bf00ca94bf58f5f91e"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/launch-output.log",
+      "bytes": 1412,
+      "sha256": "d31f8545a4f9a7455e095340c6b9fde3a6dfe3d312f5f2a739e2ec8683a0d4fd"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/native-state.json",
+      "bytes": 228,
+      "sha256": "35826ab1354aa79f9bb82b60dd84667ad8dbdc9ccd35060cf3ff996096408062"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/pane-handoff-result.json",
+      "bytes": 8240942,
+      "sha256": "86826e942e1b5eb7b64af73babffbe6a4a307bfa495c1efbfbc4b79a99b99e85"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/probe-installation.json",
+      "bytes": 1805,
+      "sha256": "cd806570df894e61a123ad82b944bd54dada9e4e5dff78eb610f46fa43394cae"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/probe-orchestration-result.json",
+      "bytes": 3411,
+      "sha256": "ccfde73cfde05813746d6282483ba480dbb621fc3b792e5771ea7b176584d4f5"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/cursor-full/profile-preparation.json",
+      "bytes": 23528,
+      "sha256": "005e156f9a33349d4f0a242392d64d6312314044718c5c8f410fa3e5c79d5130"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/experiment-plan.json",
+      "bytes": 1756,
+      "sha256": "642d299abad9a627910fb14f459547963aa037e20e71e26aa372930842182642"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/extract-video.py",
+      "bytes": 1209,
+      "sha256": "cacbe631de1abddb526587d40b07e1d283a4a7cf4a119b2aec608c9b4858e362"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/install-probe.mjs",
+      "bytes": 2461,
+      "sha256": "b131ff9b57f7ffa1f588c36dd0875543e2e08d01f8354ae2db783c448badc1a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/layout-probe-0.0.4.vsix",
+      "bytes": 5965,
+      "sha256": "154bb8ee8beacd91e4e6101f44b46df1eff449563d9b1bf1a5e65e0393234796"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/package-probe.mjs",
+      "bytes": 1133,
+      "sha256": "228b2225865060330f57f5f24453e19f2518df6987fbc845afaa39bbab5afd66"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/prepare-profiles.py",
+      "bytes": 1603,
+      "sha256": "f49502ac2c7ac5928e138317e6f9d231994403de944a981516b7584ce6d5a670"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/pretrial-build/layout-probe-0.0.4.vsix",
+      "bytes": 5840,
+      "sha256": "28f0f8b1404cd6d52142e1a61fec8bc82612c2c255c26f0f16ec093742aeaae8"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/pretrial-build/probe-package.json",
+      "bytes": 350,
+      "sha256": "0f9118f2d8694ad9c5ba935fafb510ab0c82be053501f72a4b340c8f8a1b2840"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/probe-extension/extension.js",
+      "bytes": 13160,
+      "sha256": "bcef612613d4c21fbfecb6c45441992fddbaa8a8fe13726c70c1d7d414750771"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/probe-extension/package.json",
+      "bytes": 766,
+      "sha256": "96fda42078e13c5c327de12398e90e0d299ed6b3e9677457ac9ba5dccd329959"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/probe-extension/readme.md",
+      "bytes": 120,
+      "sha256": "91c358cdb0433e956b2ef57a40efdaad6dbb1c778009b8be593d114eee7dad22"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/probe-package.json",
+      "bytes": 350,
+      "sha256": "decea400987aef6fce2c69281ec6d8c3ecc0d638d48e4f112720269c6552326c"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/run-probe.mjs",
+      "bytes": 5643,
+      "sha256": "b2e0067064a21f9f61b7a5d7d3fd8c2c40694d9685ab482cff2eb7c1ace07fe0"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/schedule.json",
+      "bytes": 5860,
+      "sha256": "a4c8cd3226fe0254485225e4bf542d10b720d9bd61f5e467d51ad85e59d8884f"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/ui-phase.mjs",
+      "bytes": 1420,
+      "sha256": "7c341ef74b082785325bc3ac290ec1b9991af4b22fb62fc944034f1df7edd864"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/ui-recipes.json",
+      "bytes": 13374,
+      "sha256": "f4bff575ad31a243e839e370faea1ba060122dfe30743cbff2d17e11d61ef6a8"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/1-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "325e95e08640822d589d10304a96a5d5cdbb389bc8d2e41627b02b4cf4851d33"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/2-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "84c1d25061266e8334d5e5219517343eecb375800ba9df04fa71e14cd0bd0e58"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/3-cleanup-owned-profile.py.log",
+      "bytes": 391,
+      "sha256": "0134f489f48cc5dec32b26c0987ec5f4f318a002a4dfeb0771cea20a7a5ebab0"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/4-extract-video.py.log",
+      "bytes": 181,
+      "sha256": "95f490f015abfd4885df273616928b34a43c648505cc4a95a45d20419ee63054"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/after-identity-verification.json",
+      "bytes": 8691,
+      "sha256": "2d81ad737e607811a0aec70df49aad81897d40e44e7ff4d03288daf83221a5ff"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/copied-settings-before.json",
+      "bytes": 519,
+      "sha256": "7ed101b05ad446a0db013948411f559b8838daf26640ac4bd24d34461ebaeddc"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-before-close.png",
+      "bytes": 318919,
+      "sha256": "5f673c66c8bb5169552aefe4d8e257eb043e7adb7182c7492ee08504e071598d"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-cdp-readiness.json",
+      "bytes": 1004,
+      "sha256": "4a3cdf25b9086339fd06cddc0723fa8e77e2e3e5379954acb79693593332048f"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "4153e8cd089b7bb08befc6505bc9dbdaa302474d36caad19f3a5ee92d50aea47"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-frame-extraction.json",
+      "bytes": 907,
+      "sha256": "82b4a138df368863fb2f64b8278f26234cf42b3412e6a4daa3f07fcf6f73d0f8"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-frame-inspection.json",
+      "bytes": 1140,
+      "sha256": "bb551ec88d7b9cae6083bd138d90338df5438244b9fe76778f5e6081befe4282"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-frames-000.png",
+      "bytes": 191054,
+      "sha256": "ab413681dadf303c2687d134bacf74f9ffcd1a16d1c1ea14330cd286f9abdbde"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-launch.json",
+      "bytes": 1509,
+      "sha256": "efb3bf43b74a2867a3e096a87282e99bf1c0dc799fa8c3b0864ac72a86df1e9a"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-native-admission.json",
+      "bytes": 4390,
+      "sha256": "6b8951d27d4c29bac14df8f1a69803c4fa5a1974a5ee3b2a0eda6cb849ab4cd0"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-native.webm",
+      "bytes": 2114701,
+      "sha256": "8ac8ae3c1c71bf40190be3708626ebd12496889dbe4a59f3caf319dad037c74e"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "d5fe059329904b1e1d598f821af10b9bf998ae814d5ce63a2c831cacbaa38da7"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-ui-close.json",
+      "bytes": 2578,
+      "sha256": "9f11a15228ec390a303d81457cf3518030a27aa48ea83bd25eb2787caf974ab7"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/initial-ui-start.json",
+      "bytes": 4519,
+      "sha256": "c5eeb623d9f42461967fed5069f509e73c0afa2b35dd280238652196e9523ecd"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/installation.json",
+      "bytes": 7195,
+      "sha256": "12b8392d35ed87a01ef09b54b215b4cc8ea10a20dec7d7741da73145631e6472"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/launch-output.log",
+      "bytes": 1402,
+      "sha256": "43ecd4aa04daf98bcc5e7494a9151aeae0f11132544e464dd3b748ae2dd645f7"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/native-state.json",
+      "bytes": 228,
+      "sha256": "6f4d43b121fb7ad8f57b88e343a26fa5d174dcc9ca0950c7f0127f90a63da93c"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/pane-handoff-result.json",
+      "bytes": 7489333,
+      "sha256": "c722e7f0a1415aa1c95257d7f750738c0925c8db48e141c731c18540e0f50f5b"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "a240ed5ac734c70b97dd8b2331f90c174678b60ff6b361029bc6b66809d884a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/probe-installation.json",
+      "bytes": 1805,
+      "sha256": "9bba728e0f06b6df4be9e00fbf3acc0413dadb4a1fe87170ff757494e4c0e29c"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/probe-orchestration-result.json",
+      "bytes": 3485,
+      "sha256": "7876995b6a0fc7fb66dca4654fb6cc78f62745bc2cf3e76525951e636ee1bc5c"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/vscode-full/profile-preparation.json",
+      "bytes": 43941,
+      "sha256": "312a108d05c95947c2cb2a8de7f28fa3d09b9d30bc1d48784fa8a229cdb85845"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/wait-for-native-admission.mjs",
+      "bytes": 3640,
+      "sha256": "871ef921e7a9171027cdf3295b1cb3e94e112cd33ba20da1101416740f14ff1b"
+    },
+    {
+      "path": "artifacts/cycle-0018/native-pane-handoff-probe/wait-for-workbench.mjs",
+      "bytes": 1722,
+      "sha256": "518c13e7a5d9b7aac97c26f5ef79385e2dd45d2b1e138f628d8edd04b7fb4400"
+    }
+  ]
+}
