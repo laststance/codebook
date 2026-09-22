@@ -332,6 +332,30 @@ test('pane handoff waits for the accepted required paint before detaching its ol
   harness.viewport.close(); assert.equal(replacement.callbacks().receivers.length, 0);
 });
 
+test('live-follow refresh restores an adopted renderer after placement fails without revealing a newer learner tab', async () => {
+  // Arrange: a native failure leaves the new panel adopted while the old live pause and lease survive.
+  const harness = await viewportHarness('normal', true), replacement = viewportPanel();
+  const signal = new AbortController().signal, oldEpoch = '11111111-1111-1111-1111-111111111111';
+  harness.ready(oldEpoch);
+  const firstFrame = harness.nextFrame(), capture = harness.viewport.present('cGF1c2U=', 'paused-1');
+  const first = await firstFrame; harness.receive({ type: 'painted', epoch: oldEpoch, id: first.id }); await capture;
+  const release = await harness.viewport.holdPlacement(signal);
+  harness.rebind(replacement); harness.panel.dispose(); release();
+  let reveals = 0; replacement.panel.reveal = () => { reveals++; };
+  try {
+    // Act: the ordinary follow path must recover without retrying native placement or selecting the tab.
+    await harness.viewport.showLive(signal);
+    // Assert: a new document confirms the retained pause, with no new capture or native focus operation.
+    assert.match(replacement.panel.webview.html, /<!doctype html>/i); assert.equal(reveals, 0);
+    const restoredFrame = replacement.nextFrame(); replacement.ready('22222222-2222-2222-2222-222222222222');
+    const restored = await restoredFrame; assert.equal(restored.data, 'cGF1c2U=');
+    replacement.receive({ type: 'painted', epoch: restored.epoch, id: restored.id });
+    const html = replacement.panel.webview.html; await harness.viewport.showLive(signal);
+    assert.equal(replacement.panel.webview.html, html); assert.equal(reveals, 0);
+    assert.deepEqual(harness.failures, []);
+  } finally { harness.viewport.close(); }
+});
+
 test('pane handoff refuses unleased, unreserved, aborted and already closed viewport ownership', async () => {
   // Arrange
   const unleased = await viewportHarness('normal'), leased = await viewportHarness('normal', true), replacement = viewportPanel();

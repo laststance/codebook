@@ -229,7 +229,8 @@ export class BrowserViewport {
   /** Reconnects the same target presentation when the learner explicitly follows its current pause. @example await viewport.showLive(signal) */
   async showLive(signal: AbortSignal): Promise<void> {
     if (this.closed) throw new Error('Viewport lease is released');
-    if (!this.historical) return;
+    // A refused placement can leave the selected live lease on an empty replacement; refresh content without revealing its tab.
+    if (!this.historical) { signal.throwIfAborted(); this.restorePanelContents(); return; }
     this.historical = false; this.historicalHtml = undefined; this.panel.webview.html = viewportHtml(this.mode); this.rendererAttached = true; await this.reveal(signal);
   }
 

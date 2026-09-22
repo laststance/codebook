@@ -316,6 +316,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     historical = false;
     private held = false;
     private closed = false;
+    private rendererAttached = true;
     private listener?: { dispose(): void };
     constructor(_runId: string, _record: unknown, private readonly fail: (reason: string) => void, _scenario: unknown,
       private readonly lease: { panel: ReturnType<typeof panel>; released(): void }, _observer?: unknown, readonly mode = 'live') {
@@ -330,9 +331,9 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       });
     }
     /** Refuses renderer use after genuine native closure during replay integration. @example await viewport.reveal() */
-    async reveal() { assert.equal(this.closed, false); viewportEvents.push(`reveal:${this.mode}`); }
+    async reveal() { assert.equal(this.closed, false); this.rendererAttached = true; viewportEvents.push(`reveal:${this.mode}`); }
     /** Marks selected live presentation without starting another runtime. @example await viewport.showLive() */
-    async showLive() { this.historical = false; }
+    async showLive() { this.historical = false; this.rendererAttached = true; }
     /** Retains the hidden live lease while the workspace reads recorded evidence. @example viewport.showHistory() */
     showHistory() { this.historical = true; }
     /** Ends this simulated lease during workspace cleanup, using its original release callback. @example viewport.close() */
@@ -340,15 +341,15 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     /** Reserves the simulated renderer so workspace tests enforce drain before adoption. @example const release = await viewport.holdPlacement() */
     async holdPlacement() { assert.equal(this.closed, false); assert.equal(this.held, false); this.held = true; viewportEvents.push(`hold:${this.mode}`); return () => { this.held = false; viewportEvents.push(`release:${this.mode}`); }; }
     /** Exposes retirement ordering bugs by requiring the current placement hold. @example viewport.rebindPanel(replacement) */
-    rebindPanel(replacement: ReturnType<typeof panel>) { assert.equal(this.held, true); assert.equal(this.closed, false); this.listener?.dispose(); this.panel = replacement; this.bind(); viewportEvents.push(`rebind:${this.mode}`); }
+    rebindPanel(replacement: ReturnType<typeof panel>) { assert.equal(this.held, true); assert.equal(this.closed, false); this.listener?.dispose(); this.panel = replacement; this.rendererAttached = false; this.bind(); viewportEvents.push(`rebind:${this.mode}`); }
     /** Confirms that selected pixels restore outside the native placement hold. @example await viewport.restorePlacement() */
-    async restorePlacement() { assert.equal(this.held, false); assert.equal(this.closed, false); viewportEvents.push(`restore:${this.mode}`); }
+    async restorePlacement() { assert.equal(this.held, false); assert.equal(this.closed, false); this.rendererAttached = true; viewportEvents.push(`restore:${this.mode}`); }
     /** Clears unavailable recorded pixels for playback readiness tests. @example viewport.clearRecorded() */
     clearRecorded() { displayedImage = undefined; }
     /** Delays only the requested replay image so workspace tests can interrupt pending paints. @example await viewport.present(png) */
-    async present(image: string) { const held = nextImage; nextImage = undefined; if (held) { held.entered(); await held.wait; } displayedImage = image; }
+    async present(image: string) { assert.equal(this.rendererAttached, true, 'Webview is not ready'); const held = nextImage; nextImage = undefined; if (held) { held.entered(); await held.wait; } displayedImage = image; }
     /** Models a confirmed missing-frame interval without retaining previous pixels. @example await viewport.presentMissing() */
-    async presentMissing() { displayedImage = undefined; }
+    async presentMissing() { assert.equal(this.rendererAttached, true, 'Recorded viewport is not ready'); displayedImage = undefined; }
   }
   const boundary = await loadModule<typeof import('../studyWorkspace')>(resolve(__dirname, '../studyWorkspace.js'), {
     vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position, Range, ViewColumn: { One: 1, Two: 2, Three: 3 }, TextEditorRevealType: { Default: 0, AtTop: 3 }, ThemeColor: class {}, RelativePattern,
@@ -5521,6 +5522,54 @@ test('presentation cannot save its mode from a stale reading restoration receipt
   } finally { releaseRestore?.(); await harness.close(); }
 });
 
+for (const stage of ['capture-presentation-pose', 'restore-presentation-pose'] as const) test(`Close cancels stalled ${stage} delivery without waiting for the renderer transport`, async () => {
+  // Arrange: delivery itself is pending, so the later receipt deadline cannot observe cancellation.
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let releaseDelivery = (_accepted: boolean) => {}, changing: Promise<unknown> | undefined, closing: Promise<void> | undefined;
+  try {
+    await harness.reader.open();
+    const panel = harness.reader['contextPanel']; assert.ok(panel);
+    const originalPost = panel.webview.postMessage.bind(panel.webview);
+    let observed!: () => void; const requested = new Promise<void>(resolve => { observed = resolve; });
+    const delivery = new Promise<boolean>(resolve => { releaseDelivery = resolve; });
+    panel.webview.postMessage = message => { if (message.type !== stage) return originalPost(message); observed(); return delivery; };
+    const state = harness.reader.presentationState();
+    changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
+    void changing.catch(() => undefined); await requested;
+    // Act
+    closing = harness.reader.close();
+    const result = await Promise.race([closing.then(() => 'closed'), new Promise<string>(resolve => setTimeout(() => resolve('blocked by transport'), 500))]);
+    // Assert
+    assert.equal(result, 'closed'); assert.equal(harness.counts().panels, 0);
+    await assert.rejects(changing, { code: 'PRESENTATION_UNAVAILABLE' });
+    assert.equal(harness.presentationPreferences.size, 0); assert.equal(harness.reader.presentationState().state, 'closed');
+  } finally { releaseDelivery(false); await changing?.catch(() => undefined); await closing; await harness.close(); }
+});
+
+for (const stage of ['capture-presentation-pose', 'restore-presentation-pose'] as const) for (const failure of ['rejected', 'not delivered', 'stalled'] as const) test(`${failure} ${stage} delivery refuses the presentation within its existing deadline`, { timeout: 15_000 }, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let releaseDelivery = (_accepted: boolean) => {};
+  try {
+    await harness.reader.open();
+    const panel = harness.reader['contextPanel']; assert.ok(panel);
+    const originalPost = panel.webview.postMessage.bind(panel.webview);
+    const pending = new Promise<boolean>(resolve => { releaseDelivery = resolve; });
+    panel.webview.postMessage = message => message.type !== stage ? originalPost(message)
+      : failure === 'stalled' ? pending : failure === 'not delivered' ? Promise.resolve(false) : Promise.reject(new Error('Reading transport rejected.'));
+    const state = harness.reader.presentationState();
+    // Act / Assert: even transport failure must not save a mode or manufacture a reading receipt.
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' }), {
+      code: 'PRESENTATION_UNAVAILABLE', causeDetail: failure === 'rejected' ? 'Error: Reading transport rejected.'
+        : failure === 'not delivered' ? 'Error: Reading position message could not reach the current explanation.'
+          : `Error: Timed out waiting for ${stage === 'capture-presentation-pose' ? 'retained' : 'restored'} reading position`,
+    });
+    assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.equal(harness.reader.presentationState().state, 'open');
+  } finally { releaseDelivery(false); await harness.close(); }
+});
+
 test('learner input after reading capture cancels placement without saving or restoring the obsolete pose', async () => {
   // Arrange
   const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
@@ -5628,6 +5677,42 @@ for (const positionMs of [0, 100]) test(`pane replacement transfers both live hi
     assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
     assert.equal(harness.reader.presentationState().layoutConfirmed, true);
     assert.equal(harness.commands.includes('workbench.action.keepEditor'), false);
+  } finally { live?.close(); await harness.close(); }
+});
+
+for (const failure of ['native layout failure', 'newer learner tab'] as const) test(`replay withdraws retired-renderer confirmation after ${failure} and recovers on the next explicit seek`, async () => {
+  // Arrange: both leases adopt the replacement before native placement loses authority.
+  const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
+  let draft: ReturnType<typeof harness.focusMutableDraft> | undefined;
+  try {
+    live = harness.reader.presentation.createViewport!('failed-replay-handoff', () => {}, () => {}, 'normal');
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    const app = harness.reader['app']; assert.ok(app);
+    const bundle = harness.controller.bundle(), image = harness.displayedImage(), progress = await (await harness.reader.learningStorage()).readProgress();
+    app.onDidDispose(() => {
+      if (failure === 'native layout failure') harness.failNextCommand('vscode.getEditorLayout');
+      else draft = harness.focusMutableDraft('newer-reading-notes.txt', 2);
+    });
+    const state = harness.reader.presentationState();
+    // Act
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), { code: 'PRESENTATION_UNAVAILABLE' });
+    // Assert: the retained film is not a current paint receipt and recovery cannot front a learner tab by itself.
+    assert.notEqual(harness.reader['app'], app); assert.equal(harness.controller.bundle(), bundle);
+    assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.controller.state().cleared, true);
+    assert.equal(harness.displayedImage(), undefined); assert.equal(harness.reader.inspect().view!.loading, true);
+    assert.equal(harness.presentationPreferences.size, 0); assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    const reveals = harness.panelReveals(); await harness.reader['refresh']();
+    assert.deepEqual(harness.panelReveals(), reveals);
+    if (draft) { assert.equal(draft.editor.group.activeTab, draft.tab); assert.equal(draft.document.getText(), 'Original learner draft.\n'); }
+    // Act: a fresh explicit request must recreate the renderer before painting the same recorded moment.
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    // Assert
+    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.controller.state().cleared, false);
+    assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.displayedImage(), image);
+    assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
+    assert.equal(harness.viewportInstances.length, 2); assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
   } finally { live?.close(); await harness.close(); }
 });
 

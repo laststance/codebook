@@ -140,8 +140,14 @@ try {
   if (mode === 'red') { assert.equal(report.captured?.pose, undefined); assert.equal(report.cases[0].passed, false); assert.notEqual(report.cases[0].after.focus, 'understood'); }
   else assert.equal(report.cases.every(entry => entry.passed), true, JSON.stringify(report.cases));
 } finally {
-  await writeFile(`${output}/result.json`, `${JSON.stringify(report, null, 2)}\n`);
-  try { if (recording) await command(['run-code', 'async page => await page.screencast.stop()'], 'failure-video-stop'); await command(['close'], 'close'); }
-  finally { await new Promise(resolve => server.close(resolve)); }
+  // Each owned resource must close even when saving evidence or stopping its recording fails.
+  try { await writeFile(`${output}/result.json`, `${JSON.stringify(report, null, 2)}\n`); }
+  finally {
+    try { if (recording) await command(['run-code', 'async page => await page.screencast.stop()'], 'failure-video-stop'); }
+    finally {
+      try { await command(['close'], 'close'); }
+      finally { await new Promise(resolve => server.close(resolve)); }
+    }
+  }
 }
 console.log(JSON.stringify(report.cases.map(entry => ({ name: entry.name, passed: entry.passed }))));

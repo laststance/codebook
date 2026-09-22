@@ -43,7 +43,7 @@ import { describeStudy } from './utils/describeStudy';
 import { selectStudy } from './utils/selectStudy';
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText';
 import { PRESENTATION_MODE_IDS, PRESENTATION_PREFERENCE_KEY, PRESENTATION_PREFERENCE_VERSION, PRESENTATION_READY_TIMEOUT_MS, STUDY_PRESENTATIONS } from './constants';
-import { presentationModeSchema, presentationPreferenceSchema, presentationPoseSchema, presentationPoseRestoredSchema, presentationPoseInvalidatedSchema, type PresentationIntent, type PresentationMode, type PresentationState, type PresentationPose, type PresentationPoseCapture } from './presentationSchemas';
+import { presentationModeSchema, presentationPreferenceSchema, presentationPoseSchema, presentationPoseRestoredSchema, presentationPoseInvalidatedSchema, type PresentationIntent, type PresentationMode, type PresentationState, type PresentationPose, type PresentationPoseCapture, type PresentationPoseRestore } from './presentationSchemas';
 
 const actionSchema = z.enum(['run', 'click', 'continue', 'stop', 'connect', 'return-current', 'return-wiki', 'open-article', 'source', 'current-file', 'focus-app', 'focus-context', 'enlarge-context', 'outline', 'arrange', 'retry', 'reload-recording']);
 const revisionShape = { revision: z.number().int().nonnegative() };
@@ -439,8 +439,8 @@ export class StudyWorkspace {
       revision: this.revision, itemId: model.selection.itemId, sourceHash: model.source.hash,
       studyId: model.selection.studyId, observationId: model.observation?.id, contentTab: view.contentTab ?? model.selection.tab };
     this.presentationPoseRequest = request;
-    if (!panel || !await panel.webview.postMessage(request)) throw new Error('Reading position capture could not reach the current explanation.');
-    await waitUntil(() => this.presentationPose?.captureId === request.captureId, 'retained reading position', PRESENTATION_READY_TIMEOUT_MS, signal);
+    if (!panel) throw new Error('Reading position capture could not reach the current explanation.');
+    await this.waitForReadingPose(panel, request, () => this.presentationPose?.captureId === request.captureId, 'retained reading position', signal);
     if (panel !== this.contextPanel) throw new Error('Explanation ownership changed during reading position capture.');
   }
 
@@ -451,9 +451,23 @@ export class StudyWorkspace {
       || pose.observationId !== model.observation?.id || pose.contentTab !== (view.contentTab ?? model.selection.tab)) throw new Error('The selected reading context changed before restoration.');
     this.presentationPoseRestored = undefined;
     // Rehydrating the same confirmed replay advances UI revisions; authorize only the unchanged evidence at its new revision.
-    if (!panel || !await panel.webview.postMessage({ ...pose, type: 'restore-presentation-pose', revision: this.revision })) throw new Error('Reading position restoration could not reach the current explanation.');
-    await waitUntil(() => this.presentationPoseRestored === pose.captureId, 'restored reading position', PRESENTATION_READY_TIMEOUT_MS, signal);
+    if (!panel) throw new Error('Reading position restoration could not reach the current explanation.');
+    await this.waitForReadingPose(panel, { ...pose, type: 'restore-presentation-pose', revision: this.revision }, () => this.presentationPoseRestored === pose.captureId, 'restored reading position', signal);
     if (panel !== this.contextPanel) throw new Error('Explanation ownership changed during reading position restoration.');
+  }
+
+  /** Bounds delivery and its receipt together for reading-pose callers so a stalled transport cannot prevent {@link close}. @example await this.waitForReadingPose(panel, request, received, 'retained reading position', signal) */
+  private async waitForReadingPose(panel: vscode.WebviewPanel, message: PresentationPoseCapture | PresentationPoseRestore, received: () => boolean, description: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    let delivery: { accepted: boolean } | { error: unknown } | undefined;
+    // Observe transport completion without awaiting it outside the same cancellable receipt deadline.
+    Promise.resolve(panel.webview.postMessage(message)).then(accepted => { delivery = { accepted }; }, error => { delivery = { error }; });
+    await waitUntil(() => {
+      if (!delivery) return false;
+      if ('error' in delivery) throw delivery.error;
+      if (!delivery.accepted) throw new Error('Reading position message could not reach the current explanation.');
+      return received();
+    }, description, PRESENTATION_READY_TIMEOUT_MS, signal);
   }
 
   /** Requires both document and native owned-tab focus for the final reading restoration. @example await this.focusPresentationPanel(panel, signal) */
@@ -569,6 +583,11 @@ export class StudyWorkspace {
       if (replacementApp) {
         for (const viewport of viewports) viewport.rebindPanel(replacementApp, signal);
         this.bindApplicationPanel(replacementApp);
+        // Retired replay pixels no longer confirm this document; preserve the bundle for the next explicit presentation.
+        if (this.recordingActive && this.replayViewport) {
+          this.replayNeedsReveal = true;
+          this.playback?.hide();
+        }
         this.initialAppPlacement?.registration?.dispose(); this.initialAppPlacement = undefined;
       }
       if (replacementContext) this.bindContextPanel(replacementContext);
