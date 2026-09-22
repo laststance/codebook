@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-22T23:53:07.161047+00:00",
-  "scope": "Cycle0018 native citation activation source repair; final provider follow-up and unchanged-installed proof pending",
+  "recordedAt": "2026-09-22T23:55:52.989695+00:00",
+  "scope": "Cycle0018 native citation activation source repair and completed scoped source reviews; new unchanged-installed proof pending",
   "sourceRevision": "3d1fbab2b9796be17b1af27628713ed6f39eb607",
   "dirty": true,
   "sourceHash": "9e43c4a6de14e019b2dd3693b0a07492f62ce78f8ee9c9fcc6332b806683b0ea",
@@ -128,6 +128,26 @@
       "path": "artifacts/cycle-0018/cold-wiki-notification-repair/provider/triage.json",
       "bytes": 661,
       "sha256": "cedea3ac58ed8225bb4e19f59c9d06116bfba32a505f3cc99171dc93040f27f0"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/provider-final/receipt.json",
+      "bytes": 641,
+      "sha256": "aa5973f7ba12ebb6c4b88b7c810532d43ac081adb6af882d6ff948a1683ac9af"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/provider-final/review.log",
+      "bytes": 1196,
+      "sha256": "510af5160f4b8d13ef456f6b50676d940e0f7b38ba0a45f84bdcfbd62c584846"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/provider-final/triage.json",
+      "bytes": 370,
+      "sha256": "558d3e0bf1b2b4381ede7351db14f22367cea1f25ed277fe4ff8d065e6d020da"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/readme-parent-read.json",
+      "bytes": 850,
+      "sha256": "2314c227a235625a6bba8d1e314039b9e8c5f2365ff814d3df3c3d05e8d1cdeb"
     },
     {
       "path": "artifacts/cycle-0018/cold-wiki-notification-repair/red.tap",
