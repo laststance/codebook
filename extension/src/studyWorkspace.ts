@@ -401,6 +401,7 @@ export class StudyWorkspace {
 
   /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @example const assertRetained = this.retainPresentationPlacement(); */
   private retainPresentationPlacement(retainFocus = true): () => void {
+    const transition = this.presentationTransition, lifetime = this.lifetime;
     const panes = this.studyPanePositions(), groups = vscode.window.tabGroups.all.map(group => ({ group, column: group.viewColumn }));
     const focusedGroup = this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup);
     const focusedSource = vscode.window.activeTextEditor?.document.uri.toString(), appActive = this.app?.active, contextActive = this.contextPanel?.active;
@@ -408,8 +409,8 @@ export class StudyWorkspace {
       const sameFocus = !retainFocus || focusedGroup === this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup)
         && focusedSource === vscode.window.activeTextEditor?.document.uri.toString() && appActive === this.app?.active && contextActive === this.contextPanel?.active;
       if (this.sameEditorGroups(groups, vscode.window.tabGroups.all) && this.sameStudyPanePositions(panes) && sameFocus) return;
-      // Learner changes end our focus ownership too; failure recovery must not reveal the previous focused pane.
-      this.presentationMovedFocus = false;
+      // Retire only this operation's focus ownership; an older passive read cannot suppress a newer transition's recovery.
+      if (transition === this.presentationTransition && lifetime === this.lifetime) this.presentationMovedFocus = false;
       throw new Error('Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.');
     };
   }

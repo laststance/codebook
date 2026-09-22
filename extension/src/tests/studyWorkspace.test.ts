@@ -1803,6 +1803,34 @@ test('a presentation read preserves changed learner focus and does not certify t
   } finally { release(); await harness.close(); }
 });
 
+test('an older presentation read cannot suppress original focus recovery after a newer mode change fails', async () => {
+  // Arrange: an owned preview needs temporary application focus while its Keep Editor command is pending.
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let releaseRead = () => {}, releaseKeep = () => {};
+  try {
+    await harness.reader.open(); const state = harness.reader.presentationState();
+    const applicationTab = harness.groups.flatMap(group => group.tabs).find(tab => 'viewType' in tab.input && tab.input.viewType === 'codebook.scopedBrowser');
+    assert.ok(applicationTab); applicationTab.isPreview = true;
+    const source = harness.reader.inspect().sourceUri, draft = harness.addForeignDraft();
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    const heldRead = harness.holdNextCommand('vscode.getEditorLayout'); releaseRead = heldRead.release;
+    const reading = harness.reader.readPresentationState(); await heldRead.started;
+    const heldKeep = harness.holdNextCommand('workbench.action.keepEditor'); releaseKeep = heldKeep.release;
+    // Act: the obsolete passive read settles after the newer transition has borrowed native focus.
+    const changing = assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), {
+      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native layout command failed',
+    });
+    await heldKeep.started; assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser');
+    releaseRead(); const result = await reading;
+    harness.failNextCommand('workbench.action.keepEditor'); releaseKeep(); await changing;
+    // Assert: the failed mode leaves its original focus and evidence intact without saving a new preference.
+    assert.equal(result.layoutConfirmed, false); assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace'); assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.reader.inspect().sourceUri, source); assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true);
+    assert.equal(draft.isDirty, true); assert.equal(harness.runtimes.length, 0);
+  } finally { releaseRead(); releaseKeep(); await harness.close(); }
+});
+
 test('first configured Study pause keeps captured source visible beside Context without manual Arrange', async () => {
   // Arrange
   const harness = await configuredWorkspaceHarness();
