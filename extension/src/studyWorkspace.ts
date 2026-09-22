@@ -38,7 +38,7 @@ import { retainedStudySelectionSchema, type RetainedStudy, type RetainedStudySel
 import { learningItemSchema } from './identitySchemas';
 import { repositorySelectionSchema, type RepositorySelection } from './learnerSchemas';
 import { RepositorySourceService } from './repositorySource';
-import type { RepositoryLayoutFocus } from './repositoryReader';
+import type { RepositoryFocusTarget, RepositoryLayoutFocus } from './repositoryReader';
 import { describeStudy } from './utils/describeStudy';
 import { selectStudy } from './utils/selectStudy';
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText';
@@ -743,12 +743,18 @@ export class StudyWorkspace {
       await this.initialize(); signal.throwIfAborted(); this.installReaders();
       await this.withLayout(signal, async (_lifetime, assertCurrent) => {
         focus?.begin();
-        const grid = await this.readMainEditorGrid(signal, assertCurrent, focus?.acquireSourceFocus);
+        let retainedFocus = focus?.retainCurrentFocus?.();
+        const assertColdCurrent = () => { assertCurrent(); retainedFocus?.assertRetained(); };
+        const grid = await this.readMainEditorGrid(signal, assertColdCurrent, focus?.acquireSourceFocus, acquire => {
+          // Scope may deliberately borrow primary focus; only its existing verified handoff can replace this receipt.
+          assertColdCurrent(); retainedFocus?.dispose(); retainedFocus = acquire ? focus?.retainCurrentFocus?.(acquire) : undefined;
+        });
+        grid.assertUnchanged(); retainedFocus ??= focus?.retainCurrentFocus?.(); assertColdCurrent();
         if (grid.groups.length >= REPOSITORY_MIN_EDITOR_GROUP_COUNT) return;
         const layout = { orientation: HORIZONTAL_EDITOR_ORIENTATION, groups: Array.from({ length: REPOSITORY_MIN_EDITOR_GROUP_COUNT }, () => ({ size: 1 })) };
         grid.assertUnchanged();
-        await vscode.commands.executeCommand('vscode.setEditorLayout', layout); assertCurrent(); grid.assertFocused();
-        const actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent(); grid.assertFocused();
+        await vscode.commands.executeCommand('vscode.setEditorLayout', layout); assertColdCurrent(); grid.assertFocused();
+        const actual = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertColdCurrent(); grid.assertFocused();
         if (!isProportionalEditorLayout(layout, actual) || !grid.preservesOtherParts(REPOSITORY_MIN_EDITOR_GROUP_COUNT)) throw new Error('The editor could not reserve separate Wiki/source panes; existing tabs were preserved.');
       });
       return;
@@ -1846,7 +1852,7 @@ export class StudyWorkspace {
   }
 
   /** Measures the main editor part before {@link arrange} or presentation placement; global chat/floating groups remain protected outside its leaves. @example const grid = await this.readMainEditorGrid(signal, assertCurrent) */
-  private async readMainEditorGrid(signal: AbortSignal | undefined, assertCurrent: () => void, acquireSourceFocus?: () => Promise<() => void>) {
+  private async readMainEditorGrid(signal: AbortSignal | undefined, assertCurrent: () => void, acquireSourceFocus?: () => Promise<() => void>, beforeScopeFocus?: (acquire?: RepositoryFocusTarget) => void) {
     let assertAcquiredFocus = () => {};
     const assertInitial = this.retainPresentationPlacement();
     let layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent(); assertInitial();
@@ -1873,6 +1879,16 @@ export class StudyWorkspace {
       const primaryVersion = primaryEditor?.document.version, primarySelections = JSON.stringify(primaryEditor?.selections);
       const useCitation = Boolean(acquireSourceFocus && !identifiableFirst);
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
+      beforeScopeFocus?.(useCitation ? undefined : { matchesEditor: () => {
+        const focused = vscode.window.activeTextEditor;
+        // Latch the captured primary target before its command; an away-and-back event must survive the delayed response.
+        return primaryEditor ? focused?.document.uri.toString() === primaryEditor.document.uri.toString() && focused.viewColumn === vscode.ViewColumn.One
+          && focused.document.version === primaryVersion && JSON.stringify(focused.selections) === primarySelections : firstFocused();
+      }, matchesGroup: () => {
+        const group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
+        return group.viewColumn === vscode.ViewColumn.One && (firstInput instanceof vscode.TabInputText ? input instanceof vscode.TabInputText && input.uri.toString() === firstInput.uri.toString()
+          : firstInput instanceof vscode.TabInputWebview && input instanceof vscode.TabInputWebview && input.viewType === firstInput.viewType);
+      } });
       if (useCitation) { assertAcquiredFocus = await acquireSourceFocus!(); assertCurrent(); assertGroups(); assertAcquiredFocus(); }
       else { await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup'); assertCurrent(); assertGroups(); }
       await waitUntil(() => {
@@ -1897,10 +1913,23 @@ export class StudyWorkspace {
       if (count === undefined || count > vscode.window.tabGroups.all.length) throw new Error('The primary editor grid could not be measured safely.');
       // Return only to a captured editor now proven to belong to this part; never guess a foreign chat/floating focus.
       if (!useCitation && panel?.viewColumn !== undefined && panel.viewColumn <= count) {
+        beforeScopeFocus?.({ matchesEditor: () => panel.active, matchesGroup: () => {
+          const group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input, kind = panel === this.app ? 'codebook.scopedBrowser' : 'codebook.studyContext';
+          return group.viewColumn === panel.viewColumn && input instanceof vscode.TabInputWebview && [kind, `mainThreadWebview-${kind}`].includes(input.viewType);
+        } });
         panel.reveal(undefined, false);
         await waitUntil(() => panel.active && vscode.window.tabGroups.activeTabGroup.viewColumn === panel.viewColumn, 'retained main editor focus', PRESENTATION_READY_TIMEOUT_MS, signal); assertCurrent(); assertGroups();
       } else if (!useCitation && editor?.viewColumn !== undefined && editor.viewColumn <= count) {
         if (editor.document.version !== documentVersion) throw new Error('The focused document changed during native scope measurement.');
+        beforeScopeFocus?.({ matchesEditor: () => {
+          const focused = vscode.window.activeTextEditor;
+          // Restore only the pre-command document/selection, then retain its later events through the next cold-layout receipt.
+          return focused?.document.uri.toString() === editor.document.uri.toString() && focused.document.version === documentVersion
+            && focused.viewColumn === editor.viewColumn && JSON.stringify(focused.selections) === retainedSelections;
+        }, matchesGroup: () => {
+          const group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
+          return group.viewColumn === editor.viewColumn && input instanceof vscode.TabInputText && input.uri.toString() === editor.document.uri.toString();
+        } });
         const restored = await vscode.window.showTextDocument(editor.document, { viewColumn: editor.viewColumn, preserveFocus: false, preview }); assertCurrent(); assertGroups();
         if (editor.document.version !== documentVersion) throw new Error('The focused document changed while its native focus was restored.');
         const activeEditor = vscode.window.activeTextEditor;

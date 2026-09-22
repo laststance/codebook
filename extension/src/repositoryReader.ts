@@ -17,9 +17,14 @@ import type { LearningLibrary } from './learningLibrary';
 import type { z } from 'zod';
 
 /** Hands preparation focus from {@link RepositoryReader.open} to queued native layout work without a synthetic editor. */
+/** Separates the requested text and tab receipts so native notification order cannot admit another learner target. */
+export interface RepositoryFocusTarget { matchesEditor(): boolean; matchesGroup(): boolean }
+
 export interface RepositoryLayoutFocus {
   begin(): void;
   acquireSourceFocus?: () => Promise<() => void>;
+  /** Retains passive cold-layout work until {@link RepositoryReader.open} hands it to its actual citation. @example const retained = focus.retainCurrentFocus?.() */
+  retainCurrentFocus?: (acquire?: RepositoryFocusTarget) => { assertRetained(): void; dispose(): void };
 }
 
 interface RepositoryControls {
@@ -87,6 +92,7 @@ export class RepositoryReader {
     const generation = ++this.generation; this.loading = true; this.error = undefined;
     const initialFocus = this.retainNativeFocus();
     let sourceFocus: ReturnType<RepositoryReader['retainNativeFocus']> | undefined;
+    let coldFocus: ReturnType<NonNullable<RepositoryLayoutFocus['retainCurrentFocus']>> | undefined;
     let anchoredSource: { uri: vscode.Uri; assertFocused(): void } | undefined;
     try {
       const store = await this.storage(); this.assertCurrent(generation);
@@ -103,10 +109,14 @@ export class RepositoryReader {
         if (!node || !node.anchors[selection.anchorIndex] || (selection.location && selection.location.sectionIndex >= node.sections.length + REPOSITORY_FIXED_READING_SECTIONS)) throw new Error('The selected article, citation, or section is unavailable in this revision.');
       }
       const acquireSourceFocus = selection && book ? async () => {
-        this.assertCurrent(generation);
+        this.assertCurrent(generation); coldFocus?.assertRetained();
         const preparingFocus = this.retainNativeFocus();
         let opened: Awaited<ReturnType<RepositoryReader['openSource']>>;
-        try { opened = await this.openSource(selection, book, generation, false, () => preparingFocus.assertRetained()); }
+        try { opened = await this.openSource(selection, book, generation, false, () => {
+          preparingFocus.assertRetained(); coldFocus?.assertRetained();
+          // The pre-display citation listener owns the intended focus change; never adopt response-time learner input.
+          coldFocus?.dispose();
+        }); }
         finally { preparingFocus.dispose(); }
         sourceFocus?.dispose(); sourceFocus = opened.focus;
         this.assertCurrent(generation);
@@ -120,14 +130,27 @@ export class RepositoryReader {
         // Check after native initialization/queueing, before scope work can capture newer learner focus as its own.
         begin: () => { this.assertCurrent(generation); initialFocus.assertRetained(); initialFocus.dispose(); },
         acquireSourceFocus,
-      }); this.assertCurrent(generation); anchoredSource?.assertFocused();
+        retainCurrentFocus: acquire => {
+          this.assertCurrent(generation); coldFocus?.assertRetained(); coldFocus?.dispose();
+          const retained = this.retainNativeFocus(acquire), receipt = {
+            assertRetained: () => { this.assertCurrent(generation); retained.assertRetained(); },
+            dispose: () => { retained.dispose(); if (coldFocus === receipt) coldFocus = undefined; },
+          };
+          coldFocus = receipt; return receipt;
+        },
+      }); this.assertCurrent(generation); coldFocus?.assertRetained(); anchoredSource?.assertFocused();
       initialFocus.dispose();
+      // Only the cold-layout receipt changes entry order; retained Study and actual Return keep their existing handoff.
+      if (coldFocus && acquireSourceFocus && !anchoredSource) await acquireSourceFocus();
+      // An empty catalog has no later I/O or citation: release immediately before the synchronous Wiki activation.
+      if (!selection || !book) { coldFocus?.assertRetained(); coldFocus?.dispose(); }
       this.ensurePanel(Boolean(anchoredSource)); this.publish();
       if (selection && book) { await this.load(selection, book, generation, anchoredSource); }
       else { this.book = undefined; this.selection = undefined; this.loading = false; this.publish(); }
-      this.assertCurrent(generation); anchoredSource?.assertFocused(); sourceFocus?.dispose(); this.panel?.reveal(vscode.ViewColumn.Two, false);
+      this.assertCurrent(generation); coldFocus?.assertRetained(); anchoredSource?.assertFocused();
+      coldFocus?.dispose(); sourceFocus?.dispose(); this.panel?.reveal(vscode.ViewColumn.Two, false);
     } catch (error) { if (generation === this.generation && !this.disposed) { this.error = String(error); this.loading = false; this.publish(); } throw error; }
-    finally { initialFocus.dispose(); sourceFocus?.dispose(); signal?.removeEventListener('abort', cancel); }
+    finally { initialFocus.dispose(); coldFocus?.dispose(); sourceFocus?.dispose(); signal?.removeEventListener('abort', cancel); }
   }
 
   /** Returns a captured native source receipt only after exact requested navigation succeeds. @example await reader.openFromAgent(input) */
@@ -203,7 +226,7 @@ export class RepositoryReader {
     if (source) this.sourceUri = source.uri;
     else await this.revealSource(generation);
     this.assertCurrent(generation); source?.assertFocused();
-    this.loading = false; this.watchSources(); this.publish(); await this.refreshSources(generation);
+    this.loading = false; this.watchSources(); this.publish(); await this.refreshSources(generation); this.assertCurrent(generation); source?.assertFocused();
   }
 
   /** Reuses the single ledger for section-relative position and focus without changing understanding. @example await this.remember(selection) */
@@ -236,12 +259,14 @@ export class RepositoryReader {
     const document = await vscode.workspace.openTextDocument(uri); this.assertCurrent(generation); assertFocus?.();
     const requestedSelection = document.validateRange(this.range(anchor.startLine, anchor.endLine));
     // Observe the requested citation before display; a late response cannot adopt later learner input as its baseline.
-    const focus = preserveFocus ? undefined : this.retainNativeFocus(() => {
-      const editor = vscode.window.activeTextEditor, group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
-      return editor?.document.uri.toString() === uri.toString() && editor.viewColumn === vscode.ViewColumn.One && group.viewColumn === vscode.ViewColumn.One
-        && input instanceof vscode.TabInputText && input.uri.toString() === uri.toString() && editor.selections.length === 1
-        && Boolean(editor.selections[0]?.anchor.isEqual(requestedSelection.start) && editor.selections[0].active.isEqual(requestedSelection.end));
-    });
+    const focus = preserveFocus ? undefined : this.retainNativeFocus({ matchesEditor: () => {
+      const editor = vscode.window.activeTextEditor;
+      return editor?.document.uri.toString() === uri.toString() && editor.document.version === document.version && editor.viewColumn === vscode.ViewColumn.One
+        && editor.selections.length === 1 && Boolean(editor.selections[0]?.anchor.isEqual(requestedSelection.start) && editor.selections[0].active.isEqual(requestedSelection.end));
+    }, matchesGroup: () => {
+      const group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
+      return group.viewColumn === vscode.ViewColumn.One && input instanceof vscode.TabInputText && input.uri.toString() === uri.toString();
+    } });
     // Native editors may normalize BOM/CRLF in getText; the provider/hash seal retains original bytes.
     try {
       const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false, preserveFocus, selection: requestedSelection }); this.assertCurrent(generation);
@@ -250,13 +275,25 @@ export class RepositoryReader {
   }
 
   /** Retains initial or explicitly acquired citation focus for {@link open}; later observed departures irrevocably retire it. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
-  private retainNativeFocus(acquire?: () => boolean) {
-    const snapshot = () => { const editor = vscode.window.activeTextEditor, group = vscode.window.tabGroups.activeTabGroup; return JSON.stringify([editor?.document.uri.toString(), editor?.document.version, editor?.viewColumn, editor?.selections, group.viewColumn, group.activeTab?.label, group.activeTab?.input]); };
-    let initial = acquire ? undefined : snapshot(), changed = false;
+  private retainNativeFocus(acquire?: RepositoryFocusTarget) {
+    const snapshot = () => { const editor = vscode.window.activeTextEditor, group = vscode.window.tabGroups.activeTabGroup; return {
+      editor: JSON.stringify([editor?.document.uri.toString(), editor?.document.version, editor?.viewColumn, editor?.selections]),
+      group: JSON.stringify([group.viewColumn, group.activeTab?.label, group.activeTab?.input]),
+    }; };
+    const pending = snapshot();
+    let initial = acquire ? undefined : pending, changed = false, editorAcquired = false, groupAcquired = false;
     const observe = () => {
-      // Acquisition permits only the requested native target, never arbitrary response-time state.
-      if (initial === undefined) { if (acquire?.()) initial = snapshot(); return; }
-      changed ||= snapshot() !== initial;
+      const current = snapshot();
+      if (initial === undefined && acquire) {
+        const editorMatches = acquire.matchesEditor(), groupMatches = acquire.matchesGroup();
+        // Independent host notifications may advance either captured component first, but never visit a third state or retreat.
+        changed ||= !editorMatches && (editorAcquired || current.editor !== pending.editor)
+          || !groupMatches && (groupAcquired || current.group !== pending.group);
+        editorAcquired ||= editorMatches; groupAcquired ||= groupMatches;
+        if (editorMatches && groupMatches) initial = current;
+        return;
+      }
+      changed ||= current.editor !== initial?.editor || current.group !== initial?.group;
     };
     const listeners = [vscode.window.onDidChangeActiveTextEditor(observe), vscode.window.onDidChangeTextEditorSelection(observe), vscode.window.tabGroups.onDidChangeTabs(observe), vscode.window.tabGroups.onDidChangeTabGroups(observe)];
     observe();

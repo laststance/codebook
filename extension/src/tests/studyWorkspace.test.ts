@@ -67,7 +67,10 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let separateEditorPart: { group: typeof groups[number]; layout: unknown; focused: boolean } | undefined;
   let separatePartLayoutReport: unknown;
   type SourceEditor = { document: { uri: Uri; getText(): string }; readonly viewColumn: number; setDecorations(): void; selections: { active: Position; anchor: Position }[]; visibleRanges: Range[]; revealRange(range: Range, revealType?: number): void };
-  let activeTextEditorChanged = (_editor: SourceEditor | undefined) => {};
+  const activeEditorListeners = new Set<(editor: SourceEditor | undefined) => void>(), selectionListeners = new Set<() => void>();
+  const activeTextEditorChanged = (editor: SourceEditor | undefined) => { for (const listener of activeEditorListeners) listener(editor); };
+  let primaryNotificationOrder: 'together' | 'editor first' | 'group first' = 'together';
+  let partialFocusEditor: { value: SourceEditor | undefined } | undefined;
   let lastSourceEditor: SourceEditor | undefined;
   let sourceFocusOnArrange: SourceEditor | undefined;
   let reportedSourceColumn: number | undefined;
@@ -101,6 +104,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let nextOpen: { wait: Promise<void>; entered(): void } | undefined;
   let nextCommand: { name: string; wait: Promise<void>; entered(): void } | undefined;
   let nextPrimaryFocusResponse: { wait: Promise<void>; entered(): void } | undefined;
+  let nextLayoutResponse: { wait: Promise<void>; entered(): void } | undefined;
   const commands: string[] = [];
   let editorLayout: unknown = { orientation: 0, groups: [{}] };
   let nextMovedPanelLayout: unknown;
@@ -159,6 +163,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   }
   /** Models the active-text receipt independently of native tab focus for workspace handoff regressions. @example focusedSourceEditor() // prior source until its native clear arrives */
   function focusedSourceEditor(): SourceEditor | undefined {
+    if (partialFocusEditor) return partialFocusEditor.value;
     if (separateEditorPart?.focused) return undefined;
     const input = activeTabGroup.activeTab?.input;
     // A newer learner target wins immediately; the delayed clear never steals its focus.
@@ -361,7 +366,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     /** Models a confirmed missing-frame interval without retaining previous pixels. @example await viewport.presentMissing() */
     async presentMissing() { assert.equal(this.rendererAttached, true, 'Recorded viewport is not ready'); displayedImage = undefined; }
   }
-  const boundary = await loadModule<typeof import('../studyWorkspace')>(resolve(__dirname, '../studyWorkspace.js'), {
+  const editorDependencies = {
     vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position, Range, ViewColumn: { One: 1, Two: 2, Three: 3 }, TextEditorRevealType: { Default: 0, AtTop: 3 }, ThemeColor: class {}, RelativePattern,
       commands: { async executeCommand(name: string, layout?: unknown): Promise<unknown> {
         commands.push(name); const held = nextCommand; if (held?.name === name) { nextCommand = undefined; held.entered(); await held.wait; }
@@ -375,10 +380,16 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         }
         if (name === 'workbench.action.keepEditor' && activeTabGroup.activeTab) activeTabGroup.activeTab.isPreview = false;
         if (name === 'workbench.action.focusFirstEditorGroup') {
-          activeTabGroup = groups.find(group => group.viewColumn === 1)!;
+          const previousEditor = focusedSourceEditor(), previousGroup = activeTabGroup, primaryGroup = groups.find(group => group.viewColumn === 1)!;
+          const primaryEditor = visibleSourceEditors.find(editor => editor.group === primaryGroup);
+          // Native text and tab-group notifications have no cross-event ordering guarantee.
+          if (primaryNotificationOrder === 'editor first') { partialFocusEditor = { value: primaryEditor }; activeTextEditorChanged(primaryEditor); }
+          if (primaryNotificationOrder === 'group first') partialFocusEditor = { value: previousEditor };
+          activeTabGroup = primaryGroup;
           if (deferPrimaryFocusEcho) pendingPrimaryFocusEcho = activeTabGroup;
           if (separateEditorPart) separateEditorPart.focused = false;
-          activeTextEditorChanged(visibleSourceEditors.find(editor => editor.group === activeTabGroup));
+          if (primaryNotificationOrder !== 'together') changedGroups({ opened: [], closed: [], changed: [previousGroup, primaryGroup] });
+          partialFocusEditor = undefined; activeTextEditorChanged(primaryEditor);
           // The command effect may precede its RPC response; newer learner input must not become the operation's baseline.
           const response = nextPrimaryFocusResponse; nextPrimaryFocusResponse = undefined;
           if (response) { response.entered(); await response.wait; }
@@ -424,9 +435,11 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
             if (opened.length) changedGroups({ opened, closed: [], changed: [] });
           }
         }
+        // Native layout is already accepted before its delayed RPC response reaches the extension.
+        if (name === 'vscode.setEditorLayout') { const response = nextLayoutResponse; nextLayoutResponse = undefined; if (response) { response.entered(); await response.wait; } }
         if (name === 'workbench.action.evenEditorWidths') editorLayout = structuredClone(settledLayout);
       } },
-      window: { state: windowState, onDidChangeWindowState: (callback: (state: typeof windowState) => void) => { windowListeners.add(callback); return { dispose() { windowListeners.delete(callback); } }; }, get activeTextEditor() { return focusedSourceEditor(); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeTextEditorChanged = callback; return disposable(); }, createWebviewPanel: panel,
+      window: { state: windowState, onDidChangeWindowState: (callback: (state: typeof windowState) => void) => { windowListeners.add(callback); return { dispose() { windowListeners.delete(callback); } }; }, get activeTextEditor() { return focusedSourceEditor(); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeEditorListeners.add(callback); return { dispose() { activeEditorListeners.delete(callback); } }; }, onDidChangeTextEditorSelection: (callback: () => void) => { selectionListeners.add(callback); return { dispose() { selectionListeners.delete(callback); } }; }, createWebviewPanel: panel,
         get visibleTextEditors() { return visibleSourceEditors.filter(editor => editor.group.activeTab?.input instanceof TabInputText && editor.group.activeTab.input.uri.toString() === editor.document.uri.toString()); },
         showTextDocument: async (document: { uri: Uri; getText(): string }, options?: { viewColumn: number; preserveFocus?: boolean; preview?: boolean; selection?: Range }) => {
           sourceColumn = options?.viewColumn === undefined ? sourceColumn : nativeReaderColumn(options.viewColumn);
@@ -441,8 +454,9 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           const previous = visibleSourceEditors.findIndex(value => value.group === group && value.document.uri.toString() === document.uri.toString());
           if (previous >= 0) visibleSourceEditors.splice(previous, 1);
           const visible = Object.assign(sourceEditor(document, group), { group });
-          Object.defineProperty(visible, 'selections', { get: () => editor.selections, set: (selections: SourceEditor['selections']) => { editor.selections = selections; } });
+          Object.defineProperty(visible, 'selections', { get: () => editor.selections, set: (selections: SourceEditor['selections']) => { editor.selections = selections; for (const listener of selectionListeners) listener(); } });
           visibleSourceEditors.push(visible);
+          if (!options?.preserveFocus) activeTextEditorChanged(focusedSourceEditor());
           const displayed = nextSourceDisplay; nextSourceDisplay = undefined; displayed?.(editor);
           return lastSourceEditor = editor;
         },
@@ -455,7 +469,9 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         },
         onDidChangeTextDocument: disposable, createFileSystemWatcher: (pattern: RelativePattern) => { watchedPatterns.push(pattern); return watcher; } } },
     './environment': { requireWorkspace: () => harness.directory }, 'codebook-cycle-0001/dist/browserViewport': { BrowserViewport: WorkspaceViewport },
-  });
+  };
+  const boundary = await loadModule<typeof import('../studyWorkspace')>(resolve(__dirname, '../studyWorkspace.js'), editorDependencies);
+  const repositoryBoundary = await loadModule<typeof import('../repositoryReader')>(resolve(__dirname, '../repositoryReader.js'), editorDependencies);
   const articleOpens: RepositorySelection[] = [], articleReturns: RepositorySelection[] = [];
   const controls = { start: async () => harness.service, connect: async () => {}, returnToRepository: async (selection: RepositorySelection) => { articleReturns.push(selection); }, openArticle: async (selection: RepositorySelection) => { articleOpens.push(selection); } };
   const presentationPreferences = new Map<string, unknown>();
@@ -511,7 +527,10 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     deferMovedPanelPlacement(kind: string) { deferredMovedPanelPlacement = kind; asynchronousLayoutReads = true; },
     focusedPanel: () => activeTabGroup.activeTab?.input instanceof TabInputWebview ? activeTabGroup.activeTab.input.viewType : undefined,
     focusedSource: focusedSourceEditor,
-    focusListenerCount: () => tabChangeListeners.size + groupChangeListeners.size + [...panels].reduce((count, panel) => count + panel.viewListenerCount(), 0),
+    focusListenerCount: () => activeEditorListeners.size + selectionListeners.size + tabChangeListeners.size + groupChangeListeners.size + [...panels].reduce((count, panel) => count + panel.viewListenerCount(), 0),
+    retainRepositoryFocus: repositoryBoundary.RepositoryReader.prototype['retainNativeFocus'],
+    /** Splits a native primary-focus handoff across actual event surfaces for cold Wiki integration tests. @example harness.usePrimaryFocusNotificationOrder('group first') */
+    usePrimaryFocusNotificationOrder(order: typeof primaryNotificationOrder) { primaryNotificationOrder = order; },
     /** Models early panel notifications followed by same-group tab departure/reentry during a held response. @example harness.roundtripExistingPanelTab('codebook.studyContext', draft); */
     roundtripExistingPanelTab(kind: string, tab: Tab) {
       const panel = [...panels].find(candidate => candidate.kind === kind); assert.ok(panel);
@@ -591,8 +610,11 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       const group = groups.find(group => group.viewColumn === column)!;
       const tab = { input: new TabInputText(document.uri), isPreview: false, isDirty: true };
       const editor = Object.assign(sourceEditor(document, group), { group });
+      let selections = editor.selections;
+      Object.defineProperty(editor, 'selections', { get: () => selections, set: (value: typeof selections) => { selections = value; for (const listener of selectionListeners) listener(); } });
       group.tabs.push(tab); group.activeTab = tab; activeTabGroup = group; visibleSourceEditors.push(editor);
       if (separateEditorPart) separateEditorPart.focused = false;
+      activeTextEditorChanged(editor);
       return { document, tab, editor, replaceContent(value: string) { text = value; document.version++; }, focus() {
         group.activeTab = tab; activeTabGroup = group;
         if (separateEditorPart) separateEditorPart.focused = false;
@@ -647,6 +669,12 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       let release = () => {}, entered = () => {};
       const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
       nextCommand = { name, wait, entered }; return { started, release };
+    },
+    /** Holds only the response after a native split so scope tests can change learner intent. @example const split = harness.holdNextLayoutResponse(); */
+    holdNextLayoutResponse() {
+      let release = () => {}, entered = () => {};
+      const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
+      nextLayoutResponse = { wait, entered }; return { started, release };
     },
     /** Lets scope regressions insert learner input after primary focus is applied but before its command response. @example const focus = harness.holdNextPrimaryFocusResponse(); */
     holdNextPrimaryFocusResponse() {
@@ -1670,17 +1698,20 @@ test('cold Wiki entry from the focused chat measures and reserves only the main 
   const harness = await workspaceHarness(false);
   harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
   const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  const receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = [];
   chat.focus();
   try {
     // Act
-    await harness.reader.arrangeRepository(new AbortController().signal);
+    await harness.reader.arrangeRepository(new AbortController().signal, undefined, { begin() {}, retainCurrentFocus(acquire) {
+      const receipt = harness.retainRepositoryFocus(acquire); receipts.push(receipt); return receipt;
+    } });
     // Assert
     assert.equal(harness.groups.length, 3); assert.equal(harness.groups[2]!.tabs.includes(chat.tab), true);
     assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
     assert.equal(harness.commands.filter(command => command === 'workbench.action.focusFirstEditorGroup').length, 1);
     assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
     assert.equal(harness.runtimes.length, 0);
-  } finally { await harness.close(); }
+  } finally { for (const receipt of receipts) receipt.dispose(); await harness.close(); }
 });
 
 for (const primary of ['blank', 'settings'] as const) test(`cold Wiki resolves ${primary} primary focus through its real citation while retaining the draft and chat part`, async () => {
@@ -1693,6 +1724,9 @@ for (const primary of ['blank', 'settings'] as const) test(`cold Wiki resolves $
     // Act
     await harness.reader.arrangeRepository(new AbortController().signal, undefined, { begin() {}, acquireSourceFocus: async () => {
       acquisitions++; harness.focusMutableDraft(); return () => { assert.equal(chat.focused(), false); };
+    }, retainCurrentFocus() {
+      const focused = chat.focused(); let disposed = false;
+      return { dispose() { disposed = true; }, assertRetained() { assert.equal(disposed, false); assert.equal(chat.focused(), focused); } };
     } });
     // Assert
     assert.equal(acquisitions, 1); assert.equal(harness.groups[0], original);
@@ -1784,6 +1818,127 @@ test('cold Wiki retains ordinary text focus without invoking the optional cited-
     // Assert
     assert.equal(acquisitions, 0); assert.equal(harness.groups.length, 3); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
   } finally { await harness.close(); }
+});
+
+for (const origin of ['chat', 'secondary text'] as const) for (const boundary of ['primary response', 'main measurement'] as const) for (const interaction of ['tab roundtrip', 'selection roundtrip', 'none'] as const) test(`cold Wiki from ${origin} ${interaction === 'none' ? 'keeps its intentional focus handoff' : `remembers learner ${interaction}`} during ${boundary}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{ size: 490 }, { size: 490 }] });
+  const chat = harness.addSeparateEditorPart(), alternate = harness.focusMutableDraft('alternate.txt', 1), primary = harness.focusMutableDraft('primary.txt', 1), original = harness.focusMutableDraft('original.txt', 2);
+  if (origin === 'chat') chat.focus();
+  const listenerCount = harness.focusListenerCount(), receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = [];
+  const focus = { begin() {}, retainCurrentFocus(acquire?: Parameters<typeof harness.retainRepositoryFocus>[0]) { const receipt = harness.retainRepositoryFocus(acquire); receipts.push(receipt); return receipt; } };
+  const held = boundary === 'primary response' ? harness.holdNextPrimaryFocusResponse() : harness.holdNextCommand('vscode.getEditorLayout');
+  let measured: ReturnType<typeof harness.holdNextCommand> | undefined;
+  const opening = harness.reader.arrangeRepository(new AbortController().signal, undefined, focus);
+  const outcome = interaction === 'none' ? opening : assert.rejects(opening, /focus changed/);
+  try {
+    await held.started;
+    if (boundary === 'main measurement') { measured = harness.holdNextCommand('vscode.getEditorLayout'); held.release(); await measured.started; }
+    assert.equal(harness.focusedSource()?.document.uri.toString(), primary.document.uri.toString());
+    // Act
+    if (interaction === 'tab roundtrip') { alternate.focus(); primary.focus(); }
+    if (interaction === 'selection roundtrip') { const selections = primary.editor.selections; primary.editor.selections = [{ anchor: selections[0]!.anchor.with(7, 0), active: selections[0]!.active.with(7, 0) }]; primary.editor.selections = selections; }
+    measured?.release(); held.release(); await outcome;
+    // Assert
+    assert.equal(harness.focusedSource()?.document.uri.toString(), interaction === 'none' && origin === 'secondary text' ? original.document.uri.toString() : primary.document.uri.toString());
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false); assert.equal(harness.runtimes.length, 0);
+    assert.equal(primary.document.getText(), 'Original learner draft.\n'); assert.equal(original.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { measured?.release(); held.release(); await opening.catch(() => undefined); for (const receipt of receipts) receipt.dispose(); assert.equal(harness.focusListenerCount(), listenerCount); await harness.close(); }
+});
+
+for (const order of ['editor first', 'group first'] as const) test(`cold Wiki accepts the intended primary transition when native notifications arrive ${order}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{ size: 490 }, { size: 490 }] });
+  const chat = harness.addSeparateEditorPart(), primary = harness.focusMutableDraft('primary.txt', 1), original = harness.focusMutableDraft('original.txt', 2);
+  harness.usePrimaryFocusNotificationOrder(order);
+  const listenerCount = harness.focusListenerCount(), receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = [];
+  const focus = { begin() {}, retainCurrentFocus(acquire?: Parameters<typeof harness.retainRepositoryFocus>[0]) { const receipt = harness.retainRepositoryFocus(acquire); receipts.push(receipt); return receipt; } };
+  try {
+    // Act
+    await harness.reader.arrangeRepository(new AbortController().signal, undefined, focus);
+    // Assert
+    assert.equal(harness.focusedSource()?.document.uri.toString(), original.document.uri.toString());
+    assert.equal(harness.commands.filter(command => command === 'workbench.action.focusFirstEditorGroup').length, 1);
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false); assert.equal(primary.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { for (const receipt of receipts) receipt.dispose(); assert.equal(harness.focusListenerCount(), listenerCount); await harness.close(); }
+});
+
+for (const interaction of ['chat', 'chat roundtrip', 'selection roundtrip', 'none'] as const) test(`cold Wiki ${interaction === 'none' ? 'accepts unchanged source' : `remembers learner ${interaction}`} before primary native focus arrives`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{ size: 490 }, { size: 490 }] });
+  const chat = harness.addSeparateEditorPart(), primary = harness.focusMutableDraft('primary.txt', 1), original = harness.focusMutableDraft('original.txt', 2);
+  const listenerCount = harness.focusListenerCount(), receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = [];
+  const focus = { begin() {}, retainCurrentFocus(acquire?: Parameters<typeof harness.retainRepositoryFocus>[0]) { const receipt = harness.retainRepositoryFocus(acquire); receipts.push(receipt); return receipt; } };
+  const held = harness.holdNextCommand('workbench.action.focusFirstEditorGroup'); let restored = false;
+  harness.changeAfterNextSourceDisplay(() => { restored = true; });
+  const opening = harness.reader.arrangeRepository(new AbortController().signal, undefined, focus);
+  const outcome = interaction === 'none' ? opening : assert.rejects(opening, /focus changed/);
+  try {
+    await held.started;
+    // Act
+    if (interaction === 'chat' || interaction === 'chat roundtrip') chat.focus();
+    if (interaction === 'chat roundtrip') original.focus();
+    if (interaction === 'selection roundtrip') { const selections = original.editor.selections; original.editor.selections = [{ anchor: selections[0]!.anchor.with(9, 0), active: selections[0]!.active.with(9, 0) }]; original.editor.selections = selections; }
+    held.release(); await outcome;
+    // Assert: an already issued native command may drain, but no later restoration or allocation may proceed.
+    assert.equal(restored, interaction === 'none'); assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(harness.focusedSource()?.document.uri.toString(), interaction === 'none' ? original.document.uri.toString() : primary.document.uri.toString());
+    assert.equal(original.document.getText(), 'Original learner draft.\n'); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { held.release(); await opening.catch(() => undefined); for (const receipt of receipts) receipt.dispose(); assert.equal(harness.focusListenerCount(), listenerCount); await harness.close(); }
+});
+
+for (const interaction of ['tab roundtrip', 'selection roundtrip', 'none'] as const) test(`cold Wiki restoration ${interaction === 'none' ? 'keeps its captured secondary editor' : `remembers learner ${interaction}`} before the native display response`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{ size: 490 }, { size: 490 }] });
+  const chat = harness.addSeparateEditorPart(), primary = harness.focusMutableDraft('primary.txt', 1), original = harness.focusMutableDraft('original.txt', 2);
+  const listenerCount = harness.focusListenerCount(), receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = [];
+  const focus = { begin() {}, retainCurrentFocus(acquire?: Parameters<typeof harness.retainRepositoryFocus>[0]) { const receipt = harness.retainRepositoryFocus(acquire); receipts.push(receipt); return receipt; } };
+  let displayed = false;
+  harness.changeAfterNextSourceDisplay(() => {
+    displayed = true;
+    if (interaction === 'tab roundtrip') { primary.focus(); original.focus(); }
+    if (interaction === 'selection roundtrip') { const editor = harness.focusedSource()!, selections = editor.selections; editor.selections = [{ anchor: selections[0]!.anchor.with(8, 0), active: selections[0]!.active.with(8, 0) }]; editor.selections = selections; }
+  });
+  try {
+    // Act
+    const opening = harness.reader.arrangeRepository(new AbortController().signal, undefined, focus);
+    if (interaction === 'none') await opening; else await assert.rejects(opening, /focus changed/);
+    // Assert
+    assert.equal(displayed, true); assert.equal(harness.focusedSource()?.document.uri.toString(), original.document.uri.toString());
+    assert.equal(harness.focusedSource()?.selections[0]!.active.line, 22); assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(original.document.getText(), 'Original learner draft.\n'); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { for (const receipt of receipts) receipt.dispose(); assert.equal(harness.focusListenerCount(), listenerCount); await harness.close(); }
+});
+
+for (const boundary of ['first measurement', 'split response', 'confirmation read'] as const) for (const interaction of ['selection', 'edit', 'chat', 'none'] as const) test(`cold Wiki ${boundary} ${interaction === 'none' ? 'retains ordinary text through accepted allocation' : `preserves newer learner ${interaction}`}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const draft = harness.focusMutableDraft(), chat = harness.addSeparateEditorPart();
+  const held = boundary === 'first measurement' ? harness.holdNextCommand('vscode.getEditorLayout') : harness.holdNextLayoutResponse();
+  let confirmation: ReturnType<typeof harness.holdNextCommand> | undefined;
+  const focus = { begin() {}, retainCurrentFocus() {
+    const editor = harness.focusedSource(), version = draft.document.version, selections = JSON.stringify(editor?.selections);
+    return { dispose() {}, assertRetained() { if (editor !== harness.focusedSource() || version !== draft.document.version || selections !== JSON.stringify(editor?.selections)) throw new Error('Native focus changed during cold Wiki reservation.'); } };
+  } };
+  const opening = harness.reader.arrangeRepository(new AbortController().signal, undefined, focus);
+  const outcome = interaction === 'none' ? opening : assert.rejects(opening, /focus changed/);
+  try {
+    await held.started;
+    if (boundary === 'confirmation read') { confirmation = harness.holdNextCommand('vscode.getEditorLayout'); held.release(); await confirmation.started; }
+    // Act
+    if (interaction === 'selection') draft.editor.selections = draft.editor.selections.map(selection => ({ anchor: selection.anchor.with(6, 0), active: selection.active.with(6, 0) }));
+    if (interaction === 'edit') draft.replaceContent('My newer unsaved text.\n');
+    if (interaction === 'chat') chat.focus();
+    confirmation?.release(); held.release(); await outcome;
+    // Assert
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(chat.focused(), interaction === 'chat'); assert.equal(harness.runtimes.length, 0);
+    assert.equal(draft.document.getText(), interaction === 'edit' ? 'My newer unsaved text.\n' : 'Original learner draft.\n');
+    if (interaction === 'selection') assert.equal(draft.editor.selections[0]!.active.line, 6);
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, boundary === 'first measurement' && interaction !== 'none' ? 0 : 1);
+  } finally { confirmation?.release(); held.release(); await opening.catch(() => undefined); await harness.close(); }
 });
 
 test('a queued cold Wiki checks its original learner focus before any native scope work', async () => {

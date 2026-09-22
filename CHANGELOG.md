@@ -2,13 +2,13 @@
 
 ## [0.2.2.0] - 2026-09-23
 
-Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. Ordinary installed 0.2.1 development candidates demonstrate the repaired functional schedule separately in both editors; the final 0.2.2 bootstrap repair still requires its own installed verification. The explicit `/codebook` skill, full real-repository usefulness, owner acceptance and final independent editor-AI trials remain unfinished.
+Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. Ordinary installed 0.2.2 candidate v29 demonstrates the functional schedule and neutral bootstrap separately in both editors. A subsequent cold Wiki focus repair still requires its own same-candidate installed verification. The explicit `/codebook` skill, full real-repository usefulness, owner acceptance and final independent editor-AI trials remain unfinished.
 
 ### Fixed
 
 - Restore the saved Wiki and exact paused recording after ordinary restart in VS Code and Cursor, while distinguishing the visible main grid from a separate chat/editor part. Refuse a real fourth main group and preserve unrelated Settings, tabs, drafts and focus.
 - Switch among all three presentations through pinned replacement panes, retaining the same viewport session, source, values, reading position, disclosures, visited links and recording position. Ordinary source-file opens preserve the existing owned panes.
-- Confirm native and inner-document focus before declaring a layout ready. Preserve newer learner navigation and selection, cancel stale or failed handoffs, drain adopted renderer work, and bound pose delivery and recovery instead of waiting indefinitely.
+- Confirm native and inner-document focus before declaring a layout ready. Preserve newer learner navigation and selection, including tab/selection departures followed by return during cold Wiki scope acquisition. Cancel stale or failed handoffs, drain adopted renderer work, and bound pose delivery and recovery instead of waiting indefinitely.
 - Retain native group identity when Cursor refreshes wrappers during an exact, currently owned predecessor/successor overlap. Continue rejecting ambiguous, moved, additional and unowned tabs.
 - Show a visible failure when cold Wiki entry is refused. Keep replacement readers noninteractive with neutral loading guidance until their first complete snapshot, avoiding an unrelated checkout title and premature controls.
 

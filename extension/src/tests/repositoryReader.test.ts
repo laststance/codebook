@@ -41,10 +41,11 @@ async function readerHarness(context: TestContext) {
   let activeEditor: NativeEditor | undefined;
   const focusListeners = new Set<() => void>(), selectionListeners = new Set<() => void>(), tabListeners = new Set<() => void>();
   const sourceGroup: { viewColumn: number; tabs: { input: TabInputText }[]; activeTab?: { input: TabInputText } } = { viewColumn: 1, tabs: [] };
-  let requiresSourceFocus = false, arrangements = 0;
+  let requiresSourceFocus = false, coldLayout = false, arrangements = 0;
   let sourceDocumentGate: { entered(): void; wait: Promise<void> } | undefined;
   let sourceDisplayGate: { entered(): void; wait: Promise<void> } | undefined;
   let arrangementGate: { entered(): void; wait: Promise<void> } | undefined;
+  let layoutResponseGate: { entered(): void; wait: Promise<void> } | undefined;
   const panelColumns: number[] = [], reveals: number[] = [];
   let provider = async (_uri: Uri) => '', workspace = source.directory, connections = 0;
   let receive = (_message: unknown) => {};
@@ -92,6 +93,9 @@ async function readerHarness(context: TestContext) {
     arrangements++;
     const held = arrangementGate; arrangementGate = undefined; if (held) { held.entered(); await held.wait; }
     focus?.begin();
+    const retained = coldLayout ? focus?.retainCurrentFocus?.() : undefined;
+    const response = layoutResponseGate; layoutResponseGate = undefined; if (response) { response.entered(); await response.wait; }
+    retained?.assertRetained();
     if (requiresSourceFocus) { assert.ok(focus?.acquireSourceFocus, 'Ambiguous main focus requires the actual selected citation.'); const assertFocused = await focus.acquireSourceFocus(); assertFocused(); }
   }, evidence: async (binding, recording) => { linked.push({ binding, recording }); } });
   const reader = createReader(), store = await reader.storage(); context.after(() => reader.dispose());
@@ -104,6 +108,8 @@ async function readerHarness(context: TestContext) {
   const selection: RepositorySelection = { bookId: 'architecture', revision: 1, nodeId: 'cart', anchorIndex: 0 };
   return { ...source, library, reader, store, selection, document, shown, panels, linked, textDocuments, Uri, createReader, panelColumns, reveals, receive: (message: unknown) => receive(message),
     requireSourceFocus() { requiresSourceFocus = true; }, arrangements: () => arrangements,
+    useColdLayout() { coldLayout = true; },
+    holdLayoutResponse() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); layoutResponseGate = { entered, wait }; return { started, release }; },
     holdArrangement() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); arrangementGate = { entered, wait }; return { started, release }; },
     holdSourceDocument() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); sourceDocumentGate = { entered, wait }; return { started, release }; },
     holdSourceDisplay() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; }); sourceDisplayGate = { entered, wait }; return { started, release }; },
@@ -111,7 +117,7 @@ async function readerHarness(context: TestContext) {
     selectSource(line: number, character: number) { assert.ok(activeEditor); activeEditor.selections = [{ anchor: new Position(line, character), active: new Position(line, character) }]; for (const listener of selectionListeners) listener(); },
     roundtripCitationTab() { const citation = sourceGroup.activeTab, editor = activeEditor; sourceGroup.activeTab = { input: new TabInputText(Uri.file(join(root, 'unrelated-draft.txt'))) }; for (const listener of tabListeners) listener(); activeEditor = editor; sourceGroup.activeTab = citation; for (const listener of tabListeners) listener(); },
     focusChat() { activeEditor = undefined; for (const listener of focusListeners) listener(); },
-    focusUnrelatedDraft() { const document = { uri: Uri.file(join(root, 'unrelated-draft.txt')), getText: () => 'Keep my draft.' }, tab = { input: new TabInputText(document.uri) }; activeEditor = { document, viewColumn: 1, selections: [{ anchor: new Position(0, 0), active: new Position(0, 0) }] }; sourceGroup.tabs.push(tab); sourceGroup.activeTab = tab; for (const listener of focusListeners) listener(); },
+    focusUnrelatedDraft(filename = 'unrelated-draft.txt') { const document = { uri: Uri.file(join(root, filename)), getText: () => 'Keep my draft.' }, tab = { input: new TabInputText(document.uri) }; activeEditor = { document, viewColumn: 1, selections: [{ anchor: new Position(0, 0), active: new Position(0, 0) }] }; sourceGroup.tabs.push(tab); sourceGroup.activeTab = tab; for (const listener of focusListeners) listener(); },
     connections: () => connections, changeWorkspace: () => { workspace = '/another/workspace'; }, provider: (uri: Uri) => provider(uri),
     fileEvent: (path: string, kind: number) => { for (const watcher of watchers) if (matchesGlob(relative(watcher.pattern.base, path), watcher.pattern.pattern)) watcher.listeners[kind]?.(Uri.file(path)); } };
 }
@@ -126,6 +132,89 @@ test('repository articles open retained source without connecting an agent or ma
   assert.equal(harness.shown[0]?.text, 'export const price = 24;\n'); assert.equal(harness.connections(), 0);
   assert.equal(state.view.sources[0]?.status, 'current'); assert.equal((await harness.library.readProgress()).decisions.length, 0);
   assert.equal('sources' in state.view.book!.revision, false);
+});
+
+for (const interaction of ['different file', 'selection', 'tab roundtrip', 'none'] as const) test(`cold Wiki reservation ${interaction === 'none' ? 'opens the actual citation without losing navigation ownership' : `preserves newer ${interaction} instead of revealing stale Wiki`}`, async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.useColdLayout(); harness.focusUnrelatedDraft('original-draft.txt');
+  const draft = harness.focusedSource(), listeners = harness.focusListenerCount(), held = harness.holdLayoutResponse();
+  const opening = harness.reader.open(harness.selection), outcome = interaction === 'none' ? opening : assert.rejects(opening, /focus changed/);
+  try {
+    await held.started;
+    // Act
+    if (interaction === 'different file') harness.focusUnrelatedDraft();
+    if (interaction === 'selection') harness.selectSource(0, 6);
+    if (interaction === 'tab roundtrip') harness.roundtripCitationTab();
+    const latestFocus = harness.focusedSource(); held.release(); await outcome;
+    // Assert
+    assert.equal(harness.focusListenerCount(), listeners); assert.equal((await harness.library.readProgress()).decisions.length, 0);
+    if (interaction === 'none') {
+      assert.equal(harness.shown.length, 1); assert.deepEqual(harness.reveals, [2]);
+      assert.equal(harness.reader.inspect().sourceUri, harness.shown[0]!.uri.toString());
+    } else {
+      assert.equal(harness.shown.length, 0); assert.deepEqual(harness.reveals, []); assert.equal(harness.panels.size, 0);
+      assert.equal((await harness.library.readProgress()).repositorySelection, undefined);
+      assert.equal(harness.focusedSource(), latestFocus);
+      if (interaction === 'selection') assert.equal(draft!.selections[0]!.active.character, 6);
+    }
+  } finally { held.release(); await opening.catch(() => undefined); }
+});
+
+for (const boundary of ['source lookup', 'progress storage', 'source refresh'] as const) test(`cold Wiki preserves chat focus during ${boundary} after its native reservation`, async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.useColdLayout(); harness.focusUnrelatedDraft();
+  const listeners = harness.focusListenerCount(); let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  const sourceLookup = boundary === 'source lookup' ? harness.holdSourceDocument() : undefined;
+  if (boundary === 'progress storage') {
+    const save = harness.library.selectRepository.bind(harness.library);
+    harness.library.selectRepository = async selection => { entered(); await held; await save(selection); };
+  }
+  if (boundary === 'source refresh') {
+    const inspect = harness.store.sources.inspect.bind(harness.store.sources);
+    harness.store.sources.inspect = async anchors => { entered(); await held; return inspect(anchors); };
+  }
+  const opening = harness.reader.open(harness.selection), rejected = assert.rejects(opening, /focus changed/);
+  try {
+    await Promise.race([sourceLookup?.started ?? started, opening]);
+    // Act
+    harness.focusChat(); sourceLookup?.release(); release(); await rejected;
+    // Assert
+    assert.deepEqual(harness.reveals, []); assert.equal(harness.focusedSource(), undefined);
+    assert.equal(harness.focusListenerCount(), listeners); assert.equal((await harness.library.readProgress()).decisions.length, 0);
+    assert.equal(harness.shown.length, boundary === 'source lookup' ? 0 : 1);
+  } finally { sourceLookup?.release(); release(); await opening.catch(() => undefined); }
+});
+
+test('cold Wiki with an empty library activates its empty reader without inventing a citation or retaining listeners', async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.useColdLayout(); harness.focusUnrelatedDraft();
+  harness.store.list = async () => []; const listeners = harness.focusListenerCount();
+  // Act
+  await harness.reader.open();
+  // Assert
+  assert.equal(harness.shown.length, 0); assert.deepEqual(harness.reveals, [2]); assert.equal(harness.panels.size, 1);
+  assert.equal(harness.reader.inspect().view.loading, false); assert.equal(harness.reader.inspect().sourceUri, undefined);
+  assert.equal(harness.focusListenerCount(), listeners); assert.equal((await harness.library.readProgress()).repositorySelection, undefined);
+});
+
+for (const retirement of ['abort', 'Close', 'new Open'] as const) test(`${retirement} during cold Wiki reservation releases its own focus receipt without a stale reveal`, async context => {
+  // Arrange
+  const harness = await readerHarness(context); harness.useColdLayout(); harness.focusUnrelatedDraft();
+  const listeners = harness.focusListenerCount(), held = harness.holdLayoutResponse(), cancellation = new AbortController();
+  const opening = harness.reader.open(harness.selection, cancellation.signal), rejected = assert.rejects(opening, /abort|cancel|superseded|changed/i);
+  try {
+    await held.started;
+    // Act
+    if (retirement === 'abort') cancellation.abort();
+    if (retirement === 'Close') harness.reader.close();
+    if (retirement === 'new Open') await harness.reader.open({ ...harness.selection, nodeId: 'order' });
+    held.release(); await rejected;
+    // Assert
+    assert.equal(harness.focusListenerCount(), listeners); assert.equal((await harness.library.readProgress()).decisions.length, 0);
+    assert.deepEqual(harness.reveals, retirement === 'new Open' ? [2] : []);
+    assert.equal(harness.shown.length, retirement === 'new Open' ? 1 : 0);
+  } finally { held.release(); await opening.catch(() => undefined); }
 });
 
 test('Wiki opens its real retained citation before resolving an otherwise ambiguous primary pane', async context => {
@@ -150,9 +239,12 @@ test('an unavailable Wiki citation cannot acquire native layout or focus as a te
   assert.equal(harness.arrangements(), 0); assert.equal(harness.shown.length, 0); assert.equal(harness.panels.size, 0);
 });
 
-for (const interaction of ['selection', 'tab roundtrip', 'none'] as const) test(`Wiki citation display response preserves later ${interaction} without adopting new learner ownership`, async context => {
+for (const entry of ['ambiguous scope', 'cold ordinary text'] as const) for (const interaction of ['selection', 'tab roundtrip', 'none'] as const) test(`${entry} Wiki citation display response preserves later ${interaction} without adopting new learner ownership`, async context => {
   // Arrange
-  const harness = await readerHarness(context); harness.requireSourceFocus(); const held = harness.holdSourceDisplay();
+  const harness = await readerHarness(context);
+  if (entry === 'ambiguous scope') harness.requireSourceFocus();
+  else { harness.useColdLayout(); harness.focusUnrelatedDraft(); }
+  const held = harness.holdSourceDisplay();
   const listeners = harness.focusListenerCount(), opening = harness.reader.open(harness.selection);
   const outcome = interaction === 'none' ? opening : assert.rejects(opening, /focus changed/);
   try {
