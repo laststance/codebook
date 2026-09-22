@@ -117,7 +117,7 @@ Zero planned silent/unhandled failure paths; tests and native proof are pending,
 ## Implementation Tasks
 
 - [x] **H1 (P1, human: ~3h / agent: ~30min)** — Native prerequisite from A1: freeze and run a separate regular-panel handoff probe, sequential Cursor then VS Code. Verify the full creation/disposal/native pin/focus/model/file-open/video/cleanup contract. Both hosts pass at the linked H1 evidence; product tasks remain unverified.
-- [ ] **H2 (P1, human: ~4h / agent: ~45min)** — Session lifetime from A2: add the guarded rebind to `experiments/cycle-0001/src/browserViewport.ts` and behavior tests in its existing test file. Preserve one lease, CDP stream and recording observer; genuine closure must retain its semantics.
+- [x] **H2 (P1, human: ~4h / agent: ~45min)** — Session lifetime from A2: add the guarded rebind to `experiments/cycle-0001/src/browserViewport.ts` and behavior tests in its existing test file. Preserve one lease, CDP stream and recording observer; genuine closure must retain its semantics. [Source evidence](../cycles/evidence/0018/viewport-handoff.md): 18 focused / 62 shared checks and extension build/typecheck pass; workspace integration remains H4.
 - [ ] **H3 (P1, human: ~4h / agent: ~45min)** — Reading state from T1: extend `extension/src/presentationSchemas.ts`, `extension/src/ui/studyHtml.ts` and existing workspace message handling with bounded capture/restoration. Add focused schema/DOM tests using the existing browser harness; keep source and learner progress unchanged.
 - [ ] **H4 (P1, human: ~6h / agent: ~60min)** — Workspace integration from Q1/A2: update `extension/src/studyWorkspace.ts` plus its test file to create final-column replacements, rebind, retire safely, reject retired callbacks and resolve final focus by logical role. Preserve cold entry/MCP-first/Wiki paths and all current negative guards.
 - [ ] **H5 (P1, human: ~4h / agent: ~45min)** — Regressions and native evidence from T2/P1: failing-before controls, typecheck, complete serial product/shared/package checks, fresh frozen VSIX and unchanged both-host schedule with video/frame inspection and latency/resource bounds.
@@ -147,6 +147,6 @@ Sequential implementation, no parallelization opportunity: H1 precedes H2/H3, wh
 
 **OUTSIDE COVERAGE:** Claude Code CLI owner-skipped. The driving agent's plan analysis supplies no independent outside review. CodeRabbit's previous source-cut checks remain historical; H6 still requires current coverage.
 
-**VERDICT:** H1 passes its finite native prerequisite in both hosts; proceed to H2–H4 and their regressions. The probe does not pass a source, installed-product or final-acceptance gate.
+**VERDICT:** H1 passes its finite native prerequisite in both hosts; H2 source checks pass; proceed to H3–H4 and integrated regressions. The probe does not pass a source, installed-product or final-acceptance gate.
 
 NO UNRESOLVED DECISIONS

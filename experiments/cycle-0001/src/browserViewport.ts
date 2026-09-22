@@ -17,7 +17,7 @@ export interface ViewportRecordingObserver {
 
 /** Displays actual selected-page pixels for {@link HostBrowser}; it cannot select targets or resume the debugger. @example await viewport.attach(cdp, signal) */
 export class BrowserViewport {
-  private readonly panel: vscode.WebviewPanel;
+  private panel: vscode.WebviewPanel;
   private readonly delivery: FrameDelivery;
   private epoch?: string;
   private readinessRequest = randomUUID();
@@ -27,6 +27,8 @@ export class BrowserViewport {
   private closed = false;
   private closing = false;
   private historical = false;
+  private historicalHtml?: string;
+  private rendererAttached = true;
   private readonly listeners: vscode.Disposable[] = [];
   private observerFailed = false;
   private observerClosed = false;
@@ -34,24 +36,35 @@ export class BrowserViewport {
   private readonly liveCounts = new Map<string, number>();
   private missingReceipt?: { epoch: string; id: string };
   private readonly rendererOperations = new Set<Promise<unknown>>();
-  private placement?: { released: Promise<void>; release(): void };
+  private placement?: { released: Promise<void>; ready: boolean; release(): void };
 
   constructor(runId: string, private readonly record: (type: string, detail?: unknown) => unknown, private readonly fail: (reason: string) => void, private readonly scenario: Scenario, private readonly lease?: ViewportLease, private readonly observer?: ViewportRecordingObserver, private readonly mode: 'live' | 'recording' = 'live') {
     this.panel = lease?.panel ?? vscode.window.createWebviewPanel('codebook.scopedBrowser', `codebook ${runId.slice(0, 8)}`, vscode.ViewColumn.One, { enableScripts: true, localResourceRoots: [] });
     this.delivery = new FrameDelivery(message => this.panel.webview.postMessage(message), (type, detail) => this.recordDelivery(type, detail));
-    this.listeners.push(this.panel.onDidDispose(() => {
+    this.bindPanel();
+    this.panel.webview.html = viewportHtml(this.mode);
+  }
+
+  /** Binds only the current renderer for construction and {@link rebindPanel}; retired callbacks cannot close the session. @example this.bindPanel() */
+  private bindPanel(): void {
+    const panel = this.panel;
+    this.listeners.push(panel.onDidDispose(() => {
+      if (panel !== this.panel || this.closed) return;
       this.closed = true;
+      // Current closure releases queued work; retired panels cannot release the replacement's hold.
+      this.placement?.release();
       this.delivery.dispose();
       this.record('viewport.disposed', { expected: this.closing });
       this.closeObserver(this.closing);
       if (!this.closing) this.fail('Owned viewport closed before cleanup');
     }));
-    this.listeners.push(this.panel.onDidChangeViewState(() => {
-      if (!this.panel.visible) this.suspendRenderer();
+    this.listeners.push(panel.onDidChangeViewState(() => {
+      if (panel !== this.panel || this.closed) return;
+      if (!panel.visible) this.suspendRenderer();
       else this.requestReadiness();
     }));
-    this.listeners.push(this.panel.webview.onDidReceiveMessage((message: unknown) => {
-      if (this.closed || this.historical) return;
+    this.listeners.push(panel.webview.onDidReceiveMessage((message: unknown) => {
+      if (panel !== this.panel || this.closed || this.historical || !this.rendererAttached) return;
       if (!message || typeof message !== 'object' || !('epoch' in message) || typeof message.epoch !== 'string' || !/^[\da-f-]{36}$/.test(message.epoch) || !('type' in message)) return;
       if (message.type === 'ready') {
         // Startup announces a renderer; only the current request can prove reveal readiness.
@@ -65,7 +78,6 @@ export class BrowserViewport {
       } else if (message.type === 'painted' && 'id' in message && typeof message.id === 'number') this.delivery.acknowledge(message.epoch, message.id);
       else if (message.type === 'missing-painted' && 'id' in message && typeof message.id === 'string' && this.mode === 'recording' && message.epoch === this.epoch) this.missingReceipt = { epoch: message.epoch, id: message.id };
     }));
-    this.panel.webview.html = viewportHtml(this.mode);
   }
 
   /** Uses js-debug's selected-target event sharing, keeping Chrome ACKs independent from slow renderer delivery. @example await viewport.attach(cdp, signal) */
@@ -100,19 +112,36 @@ export class BrowserViewport {
     if (this.closed || this.placement) throw new Error('Viewport placement is unavailable.');
     let release!: () => void;
     const released = new Promise<void>(resolve => { release = resolve; });
-    const placement = { released, release: () => { if (this.placement === placement) this.placement = undefined; release(); } };
+    const placement = { released, ready: false, release: () => { if (this.placement === placement) this.placement = undefined; release(); } };
     this.placement = placement;
     try {
       // New required operations wait outside this set; already accepted paints drain before any native move.
       await Promise.all([...this.rendererOperations]); signal.throwIfAborted();
       if (this.closed) throw new Error('Viewport closed before placement.');
+      placement.ready = true;
       return placement.release;
     } catch (error) { placement.release(); throw error; }
   }
 
+  /** Transfers a drained leased renderer for {@link StudyWorkspace} without ending CDP or recording; only the selected lease later paints. @example viewport.rebindPanel(replacement, signal) */
+  rebindPanel(panel: vscode.WebviewPanel, signal: AbortSignal): void {
+    signal.throwIfAborted();
+    if (!this.lease || this.closed || this.closing || !this.placement?.ready || this.rendererOperations.size) throw new Error('Viewport handoff requires a current drained lease placement.');
+    if (panel === this.panel) return;
+    // Drain -> retire old epoch/listeners -> bind replacement -> release -> confirm selected pixels.
+    this.suspendRenderer(); this.missingReceipt = undefined;
+    for (const listener of this.listeners.splice(0)) listener.dispose();
+    this.panel = panel; this.rendererAttached = false;
+    this.bindPanel();
+    this.record('viewport.panel-rebound');
+  }
+
   /** Reconfirms retained pixels after native relocation without recapturing the application; called outside the placement lock. @example await viewport.restorePlacement(signal) */
   async restorePlacement(signal: AbortSignal): Promise<void> {
-    if (this.historical) return;
+    if (this.historical) {
+      await this.withRenderer(async () => { signal.throwIfAborted(); this.restorePanelContents(); });
+      return;
+    }
     await this.reveal(signal); signal.throwIfAborted();
     const retained = this.pinnedPause ?? this.latestLive;
     if (retained) await this.withRenderer(() => this.delivery.offer({ ...retained, required: true }));
@@ -131,6 +160,7 @@ export class BrowserViewport {
   private async revealNow(signal: AbortSignal): Promise<void> {
     if (this.closed) throw new Error('Owned viewport is closed');
     if (this.historical) return;
+    signal.throwIfAborted(); this.restorePanelContents();
     this.suspendRenderer();
     this.panel.reveal(this.lease ? undefined : vscode.ViewColumn.One, Boolean(this.lease));
     this.requestReadiness();
@@ -193,14 +223,14 @@ export class BrowserViewport {
   /** Pins learner-selected history without allowing hidden current frames to earn paint receipts. @example viewport.showHistory(capturedHtml) */
   showHistory(html: string): void {
     if (this.closed) throw new Error('Viewport lease is released');
-    this.historical = true; this.presentationRevision++; this.suspendRenderer(); this.panel.webview.html = html;
+    this.historical = true; this.historicalHtml = html; this.presentationRevision++; this.suspendRenderer(); this.panel.webview.html = html; this.rendererAttached = true;
   }
 
   /** Reconnects the same target presentation when the learner explicitly follows its current pause. @example await viewport.showLive(signal) */
   async showLive(signal: AbortSignal): Promise<void> {
     if (this.closed) throw new Error('Viewport lease is released');
     if (!this.historical) return;
-    this.historical = false; this.panel.webview.html = viewportHtml(this.mode); await this.reveal(signal);
+    this.historical = false; this.historicalHtml = undefined; this.panel.webview.html = viewportHtml(this.mode); this.rendererAttached = true; await this.reveal(signal);
   }
 
   /** Clears a superseded recorded presentation before a seek/pause can load another bundle; it has no debugger effect. @example viewport.clearRecorded() */
@@ -232,9 +262,19 @@ export class BrowserViewport {
     this.delivery.suspend();
   }
 
+  /** Rehydrates only an explicitly selected replacement after {@link rebindPanel}; background leases cannot overwrite replay. @example this.restorePanelContents() */
+  private restorePanelContents(): void {
+    if (this.rendererAttached) return;
+    if (this.historical) {
+      if (this.historicalHtml === undefined) throw new Error('Historical viewport content is unavailable.');
+      this.panel.webview.html = this.historicalHtml;
+    } else this.panel.webview.html = viewportHtml(this.mode);
+    this.rendererAttached = true;
+  }
+
   /** Requests a correlated renderer response after visibility changes or startup. @example this.requestReadiness() */
   private requestReadiness(): void {
-    if (this.closed || this.historical || !this.panel.visible) return;
+    if (this.closed || this.historical || !this.rendererAttached || !this.panel.visible) return;
     void Promise.resolve(this.panel.webview.postMessage({ type: 'requestReady', requestId: this.readinessRequest })).catch(error => this.record('viewport.ready-request-failed', { error: String(error) }));
   }
 
