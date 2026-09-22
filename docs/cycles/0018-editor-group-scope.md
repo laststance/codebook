@@ -3,7 +3,7 @@
 Type: hardening\
 Status: validating\
 Result: pending\
-Delivery: unchanged v25b both-host development schedule passes; T3/T4-H5 complete, T5/H6 pending\
+Delivery: H6 repairs reopen current-source T4/H5; three fixing reviews non-converged, new v26 native proof and T5/H6 delivery pending\
 Goal version: 5 (started under version 4)\
 Tracking issue: https://github.com/laststance/codebook/issues/23\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -187,6 +187,8 @@ No new tasks from Performance. No TODOs proposed: carried product obligations al
 Suppressed findings: none. The public focus command's exact cross-host behavior is an explicit experiment, not an asserted portable fix. Further runtime evidence may require a revised implementation hypothesis and updated plan.
 
 ## Result and handoff
+
+Current H6 checkpoint: [failure-path repairs](evidence/0018/h6-failure-path-repairs.md) address detached live/replay recovery, cancellable reading-pose transport, QA cleanup and late inner focus. A renderer commit now observes native focus without calling `window.focus`; both-host operation remains to be revalidated. All three development review passes applied fixes and the workflow ended **non-converged**. Source verification (900/96 checks and all four typechecks) and scoped provider passes are complete; source repairs are committed as `1da6300`/`a06c4d9`. A clean v26 package remains to be built; **T4/H5 reopens for these source changes**, and T5/H6 remains incomplete. The following v25b result remains historical for its identified source/archive. The pre-existing Wiki storage-wait focus race is carried before final acceptance, separate from these new regressions. No final reviewers have started.
 
 Latest checkpoint: [Unchanged v25b](evidence/0018/installed-v25-validation.md), clean `d404bf6` / VSIX `e1fcfa5d…`, **passes the complete sequential schedule in both ordinary hosts**: exact restart/replay, twelve Wiki Returns, twelve Living/Guided pairs, 90 rapid transfers, ordinary-file tab/document retention and preserving fourth-group refusal. Cursor also passes scope-negative and twelve Wiki/Study pairs. V25's earlier selector failure remains separately recorded. All 66 contact sheets across both attempts plus four motion-detail sheets are inspected; blank/loading intervals and higher Cursor latency remain explicit reading-UX limitations. Artifact/source/install/helper identities, original profiles/drafts and zero owned resources are verified. **T3/T4-H5 complete; T5/H6 current diff/CodeRabbit/CI/artifact and PR/merge pending.** G12 and final acceptance remain unstarted.
 

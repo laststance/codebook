@@ -1,6 +1,6 @@
 # Cycle 0018 — Preserve sessions across presentation replacement
 
-Date: 2026-09-23 JST. Scope: the active [Cycle 0018](../cycles/0018-editor-group-scope.md), product source `64c7629`, evidence checkpoint `8fba2b3`. Status: engineering review complete; [H1 passes in both hosts](../cycles/evidence/0018/presentation-handoff-prerequisite.md). H2–H4 implementation and complete source/package checks pass; H5 native product validation and H6 delivery remain outstanding.
+Date: 2026-09-23 JST. Scope: the active [Cycle 0018](../cycles/0018-editor-group-scope.md), originally planned against product source `64c7629` and evidence checkpoint `8fba2b3`. Status: engineering review complete; [H1 passes in both hosts](../cycles/evidence/0018/presentation-handoff-prerequisite.md). H2–H4 source/package checks and [H5's unchanged v25b schedule](../cycles/evidence/0018/installed-v25-validation.md) pass in both hosts on `d404bf6` / VSIX `e1fcfa5d…`. [H6 review](../cycles/evidence/0018/h6-failure-path-repairs.md) then reproduced four product failure paths plus QA cleanup; all three fixing passes ended non-converged. Current T4/H5 reopens: observation-only focus and the other repaired source require a fresh unchanged package/native schedule before H6 delivery.
 
 This is a new architecture amendment after [J and the three custom-editor probes](../cycles/evidence/0018/retained-pane-investigation.md), not a fourth fixing pass of the previous implementation review. The driving agent selects this target and each recommended remedy under the owner's explicit instruction to proceed with recommended technical choices instead of skill questions. The owner did not name this new path. All final G01–G12 requirements remain unchanged; final reviewers stay at zero.
 
@@ -147,6 +147,6 @@ Sequential implementation, no parallelization opportunity: H1 precedes H2/H3, wh
 
 **OUTSIDE COVERAGE:** Claude Code CLI owner-skipped. The driving agent's plan analysis supplies no independent outside review. CodeRabbit's previous source-cut checks remain historical; H6 still requires current coverage.
 
-**VERDICT:** H1 passes its finite native prerequisite in both hosts; H2–H4 source/browser checks pass; proceed to H5 integrated native regressions. The probe does not pass a source, installed-product or final-acceptance gate.
+**VERDICT:** H1–H4 and H5's complete unchanged v25b both-host development schedule pass for their recorded source cuts. Continue H6: finish review of post-v25b failure-path repairs, repackage and repeat the sequential both-host schedule, verify current CI/archive correspondence, then deliver. H5's earlier success does not certify later source changes; final acceptance remains unstarted.
 
 NO UNRESOLVED DECISIONS

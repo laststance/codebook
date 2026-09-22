@@ -8,6 +8,8 @@ Clean source `d660d25ded1d2195ddda40cb12160d5c46ddb4fc` implements the [split na
 
 Extension **0.2.1 / API 1.5** is packaged as `artifacts/cycle-0018/installed-development-v19/codebook-cycle0018-v19.vsix`, **600,599 bytes**, SHA-256 **`796d1585721807bef37533cd3770414ad987e1357d028fbc823b7be5cd292503`**. The unchanged candidate and nineteen helper identities were frozen at **07:40:35.585516 UTC**, before any editor trial. The finalized schedule corrects v18's inherited stale helper labels; its earlier draft is retained separately. Post-trial verification confirms all nineteen helpers, the archive and all **29** installed extension files in each of the three profiles are unchanged. A read-only Cursor failure observer was added after the failure; it is explicitly supplemental and performs no repair.
 
+The frozen `package.log` contains the candidate JSON payload: its **32,989 bytes** and SHA-256 **`78286c84cddd76bca9c651d4d51f3619bf4a6ede727f599519d43f81237e1b06`** exactly match `candidate.json`; the label mismatch is retained without changing either artifact.
+
 Hosts and environment:
 
 | Host | Installed identity |
