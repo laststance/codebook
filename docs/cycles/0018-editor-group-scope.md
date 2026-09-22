@@ -1,9 +1,9 @@
 # Cycle 0018 — Native editor scope on cold study entry
 
 Type: hardening\
-Status: implementing\
+Status: validating\
 Result: pending\
-Delivery: pushed through `32703ab`; local v15 failure and scoped kept-tab/source-focus repair recorded; full new-source checks, both-host native proof and PR/merge pending\
+Delivery: pushed through `32703ab`; local `71ca0bf` source and v16 both-host schedule pass; current delivery review, CI, PR/merge pending\
 Goal version: 5 (started under version 4)\
 Tracking issue: https://github.com/laststance/codebook/issues/23\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -144,8 +144,8 @@ Synthesized from the findings above. Estimates are planning bounds, not promised
 
 - [x] **T1 (P1, human: ~2h / Codex: ~20min)** — Native scope — Prove public main-group anchoring and record its separate-part/focus behavior. Finding 1. Files: private Cycle 0018 probe/schedule/evidence, then this cycle's sanitized evidence. Verify ordinary Cursor first, preserve copied profile and exact original files; do not change product source to force the result.
 - [x] **T2 (P1, human: ~3h / Codex: ~30min)** — Regression model — Reproduce cold entry and separate parts; retain real fourth-group, focus, preview and interruption controls. Finding 4. Files: `extension/src/tests/studyWorkspace.test.ts`, relevant RepositoryReader tests if necessary. Verify expected failures on the unchanged product and meaningful passing safety controls.
-- [ ] **T3 (P1, human: ~4h / Codex: ~45min)** — Reader scope — Implement validated target-grid reservation and shared admission/receipt rules. Findings 1–3. Files: `extension/src/studyWorkspace.ts`, one `extension/src/utils/` helper and focused tests; RepositoryReader only if required. Verify targeted suites, typecheck and full product/package suites serially; preserve all prior protections.
-- [ ] **T4 (P1, human: ~3h / Codex: ~45min)** — Installed validation — Freeze one new VSIX and execute the original restart sequence plus retained modes/returns/negative controls in both ordinary hosts. Finding 5. Files: Cycle 0018 schedule, validation report and sanitized manifest. Verify videos/frames, exact loaded source/hash, zero extra execution, preserved drafts and cleanup.
+- [x] **T3 (P1, human: ~4h / Codex: ~45min)** — Reader scope — Implement validated target-grid reservation and shared admission/receipt rules. Findings 1–3. Files: `extension/src/studyWorkspace.ts`, one `extension/src/utils/` helper and focused tests; RepositoryReader only if required. Verify targeted suites, typecheck and full product/package suites serially; preserve all prior protections.
+- [x] **T4 (P1, human: ~3h / Codex: ~45min)** — Installed validation — Freeze one new VSIX and execute the original restart sequence plus retained modes/returns/negative controls in both ordinary hosts. Finding 5. Files: Cycle 0018 schedule, validation report and sanitized manifest. Verify videos/frames, exact loaded source/hash, zero extra execution, preserved drafts and cleanup.
 - [ ] **T5 (P2, human: ~1h / Codex: ~20min)** — Delivery — Review current diff including CodeRabbit CLI; synchronize docs/Issue #23, ship and merge with required CI. Findings 3–5. Files: current implementation and cycle/state records. Verify current-head review, actual CI artifact, merge/issue closure separately; keep Issue #1 open and final trial count zero.
 
 No new tasks from Performance. No TODOs proposed: carried product obligations already have authoritative records; these repair requirements belong in this cycle. Sequential implementation, no parallelization opportunity: the shared workspace controller, coupled fake and native screen are one workstream. T1 and T2 inform T3; T4 follows green implementation; T5 follows current evidence. Final reviewers must not be used for this work.
@@ -153,6 +153,8 @@ No new tasks from Performance. No TODOs proposed: carried product obligations al
 Suppressed findings: none. The public focus command's exact cross-host behavior is an explicit experiment, not an asserted portable fix. Further runtime evidence may require a revised implementation hypothesis and updated plan.
 
 ## Result and handoff
+
+Latest checkpoint: [v16 validation and manifest](evidence/0018/installed-v16-validation.md) establish the complete frozen development schedule on the same unchanged `71ca0bf` / VSIX `1c6126e1…` in both ordinary hosts. Clean-source validation passes **784/784 + 96/96**. Each host restores exact replay through normal restart, completes twelve Wiki Returns, twelve Living book/Guided pairs and a preserving fourth-group refusal. Cursor separately passes twelve Wiki/Study pairs and the ambiguous-primary visible refusal. All 115/62 original files and drafts are preserved; owned PIDs/descriptors are zero. Thirty full-trial frame sheets and four selected negative sheets are inspected, with sparse sampling, intermediate motion, constrained Context and console limits explicit. CodeRabbit's six-file `71ca0bf` supplement completes with one major finding declined against guarded source-focus ordering and regression evidence. Historical non-convergence remains unchanged. T3/T4 complete; T5 remains open for fresh pre-landing review, actual current CI/artifact comparison, PR/merge and Issue #23 closure. G12 is unimplemented/unverified; the final campaign remains 0/10 and unstarted. Earlier checkpoints below retain their original source/status cuts.
 
 Latest investigation: [v15 kept-tab focus](evidence/0018/installed-v15-validation.md) fails the final restarted Guided → Study transfer after exact replay and all twelve Returns pass. Cursor is installed but unlaunched. A separately hashed logging copy reproduces two unnecessary focus requests on already non-preview tabs, followed by a 4 ms late Application focus echo. The new scoped repair skips only exact owned retained tabs and uses a validated placed-source receipt for final focus. A late source-selection regression also fails before repair; eight focused checks now pass. Full new-source checks, CodeRabbit, a fresh VSIX and complete both-host validation remain pending. T3 is implementing, T4 failed and T5 incomplete. All owned windows/profiles are cleaned; final acceptance stays unstarted.
 

@@ -2,7 +2,7 @@
 
 Updated: 2026-09-22\
 Product stage: configured core execution, offline replay and restart demonstrated separately in both editors; complete cross-host and installed usefulness unverified\
-Active cycle: [0018 — Native editor scope on cold study entry](docs/cycles/0018-editor-group-scope.md) — implementing\
+Active cycle: [0018 — Native editor scope on cold study entry](docs/cycles/0018-editor-group-scope.md) — validating\
 Last cycle: [0017 — Packaged real-repository study](docs/cycles/0017-packaged-repository-study.md) — falsified; merged and privately packaged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#23](https://github.com/laststance/codebook/issues/23) — open\
@@ -10,7 +10,7 @@ Last cycle issue: [#21](https://github.com/laststance/codebook/issues/21) — cl
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 5
 
-Current execution: [v15 native validation and kept-tab investigation](docs/cycles/evidence/0018/installed-v15-validation.md) retain another VS Code transfer failure after all twelve initial/restarted Returns and exact replay restoration. A separate logging-only copy reproduces an unnecessary focus handoff between two already kept panels; Application refocuses 4 ms after Context. The new source repair skips only verified non-preview retention, carries an exact placed-source focus receipt and protects late learner selection. Both red controls and eight focused green controls are retained. Full new-source checks, CodeRabbit coverage, a fresh frozen VSIX and complete both-host native proof remain pending. T3 is implementing, T4 failed and T5 incomplete. All owned windows are closed with profiles/drafts preserved and zero owned PIDs/descriptors. G12 remains specified only; final reviewers remain 0/10, not started.
+Current execution: [v16 ordinary installed validation](docs/cycles/evidence/0018/installed-v16-validation.md) passes the complete frozen development schedule in both VS Code and Cursor on the same unchanged `71ca0bf` / VSIX `1c6126e1…`. Clean-source suites pass **784/784 + 96/96**. Both hosts retain exact replay through normal restart, pass twelve Wiki Returns and twelve Living book/Guided pairs, and protect a real fourth group; Cursor also passes twelve Wiki/Study pairs and the separate ambiguous-scope refusal. Original 115/62 profile files and drafts remain unchanged, with zero owned PIDs/descriptors. Video/frame and console limits remain explicit. The six-file CodeRabbit supplement completed with one declined finding and retained evidence, not a zero-finding review or formal approval. T3/T4 are complete; T5 delivery review, current CI, PR/merge and issue closure remain pending. G12 is specified only; final reviewers remain 0/10, not started.
 
 ## Verified facts
 
@@ -120,7 +120,7 @@ A fixture proves mechanisms, not the integrated final product.
 
 ## Exact resume action
 
-Immediate next action (2026-09-22): complete source and CodeRabbit checks for the kept-tab/source-focus repair, freeze a new clean VSIX, then run the complete serial VS Code / Cursor negative / Cursor initial-and-restart schedule. V15 failure is retained; no candidate combines partial results from different source cuts. Finish Cycle 0018 delivery before the required G12 skill/onboarding increment.
+Immediate next action (2026-09-22): deliver Cycle 0018 from the passing v16 source cut. Complete fresh pre-landing review with owner-required CodeRabbit coverage, synchronize committed records and Issue #23, verify current PR CI/package identity, then merge with `Closes #23` and `@coderabbitai ignore`. Keep prior failed candidates separate. After cycle delivery, select the required [G12 skill/onboarding increment](docs/plans/bundled-codebook-skill.md); do not start final reviewers before the complete candidate exists.
 
 D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answers remain authoritative: approved B, compact understand, all-citation Review needed with retained history, a narrow single article column, exact reading return, complete-citation progress identity and short publication writer ownership. Do not re-ask these choices. The app goal remains active.
 
@@ -138,7 +138,7 @@ Current [native integration evidence](docs/cycles/evidence/0011/native-validatio
 
 Earlier [Arrange investigation](docs/cycles/evidence/0011/native-layout-investigation-20260920.md): explicit recovery separates moved Codebook panes, preserves actual source placement across replay-induced render cancellation, follows later manual moves and reports interrupted placement before claiming success. **399/399 product tests pass**, zero failed/skipped/cancelled (16.760s). Final v14 inventory `fb597267fc8ac348ddff5460b8d5c47cf86f13cd231585fa6ea38aeb20a049e2` has 231 entries on dirty `a3fba6f`. Both actual hosts pass the complete Arrange/manual-move sequence, with inspected video, highlighted exact source and unchanged dirty draft. Cursor additionally passes visible 200% observation/recording Return with exact pose and learner ledger. The report qualifies its cramped retained manual layout and child-frame automation failures; this is not complete 200% usability acceptance. All intermediate hypotheses, a retracted host API inference and a simultaneous-host recording ACK timeout remain recorded.
 
-Exact next action: checkpoint the scoped placement repair, run the complete source/package checks on clean source, and freeze one new VSIX before both-host normal-install validation. Start with the original VS Code initial → normal restart → four Wiki Returns → Living book/Guided sequence; stop on any failure. Then complete both-host mode/Return, fourth-group and separate-part controls with video/inspected frames and profile cleanup. Preserve the v12 failed and logging profiles. Complete CodeRabbit/current-source review and T5 PR/merge only after native proof. G12 remains unimplemented; select its [required increment](docs/plans/bundled-codebook-skill.md) after this bounded cycle. Final acceptance remains unstarted.
+The earlier placement-repair next action is completed by [v16](docs/cycles/evidence/0018/installed-v16-validation.md). Follow the immediate delivery action above. Historical failures, logging-only experiments and partial candidates remain retained; no result is combined across source cuts.
 
 Cycle 0014 delivery is complete through [PR #16](https://github.com/laststance/codebook/pull/16), with Issue #15 closed and its branch removed. The [ship source inventory](docs/cycles/evidence/0014/ship-source-cut.json) binds 245 source/test/script files to `55ce23cfb156a0491976a3a1b295912de7ef41031c73ffc0b20674ff380eafee`. All bytes match the merged tree; 647 tests and both-host SDK proof are identified in [the ship supplement](docs/cycles/evidence/0014/ship-verification-20260921.md). Prior native cuts and failures remain historical, including the Cursor cold-reader foreign-focus rejection and cropped 200% motion.
 
