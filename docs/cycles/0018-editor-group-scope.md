@@ -3,7 +3,7 @@
 Type: hardening\
 Status: validating\
 Result: pending\
-Delivery: unchanged v24b passes Cursor and fails VS Code first Living focus; T3 diagnosis, T4/H5 FAIL, T5/H6 pending\
+Delivery: v24b VS Code focus cause traced and bounded source repair checked; T4/H5 FAIL, T5/H6 pending\
 Goal version: 5 (started under version 4)\
 Tracking issue: https://github.com/laststance/codebook/issues/23\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -55,6 +55,8 @@ During the blank-primary diagnostic, the owner added [D023 / goal version 5](../
 Exact target revisions, host versions, hashes and execution schedule must be frozen before native runs. These are development checks; direct MCP diagnostics do not satisfy the final editor-AI trials.
 
 ## Attempts and evidence
+
+[Native-tab focus repair](evidence/0018/presentation-native-tab-focus.md) traces VS Code’s current prepared/committed epoch, successful inner receipt and active Context alongside its retained last text editor. The final focus condition no longer requires that unrelated value to clear. Passive baselines ignore it only in owned active panes, preserving the existing cold-Wiki/chat protections. Four new cases fail before repair, and 19 focused controls now pass; the earlier full run’s two regressions remain recorded. **886 product/shared + 96 package checks**, builds and typechecks pass on unchanged inputs; unchanged both-host v25 verification remains pending. **T3 source checks pass / T4-H5 FAIL / T5-H6 pending**; no final-trial credit.
 
 [Unchanged v24/v24b](evidence/0018/installed-v24-validation.md), clean `193c681` / VSIX `cd24cadf…`, passes the full Cursor schedule including 90 rapid transfers, ordinary-file retention, restart and fourth-group refusal. VS Code fails its first Living request on inner-focus confirmation despite later focused DOM evidence; prior Study preference and exact paused replay survive, with unconfirmed moved geometry. The preceding v24 selector/cleanup harness failures remain separately recorded. All 60 extracted sheets and four detailed comparison sheets are inspected, with approximately one-second replacement blanking and higher Cursor latency disclosed. All original profiles/drafts and artifact/helper identities survive; zero owned resources. **T3 focus diagnosis / T4-H5 FAIL / T5-H6 pending**. Next, instrument only a fresh installed VS Code copy to identify the failing focus predicate/receipt before a source repair.
 

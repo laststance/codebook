@@ -468,8 +468,8 @@ export class StudyWorkspace {
       return group.viewColumn === panel.viewColumn && Boolean(group.activeTab && matches(group.activeTab))
         && vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(matches).length === 1;
     };
-    // Tab, panel and text-focus updates arrive separately; await all before capturing a passive focus baseline.
-    const isActive = () => panel.active && hasTargetTabFocus() && vscode.window.activeTextEditor === undefined;
+    // VS Code may retain its last text editor after webview focus; the owned native tab and document receipt decide focus.
+    const isActive = () => panel.active && hasTargetTabFocus();
     let targetAcquired = false, focusDeparted = false;
     const observeFocus = () => {
       const targetFocused = hasTargetTabFocus();
@@ -502,10 +502,12 @@ export class StudyWorkspace {
     const transition = this.presentationTransition, lifetime = this.lifetime;
     const panes = this.studyPanePositions(), groups = vscode.window.tabGroups.all.map(group => ({ group, column: group.viewColumn }));
     const focusedGroup = this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup);
-    const focusedSource = vscode.window.activeTextEditor?.document.uri.toString(), appActive = this.app?.active, contextActive = this.contextPanel?.active;
+    // Only owned active webviews make the last-text receipt irrelevant; elsewhere its changes still protect learner focus.
+    const focusedSource = () => this.app?.active || this.contextPanel?.active ? undefined : vscode.window.activeTextEditor?.document.uri.toString();
+    const source = focusedSource(), appActive = this.app?.active, contextActive = this.contextPanel?.active;
     return () => {
       const sameFocus = !retainFocus || focusedGroup === this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup)
-        && focusedSource === vscode.window.activeTextEditor?.document.uri.toString() && appActive === this.app?.active && contextActive === this.contextPanel?.active;
+        && source === focusedSource() && appActive === this.app?.active && contextActive === this.contextPanel?.active;
       if (this.sameEditorGroups(groups, vscode.window.tabGroups.all) && this.sameStudyPanePositions(panes) && sameFocus) return;
       // Retire only this operation's focus ownership; an older passive read cannot suppress a newer transition's recovery.
       if (transition === this.presentationTransition && lifetime === this.lifetime) this.presentationMovedFocus = false;

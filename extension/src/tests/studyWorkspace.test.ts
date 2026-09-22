@@ -4530,6 +4530,59 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`a 
   } finally { release(); await transfer?.catch(() => undefined); await harness.close(); }
 });
 
+for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`mode transfer confirms ${kind} focus while VS Code retains its most recent text editor`, async () => {
+  // Arrange: VS Code can keep activeTextEditor populated after native and inner webview focus succeed.
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.open(); await harness.reader.understand(true);
+    await harness.reader.action(kind === 'codebook.scopedBrowser' ? 'focus-app' : 'focus-context');
+    const before = harness.reader.inspect(), decisions = await (await harness.reader.learningStorage()).readProgress();
+    const held = harness.holdTextFocusClear(kind); release = held.release;
+    const state = harness.reader.presentationState();
+    // Act: the last text editor remains reported for the entire handoff, as observed in ordinary VS Code.
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    // Assert
+    assert.equal(harness.reader.presentationState().mode, 'living-book'); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
+    assert.equal(harness.focusedPanel(), kind); assert.equal(harness.innerFocusedPanel(), kind);
+    assert.equal(harness.focusedSource()?.document.uri.toString(), before.sourceUri);
+    assert.equal(harness.reader.inspect().sourceUri, before.sourceUri);
+    assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), decisions);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { release(); await harness.close(); }
+});
+
+for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`clearing the last text editor during ${kind} reading restoration preserves confirmed native focus`, async context => {
+  // Arrange: a late text-editor notification does not represent a new native tab or learner choice.
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    const initial = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
+    await harness.reader.action(kind === 'codebook.scopedBrowser' ? 'focus-app' : 'focus-context');
+    const panel = harness.reader['contextPanel']; assert.ok(panel);
+    const held = harness.holdTextFocusClear(kind); release = held.release;
+    const post = panel.webview.postMessage.bind(panel.webview); let cleared = false;
+    context.mock.method(panel.webview, 'postMessage', async (message: Record<string, unknown>) => {
+      if (message.type === 'restore-presentation-pose') {
+        assert.ok(harness.focusedSource()); held.release(); await Promise.resolve(); cleared = true;
+      }
+      return post(message);
+    });
+    const state = harness.reader.presentationState();
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'select' });
+    // Assert
+    assert.equal(cleared, true); assert.equal(harness.focusedSource(), undefined);
+    assert.equal(harness.focusedPanel(), kind); assert.equal(harness.innerFocusedPanel(), kind);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace'); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'study-workspace' });
+    assert.equal(harness.runtimes.length, 0);
+  } finally { release(); await harness.close(); context.mock.restoreAll(); }
+});
+
 for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`Study restoration preserves the prior source until delayed text focus clear follows ${kind} activation`, async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
