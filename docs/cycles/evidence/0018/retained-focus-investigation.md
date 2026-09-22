@@ -34,7 +34,9 @@ The subsequent clean-source receipt replaces that gap for the repair: `python3 a
 
 The bounded CodeRabbit supplement against `b23f298` completed in 229.660 seconds, covering six changed files and reporting four findings representing two duplicate pairs. Its request for clearer test provenance is addressed above. Its proposed `chat.focused() === true` assertion is not the explicit Wiki navigation contract: successful navigation deliberately establishes main focus while preserving the separate chat pane, tabs and contents. The test title now distinguishes those properties and asserts the actual intended focus transition. The focused check and next clean-source suite receipt must verify that clarification. This supplement does not convert the earlier non-converged three-pass review into a pass. Claude Code CLI remains skipped.
 
-## Remaining evidence
+## Fresh verification and remaining evidence
+
+[Unchanged v12 verification](installed-v12-validation.md) now passes the original Cursor restart and all twelve planned Wiki/Study timing pairs, alongside complete source checks and both-host exact replay restart. The retained-focus repair is **DONE_WITH_CONCERNS**: its original failure is freshly verified fixed, while the larger schedule discovers a distinct VS Code restarted Living book → Guided placement timeout. T3/T4/T5 remain open for that new failure. The earlier pending paragraph below records the investigation checkpoint, not the latest outcome.
 
 Freeze the repaired source and VSIX after complete checks, then repeat the original failing Cursor restart order and bounded timing control through a normal unmodified install. Complete the affected both-host schedule, all modes/Returns, exact saved replay, fourth-group/separate-part controls and native video/preservation evidence. Keep v11's original FAIL and the non-reproducing diagnostic distinct. Current-source CodeRabbit coverage and PR/merge remain separate requirements; Claude Code CLI stays skipped.
 
