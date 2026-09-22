@@ -157,6 +157,7 @@ export class StudyWorkspace {
   private presentationOperation?: Promise<PresentationState>;
   private presentationWrite?: Promise<void>;
   private placingPresentation = false;
+  private presentationEditorScope?: { signal: AbortSignal; lifetime: number; mainCount: number };
   private presentationMovedFocus = false;
   private presentationPoseRequest?: PresentationPoseCapture;
   private presentationPose?: PresentationPose;
@@ -428,7 +429,7 @@ export class StudyWorkspace {
       if (transition.id === this.presentationId) { if (!this.presentationConfirmed) this.presentationMode = previousMode; this.presentationReason = String(error); this.publish(); }
       if (error instanceof StudyError) throw error;
       throw new StudyError('PRESENTATION_UNAVAILABLE', 'The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.', String(error));
-    } finally { windowFocus?.dispose(); for (const release of releaseViewports.splice(0)) release(); this.placingPresentation = false; this.presentationMovedFocus = false; this.presentationPoseRequest = undefined; this.presentationPose = undefined; this.presentationPoseRestored = undefined; }
+    } finally { windowFocus?.dispose(); for (const release of releaseViewports.splice(0)) release(); this.placingPresentation = false; this.presentationEditorScope = undefined; this.presentationMovedFocus = false; this.presentationPoseRequest = undefined; this.presentationPose = undefined; this.presentationPoseRestored = undefined; }
   }
 
   /** Captures only the displayed item's bounded reading state for {@link performPresentation}; it owns no runtime controls. @example await this.captureReadingPose(signal) */
@@ -639,6 +640,8 @@ export class StudyWorkspace {
       const assertBeforeMove = this.retainPresentationPlacement();
       const retainedLayout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertPlacement(); assertBeforeMove();
       assertPreviewOwnership();
+      // Scope remains verified while geometry is provisional; empty foreign wrappers must not acquire a new identity.
+      this.presentationEditorScope = { signal, lifetime: this.lifetime, mainCount: grid.groups.length };
       this.layoutReceipt = undefined;
       // Occupy the source destination to prevent empty-group renumbering and keep focus off moving webviews.
       this.presentationMovedFocus = true;
@@ -2069,7 +2072,11 @@ export class StudyWorkspace {
     const current = vscode.window.tabGroups.all, previous = this.observedEditorGroups;
     // Actual Return retains verified main scope while its Study receipt is released; later wrapper refreshes must preserve that boundary too.
     const signature = this.layoutReceipt?.signature ?? this.repositoryLayoutRestored?.signature;
-    const mainCount = signature === undefined ? undefined : editorLayoutGroupCount(JSON.parse(signature));
+    const placementScope = this.presentationEditorScope;
+    // Only this live placement may retain its measured part boundary after releasing the old layout confirmation.
+    const placementMainCount = placementScope && this.placingPresentation && placementScope.lifetime === this.lifetime
+      && placementScope.signal === this.presentationTransition?.cancellation.signal && !placementScope.signal.aborted ? placementScope.mainCount : undefined;
+    const mainCount = placementMainCount ?? (signature === undefined ? undefined : editorLayoutGroupCount(JSON.parse(signature)));
     // A unique unchanged empty foreign part may refresh its wrapper; main empty groups and lifecycle changes stay unowned.
     const emptyOutsideBefore = mainCount === undefined ? [] : previous.filter(entry => entry.column > mainCount && !entry.group.tabs.length);
     const emptyOutsideAfter = mainCount === undefined ? [] : current.filter(group => group.viewColumn > mainCount && !group.tabs.length);

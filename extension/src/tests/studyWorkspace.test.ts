@@ -559,7 +559,16 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       const group = { viewColumn: groups.length + 1, tabs: [chatTab], activeTab: chatTab };
       separateEditorPart = { group, layout: { orientation: 1, groups: [{ size: 743 }] }, focused: false };
       groups.push(group); changedGroups({ opened: [group], closed: [], changed: [] });
-      return { tab: chatTab, layout: () => structuredClone(separateEditorPart?.layout), focused: () => separateEditorPart?.focused, focus() { separateEditorPart!.focused = true; activeTextEditorChanged(undefined); } };
+      return { tab: chatTab, layout: () => structuredClone(separateEditorPart?.layout), focused: () => separateEditorPart?.focused, focus() { separateEditorPart!.focused = true; activeTextEditorChanged(undefined); },
+        /** Refreshes only the foreign wrapper when presentation tests create a pane; lifecycle and movement remain distinct. @example chat.resync('wrapper') */
+        resync(change: 'wrapper' | 'opened' | 'unannounced' | 'move') {
+          const previous = separateEditorPart!.group, replacement = { ...previous, tabs: [...previous.tabs] };
+          // The unchanged empty chat part is not a new native group; explicit lifecycle events cannot inherit it.
+          if (change === 'move') replacement.viewColumn++;
+          groups[groups.indexOf(previous)] = replacement; separateEditorPart!.group = replacement;
+          changedGroups({ opened: change === 'opened' ? [replacement] : [], closed: change === 'opened' ? [previous] : [], changed: change === 'unannounced' ? [] : [replacement] });
+        },
+      };
     },
     reportSeparatePartLayout(layout: unknown) { separatePartLayoutReport = structuredClone(layout); },
     showTransientNativeSizes() { transientLayout = true; },
@@ -5484,6 +5493,56 @@ test('learner input after reading capture cancels placement without saving or re
     assert.equal(restorations, 0); assert.equal(harness.presentationPreferences.size, 0);
     assert.equal(harness.reader.presentationState().mode, 'study-workspace');
   } finally { release(); await harness.close(); }
+});
+
+for (const pane of ['application', 'context'] as const) test(`an unchanged empty chat wrapper during ${pane} replacement preserves all three presentation destinations`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.groups.at(-1)!.tabs = []; harness.groups.at(-1)!.activeTab = undefined;
+  try {
+    await harness.reader.open();
+    const source = harness.reader.inspect().sourceUri, progress = await (await harness.reader.learningStorage()).readProgress();
+    let refreshed = false;
+    harness.onNextPanel(pane === 'application' ? 'codebook.scopedBrowser' : 'codebook.studyContext', () => {
+      assert.equal(harness.reader['layoutReceipt'], undefined); chat.resync('wrapper'); refreshed = true;
+    });
+    const state = harness.reader.presentationState();
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    // Assert
+    assert.equal(refreshed, true); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.reader.presentationState().mode, 'living-book');
+    assert.equal(harness.reader.presentationState().panes.appColumn, 2);
+    assert.equal(harness.reader.presentationState().panes.sourceColumn, 3);
+    assert.equal(harness.reader.presentationState().panes.contextColumn, 1);
+    assert.deepEqual(harness.groups.at(-1)!.tabs, []); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(draft.document.getText(), 'Original learner draft.\n'); assert.equal(harness.reader.inspect().sourceUri, source);
+    assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
+    assert.equal(harness.runtimes.length, 0); assert.equal(harness.counts().panels, 2);
+  } finally { await harness.close(); }
+});
+
+for (const change of ['opened', 'unannounced', 'move'] as const) test(`an empty chat ${change} during pane replacement cannot inherit presentation ownership`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const chat = harness.addSeparateEditorPart(), draft = harness.focusMutableDraft();
+  harness.groups.at(-1)!.tabs = []; harness.groups.at(-1)!.activeTab = undefined;
+  try {
+    await harness.reader.open();
+    const app = harness.reader['app'], explanation = harness.reader['contextPanel'];
+    harness.onNextPanel('codebook.scopedBrowser', () => chat.resync(change));
+    const state = harness.reader.presentationState();
+    // Act
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }),
+      { code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native editor groups changed during pane creation; the learner arrangement was preserved.' });
+    // Assert
+    assert.equal(harness.reader['app'], app); assert.equal(harness.reader['contextPanel'], explanation);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace'); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal(harness.presentationPreferences.size, 0); assert.equal(harness.counts().panels, 2);
+    assert.deepEqual(harness.groups.at(-1)!.tabs, []); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+    assert.equal(draft.document.getText(), 'Original learner draft.\n'); assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
 });
 
 for (const positionMs of [0, 100]) test(`pane replacement transfers both live history and replay leases without changing the confirmed ${positionMs === 0 ? 'missing-frame' : 'captured-frame'} position`, async () => {

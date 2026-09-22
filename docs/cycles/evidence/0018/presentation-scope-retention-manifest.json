@@ -1,0 +1,844 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-22T17:09:45.645837+00:00",
+  "scope": "Cycle 0018 logging-only native group trace and bounded measured-scope repair checks; no new installed-product PASS",
+  "baseline": "00658b7621358f12f3aff088d233be4f994f6f1e; new repair sources identified by the final 303-input check manifest",
+  "checks": {
+    "experiments-cycle-0001": 62,
+    "experiments-cycle-0004": 45,
+    "experiments-cycle-0010": 39,
+    "extension": 736,
+    "package": 96
+  },
+  "availability": "Private local artifacts; no credentials or runtime payloads embedded. Preserve artifacts before moving checkout.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/after-cursor-unchanged-verification.json",
+      "bytes": 19284,
+      "sha256": "c83b718605b37d87eee76becea80236aad5693d6f9338ff7132a556255096ab5",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/candidate.json",
+      "bytes": 33227,
+      "sha256": "7e4cadf8caf21a2854a35da7c63b914042b98abbbc3a90fbf471b414e0c8d4eb",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/check-capture-paths.mjs",
+      "bytes": 1158,
+      "sha256": "2f8b68b914c8e1e5776824c209ce497b29073106b83b408d81c07097b2ade3a2",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/checked-process.mjs",
+      "bytes": 1175,
+      "sha256": "04f09fc530296c557cd2790d3d48f73b4182503e04ab4b3f3508cceceb91aa55",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/close-partial.mjs",
+      "bytes": 1663,
+      "sha256": "3787852303f626e514ca6769dd221787163174b648502238787661294b99d2dd",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/codebook-cycle0018-v23.vsix",
+      "bytes": 606166,
+      "sha256": "04426722aa4c2ccbd6bd6f1cf0f4ee713259437c7bfda962f142643a6b356044",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/connection-location.json",
+      "bytes": 186,
+      "sha256": "1a8cb6976f30d2063af1e5837663b0ff0498baf278e46bf90827df784234bae5",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/group-trace.jsonl",
+      "bytes": 451158,
+      "sha256": "ac155c19f8f3ce009ca42925c0773de1b460b09fd076b8a4adcf76cbdaaa95c1",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-before-close.png",
+      "bytes": 359442,
+      "sha256": "0b1bad4d3f1d48d8081c1b2dc1ef2fb52df253ac000c6fd69560731649c70055",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "b61e00d2164e988e375c5549e6ddc464c484ebe03c00dd6ab89d59ed4180b4b6",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-cdp-readiness.json",
+      "bytes": 1473,
+      "sha256": "c953b43e168d7fb6ee5ffe66c3cabb9f7ed3954e1f532452fb810f432522e916",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-entry-receipt.json",
+      "bytes": 180925,
+      "sha256": "e8bf2dd1d9cb2dcb0009a2f60d47fbca03e0d6878fb7ade60ed764581d2f81d8",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "89ca9daf9cee5087fd995990b5d97e68fcda4980eadcf6a814298f4d294a88e8",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-failure-observation.json",
+      "bytes": 68822,
+      "sha256": "aa53917d01bc3c6c070feb8272d9e73906f9a883d4d958927d90193741b43f44",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-failure.png",
+      "bytes": 153281,
+      "sha256": "9643c92aba75509d7e8d0806486f35f239c176c57bbc6b1289d6ac8f4bd16e12",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-frame-extraction.json",
+      "bytes": 1171,
+      "sha256": "cfe37da14d94f95b12d345119143b2101fa75e713c699a3baa45badae3f6ac2b",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-frame-inspection.json",
+      "bytes": 1174,
+      "sha256": "c0b8cd5927ce0b5543e01db1b267c9dd900fb2e6f428ce00a3b98c612ba93d49",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-frames-000.png",
+      "bytes": 291397,
+      "sha256": "d9208003fbf123fc28ce067cfcae3c76f2deec1570f41ea4e9e123ddb1f4d1ab",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-frames-012.png",
+      "bytes": 276099,
+      "sha256": "43efe34944284752e3013e41c6ca5b2052b17c747889aebec68384d14656fecc",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-launch.json",
+      "bytes": 1508,
+      "sha256": "861003eded0fb68d8c6edcb9eee89dcf92249527d49d53c56bf39f5e72a7fa7c",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-native-admission.json",
+      "bytes": 5298,
+      "sha256": "ce0099d71f285b6d9535a6e5cfc62da348718c0f02e3ea46b94ebf710fa809fb",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-native.webm",
+      "bytes": 3010673,
+      "sha256": "a6fc57d559602b55716855d24094b10214689beb49fa7e81271e3ccec661f120",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-ready-replay.png",
+      "bytes": 154357,
+      "sha256": "4354336b7597f9875c91b10b8121056f8d9bb51969d9bc27ce10f8264bfcf96c",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-roundtrip-receipt.json",
+      "bytes": 231493,
+      "sha256": "4886dd27193a256c718f898cf90bea17267e557580ecd709be97b7ec12cd8358",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-saved-wiki.png",
+      "bytes": 418762,
+      "sha256": "8af8c0ab00a83f17fa85a3b2a5f286ce81dde07b299018e434f839e78efc65a7",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-shutdown.json",
+      "bytes": 448,
+      "sha256": "14fdd2d520388192d5506a98d3fdba2ccb0b01f294f7e422ad62c0e0c01e5d74",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-study-workspace-observation-before.png",
+      "bytes": 414434,
+      "sha256": "3a88cebf2b5b96f0b11adcfad0bdc6539b9b11b53679a7e4b2bf1d0d5948e5e9",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-study-workspace-observation-return.png",
+      "bytes": 399474,
+      "sha256": "3dafe834688a1a2d72895c0fe5fde23e67005300ae726eb40eae3f7158b83d6d",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-study-workspace-observation-study.png",
+      "bytes": 386792,
+      "sha256": "ca5e16304839893cc69a6e175e0f1bda9c3ce3df55f6403d7a28eae4d15cb0db",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-study-workspace-recording-before.png",
+      "bytes": 398135,
+      "sha256": "9b2a82326f0a83aa6f99c154c9a6a41fead8dbc403f939be619388e0a5b0876e",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-study-workspace-recording-return.png",
+      "bytes": 385898,
+      "sha256": "b86d65d81a8c8a4029ea9a3642e48dc7ed6778afcb1f8ba6d9467984f6990695",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-study-workspace-recording-study.png",
+      "bytes": 338866,
+      "sha256": "ef56f27ca541b41e322a3328e659659b28ea0754f6dbb8a4b57ef02ac77adda5",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-ui-close.json",
+      "bytes": 4006,
+      "sha256": "d8f44462fd1b014e9e4fcea721f3cd3388c0af7a34ace11df97b18fdcab8e00b",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/initial-ui-start.json",
+      "bytes": 6050,
+      "sha256": "79fe19a1df06c6e1a5800205c72cf8c3c7b45d56e3b78bc994d6e83d6dfd66a6",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/installation.json",
+      "bytes": 7127,
+      "sha256": "a7b6e19d556f0374e570b8416d4d0e6716f0c694508b1f03b7ec5da76cc6bbbf",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-full/profile-preparation.json",
+      "bytes": 23522,
+      "sha256": "86be72fe769e39728c04b8a23af2105500050d57c99331dc9b66be81699bdcc4",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-initial-launch-output.log",
+      "bytes": 1396,
+      "sha256": "0d1e3da6df78e9000208934f1e125357dee4c82e41074243c52b799df4fc071f",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-orchestration-result.json",
+      "bytes": 4853,
+      "sha256": "c552f2088da0ed0a39812b32fd0c721654915f14d6f203493e23dd70c525f8bd",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-scope-negative/installation.json",
+      "bytes": 7122,
+      "sha256": "705cb201f3b481f24cee0ac26c50ca37a41988b2d2ecb9a40c3633032e0a9ef0",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-scope-negative/profile-preparation.json",
+      "bytes": 23640,
+      "sha256": "59a5c86209290ea3978bed704f74cf9796959e64dcf6734eb15e75d8fc5b7ca2",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-scope-negative/schedule.json",
+      "bytes": 1591,
+      "sha256": "6ada0e87bcb26be30aecdb8960167cebe644a5234a7a19897d6b8bef01feff37",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-step-01-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "9fa2377c9659377be157e9d12ec50a673c88eba9e8f3f733e9ac4b10cd0b6458",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-step-02-bootstrap.mjs.log",
+      "bytes": 2563,
+      "sha256": "b60722849d277c58b449f4162353ecd749258079e5cf36031daa623c69ef8986",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-step-03-full-entry.mjs.log",
+      "bytes": 1052,
+      "sha256": "de9755af461e3a2017cb80f6498f501d23abcff60cd6b7cc3fd53dd0a1402450",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-step-04-full-roundtrip.mjs.log",
+      "bytes": 626,
+      "sha256": "9067ac4a92aa5ffd708dc827178611d18f5f9e8ba5cb9e0c9069f377304959cd",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-step-05-observe-cursor-failure.mjs.log",
+      "bytes": 1493,
+      "sha256": "74002aa8633a6479f5246329be200c4650d1cda78f107b3f4d2b7e50741cb058",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-step-06-ui-phase.mjs.log",
+      "bytes": 69,
+      "sha256": "4e659e8361b9cf57045a141ec1dc58d0103db761c74c1b6ccf121c853b0a5987",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-step-07-cleanup-owned-profile.py.log",
+      "bytes": 389,
+      "sha256": "d1db18836fe8fb868afe969bb580171b76e2a78891b4877199ad5596fe20dd2b",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-step-08-extract-video.py.log",
+      "bytes": 176,
+      "sha256": "50414bf304ea10206544df40998199d90de4cb03b1446988d6a083ba603a01d4",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/cursor-step-09-verify-diagnostic.mjs.log",
+      "bytes": 305,
+      "sha256": "72c43a57b10183b84a28f541f815c85c4e966b7d5eb15d9487676a64426b4643",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/diagnostic-result.json",
+      "bytes": 3013,
+      "sha256": "6be49776aee36f0339a77969f3b6213c7108e11853c673123c6a5beb2045f276",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/extract-video.py",
+      "bytes": 1209,
+      "sha256": "cacbe631de1abddb526587d40b07e1d283a4a7cf4a119b2aec608c9b4858e362",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/focus-timing-pairs.mjs",
+      "bytes": 2148,
+      "sha256": "f687c54e23bc89c61756431334831db4e321020ec39a37ae076900197c5285ea",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/fourth-group.mjs",
+      "bytes": 4014,
+      "sha256": "f56cbe2039fe6b15ad5a699d57aa68a550e8a5dfb931a6a5b0d3120103a3fe6f",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/harness-controls.mjs",
+      "bytes": 3395,
+      "sha256": "d0d4e7793bc4f180e6c26134848b7e378ada02c62870c985b8f74c957f955d65",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/install-cursor-full-execution.json",
+      "bytes": 295,
+      "sha256": "2a4595b7ace7bcdd9f379f25367885cc14ba69930a39b327c53c98e1e56a8b49",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/install-cursor-full.log",
+      "bytes": 246,
+      "sha256": "f8ea7cce929184180d3d26c17efe725a7c4b0af2cebc44bf5f8ddb76cde39ce2",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/install-cursor-negative-execution.json",
+      "bytes": 305,
+      "sha256": "4b730ff397f5825c4b39cd2e1de64f89f5fcbd17d641e7c7467e0c2f0971cdff",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/install-cursor-negative.log",
+      "bytes": 243,
+      "sha256": "c74fecf6b17c6071709f31f05cbeca0835656ccc8a5b4a314bbc5f035940a0d9",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/install-vscode-full-execution.json",
+      "bytes": 295,
+      "sha256": "5e9b92f07953bea74500f4a229ac03cbedd09f47c7745855e0a90f1886e0c8ee",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/install-vscode-full.log",
+      "bytes": 246,
+      "sha256": "f62e7c22ca039df8929a8df9044e0b13aad7b0f661c76759a17fc7c0fa0f44da",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/instrument.py",
+      "bytes": 4358,
+      "sha256": "a8db821c9eabe8367fc2a577491b00f876b2aa9c015ea29cdd9b7c21aa45e359",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/instrumentation.json",
+      "bytes": 816,
+      "sha256": "f3739a9293a239a9c482292bf07195b8dc73e6606074610684df468ad243eb90",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/native-retention.mjs",
+      "bytes": 5970,
+      "sha256": "9aa2dc9518732a252c0ed942f505ad7f5db70be0b489dc9e4b68b1f3138df1f4",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/observe-cursor-failure.mjs",
+      "bytes": 2419,
+      "sha256": "0cb10db098cd3406e6199f42ec9ea52ddf76ede1b8680bb2ab436ca713ef4663",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/original-installed-extension.js",
+      "bytes": 2983011,
+      "sha256": "b02631518fc9444f5bb33afbe7acb15b295b7a11d90f4c6047963919aaa38ed2",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/placement-pairs.mjs",
+      "bytes": 2972,
+      "sha256": "0f3b76574a64dfabe12f189049e1768ddd079fbaf43bd918aeac9322b21495e5",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/prelaunch-unchanged-verification.json",
+      "bytes": 19284,
+      "sha256": "82f173ec9551fdf69fb3594ba97d5d2a22cff0e32e73509693d21f0b0291884c",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/prepare-full-execution.json",
+      "bytes": 280,
+      "sha256": "6a47a063d6405f8fe1654ae7ac094c22a926515fbf4ef3fff5e4146d568f74b3",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/prepare-full.log",
+      "bytes": 253,
+      "sha256": "5325c79b900ef80c31f3a00ab1ef9502168c603d4710f120e3b7c056f95fa014",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/prepare-negative-execution.json",
+      "bytes": 286,
+      "sha256": "66d6e6b746fbeb1fa5b06c46be1e3f63fd5f00b97ed62f8e963f9ead26e40df0",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/prepare-negative.log",
+      "bytes": 141,
+      "sha256": "2678dda6731c731e6bdb056e1a27f2d70b7e0a4181aac2c883763733877d151a",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/prepare-profiles.py",
+      "bytes": 1600,
+      "sha256": "97d11206e45703442abb09fe2ead2ffe298f8d3e0d1b38e7c56e9f1a1339f29d",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/prepare-scope-negative.py",
+      "bytes": 2988,
+      "sha256": "917ac89e5dd42f8d903431e70d2a0c5bf958b8e5986d8f854145caa611b76f19",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/rapid-mode-control.mjs",
+      "bytes": 2938,
+      "sha256": "814965f00c4e369d8830a3d6656ea4cbf3ec6218a21e6549b58f58ea754b90a0",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/run-host.mjs",
+      "bytes": 4656,
+      "sha256": "f6ef281d3f7b4d658804bba51abfb8795b2209ad49b20332144542bbd277bc0e",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/run-negative.mjs",
+      "bytes": 3431,
+      "sha256": "cb5767385fc8bd5d4b7a66d95d4b18f15f8f7c3eccf1d2078d5fbce80c63c7ab",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/schedule.json",
+      "bytes": 7340,
+      "sha256": "9d20f7ec0e042662b4684faaf5dacdae2b85ad7b72457ad3bc9eef1b3c07b58d",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/scope-negative-control.mjs",
+      "bytes": 4293,
+      "sha256": "8d584665c7b48153cce4d228f5c65e3c9722c72570607b04df2e11129f9af607",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/scope-negative-prepare.mjs",
+      "bytes": 2017,
+      "sha256": "dffdd047b4a35f113dbac850d0d81eba196a595b8924ce38260b538a519261f8",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/scope-negative-ui-visible.mjs",
+      "bytes": 3218,
+      "sha256": "d7be35b841aafe40f3a672039bae5d0a9798341a4299d2ff108f7c37f3a80fe0",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/ui-phase.mjs",
+      "bytes": 1420,
+      "sha256": "7c341ef74b082785325bc3ac290ec1b9991af4b22fb62fc944034f1df7edd864",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/ui-recipes.json",
+      "bytes": 18145,
+      "sha256": "753c26cf36f7dbf33d90e7257d30546a0343595902abe77bbee8ee2652e1644c",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/verify-diagnostic.mjs",
+      "bytes": 2436,
+      "sha256": "19facffcee1ba4a149742552243516cd35fd080a212b0ef0c80f5e72a20b6cd5",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/verify-unchanged.mjs",
+      "bytes": 2077,
+      "sha256": "03bd3282063a37062d8e0196d3deee3c25cbef8c93e73bb8e7148eee19ccd9d7",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/vscode-full/installation.json",
+      "bytes": 7158,
+      "sha256": "b24921cdff9f6fc98fbe0c85cdf03ffdfc8fb1003636c2c78abccc8cf1579177",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/vscode-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "a240ed5ac734c70b97dd8b2331f90c174678b60ff6b361029bc6b66809d884a2",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/vscode-full/profile-preparation.json",
+      "bytes": 43935,
+      "sha256": "8ccb1bdc13e6f8959eeb5a6d7e8f295487a7dbd19f8f5dbf99d2dc0b1814a28f",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/wait-for-native-admission.mjs",
+      "bytes": 3164,
+      "sha256": "3f96126288680f0067d46a3cdd9d6324895e2ada22701ab422b1a66b658f61d8",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-a/wait-for-workbench.mjs",
+      "bytes": 1722,
+      "sha256": "518c13e7a5d9b7aac97c26f5ef79385e2dd45d2b1e138f628d8edd04b7fb4400",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/build-cycle-0010.json",
+      "bytes": 227,
+      "sha256": "916ace9c6c4f4148ad97f26f046a2ed625e4f63c1e27a3c39719208205fb6deb",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/build-cycle-0010.log",
+      "bytes": 112,
+      "sha256": "4793d8aa8392914d11ad432b5a6f10a72fc910ee7cf9e90515c0b43236f6618f",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/build-extension.json",
+      "bytes": 213,
+      "sha256": "194b767609065b7ca9e0947ebb3aa7c06ce3cd3a3461ba3891593e688eb59683",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/build-extension.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/inputs.json",
+      "bytes": 35254,
+      "sha256": "8da342b548da662eb65a1daa54a1e3b281cffa8a5b98e656d47d6758e214afb8",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/result.json",
+      "bytes": 7900,
+      "sha256": "8f31895d386445a395aaa88e21982998f172a8f261d7bdfc75f5a2075837b907",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/tests-experiments-cycle-0001.json",
+      "bytes": 1135,
+      "sha256": "48fa296f8d7fd53fac4a16c9982ea304da1fbd26818096aa4d4aa18ba60d6428",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/tests-experiments-cycle-0001.log",
+      "bytes": 6638,
+      "sha256": "59d0c3cc349a68cb7d3bc43284e712c5a05bdd5a8ad37907ffd18547863479be",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/tests-experiments-cycle-0004.json",
+      "bytes": 921,
+      "sha256": "0a6e167ac8a3f0ae74b081e62470e2c32dbeb5953183bb86dfed0cca9122817e",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/tests-experiments-cycle-0004.log",
+      "bytes": 4853,
+      "sha256": "443090e61ed5eeda6d7c6a3c1b8c2c537f5ab48f20f5b9246a6ac5d2ca2451f0",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/tests-experiments-cycle-0010.json",
+      "bytes": 653,
+      "sha256": "91e2c693b0bab1647ddc8bc1e04868fb0d3aeb7fd49aa1e2949e3ea10c914c60",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/tests-experiments-cycle-0010.log",
+      "bytes": 4247,
+      "sha256": "4d25c90d1cba45a6206e3a4cf6a655bbd9d70ca98c22d216f51aecc11d11b70f",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/tests-extension.json",
+      "bytes": 2331,
+      "sha256": "a92338a195d7a122207f796b0819a988b50ecc559896a1fc95c55c92b8b1c166",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/tests-extension.log",
+      "bytes": 85127,
+      "sha256": "bdd752e348a48624854d9ae045e51ac9eaa32a79e9223daf39a4d4235a708326",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/tests-package.json",
+      "bytes": 524,
+      "sha256": "7e1f08dbb37de06a77be9d4b3e28c058a1e79c94276abafa9f7fb658d4e5f1b2",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/tests-package.log",
+      "bytes": 9998,
+      "sha256": "a67bec3bf90d78933fbf0732824e7e4d10d32b988ff1bee66485de02c0f07eeb",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/typecheck-experiments-cycle-0001.json",
+      "bytes": 248,
+      "sha256": "f01d7cc9ec8030908c7e8baac6b62b0e1f4c3cc25379e59231493664c9be816a",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/typecheck-experiments-cycle-0001.log",
+      "bytes": 73,
+      "sha256": "521187cac8e8b50d5fae1967add529af98c10c7cde123245fbe9708094c0c607",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/typecheck-experiments-cycle-0004.json",
+      "bytes": 248,
+      "sha256": "73aaeebf3ba2198f5c33d208790456568873c741d149ebd283625b7a644eac76",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/typecheck-experiments-cycle-0004.log",
+      "bytes": 73,
+      "sha256": "521187cac8e8b50d5fae1967add529af98c10c7cde123245fbe9708094c0c607",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/typecheck-experiments-cycle-0010.json",
+      "bytes": 248,
+      "sha256": "cb8aa1ceca6d51ce16612a6c2c7c2feb7b762fe8ff3f608f98bec77b69555878",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/typecheck-experiments-cycle-0010.log",
+      "bytes": 32,
+      "sha256": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/typecheck-extension.json",
+      "bytes": 221,
+      "sha256": "d103a65e6cdac53276023b50135db38df7d2513296006abad2f7c71b10469381",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/final-checks/typecheck-extension.log",
+      "bytes": 15,
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/focused-build.json",
+      "bytes": 178,
+      "sha256": "7b69dbe5fd57dead169e21729c694a44737bdf38a8f4cf4797e041d8591092aa",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/focused-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/focused.json",
+      "bytes": 357,
+      "sha256": "5eddd55f87053d68a55070d81223ae9e008745ed336c28f861041b79e67962ae",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/focused.log",
+      "bytes": 1997,
+      "sha256": "29e4c4ee9451c6e369c10290fc60fc33428d7fcc5b35289a27847f4f9eac9a88",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/green-build.json",
+      "bytes": 178,
+      "sha256": "d9f11c6ebcd64c270d95fdff408063ba00478083daf12b1d6d083c769674c2b9",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/green-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/green.json",
+      "bytes": 357,
+      "sha256": "f76442c89b20d05c193b796a5594bf22eb3d40cd7a3f0af4b6d6abd21df5a4eb",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/green.log",
+      "bytes": 3790,
+      "sha256": "68999fe486fc75b2935c9117be9b73b4912ea8452dfb7549217af6061f879d87",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/red-build.json",
+      "bytes": 178,
+      "sha256": "dc95a0bead216fb3c61a1d510c088d8b124ad57d6bfbd10242de5e180f97f334",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/red-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/red.json",
+      "bytes": 266,
+      "sha256": "630f5f803467d8298547235084dce849e00a32f70f71828c9d42e68f4560fb4b",
+      "availability": "private-local-present"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-scope-controls/red.log",
+      "bytes": 2509,
+      "sha256": "69bd16450ca9915e2948a67b2ec76da6a997be46ec36df2e7b9e3511819b5468",
+      "availability": "private-local-present"
+    }
+  ]
+}
