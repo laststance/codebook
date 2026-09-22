@@ -2,7 +2,7 @@
 
 Updated: 2026-09-22\
 Product stage: configured core execution, offline replay and restart demonstrated separately in both editors; complete cross-host and installed usefulness unverified\
-Active cycle: [0018 — Native editor scope on cold study entry](docs/cycles/0018-editor-group-scope.md) — validating\
+Active cycle: [0018 — Native editor scope on cold study entry](docs/cycles/0018-editor-group-scope.md) — implementing\
 Last cycle: [0017 — Packaged real-repository study](docs/cycles/0017-packaged-repository-study.md) — falsified; merged and privately packaged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#23](https://github.com/laststance/codebook/issues/23) — open\
@@ -10,7 +10,7 @@ Last cycle issue: [#21](https://github.com/laststance/codebook/issues/21) — cl
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 5
 
-Current execution: the [moving-webview focus repair](docs/cycles/evidence/0018/placement-focus-investigation.md) now also preserves learner selection and accepts only verified logical-group wrapper replacement. Source `d58d04a` passes 782 product/shared and 96 package checks, with zero failures/skips/cancellations; the clean-tree wrapper separately fails on four untracked evidence documents. Preserve that failure and verify exact selected-input equivalence after committing those records before packaging. The two-file CodeRabbit follow-up completes with zero findings in 231.285 s. [V13](docs/cycles/evidence/0018/installed-v13-validation.md) passes both VS Code phases; [v14](docs/cycles/evidence/0018/installed-v14-validation.md) passes its initial phase only. Valid review findings stop both schedules before Cursor runs. Neither partial candidate establishes both-host completion. T3 source checks are complete; new frozen packaging, the complete v15 native schedule and T5 delivery remain pending. G12 remains specified only; final reviewers are 0/10, not started.
+Current execution: [v15 native validation and kept-tab investigation](docs/cycles/evidence/0018/installed-v15-validation.md) retain another VS Code transfer failure after all twelve initial/restarted Returns and exact replay restoration. A separate logging-only copy reproduces an unnecessary focus handoff between two already kept panels; Application refocuses 4 ms after Context. The new source repair skips only verified non-preview retention, carries an exact placed-source focus receipt and protects late learner selection. Both red controls and eight focused green controls are retained. Full new-source checks, CodeRabbit coverage, a fresh frozen VSIX and complete both-host native proof remain pending. T3 is implementing, T4 failed and T5 incomplete. All owned windows are closed with profiles/drafts preserved and zero owned PIDs/descriptors. G12 remains specified only; final reviewers remain 0/10, not started.
 
 ## Verified facts
 
@@ -119,6 +119,8 @@ A fixture proves mechanisms, not the integrated final product.
 | G12 | specified; not implemented or verified | [D023 and the required plan](docs/plans/bundled-codebook-skill.md) define one bundled thin skill, VS Code `contributes.chatSkills`, safe Cursor user-directory setup and correct MCP onboarding. Common body/version, ownership/lifecycle handling, both actual `/codebook` chats, loaded identity, unavailable states, restart and protection still need implementation and ordinary-install evidence. Existing external-client MCP tests do not establish this capability. |
 
 ## Exact resume action
+
+Immediate next action (2026-09-22): complete source and CodeRabbit checks for the kept-tab/source-focus repair, freeze a new clean VSIX, then run the complete serial VS Code / Cursor negative / Cursor initial-and-restart schedule. V15 failure is retained; no candidate combines partial results from different source cuts. Finish Cycle 0018 delivery before the required G12 skill/onboarding increment.
 
 D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answers remain authoritative: approved B, compact understand, all-citation Review needed with retained history, a narrow single article column, exact reading return, complete-citation progress identity and short publication writer ownership. Do not re-ask these choices. The app goal remains active.
 

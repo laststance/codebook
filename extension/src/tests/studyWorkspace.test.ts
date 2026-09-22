@@ -105,6 +105,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let deferredPanelFocus: { kind: string; remaining: number } | undefined;
   let deferPrimaryFocusEcho = false, pendingPrimaryFocusEcho: typeof activeTabGroup | undefined;
   let deferMovedFocusEcho = false, pendingMovedFocusEcho: typeof activeTabGroup | undefined;
+  let deferKeptFocusEcho = false, pendingKeptFocusEcho: typeof activeTabGroup | undefined;
   let deferredMovedPanelPlacement: string | undefined, asynchronousLayoutReads = false;
   const postedMessages: StudyViewMessage[] = [];
   let heldPresentationMessage: { mode?: 'living-book'; wait: Promise<void>; entered(): void } | undefined;
@@ -181,6 +182,18 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         }
         if (!preserveFocus) {
           if (separateEditorPart) separateEditorPart.focused = false;
+          // Refocusing an already kept Application can echo after the following Context acknowledgement.
+          if (pendingKeptFocusEcho && kind === 'codebook.studyContext') {
+            const previous = pendingKeptFocusEcho; pendingKeptFocusEcho = undefined;
+            setImmediate(() => {
+              activeTabGroup = group; for (const listener of viewChanged) listener();
+              setImmediate(() => { activeTabGroup = previous; for (const listener of viewChanged) listener(); });
+            });
+            return;
+          }
+          if (deferKeptFocusEcho && kind === 'codebook.scopedBrowser' && previousColumn === value.viewColumn && !nativeTab.isPreview) {
+            deferKeptFocusEcho = false; pendingKeptFocusEcho = group;
+          }
           // Native relocation can refocus the first moved webview after the second move has acknowledged focus.
           if (pendingMovedFocusEcho && kind === 'codebook.studyContext' && previousColumn !== value.viewColumn) {
             const previous = pendingMovedFocusEcho; pendingMovedFocusEcho = undefined;
@@ -357,6 +370,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     deferPanelFocus(kind: string, reveal: number) { deferredPanelFocus = { kind, remaining: reveal }; asynchronousLayoutReads = true; },
     deferPrimaryFocusEcho() { deferPrimaryFocusEcho = true; asynchronousLayoutReads = true; },
     deferMovedFocusEcho() { deferMovedFocusEcho = true; asynchronousLayoutReads = true; },
+    deferKeptFocusEcho() { deferKeptFocusEcho = true; asynchronousLayoutReads = true; },
     deferMovedPanelPlacement(kind: string) { deferredMovedPanelPlacement = kind; asynchronousLayoutReads = true; },
     focusedPanel: () => activeTabGroup.activeTab?.input instanceof TabInputWebview ? activeTabGroup.activeTab.input.viewType : undefined,
     movePanel(kind: string, column: number) { const panel = [...panels].find(panel => panel.kind === kind); assert.ok(panel); panel.reveal(column); },
@@ -4309,14 +4323,53 @@ test('mode transfer waits for moved-pane placement before treating the new grid 
   } finally { await harness.close(); }
 });
 
+test('Guided walkthrough returns to Study without an unnecessary kept-tab focus handoff', async () => {
+  // Arrange: native Keep Editor focus can echo even though both owned tabs are already retained.
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); let state = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
+    state = harness.reader.presentationState(); const source = harness.reader.inspect().sourceUri;
+    const focusedPanel = harness.focusedPanel(), draft = harness.addForeignDraft();
+    harness.deferKeptFocusEcho();
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'select' });
+    // Assert: the unchanged source, learner draft and initiating focus survive the confirmed mode change.
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.reader.inspect().sourceUri, source); assert.equal(harness.focusedPanel(), focusedPanel);
+    assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true); assert.equal(draft.isDirty, true);
+    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'study-workspace' });
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
+test('a learner source selection during final reading restoration survives without a later focus restore', async () => {
+  // Arrange: already kept tabs leave the verified source focused while its reading position settles.
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); const state = harness.reader.presentationState();
+    let changedSource: ReturnType<typeof harness.changeFocusedSourceSelection> | undefined;
+    harness.changeAfterNextReadingReveal(() => { changedSource = harness.changeFocusedSourceSelection(46); });
+    // Act
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' }), {
+      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native source selection changed while presentation panes moved; the learner selection was preserved.',
+    });
+    // Assert: neither the previous selection nor the prior explanation focus may replace the learner choice.
+    assert.ok(changedSource); assert.equal(changedSource.selections[0]?.active.line, 46);
+    assert.equal(harness.focusedPanel(), undefined); assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.runtimes.length, 0);
+  } finally { await harness.close(); }
+});
+
 test('switching presentation waits for restored application focus before confirming the new mode', async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
     await harness.reader.open(); await harness.reader.action('focus-app');
     const state = harness.reader.presentationState();
-    // Two Keep Editor requests precede the initiating application-focus restoration; moves retain source focus.
-    harness.deferPanelFocus('codebook.scopedBrowser', 3);
+    // Only the moved preview needs Keep Editor before initiating application focus is restored.
+    harness.deferPanelFocus('codebook.scopedBrowser', 2);
     // Act
     await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
     // Assert
@@ -4339,8 +4392,8 @@ test('a missing final application-focus receipt rejects once without retrying fo
     const app = harness.reader['app']; assert.ok(app);
     const reveal = app.reveal.bind(app); let focusRequests = 0, placedLayout: unknown;
     context.mock.method(app, 'reveal', (...args: Parameters<typeof reveal>) => {
-      // Keep both earlier owned-tab receipts; a missing final receipt must not trigger another retry.
-      if (!args[1] && ++focusRequests >= 3) { placedLayout ??= harness.editorLayout(); return; }
+      // Keep the moved preview's receipt; a missing final receipt must not trigger another retry.
+      if (!args[1] && ++focusRequests >= 2) { placedLayout ??= harness.editorLayout(); return; }
       reveal(...args);
     });
     const state = harness.reader.presentationState();
@@ -4349,7 +4402,7 @@ test('a missing final application-focus receipt rejects once without retrying fo
       code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Timed out waiting for restored presentation pane focus',
     });
     // Assert: an applied grid remains unconfirmed; failure cannot claim the new mode or rewrite learner evidence.
-    assert.equal(focusRequests, 3, 'Two Keep Editor receipts and one failed final restore must not trigger a second full focus wait');
+    assert.equal(focusRequests, 2, 'One necessary Keep Editor receipt and one failed final restore must not trigger a second full focus wait');
     assert.equal(harness.reader.presentationState().mode, 'study-workspace');
     assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().state, 'open');
     assert.equal(harness.reader.presentationState().reason, 'Error: Timed out waiting for restored presentation pane focus');
