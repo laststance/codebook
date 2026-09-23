@@ -2,7 +2,7 @@
 
 ## [0.2.2.0] - 2026-09-23
 
-Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. Ordinary installed candidate v31 completes the functional Cursor schedule but fails VS Code's first cold Study after Wiki opens. A source correction preserves native Wiki ownership when Application clears a covered background text-editor receipt; it passes 993 product/shared and 96 package checks and a zero-finding CodeRabbit supplement, while a new unchanged candidate's complete both-host validation and the stopped ship review gate remain pending. G12 and final editor-AI acceptance remain unimplemented/unstarted.
+Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. The same normally installed v32 candidate passes the complete frozen VS Code and Cursor development schedules, including v31's cold Study regression, with inspected video and protected original work. Source and exact-candidate CI pass 993 product/shared and 96 package checks; all 276 inputs and 31 unpacked CI entries match. The final CodeRabbit supplement has zero findings, while three reused delegated fixing passes retain non-convergence and the invoked ship review stop remains unresolved. Visible loading and broader UX remain open. G12 and final editor-AI acceptance remain unimplemented/unstarted; no PR/merge/publication is claimed.
 
 ### Fixed
 
