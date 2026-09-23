@@ -1,9 +1,9 @@
 # Cycle 0017 — Packaged real-repository study
 
 Type: experiment\
-Status: validating\
+Status: closed\
 Result: falsified\
-Delivery: committed; final delivery pending\
+Delivery: merged and privately packaged; new artifact not natively reexecuted\
 Goal version: 3\
 Tracking issue: https://github.com/laststance/codebook/issues/21\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -104,6 +104,7 @@ The [isolated Cursor investigation](evidence/0017/cursor-layout-investigation.md
 
 ## Handoff
 
-- Exact next action: complete the bounded evidence/documentation review, coderabbit-cli, cycle PR and merge/Issue #21 closure. Then select a compatibility cycle for native editor-group scope/reservation with focused red controls and both-host packaged restart. The original Cursor restart remains failed/unverified.
+- Delivery complete: [PR #22 and actual main-CI artifact verification](evidence/0017/delivery-20260921.md); Issue #21 closed at merge. The pre-PR review checkpoints above retain their historical scope and are superseded by this delivery record.
+- Exact next action: [Cycle 0018](0018-editor-group-scope.md) repairs native editor-group scope/reservation with focused red controls and both-host packaged restart. The original Cursor restart remains failed/unverified.
 - The isolated VS Code editor, MCP and owned runtimes are stopped, with the exact unsaved QA draft preserved in its profile backup. Cursor has completed its bounded live/replay/Wiki run and failed the restart sequence; its editor/MCP/runtime processes are now stopped with exact draft backup retained. Frozen Cycle 0016 review worktrees and private evidence remain untouched; Claude automatic retries remain disabled.
-- PRODUCT_GOAL.md and accepted design decisions are unchanged. Only this cycle is active.
+- This cycle preserves its goal-version-3 experiment contract. The subsequent explicit D022 acceptance refinement belongs to goal version 4; no successful final trial is inferred. Cycle 0018 is now the sole active cycle.

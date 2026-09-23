@@ -1,0 +1,502 @@
+{
+  "scope": "Cycle 0018 retained focus: separately hashed installed logging diagnostics and source regression controls; no final acceptance",
+  "updatedAt": "2026-09-22T02:14:02.737470+00:00",
+  "availability": "Private local artifacts. Preserve privately before moving or deleting the checkout. No installed profiles or credentials are public.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/before-restart.json",
+      "bytes": 56552,
+      "sha256": "d8d6694424215af2985bb3f0f3f17999be0f3d80b4e9201675c048eea8bc16fa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/connection-location.json",
+      "bytes": 177,
+      "sha256": "bed14b35d85886e59b805b696898af97b09a01387ea8bb8284cfd47e3508fa1f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/diagnostic-bundle.json",
+      "bytes": 605,
+      "sha256": "3bee11f4b5395d559689c6591bd3afd60055ed9277967beb6b5dfd9a0961b9d1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/diagnostic-frames.png",
+      "bytes": 896385,
+      "sha256": "d90336f7feef61397cdee02fc504fc8ec96b5a6a081e365a79c0136b85d31d72"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/focus-trace.json",
+      "bytes": 103364,
+      "sha256": "2745563174350c4899c52e86f70f6670165c97af896d1213d2fe3fdfff0aca09"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/frame-extraction.json",
+      "bytes": 122,
+      "sha256": "3aa4e3b7acb2c810a9dcea61dc6cd90ce2685754c73a90ddfb9e3befd4963f31"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/frame-inspection.json",
+      "bytes": 529,
+      "sha256": "a3aad08bd41fb0e96ac01162155ae46bdaeeeb86ec7c06050363280c14a4ed7f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/initial-bootstrap.json",
+      "bytes": 157817,
+      "sha256": "8178f70a164165a62f4f427d76f5dfd1da3744349df0a4f3331921814b80216f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/installation.json",
+      "bytes": 7102,
+      "sha256": "39f51348039d5ae83c4a1a7aa9b333b3ac4a299b504db342f5c921a6af6b98a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/profile-preparation.json",
+      "bytes": 46295,
+      "sha256": "da652f2ce3f05519214f7eff41533b0b7aa38109a71be274b9e62afbe9cf78b6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-before-close.png",
+      "bytes": 353408,
+      "sha256": "f0d5d1d29975d025bd02570d05ac3d9df452a6d4dfed5b8d3aa1b23819228e29"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-bootstrap.json",
+      "bytes": 157807,
+      "sha256": "7fbac3ce9b99525c01c360f0ab0b5cf895c6b5b67e47c9c737e47d146ea9ede8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-cold-wiki.png",
+      "bytes": 430584,
+      "sha256": "e28ea7fa61459edbe2d6fc06665d5afc02bd9b2a41044a6bdecd43bd355350ba"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-entry-failure.png",
+      "bytes": 159509,
+      "sha256": "84a1cf45da56fb17a87c885445f05396aa2f10dbaafa83325f0fccccc07fa545"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-entry-receipt.json",
+      "bytes": 73999,
+      "sha256": "19814f8cc1ef32e2f3932ee38eabd11f15b6b4ae2d0753a94f5c0ceca3a5c7d4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-exit.json",
+      "bytes": 61,
+      "sha256": "7946c7c46194a45e0498c7a8c16bea25d95a07a7dae56a0485c103cae48def9b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-launch.json",
+      "bytes": 1464,
+      "sha256": "05dd68596a4479104055de24b74ec7fd5d94fcee201df0d1894f9766a17953f4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-native.webm",
+      "bytes": 3601646,
+      "sha256": "9bea10ffc44eeae6f22927ad1ba4bfe209782c89433740450690293888eacb5d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-shutdown.json",
+      "bytes": 449,
+      "sha256": "162c54669703b9405b15b92e21922a0ef6569c461a37046e7d4feeff259d57ad"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-ui-close.json",
+      "bytes": 4292,
+      "sha256": "15c97df5517b811f93a642c232c89ca6a263048f016f8c4949a0810c8a06437a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-ui-start.json",
+      "bytes": 5395,
+      "sha256": "d9aa713a60999ae89442129a098213817e9bfd893064c7386cb5abd60cc36336"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/restart-video-probe.json",
+      "bytes": 216,
+      "sha256": "afb083a4c9dc7cfca3fecad59aa83e6754e048114cec8b5576c9401e4b9df4cf"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/schedule.json",
+      "bytes": 822,
+      "sha256": "822e0c86ce27c9e879c42565eae9c707179f892ad5047cebcb166437994323b4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-callers/source-copy-preservation.json",
+      "bytes": 113,
+      "sha256": "af6005727793e0e3764e31a4c5cdf6cb8a138873c3e909e82130576db8ff5bd1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/before-restart.json",
+      "bytes": 56552,
+      "sha256": "d8d6694424215af2985bb3f0f3f17999be0f3d80b4e9201675c048eea8bc16fa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/connection-location.json",
+      "bytes": 176,
+      "sha256": "bedc3a806ea5b18e782209ed9e882e11b1fa096d0309f693c44b3b6afb2ab5b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/diagnostic-bundle.json",
+      "bytes": 605,
+      "sha256": "7c2bdcb6af1753ee369e8d3eba5d132080ee9dc997e969a37ad81ff9976bbc64"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/diagnostic-frames.png",
+      "bytes": 704195,
+      "sha256": "badc5d3d08cfcd18e93453a8e2a6d9b2b6dc009c66f92dd7da1a6b418cfe43ea"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/focus-trace.json",
+      "bytes": 940340,
+      "sha256": "36107674410eceb1ab621eca833228fa9429dab10c4f26ce1ec93ab1ade69e63"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/frame-extraction.json",
+      "bytes": 122,
+      "sha256": "90312e0fbba7267dc31faeb24359c40acb0b98d09980aea47df538a49669b7f3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/frame-inspection.json",
+      "bytes": 529,
+      "sha256": "cd83dbb6933700ea00138e49b7c984e6481533b43a0c5fd90c3da8a0aa22d520"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/initial-bootstrap.json",
+      "bytes": 157817,
+      "sha256": "8178f70a164165a62f4f427d76f5dfd1da3744349df0a4f3331921814b80216f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/installation.json",
+      "bytes": 7096,
+      "sha256": "662e8ad33280dde9cade215a0a0cb75ac035b99651cc1f1e4d1193590565e1dc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/profile-preparation.json",
+      "bytes": 46319,
+      "sha256": "82a059c74a1dfd59e6128bc3982f3595cfbe4f17bc136d80e3f8fc05e9353ffc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-before-close.png",
+      "bytes": 340436,
+      "sha256": "930015c1efec2a13e42216ac69b5b40a133714275ac8667beea481f369df1632"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-bootstrap.json",
+      "bytes": 157807,
+      "sha256": "549b08fce96206f2ade7203b2d84e6c05b56f41912ab1991636d46c55e09eb46"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-cold-wiki.png",
+      "bytes": 430597,
+      "sha256": "117ab9e3d8b8ae6d1dbcde34741fbfe6a591b576be2e3be6bb0d4a4e3c1e948d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-entry-receipt.json",
+      "bytes": 189003,
+      "sha256": "44b46e210b906da6ed9e5ebcfe4472ded87e868f56702ab1b3eb5011eaa5b162"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-exit.json",
+      "bytes": 61,
+      "sha256": "7c43b44881423d11b464346bfe8793492e502d986ffb542fe2de51ae1d043c4d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-launch.json",
+      "bytes": 1459,
+      "sha256": "25dd62573c11eabb4cbb576feca302d672c989e797276842656a50ef6aac688b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-native.webm",
+      "bytes": 6283292,
+      "sha256": "9cea75e119d2fda3e87a6af8e7bb18a22fa3e381846b8fc910a9dcbbbdc578f2"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-ready-replay.png",
+      "bytes": 143109,
+      "sha256": "aabf092cb974a6b3fc78fdcaeb1a106078e562865f3724160a84f3f050035ccb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-saved-wiki.png",
+      "bytes": 404296,
+      "sha256": "37a1333f9f9bf09348de339113645b6f436f2fcf2decf178ab90f986b6d28db0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-shutdown.json",
+      "bytes": 449,
+      "sha256": "eb8334452849ad68c0d42781d75dbc2485be706282cef8005862e3c9943bed95"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-ui-close.json",
+      "bytes": 3961,
+      "sha256": "048bbb82a4f30b6a53622a623b6c7f2a80814dbd5d2c474592a78a9360c5e023"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-ui-start.json",
+      "bytes": 5393,
+      "sha256": "b3ac03e102a36cf699d602b9c61ef86da1ef584b69e28d94329124b502beb56b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/restart-video-probe.json",
+      "bytes": 216,
+      "sha256": "8d1935552c5698d4a84e2dd3d7dce2e76cfa8cb5fcfd58d8a5500ed40bdbacac"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/schedule.json",
+      "bytes": 837,
+      "sha256": "e7c86ca5b6d1ae5bded6515f9b6ebdbc6fd46d47c9eef3a0cb409def8e2e2715"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/source-copy-preservation.json",
+      "bytes": 113,
+      "sha256": "6bbcacd897993456e21ac974470ba1c6661cebb66051005e41e9803fa00749a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/timing-failure.png",
+      "bytes": 143053,
+      "sha256": "8c76361a2fcc9643ab7ac2243224222329b934a41c90db7aae0617879915c157"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-focus-timing/timing-pairs.json",
+      "bytes": 88715,
+      "sha256": "94f6ba5a926fc0def098d392852c8272d283ce5d04d8b69d8284b29867241f26"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/before-restart.json",
+      "bytes": 56552,
+      "sha256": "d8d6694424215af2985bb3f0f3f17999be0f3d80b4e9201675c048eea8bc16fa"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/connection-location.json",
+      "bytes": 184,
+      "sha256": "e96cd0144d2fd66a5cfa54e9f0bbbae58823bcccb30702b8638e4a4224fdf300"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/diagnostic-bundle.json",
+      "bytes": 605,
+      "sha256": "99cc68be5bc3448b75110da7612e2b648b54fe4592b4eada827dbc8f6ccf8788"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/diagnostic-frames.png",
+      "bytes": 751479,
+      "sha256": "05a633b68b2cdd95fbe62131bcbd78480a8287724570c28e8aeb1cd4f9614a70"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/diagnostic-result.json",
+      "bytes": 679,
+      "sha256": "e655f13e3937dbe8819eac5a1ed5ac0d04012328a1f4b2e65b90674e1a3cc5e8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/focus-trace.json",
+      "bytes": 190139,
+      "sha256": "22ba467152812348e9d85d7193a1f7a88d0f86c87c8886584683e7e21a849aca"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/frame-extraction.json",
+      "bytes": 122,
+      "sha256": "479b3f08cb8f22b5ccfcb67e71440f4ca05b6cb3eaf28e1ecd6cdd2b26421693"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/frame-inspection.json",
+      "bytes": 447,
+      "sha256": "01d001e856373ecdfdf7aa038cc7b72af93714dddbe10b676ccc45cbf0d6bdce"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/initial-bootstrap.json",
+      "bytes": 157817,
+      "sha256": "8178f70a164165a62f4f427d76f5dfd1da3744349df0a4f3331921814b80216f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/installation.json",
+      "bytes": 7152,
+      "sha256": "490e0b0b2f18f7a72c20c2cca7d80bc62311b0e48e84f949e4863da88580bd83"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/profile-preparation.json",
+      "bytes": 46364,
+      "sha256": "fffa7ab66930c8c6b50687966871d1f779b7df006ad088e6e39dad4fedae053f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-before-close.png",
+      "bytes": 338203,
+      "sha256": "526a907f07f92d8e61888228cf2b312b1556b8771c8ee0998606e81cf2f5978e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-bootstrap.json",
+      "bytes": 157816,
+      "sha256": "c2190b32bf7fa9d82b6cb17e1a80a1cd4e279936a43e6384e377c45caaa4938f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-cold-wiki.png",
+      "bytes": 430595,
+      "sha256": "19f9f2052e1d0e0e4fc3bcd540a95c39cfbd30e83a1e89f07ad03e8ddb5a5be1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-entry-receipt.json",
+      "bytes": 189062,
+      "sha256": "a469ea177cb9dca88d44bc9c7f3eece199f8ca698a4f342789e5bc2cf5f48242"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-exit.json",
+      "bytes": 61,
+      "sha256": "ca1df13b26ee8b12bae56eead735f771c2d4f09020e8f4cc6d1d06713c4608f3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-launch.json",
+      "bytes": 1499,
+      "sha256": "e5bb7b4316e778073e186ed47dcc1a2f459eab143eab9f7ea9dd2ee6c1903e8d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-native.webm",
+      "bytes": 4297284,
+      "sha256": "04057b0e5c5aa102336425489715b1cf6be274c2f653cc279efc63ca2d60457c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-ready-replay.png",
+      "bytes": 143109,
+      "sha256": "aabf092cb974a6b3fc78fdcaeb1a106078e562865f3724160a84f3f050035ccb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-saved-wiki.png",
+      "bytes": 404296,
+      "sha256": "37a1333f9f9bf09348de339113645b6f436f2fcf2decf178ab90f986b6d28db0"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-shutdown.json",
+      "bytes": 449,
+      "sha256": "d3453fbf949033eabba787689110206082d95207b89969cc6887ea24e67d7181"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-ui-close.json",
+      "bytes": 4288,
+      "sha256": "7154229f6bd14f97e71af8a071c9ccd4471dcf6e84d28430461c8a37917b19fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-ui-start.json",
+      "bytes": 5409,
+      "sha256": "2503bc178567a415d1d376addbaceebd721289fc323637b6860bc46c55cc6261"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/restart-video-probe.json",
+      "bytes": 216,
+      "sha256": "0f95e3d80498581de17490ab7b06fe5c8b7cbda01ef128bd0a2c2aa8c76fd059"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/schedule.json",
+      "bytes": 885,
+      "sha256": "e3a14cf45fff12bfe9466ed64557522173252996edfbf95c9d3696d81c532f06"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/cursor-retained-focus-trace/source-copy-preservation.json",
+      "bytes": 113,
+      "sha256": "962ff32b34b3af8881f01ead8f526bd1a58c2d7b3e750272559928f3b244bd4c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/focus-callers-pairs.mjs",
+      "bytes": 2133,
+      "sha256": "636b6f66ea13132a98c436ec4e2f399c221bda10c18e27c9693ad74caf82f5f1"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/focus-timing-pairs.mjs",
+      "bytes": 2132,
+      "sha256": "8d917e8db0d586c7b0fb56d7ee85e3d9e937325c4ca1acd812f8a3659eb660a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/instrument-focus-callers.py",
+      "bytes": 4784,
+      "sha256": "23c6e0953f1d29ed8d917c93efc3a0a6f4767de8e6f1f1991d558f2f803b9115"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/instrument-focus-timing.py",
+      "bytes": 4349,
+      "sha256": "4dfa6193d3e6bf8d3460fde47282b81c087150d73e67e43dec702efeb4a28dd4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/instrument-retained-focus.py",
+      "bytes": 4378,
+      "sha256": "ab8ec49137387f08bcff43a02e00766e60acdd2bf99978ee6d0c2a397ff9b012"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v11/trace-ui-visible.mjs",
+      "bytes": 3229,
+      "sha256": "c2c092667e7e37c9b6830aa1aa4d10053aa18d7e9f27d03a248fb6e4c4c6acf6"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-regression-green.log",
+      "bytes": 622,
+      "sha256": "5bc58f99d557606f65c535b944074f18e1faf44d285b3972917fb87c66913330"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-regression-red.log",
+      "bytes": 1626,
+      "sha256": "8ab2e5b13df9fa46a88aa777dc245cebb30e9d4141dc9605de44987400253906"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-workspace.log",
+      "bytes": 32802,
+      "sha256": "3584fb3efc172981bb8d9b9b69dbb9dc4d708ed0dc008cf73e26f65f06e02abb"
+    },
+    {
+      "path": "artifacts/cycle-0018/run-full-validation.py",
+      "bytes": 2594,
+      "sha256": "99dd34cc5753323ed8b9c777375e718f60e9bae396b4f7f6430a391b36d49942"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-full-build.log",
+      "bytes": 393,
+      "sha256": "e1de0ce10def961f0531e95f3e3c79935d0aca593a092f2ddcc101889971632c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-full-product-shared.tap",
+      "bytes": 205749,
+      "sha256": "ee3489ebd7018bd682737b55bbf9180b7e4ff9e9904be4182c4b7251925ce903"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-full-package.tap",
+      "bytes": 23253,
+      "sha256": "0cc712b8635d6b5a397c294efc51d5112ad4b6d3e1a244924d03426fa04375e7"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-full-validation.json",
+      "bytes": 31999,
+      "sha256": "628ef66dcd649b4c47325dbca77599afd884ae7599fc4483c86186ab1174c871"
+    },
+    {
+      "path": "artifacts/cycle-0018/coderabbit-retained-focus.txt",
+      "bytes": 4204,
+      "sha256": "b5253d4fe0d65de8888cf7ce9f77c374b45652e6e0b2cf7bc917d6f50b5f362d"
+    },
+    {
+      "path": "artifacts/cycle-0018/coderabbit-retained-focus-receipt.json",
+      "bytes": 488,
+      "sha256": "a6b2abfe8d03b9c986d7c6ddd306faece5f577054cc2c776f3c0209d71786cf3"
+    }
+  ]
+}

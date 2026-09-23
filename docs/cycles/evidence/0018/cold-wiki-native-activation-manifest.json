@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-22T23:55:52.989695+00:00",
+  "scope": "Cycle0018 native citation activation source repair and completed scoped source reviews; new unchanged-installed proof pending",
+  "sourceRevision": "3d1fbab2b9796be17b1af27628713ed6f39eb607",
+  "dirty": true,
+  "sourceHash": "9e43c4a6de14e019b2dd3693b0a07492f62ce78f8ee9c9fcc6332b806683b0ea",
+  "runtimeSourceSha256": "60ff58dc5893e12c8794e61f11a1bbbd00e11391d976927f18d0238ec8433ea0",
+  "qualification": "Fourteen focused,970 product/shared,96 package and four typechecks pass. Independent full-runtime review has0FIXABLE/1informationalINVESTIGATE; exact production hash retained despite test-only change during review. No new installed proof or final acceptance.",
+  "availability": "Private ignored local artifacts; missing files require revalidation. Raw traces, recordings and profile data are not published.",
+  "files": [
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/adversarial/bf94bd19/coverage.json",
+      "bytes": 47619,
+      "sha256": "0c16ed945119d312a48794153f36c69d64f12b9ac41c680e68c335aed1b29004"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/adversarial/bf94bd19/native-focus-probe-results.json",
+      "bytes": 12629,
+      "sha256": "eee5b6e0dbf0410d0f9332afd3c19aee983a26849a39bc97b6bc51c60e1b6244"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/adversarial/bf94bd19/native-focus-probe.mjs",
+      "bytes": 10283,
+      "sha256": "ba26fb9ea69691f1d82b42ae4a007b2f419642115eeb087fc192552b2498b70c"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/adversarial/bf94bd19/report.md",
+      "bytes": 6924,
+      "sha256": "6036b52f5c1ee06ac519e65386328b8dd9eb4299e90aef6b676f0906fb34d7f3"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/adversarial/log-receipt.json",
+      "bytes": 957,
+      "sha256": "3b9877aeabd8ab3a4fe90674e053ac464ca21d4359209307730567da1b98fb05"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/build-green.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/build-red.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/full-build.log",
+      "bytes": 393,
+      "sha256": "e1de0ce10def961f0531e95f3e3c79935d0aca593a092f2ddcc101889971632c"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/full-orchestration.log",
+      "bytes": 751,
+      "sha256": "40bf33b223e3d81642528fbf17b313139e499bc2d1addb640b8eec1f3b3a7b69"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/full-package.tap",
+      "bytes": 23265,
+      "sha256": "a1348f8956266770ddc3c9d5e709773f42d92c5b7b22606d07e6fc4e1e6ec219"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/full-product-shared.tap",
+      "bytes": 254827,
+      "sha256": "e65aeda66e11793e48d061e908c45070a876475e169552ff08497577ca58390c"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/full-validation.json",
+      "bytes": 32840,
+      "sha256": "8fc27692a129306b43224837cee67e29acdbab060c030d5c8c5a4d92d590ecf7"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/green.tap",
+      "bytes": 3465,
+      "sha256": "cb692c9cc32b5940f1e88cb81a06121786fc4548a1ad8163533e9cb324725bc0"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/group-build.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/group-full-build.log",
+      "bytes": 393,
+      "sha256": "e1de0ce10def961f0531e95f3e3c79935d0aca593a092f2ddcc101889971632c"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/group-full-orchestration.log",
+      "bytes": 763,
+      "sha256": "960c73a6831ac76f51f87cdb8d9cd12c95ac817100f4f235caa64e1a5fdb385b"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/group-full-package.tap",
+      "bytes": 23268,
+      "sha256": "1982f9767b7034757f5a005e5584861a0bc5ccb4fb867615532ee8d45225efa1"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/group-full-product-shared.tap",
+      "bytes": 255344,
+      "sha256": "b54cad5541051d6d1e8336a1f97b4f4ca2f91fd55c9665eb9c710c0120faf311"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/group-full-validation.json",
+      "bytes": 32852,
+      "sha256": "15fdbf741d87425e33f0a8cb6dcfef29f5842bdd011254b085f7dafc0516c217"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/group-green.tap",
+      "bytes": 4013,
+      "sha256": "be3b2f9e8c57d6451f480717b0f18ee90ffa5d6952d513c45c270375ba7633d1"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/primary-review.json",
+      "bytes": 1293,
+      "sha256": "465ce666f841bfaf86d9599b5dc84a95945e2a7443f98c9db25a41ed8128956f"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/provider/receipt.json",
+      "bytes": 615,
+      "sha256": "715464294a1239f2eba91b2e8cd5de3901f08ab72db81332e2e2e75480a9af63"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/provider/review.log",
+      "bytes": 2076,
+      "sha256": "031b7f4490c59fdf51a7e0886b4e2dd2e46264559388778328571eeb46b13aa5"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/provider/triage.json",
+      "bytes": 661,
+      "sha256": "cedea3ac58ed8225bb4e19f59c9d06116bfba32a505f3cc99171dc93040f27f0"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/provider-final/receipt.json",
+      "bytes": 641,
+      "sha256": "aa5973f7ba12ebb6c4b88b7c810532d43ac081adb6af882d6ff948a1683ac9af"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/provider-final/review.log",
+      "bytes": 1196,
+      "sha256": "510af5160f4b8d13ef456f6b50676d940e0f7b38ba0a45f84bdcfbd62c584846"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/provider-final/triage.json",
+      "bytes": 370,
+      "sha256": "558d3e0bf1b2b4381ede7351db14f22367cea1f25ed277fe4ff8d065e6d020da"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/readme-parent-read.json",
+      "bytes": 850,
+      "sha256": "2314c227a235625a6bba8d1e314039b9e8c5f2365ff814d3df3c3d05e8d1cdeb"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/red.tap",
+      "bytes": 4130,
+      "sha256": "1849e92d70319d644a60e798344de35a235b4e3230318116363a9c95e482914d"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/typecheck/receipt.json",
+      "bytes": 1357,
+      "sha256": "b955bc8cf47367f7e86f01bea4197fa05cb8f0f5f7c5f04bab318a958fb7d16f"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/typecheck/typecheck-0.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/typecheck/typecheck-1.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/typecheck/typecheck-2.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/typecheck/typecheck-3.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/typecheck-final/receipt.json",
+      "bytes": 1384,
+      "sha256": "505a8f9d3e245ab7bac4019aa88f3c6194c92eb7a13c0b94a39cac8aee42b631"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/typecheck-final/typecheck-0.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/typecheck-final/typecheck-1.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/typecheck-final/typecheck-2.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/cold-wiki-notification-repair/typecheck-final/typecheck-3.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

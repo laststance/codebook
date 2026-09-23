@@ -1,0 +1,1257 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-22T06:26:28.024840+00:00",
+  "scope": "G/H observed focus-delivery failures and I successful bounded private message intervention; no product or Cursor acceptance.",
+  "baseProductCommit": "92b3a29f7a65829ac2a5f9e5c780f034bfa98ebd",
+  "baseVsixSha256": "edd2ecb967b8ee089f6cccfbb17fc75c1d465cd37576625ae48554fe4d8e70ee",
+  "availability": "Private ignored local artifacts; preserve accessible copies before moving or deleting the checkout. Missing evidence requires revalidation.",
+  "cleanupAudit": [
+    {
+      "diagnostic": "owned-tab-nativefocus-v17",
+      "at": "2026-09-22T05:56:35.706018+00:00",
+      "originalFilesUnchanged": 115,
+      "ownedEditorPids": [],
+      "connectionDescriptors": 0,
+      "unsavedDraftBackupRetained": true,
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "endedAt": "2026-09-22T05:56:11.103Z"
+      },
+      "backgroundCleanup": {
+        "mainPids": [
+          77181
+        ],
+        "signal": "SIGTERM",
+        "reason": "Owned background app only after normal window close and backup verification"
+      }
+    },
+    {
+      "diagnostic": "owned-tab-focusbarrier-observed-v17",
+      "at": "2026-09-22T06:03:48.605081+00:00",
+      "originalFilesUnchanged": 115,
+      "ownedEditorPids": [],
+      "connectionDescriptors": 0,
+      "unsavedDraftBackupRetained": true,
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "endedAt": "2026-09-22T06:03:14.648Z"
+      },
+      "backgroundCleanup": {
+        "mainPids": [
+          79534
+        ],
+        "signal": "SIGTERM",
+        "reason": "Owned background app only after normal window close and backup verification"
+      }
+    },
+    {
+      "diagnostic": "owned-tab-messagefocus-v17",
+      "at": "2026-09-22T06:11:28.252300+00:00",
+      "originalFilesUnchanged": 115,
+      "ownedEditorPids": [],
+      "connectionDescriptors": 0,
+      "unsavedDraftBackupRetained": true,
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "endedAt": "2026-09-22T06:10:58.181Z"
+      },
+      "backgroundCleanup": {
+        "mainPids": [
+          82132
+        ],
+        "signal": "SIGTERM",
+        "reason": "Owned background app only after normal window close and backup verification"
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/candidate.json",
+      "bytes": 32523,
+      "sha256": "5cee8072d559180581b68a018fa39a26614c58e8ea012ccb45d331db01348600"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/capture-host-observer.mjs",
+      "bytes": 1329,
+      "sha256": "b0d433cde20cf4b0b11feec884b431790646a7aadb7d19877baefeb75bee87db"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/full-common.mjs",
+      "bytes": 3438,
+      "sha256": "a6b7cee81366539a41f02a4fac04c830f50a35bce3ec694cc29c1ea7132dd694"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/helper-hashes.json",
+      "bytes": 1753,
+      "sha256": "cd19f389c08410cca478d6177615bc0fe0ac7ecf619b807775de46549a21961e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/install-host-observer.mjs",
+      "bytes": 4792,
+      "sha256": "69d97eb9e505e9839f92c7a0a3bff93aa5db090981f99cb06d0d196ef3c91180"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/instrument-keep.py",
+      "bytes": 14246,
+      "sha256": "e4074059fd048d33f49a81f013bdea3a2f670a2d47890af38180b3477c6bc0eb"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/outcome.json",
+      "bytes": 1502,
+      "sha256": "5184f49f89bae57b2c0ca53412aae187c7cd3d2ee3c1f0c20fea518712c38af5"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/placement-pairs.mjs",
+      "bytes": 2991,
+      "sha256": "23a5404152b92659a16433942d0ff151aee3ffaf4709921d363e8a92172d2663"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/prepare-profiles.py",
+      "bytes": 1583,
+      "sha256": "f4cffb9775632b372fbb73dc88be93473fed23a3366a595ce2f4960b51856967"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/rapid-mode-control.mjs",
+      "bytes": 2851,
+      "sha256": "c61fb9b961b29da3d82185df44261cd5343e77d1cd5cbfdacd96e0e50c346813"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/renderer-focus-control.mjs",
+      "bytes": 4192,
+      "sha256": "43357fd0d6f9fdf488614abf1ceb957ea92b630c7a4ab75e09aae1d2109f34e3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/run-minimal.mjs",
+      "bytes": 993,
+      "sha256": "c6ccc1a0be113bc534571207c7a8b6b716b324f7d82f7eae08d45176c733527c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/save-trace.mjs",
+      "bytes": 1153,
+      "sha256": "09163b704e22fbcb5c98022cc9ea52b7d39949a7b80ba6ce4dfc8e34eca89482"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/schedule.json",
+      "bytes": 36504,
+      "sha256": "b368d85f226c7227e2bb32980b6dcb39972882f073364f92369838f0a4f00f62"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/connection-location.json",
+      "bytes": 186,
+      "sha256": "e65dfdbff458789ee31f8feeb6331a47ef734d5ab379cb6cad33e9afc70761cd"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/diagnostic-bundle.json",
+      "bytes": 1089,
+      "sha256": "95cd93379a778305487a9d19cad39d9ae66a646e499912a20d7436c54bc19dfd"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/failed-transition-summary.json",
+      "bytes": 9593,
+      "sha256": "b6f7d804592933d95b4db4720aa5c6e2599732d94a91f25c847fb10fec59da46"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/focus-trace-2026-09-22T05-56-01.303Z.json",
+      "bytes": 4502666,
+      "sha256": "80203075705118df6e1cae9985fa0c715db6d7d4139e1f2c3143cec7f6b3b767"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/host-minimal.json",
+      "bytes": 355130,
+      "sha256": "71dc7b86a495c2277ba5210dbc54d160ac7448dad9d44e1aae685756c6e5485b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/host-modes.json",
+      "bytes": 981057,
+      "sha256": "620bd578328dff66584331010e9287329d596012dbde0f15dee017fb603df318"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/host-observer.json",
+      "bytes": 16756,
+      "sha256": "233243042d687cd4dcde1228f2990914463ad30f01453c5ac60462e7a2eba82a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-before-close.png",
+      "bytes": 440504,
+      "sha256": "7035eb5027575c02da286e3c02dbd11add9e5ff9a6f5b3235b98ad93eff5040a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "50291a4b86a6cd5247d72e0fc32520876dc1646d06aab1ccf0d8ffb1c98616ab"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-entry-receipt.json",
+      "bytes": 184826,
+      "sha256": "a49f897a497bc5a48cfc1f32d6292798afdd0d968d40d770cbab0ae6a2759bcc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "32c0a2eb041b469ae0743bbb3f048905c907924ec8c4b78320a16f3e6bd5b21e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frame-extraction.json",
+      "bytes": 6526,
+      "sha256": "dedfd58e30cb3be0f55fabbb21f20bce0db4f20de4e2fd8183d3fd7067b1a113"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frame-inspection.json",
+      "bytes": 988,
+      "sha256": "a0ae63ba8d3343af2ef4514278b598601421409bcaf56d0d6ebba1d7f43361f1"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-000.png",
+      "bytes": 278081,
+      "sha256": "249c0be5c4b8f99034ccefd3ab0512226e85c69e69d72171a025fff2e6212f05"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-012.png",
+      "bytes": 236280,
+      "sha256": "1c154541367c672128c5e23f85fc0f9f1de6ca786281acb81a9e96c48060a516"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-024.png",
+      "bytes": 435828,
+      "sha256": "abe8ba89ca54457c82c62144ba9f3914bb117094f880c0950bbf09ee8dc354e6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-036.png",
+      "bytes": 383947,
+      "sha256": "1e869c71dc4476b3860f9a392f8ce8873f7cc5f76bc959316c3c6aff85443c39"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-048.png",
+      "bytes": 334242,
+      "sha256": "f44a9f901f803e071a445f827fc0c41c7f0101c83d2e0e1d31faf889cd9cba48"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-060.png",
+      "bytes": 379026,
+      "sha256": "0d7accaabe4cb6cdb34b9debd26ad5db9e6c6585bb15c752f19508fc1ec568d3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-072.png",
+      "bytes": 357140,
+      "sha256": "94b3bad0f412fd3afbf8706c329d73fde77553accffad3ed7ee7cc33d1eeefa0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-084.png",
+      "bytes": 599662,
+      "sha256": "77ce6db0407c12b480df5422756eb5e7543b085f3149d0f315c399ca6ab2d46f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-096.png",
+      "bytes": 640989,
+      "sha256": "ac8fc25ad705dbe443178682631c1559cb5264abd1db978e4fe7493347b68f34"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-108.png",
+      "bytes": 317132,
+      "sha256": "9951bfaa335a0e8cfd0349ded648252fe406b900192802780d81703e40691907"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-120.png",
+      "bytes": 271312,
+      "sha256": "9282301f1194e2f15a27c270df64f0a498dc4d831603650bfefd4e79f10f2e02"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-132.png",
+      "bytes": 355195,
+      "sha256": "7cedeeae176e4a74c40b492236260b8f4657fd6f9672504a640ceec3d1cab94d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-144.png",
+      "bytes": 344469,
+      "sha256": "ba66bbca3073dc54f60cdfed07d91609d755adc1bb083dcb6564d6e5fc9b4a3e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-156.png",
+      "bytes": 256050,
+      "sha256": "e80e430b09db93a6f29975364673be2b19d0a86f16b076b479c75f7ef772f5fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-168.png",
+      "bytes": 295132,
+      "sha256": "ec0b2639562a649ad3016c03f8f569e14da54a1a510ced08512d6ecdaa3d73cc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-180.png",
+      "bytes": 340571,
+      "sha256": "4bde3682b9a02e9982da563c02649929956e7f3cf44c582b6647e08cb29be196"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-192.png",
+      "bytes": 240723,
+      "sha256": "13fad5169da5b81b151a74117e1babba3c64f37cc7cf45585566153faea144f0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-204.png",
+      "bytes": 293993,
+      "sha256": "05417703756e3d7ff12ca752d5b6082acd886b9de9bcfbbbb649a21b400e4dce"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-216.png",
+      "bytes": 306242,
+      "sha256": "6e1af3fb6c25e406a870cae1f75cf1b4190d5932dc64bc45523697b65e2ef67a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-228.png",
+      "bytes": 291615,
+      "sha256": "8b575d43dcd675bfad997defdf9d24d6a6904455e08fdb7de77d81c46d036d7d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-240.png",
+      "bytes": 261607,
+      "sha256": "e4ac3970e281ea166a0eda587f21e3c3b268b965dc8fb664c95a77862871f44d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-252.png",
+      "bytes": 274540,
+      "sha256": "78fc878357fc4744fb8e2b44389a30fbe92400eeb21b98054ae7ac1f7f87eec6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-264.png",
+      "bytes": 339472,
+      "sha256": "36e06f6084f356025f48cbaa8cc69ad1e436511a6936eccda3f07ac00abd4b30"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-frames-276.png",
+      "bytes": 368416,
+      "sha256": "8c7f8d6db51ca3ddacb60c1d22c32ce7ea061dd789a5cb81fdac27872581a535"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-launch.json",
+      "bytes": 1494,
+      "sha256": "7d474c94357e2cf54e2b817dfdc1b7b2619d1e2047d62ce76d97bed860099acf"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-native.webm",
+      "bytes": 18306879,
+      "sha256": "ea519fc5e7a5920d0cc4fb04b14bae9b693f94d0d0373f543737dded621f8e8c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-ready-replay.png",
+      "bytes": 172744,
+      "sha256": "1226675711a630215f258f7cb9f586a5c775f9a57b6ee84b4c6c3986072b1468"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-saved-wiki.png",
+      "bytes": 470779,
+      "sha256": "fd784ef819d09ccb67f42e28660c79552a4f90bc0d28e19251ffe650aed7497c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "859ef2202b3554d4f52c272bd026ece92b0cf13a4b851d81ed1b4013a9fb3682"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-ui-close.json",
+      "bytes": 3302,
+      "sha256": "5016115da5c7db0dbb48bec9c28f5e39cc0ddb85563f309b3e6357c404c22172"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/initial-ui-start.json",
+      "bytes": 5468,
+      "sha256": "dcf851714073834397f5492a45ae7718e755dc34028845d2041d63566691f342"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/installation.json",
+      "bytes": 7169,
+      "sha256": "b312a4313616c8ea3f1ef22574d7f4c70ecdf6010993243a66b4353876b2b804"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/instrumentation-loaded.json",
+      "bytes": 162,
+      "sha256": "914968c0cb9817c6b37198ae0c5b0b72cd8bb48efbcad89eac483c91993e77b2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/minimal-command.json",
+      "bytes": 1663,
+      "sha256": "aba2ca9428ebccd7d064c006747c9d5d279d26fabe7af4fe887404041a1602ea"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/minimal-result.json",
+      "bytes": 847172,
+      "sha256": "cd046972fcbb829642b2f5b9e403bc9d06cdc68ff11a101793a66d2454e8cf0d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/native-focus-failure.json",
+      "bytes": 4499943,
+      "sha256": "26bb85526e263526e50d968bf8e86234aeac8eb045266e1b48066c3fffc033d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "a240ed5ac734c70b97dd8b2331f90c174678b60ff6b361029bc6b66809d884a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/profile-preparation.json",
+      "bytes": 43927,
+      "sha256": "06f74e01ef5a1aae16141cf09ebefe33511d04848a7af922122dcacea621316b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/rapid-mode-control.json",
+      "bytes": 303757,
+      "sha256": "9db48729a19bd3e973e728a5651e8f0edcde7dfd3f31cc9f9ca20e435cd85ac8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/rapid-mode-failure.png",
+      "bytes": 181930,
+      "sha256": "7eec722aed1096a76106ffb2c7f83ed7935a9f1678d261fd3ee9d2d87aa775ff"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/trace-save-toolbar.json",
+      "bytes": 1394,
+      "sha256": "148b0602a50f5af569fd7f00b5bc18e84b5e6eb1e47bcac520d2ba49fc56253d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/vscode-failure-observation.json",
+      "bytes": 68144,
+      "sha256": "1bb4db6545840cf460c5f313e5c27e5620083363fd66da48c27f15ba10b6ddf3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-nativefocus-v17/vscode-full/vscode-failure.png",
+      "bytes": 181930,
+      "sha256": "7eec722aed1096a76106ffb2c7f83ed7935a9f1678d261fd3ee9d2d87aa775ff"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/candidate.json",
+      "bytes": 32523,
+      "sha256": "5cee8072d559180581b68a018fa39a26614c58e8ea012ccb45d331db01348600"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/capture-host-observer.mjs",
+      "bytes": 1329,
+      "sha256": "b0d433cde20cf4b0b11feec884b431790646a7aadb7d19877baefeb75bee87db"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/full-common.mjs",
+      "bytes": 3442,
+      "sha256": "4009cb66f890786dd791fec3404e92e06dfa5b1be431cfa9910f605229c159b3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/helper-hashes.json",
+      "bytes": 1664,
+      "sha256": "dc4ae55f2bda41dae1b57420664e4108c4a232aa62859906f2c45138aeeb706c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/install-host-observer.mjs",
+      "bytes": 4792,
+      "sha256": "69d97eb9e505e9839f92c7a0a3bff93aa5db090981f99cb06d0d196ef3c91180"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/instrument-keep.py",
+      "bytes": 12853,
+      "sha256": "39cc5dc788f7cdd40e6c7b86aed815de65aadf3eed93ff7ce321a770988af733"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/outcome.json",
+      "bytes": 1588,
+      "sha256": "b5fe044e14cf45cdb73b79819e4a270b7e64d168bc6dd17904d57f0f8e732f70"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/placement-pairs.mjs",
+      "bytes": 2991,
+      "sha256": "23a5404152b92659a16433942d0ff151aee3ffaf4709921d363e8a92172d2663"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/prepare-profiles.py",
+      "bytes": 1587,
+      "sha256": "ba452565ea4bab049abc09c16044a142c43890613df7372fb7595c6b8a7ccb74"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/rapid-mode-control.mjs",
+      "bytes": 2851,
+      "sha256": "c61fb9b961b29da3d82185df44261cd5343e77d1cd5cbfdacd96e0e50c346813"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/renderer-focus-control.mjs",
+      "bytes": 4192,
+      "sha256": "43357fd0d6f9fdf488614abf1ceb957ea92b630c7a4ab75e09aae1d2109f34e3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/save-trace.mjs",
+      "bytes": 1153,
+      "sha256": "09163b704e22fbcb5c98022cc9ea52b7d39949a7b80ba6ce4dfc8e34eca89482"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/schedule.json",
+      "bytes": 36645,
+      "sha256": "0d5750d8e194b0bcc648b6a6b43ce05ae538dd6c95f8fe58302865180f892c85"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/connection-location.json",
+      "bytes": 190,
+      "sha256": "dcd9f0a71acccaff708c557ee912e7747515907d81c607a12d0b519c27d9c728"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/diagnostic-bundle.json",
+      "bytes": 1131,
+      "sha256": "158c6ec85a11628ba2f81c5d36e0d58cc79dd37de2928dab658a12496ad4521d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/failed-transition-summary.json",
+      "bytes": 41520,
+      "sha256": "a1df913fcaef46a390c5455d6ff02ae6d89f3f11c9155ed4c0b93d3b83e45947"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/focus-trace-2026-09-22T06-01-34.464Z.json",
+      "bytes": 2751560,
+      "sha256": "6e159f57bc03f157f3d44da5bdce1a4f8461591c3062f30c05c297dac9edb880"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/host-modes.json",
+      "bytes": 382309,
+      "sha256": "209842e86f3dce7301f9821ca2d93279a4482df1d6b3956510904a7f40d10fa8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/host-observer.json",
+      "bytes": 16756,
+      "sha256": "0353a390b2f962301a5c9adf65518dfd3ae04d1dc8a759db375bc0d0cebd6015"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-before-close.png",
+      "bytes": 421751,
+      "sha256": "c9d3570a13c150a752713db0c01c7168748be1ada2e138bfa85448cde35a56c8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-bootstrap.json",
+      "bytes": 157807,
+      "sha256": "9d50c5d3af4081f3786fa28c66b1b0b769f855f011072d006be21ce1afa2c6ef"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-entry-receipt.json",
+      "bytes": 184877,
+      "sha256": "53ec1ecec947776e1824ec0a49abba1cfcacad0b674ee8c6ed50c98d63e4c506"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "a6fb577236d94f5a893dfa5ae949c23f1eea6fc6e818413a4fbf2237c13f8948"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frame-extraction.json",
+      "bytes": 7549,
+      "sha256": "3cf6dda12f1c918851d3a43e0572fa4d2e4281a0df549b26ba2d13bcb032d250"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frame-inspection.json",
+      "bytes": 970,
+      "sha256": "2f4f0ac6ef297ee6cb9b40583182c143e722f75c972c7d3bc9339cd3c7feaa1f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-000.png",
+      "bytes": 271775,
+      "sha256": "ab5af4cb7ea422fdf7caa6fcb26d986a9d2fbbef2333deda1de3d89b22b7ea4f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-012.png",
+      "bytes": 459052,
+      "sha256": "c10d18ecbf6a98618504c299e5f185c1457245abb47c3a75319489878a89ce07"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-024.png",
+      "bytes": 329941,
+      "sha256": "09c6e3b330d222919f97f1634c67789b6fd5104b04b4f77338ea1a49b01b4487"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-036.png",
+      "bytes": 384346,
+      "sha256": "e08caa7770ad8eeb2e649da18a4cd86cb7d2054a78d38278e614de83a1e9e1d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-048.png",
+      "bytes": 325149,
+      "sha256": "ec9c670a157a16ae9e8a1cf030722773bef7e49c96d55cd24ff0beab2d261495"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-060.png",
+      "bytes": 371291,
+      "sha256": "c88329be61e8921412d3db03b36872c5295fa1b10d4b465cfa9f0b4acc02ad1e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-072.png",
+      "bytes": 567416,
+      "sha256": "23dbf8810f6559fc101b41b471e4e5c75bc883fe46a7b06eddce33a950eee569"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-084.png",
+      "bytes": 605547,
+      "sha256": "78fe22c0ddda262a4152c402774c023bead18f3130527640809ec75db0a0c5ed"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-096.png",
+      "bytes": 387520,
+      "sha256": "205acd1b58f6557aece8b9efcc7380fb034119cb075f7fc2057125f368c5dce7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-108.png",
+      "bytes": 354151,
+      "sha256": "75c7eb95070b5b0cc2fd8b8415f151056b5b55aadd3bd7171417a0a2984ca9c4"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-120.png",
+      "bytes": 271103,
+      "sha256": "01e7661e58ed31ec5d666894798e979d5c66fe6f883637b70e30377623cb9ab3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-132.png",
+      "bytes": 355205,
+      "sha256": "b517e013e5f4d2923d49da84e5ed1ac2e3b77da3d361a532246a4726eab425c2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-144.png",
+      "bytes": 296577,
+      "sha256": "ad1f4bd8ec8b5d1fdf2c8905d6756f975df65f62a3b4bf4f0a1a12f772fd54df"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-156.png",
+      "bytes": 254237,
+      "sha256": "5e9a0d1637888b9294f3052f92766a00f2c3c0965ee444289d1d7fa648f7553b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-168.png",
+      "bytes": 294594,
+      "sha256": "6d5fddb270adf7bca380c3aedff7b3f13df092b3b28d896a315019ae65a2c194"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-180.png",
+      "bytes": 338113,
+      "sha256": "2f94a01f21935742ee6f1f50ea8a2b9a035b1a95dbadba8b64ce4297ddf5e6b8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-192.png",
+      "bytes": 237642,
+      "sha256": "6e2c172db1a1a28de3761df10981697cc7e583eb52148242a0c895c068154e61"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-204.png",
+      "bytes": 293797,
+      "sha256": "c5f215afcefec27fc8440876539d4851fe06c0e16cc3e073c22dc72bedc30ff3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-216.png",
+      "bytes": 380881,
+      "sha256": "9313dfaa451640c5ee52b51bc40ee15c89a142a41867b0dac1b9abc2fc31303d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-228.png",
+      "bytes": 293300,
+      "sha256": "c84a03ad1aea976fb9633342c66fd525a1245104d1ff106a6c5a5889617dfbb0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-240.png",
+      "bytes": 260934,
+      "sha256": "b3305524791b66d40f30c05cf4f0061f1a0ab100484f39a775369d69831bbf87"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-252.png",
+      "bytes": 274181,
+      "sha256": "52b9cce358ab2878980d26c2cd80f3e2ab8dd5d045cbe2d448d30e5172125fdb"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-264.png",
+      "bytes": 337676,
+      "sha256": "66723aebf7cf9f4acb02a02fcb96ae106c480ff69febe595cff0a3b89da0b702"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-276.png",
+      "bytes": 297485,
+      "sha256": "308bc07fa34208e0135bbebcda02127e225c72a9d60ccdf3327bb5a246d30f65"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-288.png",
+      "bytes": 274060,
+      "sha256": "977ec72bdf45e0f95832fba5bd8efb19d8829a917bbc11d174b3aa462ee7d485"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-300.png",
+      "bytes": 274476,
+      "sha256": "85de8c11eef42d6c47beb247295737f77f66484d70629981f4dc9f6f36af5ec2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-frames-312.png",
+      "bytes": 257914,
+      "sha256": "748ebaa3e23b21c00513fcb7386fe7de48a6522221318c203fa0d9f36d5a8739"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-launch.json",
+      "bytes": 1514,
+      "sha256": "08c24930a455aa4f3d134305ee7d4c5c7ef7c06aa8a976baec19b356daffae81"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-native.webm",
+      "bytes": 16046766,
+      "sha256": "724087c7f543e635224e00f16a8528656dfcacb69ee6cb72fbc39498b9770213"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-ready-replay.png",
+      "bytes": 172748,
+      "sha256": "3ff8c20694d276a45c035847435d5193c7d7c28fa238179ea1e96e00a000262a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-saved-wiki.png",
+      "bytes": 470779,
+      "sha256": "fd784ef819d09ccb67f42e28660c79552a4f90bc0d28e19251ffe650aed7497c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "71303ef5e68a3f3b78ea3c5848e748a7054a5faca0bc9ba93c35da76db619f20"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-ui-close.json",
+      "bytes": 3307,
+      "sha256": "9bad6ae7cd1be1585dd2b69d40ea0a82af1f10e6343ee2400c0c06cef6d9f053"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/initial-ui-start.json",
+      "bytes": 5496,
+      "sha256": "a2b8d1e81043d3a3130a408f76b330d0d0c4b2df3bcd010f98661e81fc930aec"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/installation.json",
+      "bytes": 7207,
+      "sha256": "0ce3588ce9a4f565a0367888a79e8bf3dc950fbfd8fed54a4771ba451ad64af4"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/instrumentation-loaded.json",
+      "bytes": 166,
+      "sha256": "6118112555e35e165b3b891ec92a3164dc2255c1649717846da4a0eaf3713a99"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "a240ed5ac734c70b97dd8b2331f90c174678b60ff6b361029bc6b66809d884a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/profile-preparation.json",
+      "bytes": 43935,
+      "sha256": "d97cf4f828bc5526b07aacfaa86dc635de0b8de635c3c0598d8eb14ec052a509"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/rapid-mode-control.json",
+      "bytes": 183725,
+      "sha256": "e3b7624368ed771d7afd56f676e3ab7d82765d42adbe0a332114620f161ab74c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/rapid-mode-failure.png",
+      "bytes": 177216,
+      "sha256": "91a69d818af004d92cfed198a405466223824a33d587eb66c48b692cd9114e78"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/trace-save-toolbar.json",
+      "bytes": 1281,
+      "sha256": "c129fce2d52a49c706e92a0e629c18d6c4ba019a012de5b4223c87b1a556e350"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/vscode-failure-observation.json",
+      "bytes": 68110,
+      "sha256": "4704d07f9b70cacc6e0730eba2d5c67cb4585e640e295c21616f431620ca0aa7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-focusbarrier-observed-v17/vscode-full/vscode-failure.png",
+      "bytes": 177216,
+      "sha256": "91a69d818af004d92cfed198a405466223824a33d587eb66c48b692cd9114e78"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/candidate.json",
+      "bytes": 32523,
+      "sha256": "5cee8072d559180581b68a018fa39a26614c58e8ea012ccb45d331db01348600"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/capture-host-observer.mjs",
+      "bytes": 1329,
+      "sha256": "b0d433cde20cf4b0b11feec884b431790646a7aadb7d19877baefeb75bee87db"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/full-common.mjs",
+      "bytes": 3439,
+      "sha256": "f6bc127990eab2afd2c9c943a1ba2a9c6135c7bed8af6bf8174e5acc049c57fb"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/helper-hashes.json",
+      "bytes": 1664,
+      "sha256": "f34c9aa88ebcbde34189305ffbeb02eea8bd557e391e63ccd7934416e92b0487"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/install-host-observer.mjs",
+      "bytes": 4958,
+      "sha256": "2c2a62a963cb2857c8898da66759b671158e0f465589be685a730824c06b54e8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/instrument-keep.py",
+      "bytes": 13649,
+      "sha256": "fd250023d133920c628d3461a7f69fef9bbd53be99fff9f61b9be96bb97288ab"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/observe-failure.mjs",
+      "bytes": 2419,
+      "sha256": "bc1d43081bfca0da2af6211e6aa2a94e4e62366dff7c0e2d76c47c28d2b258bf"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/outcome.json",
+      "bytes": 1628,
+      "sha256": "01afae15aceace986df60fc9853ac9cb5e9e629200ceb4f17421ef27743cc74b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/phase-ui-visible.mjs",
+      "bytes": 3861,
+      "sha256": "1a0e5396f30c49bdef2ce87a8d7fd3901e541d4d70c67f9636dd8d329b81a9c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/placement-pairs.mjs",
+      "bytes": 2991,
+      "sha256": "23a5404152b92659a16433942d0ff151aee3ffaf4709921d363e8a92172d2663"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/prepare-profiles.py",
+      "bytes": 1584,
+      "sha256": "7708261b663ecf3bfcc991f639b7b5653cfb25e350868ecd1159229ecf4f6d22"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/rapid-mode-control.mjs",
+      "bytes": 2851,
+      "sha256": "c61fb9b961b29da3d82185df44261cd5343e77d1cd5cbfdacd96e0e50c346813"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/renderer-focus-control.mjs",
+      "bytes": 4192,
+      "sha256": "43357fd0d6f9fdf488614abf1ceb957ea92b630c7a4ab75e09aae1d2109f34e3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/save-trace.mjs",
+      "bytes": 1153,
+      "sha256": "09163b704e22fbcb5c98022cc9ea52b7d39949a7b80ba6ce4dfc8e34eca89482"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/schedule.json",
+      "bytes": 36716,
+      "sha256": "3a6851ac55bb583214b84310f5849273a4b49b195dcf552a313fa895dc11000a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/completed-state.json",
+      "bytes": 59315,
+      "sha256": "b92447f345d1e65c17689bbc5785140351cf52cc7b56960b1037e9b9a98f32d5"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/connection-location.json",
+      "bytes": 187,
+      "sha256": "d9fcba5dc158ddf7531632d1272c6fc42c39a1f420ce3c83761c05909ec5b5c1"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/diagnostic-bundle.json",
+      "bytes": 1194,
+      "sha256": "24434bc8e2042e831f904d7d09d1d4b9d6af5d8185afa1133dc5842d793de075"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/focus-trace-2026-09-22T06-09-56.595Z.json",
+      "bytes": 6905998,
+      "sha256": "db7af9e247b56d49e6e7d9c1068702bbbe7c51aaf812d24f51a466376b7016ea"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/host-modes.json",
+      "bytes": 822075,
+      "sha256": "8fda4797134a5ba64d09ec72f3a19a83a6ada35ac75beb925fb1c982a73a7d39"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/host-observer.json",
+      "bytes": 18623,
+      "sha256": "99a873dc0a28a401d1b4677eb5fb9ebbe325c485ca7896990d5f2820addae2ca"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-before-close.png",
+      "bytes": 421776,
+      "sha256": "b845884f6f9252d474a207c98fc84d9817788533ecce0b25919cb02962136c56"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "c349ed04793bc62809723a6f12bff6668474cf3f62d81fc35d5a00c65be87acd"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-entry-receipt.json",
+      "bytes": 184828,
+      "sha256": "6f3dfeb43eeca09aeba33846db8a0fe24e674115c71be27bc24d836ae96ac8e1"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "2374a54ad5c7fe6043b44cc0f9e5acc723164c6bdf159c032ef1f3740c4b2d02"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frame-extraction.json",
+      "bytes": 6802,
+      "sha256": "e239322cfa0982ef4e9f57ab9243158930bb16fced53d4cb55736bd66c35b227"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frame-inspection.json",
+      "bytes": 996,
+      "sha256": "2c1444fb2626631ca86e3cc5a5ae8af774463aa64113120e1e172e2804b57f61"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-000.png",
+      "bytes": 271651,
+      "sha256": "58fad949a725f9720d29c82a3d3e3fac349f20e7c579bf37ed46d99cf3f83778"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-012.png",
+      "bytes": 424529,
+      "sha256": "2e3048e9004f2f4a77e4d3d94118a4275861b4a232b2abd943f362826680f8a1"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-024.png",
+      "bytes": 331363,
+      "sha256": "164d6280bb46f69a8a8b8fa0beec1174c6704ddd260511b0a69b2dbcefd127fb"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-036.png",
+      "bytes": 384257,
+      "sha256": "389c7047126f2427e9a461e4732d905aa2c43cdc39d35c08821a0ec45476c9fd"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-048.png",
+      "bytes": 325149,
+      "sha256": "ec9c670a157a16ae9e8a1cf030722773bef7e49c96d55cd24ff0beab2d261495"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-060.png",
+      "bytes": 446828,
+      "sha256": "771fa97609b9e7005c07330f5ede1a9457bbee8fbcb96f1b866841a16a6d4726"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-072.png",
+      "bytes": 557207,
+      "sha256": "19797ed7142be986d8fbf8b3e89af1241fd4a0e76095da043214fcc4cd04659f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-084.png",
+      "bytes": 571895,
+      "sha256": "aeb389a1a69230ed5f14de31ea031623602f605cf60bc65a10246be0d5ed4e4f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-096.png",
+      "bytes": 589381,
+      "sha256": "48c30f5f55e2570ad4afd4c3df935b0d2414e2a6f4f8a9ec455400fb9d04e9c4"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-108.png",
+      "bytes": 586986,
+      "sha256": "109d318e9ab57d8a0eff837b215da784552a9eb33d17586fca0e8bbe4777615b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-120.png",
+      "bytes": 566429,
+      "sha256": "42e3651976b6f3d361067b98ca80fcf912d4c50fa396d34ce486dce9cc30f494"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-132.png",
+      "bytes": 397261,
+      "sha256": "3ca4b7c95cfd3bb75674a53fcdf841043fbf1037c3033a2aedcb5d2f9981fb82"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-144.png",
+      "bytes": 292345,
+      "sha256": "681449224550044bdf069009a645de533586ee9dc5a948d7d297372d9d075c56"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-156.png",
+      "bytes": 249650,
+      "sha256": "cb3d4f5bdc757843fbc853e7313e2f70600fb21585dff97500eb42bd4b786307"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-168.png",
+      "bytes": 288212,
+      "sha256": "032966f1e46db3327e7ce6e8cff49a9c5acb2c8127a41fd65ebac64fbe864589"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-180.png",
+      "bytes": 332699,
+      "sha256": "4eac87e42bd97ea58b7efca77bdca1ae09487b16b07739f8eaa0bb55a61e215c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-192.png",
+      "bytes": 234786,
+      "sha256": "79e128f0f3eacf1af036a123f4d557259be5f294df43a245b2d7de059e51b226"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-204.png",
+      "bytes": 287092,
+      "sha256": "a2bcd72cc2e2dabf24428d3cba45a420148ff78aedc98fa87a8e6e62965ab4c8"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-216.png",
+      "bytes": 298046,
+      "sha256": "338d17f421f647321bc3e51c546fe194f40209b95ae11fe321d2d239ff1f3459"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-228.png",
+      "bytes": 304555,
+      "sha256": "1b3b5adfd3cf4acaa2aa9ebb61215f3df32140f52b44b7d62334fedc017bad9a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-240.png",
+      "bytes": 269594,
+      "sha256": "dcb07e766cce1ffc5497fafe75c7d06b3296f86ca9c6d31a349c0a074ed06e16"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-252.png",
+      "bytes": 267286,
+      "sha256": "a8423092fb62bae6e45b42fd200340783b67b32a00b277c411cc0951ca844a82"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-264.png",
+      "bytes": 332001,
+      "sha256": "d1b9feb1cca5dbe25bfd16ec2f3a82cb60cb62c8bce25dd1a21482f952093194"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-276.png",
+      "bytes": 292887,
+      "sha256": "d603287d2db504f51f670049a379e2ef1e625dddb419cb6109886b8952e903dc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-frames-288.png",
+      "bytes": 264077,
+      "sha256": "1050d6e08dad7fc68ae768b6295d5b6be9b0f83b7cefa781ed2e6d1312942499"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-launch.json",
+      "bytes": 1499,
+      "sha256": "cd7eeecdb9428791b2b1e5cce5a64a55846d0545b2fa5ee7761116dcfe006e2d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-native.webm",
+      "bytes": 24740360,
+      "sha256": "1b35ebdb986a860efbcab47c25bd05ca13d77759d958f7234aab3836929fabbe"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-ready-replay.png",
+      "bytes": 172746,
+      "sha256": "d19c1dcc3549576d7162fea21e7b6fc64bfd649797320ccc23cb581de21ab7a1"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-saved-wiki.png",
+      "bytes": 470779,
+      "sha256": "fd784ef819d09ccb67f42e28660c79552a4f90bc0d28e19251ffe650aed7497c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "00b2060440409f6e8b1400c59ec0b09e0f1a84823a1174b215a5b41e940c4f08"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-ui-close.json",
+      "bytes": 3289,
+      "sha256": "bcde84592ee9498958c0051c70bf522f2446c041873865b8344e72519b337bcb"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/initial-ui-start.json",
+      "bytes": 5472,
+      "sha256": "541bc49686cef3360254af3ad50963cb85d5de581638cd7b17512d708bff3554"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/installation.json",
+      "bytes": 7183,
+      "sha256": "ac050be9e4bccd62383d8fd1a2ac5b288e9a8fd2825068d93b55d57c0f2e4cab"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/instrumentation-loaded.json",
+      "bytes": 163,
+      "sha256": "5c76fe69783f481b7d3f3c43bbab1f23e4921c40e2ea88d7cd59af9bca55558a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/post-trial-install-equality.json",
+      "bytes": 1076,
+      "sha256": "a4ffc55425bab7518f14a63cbdb5d87ef557d7bc30e4975cec91eb3330516236"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "a240ed5ac734c70b97dd8b2331f90c174678b60ff6b361029bc6b66809d884a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/profile-preparation.json",
+      "bytes": 43929,
+      "sha256": "d84c536aaedcfff7829460b123a1b58af9d71278fcd85cc9cc89da470106b3c2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/rapid-mode-control.json",
+      "bytes": 564265,
+      "sha256": "30c858e05cfcc18a3ebee2471c6146164524640db132f528222597997086a6a4"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-tab-messagefocus-v17/vscode-full/trace-save-toolbar.json",
+      "bytes": 1281,
+      "sha256": "c874187375a3d5e363cc8ec8a93112248d556599b9c295b874b2022ace6cec23"
+    }
+  ],
+  "updatedAt": "2026-09-22T06:55:08.813832+00:00",
+  "sourceDirty": null,
+  "sourceStatus": "Historical diagnostic trial checkout status was not separately persisted in these artifacts. Exact base VSIX and privately modified installed bytes are identified; do not infer a clean diagnostic bundle from embedded metadata.",
+  "manifestAssemblyCheckout": {
+    "at": "2026-09-22T06:55:08.813832+00:00",
+    "revision": "b167ca5205aecbaee869c75146d32024308228a0",
+    "dirty": true,
+    "status": [
+      " M PROJECT_STATE.md",
+      " M docs/cycles/0018-editor-group-scope.md",
+      " M experiments/cycle-0001/src/utils/viewportHtml.ts",
+      " M extension/src/studyWorkspace.ts",
+      " M extension/src/tests/studyWorkspace.test.ts",
+      " M extension/src/ui/studyHtml.ts",
+      " M extension/src/utils/capturedAppHtml.ts",
+      "?? docs/cycles/evidence/0018/owned-tab-focus-handoff-manifest.json",
+      "?? docs/cycles/evidence/0018/owned-tab-focus-handoff.md",
+      "?? docs/plans/cycle-0018-owned-focus-handoff.md",
+      "?? experiments/cycle-0001/src/utils/installWebviewFocus.ts",
+      "?? extension/src/tests/webviewFocus.test.ts",
+      "?? extension/src/utils/focusWebview.ts",
+      "?? extension/src/webviewFocusSchemas.ts"
+    ],
+    "scope": "Fresh checkout status at sanitized manifest update, after the diagnostic trials and during product repair; not substituted for historical trial state."
+  }
+}

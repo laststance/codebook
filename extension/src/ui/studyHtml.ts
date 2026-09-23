@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { installWebviewFocus } from 'codebook-cycle-0001/dist/utils/installWebviewFocus';
 import type { StudyCatalogEntry } from '../studySchemas';
 import type { LiveStudy, projectStudy } from '../studyModel';
 import type { RetainedStudy } from '../retainedStudySchemas';
 import type { StudyDescriptor } from '../utils/describeStudy';
 import type { PlaybackState, PlaybackBundle } from '../playbackController';
 import { STUDY_STYLES, STUDY_UI_OPTIONS } from './constants';
-import type { PresentationState } from '../presentationSchemas';
+import type { PresentationState, PresentationReadingPose, PresentationPoseCapture, PresentationPoseRestore } from '../presentationSchemas';
 
 export interface StudyViewMessage {
   type: 'study'; revision: number; model: ReturnType<typeof projectStudy>; study?: Pick<RetainedStudy, 'id' | 'state' | 'terminal' | 'createdAt' | 'reason' | 'profile' | 'finalOutcome' | 'links'> & { historyOutcome: string; studyOutcome: string; recordingSave?: Pick<LiveStudy['recording'], 'status' | 'contextStatus' | 'reason' | 'contextReason'> };
@@ -24,7 +25,8 @@ declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getS
 export function studyHtml(kind: 'context' | 'moments'): string {
   const nonce = randomUUID();
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${kind === 'moments' ? 'moments-only' : ''}">
-<header class="presentation-header" ${kind === 'moments' ? 'hidden' : ''}><h1 id="title">Study the checkout flow</h1><label for="presentation-mode"><span class="visually-hidden">Presentation</span><select id="presentation-mode" aria-label="Presentation mode"></select></label><details id="presentation-options"><summary>View options</summary><p id="presentation-caption" class="muted mode-caption"></p><div class="row presentation-tools"><button data-presentation="restore">Restore layout</button><button data-action="enlarge-context">Enlarge explanation</button><button data-presentation="save-preference" hidden>Save preference</button></div></details><p id="presentation-status" class="presentation-status" role="status" aria-live="polite"></p></header>
+<p id="bootstrap-status" class="status" role="status" aria-live="polite">Loading study…</p><main id="study-content" hidden inert>
+<header class="presentation-header" ${kind === 'moments' ? 'hidden' : ''}><h1 id="title">Codebook study</h1><label for="presentation-mode"><span class="visually-hidden">Presentation</span><select id="presentation-mode" aria-label="Presentation mode"></select></label><details id="presentation-options"><summary>View options</summary><p id="presentation-caption" class="muted mode-caption"></p><div class="row presentation-tools"><button data-presentation="restore">Restore layout</button><button data-action="enlarge-context">Enlarge explanation</button><button data-presentation="save-preference" hidden>Save preference</button></div></details><p id="presentation-status" class="presentation-status" role="status" aria-live="polite"></p></header>
 <button data-action="return-wiki" hidden>← Return to Wiki</button><button data-action="open-article" hidden>Open article</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite">No running study</div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
 <p id="errors" class="error" role="status" aria-live="polite"></p><button data-action="retry" hidden>Retry storage / refresh</button>
 <section id="recording-transport" aria-label="Recorded playback" hidden><h2>Recorded walkthrough</h2><p id="recording-status" role="status" aria-live="polite"></p><div class="row"><button class="primary" id="playback-toggle" data-playback="play">Play recording</button><button data-playback="start">Replay from start</button><button data-action="reload-recording">Reload saved recording</button></div><label for="playhead">Recorded position</label><input id="playhead" type="range" min="0" max="0" step="1" value="0"><p id="playback-position"></p><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details><p class="muted">Playback changes this reader only. It does not run application code or mark understanding.</p></section>
@@ -38,17 +40,26 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite" hidden></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
 <section><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div><label for="studies">Saved studies</label><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select></section>
-<script nonce="${nonce}">(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)})</script></body></html>`;
+</main>
+<script nonce="${nonce}">(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'})</script></body></html>`;
 }
 
 /** Keeps control DOM stable on state updates so native webview messages do not discard keyboard focus. @example studyClient() */
-function studyClient(options: typeof STUDY_UI_OPTIONS): void {
+function studyClient(options: typeof STUDY_UI_OPTIONS, installFocus?: typeof installWebviewFocus): void {
   const api = acquireVsCodeApi(), visited = new Set(api.getState()?.visited ?? []);
+  installFocus?.(api);
   let current: StudyViewMessage | undefined;
   let scrubbing = false;
-  let readingPose: { presentationId: string; revision: number; anchorId?: string; fraction: number; leadingOffsetPx: number; scrollY: number; focused?: HTMLElement } | undefined;
-  // A learner can keep tabbing during native placement; retain their latest focus instead of the initiating control.
-  document.addEventListener('focusin', event => { if (readingPose && event.target instanceof HTMLElement) readingPose.focused = event.target; });
+  let inputRevision = 0;
+  let poseTransaction: { request: PresentationPoseCapture; inputRevision: number; invalidated: boolean; restoring: boolean } | undefined;
+  // Real input retires the captured pose; native resize/focus events alone are not a new learner reading choice.
+  for (const eventName of ['keydown', 'pointerdown', 'wheel', 'touchstart']) document.addEventListener(eventName, event => {
+    if (!event.isTrusted) return;
+    inputRevision++;
+    if (!poseTransaction || poseTransaction.invalidated) return;
+    poseTransaction.invalidated = true;
+    api.postMessage({ type: 'presentation-pose-invalidated', captureId: poseTransaction.request.captureId });
+  }, { capture: true, passive: true });
   const element = (id: string) => { const found = document.getElementById(id); if (!found) throw new Error(`Missing reader element ${id}`); return found; };
   const send = (message: object) => api.postMessage({ ...message, revision: current?.revision });
   const button = (action: string) => document.querySelector<HTMLButtonElement>(`button[data-action="${action}"]`);
@@ -124,20 +135,88 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
     const tab = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : tabs[(selected + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
     document.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`)?.focus(); send({ type: 'tab', tab });
   });
+
+  /** Names only known controls for panel replacement; captures no HTML or executable selector. @example focusLocator(document.activeElement) */
+  const focusLocator = (target: Element | null): PresentationReadingPose['focus'] => {
+    if (!(target instanceof HTMLElement) || target === document.body) return;
+    const id = options.focusIds.find(id => id === target.id);
+    if (id) return { kind: 'id', id };
+    const detail = options.readingDetails.find(id => id === target.parentElement?.id);
+    if (target.tagName === 'SUMMARY' && detail) return { kind: 'summary', id: detail };
+    const action = options.focusActions.find(action => action === target.dataset.action);
+    if (action) return { kind: 'action', action, index: Array.from(document.querySelectorAll('[data-action]')).filter(element => element instanceof HTMLElement && element.dataset.action === action).indexOf(target) };
+    if (target.dataset.presentation === 'restore' || target.dataset.presentation === 'save-preference') return { kind: 'presentation', action: target.dataset.presentation };
+    if (target.dataset.playback === 'start') return { kind: 'playback-start' };
+    if (target.classList.contains('table-scroll')) return { kind: 'values' };
+    const region = target.parentElement?.id;
+    if (target.dataset.item && (region === 'flow' || region === 'moments')) return { kind: 'item', region, itemId: target.dataset.item, observationId: target.dataset.observation };
+  };
+  /** Resolves semantic reading controls after model rendering, without interpolating captured selectors. @example resolveFocus(pose.focus) */
+  const resolveFocus = (focus: PresentationReadingPose['focus']): HTMLElement | undefined => {
+    if (!focus) return;
+    if (focus.kind === 'id') return document.getElementById(focus.id) ?? undefined;
+    if (focus.kind === 'summary') return document.getElementById(focus.id)?.querySelector('summary') ?? undefined;
+    if (focus.kind === 'action') return Array.from(document.querySelectorAll<HTMLElement>('[data-action]')).filter(element => element.dataset.action === focus.action)[focus.index];
+    if (focus.kind === 'presentation') return Array.from(document.querySelectorAll<HTMLElement>('[data-presentation]')).find(element => element.dataset.presentation === focus.action);
+    if (focus.kind === 'playback-start') return document.querySelector<HTMLElement>('[data-playback="start"]') ?? undefined;
+    if (focus.kind === 'values') return document.querySelector<HTMLElement>('.table-scroll') ?? undefined;
+    return Array.from(document.getElementById(focus.region)?.querySelectorAll<HTMLElement>('[data-item]') ?? []).find(element => element.dataset.item === focus.itemId && element.dataset.observation === focus.observationId);
+  };
+  /** Binds capture/restore to the currently rendered learning item and admitted mode operation. @example matchesPose(request) */
+  const matchesPose = (request: PresentationPoseCapture | PresentationPoseRestore): boolean => Boolean(current && current.revision === request.revision
+    && current.model.selection.itemId === request.itemId && current.model.source.hash === request.sourceHash
+    && current.model.selection.studyId === request.studyId && current.model.observation?.id === request.observationId && (current.contentTab ?? current.model.selection.tab) === request.contentTab
+    && current.presentation?.state === 'applying' && current.presentation.presentationId === request.presentationId
+    && current.presentation.presentationControlRevision === request.expectedRevision);
+  /** Captures bounded reading data for the host only after its exact model is displayed. @example capturePose(request) */
+  const capturePose = (request: PresentationPoseCapture) => {
+    if (!installFocus || !matchesPose(request)) return;
+    const anchorId = options.readingAnchors.find(id => { const candidate = element(id); return candidate.offsetHeight > 0 && candidate.getBoundingClientRect().bottom > 0; });
+    const anchor = anchorId ? element(anchorId) : undefined, focus = focusLocator(document.activeElement);
+    if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body && !focus) {
+      api.postMessage({ type: 'presentation-pose-invalidated', captureId: request.captureId }); return;
+    }
+    const pose: PresentationReadingPose = { anchorId,
+      fraction: anchor ? Math.max(0, -anchor.getBoundingClientRect().top) / anchor.offsetHeight : 0,
+      leadingOffsetPx: anchor ? Math.max(0, anchor.getBoundingClientRect().top) : 0, scrollY: Math.max(0, window.scrollY),
+      valuesScrollLeft: Math.max(0, document.querySelector('.table-scroll')?.scrollLeft ?? 0),
+      expanded: options.readingDetails.filter(id => element(id) instanceof HTMLDetailsElement && element(id).hasAttribute('open')),
+      visited: options.readingVisited.filter(action => visited.has(action)), focus };
+    poseTransaction = { request, inputRevision, invalidated: false, restoring: false };
+    api.postMessage({ ...request, type: 'presentation-pose', pose });
+  };
+  /** Restores a same-item pose once after replacement/layout; later learner input invalidates the queued animation frame. @example restorePose(message) */
+  const restorePose = (message: PresentationPoseRestore) => {
+    if (!installFocus || !matchesPose(message)) return;
+    const reject = () => api.postMessage({ type: 'presentation-pose-invalidated', captureId: message.captureId });
+    if (poseTransaction?.restoring && poseTransaction.request.captureId === message.captureId) return;
+    // A fresh renderer may adopt one host-owned pose only before any learner input in that document.
+    if (poseTransaction ? poseTransaction.invalidated || poseTransaction.request.captureId !== message.captureId || poseTransaction.inputRevision !== inputRevision : inputRevision !== 0) { reject(); return; }
+    poseTransaction ??= { request: { ...message, type: 'capture-presentation-pose' }, inputRevision, invalidated: false, restoring: false };
+    poseTransaction.restoring = true;
+    const transaction = poseTransaction, pose = message.pose;
+    for (const id of options.readingDetails) { const details = element(id); if (details instanceof HTMLDetailsElement) details.open = pose.expanded.includes(id); }
+    visited.clear(); for (const action of pose.visited) visited.add(action);
+    api.setState({ visited: [...visited] });
+    for (const link of Array.from(document.querySelectorAll<HTMLButtonElement>('.link[data-action]'))) link.classList.toggle('visited', visited.has(link.dataset.action ?? ''));
+    requestAnimationFrame(() => {
+      if (!matchesPose(message) || transaction !== poseTransaction || transaction.invalidated || transaction.inputRevision !== inputRevision) { reject(); return; }
+      const target = resolveFocus(pose.focus), anchor = pose.anchorId ? document.getElementById(pose.anchorId) : null;
+      if (pose.focus && !target || pose.anchorId && (!anchor || !anchor.offsetHeight)) { reject(); return; }
+      // Restoring reading context never focuses a different native pane.
+      if (document.hasFocus() && target) { target.focus({ preventScroll: true }); if (document.activeElement !== target) { reject(); return; } }
+      const scroller = document.querySelector('.table-scroll'); if (scroller) scroller.scrollLeft = pose.valuesScrollLeft;
+      window.scrollTo({ top: pose.scrollY === 0 ? 0 : anchor ? window.scrollY + anchor.getBoundingClientRect().top + pose.fraction * anchor.offsetHeight - pose.leadingOffsetPx : pose.scrollY, behavior: 'instant' });
+      api.postMessage({ type: 'presentation-pose-restored', captureId: message.captureId });
+    });
+  };
   window.addEventListener('message', event => {
-    const message: StudyViewMessage = event.data;
+    const message: StudyViewMessage | PresentationPoseCapture | PresentationPoseRestore = event.data;
+    if (message?.type === 'capture-presentation-pose') { capturePose(message); return; }
+    if (message?.type === 'restore-presentation-pose') { restorePose(message); return; }
     if (message?.type !== 'study') return;
     const incoming = message.presentation;
-    if (incoming?.state === 'applying') {
-      if (!readingPose || readingPose.presentationId !== incoming.presentationId || readingPose.revision !== incoming.presentationControlRevision) {
-        const anchor = ['title', 'observation', 'overview', 'live-content', 'source-version', 'flow', 'moments'].map(element)
-          .find(candidate => candidate.offsetHeight > 0 && candidate.getBoundingClientRect().bottom > 0);
-        readingPose = { presentationId: incoming.presentationId, revision: incoming.presentationControlRevision, anchorId: anchor?.id,
-          fraction: anchor ? Math.max(0, -anchor.getBoundingClientRect().top) / anchor.offsetHeight : 0, leadingOffsetPx: anchor ? Math.max(0, anchor.getBoundingClientRect().top) : 0, scrollY: window.scrollY,
-          focused: document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined };
-      }
-      api.postMessage({ type: 'presentation-pose', presentationId: incoming.presentationId, expectedRevision: incoming.presentationControlRevision });
-    }
+    if (poseTransaction && (incoming?.state !== 'applying' || incoming.presentationId !== poseTransaction.request.presentationId || incoming.presentationControlRevision !== poseTransaction.request.expectedRevision)) poseTransaction = undefined;
     current = message; const { model, recording } = message, contentTab = message.contentTab ?? model.selection.tab;
     const mode = message.presentation, applying = mode?.state === 'applying';
     if (mode) {
@@ -178,7 +257,7 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
       }
     }
     const item = model.progressByItem.find(value => value.id === model.selection.itemId);
-    text('title', item?.title ?? 'Study the checkout flow');
+    text('title', item?.title ?? 'Codebook study');
     const selectedProfile = message.profiles.find(profile => profile.id === model.selection.profile), liveProfile = message.profiles.find(profile => profile.id === message.liveProfile);
     const profiles = element('profiles');
     if (profiles instanceof HTMLSelectElement) { replace('profiles', message.profiles, () => message.profiles.map(profile => { const option = document.createElement('option'); option.value = profile.id; option.textContent = profile.title; return option; })); profiles.value = model.selection.profile; profiles.disabled = message.busy || Boolean(message.liveState && message.liveState !== 'stopped'); }
@@ -251,17 +330,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS): void {
       studies.value = model.selection.studyId ?? previous;
     }
     for (const link of Array.from(document.querySelectorAll<HTMLButtonElement>('.link[data-action]'))) link.classList.toggle('visited', visited.has(link.dataset.action ?? ''));
-    if (readingPose && incoming?.state !== 'applying' && incoming?.presentationId === readingPose.presentationId && incoming.presentationControlRevision === readingPose.revision) {
-      const pose = readingPose; readingPose = undefined;
-      requestAnimationFrame(() => {
-        // A later selection owns its own pose; restoring scroll never takes focus from another native pane.
-        if (current?.presentation?.presentationId !== pose.presentationId || current.presentation.presentationControlRevision !== pose.revision) return;
-        const anchor = pose.anchorId ? document.getElementById(pose.anchorId) : null;
-        window.scrollTo({ top: pose.scrollY === 0 ? 0 : anchor ? window.scrollY + anchor.getBoundingClientRect().top + pose.fraction * anchor.offsetHeight - pose.leadingOffsetPx : pose.scrollY, behavior: 'instant' });
-        // Do not replace a newer focus choice made between the settled message and this animation frame.
-        if (document.hasFocus() && pose.focused?.isConnected && (document.activeElement === pose.focused || document.activeElement === document.body)) pose.focused.focus({ preventScroll: true });
-      });
-    }
+    // A replacement must not expose placeholder facts or actions before its complete host snapshot.
+    element('study-content').inert = false; element('study-content').hidden = false; element('bootstrap-status').hidden = true;
     api.postMessage({ type: 'rendered', revision: message.revision, itemId: model.selection.itemId, snapshotUri: model.observation?.snapshotUri, ...(recording ? { presentationRevision: recording.presentationRevision } : {}), ...(message.presentation ? { presentationControlRevision: message.presentation.presentationControlRevision, presentationMode: message.presentation.mode } : {}) });
   });
   api.postMessage({ type: 'ready' });

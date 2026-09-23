@@ -32,9 +32,10 @@ async function feedbackHarness(context: TestContext) {
         textDocuments: [], onDidChangeTextDocument: disposable,
         registerTextDocumentContentProvider: (_scheme: string, value: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { provider = value.provideTextDocumentContent; return disposable(); },
         createFileSystemWatcher: () => ({ dispose() {}, onDidChange: disposable, onDidCreate: disposable, onDidDelete: disposable }),
-        openTextDocument: async (uri: Uri) => { const text = await provider(uri); return { uri, getText: () => text }; },
+        openTextDocument: async (uri: Uri) => { const text = await provider(uri); return { uri, getText: () => text, validateRange: (range: unknown) => range }; },
       },
       window: {
+        tabGroups: { activeTabGroup: { viewColumn: 1 }, onDidChangeTabs: disposable, onDidChangeTabGroups: disposable }, onDidChangeActiveTextEditor: disposable, onDidChangeTextEditorSelection: disposable,
         registerTreeDataProvider: disposable, showTextDocument: async () => {},
         showErrorMessage: async (message: string) => { notifications.push(message); },
         createWebviewPanel: () => {

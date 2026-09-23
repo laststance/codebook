@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "at": "2026-09-21T14:18:26.333916+00:00",
+  "scope": "Development implementation review; no installed repair or final acceptance",
+  "source": {
+    "base": "c3cee826ea6e7c25e835b381a320bcd39ec477d9",
+    "head": "49932bd24ee053ba4ee58d233741576fc2b0c407",
+    "dirty": true,
+    "sourceHash": "759166d9a906d0ec415fc10452cc79a0dab42928e5bcc3c712e828528ef26c4c",
+    "sourceInputCount": 269
+  },
+  "results": {
+    "productShared": 726,
+    "package": 96,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "fixCycles": 3,
+    "reviewConverged": false,
+    "claudeCode": "owner-skipped",
+    "codeRabbitPasses": [
+      {
+        "files": 19,
+        "findings": 2
+      },
+      {
+        "files": 29,
+        "findings": 0
+      },
+      {
+        "files": 29,
+        "findings": 1
+      }
+    ],
+    "finalReviewers": 0,
+    "finalEditorTrials": 0
+  },
+  "privacy": "Only locations, hashes and sanitized outcomes are public; referenced private artifacts stay ignored.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/review-pass-1.json",
+      "bytes": 4156,
+      "sha256": "57c775703229557dcd9fa409b19060aa0e6d2563bc244d9b3b8360a8e3560484"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-2.json",
+      "bytes": 2936,
+      "sha256": "3868409627c60b9580505f76a69a8aa28d9a108165209b7567bd64e8d6a51432"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3.json",
+      "bytes": 2578,
+      "sha256": "8605417409a6fa1687e6aff156d50442d6cbc49d0b19dc0e40255df568b3c172"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-parent.json",
+      "bytes": 1645,
+      "sha256": "b0547e5621770df02d3f18eef095fa823eda9b6d8e4dfb1c494c565f9abe7afa"
+    },
+    {
+      "path": "artifacts/cycle-0018/coderabbit-first.jsonl",
+      "bytes": 3384,
+      "sha256": "8cccb8fc447cc666f33f0284a7f8c6ca2dd62c442f036962ffcad7e8d74d7bad"
+    },
+    {
+      "path": "artifacts/cycle-0018/coderabbit-second.jsonl",
+      "bytes": 2085,
+      "sha256": "b2a5483775c4fab6db932d8d7c6f0227652e76178dbc35885f12345672dfdb02"
+    },
+    {
+      "path": "artifacts/cycle-0018/coderabbit-third.jsonl",
+      "bytes": 3037,
+      "sha256": "8af29dc295599ffa0f4601efd6a4ca00c105d1f29cffff8c7b8757c6d5a85488"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-mcp-first-red.tap",
+      "bytes": 1077,
+      "sha256": "70f6830e6d216d06f50b43d772de586ab70fb113b48bef980e28f4ae80f93d0c"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-mcp-first-green.tap",
+      "bytes": 2150,
+      "sha256": "b4329be420892b81cd9635a7dd13ab5b7cac8bbb31e99464781779ae6175277e"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-owned-wiki-red.tap",
+      "bytes": 2451,
+      "sha256": "e728be56ba3406ee15a6bf531711e5038f29876c92fd72492ba6a0ed410aa2e6"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-owned-wiki-green.tap",
+      "bytes": 2738,
+      "sha256": "fd9cb61c88c4c8d835cc736a61676d2bafb690705114182c206e1ac77607d93d"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-final-product-shared.tap",
+      "bytes": 83366,
+      "sha256": "93824b4a50538468cd806eab7ec9ff5b3b64b00329314f9331413f92f5fba221"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-final-package.tap",
+      "bytes": 10076,
+      "sha256": "f11aa86c4d91a75bc88255c4c7164e41651b78720e90560cb6d2685a39122c98"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-final-build.log",
+      "bytes": 393,
+      "sha256": "e1de0ce10def961f0531e95f3e3c79935d0aca593a092f2ddcc101889971632c"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-final-validation.json",
+      "bytes": 42994,
+      "sha256": "bc5d86ed3e1c20e5c45b347472432b634af20c54968c1265ec70862d7135ea49"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-native-log.json",
+      "bytes": 548,
+      "sha256": "ecd2ac2d3dfa1ab420f24bb19415760b2e63c3e4e40550946fc631d75aa6bb8f"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-pass-3-review-log.json",
+      "bytes": 1547,
+      "sha256": "e7f5bfe38f560fb419fc49ce15dcb04db25c51b4a005bd48ae842279cb73adf6"
+    },
+    {
+      "path": "artifacts/cycle-0018/review-skill-end.log",
+      "bytes": 50,
+      "sha256": "4a89b06010be6143e338bf182c458977ad973e12a5205c4fcad3d516a2f72917"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-plan-draft.json",
+      "bytes": 2268,
+      "sha256": "dad2daa7cd89f443ed94a449380e3b2427450006ebbeb409689969b27d59193a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/preparation-index.json",
+      "bytes": 280,
+      "sha256": "5130d3595659a04957c8b241084a6d3c6c43942794d15015389299fcf21b96c3"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/host-preflight.json",
+      "bytes": 706,
+      "sha256": "1a7ec68bfae447358879532d324da2449eeb0e2e1ecb295709436e6e41698494"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/cursor/profile-preparation.json",
+      "bytes": 23360,
+      "sha256": "a8a6e1d4a3b993c8252757f203643e9ee213fee82503b905df3e9b63d4d0a3ec"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development/vscode/profile-preparation.json",
+      "bytes": 43773,
+      "sha256": "794b6c24e12c166992a75a3e4a427552f326544a6def43b43dfdd72d48fee3eb"
+    }
+  ]
+}

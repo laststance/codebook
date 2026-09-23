@@ -9,6 +9,50 @@ import type { StudyService } from '../service';
 import { createHarness } from './helpers';
 import { loadModule } from './utils/loadModule';
 
+test('a cold Wiki refusal is visible and still rejects while its notification remains open', { timeout: 1_000 }, async () => {
+  // Arrange
+  const commands = new Map<string, () => Promise<void>>(), messages: string[] = [];
+  const refusal = new Error('Timed out waiting for identifiable primary editor focus');
+  let requests = 0;
+  const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
+    vscode: { commands: { registerCommand(name: string, action: () => Promise<void>) { commands.set(name, action); return { dispose() {} }; } },
+      workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+      window: { showErrorMessage(message: string) { messages.push(message); return new Promise<undefined>(() => {}); } } },
+    './environment': {},
+    './repositoryReader': { RepositoryReader: class { async open() { requests += 1; throw refusal; } async dispose() {} } },
+    './studyWorkspace': { StudyWorkspace: class { async dispose() {} } },
+  });
+  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: __dirname }, subscriptions: [], workspaceState: { get: () => undefined, update: async () => {} } });
+  try {
+    // Act
+    await assert.rejects(commands.get('codebook.openRepositoryWiki')!(), error => error === refusal);
+    // Assert
+    assert.deepEqual(messages, ['Codebook could not open Repository Wiki: Error: Timed out waiting for identifiable primary editor focus']);
+    assert.equal(requests, 1);
+  } finally { await boundary.deactivate(); }
+});
+
+test('a successful Wiki command opens once without displaying a failure notification', async () => {
+  // Arrange
+  const commands = new Map<string, () => Promise<void>>(), messages: string[] = [];
+  let requests = 0;
+  const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
+    vscode: { commands: { registerCommand(name: string, action: () => Promise<void>) { commands.set(name, action); return { dispose() {} }; } },
+      workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+      window: { showErrorMessage(message: string) { messages.push(message); return Promise.resolve(undefined); } } },
+    './environment': {},
+    './repositoryReader': { RepositoryReader: class { async open() { requests += 1; } async dispose() {} } },
+    './studyWorkspace': { StudyWorkspace: class { async dispose() {} } },
+  });
+  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: __dirname }, subscriptions: [], workspaceState: { get: () => undefined, update: async () => {} } });
+  try {
+    // Act
+    await commands.get('codebook.openRepositoryWiki')!();
+    // Assert
+    assert.equal(requests, 1); assert.deepEqual(messages, []);
+  } finally { await boundary.deactivate(); }
+});
+
 test('a released study with failed evidence can retire its dead connection and explicitly start a fresh reachable instance', async () => {
   // Arrange
   const harness = await createHarness(), services: StudyService[] = [], commands = new Map<string, () => Promise<string | void>>();

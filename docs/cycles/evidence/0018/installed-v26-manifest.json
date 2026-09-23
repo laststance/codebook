@@ -1,0 +1,882 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-22T20:04:05.789556+00:00",
+  "scope": "Cycle0018 unchanged v26 FAIL and concluded native A-E diagnosis; development only",
+  "sourceRevision": "04a7acf22b262875567a2e4557da4c5b8770f665",
+  "sourceHash": "febe54076abc595a96cfc754d3343782dad2687c3bb4d161fbb8a547e841b0bc",
+  "vsixSha256": "d7a730163b461760d4f85979708eabebe2d2beadebe2a0c6d9a1b0644a6ee8be",
+  "nativeResult": "v26 FAIL; C reproduces missing inner delivery; E private intervention completes 120 transfers; both-host unchanged repair pending",
+  "availability": "Private ignored local artifacts; missing files require revalidation. Raw recordings/transcripts/profile state are not published.",
+  "files": [
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/after-negative-unchanged-verification.json",
+      "bytes": 18333,
+      "sha256": "a7a9a0fb6c478356a5d8a05ee2479add664ac96a2a0c919fac8c78e638be1a9e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/after-vscode-unchanged-verification.json",
+      "bytes": 18333,
+      "sha256": "a54551ac090fc6e0901d58883b8063e31a580f81282d101dbb44616369cba5b6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/candidate.json",
+      "bytes": 33233,
+      "sha256": "3fbcd7b8d46edb8a70d4c611f84993e6cdd52c343a122b138aa0073472612fb4"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/ci-artifact/comparison.json",
+      "bytes": 2053,
+      "sha256": "15f2067e9127b1cdbaf9773c3555aa6bceb950e011702d53e8538892dfc91db5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/ci-artifact/verification.json",
+      "bytes": 32698,
+      "sha256": "7c47a7427c527594f52f5659ec169e1e979e6401120b83571b6f8721058bb306"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-full/installation.json",
+      "bytes": 7078,
+      "sha256": "c49043a7d1fc30ff843d515f51e8b8affc42cdc75d30b8d1bf52bbba7b5fbd8d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-full/profile-preparation.json",
+      "bytes": 23498,
+      "sha256": "f7f781142e293552e071636ccafc5028ea7fa895e4aace551f0a645fc7671110"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "d5259fcbdf47cb3ef08e6ff384eb455f3963ce2fc4641ff5bea897a1a98e8a97"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-cdp-readiness.json",
+      "bytes": 1567,
+      "sha256": "af2cfcd69212b36106edda9f38d21a05fddefa27ab64cc5b9cffc6229aa19375"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-exit.json",
+      "bytes": 61,
+      "sha256": "64aa282ba956f490cac1aab52103de020fe1dc662d37e907127d0ebaebe9811d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-frame-extraction.json",
+      "bytes": 1216,
+      "sha256": "412a816a0b1705fc300e20c29350b9034f6f546f7d0d2f92f596d30f4d12b82a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-launch.json",
+      "bytes": 1494,
+      "sha256": "8ffd5789514f0f77a71ae061875dc753db04aecc6299e99c5b892b0d75055117"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-native-admission.json",
+      "bytes": 5302,
+      "sha256": "12dbc51b401b9d2821392777c4c644dcd4a4f39e722f8e99fea7a8da6caeb5fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-negative-control.json",
+      "bytes": 124931,
+      "sha256": "bf690c34c13a2d661f266bdc3b90b311a88a28d0534e2fa79bf6bcf20e14d0c9"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-negative-prepare.json",
+      "bytes": 83000,
+      "sha256": "09dd02535e19853ef1166732b2da264ac13376c1e127876762e4d921bbaa422e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "1ed9e082e763dc090ea2f3f34ae98829c28c98e03cffd1bba522779cc769ac2e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-ui-close.json",
+      "bytes": 4118,
+      "sha256": "5e38a6ef78bbe3a00db19a0031eafa757a9494402a1d809d1bde47f582826ea5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/initial-ui-start.json",
+      "bytes": 6090,
+      "sha256": "59703a8a2f7a8533e0e10ca675044415e6233fe6942a90a99f2d356a1bdc40e5"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/installation.json",
+      "bytes": 7141,
+      "sha256": "6b3fcff021cc413f6937adf9864f83bb1fc9478bc7260f965a1a6292034c126d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/cursor-scope-negative/profile-preparation.json",
+      "bytes": 23640,
+      "sha256": "a43344711931b8ff90c7fbb00c4cc8cf85f74d978322efd09f3ce23705933514"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/negative-orchestration-result.json",
+      "bytes": 3712,
+      "sha256": "85a1e9eef9de4fdff02d7a0646cc060a5e8f4cba9415054f778df34e24bc707a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/negative-video-inspection.json",
+      "bytes": 1026,
+      "sha256": "7f6416786e1f70b94bd0d00bc546aedb18d38032da2a6e2d4a1daec719f69f04"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/schedule-conclusion.json",
+      "bytes": 467,
+      "sha256": "f45ccbf2f72a0f5bb137a071f01462f9685ac16f3a5fa7cd6b1994b2d2f6fcc6"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/schedule.json",
+      "bytes": 15373,
+      "sha256": "17e086eabc46b8601ac4c45901bae03d609d6533212c93147b4d653161daaed8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/schedule.sha256",
+      "bytes": 80,
+      "sha256": "7564820c0eed063051a1b4f2f80c222161089fed555650ea9f91262a356ec88a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "8ce197c2f3caa5acf4ba0e8593567dc17f7ba2f089a776857ed81f9fae32ff57"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-cdp-readiness.json",
+      "bytes": 910,
+      "sha256": "f4028537a23ba3297022c1c85501456fae8410886e486906420461dabcdc5400"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-entry-receipt.json",
+      "bytes": 184822,
+      "sha256": "ba043bdb19d51b53e644b0e433df751c7311d1e725834aa16faaf92ecb93655a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "2e549c5fd1267722ad3f89e1dea3463657cd636b69649839a9b42604dec6acbc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-frame-extraction.json",
+      "bytes": 1744,
+      "sha256": "af6a26b647a379c7328e08dc1dca356a139c41f819c9eee79f5874c6ee347edb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-launch.json",
+      "bytes": 1434,
+      "sha256": "06d6f65285fa76eb5e5240022c681f48898026cab803f4a512181cc4b1d4b4eb"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-native-admission.json",
+      "bytes": 5382,
+      "sha256": "c3616c51fcb6c079b22b70625b546a445e6a5afc1408a706210cfde94481777f"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-roundtrip-receipt.json",
+      "bytes": 670554,
+      "sha256": "56f559b1b122151920d4207cc6003803ba108f03008e15627f17d822eaabf7a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "2663fbddbdd19353870b2a5f0523242502cd344f4d42dbedd4317baf7d228952"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-ui-close.json",
+      "bytes": 3460,
+      "sha256": "3ee0c596ef38dab87dbfb9d57f6163c72612b6240685cf19c8697cfbdc1f6827"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/initial-ui-start.json",
+      "bytes": 6253,
+      "sha256": "eb862e2bb1fd318bb78323fda857051ce68c91756ac75b8accd7957e015429ef"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/installation.json",
+      "bytes": 7117,
+      "sha256": "3dc5d367e82c3ca56e5c79be1c67565f5eb2d15f1f41a373d267af1e68d52faf"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/profile-preparation.json",
+      "bytes": 43911,
+      "sha256": "2ee607b5615b164b26626ae8c7669d7873d0c41ee29bff8d4fc53d92df23123c"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "3f326e46bfc69a0a3a0c8541056c627e0311a409593a762b99927cc5e06d23dd"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-cdp-readiness.json",
+      "bytes": 760,
+      "sha256": "43dcf1e74ee99f497bd0c1dd040f288fc2e47e36972abe494a16a803305775d8"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-entry-receipt.json",
+      "bytes": 192435,
+      "sha256": "8cb7215f676ceb0ab030fe9bf5c3110a78ff79d7b7ad24bf331b3f4561f59d42"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-exit.json",
+      "bytes": 61,
+      "sha256": "4b81a6bd5ad73c00a022ee5a7888c847f946fc951237a145a2acb98ec6c90e82"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-failure-observation.json",
+      "bytes": 68330,
+      "sha256": "6d14ec69deb0a2684bf240fd1d86a237a26a3dc403b5857e50e986feebdc63cc"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-frame-extraction.json",
+      "bytes": 2581,
+      "sha256": "94d5b87e19dfbdae318e3870c8d3c355dfa35bd89a05a6662ead864f92b9ee6e"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-launch.json",
+      "bytes": 1434,
+      "sha256": "35de781789a975f7791674d1cedb84d9503e9f9b02335282498ca20a52fc389d"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-native-admission.json",
+      "bytes": 5382,
+      "sha256": "38caeb04bb0b1546560833ffd61d80a604499a8e24a545700bc9e9e7631c6399"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-roundtrip-receipt.json",
+      "bytes": 670574,
+      "sha256": "1c04c8f3800dbe1b263972685adcf400da1a45768210e7fbafb21828d051f5ad"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-shutdown.json",
+      "bytes": 450,
+      "sha256": "b63c8aa7a5e89abc31da820ceb6d641e91f06a7ea484ab27e02e3918847423af"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-ui-close.json",
+      "bytes": 3460,
+      "sha256": "8e7cffb34d8b644352ed1c617ab1919e4af255c32f504874a667dc0d2627bfba"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/restart-ui-start.json",
+      "bytes": 5902,
+      "sha256": "3a04b7a8a67aee036df0f16509c294801a9d27b261ae282753174c1930e1d99a"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-full/video-inspection.json",
+      "bytes": 4986,
+      "sha256": "76dc7b98f1ebaa4eca676f23e25c62b50d325d75763cd7f9dd1989eb9b31e17b"
+    },
+    {
+      "path": "artifacts/cycle-0018/installed-development-v26/vscode-orchestration-result.json",
+      "bytes": 8702,
+      "sha256": "fa76d8afef8e74b8cae492579f66657b6b62c46c4c2d80257c0fe78474e1fd63"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/after-vscode-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "506bee20fa37ffa5046fa8f3689004d6902a3e705f8ce8ce9d760d1fdfe097db"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/candidate.json",
+      "bytes": 33233,
+      "sha256": "3fbcd7b8d46edb8a70d4c611f84993e6cdd52c343a122b138aa0073472612fb4"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/schedule.json",
+      "bytes": 6927,
+      "sha256": "d1636892369b64f4e74de8020ac5780b8a0fc758e256c9e048ad7a782407db5c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/initial-bootstrap.json",
+      "bytes": 157808,
+      "sha256": "612985495439d879528e23ae4f00bbd163b596e4fa92f4360d22bb8497683b7c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/initial-cdp-readiness.json",
+      "bytes": 1004,
+      "sha256": "6cedff3043adecdcf020a2cf8a3b0045ee516a6fb9cb1d984363bb4b8ebfa621"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/initial-entry-receipt.json",
+      "bytes": 184791,
+      "sha256": "8d6c30def7acd29a6b8274a557d3734dac3d7fb5e89f188a3d51769fedae89c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "ef4e0b257a697f957a4eac314985a8cf9f0be410dc4cb9e0439ed742e8a3a76e"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/initial-frame-extraction.json",
+      "bytes": 1171,
+      "sha256": "d216bcad627b382c353ae03a1502d450c739aa6c4a29dc03f7bdda31c3184074"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/initial-launch.json",
+      "bytes": 1444,
+      "sha256": "42aae736b76504b1a086913894d7e505cf271a517cc1ef38eabbdf423ce37061"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/initial-native-admission.json",
+      "bytes": 5386,
+      "sha256": "131a413a07625998670f4244feff88100810d02602f6a2788e974f52b1f8f80d"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "401f625d21eb90fda5725c46cbe80a93448e0d4c8ca63cf225ab37cc488695c7"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/initial-ui-close.json",
+      "bytes": 3450,
+      "sha256": "40dc8e4b8eab7f55324a1ca997b57d6d7077f50b845a49e7e7ebd431d69b254e"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/initial-ui-start.json",
+      "bytes": 6243,
+      "sha256": "14ce6af94bd57294f881c9a7d3dd208f9d12af4225f2f92e327cf3f1e0e1cb77"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/installation.json",
+      "bytes": 7114,
+      "sha256": "d934ba034753a3b903bef445a64e0131207ec52d406556a9657a71b086dd1103"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/profile-preparation.json",
+      "bytes": 43915,
+      "sha256": "9e46a49a0f1e1b11c73356fb4bb9c3d5f436d2f71c8c47b1a98b2515c8f7056d"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-full/video-inspection.json",
+      "bytes": 1341,
+      "sha256": "30e86db052651786c61d347d6da0a8b9632dc1563e79e6eb20e65a9c83056ed4"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-a/vscode-orchestration-result.json",
+      "bytes": 4542,
+      "sha256": "341cf8f97f3300eddabfb7b3a87d31573840861a64d19df915f581839ddc9d40"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/after-vscode-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "6ad582a710686327718abfde9d79019454678872fbc391760a27a506968dbaeb"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/before-launch-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "7eb7a4465120bd7c96a1962b3a2abbcc009765bae40bf1a5521fff017d452a21"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/candidate.json",
+      "bytes": 33233,
+      "sha256": "3fbcd7b8d46edb8a70d4c611f84993e6cdd52c343a122b138aa0073472612fb4"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/schedule.json",
+      "bytes": 7462,
+      "sha256": "ce81c77263997a1beea8d7f2567aa5d9089f5cae59466d7aac2b3b269c6528f9"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/diagnostic-bundle.json",
+      "bytes": 692,
+      "sha256": "5e2ab563a2bc86f6747df2f5c7b5725f99efb4ebacdf01affe44455694464920"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "cf8296924ea27f44d7a6da5843359aadb8e97c45259469300c7fc2324dfe8865"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-cdp-readiness.json",
+      "bytes": 910,
+      "sha256": "0911d8ea8ae883d67038dcdc95811f44158285c200a4e7dcc39fda54b04ed4e5"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-entry-receipt.json",
+      "bytes": 184781,
+      "sha256": "05c62644a305aa77879083fb038e24bf750121934e2564510092bb410d1741d4"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "1e3f0c4446d8f1b87ef0b5e666d1e29bfd4093046c4de18613160d2d6325c33a"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-frame-extraction.json",
+      "bytes": 1719,
+      "sha256": "7ab020b4a01cd758b03b37de440f49eec4d3789805fc622412cd3755bab17927"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-host-focus-dump.json",
+      "bytes": 26949,
+      "sha256": "2dbbc5be8f314a0ff9fed3c2f878eaacb7b4f2d1b17afba6bcdcb9a5e5cde14c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-host-focus-install.json",
+      "bytes": 8894,
+      "sha256": "fd9337e5d0741028e09e45cfdf4778f0f08f041fdc702dc643fcfaef7f4fcb9f"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-launch.json",
+      "bytes": 1444,
+      "sha256": "122b279fc16447fb4495e9b2b2d419d5c8837762fd9a4af0edecf32a9c2e6e20"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-native-admission.json",
+      "bytes": 5386,
+      "sha256": "af82e54d5eb2f036a6204f88ac6f64bb51767c97f37a0d46beb979353d9761f0"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-roundtrip-receipt.json",
+      "bytes": 670372,
+      "sha256": "5f765f6e8d9c1415a95fe0662ab317d7c0b2374b9a61c3d46150c45da2096328"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "3a9d40b8cd21fcf24147428efc4c8bd9988b1051facd42af92532071b5ddd4d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-ui-close.json",
+      "bytes": 3450,
+      "sha256": "504ebf8fafeb670eb4422530f4c24d922d768fbe77496931ad82ee3e6b49dd45"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/initial-ui-start.json",
+      "bytes": 6243,
+      "sha256": "65cc03e0a5ca9b873d376d65acdbc2daa422283f1fd661faf863c082c68e188a"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/installation.json",
+      "bytes": 7114,
+      "sha256": "d00ddf0fe1394cbc5049d5fdf3e4e52ee1de339b57d12277344ecca102b331bc"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/profile-preparation.json",
+      "bytes": 43915,
+      "sha256": "2b001c236602d51e71337a2a62ce400544631c19ff982b405d0789f791cb0e8c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-bootstrap.json",
+      "bytes": 157816,
+      "sha256": "490cbe995594eb8026d73e35dc1ca1dde4eb4f47d31fe23812ccb6020256956d"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-cdp-readiness.json",
+      "bytes": 760,
+      "sha256": "aa200c52e95a3c6dc5a6692801f86d36753617e59d956ab38c16fda639c431f5"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-entry-receipt.json",
+      "bytes": 192397,
+      "sha256": "f97f91e957f714d26d880cd3ec63308fbc5549050ca2c94ba8ec529cad141d8e"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-exit.json",
+      "bytes": 61,
+      "sha256": "e8313cbde9dfc53fbae704e332eae8fb791cf21f9175b5d6af91f77f704c5cc7"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-frame-extraction.json",
+      "bytes": 2541,
+      "sha256": "1ae60662c1488be43417466bccbf257c1573a8507338fbf14197cc99327a166f"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-host-focus-dump.json",
+      "bytes": 10793,
+      "sha256": "39ef4f1e7e5004a007e4c57df9c4132bc72976dda86be37fd29a5287d72686aa"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-host-focus-install.json",
+      "bytes": 9245,
+      "sha256": "1ef7e95c352a3a50737fc635ea9ccd49f9969a1c3172cda01f8f52162899a7bc"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-launch.json",
+      "bytes": 1444,
+      "sha256": "0e48ed5bbffecefe44d8da6e0267185d92f02593eb577530cdcfc4a9a6a9ae44"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-native-admission.json",
+      "bytes": 5386,
+      "sha256": "379ece68f9eb70d8d0f618cfc6b18ba307290843f633492073aa158f2d9db6a9"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-roundtrip-receipt.json",
+      "bytes": 670382,
+      "sha256": "2c0d03e3a276766db8c43bc8594ddd96b194e5f57b6d9518c553552194cb17f5"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-shutdown.json",
+      "bytes": 450,
+      "sha256": "2e96011fe79c20ab9d0dd6b31c6206aee5614382b6f00bb8bf4d4e38c99dc368"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-ui-close.json",
+      "bytes": 3450,
+      "sha256": "6f3c60af7015f0fc6ec900179ab8732a18b8d41a1a78fdfbd18fc7637b824ddf"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/restart-ui-start.json",
+      "bytes": 5892,
+      "sha256": "319fffdcaa21576786cbb9e7a444085fd488463d4af0bf60ff17918c8a257cac"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-full/video-inspection.json",
+      "bytes": 5330,
+      "sha256": "a4d72a2fb7b60edcf34f274505dd7c3264a67ca50e0365bdfe3d283e88561758"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-b/vscode-orchestration-result.json",
+      "bytes": 9248,
+      "sha256": "ee62ce5e2b9b11f15fd251bcb0d1429f47266279cf0da93e7e3b143e61ef674a"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/after-vscode-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "80612c4b838e55417bba2eca24d79ad91e68ce517c3c3ee2531392df3a672c20"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/before-launch-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "5606612bcddab20e0f2ff5c5a95c14958be47acc92b257537ec2696a4b402ac7"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/candidate.json",
+      "bytes": 33233,
+      "sha256": "3fbcd7b8d46edb8a70d4c611f84993e6cdd52c343a122b138aa0073472612fb4"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/schedule.json",
+      "bytes": 7515,
+      "sha256": "068e6f1122ec46a5ff19b0a4eb43c2451ceca16aa189d4176251112b80a99744"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/diagnostic-bundle.json",
+      "bytes": 692,
+      "sha256": "7610b49d523ba98272353116a4c8a0aa5a0be5927567b541ab21d149688baf34"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "6123d8cdea7a23a9aca56f74ee3df3e7913d3e939b746fd2d9e8bb0dccd75ea5"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-cdp-readiness.json",
+      "bytes": 910,
+      "sha256": "1ea1f9227324e7143510588fb2f5b10b1f5e04e464fce0dc7751b146fb65ed7c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-entry-receipt.json",
+      "bytes": 184788,
+      "sha256": "00b6f39e56e5f376ec2db24fd81c857a41cd5624a89bcadd5b86559d4c6d6e6c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "d24a39f584b6a1fb318e886cb948e0130d69f8b9c30a6a7fe3f62f7047a561ab"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-failure-observation.json",
+      "bytes": 68247,
+      "sha256": "820d39d99b5299c0f4002837b3a718ba32d934fa39c775ad681dcddb5eefd132"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-frame-extraction.json",
+      "bytes": 1993,
+      "sha256": "d9e8e317e8271de18a4d08892f790f8e94bb09e82bc39d7cf34944fee3cf836d"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-host-focus-dump.json",
+      "bytes": 52107,
+      "sha256": "9f6e63ccf3ceb881ded26dc7f28613a3a3be80d55a1cf1524e76e81783895d46"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-host-focus-install.json",
+      "bytes": 8894,
+      "sha256": "05544abb2fe9301cb56b40975ff07b39f9179d74bd77d9a1d3a0106d9cb9c7ee"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-launch.json",
+      "bytes": 1444,
+      "sha256": "7816cbda4c5f1fddc9f4bf20ae357884c30ed27ae62a9e0935d3a96ea7a4c244"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-native-admission.json",
+      "bytes": 5386,
+      "sha256": "a7b6762f6936dd4cda421c32333d0ba98e74a005f13c9b150054856cc052c6ff"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-roundtrip-receipt.json",
+      "bytes": 670379,
+      "sha256": "ac4c0ec1a6c638806354b789b7d0f2d2304960fb3d904825c699edb45de3c749"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "811f6a06582a831075f1b6f0c4287147a35fc1c470006f70e73d550f5735e51b"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-ui-close.json",
+      "bytes": 3450,
+      "sha256": "cced5fcab97c1fc00ce018861dab77832eaec84460c2dec15b8468455d87fe82"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/initial-ui-start.json",
+      "bytes": 6243,
+      "sha256": "39d7d97cb337d33d5fe5eac256c79a43323dc575198f20569b921d5bae835f3b"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/installation.json",
+      "bytes": 7122,
+      "sha256": "6ff17b8570e9470d442c47c5bff007a094a99c5c611958d407601f27332431ca"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/profile-preparation.json",
+      "bytes": 43915,
+      "sha256": "696540099121eeaa9e4c3d9b586147738871e7ff4c53ff86c053dafdbd74c42a"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/retained-pairs.json",
+      "bytes": 88846,
+      "sha256": "0e12da60dc3b6e8bab2da6423520508d1de108768b81ba8fe5f7874b060d9844"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-full/video-inspection.json",
+      "bytes": 2209,
+      "sha256": "11955a7b7719e0fe75cee18d1af07c3d573e53142f815143e7c03484d950fb39"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-c/vscode-orchestration-result.json",
+      "bytes": 6039,
+      "sha256": "02a6afb97cfcdfe29b9b3756762c6bbc0e849241d5374bada266266af7f87731"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/after-vscode-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "6dc5f0c118ac2ebb8fd5521aafefa1897d2272db2322b4d49af0c593768ff674"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/before-launch-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "86c4f160c640bbbcd87a634f3091dc6920eff500d928719f2157fd2b9f1ff376"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/candidate.json",
+      "bytes": 33233,
+      "sha256": "3fbcd7b8d46edb8a70d4c611f84993e6cdd52c343a122b138aa0073472612fb4"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/schedule.json",
+      "bytes": 8020,
+      "sha256": "4b0695e31aac34c415f3dae28bd84c7f40783907beba6b2d8856a431d465ba06"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/diagnostic-bundle.json",
+      "bytes": 1060,
+      "sha256": "1f709e5d673ccc4bb326de20dbd010f83b7152d3a1be973f89e7524a5fd0000c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "226993856973fed40d4e7bff6e467c8379da6265d5ce093c204d5206e032e292"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-cdp-readiness.json",
+      "bytes": 910,
+      "sha256": "7d06b625fa524a732b4239148cffbe20c055b05ba9af79a6324e59a39cfaaa1c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-entry-receipt.json",
+      "bytes": 184794,
+      "sha256": "387ea61b3d7070baeab153145543c6044377454982dfaf10fd4c8996ab13352e"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "2b51fccf378fd448e982e84bbc07c15014db77079666af24b4003bf069f13375"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-failure-observation.json",
+      "bytes": 68825,
+      "sha256": "4f1c051f0f98b55073222c6089b9f0edfc83049306e60f83b693aba7847dbe5c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-frame-extraction.json",
+      "bytes": 1719,
+      "sha256": "32da9540d87c30cc5ee44545740cba099f250574a933a733d873a8b9dd626d70"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-host-focus-dump.json",
+      "bytes": 28149,
+      "sha256": "4a6e6c9e6510d44ba087940a39d5629ccd26b96768b5a5d4201c7afd7b026d41"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-host-focus-install.json",
+      "bytes": 8894,
+      "sha256": "2678eb5a61911a6891665d0dbb7fd48f234c3cc7aa68fbd379c2a11ad207977b"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-launch.json",
+      "bytes": 1444,
+      "sha256": "87fc47a9e1d0299ad5fae382e540c4ab3064f656d88993701c89cc310aa96ca0"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-native-admission.json",
+      "bytes": 5386,
+      "sha256": "880f29bf4cdeee63ef1c5424db54b6257dae55fa481481bb28ede95f2e0a3b88"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-roundtrip-receipt.json",
+      "bytes": 668710,
+      "sha256": "0e50463cfdd3e64b7b55d4268fde7afbcf8ab2ee962ce5477a19f8d0cab09ddb"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "17d354a501f5ac7c893067e0cbca8dce6f5d560867aed3a262f80ffc59ca57df"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-ui-close.json",
+      "bytes": 3450,
+      "sha256": "a9c84e3fa54225cdab55efc00f024566d3a0bf097ca0e5088c23e9bd39d41be0"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/initial-ui-start.json",
+      "bytes": 6243,
+      "sha256": "3857e78c50abdbe577b3e48f6db63b29678a7b3976383576c2b758d614849548"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/installation.json",
+      "bytes": 7114,
+      "sha256": "edb6216aa1c5eaf9fd4146a0e75b91b47405fa8c06e97c4334ebee6a17d14508"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/profile-preparation.json",
+      "bytes": 43915,
+      "sha256": "bf7ddc548b3e81f5211766e96469aa15a8d218170865825ded03147ee2d4f84c"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-full/video-inspection.json",
+      "bytes": 1978,
+      "sha256": "fdb52327a543a19ddd4a21a4ef7d1c2b36d64090908ca643ff6c1fe73ae23c26"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-d/vscode-orchestration-result.json",
+      "bytes": 5704,
+      "sha256": "a93ebfafee8c33d91b5fc3f534d315e234e0c54ce8818c5812b2971c114c86f1"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/after-vscode-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "939daa67e82c989948b409efb1b2c25c63ddf5dd60bde420a20b3cb0fb2be54d"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/before-launch-unchanged-verification.json",
+      "bytes": 6323,
+      "sha256": "d8f560589034b6387a62040052f8d914a7987f276608633a3d9f8ac36fe4692d"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/candidate.json",
+      "bytes": 33233,
+      "sha256": "3fbcd7b8d46edb8a70d4c611f84993e6cdd52c343a122b138aa0073472612fb4"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/schedule.json",
+      "bytes": 8031,
+      "sha256": "ee5a57b697c1a5bcd3db2e7257badd613984f1aa12b51dccdf94d2bbe1803625"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/diagnostic-bundle.json",
+      "bytes": 1092,
+      "sha256": "ef52e583a2d711e5e5635a6fc1128876a91ebe7972f545846129a8ac3ec38926"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "e1ed20dfe0ad5b80ae7cba65e921806e269b5bf2fffc7c1ca0107dd836b7a389"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-cdp-readiness.json",
+      "bytes": 910,
+      "sha256": "043d9516f69a02dd387e346076948d657bd32eafa0c87724fd78bdda84f35969"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-entry-receipt.json",
+      "bytes": 184795,
+      "sha256": "0d64c6df3fdea9a3c22df4d73ec583e7b21e7fd4e8bebf89b162cac0e45bcb60"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "f72f5243eef74f646b989c064645c1fc06995259288930cf75e87f4f98b208c6"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-frame-extraction.json",
+      "bytes": 3640,
+      "sha256": "7fb2a73394feaf5763467cf263c7d194795041aece8084edc665e910442feae4"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-host-focus-dump.json",
+      "bytes": 7063,
+      "sha256": "7ecda794fd6c0edd2ae02b7119803d71accfa9730c2a549dd2882d8293353374"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-host-focus-install.json",
+      "bytes": 8894,
+      "sha256": "463be6a2bdb54eae2e1dc55628ea7f4b20e49346dab9b475cf0763037796a0fb"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-launch.json",
+      "bytes": 1444,
+      "sha256": "4e142bfa9cfad7c2f596f34492072d8602368e941389e1c917e2a3db81804a44"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-native-admission.json",
+      "bytes": 5386,
+      "sha256": "74607871079aa4af1d6e5b1cb71f933184c86e09a0a776a8d874c8fd4bce6858"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-roundtrip-receipt.json",
+      "bytes": 670372,
+      "sha256": "4532d2c368c08db4c9413408d2d7e890bddf9c8b604070455bfc35e0ccf8c1db"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "7142970418483cc475aee38dc5bee7cb48a4a17ec0ae9f6629bdb0e166923d07"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-ui-close.json",
+      "bytes": 3450,
+      "sha256": "3047b9cdd7ad21255f34386ae5f5fafe9e13ea15a9914e76e77fcd88005640c2"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/initial-ui-start.json",
+      "bytes": 6243,
+      "sha256": "0e24f26b467ccc0ef56177d90f3336a35bad8640f1583e35a3aa647c5d2a69d5"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/installation.json",
+      "bytes": 7114,
+      "sha256": "fcb753c0ea87338e3b147eabdffc376c396e9c84bf129d4eec0a5cc8a9f94b3d"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/profile-preparation.json",
+      "bytes": 43915,
+      "sha256": "cb4209289fa7b2957f6f2784994fc308f2bb9170e109c83dac1fd138b57dd776"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/retained-pairs.json",
+      "bytes": 875704,
+      "sha256": "a0701653eb2bbb941b6fad9b17403a336119664f1eddd283ed47b930db07531b"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-full/video-inspection.json",
+      "bytes": 4099,
+      "sha256": "73321a8fa0cdaf79161bd970b53422f1c5d47c5a67eda60ea7519a17a420b552"
+    },
+    {
+      "path": "artifacts/cycle-0018/retained-focus-v26-e/vscode-orchestration-result.json",
+      "bytes": 4984,
+      "sha256": "763ab278c4af88df5e034c2444fe93083a353f96a327041d87189a4c17934cd1"
+    }
+  ]
+}

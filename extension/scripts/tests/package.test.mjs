@@ -53,7 +53,7 @@ test('a real VSIX loads outside the checkout and preserves exact fixture maps, p
   // Arrange / Act
   const checked = await verifyPackageContent(original);
   // Assert
-  assert.equal(receipt.isolatedModuleLoad, true); assert.equal(checked.extension.version, '0.2.1'); assert.equal(checked.extension.apiVersion, '1.5');
+  assert.equal(receipt.isolatedModuleLoad, true); assert.equal(checked.extension.version, '0.2.2'); assert.equal(checked.extension.apiVersion, '1.5');
   assert.equal(checked.entries, 31); assert.equal(receipt.dependencies.length, 12);
   for (const path of ['fixture/server.mts', 'fixture/client.mts', 'fixture/constants.mts', 'fixture/index.html', 'build/server.mjs', 'build/server.mjs.map', 'build/client.mjs', 'build/client.mjs.map', 'build/constants.mjs', 'build/constants.mjs.map']) {
     assert.deepEqual(original.get(`extension/dist/demo/${path}`), await readFile(join(repository, 'experiments/cycle-0004', path)));

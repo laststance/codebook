@@ -1,0 +1,498 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-22T02:53:29.229408+00:00",
+  "scope": "Cycle 0018 v12 logging-only placement diagnosis and focused source repair; not final acceptance",
+  "privateBase": "artifacts/cycle-0018/placement-investigation-v12",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/candidate.json",
+      "bytes": 32523,
+      "sha256": "725b52a2581507d57d20c567e15ca85738a3fa71d01e751ea1e54386e138447b"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/focus-preservation.tap",
+      "bytes": 644,
+      "sha256": "0f2c8379976f7fe7e64dd736f1002549ffcdceb4af54029302063d49344e1f35"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/instrument-placement.py",
+      "bytes": 4088,
+      "sha256": "ef1550667ba750f0eb135d7fc1f54f452d0eb2349ab23b0d400b875ea7cc2449"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/phase-ui-visible.mjs",
+      "bytes": 3208,
+      "sha256": "d79c16d4794ea5afb072f4dd926fafc856b4b3f748846333ff0c8e106f31e187"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/regression-green.tap",
+      "bytes": 1212,
+      "sha256": "c1e04edefc366a06694c93ac9c8d6074bc1fb752cd1f438ba1600fd342df034f"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/regression-red.json",
+      "bytes": 396,
+      "sha256": "26ad8bfa831184beabda623287b617fa1d3ebc371e26cc68bb01f7c8637eba5b"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/regression-red.tap",
+      "bytes": 1146,
+      "sha256": "99d9ac34311616b8c583e38e7c0b0dd44a1baddccc0813aeb5089982a3f00a80"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/schedule.json",
+      "bytes": 813,
+      "sha256": "a6bc4ba317843ab6d53cdc459bf69aed5aa40abd8ef36d7601113b0da028cd29"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/before-restart.json",
+      "bytes": 56552,
+      "sha256": "ecde4d4f05da370e326cc22094aba637d6442e996e6c7605250933ab6e944766"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/connection-location.json",
+      "bytes": 182,
+      "sha256": "1bff32bc3bfc8ead596ffff1f557e22f8dce5cf07c3bb115f1bef2389bc56604"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/diagnostic-bundle.json",
+      "bytes": 588,
+      "sha256": "1db6ffc2b96b2f8abe8eecf7c72fd45093ea3503f35fbc71651606fdae417e05"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-before-close.png",
+      "bytes": 424982,
+      "sha256": "3fb9f16eae24b6f4b8369f5443dd7f936f82b76bbf2bac16d135b7a2c20c91ca"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-bootstrap.json",
+      "bytes": 157816,
+      "sha256": "a75575700590364d6fb361b5280551c2222f4e3c514b844232bae6de49bd8b2f"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-entry-receipt.json",
+      "bytes": 185290,
+      "sha256": "f3ba1217118a03ee0984f429619fbeb20c6bb9e158e135bdc2a767cb3c2e6856"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "e7f1c2820ff134361bcef7af7dd24bacae6a33202b53839f525b4f67b2e8da52"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-frame-extraction.json",
+      "bytes": 2046,
+      "sha256": "864b196ea56ccf9e87d6f10b70a0cb41301597b311bc40f37da9a82683b788cc"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-frame-inspection.json",
+      "bytes": 990,
+      "sha256": "6a52fbbfc83c324a609fac974787641e3fea9de2b441736bb1797834316541c9"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-frames-00.png",
+      "bytes": 659500,
+      "sha256": "48813a904d71d7547f24bd6d05031dd4e701f0446735ed109b243f44cdf57d05"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-frames-10.png",
+      "bytes": 785980,
+      "sha256": "dd761de1b4e2a969866d2141a9561e05d4dac231912eaffde1a3470ab5765c93"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-frames-20.png",
+      "bytes": 727858,
+      "sha256": "61e809572cb3b66c849f03da075418da06aaa9eaf87257cbbd110a8c398df302"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-frames-30.png",
+      "bytes": 538083,
+      "sha256": "2b1a0b3d258ff81cacba1c9afb1c3a9ace7419e3cd0df6e92c69125f79fffae6"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-frames-40.png",
+      "bytes": 417023,
+      "sha256": "60c4662c8fb0ed95dedee32f2c7f50f0fde612026fd04d31a76d3510a284326d"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-guided-walkthrough-observation-before.png",
+      "bytes": 447673,
+      "sha256": "647f5c1c22e2a12ec60758f17a400ac19545d716ca7873a8919f053ebd93edc2"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-guided-walkthrough-observation-return.png",
+      "bytes": 483304,
+      "sha256": "e1c793aba6a20ff6afbf4103029c848893a0a23c9b245993f7ae5bdf4874679e"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-guided-walkthrough-observation-study.png",
+      "bytes": 376367,
+      "sha256": "f3fb3086dd53a79a31989c28d8688afb65bbd19aaabed64a3e0aa6283a3fbd9a"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-guided-walkthrough-recording-before.png",
+      "bytes": 531314,
+      "sha256": "116214ec4d6466b569ebc1b75063ec335b9ba7e2d9d1ad376ef16216390aa4a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-guided-walkthrough-recording-return.png",
+      "bytes": 460125,
+      "sha256": "bc551ad7383e5632b85478dada43da066fe9f0a7f87f5ef99ff6bd8c4e4f0625"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-guided-walkthrough-recording-study.png",
+      "bytes": 396590,
+      "sha256": "40a22bb10129b0de2bd7dc568cf4c71ee5f6528a6c8419ff181d6537648d645b"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-launch.json",
+      "bytes": 1474,
+      "sha256": "9457b1965187171a8c42dafd335bbaafd2129aeb821bd7f3fc799c083a3c6158"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-living-book-observation-before.png",
+      "bytes": 522827,
+      "sha256": "b923aef22e528f2fe0dda1909471692b956587b3417e96ef60a1b767070c1585"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-living-book-observation-return.png",
+      "bytes": 529000,
+      "sha256": "31e3ae76c86638a4633b545108b09f2349aa346847539f708fa693f5b99acba8"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-living-book-observation-study.png",
+      "bytes": 414033,
+      "sha256": "2979201bf3e9e239ba36667cf4869e86a30b150030e8eeea6b0c6d25980a694f"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-living-book-recording-before.png",
+      "bytes": 560213,
+      "sha256": "3e2e0731b816ab4fcd4f97f3032fd3f0cd264a9ffaa1648f171eb61e57e40e16"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-living-book-recording-return.png",
+      "bytes": 517814,
+      "sha256": "8f1c231cd9a586f2484df0531e44bb1f70d50fa20fdb36932c2fd3a792f0bb30"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-living-book-recording-study.png",
+      "bytes": 395111,
+      "sha256": "e132589134d8494ff6888099c45fd8db55fdbfffffba142560adefb67bee5e79"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-native.webm",
+      "bytes": 12493420,
+      "sha256": "85c569688cf3d8b79b82d798d6be22eaa72387762d2175f26b93e4022ce8c20f"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-placement-events.json",
+      "bytes": 525811,
+      "sha256": "7ddbe91c0c75b4f0dc5fc79c8c10da9139b34d84ce61064fd2a1a3f3d937d600"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-ready-replay.png",
+      "bytes": 172748,
+      "sha256": "3ff8c20694d276a45c035847435d5193c7d7c28fa238179ea1e96e00a000262a"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-roundtrip-receipt.json",
+      "bytes": 671618,
+      "sha256": "eca44413c41cbb31da8d15057bb5c3cb6f1eb1dab8e6de193a7a1ab8263189af"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-saved-wiki.png",
+      "bytes": 470779,
+      "sha256": "fd784ef819d09ccb67f42e28660c79552a4f90bc0d28e19251ffe650aed7497c"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-shutdown.json",
+      "bytes": 450,
+      "sha256": "7b7b5247ee75523b9eccf0b0dfe0d79c3a19f7d830f37c5e5af57ae99f9f2f60"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-study-workspace-observation-before.png",
+      "bytes": 453297,
+      "sha256": "49dabc645d57ac8bb2e2ff3a82a5421447859d683a6fe4b623c3c13c8343e59c"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-study-workspace-observation-return.png",
+      "bytes": 489089,
+      "sha256": "941f0d74499050bc32db14917b098f787cf96addf91b7befc9c2151bdde4eb3c"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-study-workspace-observation-study.png",
+      "bytes": 422954,
+      "sha256": "a5109d6e4c0f9b81c5e236201d36ea80000261b25d9da1b2da094ab0fa230d5d"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-study-workspace-recording-before.png",
+      "bytes": 519623,
+      "sha256": "ddf55a371e92a6d982d578a9d8b51fe1dc95a25b3c3e3aa97ea402dcc4ea7254"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-study-workspace-recording-return.png",
+      "bytes": 451432,
+      "sha256": "60f32efa41b077e19eb812fcb9c8bb3f3e41f876c6f2bd6210406225f59e0f80"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-study-workspace-recording-study.png",
+      "bytes": 412215,
+      "sha256": "53892f423850728d785b9014004a9a6a72e5d425ad82caf48241095f10bc2906"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-ui-close.json",
+      "bytes": 3850,
+      "sha256": "aa6e4c00d2c5174b629f010200cb591011f3cf42c772b284b390d309c6867e64"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/initial-ui-start.json",
+      "bytes": 5454,
+      "sha256": "4191b0b47e23b322fd6f63001e2cacbc7d4b00ca699c27705579a0c9e14b2e28"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/installation.json",
+      "bytes": 7151,
+      "sha256": "38f1fd0614259e3019cba1cbafee95c8168404822009cb371f9a333fa29425a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "a240ed5ac734c70b97dd8b2331f90c174678b60ff6b361029bc6b66809d884a2"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/profile-preparation.json",
+      "bytes": 43906,
+      "sha256": "94448a74a40a212e0083eb5a9c3f7867640c78fd7d6fc5b3a6e512f9d9ee5b03"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-before-close.png",
+      "bytes": 560105,
+      "sha256": "755d1d7988772d53c5cefea9eb1805dc25f5941bb4b65fd552ae9db34b0f6f71"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-bootstrap.json",
+      "bytes": 157815,
+      "sha256": "0d0aff95b21bf12220f1817a5a09a821ea0ab08256792f39a3efdb4376c3113b"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-cold-wiki.png",
+      "bytes": 498415,
+      "sha256": "a415d6dc8d4ee3db6a9e13e7b52ec1e54cbe61dda14ea2ee2d1369d6b5547bf2"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-entry-receipt.json",
+      "bytes": 192892,
+      "sha256": "349747a579fbad9ba94e1fe7caa8aded4f4d1c0cf309f8b3f5afeecb0288cceb"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-exit.json",
+      "bytes": 61,
+      "sha256": "cc0584bf76d1466a0bb5d0a7e5f2af24981295be345f6f3921b04aa9e6f785ae"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-failure-state.json",
+      "bytes": 21645,
+      "sha256": "8052bbfaf119a014c0db79eae88203be5d351172eb88a82c91ff3279cfb8f9e7"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-frame-extraction.json",
+      "bytes": 2045,
+      "sha256": "5d64488f8a3a306d97a209c08b4164ba00eecb92dd6a0cbb2e2b8176836da709"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-frame-inspection.json",
+      "bytes": 1140,
+      "sha256": "764f18449f9b16b17a0991d6310684bb950e5fde91ae0bac7661d1d57c29cb6e"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-frames-00.png",
+      "bytes": 585185,
+      "sha256": "7af5af6e49c6306ac35f5c4e8b3f8717ad69a0ffb5089de7d05582b4f35e75f0"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-frames-10.png",
+      "bytes": 758026,
+      "sha256": "8d18a4024495b1010b3fe46a9aa524b0d02dc09cc751e74137fdfc02f006a038"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-frames-20.png",
+      "bytes": 639667,
+      "sha256": "db49165a6b941c393431f965b12ee32f8c00eff8033dcea534faeefa04503481"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-frames-30.png",
+      "bytes": 457628,
+      "sha256": "a2372f1d831df0109d8ab3e7c13d9353a95b700091804b6b176c21c5de9cd271"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-frames-40.png",
+      "bytes": 461236,
+      "sha256": "3d4c339fd07ce1aed26ead3e858a2dcc074380abe3e431298ce71a482083e698"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-launch.json",
+      "bytes": 1474,
+      "sha256": "b718f15785191b9affc9d1eca8b492d12051a7dd96c6004d2ea582d55b5e0a9f"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-living-book-observation-before.png",
+      "bytes": 528532,
+      "sha256": "d1988fd3b78ee73bce431b2117a25cbdfb6de8b87c2fb7d41eca5ffa5d37fd45"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-living-book-observation-return.png",
+      "bytes": 534987,
+      "sha256": "aa4b9b68d27c67d59d40f8d06f9546cca9e95ecda192965c06bac71267ab51fb"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-living-book-observation-study.png",
+      "bytes": 412245,
+      "sha256": "c3b2ac5a073b46bff9a04879332b96c35260e65f03f80569bd6f298a7a8a3f13"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-living-book-recording-before.png",
+      "bytes": 536889,
+      "sha256": "efc059f292b693c96243ecf045174003acbb4420070d750f99087d103e1d5182"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-living-book-recording-return.png",
+      "bytes": 534156,
+      "sha256": "bf3501a2c78cd6ee8b067ce19c5e428d7946c69b7c2b14c6ff1c98b1679abba1"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-living-book-recording-study.png",
+      "bytes": 393616,
+      "sha256": "0eb367325ddc529e2626d8a9f551e83f7a7b213aebd18f278d5df2232aae7c01"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-native.webm",
+      "bytes": 6776002,
+      "sha256": "f98c485e92e372877fa672096e0a556d6dabfa82f84f7f08cbed89f8a5c40c98"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-placement-events.json",
+      "bytes": 350962,
+      "sha256": "5535ef46878c0ce648b93227ea63d302d1bf3ad91f7fe51b88fa25907f9a9af5"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-ready-replay.png",
+      "bytes": 173049,
+      "sha256": "804445708346858ec522d5a2354e340343cbc677c015a295006df9b8ff66fbc3"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-roundtrip-failure.png",
+      "bytes": 560105,
+      "sha256": "755d1d7988772d53c5cefea9eb1805dc25f5941bb4b65fd552ae9db34b0f6f71"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-roundtrip-receipt.json",
+      "bytes": 396620,
+      "sha256": "ef9aef5e743d866999711060824d5de1e406f8c56cca19bbe4b9143671213882"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-saved-wiki.png",
+      "bytes": 491499,
+      "sha256": "045884fdf87526b4b25a0552cf9dbc0a0ac765f1d7fd11475c8c47c8cd89776a"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-shutdown.json",
+      "bytes": 450,
+      "sha256": "8a8a195603cab94d361b68297c396a61316a5869da753217b87d296bbd6106df"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-study-workspace-observation-before.png",
+      "bytes": 457307,
+      "sha256": "35a33806bc61f40bc608084e0a883a54459683a5eda78f4eac3211ad0f5538bc"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-study-workspace-observation-return.png",
+      "bytes": 491113,
+      "sha256": "cc28a5b491e3e45401a8aef613391224987483276fff9dc33c67e2f547a5c88d"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-study-workspace-observation-study.png",
+      "bytes": 422870,
+      "sha256": "b1c5b8024bb8b027becc3a1c14dda7c70e9245c9ea4ecac3ea8bfbe3436f4f09"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-study-workspace-recording-before.png",
+      "bytes": 498237,
+      "sha256": "fd33f6fea0753b54f352f26fd185698dc0b8a510f098f705644eee4c73ccaf05"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-study-workspace-recording-return.png",
+      "bytes": 458402,
+      "sha256": "52622c8f8690d2da50d29e816cff2e058da98df5cfd1aa2590d8881073a8b6b0"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-study-workspace-recording-study.png",
+      "bytes": 412021,
+      "sha256": "80c0a1bd29dd213c97f5d77704fdc8c7d40b0a0e3cead37e769eea4eaf6fcf51"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-ui-close.json",
+      "bytes": 3493,
+      "sha256": "66a02d2682fd00a7b6bd096d26904462fa4ef0324ce2d8f0a86d5eda5cd99289"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/vscode-full/restart-ui-start.json",
+      "bytes": 5454,
+      "sha256": "f443a980056c437438e480fa5dae3b25608242f313d95a9d9cb943390bc7a1fd"
+    },
+    {
+      "path": "artifacts/cycle-0018/placement-investigation-v12/workspace-reader.tap",
+      "bytes": 83152,
+      "sha256": "63f024177fb1cc7c98e0adf5bb7905def36e0090e208972bbc0c0aaa9adec416"
+    }
+  ]
+}

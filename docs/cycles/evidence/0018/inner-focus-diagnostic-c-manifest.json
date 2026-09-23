@@ -1,0 +1,308 @@
+{
+  "schemaVersion": 1,
+  "scope": "Harness startup refusal before product actions; no product conclusion",
+  "recordedAt": "2026-09-22T11:21:58.420607+00:00",
+  "availability": "Private artifacts in the current checkout. No credentials or runtime payloads embedded. Diagnostic copies are modified and do not prove unchanged installation.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/after-diagnostic-verification.json",
+      "bytes": 5286,
+      "sha256": "d36895b95014514088592d0e701be18c83521b869145c4f8aea425b0ec20204d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/before-diagnostic-verification.json",
+      "bytes": 5287,
+      "sha256": "ebf8f7055e47eec9b275713be987d3736270b91b8a978ca2f483084cc405a14c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/before-restart.mjs",
+      "bytes": 2067,
+      "sha256": "9c08a9a13d4bab6720aa45455e176d4dc56d7bf5b204498359457989ba0d8015"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/bootstrap.mjs",
+      "bytes": 1980,
+      "sha256": "360b9519671456d0ffd757ae847375967cef20750c53debce1fa6be8e2923720"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/candidate.json",
+      "bytes": 32989,
+      "sha256": "631f6ef6c8885abc632fe10d3513c38168b12adcfd773087571ec6b400e6a2bd"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/check-capture-paths.mjs",
+      "bytes": 1117,
+      "sha256": "7158cb203126c68da7ce6adbbaa7f3448d58c77486a498ba3110f3af42221996"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/check-native-focus.mjs",
+      "bytes": 1237,
+      "sha256": "6621c4b471a105593ba2ad1429000df16221ace0cac11297a4ac73549288ed3e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/checked-process.mjs",
+      "bytes": 1175,
+      "sha256": "04f09fc530296c557cd2790d3d48f73b4182503e04ab4b3f3508cceceb91aa55"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cleanup-owned-profile.py",
+      "bytes": 2283,
+      "sha256": "fb75176e36c03376914026fd74d530e44509632e2527dd5982a16f5e28d36c68"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/aborted-before-close.png",
+      "bytes": 254563,
+      "sha256": "5dbd4be37e4779faa1e9281c89e70e68bf52da253bcf024eb1328181a1a32f4c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/diagnostic-bundle.json",
+      "bytes": 1746,
+      "sha256": "9cf81c95d5efeef5ad29c936cdd139d7d6d639380c375d76ae8f7be7c1ac5def"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/diagnostic-guard-bundle.json",
+      "bytes": 961,
+      "sha256": "e6264addc1517c755b71fa61f057b07166eaeeed1600eb72e6850b9cac4af0c7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/guard-dispose.json",
+      "bytes": 687,
+      "sha256": "45fb1e46f3af282f559db0e58d1e0d38fa2cb297d67466640441bafeddc1563d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/initial-editor.log",
+      "bytes": 221,
+      "sha256": "462013185114ef1cc6d2276c2c0efbd7f2b42098853abcc9a12e91983f33f6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/initial-exit.json",
+      "bytes": 61,
+      "sha256": "c573c866f5e7352e5e04cae52d04659526affd807db8596456086c5eb41fff08"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/initial-launch.json",
+      "bytes": 1484,
+      "sha256": "9d2b6251d5b2a36a48f581540293b8dee0dfbc021c22d238386f5add4c3660ed"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/initial-shutdown.json",
+      "bytes": 449,
+      "sha256": "b54a216959d951ab0f42377a599081053d075619141764a784be7be052b1c59b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/initial-ui-start.json",
+      "bytes": 6821,
+      "sha256": "654d0af0f4a635e9ac858802726923d55db52b6397ddac1616e7a5641d0931f7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/installation.json",
+      "bytes": 7119,
+      "sha256": "49e9c690b878d9c35bc2248453bb88a5cd37f28596cc3be2f0f2c311abfbf063"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/native-state.json",
+      "bytes": 311,
+      "sha256": "7c980de8c076fc67b5c9e51928f27d829f2e04ed7432956b40f3efddec736d40"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/pre-trial-state.json",
+      "bytes": 662,
+      "sha256": "665afda60384e0ac3ca011023673572a1c0c0a254f2b74a059a4e9398060a7b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/cursor-full/profile-preparation.json",
+      "bytes": 23510,
+      "sha256": "0c1730fd5332cede0abf8884c008b9d5acc5c4327cdae93f7008d025f31f1b3c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/diagnostic-result.json",
+      "bytes": 631,
+      "sha256": "bd64204803dfdbbcf88b099719d8721dac76993e52c26fa87ea2584bb4785435"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/environment.json",
+      "bytes": 690,
+      "sha256": "493335e6be7c693d879cd77a6b9d1e0a1a6d5549671d88d38eefb03717345e53"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/extract-video.py",
+      "bytes": 1209,
+      "sha256": "cacbe631de1abddb526587d40b07e1d283a4a7cf4a119b2aec608c9b4858e362"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/focus-timing-pairs.mjs",
+      "bytes": 2148,
+      "sha256": "8983f53eecf26bbd9d5acbaadea7296bca0aada8ae248c589e42dce5e1546cd3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/frame-inspection.json",
+      "bytes": 204,
+      "sha256": "8c4e52db773b714f61b9fbde924b1d2ac4d972ea354919b161dcd2de44a9c41d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/full-common.mjs",
+      "bytes": 3429,
+      "sha256": "ef888c6d3d3f408635ca4f8f39ba231e2a89b6a07b96521ca2efddf3a7b11d95"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/full-entry.mjs",
+      "bytes": 5295,
+      "sha256": "ab83cc9c3a5714c2578da4e2f8e7a504d995f0a0838233dd2343090d6fbfc54a"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/full-roundtrip.mjs",
+      "bytes": 10651,
+      "sha256": "e317d909431b630d92ee079b9c0b76c2b137a34c52f349cd50ea4397fa73fe72"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/harness-controls-rzgIZt/cursor-full/false-control-native-preflight.json",
+      "bytes": 505,
+      "sha256": "b68eb88d342bed2336fd5a56e63828f8879cb328bc2f6befd6b1f8d765d6ee2b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/harness-controls-rzgIZt/cursor-full/installation.json",
+      "bytes": 303,
+      "sha256": "190bd9ce65d7d5583693611b1d650b8308e3020eec44d4d339ae6d6f75b0aad2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/harness-controls-rzgIZt/cursor-full/native-state.json",
+      "bytes": 382,
+      "sha256": "09ea318991aaa5205deaafecea6fd6ec7ed9ff8534812e5025c30ab20311cbc3"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/harness-controls-rzgIZt/cursor-full/true-control-native-preflight.json",
+      "bytes": 503,
+      "sha256": "44d65098cfb94748f3d67dc7e13755117f9bd859bebad9ddb34eba622ec6a3fd"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/harness-controls-rzgIZt/failed-child.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/harness-controls-rzgIZt/initial.webm",
+      "bytes": 17,
+      "sha256": "37a084be87246ef17563f0337770335bf02cd3d9cccb623b02e6b70d973ef74b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/harness-controls.json",
+      "bytes": 472,
+      "sha256": "ce7a0fd62c6e6ab0086d10a9dc29d2515413dfb4d879e862626647aa5a72c90b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/harness-controls.mjs",
+      "bytes": 3246,
+      "sha256": "59078614737a57dae0f291eecdd27e3cdf4fdd317099a20e54ae6af890cbba9f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/helper-hashes.json",
+      "bytes": 5945,
+      "sha256": "c48b64930fe50b14c06c7190c057711f896ff19e36189ce8203532db56d8933f"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/initial-launch-output.log",
+      "bytes": 1372,
+      "sha256": "16c740b7e44cf475b15c4f4d15bac1a77d92b8e7349490395fc63fb655f9a6fc"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/install.mjs",
+      "bytes": 3564,
+      "sha256": "8712f87752c33389399d72104e028404537ed6345e662302680451011de9d876"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/instrument-guard.py",
+      "bytes": 9828,
+      "sha256": "e04c6ab5968663f115e5c823f7b3000163c15a71ffb722c15abd32d5ac8c9992"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/instrument-inner.py",
+      "bytes": 5252,
+      "sha256": "eed8bfff0fd41261733e76427ff051a7aa9457f3f59b2b0b3b266d3f519f32b2"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/instrument-passive.py",
+      "bytes": 1983,
+      "sha256": "1bd78f341e988777bf7bf88aaec3d21997bd514a486d67e47f786f5ded84574d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/launch.mjs",
+      "bytes": 2191,
+      "sha256": "5ee58a877ab988274186aa809c69ee45ca6e2855e52f91251ead5c5018a1322c"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/observe-cursor-failure.mjs",
+      "bytes": 2419,
+      "sha256": "0cb10db098cd3406e6199f42ec9ea52ddf76ede1b8680bb2ab436ca713ef4663"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/orchestration-result.json",
+      "bytes": 2309,
+      "sha256": "d8e09b30f6664e5f9324cdd412efa75cedba7aa27fc0104be1cbd1b146e21350"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/partial-start-cleanup.json",
+      "bytes": 2562,
+      "sha256": "9d5535681f27df72a14b6b2591f56145911097448a48b1f215aa8b3d1117af73"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/placement-pairs.mjs",
+      "bytes": 2972,
+      "sha256": "c8d80cc2edad48fb75f1d0f31545c43915189100f8516e2e827b58f413541dc7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/prepare-profiles.py",
+      "bytes": 1584,
+      "sha256": "a835fce53d5e18c05c73bd2297721d756bfb413217ee5a8910ed9c05d49b2d5d"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/rapid-mode-control.mjs",
+      "bytes": 2938,
+      "sha256": "814965f00c4e369d8830a3d6656ea4cbf3ec6218a21e6549b58f58ea754b90a0"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/run-diagnostic.mjs",
+      "bytes": 4671,
+      "sha256": "19ee1d5b04a5b2a18c16335ec5fad1e282752bcf3c7308cdc9ed0e99d19df11b"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/save-trace.mjs",
+      "bytes": 1182,
+      "sha256": "ce67a6ac001c40efdf887150310c2d545856794eb2cda96f0e60621fcd96f447"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/schedule.json",
+      "bytes": 9875,
+      "sha256": "a2652620afd39f2e3a2b79c07dae9338502da0bb6d625b91bed8fe57f7f9e2d7"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/step-01-ui-phase.mjs.log",
+      "bytes": 3455,
+      "sha256": "8fe5504b2fd8f9420abe388b85d3fd16498fa1191f9873797c09e03dc67d69b1"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/step-02-cleanup-owned-profile.py.log",
+      "bytes": 390,
+      "sha256": "867c54d6aeeed19c78fff1014db419e1315dc7af6219616e951a00fc01f16112"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/step-03-verify-diagnostic.mjs.log",
+      "bytes": 51,
+      "sha256": "92a99b4b986a191bed9973762a72ab19441412c5ff4b06b77d67fac3c8e7888e"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/ui-phase.mjs",
+      "bytes": 1420,
+      "sha256": "7c341ef74b082785325bc3ac290ec1b9991af4b22fb62fc944034f1df7edd864"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/ui-recipes.json",
+      "bytes": 18175,
+      "sha256": "04caf26d56558c8556f6ad8621542cc8feccb1a43d47461854fb36c9bb888040"
+    },
+    {
+      "path": "artifacts/cycle-0018/owned-inner-focus-v21-c/verify-diagnostic.mjs",
+      "bytes": 1713,
+      "sha256": "8429a571f537b1f845b4a57cb5871655732ba7927c0e8ff4e8df433ef8dba170"
+    }
+  ]
+}

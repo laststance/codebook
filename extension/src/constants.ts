@@ -1,5 +1,5 @@
 export const API_VERSION = '1.5';
-export const EXTENSION_VERSION = '0.2.1';
+export const EXTENSION_VERSION = '0.2.2';
 export const DEMO_ASSET_PATHS = ['fixture/server.mts', 'fixture/client.mts', 'fixture/constants.mts', 'fixture/index.html',
   'build/server.mjs', 'build/server.mjs.map', 'build/client.mjs', 'build/client.mjs.map', 'build/constants.mjs', 'build/constants.mjs.map'] as const;
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0';
@@ -65,10 +65,18 @@ export const MAX_LIBRARY_FILES = 16;
 export const MAX_SOURCE_DOCUMENTS = 34;
 export const STUDY_REFRESH_INTERVAL_MS = 250;
 export const STUDY_EDITOR_GROUP_COUNT = 3;
+export const REPOSITORY_MIN_EDITOR_GROUP_COUNT = 2;
 export const HORIZONTAL_EDITOR_ORIENTATION = 0;
 export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1';
 export const PRESENTATION_PREFERENCE_VERSION = 1;
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000;
+export const PRESENTATION_READING_LIMIT_PX = 10_000_000;
+export const PRESENTATION_FOCUS_INDEX_LIMIT = 32;
+export const PRESENTATION_READING_ANCHORS = ['title', 'observation', 'overview', 'live-content', 'source-version', 'flow', 'moments'] as const;
+export const PRESENTATION_READING_DETAILS = ['presentation-options', 'playback-diagnostics', 'later-annotations', 'study-controls', 'evidence-details'] as const;
+export const PRESENTATION_READING_VISITED = ['source', 'current-file'] as const;
+export const PRESENTATION_FOCUS_IDS = ['presentation-mode', 'playback-toggle', 'playhead', 'overview-tab', 'live-tab', 'recording-tab', 'understood', 'profiles', 'studies'] as const;
+export const PRESENTATION_FOCUS_ACTIONS = ['return-wiki', 'open-article', 'return-current', 'continue', 'stop', 'retry', 'reload-recording', 'source', 'current-file', 'run', 'click', 'connect', 'focus-app', 'focus-context', 'outline', 'arrange', 'enlarge-context'] as const;
 export const PRESENTATION_MODE_IDS = ['study-workspace', 'living-book', 'guided-walkthrough'] as const;
 export const STUDY_PRESENTATIONS = {
   'study-workspace': { title: 'Study workspace', description: 'Application above source, with explanation alongside.', appColumn: 1, sourceColumn: 2, contextColumn: 3,

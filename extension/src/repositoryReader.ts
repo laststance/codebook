@@ -16,10 +16,26 @@ import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText';
 import type { LearningLibrary } from './learningLibrary';
 import type { z } from 'zod';
 
+/** Separates the requested text and tab receipts so native notification order cannot admit another learner target. */
+export interface RepositoryFocusTarget {
+  matchesEditor(): boolean;
+  matchesGroup(): boolean;
+  /** Lets citation display acquire its initial caret before the requested selection without changing layout targets. @example target.matchesEditorIdentity?.() */
+  matchesEditorIdentity?: () => boolean;
+}
+
+/** Hands preparation focus from {@link RepositoryReader.open} to queued native layout work without a synthetic editor. */
+export interface RepositoryLayoutFocus {
+  begin(): void;
+  acquireSourceFocus?: () => Promise<() => void>;
+  /** Retains passive cold-layout work until {@link RepositoryReader.open} hands it to its actual citation. @example const retained = focus.retainCurrentFocus?.() */
+  retainCurrentFocus?: (acquire?: RepositoryFocusTarget) => { assertRetained(): void; dispose(): void };
+}
+
 interface RepositoryControls {
   storage(): Promise<LearningLibrary>;
   connect(): Promise<void>;
-  arrange(signal: AbortSignal, returnSelection?: RepositorySelection): Promise<void>;
+  arrange(signal: AbortSignal, returnSelection?: RepositorySelection, focus?: RepositoryLayoutFocus): Promise<void>;
   evidence(binding: BookObservationBinding, recording: boolean, signal: AbortSignal, origin: RepositorySelection): Promise<void>;
 }
 
@@ -79,19 +95,67 @@ export class RepositoryReader {
     const navigation = this.navigation, cancel = () => navigation.abort(signal?.reason);
     signal?.addEventListener('abort', cancel, { once: true });
     const generation = ++this.generation; this.loading = true; this.error = undefined;
+    const initialFocus = this.retainNativeFocus();
+    let sourceFocus: ReturnType<RepositoryReader['retainNativeFocus']> | undefined;
+    let coldFocus: ReturnType<NonNullable<RepositoryLayoutFocus['retainCurrentFocus']>> | undefined;
+    let anchoredSource: { uri: vscode.Uri; assertFocused(): void } | undefined;
     try {
       const store = await this.storage(); this.assertCurrent(generation);
-      await this.controls.arrange(navigation.signal, restoreReadingLayout ? input : undefined); this.assertCurrent(generation);
-      this.ensurePanel(); this.publish();
       const [catalog, learner] = await Promise.all([store.list(), store.library.readProgress().then(progress => ({ progress, error: undefined }), error => ({ progress: undefined, error: `Learning storage unavailable: ${String(error)}` }))]);
-      this.assertCurrent(generation); const { progress } = learner; this.catalog = catalog; this.progress = progress; this.error = learner.error; this.changes.fire();
+      this.assertCurrent(generation); initialFocus.assertRetained(); const { progress } = learner;
+      this.catalog = catalog; this.progress = progress; this.error = learner.error; this.changes.fire();
       const first = catalog.find(entry => entry.status === 'available');
-      const selection = input ?? progress?.repositorySelection ?? this.selection ?? (first?.revision && first.firstNodeId ? { bookId: first.bookId, revision: first.revision, nodeId: first.firstNodeId, anchorIndex: 0 } : undefined);
-      if (selection) { await this.load(repositorySelectionSchema.parse(selection), generation); }
+      const requested = input ?? progress?.repositorySelection ?? this.selection ?? (first?.revision && first.firstNodeId ? { bookId: first.bookId, revision: first.revision, nodeId: first.firstNodeId, anchorIndex: 0 } : undefined);
+      const selection = requested && repositorySelectionSchema.parse(requested);
+      const book = selection && await store.read(selection.bookId, selection.revision); this.assertCurrent(generation); initialFocus.assertRetained();
+      // Validate real content before any native effect; an invalid selection cannot become a temporary focus anchor.
+      if (selection && book) {
+        const node = book.revision.document.nodes.find(value => value.id === selection.nodeId);
+        if (!node || !node.anchors[selection.anchorIndex] || (selection.location && selection.location.sectionIndex >= node.sections.length + REPOSITORY_FIXED_READING_SECTIONS)) throw new Error('The selected article, citation, or section is unavailable in this revision.');
+      }
+      const acquireSourceFocus = selection && book ? async () => {
+        this.assertCurrent(generation); coldFocus?.assertRetained();
+        const preparingFocus = this.retainNativeFocus();
+        let opened: Awaited<ReturnType<RepositoryReader['openSource']>>;
+        try { opened = await this.openSource(selection, book, generation, false, () => {
+          preparingFocus.assertRetained(); coldFocus?.assertRetained();
+          // The pre-display citation listener owns the intended focus change; never adopt response-time learner input.
+          coldFocus?.dispose();
+        }); }
+        finally { preparingFocus.dispose(); }
+        sourceFocus?.dispose(); sourceFocus = opened.focus;
+        this.assertCurrent(generation);
+        const editor = vscode.window.activeTextEditor, group = vscode.window.tabGroups.activeTabGroup, nativeInput = group.activeTab?.input;
+        if (editor !== opened.editor || editor.viewColumn !== vscode.ViewColumn.One || group.viewColumn !== vscode.ViewColumn.One
+          || !(nativeInput instanceof vscode.TabInputText) || nativeInput.uri.toString() !== opened.uri.toString()) throw new Error('The selected citation did not acquire identifiable primary editor focus.');
+        const assertFocused = () => { this.assertCurrent(generation); sourceFocus!.assertRetained(); };
+        anchoredSource = { uri: opened.uri, assertFocused }; return assertFocused;
+      } : undefined;
+      await this.controls.arrange(navigation.signal, restoreReadingLayout ? input : undefined, {
+        // Check after native initialization/queueing, before scope work can capture newer learner focus as its own.
+        begin: () => { this.assertCurrent(generation); initialFocus.assertRetained(); initialFocus.dispose(); },
+        acquireSourceFocus,
+        retainCurrentFocus: acquire => {
+          this.assertCurrent(generation); coldFocus?.assertRetained(); coldFocus?.dispose();
+          const retained = this.retainNativeFocus(acquire), receipt = {
+            assertRetained: () => { this.assertCurrent(generation); retained.assertRetained(); },
+            dispose: () => { retained.dispose(); if (coldFocus === receipt) coldFocus = undefined; },
+          };
+          coldFocus = receipt; return receipt;
+        },
+      }); this.assertCurrent(generation); coldFocus?.assertRetained(); anchoredSource?.assertFocused();
+      initialFocus.dispose();
+      // Only the cold-layout receipt changes entry order; retained Study and actual Return keep their existing handoff.
+      if (coldFocus && acquireSourceFocus && !anchoredSource) await acquireSourceFocus();
+      // An empty catalog has no later I/O or citation: release immediately before the synchronous Wiki activation.
+      if (!selection || !book) { coldFocus?.assertRetained(); coldFocus?.dispose(); }
+      this.ensurePanel(Boolean(anchoredSource)); this.publish();
+      if (selection && book) { await this.load(selection, book, generation, anchoredSource); }
       else { this.book = undefined; this.selection = undefined; this.loading = false; this.publish(); }
-      this.assertCurrent(generation); this.panel?.reveal(vscode.ViewColumn.Two, false);
+      this.assertCurrent(generation); coldFocus?.assertRetained(); anchoredSource?.assertFocused();
+      coldFocus?.dispose(); sourceFocus?.dispose(); this.panel?.reveal(vscode.ViewColumn.Two, false);
     } catch (error) { if (generation === this.generation && !this.disposed) { this.error = String(error); this.loading = false; this.publish(); } throw error; }
-    finally { signal?.removeEventListener('abort', cancel); }
+    finally { initialFocus.dispose(); coldFocus?.dispose(); sourceFocus?.dispose(); signal?.removeEventListener('abort', cancel); }
   }
 
   /** Returns a captured native source receipt only after exact requested navigation succeeds. @example await reader.openFromAgent(input) */
@@ -158,15 +222,16 @@ export class RepositoryReader {
   /** Exposes sanitized model/render receipts for native evidence without claiming pixel verification. @example reader.inspect().rendered */
   inspect() { return { view: this.message(), opened: Boolean(this.panel), sourceUri: this.sourceUri?.toString(), rendered: this.rendered }; }
 
-  /** Validates a retained selection before replacing the visible article, then reveals its immutable citation. @example await this.load(selection, generation) */
-  private async load(selection: RepositorySelection, generation: number): Promise<void> {
-    const book = await this.store!.read(selection.bookId, selection.revision); this.assertCurrent(generation);
-    const node = book.revision.document.nodes.find(value => value.id === selection.nodeId);
-    if (!node || !node.anchors[selection.anchorIndex] || (selection.location && selection.location.sectionIndex >= node.sections.length + REPOSITORY_FIXED_READING_SECTIONS)) throw new Error('The selected article, citation, or section is unavailable in this revision.');
+  /** Applies the validated article from {@link open}, retaining its actual cited-source anchor when native scope needed it. @example await this.load(selection, book, generation) */
+  private async load(selection: RepositorySelection, book: NonNullable<RepositoryReader['book']>, generation: number, source?: { uri: vscode.Uri; assertFocused(): void }): Promise<void> {
+    this.assertCurrent(generation); source?.assertFocused();
     this.book = book; this.selection = selection; this.revision++; this.rendered = undefined; this.sourceUri = undefined; this.sourceStates = []; this.publish();
     try { await this.remember(selection); } catch (error) { this.assertCurrent(generation); this.error = `Return location not saved: ${String(error)}`; }
-    this.assertCurrent(generation); await this.revealSource(generation); this.assertCurrent(generation);
-    this.loading = false; this.watchSources(); this.publish(); await this.refreshSources(generation);
+    this.assertCurrent(generation); source?.assertFocused();
+    if (source) this.sourceUri = source.uri;
+    else await this.revealSource(generation);
+    this.assertCurrent(generation); source?.assertFocused();
+    this.loading = false; this.watchSources(); this.publish(); await this.refreshSources(generation); this.assertCurrent(generation); source?.assertFocused();
   }
 
   /** Reuses the single ledger for section-relative position and focus without changing understanding. @example await this.remember(selection) */
@@ -188,13 +253,75 @@ export class RepositoryReader {
 
   /** Reveals exact copied bytes in a native read-only document with the inclusive citation selected. @example await this.revealSource(generation) */
   private async revealSource(generation: number): Promise<void> {
-    this.assertCurrent(generation); const selection = this.selection!, anchor = this.selectedNode()!.anchors[selection.anchorIndex]!;
+    const opened = await this.openSource(this.selection!, this.book!, generation, true); this.assertCurrent(generation); this.sourceUri = opened.uri;
+  }
+
+  /** Opens the real immutable citation for {@link revealSource} or cold scope acquisition without publishing navigation success. @example await this.openSource(selection, book, generation, false) */
+  private async openSource(selection: RepositorySelection, book: NonNullable<RepositoryReader['book']>, generation: number, preserveFocus: boolean, assertFocus?: () => void) {
+    this.assertCurrent(generation); const anchor = book.revision.document.nodes.find(node => node.id === selection.nodeId)!.anchors[selection.anchorIndex]!;
     const uri = vscode.Uri.from({ scheme: REPOSITORY_SOURCE_SCHEME, authority: this.store!.library.workspaceKey,
       path: `/${selection.bookId}/${selection.revision}/${selection.nodeId}/${selection.anchorIndex}/${basename(anchor.path)}`, query: `hash=${anchor.hash}` });
-    const document = await vscode.workspace.openTextDocument(uri); this.assertCurrent(generation);
+    const document = await vscode.workspace.openTextDocument(uri); this.assertCurrent(generation); assertFocus?.();
+    const documentVersion = document.version, requestedSelection = document.validateRange(this.range(anchor.startLine, anchor.endLine));
+    const matchesEditorIdentity = () => {
+      const editor = vscode.window.activeTextEditor;
+      return editor?.document.uri.toString() === uri.toString() && editor.document.version === documentVersion && editor.viewColumn === vscode.ViewColumn.One;
+    };
+    // Observe the requested citation before display; a late response cannot adopt later learner input as its baseline.
+    const focus = preserveFocus ? undefined : this.retainNativeFocus({ matchesEditorIdentity, matchesEditor: () => {
+      const editor = vscode.window.activeTextEditor;
+      return matchesEditorIdentity() && editor?.selections.length === 1
+        && Boolean(editor.selections[0]?.anchor.isEqual(requestedSelection.start) && editor.selections[0].active.isEqual(requestedSelection.end));
+    }, matchesGroup: () => {
+      const group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
+      return group.viewColumn === vscode.ViewColumn.One && input instanceof vscode.TabInputText && input.uri.toString() === uri.toString();
+    } });
     // Native editors may normalize BOM/CRLF in getText; the provider/hash seal retains original bytes.
-    await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false, preserveFocus: true, selection: this.range(anchor.startLine, anchor.endLine) }); this.assertCurrent(generation);
-    this.sourceUri = uri;
+    try {
+      const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false, preserveFocus, selection: requestedSelection }); this.assertCurrent(generation);
+      focus?.assertRetained(); return { uri, editor, focus };
+    } catch (error) { focus?.dispose(); throw error; }
+  }
+
+  /** Retains initial or explicitly acquired citation focus for {@link open}; later observed departures irrevocably retire it. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
+  private retainNativeFocus(acquire?: RepositoryFocusTarget) {
+    const snapshot = () => { const editor = vscode.window.activeTextEditor, group = vscode.window.tabGroups.activeTabGroup; return {
+      editor: JSON.stringify([editor?.document.uri.toString(), editor?.document.version, editor?.viewColumn, editor?.selections]),
+      group: JSON.stringify([group.viewColumn, group.activeTab?.label, group.activeTab?.input]),
+    }; };
+    const pending = snapshot();
+    let initial = acquire ? undefined : pending, changed = false, editorAcquired = false, groupAcquired = false;
+    let intermediateEditor = acquire?.matchesEditorIdentity?.() ? pending.editor : undefined, missingEditorObserved = false;
+    const observe = (event?: 'active-editor' | vscode.TextEditorSelectionChangeEvent) => {
+      const current = snapshot(), activeEditor = vscode.window.activeTextEditor, selectionEvent = typeof event === 'object' ? event : undefined;
+      // Explicit learner selection never proves ownership, even when it happens to match the requested range.
+      if (selectionEvent && activeEditor && selectionEvent.textEditor.document.uri.toString() === activeEditor.document.uri.toString()
+        && selectionEvent.textEditor.viewColumn === activeEditor.viewColumn
+        && (selectionEvent.kind === vscode.TextEditorSelectionChangeKind.Keyboard || selectionEvent.kind === vscode.TextEditorSelectionChangeKind.Mouse)) changed = true;
+      if (initial === undefined && acquire) {
+        const editorMatches = acquire.matchesEditor(), groupMatches = acquire.matchesGroup();
+        let intermediateMatches = false;
+        // Native citation activation may briefly remove the editor, then expose its first caret before applying the range.
+        if (!editorMatches && !editorAcquired && acquire.matchesEditorIdentity) {
+          if (!activeEditor && groupMatches && intermediateEditor === undefined) { missingEditorObserved = true; intermediateMatches = true; }
+          else if (acquire.matchesEditorIdentity()) {
+            // Only the activation event can establish the initial caret; later selection events cannot replace it.
+            if (intermediateEditor === undefined && event === 'active-editor') intermediateEditor = current.editor;
+            intermediateMatches = intermediateEditor === current.editor;
+          }
+        }
+        // Each component advances once; observed third states, selection detours and retreats permanently retire navigation.
+        changed ||= !editorMatches && !intermediateMatches && (editorAcquired || missingEditorObserved || intermediateEditor !== undefined || current.editor !== pending.editor)
+          || !groupMatches && (groupAcquired || current.group !== pending.group);
+        editorAcquired ||= editorMatches; groupAcquired ||= groupMatches;
+        if (editorMatches && groupMatches) initial = current;
+        return;
+      }
+      changed ||= current.editor !== initial?.editor || current.group !== initial?.group;
+    };
+    const listeners = [vscode.window.onDidChangeActiveTextEditor(() => observe('active-editor')), vscode.window.onDidChangeTextEditorSelection(observe), vscode.window.tabGroups.onDidChangeTabs(() => observe()), vscode.window.tabGroups.onDidChangeTabGroups(() => observe())];
+    observe();
+    return { assertRetained() { observe(); if (initial === undefined || changed) throw new Error('Native focus changed during repository navigation; the newer learner focus was preserved.'); }, dispose() { for (const listener of listeners) listener.dispose(); } };
   }
 
   /** Validates every restored source URI against its exact book, workspace and hash before exposing copied text. @example await this.sourceText(uri) */
@@ -241,11 +368,12 @@ export class RepositoryReader {
   private clearWatchers(): void { for (const watcher of this.watchers.splice(0)) watcher.dispose(); }
 
   /** Installs a single nonce-scoped panel whose obsolete callbacks cannot act after Close. @example this.ensurePanel() */
-  private ensurePanel(): void {
+  private ensurePanel(preserveFocus = false): void {
     if (this.panel) return;
-    const panel = vscode.window.createWebviewPanel('codebook.repositoryWiki', 'codebook · Repository Wiki', vscode.ViewColumn.Two, { enableScripts: true, localResourceRoots: [] });
+    const panel = vscode.window.createWebviewPanel('codebook.repositoryWiki', 'codebook · Repository Wiki', { viewColumn: vscode.ViewColumn.Two, preserveFocus }, { enableScripts: true, localResourceRoots: [] });
     this.panel = panel;
     panel.webview.onDidReceiveMessage(value => {
+      if (this.panel !== panel) return;
       const revision = this.revision, generation = this.generation;
       void this.receive(value).catch(error => {
         // A failed click must remain perceivable without moving the article's saved reading position.

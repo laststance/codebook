@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-22T20:50:33.721378+00:00",
+  "scope": "Bounded owned-tab-overlap group repair: failing-before, focused/full checks and exact completed CodeRabbit supplement",
+  "sourceBase": "9c697c997d45f698ee23b1ee7ab7bee784ef3b31",
+  "sourceHash": "9db57af7b0093a4247830f50d3bf4b28bb17a11ebd7432d69952cbc1d5d5673e",
+  "selectedInputs": 275,
+  "focusedChecks": 27,
+  "productShared": 909,
+  "packageChecks": 96,
+  "typechecks": 4,
+  "provider": {
+    "recordedAt": "2026-09-22T20:50:33.720637+00:00",
+    "rawFindings": 0,
+    "actionableFindings": 0,
+    "logSha256": "efe55c253982a7dd2a08786f82886c1b9913b17e40a9be56353b4a6bd58f4f2c",
+    "sourceDiffSha256": "341387b2556dc486d93f5f29849c07f8cdc79806b09396eef662ab079ccda77e",
+    "reviewedFiles": [
+      "extension/src/studyWorkspace.ts",
+      "extension/src/tests/studyWorkspace.test.ts"
+    ],
+    "limit": "Completed current-diff development review; does not replace historical H6 non-convergence or final end-user acceptance."
+  },
+  "nativeCurrentSource": "PENDING v28; v27 remains FAIL",
+  "availability": "Private ignored local files; missing artifacts require revalidation",
+  "files": [
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/coderabbit-receipt.json",
+      "bytes": 615,
+      "sha256": "3a8e08cb71157d96546a3660cd988acd53bd97af60d337e68b6a3ecf9ca81f19"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/coderabbit-triage.json",
+      "bytes": 523,
+      "sha256": "6332888895044b005b36fc78979b1a7f22525cabfb9bc17180b63685597dcead"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/coderabbit.log",
+      "bytes": 1066,
+      "sha256": "efe55c253982a7dd2a08786f82886c1b9913b17e40a9be56353b4a6bd58f4f2c"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/build-extension.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/build-runtime.log",
+      "bytes": 112,
+      "sha256": "4793d8aa8392914d11ad432b5a6f10a72fc910ee7cf9e90515c0b43236f6618f"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/check-results.json",
+      "bytes": 6273,
+      "sha256": "d3fbc799b49781e1ff1ffd89bcd1d43bec610162517b3107917c1a66886fbc7d"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/package-tests.log",
+      "bytes": 10070,
+      "sha256": "1a5d89081d9c4b4b23a253392f90739bd466bfc99a86dff32c51b9f165fabf78"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/product-tests.log",
+      "bytes": 103699,
+      "sha256": "1855f24710ec22e3ebf8d2ff6a23377197dbde790c15060f0f33f0303e4875a1"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/run.log",
+      "bytes": 223,
+      "sha256": "dcd4666d2228de916b7053b51ddaa2a3b15e138007c79f4e45fe4c7ab5f04d9b"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/source-after.json",
+      "bytes": 31792,
+      "sha256": "41d496dce78929f42ae932ba8770985211620e633cb5917fd3ad071846de330a"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/source-before.json",
+      "bytes": 31792,
+      "sha256": "41d496dce78929f42ae932ba8770985211620e633cb5917fd3ad071846de330a"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/typecheck-0.log",
+      "bytes": 15,
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/typecheck-1.log",
+      "bytes": 73,
+      "sha256": "521187cac8e8b50d5fae1967add529af98c10c7cde123245fbe9708094c0c607"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/typecheck-2.log",
+      "bytes": 73,
+      "sha256": "521187cac8e8b50d5fae1967add529af98c10c7cde123245fbe9708094c0c607"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/full-checks/typecheck-3.log",
+      "bytes": 32,
+      "sha256": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630"
+    },
+    {
+      "path": "artifacts/cycle-0018/overlap-group-repair/reviewed-diff.patch",
+      "bytes": 12633,
+      "sha256": "341387b2556dc486d93f5f29849c07f8cdc79806b09396eef662ab079ccda77e"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/green-build.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/green-tests.log",
+      "bytes": 2977,
+      "sha256": "7e1aa1700001877576509736a9ca025a95fca5c0e041972b5f9b2b83c22b7cfa"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/group-identity-diagnosis.json",
+      "bytes": 8959,
+      "sha256": "0a63e3ec3420f26f285cc581fae98378556e3ebe18ba5ce0c45f00c2fbb26c66"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/red-build.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0018/pane-handoff-trace-v27-a/red-tests.log",
+      "bytes": 2842,
+      "sha256": "d6b3fffe0c4185ee38558d1fad18f3b05b9eeb4bbd2040e71cd21f4a4114df19"
+    }
+  ]
+}

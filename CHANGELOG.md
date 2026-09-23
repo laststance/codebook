@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.2.0] - 2026-09-23
+
+Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. The same normally installed v32 candidate passes the complete frozen VS Code and Cursor development schedules, including v31's cold Study regression, with inspected video and protected original work. Source and exact-candidate CI pass 993 product/shared and 96 package checks; all 276 inputs and 31 unpacked CI entries match. The final CodeRabbit supplement has zero findings, while three reused delegated fixing passes retain non-convergence. [PR #24](https://github.com/laststance/codebook/pull/24) is open for current-head checks and merge. Visible loading and broader UX remain open. G12 and final editor-AI acceptance remain unimplemented/unstarted; no merge/publication is claimed.
+
+### Fixed
+
+- Restore the saved Wiki and exact paused recording after ordinary restart in VS Code and Cursor, while distinguishing the visible main grid from a separate chat/editor part. Refuse a real fourth main group and preserve unrelated Settings, tabs, drafts and focus.
+- Switch among all three presentations through pinned replacement panes, retaining the same viewport session, source, values, reading position, disclosures, visited links and recording position. Ordinary source-file opens preserve the existing owned panes.
+- Confirm native and inner-document focus before declaring a layout ready. Preserve newer learner navigation and selection, including tab/selection departures followed by return during cold Wiki scope acquisition. Cancel stale or failed handoffs, drain adopted renderer work, and bound pose delivery and recovery instead of waiting indefinitely.
+- Retain native group identity when Cursor refreshes wrappers during an exact, currently owned predecessor/successor overlap. Continue rejecting ambiguous, moved, additional and unowned tabs.
+- Accept the measured missing-editor and initial-caret stages when opening an exact copied Wiki citation, while preserving newer input and observed group/selection detours.
+- Preserve the active Wiki tab when first Application registration covers its background source; reject unrelated text clears, tab-only learner departures or roundtrips, and closed/reopened lookalikes. Release temporary observers if native Application creation fails.
+- Show a visible failure when cold Wiki entry is refused. Keep replacement readers noninteractive with neutral loading guidance until their first complete snapshot, avoiding an unrelated checkout title and premature controls.
+
+### Changed
+
+- Keep installed functional checks, inspected motion, source review, CI packaging and final user acceptance distinct. The required completion experience now includes explicit `/codebook` use by each editor's own AI through normal skill/MCP setup; that integration remains to be implemented.
+
 ## [0.2.1.1] - 2026-09-21
 
 Documentation and validation update; the extension remains private preview 0.2.1 / MCP API 1.5. The actual main-CI package now has separate real-repository evidence in both editors. Cursor cold restart still fails; this entry does not announce a repaired package.

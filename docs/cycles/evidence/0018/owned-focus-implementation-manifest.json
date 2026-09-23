@@ -1,0 +1,651 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-22T06:57:06.828690+00:00",
+  "scope": "Source/renderer validation for the document-bound focus repair; no new installed-editor acceptance.",
+  "testedSource": {
+    "at": "2026-09-22T06:55:08.786Z",
+    "revision": "b167ca5205aecbaee869c75146d32024308228a0",
+    "dirty": true,
+    "sourceHash": "fd4b8d3302c3571860e3757b11a621dd4972b22032e0d801330e0fdd129b2db7",
+    "sourceHashes": [
+      "extension/README.md:efab7cfd25560bb692810dc6f1a71ac9554df8f225a84ed11fb09a011fca2ba0",
+      "extension/package.json:f389b1941f3d0b4dab5a37c612d8bb48763e9880d47d613944f2a6952b7e1dc8",
+      "extension/patches/@modelcontextprotocol__sdk@1.30.0.patch:d189ea81b9fc663a9209ef13abaccda8ce69b604b61dc008db18880db223f206",
+      "extension/pnpm-lock.yaml:497d6c18521ec320095d090d0b7bd0d444491091822429c2ed2ed35e6e78fdad",
+      "extension/pnpm-workspace.yaml:972dca9c152c3ef86d90a6a92cb12916fcfcbe9d7993e05b1a2a75f88e6cca93",
+      "extension/scripts/build-metadata.mjs:439d90f4c3f7493389818b5bd673a01b6fbbbfa59b1812fa7ef85c32b70e6ec7",
+      "extension/scripts/check-package.mjs:1e1f5d36a9cf076cb3d2345bdb760faf49621d933b3273655a87ddfda3c8c9a2",
+      "extension/scripts/native-repository-session.mjs:e719896d893a4ffb71f9653edb1fed0c0c26d110d8dafb5cf62dd9eb4f15a0eb",
+      "extension/scripts/package.mjs:e00b59fe39bd230ea384b8edea679439d61aa53c61100cd3559fc787e904dadb",
+      "extension/scripts/prepare-demo.mjs:a8c93af845b84de3b5387d5f8121d7c3de9e34507537679ea38ff214742d45e6",
+      "extension/scripts/repository-return-qa.mjs:c0c87d3829be7db54db1fc4c3c2481ae1a685d3dd4161af1476e235e57ab7bfa",
+      "extension/scripts/repository-webview-qa.mjs:cb115b6d6ff3ae7387da143cd402977c5044b01e74c56b393577b4d48d570ea5",
+      "extension/scripts/study-table-focus-qa.mjs:3c320d8853a41a95261faca2546210c0d87b4300547c4034c334dbe28c75a422",
+      "extension/scripts/tests/archiveLimits.test.mjs:f0bfce137f42ebaa4c424de7364ba4bbb789106388a3e29f1d5ebeae64c57708",
+      "extension/scripts/tests/package.test.mjs:55a971a096cd29d678ea0a4e6760d10f144c7553584213deebb7759f2e4a3bf2",
+      "extension/scripts/tests/packageCli.test.mjs:99972eacc05bf1b2ad4bb1c1edf32974956718862489ddbce8d644be76ebcc98",
+      "extension/scripts/tests/packageIO.test.mjs:5800c4ebacedcb46d490f5211acb8ce36aec096b14f87627989c262f59f8da25",
+      "extension/scripts/tests/prepareDemo.test.mjs:3115dd4870b5d3201cd04b7df4aec7295984848b6a12f179a6b0c0961c0a0eb8",
+      "extension/scripts/tests/runPackageCommand.test.mjs:a45ff509c633846ffa178720bf123fa556d53a5c1144828cdfe35b287bf7b472",
+      "extension/scripts/understanding-focus-qa.mjs:67ddbf497ad036f777e42c471917ea6bb29d5b359fb19ebfa77ad638324c4816",
+      "extension/scripts/utils/buildPackage.mjs:b70e4f94c39759001fd7e51589ff2374670cde5f86039479d9b8ee4b0fdf5e5f",
+      "extension/scripts/utils/cleanPackageOutputs.mjs:6782f797261bf6bd2738a8623d67b893b25d56d79468f08541012e4539591e66",
+      "extension/scripts/utils/inspectBundle.mjs:2ba3503d7e23b1b377b23685257ecb19a29da96b41bf16eff3a63f886c198e14",
+      "extension/scripts/utils/loadBuiltExtension.mjs:9c8538f83444b1ba3813b092e00dc09dc015703c273578aa7646197e26e3fb0d",
+      "extension/scripts/utils/packageConstants.mjs:3fa52ff8db3a7f1e2c224dc10e80b89786b20ec4116965197b31e33d2bed3b08",
+      "extension/scripts/utils/prepareDemo.mjs:71304d87121113c516b12f33ad73e7a5eb07254928e90b769f9f11a856ffc633",
+      "extension/scripts/utils/readBuildIdentity.mjs:fac8f6f289a6b093189bd2fef6d9aad54c098e15633e5058675c2d432e5f9ab2",
+      "extension/scripts/utils/readVsixBytes.mjs:f9176554e29f85689d25d5e9420184e65e88fb790620e8ad0cccf07016404e1b",
+      "extension/scripts/utils/readVsixEntries.mjs:2da192c4d60ff2a8cbc38d05caeee98d546120c41b1564506efa501070ba947f",
+      "extension/scripts/utils/resolvePackageDestination.mjs:f8b9c6cc4db60072b8bb2454e0ab7c777e4210e4135e4f045bdc6af05a3409ba",
+      "extension/scripts/utils/runPackageCommand.mjs:d770f81ca03f63a0d4f31e06ea5cc22736ba49a2334b6a6865427aaef4c443bb",
+      "extension/scripts/utils/verifyPackageContent.mjs:b8c4fb35aa32eae6b2e83e3541927425479c85c7b0b96a584cd3f37f932a1cd8",
+      "extension/scripts/utils/withPackageOutput.mjs:2e6c843d7bae3783ddfe39eba64e6b1ca824eb16a6d94ba69971dfa5bcad4019",
+      "extension/src/agentConsole.ts:1559e2a6e8464daadfa454e38f77fbd4fbb10bea6431fb3c2604ae781ddf722b",
+      "extension/src/assets/book.svg:5c5e14d75ab49f45e90268d8398512165528497d4ab9303080ab42e51312c6b9",
+      "extension/src/citationSchemas.ts:f6537663f702da3aa22d84aad896e88ddce0c8654e4002c01049a75d3f9b0c9d",
+      "extension/src/client.ts:3f585fc39245d8792e39728e87efa80ae9e758bcbb0634d3faff07b56b97fd20",
+      "extension/src/configuredBrowserRun.ts:3755a90748239c3a3d2a2a2183294f9839c78416ca3068771a5210cc95c317b3",
+      "extension/src/configuredProfile.ts:60543a0a87750caf743e2338ac868bee39176d51eccde90a62dd16c3de3768f5",
+      "extension/src/configuredStudySchemas.ts:95ae72cf5b5b7566a4bea743550a18435f9c1f60ae9cceacc8ded7c0f1573646",
+      "extension/src/constants.ts:983ec385b63fc0bba22fc87cfc4c15274019cbdeeda1de547d3bc2acd877c83c",
+      "extension/src/environment.ts:28610080484ddf5c15f5ada0702f29d4f87b50a87da3da178e489006a03b079f",
+      "extension/src/errors.ts:4fd1f377c7b257d1ff8784f79d6083f66f98083d8e379df17ae38af2765aa57e",
+      "extension/src/extension.ts:8350cb062c26d1faa5cee972190a3e5535e9132033c60b1fa7dd3f9eb649a793",
+      "extension/src/identitySchemas.ts:34774472c6af490e21be47674dd00a7692a43f7b012e79eb0e19b5398ab84438",
+      "extension/src/learnerSchemas.ts:5d1661a526cdc86923d721183aab4741e66585d86296e5d63e8bf8f165310e7d",
+      "extension/src/learningLibrary.ts:498f3d0118d586a0bce0be9ec27fcdb4f9183c98992f8025b058dce886616e8e",
+      "extension/src/legacyStudySchemas.ts:a3826759f13c120692226619ff476e6025afb023b1ce6de45387f231ea758ea4",
+      "extension/src/nativeBootstrap.ts:8fa6783aed969bf7895e7f183ecaa85fa2ab0115cdfbc9916a09b815d793fac4",
+      "extension/src/nativeRepositoryBootstrap.ts:a22b4a1a0815705abbbaee09b690727e16d27c398e5c3d33fd5267585ba1c7b9",
+      "extension/src/nativeRunner.ts:dcd106d5a6dbbff60450b2b6a5a6efd564926bcf2bd07a0f9aaafcb2ae3a46a2",
+      "extension/src/nativeSchemas.ts:eeb104e926b4c921c3dcc1120fef7cd112f2132cfcee0426e91cbaf22adcbf6b",
+      "extension/src/nativeStudyBootstrap.ts:b081659cb2e2cf2893303e00d0d0f5abc7d5cb1d57e916ce219223353b808fdc",
+      "extension/src/nativeStudyRunner.ts:e95b5e4e7c150fe370acea6db9b20cfc429ab7eb8d3a62b66a43eb58524df1cd",
+      "extension/src/nativeStudySchemas.ts:ae3f14090e3214af5b927e8a679689153c27937491998dc9ee237eab095672f9",
+      "extension/src/ownedRepositoryBreakpoint.ts:21e976eb4ba31ececf91cba0e2c69e242320f5ace24da38ff67d6f529c3a2204",
+      "extension/src/playbackController.ts:2dd070376f0aca9f95e61eb887bd9ad0a09a5706cd2cd1ffe14d00a543fa9c0c",
+      "extension/src/playbackSchemas.ts:a2246dc13ffceaac73f6fffeb49d97e13229f46ba0c97cb9d71d05a88ddce995",
+      "extension/src/presentationSchemas.ts:e8a63800e7532e0f0733c2ae30af3ec2a6986f58443ae3f898f9a499c2f53564",
+      "extension/src/protocol.ts:8264be44834246506ae5984a8ea8b589507b55473f0c315e9faddd9ed0798723",
+      "extension/src/recordingSchemas.ts:1583763983cf82293343cf1ed6a27ef933b0396a80e60fa69fa25eb3c545099f",
+      "extension/src/recordingStore.ts:e7e0ba50fcc5731a29f307d65f7dc3c710f4fa6b3e40d937ce94d7b36a3f21e7",
+      "extension/src/repositoryBook.ts:aba5a287d19d9881d10aa2aa493048b5fd2246a9bb6f0de7953272a9de0bb060",
+      "extension/src/repositoryBundle.ts:5fdb70d298d95e1f8405c1450d1286e13447743da783dd2d7b0f420d493844b5",
+      "extension/src/repositoryConfigSchemas.ts:76f016baadef291096a7b5400963a278ed77f30f872c280ace5437efbd29e30d",
+      "extension/src/repositoryReader.ts:23142a8d3ee9615ab7c42febc1f9d34730fdaad054235544ee1bc4fd50f73a19",
+      "extension/src/repositorySchemas.ts:e85a358e6acb9df3da67752a284e1e3bf5ddae72c01084ccf32f29fe2ed82712",
+      "extension/src/repositorySource.ts:e3bd83299fdad9e3346286bbec898e0b86890880e354649d26983223cf8b8f83",
+      "extension/src/repositoryView.ts:a71a795d9f32061f10a05f3bccba74102ddda866a53919c92cb8c1261e61efc2",
+      "extension/src/resources.ts:27f030097907d4f28a342f561eb1126ae30b56cbaf52ff218e13d36ec7079dac",
+      "extension/src/retainedStudySchemas.ts:6aa3f2fe611fbf48ef7a60025a11cedbc918dca326479bda4d3af02d339e2eec",
+      "extension/src/runtime.ts:10b23b89c7d15730fd705184d8464f615c7f3924f29a8808ff5622acaafb6dd6",
+      "extension/src/schemas.ts:7ee610413e16bd55752b82418b3b3e48fdf319a00b3c7165bab7616524205a9e",
+      "extension/src/server.ts:02aae2b52b42bdbe6dc63318547396a244680e8e933bd3e6b5228cccd8cda865",
+      "extension/src/service.ts:6544a4255fa535248b343bdf5de769dc158334d7c3dfeea88105595a9efb1762",
+      "extension/src/sourceSchemas.ts:950815c125ebbd21e023b240743ffd4d3a7e3af859b1a55889989e9e365b55af",
+      "extension/src/studyModel.ts:f34b02ee688d823c988da65ef53560d3bd69805eda0b1e2dce737fdbcd413751",
+      "extension/src/studySchemas.ts:05a18f5163df920bf6e0fd7e1df193d1200a1cf2e20511c597a71e95b5fa23d1",
+      "extension/src/studyWorkspace.ts:7ef815d08571e4c9cecd26b6963161e1d1302ef4ecf03b37e63e2bae7663bc83",
+      "extension/src/tests/boundaries.test.ts:b485ef4120429c881f6e3e214089e18b03c7166adeeabf2c39a808455f47c9ac",
+      "extension/src/tests/citationProgress.test.ts:911a9eab9377a7218104f6416ec6c6062d18b87c35deacc96f1468aa4a1e2ac4",
+      "extension/src/tests/client.test.ts:a5ff95c6ef8b22bef0e2e6882d048d20b0a6f70baf51a833300d3b0d042a30bc",
+      "extension/src/tests/configuredAdapter.test.ts:4caaefc9ccf08be37f42d25990a38268b2be0c67032a6b3a4cce116653af45e4",
+      "extension/src/tests/configuredApplication.test.ts:eef5e89a6472ccaa9f69d889d0bdb50a012933a25208198dd696c48b2e0f3a5d",
+      "extension/src/tests/configuredBundle.test.ts:3eed48b411c165d717a7fe8676845f5817f6aaa183d3a6dfe9984dbd8cfe484c",
+      "extension/src/tests/configuredPreparation.test.ts:241d0f98da2af9ba2a6139cf5ef66573a7ef1a09bcf1a60c4ec29da608f96b04",
+      "extension/src/tests/configuredPresentation.test.ts:5ff75226f33d5d857288ea561b4724e2c699bad152c9b22970893485e014dfc4",
+      "extension/src/tests/configuredProgress.test.ts:ae4119e03ceef333c6dd44851f9be192d1e8f9c8db77206b5ca6a563a1e5dffe",
+      "extension/src/tests/configuredRecording.test.ts:efc1fcccd3ca4bb962cd5b506823cb78508bcd169497aed9e43e08a6cc52fef0",
+      "extension/src/tests/configuredRuntime.test.ts:fb3faf241dfbfebccda1429ac0093bb4f74e74ccd2c3d4ef4fa17f08c679fa95",
+      "extension/src/tests/configuredRuntimeRecording.test.ts:e08802b3c7f04af10742fbfc7bdd4f77e5fadf197b1e04a93fe3ec4eb41fc19e",
+      "extension/src/tests/configuredService.test.ts:6f1ee6ba0bfa100e46aaae9b5daa192e6810820835e4bca4dee91f59274486b8",
+      "extension/src/tests/configuredStorage.test.ts:484280a3d35ae57a5ec8cef272c32f0ce945fb10e56074b08207bf0f6c941306",
+      "extension/src/tests/configuredStudy.test.ts:5f761d857bcb8a7df8ae32741cebaa0b9c4ca15aea3942a1c6437eb752f08edc",
+      "extension/src/tests/demoAssets.test.ts:67886a128656ff9fda3ac443e636ee8c0d27e3373423aa7031481743cdb44a4c",
+      "extension/src/tests/editorLayout.test.ts:b708e2cd30b5e4675e19e79fc147d48750ea696a684b99673f61e8c854fc3d84",
+      "extension/src/tests/editorLayoutGroupCount.test.ts:63df506606147fb260453603c873f94d81a45f5bcfc6267cd87e0b068fe54e07",
+      "extension/src/tests/environment.test.ts:0b6ebee882248faea42976ed4f54e0456f63463b4359152dd6123a69882b686e",
+      "extension/src/tests/extension.test.ts:6f6b2eb60291f9519931d768671db3af5f6fc0d39798cb7f9dddfcf8aeda1f44",
+      "extension/src/tests/fixtures/cycle-0006-legacy/README.md:64dd0ecc2fd83bf9c3ed5c4f784f2d1f8c438bcb10bcd67cdcf3b51f6355ff32",
+      "extension/src/tests/fixtures/cycle-0006-legacy/progress.v1.json:4cd64d619cb165a2e6d4b68a4f5be32c21ea50cb06df4d89f9633dde3a81038b",
+      "extension/src/tests/fixtures/cycle-0006-legacy/study.v1.json:46da21735d8e86a0b6a3cfd05ad9437142360b0530f2996502737621570c7c57",
+      "extension/src/tests/fixtures/cycle-0009-legacy/README.md:ade12dd24b972a38740f48e64da6032b010190e6aeaf6211494d3c3c499ede3f",
+      "extension/src/tests/fixtures/cycle-0009-legacy/architecture.book.v1.json:5bee2841bd0a6934685a0f3b1dc8aa1ac689516d61264f5207bd40cb81e485b9",
+      "extension/src/tests/helpers.ts:a0c23cb809c35b504467223e1596e6b03e71a8a4d2259f5cc3ec80ccad07542e",
+      "extension/src/tests/learning.test.ts:31b521fc0dd044b4bc683fa2c234c763d218a052d6db45228c437b06eef83b8b",
+      "extension/src/tests/legacyMigration.test.ts:a127914cfd8309e99830c95720d88adcad7ff1940203e96ee8f3ac55594fe306",
+      "extension/src/tests/nativePaths.test.ts:295262c423e2078f3be45b368f3499347e50521b245c2a4d4359de48ad616c54",
+      "extension/src/tests/nativeRepositoryLauncher.test.ts:21f230bcba87cdde6cab3c5834f84094678a0b6f1036aa141d8f059b06486b0b",
+      "extension/src/tests/playbackController.test.ts:b4b4929ff98ce49cbb0c07be9e2551001ee6b06db6f7a17281e8f6953a0e347b",
+      "extension/src/tests/presentationPixelLayout.test.ts:445739fc240d45187a4c023e55a975bbdeb52015fd66b5d7c5edf0d63e33a339",
+      "extension/src/tests/protocol.test.ts:f20646c81ae27c652d90ec8b4d80e8e8f7b35594e0ae1cb16e7fbd77bdacd3a9",
+      "extension/src/tests/recordingContext.test.ts:0a493f96a668a1f0a0a94c65922b72f09b9a64cb9865a57d625ce23d4f393988",
+      "extension/src/tests/recordingProtocol.test.ts:498860cdf4c47e65824a6c5439efea6f61d3c4ec060b105ebe862f7a796181ef",
+      "extension/src/tests/recordingStore.test.ts:42de72e7013013d4a83f1f9b435034839b797561f18dabe27b698525f7ab33cb",
+      "extension/src/tests/repositoryBook.test.ts:101bbb4f50e2ead630d3d3651f93bf24d272d0e31e3c8b3f83aab72adbc7f828",
+      "extension/src/tests/repositoryConfig.test.ts:2e2c6a4f5a78afc7d82400cc8e228f3d485fc8704b093f0e04fc0c4a4dd8336d",
+      "extension/src/tests/repositoryEvidenceFeedback.test.ts:308ba39617a768205cc5b2743097dd8463f7261d4807aa4eed0c99e1c95a90d0",
+      "extension/src/tests/repositoryProtocol.test.ts:e2b5c80de6ba1276452c8cc537118a9c40b5498a1686a041db62b757923c291f",
+      "extension/src/tests/repositoryReader.test.ts:6e495e1b308377220f1829a1b0c9ee0ce65c3310eff7c9fec7995f3845c1bfd6",
+      "extension/src/tests/repositorySource.test.ts:6651212822bf304a3f12b5889a95a59f1ec163e320d08825304bdaacc5564807",
+      "extension/src/tests/service.test.ts:88aeabf719284f7bddbc7706667b1e13c59396b0064176d80b722790440a7335",
+      "extension/src/tests/studyWorkspace.test.ts:218b84a81136fd209d8145d47f2632eeb67e8352c34648508bddf9755c6056f5",
+      "extension/src/tests/utils/configuredRuntimeHarness.ts:622bf771d6f22b4467d9cf93459432384ae9b4f94e145fbaa7287653a2c7bee8",
+      "extension/src/tests/utils/configuredServiceHarness.ts:cacaae61197e6065a741574e181988257118fd016b0dace1b951a382fef3a534",
+      "extension/src/tests/utils/createConfiguredStudy.ts:de2885b6553470370773e35479f9509e8800580c92e58c17e8f015342a757f31",
+      "extension/src/tests/utils/httpStatus.ts:409357d3aeb1dde960899fa4cc591641aa6998a2e809559e6e99adc2f666a922",
+      "extension/src/tests/utils/loadModule.ts:79a3e113d14e38ad6253003d96d86fd4ca1049a56baef4a1955223cb3cfe6ae1",
+      "extension/src/tests/utils/repositoryHarness.ts:41b801aa1c3c8d9c7e236353ddace07946492cc50fb3c53601cb458ed2dd7ffa",
+      "extension/src/tests/webviewFocus.test.ts:885b49c91995b73cfdb0bcce828792701ceed1abb3500f63f5735e532338f95e",
+      "extension/src/ui/constants.ts:8bae44b8c06e5e133ad98564d64430f83ed9999056b0f2db971b2bbbcbfe7f32",
+      "extension/src/ui/repositoryHtml.ts:abbff25c145c4f52a23cde405c0e3ddce9a896b74f507f1534682ca266a6c36c",
+      "extension/src/ui/studyHtml.ts:d8d7277c6b094b59668c2f5cac2644ca3532e880fce507f0d05f1bc377f27f9c",
+      "extension/src/utils/assertConfiguredDescriptor.ts:7e8e22f74366691d4fda1733d96bd01d0d480227120298588ead3c5f7c6d7490",
+      "extension/src/utils/assertConfiguredSourceDocuments.ts:f14fb2aca5dc88f217d44b8e18f892e711a309d8238df06368c86b1c62958f7e",
+      "extension/src/utils/assertDevelopmentWorkspace.ts:581dffcca23883757790ceb8608d689effb9fc1ffab82c27a029a55c7142d321",
+      "extension/src/utils/assertStudyCheckpoint.ts:bde88b14b1d965640b2f65da79ad97cddac404e7149fe7fcefda7dd972aee46b",
+      "extension/src/utils/atomicPrivateWrite.ts:c70d799755b68a4b02cd2a10ac3936f0605c0b131cf972bf07a9841f46d7df77",
+      "extension/src/utils/bookIntentDigest.ts:b674f2ef53ae9bd86e5189e2e9d3aabbb2280923a615321c5d66143d87e4b59a",
+      "extension/src/utils/bookObservationHash.ts:4d2a8c2d0f39e06dbd0c78ba316dcd152165cd30c20425eca24593d799384b11",
+      "extension/src/utils/buildRecordingContext.ts:13f164a305e67f1d336b57e87bdb87e20365663ce9cd4c5c88f40d7ade7ede5f",
+      "extension/src/utils/captureStudy.ts:fe557034896856b0d05929cfc34ce0e129c15fee526383c60678bdcdc0bba3c9",
+      "extension/src/utils/capturedAppHtml.ts:d64e3192cf34d3ceae34bba1a3623240f1d8ea7517f1407802eb82f00f2e3a0b",
+      "extension/src/utils/checkDemoFiles.ts:07c378f69844cc79687764b60fba823f0299cc61f4cf91547878983f3d028410",
+      "extension/src/utils/citationContext.ts:80c1f7c2ea3942fc91f78abcc8343f9ca833310bee012c421aa082ed9c76518e",
+      "extension/src/utils/citationLearningState.ts:8a2cdb0c0dbc8d65ae1b07038d6ee7856234970f98e4eaa14e5e131bf2d3d881",
+      "extension/src/utils/configuredDomExpression.ts:2fb80a8c60e53805c7fe2868c67e466f7b1fbeebbd066ccfef94deb8f197ab9a",
+      "extension/src/utils/createBundleVerifier.ts:ae46003aba87be46e6dd2eff114ab5c23829b5e0ee75c7110e04940c76ef18cf",
+      "extension/src/utils/createNativeProfile.ts:6ad64d7f1c2c51909b4d3e0c5113e5a4cb19e3ee4004c712115ab5292ebf432d",
+      "extension/src/utils/createRecordingObserver.ts:2eb3e81ff71162aebe91a60811e1eb6b0919762cc0883729daae052018351bee",
+      "extension/src/utils/decodeConfiguredStudy.ts:98e3108b2fce4659e297c50409471ce0642c2c0d61ceb8c0ca2c7eaef528f34e",
+      "extension/src/utils/decodeLearnerProgress.ts:3be52408bf79a74fd4eae07af246e08942192fc795bf116c8f1cec6a42612623",
+      "extension/src/utils/decodeRetainedStudy.ts:72ad52195abe06aaec17000fe68b843c7eccd3bb52405fcfde71fb0c5822d396",
+      "extension/src/utils/decodeStudyArchive.ts:14bee3aa743a0dd1efa8740a24ddb43c1bfb37739776d4ebc9e6516af6617eac",
+      "extension/src/utils/describeStudy.ts:1105fd19352f2a88a3f7bebd83d4136e4ae4c65d7e7177a165a2debb51ca4d2f",
+      "extension/src/utils/editorLayoutGroupCount.ts:258f3477f0cd8f82fedfa03ba7fb03f43ec5ad35ee32c57d333d4964b22b06a7",
+      "extension/src/utils/exerciseNativeRecording.ts:03a4d3dadb67d95b7a45386dc086ec9e10a88dd0dccec2f6f7bea7a7ba999cda",
+      "extension/src/utils/extractDevelopmentModule.ts:cdf46bc4b8fdb3f9c28107cd17198be46c18a50a13b60566e4a43e7dee0b7be2",
+      "extension/src/utils/focusWebview.ts:57d11e7504848805ab653a4561c599d54643cb185dd0218769ea541b4ddc3613",
+      "extension/src/utils/getDemoRoot.ts:8d69fecbad58d098125402e4e929297843609929209636201b79f9fcc9320490",
+      "extension/src/utils/inspectConfiguredValues.ts:6124aa7c9b06dcd871696685fabd1543b8e59c9850b843fdfa9443b02a666253",
+      "extension/src/utils/isBalancedEditorLayout.ts:2743ff6fae31485c2ae6c4b4cc95122baf2e2a0eceef8be89510c67a9b48872d",
+      "extension/src/utils/isProportionalEditorLayout.ts:6dc3079d8de391b028d3b181f3769b172391f1b7f08788ab4929242ed0f45366",
+      "extension/src/utils/isSourcePosition.ts:84ef41851cee955a8f986f3d356fbf2846d0eec64ea1a34911bd936e9362bb77",
+      "extension/src/utils/launchDevelopmentServer.ts:41f708360ded9012985350e70e393e66c2da4159a91f9d2e308539262cac0bf8",
+      "extension/src/utils/normalizeNativeSourceText.ts:5775187a168ee98b3528b2577ed5e18b0c0c9ac1867f32b166ab56156fb96f51",
+      "extension/src/utils/omittedDetail.ts:b263dc6bb2cbc65915c0c241d23c4707d1ec56681a922afada214832ff8cbf5d",
+      "extension/src/utils/prepareRepositoryStudy.ts:64994682f24b62585467e14568e1f0a1a328cc0009bc85c2fa0f669a3f1df768",
+      "extension/src/utils/projectConfiguredStudy.ts:9ed62a16cb0bb61a8bbdb76ff6de1a6563b57a2823619c1b416e89571bf7b772",
+      "extension/src/utils/projectPlaybackStudy.ts:56c9758aa1812931f7dc850e1cb00c12569c0f50c17d49433143f6b79ac682c8",
+      "extension/src/utils/projectRecording.ts:8f99ead13eebe037ca28aa792f3f30f1977b85129ecd8dade6052f2f101c6136",
+      "extension/src/utils/readBoundedFile.ts:baf3de0099ed30842422c3cef24e6dddffb609e04d62e487a0ca2b73759c8357",
+      "extension/src/utils/readDevelopmentBundle.ts:e4049118edcc806389888f4af8f80218baede6a432d1613162c3318b17c5ce11",
+      "extension/src/utils/readPngDimensions.ts:31acd49b95fc487def7b1181af9e4cbccd6833981bd69b777ca3bdb2e9048c1b",
+      "extension/src/utils/readRecordingResource.ts:21c70dcc29e8cb447222d4364cd60c3c6dea665541af43f2664d8a5b8dc111ab",
+      "extension/src/utils/readRepositoryBuildText.ts:5c6da6db36fe47ffd5f2931e1c57711d462b92cdaa1976478867e3bc21fb5a22",
+      "extension/src/utils/readRepositoryResource.ts:155631d97cc765f8078a9398c7f5ed3a9bf0b91c8898ee1199fa439c81539e1f",
+      "extension/src/utils/recordingPhases.ts:427e6229ba30824cbbcbb6b47aed005aee6162919750ab28217bf39456e1e05f",
+      "extension/src/utils/retainEditorReadingPosition.ts:b9c4e766b175c45321d1ea5338d2a14413fe124a7a23ea12447b7be106f6dbf7",
+      "extension/src/utils/sameScriptUrl.ts:df4896e47ec2ba60112a0a31837925766a63c6ea883fcb9a9a8d75228fbafe1d",
+      "extension/src/utils/selectStudy.ts:3a93d2c05a7808bf6ecdc2242b41847aa86dd363686e36ed45d0052c1f331cd8",
+      "extension/src/utils/snapshotSourceHashes.ts:b348a246b732313627f3362d2c560e3324f227d383a47599cfa6bb7e97646c9b",
+      "extension/src/utils/sourceExclusion.ts:d625b6353b8611560d13a322b8310b0a1376fddc51169331a7cf61b52ac9d65d",
+      "extension/src/utils/toPixelEditorLayout.ts:bc46ed6b9fdc7b40e6cd85d326fab90e5a0bd03f48e4015d601618d73f2f2305",
+      "extension/src/utils/unchangedSource.ts:af64a5a1e9913b420698e6ea3b1f25b3b493f659d9850700ebe4273e0c2e0930",
+      "extension/src/utils/validateConfiguredStudyEvidence.ts:243bccf53f9c6e68a39166d58fd9fa1651214feed2e7cc79ab5030b52bff37d7",
+      "extension/src/utils/validateRecordingContext.ts:80e1356dc4709b791f424ec65401ab5417ccb4adfe8c49e254381ea9edcc25a2",
+      "extension/src/utils/validateRepositoryBook.ts:0b2769be21c758bb9f676594223bfbe84ef29aaa5fd6fb6fc3bf45575265681a",
+      "extension/src/utils/validateStudy.ts:d0ea402c0a6412086e76a02d3f58b1d013c6c8d1a9ebb49f066e8c3a83dd593a",
+      "extension/src/utils/withStorageLock.ts:30b8f22e95c219f5f128d6024ab608834e5fa2e8cbc0f624c1ba588c96887972",
+      "extension/src/webviewFocusSchemas.ts:17462d94397da6d270cd543b813cbfe1d6f16ff22d13108a05d6da633c7c52f3",
+      "extension/tsconfig.json:e7a46594ffdb92be57ea0f137c059ec074bc977f12b2a427aa2f4e5155df3e97",
+      "experiments/cycle-0001/fixture/cart.ts:3bac1df495e3b49c1b03781bc5ba859825e993614a811fc69960cd31f2f72c4d",
+      "experiments/cycle-0001/fixture/index.html:d326df406c431a8b51051ae40463b3c3793f3b04d8e9e4c2de7d03b4d73ade02",
+      "experiments/cycle-0001/fixture/tsconfig.json:407fc280eec89bb7f7d9bce745beed66d3b0cea1cd4b6fccacca0e6e0a23ac02",
+      "experiments/cycle-0001/package.json:9768069438e1fbf87ef7e7a2257fa6711aa7acfead3000a155659a69c35a0a28",
+      "experiments/cycle-0001/pnpm-lock.yaml:c9b0ae630d75714be18a2954b50f1fb8693236d4d6cfc1448f2878ff0821b2e8",
+      "experiments/cycle-0001/src/browserViewport.ts:6e42b66c78a089706a75b1c23a7e1b8a1b5d2909e68c66712c31dd13d62c216d",
+      "experiments/cycle-0001/src/cdp.ts:7aca13df8b981d1de63c1ac5bef79768a23adc086504d2b9980fcf2373a387df",
+      "experiments/cycle-0001/src/constants.ts:8f2d17eb580cdad31e98bc08f49178c0a4216caa87e5886544db08e24ea6d252",
+      "experiments/cycle-0001/src/cursorCdpBridge.ts:d72541dd075a4fb3446928b0e65a724e8305788349175cfa2f6e08978f30aa0f",
+      "experiments/cycle-0001/src/evidence.ts:08ccf64425b8cc35f839f7c065b70c7055a5fb78547b0e5e48a770f9eafff456",
+      "experiments/cycle-0001/src/extension.ts:cbbe956d08867a6736cbd41315cb4e5180b23f8592e9ba4a9910325efed53c44",
+      "experiments/cycle-0001/src/frameDelivery.ts:0d4a073082cd6bd49696337ae31cce3882efa00d337990ea0b3e62bb69285acd",
+      "experiments/cycle-0001/src/hostBrowser.ts:a669fcfe1d6670164d04ce060bde182ca36dd1abcd85fa88c8504cfb70e0185b",
+      "experiments/cycle-0001/src/inspect.ts:a7dbba2697ebcbb1827637f3810ad87b6bd0595060790081aa66aaf3813ed2c5",
+      "experiments/cycle-0001/src/pauseGate.ts:72c87e952895d73cdd4a8695a4a554d3c7699a4fb112c208d83a4aca18251567",
+      "experiments/cycle-0001/src/run.ts:49d79a2bacf59c7554291fb66910ba8c800d87b13e3bc22dac0ec83e93e8330a",
+      "experiments/cycle-0001/src/runner.ts:ee9c5c12c03af488d3cf0574832049b8b2b18025c8d8221a4a6823a7ee734dfe",
+      "experiments/cycle-0001/src/tests/awaitResponse.test.ts:e4b0243a487065b095561fac5f3e983b8c1a98de62b9df08324ac8240f369ae6",
+      "experiments/cycle-0001/src/tests/browserViewport.test.ts:5a238f3d517e2c62dffea772c1a20d00df6561cecc4a4aa5b15cfa6a9a51f877",
+      "experiments/cycle-0001/src/tests/cdp.test.ts:757c4e4f8a00ee2ec15f6346bc1214d6a4fe49d57d6305f6ff0b9b5aa691eb52",
+      "experiments/cycle-0001/src/tests/cursorCdpBridge.test.ts:ef68a052d8f3efdb63e418a05a89477775e85ca5d6e35f25bae632f2c5ff5b7c",
+      "experiments/cycle-0001/src/tests/endpoint.test.ts:ffc9666680732513dba379c9f0ad12854beb94688a4db5d365738ec1568d6e82",
+      "experiments/cycle-0001/src/tests/evidence.test.ts:0079778ff9087fb142ad8d74aae764d965e96b4e930acdaf7aaf5e0410c4a18d",
+      "experiments/cycle-0001/src/tests/frameDelivery.test.ts:f10a65c5a901d155f6bdf592b5e8495741348beb1332fbda0adf715f079f1dca",
+      "experiments/cycle-0001/src/tests/host.test.ts:8640835cad73898469031aa92f008fc237403c6da7c1e4facfbf3866c8fdb5e9",
+      "experiments/cycle-0001/src/tests/hostCleanup.test.ts:398d905baa937fe756a9d97d51c5f29465cff84e4ba1df06e72425ecd2ef2d31",
+      "experiments/cycle-0001/src/tests/hostInstallation.test.ts:e65e5b93a7b55cafd818743b63c706869a2c0c303a2b14e65f285af6b2e77ce9",
+      "experiments/cycle-0001/src/tests/pauseGate.test.ts:279cdfa1853f63de8afa92904d59d8f62b78aa9d70a72d31f08426fadbffe3c5",
+      "experiments/cycle-0001/src/tests/profileProcesses.test.ts:ae73eb414674294008f3425deadb4612c9a102836cf040b4e76c330b8ee05519",
+      "experiments/cycle-0001/src/tests/runCleanup.test.ts:6ddbeaa934b741a5bad99ebd097e23680866fe67aa26822f32a3f1bf72d0871d",
+      "experiments/cycle-0001/src/tests/runner.test.ts:7ba7734f57607d32a59ba45df63274a7ed67cd76f48fdb2854791239c247399d",
+      "experiments/cycle-0001/src/tests/verifySource.test.ts:d52f1bcdd57e961569d1bc33ae9a9fb1444ccb5561798d6901454d113b759a54",
+      "experiments/cycle-0001/src/utils/awaitResponse.ts:e6f1e686aecbf5185607e56b3cb12aad730296906331b3891c25d4401ffe97a0",
+      "experiments/cycle-0001/src/utils/installWebviewFocus.ts:edf2db2d2662ad1894825622344edd2310ee908b964385532e28cacaed991500",
+      "experiments/cycle-0001/src/utils/isEndpointClosed.ts:5dda64855ae2c6366a4df2de99d452c42ac7ba357bf8e797501181a9b37b9789",
+      "experiments/cycle-0001/src/utils/profileProcesses.ts:0cef3fdec0aa602690a3f52355997e12e15eb7a2a8e1ab55cb9f9a56c17b33b0",
+      "experiments/cycle-0001/src/utils/readHostInstallation.ts:484c53e3508eb1ac5f5384df3912de9d54023e7fe86d34069801d03d712b31cc",
+      "experiments/cycle-0001/src/utils/selectBrowser.ts:95112c844bb528617ddc30d1b90ab95225fa4b30529e42eaf35628a4df48f1b5",
+      "experiments/cycle-0001/src/utils/selectHost.ts:42bdfed7c801af10bbd5d2ae19758384c4a6905e9a02552f1acea60771ae4396",
+      "experiments/cycle-0001/src/utils/selectPageTarget.ts:0f11a2380e0efc56c89ede2eb133c9cdee3ebbe6b01c05705c0c98763194fe99",
+      "experiments/cycle-0001/src/utils/settleCleanup.ts:b8cdbca132d81927c03c8dbbb55e0c32191e3a774e2c54084ae28c9bbcd961df",
+      "experiments/cycle-0001/src/utils/sha256.ts:b9817247469c6ebea02b7a5ecacf05718b762080a237448213820d785130fa2d",
+      "experiments/cycle-0001/src/utils/viewportHtml.ts:a337e98f0a8d48e19d5bea632b518cf2e04558d0bf44e8af0425c666df326834",
+      "experiments/cycle-0001/src/utils/waitUntil.ts:a3b2254f867f30d35516d5df2fa503a4f2f925e554f6b79bd5a1dcd0c9fcd902",
+      "experiments/cycle-0001/src/verifySource.ts:27081b0e379a785d8bbefc3452448e8c3a601bfa9548eb7d23048ebf7e55acfe",
+      "experiments/cycle-0001/tsconfig.json:635772cd4bc3f7be0448402c545339ab226145d7897ee6a5b60707596bf42502",
+      "experiments/cycle-0004/fixture/client.mts:57abd1be0eb01662d17bd2f814998e2882ebb8f68af769bbabe62b63134ac77c",
+      "experiments/cycle-0004/fixture/constants.mts:0cc1c000d028deb10e0da2aa7e2437c324b60acb526ca74ff9e0229e5b3c6ac4",
+      "experiments/cycle-0004/fixture/index.html:ec7dd58c05d3b3bafefe8598170924eff9228a24749e7ed3e6f75405e5c1c2e3",
+      "experiments/cycle-0004/fixture/server.mts:31de7d4f88e042a6ee10552584434b79344cae268e1ec2f6c574beeb2948504a",
+      "experiments/cycle-0004/fixture/tsconfig.json:14d71d80d99a0f385f181aee0f2a729e391adc6a89de4f2527e305d20334a598",
+      "experiments/cycle-0004/package.json:a4529f70582761b6aa423945021bcf718999e0bd57385228d5211338b3f793a8",
+      "experiments/cycle-0004/pnpm-lock.yaml:e9e3fca75cdbc93113daa59a47b414c564e9527c896e5699aaa51fe018b4f476",
+      "experiments/cycle-0004/src/constants.ts:38bbc580f28a3b43681a5aba42753428e737ba8a65233a9dfd947383f012f5cc",
+      "experiments/cycle-0004/src/extension.ts:57d93eefc6ae1468b8d67bb28153481eac2823d8d88a69f8ed8c1c51e4a5de32",
+      "experiments/cycle-0004/src/inspectParticipant.ts:4e2b4c0b320203b0485eb564000aae5555795a42ed4c8d58987374484ffd165a",
+      "experiments/cycle-0004/src/networkEvidence.ts:725df4b6265adce82ca61383b21b762ad69436489ca7304c2c96cb237cff55ab",
+      "experiments/cycle-0004/src/pauseBudget.ts:c814dd4592d038e5230d71e3fea1a249b2e8099a5f58400451a5d0a079c29889",
+      "experiments/cycle-0004/src/profiles.ts:2206cf5ec88cea8feb169318cb66d9969f2edf4e362a53857a9d8414113c1148",
+      "experiments/cycle-0004/src/run.ts:64d61f65f35b3ab5b644ed0a06bf705d1d2b48cba57641ea1790ccf32bf761e6",
+      "experiments/cycle-0004/src/runner.ts:a84f8516bdfe646788871753a87b69c6d858a50db4b7f7cfe464f98d3f0133dc",
+      "experiments/cycle-0004/src/tests/backendProcesses.test.ts:a58e87c87a86a86be1d02a4e6823ad7a28e718e81d99eee71065e4b693d23431",
+      "experiments/cycle-0004/src/tests/checkoutFixture.test.ts:12359ab44ae35a31c25b2baa0d5b10c77cca7f2facf7c03ae39fdca0e1dcddde",
+      "experiments/cycle-0004/src/tests/checkoutNetwork.test.ts:2a74e67055bba6c748528630facec6ae537fc50f2715a8f107f1ab4b5857bf48",
+      "experiments/cycle-0004/src/tests/cleanup.test.ts:d9dee1db0f168f6f38821171875f97030c87a18751a77c95caf74a330df26660",
+      "experiments/cycle-0004/src/tests/finalScenario.test.ts:01fb98a6234d6b51cf0300e81aa802cda5a8e017f34dd4a8be597a1181c09a88",
+      "experiments/cycle-0004/src/tests/lifecycle.test.ts:2dc2e39de9d7755d966307ce71323927c3a584bfeef7b8d9a626c8ab0b0f3f8f",
+      "experiments/cycle-0004/src/tests/networkEvidence.test.ts:8263c57491edcc05cc1fbe46a5edc0122e42f49cfde77d45fd61a2f89fefed0b",
+      "experiments/cycle-0004/src/tests/participantTarget.test.ts:824358284dc931d4e689642bdbb284780b630ab18acd1aa4e4404fec0fe73076",
+      "experiments/cycle-0004/src/tests/pauseBudget.test.ts:5ae6c5201c3d14779c2b001d88d88fa4e21294bb4704df805801b089ed72da0c",
+      "experiments/cycle-0004/src/tests/profileSources.test.ts:dfb1cd0d3ff651bd32278baa006db76003eb4d176c3e82a7e79fffb6bc738405",
+      "experiments/cycle-0004/src/tests/runnerVerdict.test.ts:de89941fa334b01608070cd3e64acc2179875f0c58fb169964786b90ff2a6f42",
+      "experiments/cycle-0004/src/utils/actionExpectations.ts:41397414b6c8fbee235cdda6ed966fb5d664d3a5bcd0f79276565b2ef1c8af79",
+      "experiments/cycle-0004/src/utils/assertFinalScenario.ts:591682881c13f1ce230702a160e27a8c4abb37161f6331507b39fe143fd39e52",
+      "experiments/cycle-0004/src/utils/backendProcesses.ts:c04257be3b3b952e7197d11015e05dd77d54e6db66d0e0f781aee65d98c40f3b",
+      "experiments/cycle-0004/src/utils/readBackendEndpoint.ts:01da3389b59ba0f272b000e5b99dfdd943f04e2cd01f02a1136be6c4b51f5282",
+      "experiments/cycle-0004/src/utils/readCheckoutTuple.ts:8dc97e2f450443cc17ec4408126ffad55e975ab522d6728773a2c20170fbf551",
+      "experiments/cycle-0004/src/utils/readTuple.ts:86b6f7845ff8fa3329bf472283bd0dfd4ce3b7192136d5f8312585dfa51b9ef9",
+      "experiments/cycle-0004/src/utils/sealFixture.ts:a0480ff9936287884c52b0fe572786d80a43758c09b617a1882f7b24b8a65ab8",
+      "experiments/cycle-0004/src/utils/stopExpectations.ts:20094c633c8619b2a093183447cbf5c08748fcd9e8a6e8da416f511843b0552d",
+      "experiments/cycle-0004/tsconfig.json:d66845f187f7bf495cf63b3aebcce04481f8db61d164bb69646d059afe708d09"
+    ],
+    "extensionVersion": "0.2.1",
+    "apiVersion": "1.5"
+  },
+  "availability": "Private ignored local files in this checkout; preserve accessible copies before deleting or moving it. Missing evidence requires revalidation.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0018/message-focus-arrange-diagnosis.tap",
+      "bytes": 2072,
+      "sha256": "9b23c6996297eb2f9ba8644883e621e3ea9bfa03d7bc1c06d872d82816a2e064"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-arrange-red.tap",
+      "bytes": 969,
+      "sha256": "231f4a74883f435c68a4665fc72b840e476255e7c7e55e88bde31095e81b92d1"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-arrange-stack.tap",
+      "bytes": 4289,
+      "sha256": "2f5cb11f8c2dc8ebf049cfcf2af3b1315fba1004c98b04162aa4d311a70962d0"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-blur-build.log",
+      "bytes": 55,
+      "sha256": "0e0d1b3680bdb55a702cdb1ba97098c269ecfc16da7edf99ad1a451907fb5699"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-blur-red.tap",
+      "bytes": 936,
+      "sha256": "b9689ca7c2d7e95c92e08cf76f9e1a295941754b0c7d886f4d0e1c54d56ac8f6"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-boundaries-repaired.tap",
+      "bytes": 2359,
+      "sha256": "3c0c6368f5b2363b0814af4c43ae5c1cc3ea2c503d4f51f59d532dbb5f6fb767"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-boundaries-v3.tap",
+      "bytes": 1440,
+      "sha256": "5ad59777fb41ce8b128edfeaf17d879f885bd61fa4ec012d510843a1d2906c3e"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-boundaries.tap",
+      "bytes": 4734,
+      "sha256": "3ef091b08e5e276f1f630e2d12ab1c37eebba3bca7306729973f642eed0d6b26"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-build.log",
+      "bytes": 55,
+      "sha256": "0e0d1b3680bdb55a702cdb1ba97098c269ecfc16da7edf99ad1a451907fb5699"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-coderabbit.log",
+      "bytes": 1412,
+      "sha256": "13736458d2496cd0984bca1715ce45f48b04bd562cb343caa50e3781e88b6e6c"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-final-build-v2.log",
+      "bytes": 281,
+      "sha256": "dc74658822d030f1db1cd2b534a53c3b34cad828c297fc9cb283de87f0ea470b"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-final-build.log",
+      "bytes": 55,
+      "sha256": "0e0d1b3680bdb55a702cdb1ba97098c269ecfc16da7edf99ad1a451907fb5699"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-final-coderabbit.log",
+      "bytes": 2363,
+      "sha256": "8686bdbb43d5257879635704f1bf9080f874ef4c991564f2876d92276fc072ea"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-final-package.tap",
+      "bytes": 10064,
+      "sha256": "01cf1cc81eebdbeca57dbd9769ca882aeb2bd4ee10542bf49f0c2631198f1cd9"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-final-product-shared.tap",
+      "bytes": 92359,
+      "sha256": "dc8b2d42299979d04de496316c53934d87dc131b33b439519d670c1c1c0171d1"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-final-tested-build.json",
+      "bytes": 31642,
+      "sha256": "e356b2c2b9d7624335ba9d6c0f001249562469ef07b396cced97e20440cd2926"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-green.tap",
+      "bytes": 241,
+      "sha256": "d13f2db3ab22a06009244e1ba10d1af7d2e540f4eb28a45e5f4853c415a7b57c"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-package.tap",
+      "bytes": 10061,
+      "sha256": "66158d316204f37f982846fd4c97d4a6d403046b70e9a4d043ef797e686b611d"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-product-build.log",
+      "bytes": 393,
+      "sha256": "e1de0ce10def961f0531e95f3e3c79935d0aca593a092f2ddcc101889971632c"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-product-shared.tap",
+      "bytes": 92224,
+      "sha256": "71bceb3d3efb43a8bcd9c59c659ac590fdc0c68a914a2e663e0df4ccbd66dea3"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-protocol-v2.tap",
+      "bytes": 1825,
+      "sha256": "0dd6317b3f13713dcf9591e9aa916e15421cf2dbfd6ea86109745196dc71ce8a"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-protocol-v3.tap",
+      "bytes": 1939,
+      "sha256": "50b32bafeea866bda199ae436366409e415cfe75c9e10d9c3a0b38b08c9c7a41"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-protocol.tap",
+      "bytes": 1707,
+      "sha256": "3181069a2c1d7d36e9840ff1cef38cc3af363b59138e10fa18964dd599c013a7"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-red.tap",
+      "bytes": 1054,
+      "sha256": "072f864cf3cf0b372b8e3f5f39c1746b2a856c7dcb2ea349a4afba8e6d32b1b6"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2.log",
+      "bytes": 38,
+      "sha256": "0628ad477b93308668450f2670d1e06dd7f5275737e901baa43c78c2ca3570a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2.mjs",
+      "bytes": 7794,
+      "sha256": "2dc37688341ce627b03dc145153a901eed52e3e76dfbef60ae1f299f7323598a"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer.log",
+      "bytes": 38,
+      "sha256": "0628ad477b93308668450f2670d1e06dd7f5275737e901baa43c78c2ca3570a3"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer.mjs",
+      "bytes": 7788,
+      "sha256": "a29509c89f4f7da18d72bac1c244341486ec665a668016d9b2f043f12cd301ba"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-repair-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-test-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-tested-build.json",
+      "bytes": 31642,
+      "sha256": "1c725634600c0f4568514a36f175fc7d385f1af440bb02ef3d41ac3953de6f70"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-workspace.tap",
+      "bytes": 39378,
+      "sha256": "9e2fea64f9e360c3eeb107de672af76f67a443a528cb23889423a7e1cb909e5f"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/captured-focused.png",
+      "bytes": 27263,
+      "sha256": "7a14452f2c14fd3c0c3459ddbd95423bcdb95abfec76e4b28811fd30eca8ee52"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/close.log",
+      "bytes": 45,
+      "sha256": "edfaacbc8813674e58c9916011db613e447cbc139f0a9749d26974416412ee09"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/context-focused.png",
+      "bytes": 63723,
+      "sha256": "84d7a203306e5ece9e1ab2ed1c86c1b4312c0c8daa69dc105d1a45813a5fc1df"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/empty-focused.png",
+      "bytes": 22980,
+      "sha256": "fb36d93be0dea69376a1d905ff10be59629a7e2b44272c298fa4fecee196a34e"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/error-focused.png",
+      "bytes": 28027,
+      "sha256": "136a146a9c21fe94a970ab73c40dd7688db2b3672de9c995a2faa605b7b862ea"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/frame-inspection.json",
+      "bytes": 1515,
+      "sha256": "d5611da7d67f8ffc65cc6de86cf2fe4509b3972773a98f24e8def1b949fee8c3"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/frames-01.png",
+      "bytes": 46161,
+      "sha256": "ba1e56e368f71cae281fbfcff7a66d6d02d5d07c2655eb9be3153c37eb7bbfb4"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/frames-02.png",
+      "bytes": 43813,
+      "sha256": "831bf4fb73c01abb45a0b00360ce0ab79b4bd69ec46600296a25df9d09bd31b4"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/frames-03.png",
+      "bytes": 31737,
+      "sha256": "5b042e7ffe88cc746cb9e305107925df08319bcc2b305f83e1c000b105dfb3e8"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/frames-04.png",
+      "bytes": 17143,
+      "sha256": "c105a0fe6109fe5a9a063a4a786760e0928984b638cffeaf1b7181e37a18fffa"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/live-focused.png",
+      "bytes": 12957,
+      "sha256": "6b363160b9f9266f5d6c0cc9eb4f74f441f85c412fa4205bdd75e617f8316d0f"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/loading-focused.png",
+      "bytes": 23258,
+      "sha256": "92b3c9bcda6d0603f30dfd14277c018f762b622f5abfb6564284cbdb9a99ca99"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/open.log",
+      "bytes": 304,
+      "sha256": "22f3a8209df1430093f782bc4d5f2b34cf87aac23617f276638b318357dc61df"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/probe.js",
+      "bytes": 8984,
+      "sha256": "c5829a5da766bd6a83fa35cc6244887aa774be1bbb211798532c8542ff285c34"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/probe.log",
+      "bytes": 13873,
+      "sha256": "66de893fd58bff0390ff5034916f4baae749372956b9dce6baa5ceb33d5991c9"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/renderer.webm",
+      "bytes": 83583,
+      "sha256": "0f4e41895dcec1a1f8867d63ecb3a69ca64cc9957a66cd4405bf2b61b25966b7"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/replay-focused.png",
+      "bytes": 14000,
+      "sha256": "8b61e888c32ddd9e4be0fb46413b76724498c66ee8f2fa31c7f02986341d917f"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/result.json",
+      "bytes": 6985,
+      "sha256": "c16a2c7d85deb3b418bb597c0a69186559121d66c29b24e854fe65f5dd76f055"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/video-start.log",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer/video-stop.log",
+      "bytes": 80,
+      "sha256": "f1c5a88b6f0054f8282a605e21e0c6b5de1f68692e4177222f2dedbf3ddb6cd0"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/captured-focused.png",
+      "bytes": 27263,
+      "sha256": "7a14452f2c14fd3c0c3459ddbd95423bcdb95abfec76e4b28811fd30eca8ee52"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/close.log",
+      "bytes": 48,
+      "sha256": "a2a92e84a3b3823961b29bb3f04978fa373f4373433c3ca92fee8cff74ce8ae9"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/context-focused.png",
+      "bytes": 63723,
+      "sha256": "84d7a203306e5ece9e1ab2ed1c86c1b4312c0c8daa69dc105d1a45813a5fc1df"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/empty-focused.png",
+      "bytes": 22980,
+      "sha256": "fb36d93be0dea69376a1d905ff10be59629a7e2b44272c298fa4fecee196a34e"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/error-focused.png",
+      "bytes": 28027,
+      "sha256": "136a146a9c21fe94a970ab73c40dd7688db2b3672de9c995a2faa605b7b862ea"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/frame-inspection.json",
+      "bytes": 1332,
+      "sha256": "7cfc287043e96a42c9a748accd922cd8546026c67152e6cb2720ad669c9823a5"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/frames-01.png",
+      "bytes": 42830,
+      "sha256": "ab068b1fb207486b36ef04de0ae828043eb4bd80d5a7c0740bfeb7d60aa4bd5f"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/frames-02.png",
+      "bytes": 45410,
+      "sha256": "8e40f903a7a59e82ea018f19018b53cc7f709336c41a76ff26b8582a9196956e"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/frames-03.png",
+      "bytes": 32026,
+      "sha256": "a314a79df1661e51a964facbc4a7b7d3fdae6d6181cda4c009770fb985b69264"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/frames-04.png",
+      "bytes": 17209,
+      "sha256": "5ef3dd35abb1054ca96f53863719f7e48b1d10d942a61be9f6ed4dcc17352f7d"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/live-focused.png",
+      "bytes": 12957,
+      "sha256": "6b363160b9f9266f5d6c0cc9eb4f74f441f85c412fa4205bdd75e617f8316d0f"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/loading-focused.png",
+      "bytes": 23258,
+      "sha256": "92b3c9bcda6d0603f30dfd14277c018f762b622f5abfb6564284cbdb9a99ca99"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/open.log",
+      "bytes": 307,
+      "sha256": "4a7eacc1d2c7adee3881ec1aac013729b311ed304d146e229e9b0f6c320b577b"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/probe.js",
+      "bytes": 8987,
+      "sha256": "e8a3250ffc168fb5e980f1c3b333118ee82cae95d492a557626c1734ce9cb41b"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/probe.log",
+      "bytes": 15038,
+      "sha256": "4519db38a2bb68f07fb4a0c890cf4c92dd36854027018522d63a6aa16a654225"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/renderer.webm",
+      "bytes": 83623,
+      "sha256": "c30d10db0dae8a84c6eb43e0b680b3981f1ec4a2af09a14db9baaecae8f0302f"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/replay-focused.png",
+      "bytes": 14000,
+      "sha256": "8b61e888c32ddd9e4be0fb46413b76724498c66ee8f2fa31c7f02986341d917f"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/result.json",
+      "bytes": 8693,
+      "sha256": "e99ada17614d89c837330d3e06815a23e5dacad44d14ad83bcb50196309b76b0"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/video-start.log",
+      "bytes": 36,
+      "sha256": "4367dda53543c0f376d0c63b1af6f36d7cc70bd6fcd4e010d07bbca0a8fb0733"
+    },
+    {
+      "path": "artifacts/cycle-0018/message-focus-renderer-v2/video-stop.log",
+      "bytes": 83,
+      "sha256": "4b79c31fc109ed21d52a5132ef1ba6ad8920841fdb50346c0a24c1a35b3d6e7c"
+    }
+  ]
+}
