@@ -74,10 +74,10 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
       }
       // The final reader checkpoint must be taken after runtime/explanation shutdown, not the last polling tick.
       try { await reader?.retire(target.service); } catch (error) { finalizationError ??= error; }
+      if (registeredCursorServer) { vscode.cursor?.mcp?.unregisterServer(registeredCursorServer); registeredCursorServer = undefined; }
       // This unique descriptor belongs only to the stopped instance, never to another window.
       await unlink(target.descriptorPath).catch(error => { if (error.code !== 'ENOENT') throw error; });
       target.environment.dispose(); if (running === target) running = undefined;
-      if (registeredCursorServer) { vscode.cursor?.mcp?.unregisterServer(registeredCursorServer); registeredCursorServer = undefined; }
       notifyMcpDefinitions();
       if (finalizationError) throw finalizationError;
     })();

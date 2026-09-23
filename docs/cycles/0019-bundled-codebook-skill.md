@@ -67,8 +67,8 @@ Initial source implementation is in progress on this branch. The canonical versi
 
 ## Handoff
 
-- Exact next action: design the common skill/host setup around current package and instance lifecycle, then implement and validate the first package cut.
-- Changed files / branch / active processes: `codex/cycle-0019-bundled-codebook-skill`; documentation work in progress; no owned native test processes launched.
+- Exact next action: finish exact-source typechecks and review, freeze a VSIX, then run ordinary-install VS Code and Cursor chat trials.
+- Changed files / branch / active processes: `codex/cycle-0019-bundled-codebook-skill`; common skill, package registration, onboarding source and tests in progress; no owned native test processes launched.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D023 implementation status only; no new goal decision.
 - At most one next candidate and why (after evidence): correct the warm Wiki storage-wait focus race before final existing-work protection acceptance.

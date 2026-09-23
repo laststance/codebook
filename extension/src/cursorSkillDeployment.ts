@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { link, lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, readFile, rename, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { EXTENSION_VERSION, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './constants';
@@ -152,6 +152,10 @@ export async function removeManagedCursorSkill(storageRoot: string, homeRoot = h
     if (status.dev !== receipt.device || status.ino !== receipt.inode) throw new Error('The Cursor skill was replaced after setup; Codebook preserved it.');
     if (sha256(current) !== receipt.skillSha256) throw new Error('The Cursor skill was edited after setup; Codebook preserved it.');
     await unlink(targetPath);
+    // Remove only an empty Codebook directory; leave any user-added files in place.
+    await rmdir(join(homeRoot, '.cursor', 'skills', 'codebook')).catch(error => {
+      if (!['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(error.code)) throw error;
+    });
     await atomicPrivateWrite(receiptPath, { ...receipt, installed: false }, RECEIPT_LIMIT_BYTES);
     return { status: 'removed', path: targetPath, sha256: receipt.skillSha256, version: receipt.skillVersion };
   });

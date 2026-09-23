@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deployCursorSkill, removeManagedCursorSkill, verifyManagedCursorSkill } from '../cursorSkillDeployment';
@@ -75,12 +75,26 @@ test('an owned skill updates to the new package, then explicit removal and resto
   // Act
   const updated = await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
   const removed = await removeManagedCursorSkill(paths.storageRoot, paths.homeRoot);
+  await assert.rejects(lstat(join(paths.homeRoot, '.cursor', 'skills', 'codebook')), { code: 'ENOENT' });
   const restored = await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
   // Assert
   assert.equal(updated.status, 'updated'); assert.equal(updated.version, '1.0.1');
   assert.equal(removed.status, 'removed'); assert.equal(restored.status, 'restored');
   assert.equal(await readFile(paths.targetPath, 'utf8'), NEXT_SKILL);
   assert.equal(await readFile(join(paths.storageRoot, 'cursor-skill', `${original.sha256}.SKILL.md`), 'utf8'), INITIAL_SKILL);
+});
+
+test('removing the managed skill leaves a user file in the same directory untouched', async context => {
+  // Arrange
+  const paths = await fixture(context), note = join(paths.homeRoot, '.cursor', 'skills', 'codebook', 'my-notes.txt');
+  await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  await writeFile(note, 'Keep this note');
+  // Act
+  const removed = await removeManagedCursorSkill(paths.storageRoot, paths.homeRoot);
+  // Assert
+  assert.equal(removed.status, 'removed');
+  assert.equal(await readFile(note, 'utf8'), 'Keep this note');
+  await assert.rejects(lstat(paths.targetPath), { code: 'ENOENT' });
 });
 
 test('a symlinked Cursor skill directory cannot redirect installation to unrelated work', async context => {
