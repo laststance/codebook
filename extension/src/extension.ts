@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { createEnvironment, requireWorkspace } from './environment';
 import { StudyService } from './service';
 import { startServer } from './server';
-import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './constants';
+import { EXTENSION_VERSION, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './constants';
+import { deployCursorSkill, removeManagedCursorSkill, verifyManagedCursorSkill } from './cursorSkillDeployment';
 import { StudyWorkspace } from './studyWorkspace';
 import { profileSchema } from './studySchemas';
 import { learningItemSchema } from './identitySchemas';
@@ -18,6 +19,13 @@ let stopExtension: (() => Promise<void>) | undefined;
 export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & { globalStorageUri: Pick<vscode.Uri, 'fsPath'>; workspaceState: Pick<vscode.Memento, 'get' | 'update'> }) {
   type Running = { endpoint: Awaited<ReturnType<typeof startServer>>; environment: Awaited<ReturnType<typeof createEnvironment>>; descriptorPath: string; service: StudyService };
   let starting: Promise<Running> | undefined, running: Running | undefined, stopping: Promise<void> | undefined;
+  let registeredCursorServer: string | undefined;
+  let notifyMcpDefinitions: () => void = () => {};
+  const isCursorHost = vscode.env?.appName?.toLowerCase().includes('cursor') ?? false;
+  const setupMatchesCurrentWorkspace = () => {
+    try { return context.workspaceState.get<{ workspace: string }>('codebook.aiChatSetup')?.workspace === requireWorkspace(); }
+    catch { return false; }
+  };
   let reader: StudyWorkspace | undefined;
   let repositoryReader: RepositoryReader | undefined;
   const workspace = (): StudyWorkspace => reader ??= new StudyWorkspace(context, { start: async () => { await start(); if (!running) throw new Error('Study server did not start.'); return running.service; }, connect, returnToRepository: selection => repository().open(selection, undefined, true), openArticle: selection => repository().open(selection) });
@@ -50,7 +58,7 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
         throw error;
       }
     })();
-    try { running = await attempt; return running.descriptorPath; }
+    try { running = await attempt; notifyMcpDefinitions(); return running.descriptorPath; }
     finally { if (starting === attempt) starting = undefined; }
   };
   const stop = async () => {
@@ -69,6 +77,8 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
       // This unique descriptor belongs only to the stopped instance, never to another window.
       await unlink(target.descriptorPath).catch(error => { if (error.code !== 'ENOENT') throw error; });
       target.environment.dispose(); if (running === target) running = undefined;
+      if (registeredCursorServer) { vscode.cursor?.mcp?.unregisterServer(registeredCursorServer); registeredCursorServer = undefined; }
+      notifyMcpDefinitions();
       if (finalizationError) throw finalizationError;
     })();
     try { await attempt; } finally { if (stopping === attempt) stopping = undefined; }
@@ -78,10 +88,68 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     await vscode.env.clipboard.writeText(JSON.stringify({ mcpServers: { codebook: { type: 'http', url: descriptor.url, headers: { Authorization: `Bearer ${descriptor.token}` } } } }, null, 2));
     void vscode.window.showInformationMessage('Codebook connection copied. This credential grants access to the selected workspace; recopy after restart.');
   };
+  const registerCursorConnection = () => {
+    if (!running) throw new Error('Codebook server is not running. Run Codebook: Set Up AI Chat again.');
+    if (!vscode.cursor?.mcp?.registerServer) throw new Error('This Cursor version does not expose MCP registration to Codebook. Update Cursor or use the public manual connection setup.');
+    if (registeredCursorServer) vscode.cursor.mcp.unregisterServer(registeredCursorServer);
+    const name = `codebook-${running.service.instanceId}`;
+    vscode.cursor.mcp.registerServer({ name, server: { url: running.endpoint.descriptor.url,
+      headers: { Authorization: `Bearer ${running.endpoint.descriptor.token}` } } });
+    registeredCursorServer = name;
+  };
+  const setupAiChat = async () => {
+    requireWorkspace();
+    if (isCursorHost) await deployCursorSkill(context.extensionPath, context.globalStorageUri.fsPath);
+    else if (!vscode.lm?.registerMcpServerDefinitionProvider) throw new Error('This VS Code version cannot register the Codebook MCP provider. Update VS Code.');
+    await start();
+    if (isCursorHost) registerCursorConnection();
+    if (!running) throw new Error('Codebook server did not start.');
+    await context.workspaceState.update('codebook.aiChatSetup', { workspace: running.endpoint.descriptor.workspace });
+    notifyMcpDefinitions();
+    void vscode.window.showInformationMessage('Codebook AI chat is ready for this workspace. Open a new chat and choose /codebook.');
+  };
+  if (!isCursorHost && vscode.lm?.registerMcpServerDefinitionProvider && vscode.EventEmitter && vscode.McpHttpServerDefinition && vscode.Uri) {
+    const changes = new vscode.EventEmitter<void>();
+    notifyMcpDefinitions = () => changes.fire();
+    context.subscriptions.push(changes, vscode.lm.registerMcpServerDefinitionProvider('laststance.codebook.currentWorkspace', {
+      onDidChangeMcpServerDefinitions: changes.event,
+      provideMcpServerDefinitions: () => {
+        if (!running || !setupMatchesCurrentWorkspace()) return [];
+        const descriptor = running.endpoint.descriptor;
+        return [new vscode.McpHttpServerDefinition('Codebook', vscode.Uri.parse(descriptor.url),
+          { Authorization: `Bearer ${descriptor.token}` }, `${EXTENSION_VERSION}-${running.service.instanceId}`)];
+      },
+      resolveMcpServerDefinition: async definition => {
+        if (!setupMatchesCurrentWorkspace()) throw new Error('Run Codebook: Set Up AI Chat for this workspace.');
+        if (!(definition instanceof vscode.McpHttpServerDefinition)) throw new Error('Codebook requires an HTTP MCP definition.');
+        await start();
+        if (!running) throw new Error('Codebook server did not start.');
+        const descriptor = running.endpoint.descriptor;
+        definition.uri = vscode.Uri.parse(descriptor.url);
+        definition.headers = { Authorization: `Bearer ${descriptor.token}` };
+        definition.version = `${EXTENSION_VERSION}-${running.service.instanceId}`;
+        return definition;
+      },
+    }));
+  }
   stopExtension = async () => { await stop(); await repositoryReader?.dispose(); await reader?.dispose(); };
   context.subscriptions.push(vscode.commands.registerCommand('codebook.startAgentServer', start),
     vscode.commands.registerCommand('codebook.stopAgentServer', stop),
     vscode.commands.registerCommand('codebook.copyAgentConnection', connect),
+    vscode.commands.registerCommand('codebook.setupAiChat', setupAiChat),
+    vscode.commands.registerCommand('codebook.removeManagedCursorSkill', async () => {
+      if (!isCursorHost) throw new Error('This command is available in Cursor only.');
+      const choice = await vscode.window.showWarningMessage('Remove the Codebook-owned user skill from Cursor? Other Cursor windows share this skill.', { modal: true }, 'Remove managed skill');
+      if (choice !== 'Remove managed skill') return;
+      await removeManagedCursorSkill(context.globalStorageUri.fsPath);
+      await context.workspaceState.update('codebook.aiChatSetup', undefined);
+      if (registeredCursorServer) { vscode.cursor?.mcp?.unregisterServer(registeredCursorServer); registeredCursorServer = undefined; }
+      void vscode.window.showInformationMessage('Managed Cursor skill removed. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.');
+    }),
+    vscode.commands.registerCommand('codebook.restoreManagedCursorSkill', async () => {
+      if (!isCursorHost) throw new Error('This command is available in Cursor only.');
+      await setupAiChat();
+    }),
     vscode.commands.registerCommand('codebook.openStudyWorkspace', () => workspace().open()),
     vscode.commands.registerCommand('codebook.selectPresentation', () => workspace().selectPresentation()),
     vscode.commands.registerCommand('codebook.closeStudyWorkspace', () => reader?.close()),
@@ -99,9 +167,23 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     vscode.commands.registerCommand('codebook.selectStudyProfile', profile => workspace().selectProfile(profileSchema.parse(profile))),
     vscode.commands.registerCommand('codebook.markUnderstanding', understood => { if (understood !== undefined && typeof understood !== 'boolean') throw new Error('Understanding requires a boolean learner choice.'); return workspace().understand(understood); }),
     ...(['run', 'click', 'continue', 'stop', 'return-current', 'return-wiki', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry'] as const).map(action => vscode.commands.registerCommand(`codebook.study.${action}`, () => workspace().action(action))),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => { void stop().then(async () => { await repositoryReader?.dispose(); repositoryReader = undefined; await reader?.dispose(); reader = undefined; repository(); }).catch(error => vscode.window.showErrorMessage(`Codebook cleanup incomplete: ${String(error)}`)); }));
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void (async () => {
+        try { await context.workspaceState.update('codebook.aiChatSetup', undefined); }
+        finally { await stop(); await repositoryReader?.dispose(); repositoryReader = undefined; await reader?.dispose(); reader = undefined; repository(); }
+      })().catch(error => vscode.window.showErrorMessage(`Codebook cleanup incomplete: ${String(error)}`));
+    }));
   // Register lazy readers before restored captured documents or contributed views request their providers.
   workspace(); repository();
+  if (context.workspaceState.get<{ workspace: string }>('codebook.aiChatSetup')) {
+    void (async () => {
+      if (!setupMatchesCurrentWorkspace()) throw new Error('The selected workspace changed after setup');
+      if (isCursorHost) await verifyManagedCursorSkill(context.extensionPath, context.globalStorageUri.fsPath);
+      await start();
+      if (isCursorHost) registerCursorConnection();
+      notifyMcpDefinitions();
+    })().catch(error => { void vscode.window.showWarningMessage(`Codebook AI chat did not reconnect: ${String(error)}. Run Codebook: Set Up AI Chat.`); });
+  }
   return { inspectStudy: () => reader?.inspect(), inspectRepository: () => repositoryReader?.inspect() };
 }
 

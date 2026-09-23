@@ -1,8 +1,18 @@
 # Changelog
 
+## [0.2.3.0] - 2026-09-23 (development candidate)
+
+Cycle 0019 adds the common versioned `codebook` skill to the VSIX, registers it through VS Code `contributes.chatSkills`, and introduces an ordinary editor-chat setup command. The source routes VS Code through a workspace-local MCP provider and Cursor through receipt-protected user-skill deployment plus per-instance MCP registration. Focused source/package checks pass, but slash discovery, actually loaded skill content, AI-owned MCP results and restart in normally installed editors remain unverified. This is not a completed G12 or final acceptance release. The previous 0.2.2 preview remains the latest merged version.
+
+### Added
+
+- A thin status-first skill that uses public Codebook help and distinguishes observed facts, source inference and unknowns without marking learner understanding.
+- Cursor skill ownership, update, removal and restoration controls that refuse unowned or edited same-name files; private receipts include content hash and file identity.
+- A single setup command for a trusted current workspace, with host-specific MCP registration and same-workspace restart handling. Normal installed chat behavior remains the next validation gate.
+
 ## [0.2.2.0] - 2026-09-23
 
-Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. The same normally installed v32 candidate passes the complete frozen VS Code and Cursor development schedules, including v31's cold Study regression, with inspected video and protected original work. Source and exact-candidate CI pass 993 product/shared and 96 package checks; all 276 inputs and 31 unpacked CI entries match. The final CodeRabbit supplement has zero findings, while three reused delegated fixing passes retain non-convergence. [PR #24](https://github.com/laststance/codebook/pull/24) is open for current-head checks and merge. Visible loading and broader UX remain open. G12 and final editor-AI acceptance remain unimplemented/unstarted; no merge/publication is claimed.
+Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. The same normally installed v32 candidate passes the complete frozen VS Code and Cursor development schedules, including v31's cold Study regression, with inspected video and protected original work. Source and same-source CI pass 993 product/shared and 96 package checks. [PR #24](https://github.com/laststance/codebook/pull/24) merged; exact-main CI succeeded and its downloaded VSIX matches all 276 source inputs and 29/31 installed-v32 entries, with only revision metadata/reference differences. The three reused delegated fixing passes retain non-convergence and the later current-head CodeRabbit pass has one minor packaged README status finding. The main CI artifact was package-compared, not natively executed. Visible loading and broader UX remain open. G12 and final editor-AI acceptance remain unimplemented/unstarted; no publication is claimed.
 
 ### Fixed
 

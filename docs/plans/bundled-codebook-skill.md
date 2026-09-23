@@ -1,6 +1,6 @@
 # Required development: bundled codebook skill and chat onboarding
 
-Status: required, not implemented or validated. Authority: [G12](../../PRODUCT_GOAL.md#bundled-thin-skill-and-explicit-chat-entry) and [D023](../../DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21), 2026-09-21. This is a pending development contract, not a second active cycle or a claim that `/codebook` works in the current preview. [Cycle 0018](../cycles/0018-editor-group-scope.md) remains active for native scope repair. Select a bounded implementation cycle from its result; choose details through the applicable DX/engineering reviews in [DEVELOPMENT.md](../../DEVELOPMENT.md).
+Status: required, source implementation in progress, ordinary-install validation absent. Authority: [G12](../../PRODUCT_GOAL.md#bundled-thin-skill-and-explicit-chat-entry) and [D023](../../DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21), 2026-09-21. This is the development contract for active [Cycle 0019](../cycles/0019-bundled-codebook-skill.md), not a claim that `/codebook` works in the current merged preview. [Cycle 0018](../cycles/0018-editor-group-scope.md) closed with bounded native repair and merged delivery. The [Cycle 0019 integration review](cycle-0019-skill-onboarding.md) records source-route choices and their still-unverified host boundaries.
 
 ## Required increment
 
