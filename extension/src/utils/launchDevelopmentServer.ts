@@ -19,6 +19,7 @@ export function launchDevelopmentServer(target: string, node: string, record: (t
   record('application.acquired', { pid: child.pid, node, arguments: arguments_, cwd: target, secretEnvironmentInherited: false });
   return {
     pid: child.pid,
+    isRunning: () => child.pid !== undefined && child.exitCode === null && child.signalCode === null && error === undefined && closing === undefined,
     /** Waits for the actual ephemeral listener and root compilation, called during preparation. @example await app.ready(signal) */
     async ready(signal: AbortSignal) {
       origin = await waitUntil(() => {

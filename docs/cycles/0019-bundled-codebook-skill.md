@@ -3,7 +3,7 @@
 Type: product-increment\
 Status: implementing\
 Result: pending\
-Delivery: not yet built\
+Delivery: dirty-source development VSIX trials; no frozen candidate\
 Goal version: 5\
 Tracking issue: https://github.com/laststance/codebook/issues/25\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -54,21 +54,25 @@ The final acceptance campaign is **0/10 reviewers and 0/at least 20 editor trial
 
 ## Attempts and evidence
 
-Initial source implementation is in progress on this branch. The canonical versioned skill is included in the package allowlist and VS Code contribution. A Cursor manager installs only a receipted user skill, refusing same-name collisions, later edits/replacements and redirected directories; its owner hash/file identity and old managed body are kept privately. Activation now has explicit setup, host MCP registration, same-workspace restart and removal/restore commands. The 2026-09-23 dirty source cut passed the focused deployment/mocked-host checks, **1001/1001 product/shared** and **99/99 package** checks; four typecheck targets and a frozen archive still need the final cut. These automated results are not installed skill discovery, actual AI use or restart proof. The [integration review](../plans/cycle-0019-skill-onboarding.md), G12 reconnaissance and official docs identify candidate contracts only. No normal-installed Codebook chat attempt has yet run.
+The common versioned skill is packaged and contributed in VS Code. A Cursor manager installs only a receipted user skill, refusing same-name collisions, later edits/replacements and redirected directories; its owner hash/file identity and old managed body are kept privately. Activation has explicit setup, registration, same-workspace restart and removal/restore commands. A fresh adversarial development reviewer identified three fixable lifecycle failures: the bridge's 5-minute idle session could expire without reconnection, closed children did not immediately release their eight-slot server capacity, and an interrupted skill publication could strand the receipt. The current source retries only the server's exact pre-dispatch unknown-session 404, sends session termination when the stdio child closes, and journals the skill's staged inode and displaced prior owner through install/update/removal. Displaced files move to retention on the same volume rather than being unlinked after a prior check; recovery refuses changed or unowned content. A second pass found that automatic stale-lock recovery could race a live writer, so source now leaves any interrupted writer lock untouched for explicit resolution after all affected windows close. It also fixes repeat-setup disconnection and input-derived bridge error logs. CodeRabbit's seven local findings were addressed, including exact owned Next-lock checks without skipping dependency and directory checks, package credential rejection and trial provenance. Real-child idle/rapid-restart and interrupted filesystem regressions pass; the complete dirty source cut passes **1013/1013 product/shared** and **100/100 package** checks with `git diff --check` clean. A new unchanged normally installed cut remains due.
+
+[The ordinary-install development trial record](evidence/0019/installed-chat-development.md) separates host outcomes. VS Code Copilot Chat discovered the skill and itself called MCP, but its natural runtime attempts did not complete: one target route was unsupported and another `codebook_status` incorrectly treated Codebook's own Next lock as a missing prerequisite. The code now suppresses only that owned-run lock in status, with a focused regression check; a newly installed cut must retest it. Cursor 3.21.16 omitted configured headers from HTTP MCP requests, producing 401. A versioned local stdio bridge using the private descriptor replaced that route while retaining bearer protection. Cursor Agent then independently completed a theme-button question through actual Codebook pause (`ThemeToggle.tsx:19`, `otherTheme = dark`), continuation, white-to-dark screen change, source explanation and saved recording. Its first run failed after requesting an unsafe required evaluation; its second run completed. A clean-stdio development VSIX reloaded in the dedicated Cursor window and showed Connected, 13 tools/4 resources, visible `/codebook`, and an Agent-issued `codebook_status` for the correct workspace. The earlier temporary user MCP entry was removed and the existing user file restored byte-for-byte.
+
+The Cursor runtime answer is not a complete G12 or product pass. Its diagnostic VSIX contained temporary stderr output, the later clean stdio VSIX and deployed skill were still version 1.0.0, and the new source skill 1.0.1 (which directs the AI not to echo temporary instance IDs) is not yet installed-tested. The window-reload trial is not a full application quit/relaunch. The native Codebook view showed a layout-retention error; the replay-at-zero understanding label also incorrectly said storage was unavailable, although no source existed at that position. The latter copy was corrected in source; the layout failure still needs diagnosis. Full-screen motion video, final-cut packaging, missing-connection guidance and both-host same-VSIX proof remain open.
 
 ## Result and decision
 
 - Result: pending.
-- Findings: Cycle 0018 delivered, while its installed v32 lacks G12; the packaged README's pre-v32 status was corrected in this new 0.2.3 source cut. New G12 source and focused tests are not installed-host proof.
+- Findings: Both standard chats discovered `/codebook`; Cursor's stdio route completed one genuine runtime question and survived a dedicated-window reload, while VS Code's runtime question and Cursor's full restart remain unverified. The documented Cursor HTTP-header API failed in the target host. The recorded Cursor layout error is a product issue to resolve before final acceptance. The subsequent lifecycle fixes are source-tested only; the clean candidate must retest them.
 - Keep / revise / replace: pending implementation and host evidence.
-- Evidence that can update goal state: none yet for G12.
+- Evidence that can update goal state: partial G12 development evidence only; no complete G12 verification or final acceptance.
 - Remaining gaps and regression obligations: full G12, warm Wiki storage-wait protection, visible loading/reading UX, broad real-repository support, all final integrated conditions and owner acceptance.
-- Delivery state and proof: Issue #25 open; no Cycle 0019 PR or frozen VSIX.
+- Delivery state and proof: Issue #25 open; no Cycle 0019 PR or frozen clean-source VSIX. Diagnostic/development archive hashes and their qualifications are in the evidence record.
 
 ## Handoff
 
-- Exact next action: finish exact-source typechecks and review, freeze a VSIX, then run ordinary-install VS Code and Cursor chat trials.
-- Changed files / branch / active processes: `codex/cycle-0019-bundled-codebook-skill`; common skill, package registration, onboarding source and tests in progress; no owned native test processes launched.
+- Exact next action: finish the development review, package one clean-source VSIX, install that exact artifact in both editors, and rerun the same natural theme question plus restart/unavailable and idle/rapid-reconnect checks. Investigate the native layout-retention error before treating the experience as final-ready.
+- Changed files / branch / active processes: `codex/cycle-0019-bundled-codebook-skill`; skill 1.0.1, Cursor bridge, package setup, status and UI copy are dirty. A dedicated Cursor validation window and its MCP instance remain open; no runtime app/debugger is active.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D023 implementation status only; no new goal decision.
 - At most one next candidate and why (after evidence): correct the warm Wiki storage-wait focus race before final existing-work protection acceptance.

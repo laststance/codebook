@@ -306,7 +306,7 @@ function studyClient(options: typeof STUDY_UI_OPTIONS, installFocus?: typeof ins
     const checkbox = element('understood');
     // Native disabled blurs a focused checkbox; saving retains its focus and exposes the temporary ARIA state.
     if (checkbox instanceof HTMLInputElement) { checkbox.checked = model.selectedUnderstanding.understood; checkbox.disabled = message.loading || !model.selectedUnderstanding.known; checkbox.setAttribute('aria-disabled', String(message.saving || checkbox.disabled)); }
-    text('save-state', message.saving ? 'Saving…' : !model.selectedUnderstanding.known ? 'Understanding storage unavailable' : model.selectedUnderstanding.understood ? `Learner marked understood · ${model.selectedUnderstanding.at ?? ''}` : 'Checked only by you; execution never changes this.');
+    text('save-state', message.saving ? 'Saving…' : recording && !model.observation ? 'Seek to an observed moment to check understanding.' : !model.selectedUnderstanding.known ? 'Understanding storage unavailable' : model.selectedUnderstanding.understood ? `Learner marked understood · ${model.selectedUnderstanding.at ?? ''}` : 'Checked only by you; execution never changes this.');
     text('progress', !model.currentSourceAvailable ? 'Current source unavailable — historical understanding retained.' : `${model.understoodCount} of ${model.progressByItem.length} understood for current source · ${model.reviewCount} needs review`);
     text('value-caption', model.observation ? 'Actual primitive values captured at this stop.' : 'No values captured for this item.');
     const unavailable = model.observation?.actionId === 'repository-click' ? model.observation.unavailableValues : [];

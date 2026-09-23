@@ -2,13 +2,14 @@
 
 ## [0.2.3.0] - 2026-09-23 (development candidate)
 
-Cycle 0019 adds the common versioned `codebook` skill to the VSIX, registers it through VS Code `contributes.chatSkills`, and introduces an ordinary editor-chat setup command. The source routes VS Code through a workspace-local MCP provider and Cursor through receipt-protected user-skill deployment plus per-instance MCP registration. Focused source/package checks pass, but slash discovery, actually loaded skill content, AI-owned MCP results and restart in normally installed editors remain unverified. This is not a completed G12 or final acceptance release. The previous 0.2.2 preview remains the latest merged version.
+Cycle 0019 adds the common versioned `codebook` skill to the VSIX, registers it through VS Code `contributes.chatSkills`, and introduces an ordinary editor-chat setup command. The source routes VS Code through a workspace-local MCP provider and Cursor through receipt-protected user-skill deployment plus per-instance MCP registration. Development VSIX trials discovered `/codebook` and AI-owned MCP calls in both standard chats; one Cursor question completed a source/runtime observation, while VS Code's natural runtime trial did not. The latest source repairs idle-session recovery, immediate bridge-session release and interrupted skill deployment, with 1013 product/shared and 100 package checks passing. Same clean VSIX, both-host restart, complete G12 and final acceptance remain unverified. The previous 0.2.2 preview remains the latest merged version.
 
 ### Added
 
 - A thin status-first skill that uses public Codebook help and distinguishes observed facts, source inference and unknowns without marking learner understanding.
 - Cursor skill ownership, update, removal and restoration controls that refuse unowned or edited same-name files; private receipts include content hash and file identity.
 - A single setup command for a trusted current workspace, with host-specific MCP registration and same-workspace restart handling. Normal installed chat behavior remains the next validation gate.
+- Bounded bridge reconnection after an expired upstream session, immediate session termination on child exit, and journaled recovery for interrupted Cursor skill installation, update and removal.
 
 ## [0.2.2.0] - 2026-09-23
 

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { link, lstat, mkdir, readFile, rename, rmdir, unlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readdir, readFile, rename, rmdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { EXTENSION_VERSION, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './constants';
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite';
 import { withStorageLock } from './utils/withStorageLock';
@@ -19,6 +19,22 @@ type SkillReceipt = {
   device: number;
   inode: number;
 };
+
+type PendingSkill = {
+  schemaVersion: 1;
+  targetPath: string;
+  stagedPath: string;
+  skillSha256: string;
+  skillVersion: string;
+  extensionVersion: string;
+  device: number;
+  inode: number;
+  previous?: SkillReceipt;
+  displacedPath?: string;
+  retiredPath?: string;
+};
+
+type PendingRemoval = { schemaVersion: 1; targetPath: string; displacedPath: string; retiredPath: string; owner: SkillReceipt };
 
 export type CursorSkillResult = { status: 'installed' | 'updated' | 'restored' | 'current' | 'removed'; path: string; sha256: string; version: string };
 
@@ -69,6 +85,106 @@ async function readReceipt(path: string, targetPath: string): Promise<SkillRecei
   return bytes ? parseReceipt(JSON.parse(bytes.toString('utf8')), targetPath) : undefined;
 }
 
+/** Limits a recovery file to Codebook's private storage or the skill's own volume when profiles span devices. @example isRetiredPath('/home/.cursor/skills/codebook/.codebook-retired-id.tmp', '/private/pending.json', '/home/.cursor/skills/codebook/SKILL.md') */
+function isRetiredPath(candidate: unknown, recordPath: string, targetPath: string): boolean {
+  return typeof candidate === 'string' && (
+    (dirname(candidate) === dirname(recordPath) && /^retired-[a-f0-9-]+\.SKILL\.md$/.test(basename(candidate))) ||
+    (dirname(candidate) === dirname(targetPath) && /^\.codebook-retired-[a-f0-9-]+\.tmp$/.test(basename(candidate)))
+  );
+}
+
+async function readPending(path: string, targetPath: string): Promise<PendingSkill | undefined> {
+  const bytes = await regularFile(path);
+  if (!bytes) return undefined;
+  const value: unknown = JSON.parse(bytes.toString('utf8'));
+  const stagedDirectory = dirname(dirname(targetPath));
+  if (typeof value !== 'object' || value === null || !('schemaVersion' in value) || value.schemaVersion !== 1 ||
+    !('targetPath' in value) || value.targetPath !== targetPath || !('stagedPath' in value) || typeof value.stagedPath !== 'string' ||
+    dirname(value.stagedPath) !== stagedDirectory || !/^\.codebook-stage-[a-f0-9-]+\.tmp$/.test(basename(value.stagedPath)) ||
+    !('skillSha256' in value) || typeof value.skillSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.skillSha256) ||
+    !('skillVersion' in value) || typeof value.skillVersion !== 'string' || !('extensionVersion' in value) || typeof value.extensionVersion !== 'string' ||
+    !('device' in value) || typeof value.device !== 'number' || !Number.isSafeInteger(value.device) ||
+    !('inode' in value) || typeof value.inode !== 'number' || !Number.isSafeInteger(value.inode)) {
+    throw new Error('Cursor skill pending ownership record is invalid; no skill file was changed.');
+  }
+  if ('displacedPath' in value && (typeof value.displacedPath !== 'string' || dirname(value.displacedPath) !== dirname(targetPath) ||
+    !/^\.codebook-displaced-[a-f0-9-]+\.tmp$/.test(basename(value.displacedPath)))) {
+    throw new Error('Cursor skill pending displacement path is invalid; no skill file was changed.');
+  }
+  if ('retiredPath' in value && !isRetiredPath(value.retiredPath, path, targetPath)) {
+    throw new Error('Cursor skill pending private retention path is invalid; no skill file was changed.');
+  }
+  if ('previous' in value && value.previous !== undefined) parseReceipt(value.previous, targetPath);
+  return value as PendingSkill;
+}
+
+async function readPendingRemoval(path: string, targetPath: string): Promise<PendingRemoval | undefined> {
+  const bytes = await regularFile(path);
+  if (!bytes) return undefined;
+  const value: unknown = JSON.parse(bytes.toString('utf8'));
+  if (typeof value !== 'object' || value === null || !('schemaVersion' in value) || value.schemaVersion !== 1 ||
+    !('targetPath' in value) || value.targetPath !== targetPath || !('displacedPath' in value) || typeof value.displacedPath !== 'string' ||
+    dirname(value.displacedPath) !== dirname(targetPath) || !/^\.codebook-displaced-[a-f0-9-]+\.tmp$/.test(basename(value.displacedPath)) ||
+    !('retiredPath' in value) || !isRetiredPath(value.retiredPath, path, targetPath) ||
+    !('owner' in value)) throw new Error('Cursor skill pending removal record is invalid; no skill file was changed.');
+  parseReceipt(value.owner, targetPath);
+  return value as PendingRemoval;
+}
+
+async function matchesOwnedFile(path: string, owner: Pick<SkillReceipt, 'skillSha256' | 'device' | 'inode'>): Promise<boolean> {
+  const status = await inspectedPath(path);
+  if (!status?.isFile() || status.isSymbolicLink() || status.dev !== owner.device || status.ino !== owner.inode) return false;
+  const bytes = await readFile(path);
+  return sha256(bytes) === owner.skillSha256 && (await lstat(path)).ino === status.ino;
+}
+
+async function writeStagedBytes(directory: string, bytes: Buffer): Promise<string> {
+  const path = join(directory, `.codebook-stage-${randomUUID()}.tmp`), handle = await open(path, 'wx', PRIVATE_FILE_MODE);
+  try { await handle.writeFile(bytes); await handle.sync(); }
+  catch (error) { await handle.close(); await unlink(path).catch(() => undefined); throw error; }
+  await handle.close(); return path;
+}
+
+async function removeOwnedStage(pending: PendingSkill): Promise<void> {
+  if (await matchesOwnedFile(pending.stagedPath, pending)) await unlink(pending.stagedPath);
+}
+
+async function retireDisplaced(path: string, retiredPath: string, owner: SkillReceipt): Promise<void> {
+  const displaced = await inspectedPath(path), retired = await inspectedPath(retiredPath);
+  if (displaced && retired) throw new Error('Cursor skill displacement and private retention both exist; Codebook preserved both for inspection.');
+  // Moving the actual file preserves a concurrent edit or replacement instead of unlinking it after an earlier check.
+  if (displaced) await rename(path, retiredPath);
+  if (await inspectedPath(retiredPath) && !await matchesOwnedFile(retiredPath, owner))
+    throw new Error('The displaced Cursor skill changed; Codebook retained its actual bytes privately for recovery.');
+}
+
+async function removeOwnedDisplacement(pending: PendingSkill): Promise<void> {
+  if (!pending.displacedPath) return;
+  if (!pending.previous || !pending.retiredPath) throw new Error('Cursor skill displacement has no complete recovery record.');
+  await retireDisplaced(pending.displacedPath, pending.retiredPath, pending.previous);
+}
+
+async function recoverRemoval(path: string, receiptPath: string, targetPath: string): Promise<{ owner: SkillReceipt; completed: boolean } | undefined> {
+  const pending = await readPendingRemoval(path, targetPath);
+  if (!pending) return undefined;
+  const target = await inspectedPath(targetPath), displaced = await inspectedPath(pending.displacedPath);
+  if (target && !await matchesOwnedFile(targetPath, pending.owner))
+    throw new Error('Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file.');
+  if (displaced && !await matchesOwnedFile(pending.displacedPath, pending.owner))
+    throw new Error('The displaced Cursor skill changed during removal; Codebook preserved it and its recovery record.');
+  if (!target && displaced) {
+    // Removal moved the exact owned body; finish its receipt before deleting that body.
+    await atomicPrivateWrite(receiptPath, { ...pending.owner, installed: false }, RECEIPT_LIMIT_BYTES);
+    await retireDisplaced(pending.displacedPath, pending.retiredPath, pending.owner);
+  } else if (!target && !displaced) {
+    const receipt = await readReceipt(receiptPath, targetPath);
+    if (receipt?.installed) throw new Error('Removed Cursor skill is missing before its receipt was updated; Codebook preserved the recovery record.');
+    await retireDisplaced(pending.displacedPath, pending.retiredPath, pending.owner);
+  } else if (displaced) await retireDisplaced(pending.displacedPath, pending.retiredPath, pending.owner);
+  await unlink(path);
+  return { owner: pending.owner, completed: !target };
+}
+
 async function packageSkill(extensionPath: string): Promise<{ bytes: Buffer; version: string; sha256: string }> {
   const path = join(extensionPath, SKILL_RELATIVE_PATH), bytes = await regularFile(path);
   if (!bytes) throw new Error('This Codebook installation is missing its bundled skill. Reinstall the VSIX.');
@@ -77,29 +193,52 @@ async function packageSkill(extensionPath: string): Promise<{ bytes: Buffer; ver
   return { bytes, version, sha256: sha256(bytes) };
 }
 
-async function stageSkill(path: string, bytes: Buffer, replace: boolean): Promise<void> {
-  const temporary = join(path, '..', `.codebook-${randomUUID()}.tmp`);
-  try {
-    await writeFile(temporary, bytes, { flag: 'wx', mode: PRIVATE_FILE_MODE });
-    if (replace) await rename(temporary, path);
-    else await link(temporary, path);
-  } finally { await unlink(temporary).catch(error => { if (!isMissing(error)) throw error; }); }
-}
-
 /** Installs or updates only a receipted user skill when Cursor setup is requested; another skill or later edit is preserved. @example await deployCursorSkill('/ext', '/private', '/home') */
 export async function deployCursorSkill(extensionPath: string, storageRoot: string, homeRoot = homedir()): Promise<CursorSkillResult> {
   const targetDirectory = join(homeRoot, '.cursor', 'skills', 'codebook');
   const targetPath = join(targetDirectory, 'SKILL.md');
+  const skillParent = dirname(targetDirectory);
   const receiptDirectory = join(storageRoot, 'cursor-skill');
   const receiptPath = join(receiptDirectory, 'receipt.json');
+  const pendingPath = join(receiptDirectory, 'pending.json');
+  const removalPath = join(receiptDirectory, 'removal.json');
   const packaged = await packageSkill(extensionPath);
   return withStorageLock(receiptDirectory, async () => {
-    const receipt = await readReceipt(receiptPath, targetPath);
-    const existingDirectory = await inspectedPath(targetDirectory);
-    if (!receipt && existingDirectory) throw new Error('A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.');
     await ensureDirectory(join(homeRoot, '.cursor'));
-    await ensureDirectory(join(homeRoot, '.cursor', 'skills'));
-    await ensureDirectory(targetDirectory);
+    await ensureDirectory(skillParent);
+    const initialDirectory = await inspectedPath(targetDirectory);
+    if (initialDirectory && (!initialDirectory.isDirectory() || initialDirectory.isSymbolicLink()))
+      throw new Error(`Codebook will not follow a non-directory skill path: ${targetDirectory}`);
+    await recoverRemoval(removalPath, receiptPath, targetPath);
+    let receipt = await readReceipt(receiptPath, targetPath);
+    const pending = await readPending(pendingPath, targetPath);
+    if (pending) {
+      if (await matchesOwnedFile(targetPath, pending)) {
+        // A prior publication succeeded before its receipt; adopt only its recorded bytes and inode.
+        receipt = { schemaVersion: 1, targetPath, skillSha256: pending.skillSha256, skillVersion: pending.skillVersion,
+          extensionVersion: pending.extensionVersion, installed: true, device: pending.device, inode: pending.inode };
+        await atomicPrivateWrite(receiptPath, receipt, RECEIPT_LIMIT_BYTES);
+        await removeOwnedDisplacement(pending);
+      } else if ((pending.previous && await matchesOwnedFile(targetPath, pending.previous)) ||
+        (receipt?.installed && await matchesOwnedFile(targetPath, receipt))) {
+        // Publication never happened; retain the previous exact owner or the absent first-install target.
+        await removeOwnedDisplacement(pending);
+      } else if (!await inspectedPath(targetPath) && pending.previous && pending.displacedPath &&
+        await matchesOwnedFile(pending.displacedPath, pending.previous)) {
+        // A crash after displacement left the owned prior body intact; restore it without overwriting new content.
+        await link(pending.displacedPath, targetPath);
+        await removeOwnedDisplacement(pending);
+      } else if (!receipt?.installed && !await inspectedPath(targetPath) && !pending.displacedPath) {
+        // The first-install target was never published.
+      } else throw new Error('Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record.');
+      await removeOwnedStage(pending);
+      await unlink(pendingPath);
+    }
+    const existingDirectory = await inspectedPath(targetDirectory);
+    if (!receipt && existingDirectory) {
+      if (!existingDirectory.isDirectory() || existingDirectory.isSymbolicLink() || (await readdir(targetDirectory)).length !== 0)
+        throw new Error('A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.');
+    }
     const current = await regularFile(targetPath);
     if (!receipt && current) throw new Error('An existing codebook skill is not owned by this installation; no file was changed.');
     if (receipt && current) {
@@ -114,14 +253,39 @@ export async function deployCursorSkill(extensionPath: string, storageRoot: stri
       const backupPath = join(receiptDirectory, `${receipt.skillSha256}.SKILL.md`);
       const backup = await regularFile(backupPath);
       if (backup && sha256(backup) !== receipt.skillSha256) throw new Error('The previous managed skill backup differs from its receipt; no replacement was made.');
-      if (!backup) await writeFile(backupPath, current, { flag: 'wx', mode: PRIVATE_FILE_MODE });
+      if (!backup) {
+        const stagedBackup = await writeStagedBytes(receiptDirectory, current);
+        try { await link(stagedBackup, backupPath); }
+        finally { await unlink(stagedBackup); }
+      }
       if (sha256((await regularFile(targetPath)) ?? Buffer.alloc(0)) !== receipt.skillSha256) throw new Error('The Cursor skill changed during setup; no replacement was made.');
     }
-    await stageSkill(targetPath, packaged.bytes, Boolean(current));
-    const installedStatus = await lstat(targetPath);
+    await ensureDirectory(targetDirectory);
+    const retiredDirectory = (await lstat(receiptDirectory)).dev === (await lstat(targetDirectory)).dev ? receiptDirectory : targetDirectory;
+    const stagedPath = await writeStagedBytes(skillParent, packaged.bytes), stagedStatus = await lstat(stagedPath);
+    const next: PendingSkill = { schemaVersion: 1, targetPath, stagedPath, skillSha256: packaged.sha256, skillVersion: packaged.version,
+      extensionVersion: EXTENSION_VERSION, device: stagedStatus.dev, inode: stagedStatus.ino,
+      ...(current && receipt ? { previous: receipt, displacedPath: join(targetDirectory, `.codebook-displaced-${randomUUID()}.tmp`),
+        retiredPath: retiredDirectory === receiptDirectory ? join(receiptDirectory, `retired-${randomUUID()}.SKILL.md`) :
+          join(targetDirectory, `.codebook-retired-${randomUUID()}.tmp`) } : {}) };
+    try { await atomicPrivateWrite(pendingPath, next, RECEIPT_LIMIT_BYTES); }
+    catch (error) { await unlink(stagedPath); throw error; }
+    if (current && receipt && !await matchesOwnedFile(targetPath, receipt)) throw new Error('The Cursor skill changed during setup; Codebook preserved it.');
+    if (current && receipt && next.displacedPath) {
+      await rename(targetPath, next.displacedPath);
+      if (!await matchesOwnedFile(next.displacedPath, receipt)) {
+        await link(next.displacedPath, targetPath).catch(() => undefined);
+        throw new Error('The Cursor skill changed during setup; Codebook preserved the displaced file and recovery record.');
+      }
+    }
+    await link(stagedPath, targetPath);
+    if (!await matchesOwnedFile(targetPath, next)) throw new Error('The published Cursor skill changed during setup; Codebook preserved its recovery record.');
     await atomicPrivateWrite(receiptPath, { schemaVersion: 1, targetPath, skillSha256: packaged.sha256,
       skillVersion: packaged.version, extensionVersion: EXTENSION_VERSION, installed: true,
-      device: installedStatus.dev, inode: installedStatus.ino }, RECEIPT_LIMIT_BYTES);
+      device: next.device, inode: next.inode }, RECEIPT_LIMIT_BYTES);
+    await removeOwnedStage(next);
+    await removeOwnedDisplacement(next);
+    await unlink(pendingPath);
     return { status: current ? 'updated' : receipt ? 'restored' : 'installed', path: targetPath, sha256: packaged.sha256, version: packaged.version };
   });
 }
@@ -143,20 +307,41 @@ export async function verifyManagedCursorSkill(extensionPath: string, storageRoo
 /** Removes only the exact receipted Cursor skill after an explicit user command; setup can restore it later. @example await removeManagedCursorSkill('/private', '/home') */
 export async function removeManagedCursorSkill(storageRoot: string, homeRoot = homedir()): Promise<CursorSkillResult> {
   const targetPath = join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md');
-  const receiptDirectory = join(storageRoot, 'cursor-skill'), receiptPath = join(receiptDirectory, 'receipt.json');
+  const receiptDirectory = join(storageRoot, 'cursor-skill'), receiptPath = join(receiptDirectory, 'receipt.json'), removalPath = join(receiptDirectory, 'removal.json');
   return withStorageLock(receiptDirectory, async () => {
+    const directory = join(homeRoot, '.cursor', 'skills', 'codebook');
+    for (const path of [join(homeRoot, '.cursor'), join(homeRoot, '.cursor', 'skills')]) {
+      const status = await inspectedPath(path);
+      if (!status?.isDirectory() || status.isSymbolicLink()) throw new Error(`Codebook will not follow a missing or redirected skill directory: ${path}`);
+    }
+    const targetDirectory = await inspectedPath(directory);
+    if (targetDirectory && (!targetDirectory.isDirectory() || targetDirectory.isSymbolicLink())) throw new Error(`Codebook will not follow a non-directory skill path: ${directory}`);
+    if (await inspectedPath(join(receiptDirectory, 'pending.json'))) throw new Error('Cursor skill setup is interrupted. Run Codebook: Set Up AI Chat to recover before removal.');
+    const recovered = await recoverRemoval(removalPath, receiptPath, targetPath);
+    if (recovered?.completed) return { status: 'removed', path: targetPath, sha256: recovered.owner.skillSha256, version: recovered.owner.skillVersion };
     await assertSkillParents(homeRoot);
     const receipt = await readReceipt(receiptPath, targetPath), current = await regularFile(targetPath);
     if (!receipt?.installed || !current) throw new Error('No installed Codebook-owned Cursor skill was found; no file was changed.');
     const status = await lstat(targetPath);
     if (status.dev !== receipt.device || status.ino !== receipt.inode) throw new Error('The Cursor skill was replaced after setup; Codebook preserved it.');
     if (sha256(current) !== receipt.skillSha256) throw new Error('The Cursor skill was edited after setup; Codebook preserved it.');
-    await unlink(targetPath);
+    const retiredDirectory = (await lstat(receiptDirectory)).dev === (await lstat(directory)).dev ? receiptDirectory : directory;
+    const displacedPath = join(directory, `.codebook-displaced-${randomUUID()}.tmp`);
+    const retiredPath = retiredDirectory === receiptDirectory ? join(receiptDirectory, `retired-${randomUUID()}.SKILL.md`) :
+      join(directory, `.codebook-retired-${randomUUID()}.tmp`);
+    await atomicPrivateWrite(removalPath, { schemaVersion: 1, targetPath, displacedPath, retiredPath, owner: receipt }, RECEIPT_LIMIT_BYTES);
+    await rename(targetPath, displacedPath);
+    if (!await matchesOwnedFile(displacedPath, receipt)) {
+      await link(displacedPath, targetPath).catch(() => undefined);
+      throw new Error('The Cursor skill changed during removal; Codebook preserved the displaced file and recovery record.');
+    }
+    await atomicPrivateWrite(receiptPath, { ...receipt, installed: false }, RECEIPT_LIMIT_BYTES);
+    await retireDisplaced(displacedPath, retiredPath, receipt);
     // Remove only an empty Codebook directory; leave any user-added files in place.
-    await rmdir(join(homeRoot, '.cursor', 'skills', 'codebook')).catch(error => {
+    await rmdir(directory).catch(error => {
       if (!['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(error.code)) throw error;
     });
-    await atomicPrivateWrite(receiptPath, { ...receipt, installed: false }, RECEIPT_LIMIT_BYTES);
+    await unlink(removalPath);
     return { status: 'removed', path: targetPath, sha256: receipt.skillSha256, version: receipt.skillVersion };
   });
 }

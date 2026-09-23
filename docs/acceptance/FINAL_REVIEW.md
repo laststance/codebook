@@ -90,4 +90,4 @@ The driving agent checks completeness and appends the ledger; it cannot rewrite 
 
 ## Current state
 
-**Not started. Consecutive passes: 0 / 10. Editor-specific final trials: 0 / at least 20.** The product is incomplete; no final candidate, support pool or draw is frozen. G12's bundled skill, registration/setup, lifecycle protection and ordinary-install chat validation remain outstanding. Continue development first, then execute this protocol. Existing development reviews and native QA do not count.
+**Not started. Consecutive passes: 0 / 10. Editor-specific final trials: 0 / at least 20.** The product is incomplete; no final candidate, support pool or draw is frozen. G12 has partial ordinary-install development evidence under [Cycle 0019](../cycles/0019-bundled-codebook-skill.md), while the exact final skill/setup cut, both-host natural-question completion, full restart and unavailable-state checks remain outstanding. Continue development first, then execute this protocol. Existing development reviews and native QA do not count.

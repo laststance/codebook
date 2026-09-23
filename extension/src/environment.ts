@@ -15,7 +15,7 @@ import { ConfiguredBrowserRun } from './configuredBrowserRun';
 import { REPOSITORY_BROWSER_ACTION } from './constants';
 import { readBoundedFile } from './utils/readBoundedFile';
 import type { BrowserViewportFactory } from 'codebook-cycle-0001/dist/browserViewport';
-import { assertDevelopmentWorkspace } from './utils/assertDevelopmentWorkspace';
+import { assertDevelopmentWorkspace, type DevelopmentLockIdentity } from './utils/assertDevelopmentWorkspace';
 import { checkDemoFiles } from './utils/checkDemoFiles';
 import { getDemoRoot } from './utils/getDemoRoot';
 
@@ -87,8 +87,15 @@ export async function createEnvironment(context: Pick<vscode.ExtensionContext, '
   return { workspace, host, build,
     assertWorkspace() { if (requireWorkspace() !== workspace) throw new StudyError('STALE_INSTANCE', 'Workspace identity changed; reconnect before reading or publishing repository content.'); },
     prerequisites: async () => {
+      let ownedConfiguredLock: DevelopmentLockIdentity | undefined;
+      // Only one live configured run may own this workspace lock; status still checks the surrounding build.
+      for (const run of runs.values()) {
+        if (run instanceof ConfiguredBrowserRun) ownedConfiguredLock = run.ownsDevelopmentLock();
+        if (ownedConfiguredLock) break;
+      }
       const [{ ready, missing }, demo, configured] = await Promise.all([resolvePrerequisites(), checkDemoFiles(templateRoot),
-        assertDevelopmentWorkspace(workspace, new AbortController().signal).then(() => [], error => [String(error)])]);
+        // Even during a run, recheck dependencies and directories; only its exact live lock is permitted.
+        assertDevelopmentWorkspace(workspace, new AbortController().signal, ownedConfiguredLock).then(() => [], error => [String(error)])]);
       const check = (specific: string[]) => ({ ready: ready && specific.length === 0, missing: [...missing, ...specific] });
       return { ready, missing, profiles: { 'paired-cart-demo': check(demo), 'checkout-demo': check(demo), 'repository-browser': check(configured) } };
     },

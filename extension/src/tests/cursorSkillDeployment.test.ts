@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { lstat, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deployCursorSkill, removeManagedCursorSkill, verifyManagedCursorSkill } from '../cursorSkillDeployment';
@@ -82,6 +82,130 @@ test('an owned skill updates to the new package, then explicit removal and resto
   assert.equal(removed.status, 'removed'); assert.equal(restored.status, 'restored');
   assert.equal(await readFile(paths.targetPath, 'utf8'), NEXT_SKILL);
   assert.equal(await readFile(join(paths.storageRoot, 'cursor-skill', `${original.sha256}.SKILL.md`), 'utf8'), INITIAL_SKILL);
+  assert.ok((await readdir(join(paths.storageRoot, 'cursor-skill'))).filter(name => name.startsWith('retired-')).length >= 2);
+});
+
+test('setup retries after an interrupted first installation without adopting an unowned skill', async context => {
+  // Arrange: the previous process recorded a staged file but never published SKILL.md.
+  const paths = await fixture(context), parent = join(paths.homeRoot, '.cursor', 'skills'), receiptDirectory = join(paths.storageRoot, 'cursor-skill');
+  await mkdir(parent, { recursive: true }); await mkdir(join(parent, 'codebook')); await mkdir(receiptDirectory);
+  const stagedPath = join(parent, '.codebook-stage-00000000-0000-0000-0000-000000000001.tmp');
+  await writeFile(stagedPath, INITIAL_SKILL); const staged = await lstat(stagedPath);
+  await writeFile(join(receiptDirectory, 'pending.json'), JSON.stringify({ schemaVersion: 1, targetPath: paths.targetPath, stagedPath,
+    skillSha256: createHash('sha256').update(INITIAL_SKILL).digest('hex'), skillVersion: '1.0.0', extensionVersion: '0.2.3', device: staged.dev, inode: staged.ino }));
+  await writeFile(join(receiptDirectory, 'writer.lock'), '{"pid":2147483647}');
+  // Act: an actual process crash leaves a lock; only an operator who has confirmed its owner is gone retires it.
+  await assert.rejects(deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot), /locked by another writer/);
+  assert.ok(await lstat(join(receiptDirectory, 'pending.json')));
+  await rename(join(receiptDirectory, 'writer.lock'), join(receiptDirectory, 'writer.lock.interrupted'));
+  const result = await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  // Assert
+  assert.equal(result.status, 'installed'); assert.equal(await readFile(paths.targetPath, 'utf8'), INITIAL_SKILL);
+  assert.equal(await readFile(join(receiptDirectory, 'writer.lock.interrupted'), 'utf8'), '{"pid":2147483647}');
+  await assert.rejects(lstat(stagedPath), { code: 'ENOENT' });
+  await assert.rejects(lstat(join(receiptDirectory, 'pending.json')), { code: 'ENOENT' });
+});
+
+test('setup preserves an interrupted writer lock instead of racing another Cursor window to recover it', async context => {
+  // Arrange
+  const paths = await fixture(context), receiptDirectory = join(paths.storageRoot, 'cursor-skill');
+  await mkdir(receiptDirectory);
+  await writeFile(join(receiptDirectory, 'writer.lock'), '{"pid":2147483647}');
+  // Act / Assert
+  await assert.rejects(deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot), /locked by another writer/);
+  assert.equal(await readFile(join(receiptDirectory, 'writer.lock'), 'utf8'), '{"pid":2147483647}');
+  await assert.rejects(lstat(paths.targetPath), { code: 'ENOENT' });
+});
+
+test('setup preserves an unknown writer lock instead of assuming an interrupted owner', async context => {
+  // Arrange
+  const paths = await fixture(context), receiptDirectory = join(paths.storageRoot, 'cursor-skill');
+  await mkdir(receiptDirectory);
+  await writeFile(join(receiptDirectory, 'writer.lock'), 'unknown owner');
+  // Act / Assert
+  await assert.rejects(deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot), /locked by another writer/);
+  assert.equal(await readFile(join(receiptDirectory, 'writer.lock'), 'utf8'), 'unknown owner');
+  await assert.rejects(lstat(paths.targetPath), { code: 'ENOENT' });
+});
+
+test('setup completes an interrupted owned upgrade only when the published inode and bytes match its recovery record', async context => {
+  // Arrange: the new body reached Cursor, but the previous process stopped before replacing its receipt.
+  const paths = await fixture(context), parent = join(paths.homeRoot, '.cursor', 'skills'), receiptDirectory = join(paths.storageRoot, 'cursor-skill');
+  await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  await writeFile(paths.sourcePath, NEXT_SKILL);
+  const stagedPath = join(parent, '.codebook-stage-00000000-0000-0000-0000-000000000002.tmp');
+  await writeFile(stagedPath, NEXT_SKILL); const staged = await lstat(stagedPath);
+  await writeFile(join(receiptDirectory, 'pending.json'), JSON.stringify({ schemaVersion: 1, targetPath: paths.targetPath, stagedPath,
+    skillSha256: createHash('sha256').update(NEXT_SKILL).digest('hex'), skillVersion: '1.0.1', extensionVersion: '0.2.3', device: staged.dev, inode: staged.ino }));
+  await rename(stagedPath, paths.targetPath);
+  // Act
+  const result = await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  // Assert
+  assert.equal(result.status, 'current'); assert.equal(result.version, '1.0.1');
+  assert.equal((await verifyManagedCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot)).status, 'current');
+  await assert.rejects(lstat(join(receiptDirectory, 'pending.json')), { code: 'ENOENT' });
+});
+
+test('interrupted setup preserves a manually edited published skill and its recovery record', async context => {
+  // Arrange
+  const paths = await fixture(context), parent = join(paths.homeRoot, '.cursor', 'skills'), receiptDirectory = join(paths.storageRoot, 'cursor-skill');
+  await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  await writeFile(paths.sourcePath, NEXT_SKILL);
+  const stagedPath = join(parent, '.codebook-stage-00000000-0000-0000-0000-000000000003.tmp');
+  await writeFile(stagedPath, NEXT_SKILL); const staged = await lstat(stagedPath);
+  await writeFile(join(receiptDirectory, 'pending.json'), JSON.stringify({ schemaVersion: 1, targetPath: paths.targetPath, stagedPath,
+    skillSha256: createHash('sha256').update(NEXT_SKILL).digest('hex'), skillVersion: '1.0.1', extensionVersion: '0.2.3', device: staged.dev, inode: staged.ino }));
+  await rename(stagedPath, paths.targetPath);
+  await writeFile(paths.targetPath, 'Learner changed the interrupted skill');
+  // Act / Assert
+  await assert.rejects(deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot), /interrupted setup/);
+  assert.equal(await readFile(paths.targetPath, 'utf8'), 'Learner changed the interrupted skill');
+  assert.ok(await lstat(join(receiptDirectory, 'pending.json')));
+});
+
+test('setup restores the prior owned skill after an interrupted displacement before updating it', async context => {
+  // Arrange: the old owned file was moved aside, but the new file was never published.
+  const paths = await fixture(context), parent = join(paths.homeRoot, '.cursor', 'skills'), receiptDirectory = join(paths.storageRoot, 'cursor-skill');
+  await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  const previous = JSON.parse(await readFile(join(receiptDirectory, 'receipt.json'), 'utf8'));
+  await writeFile(paths.sourcePath, NEXT_SKILL);
+  const stagedPath = join(parent, '.codebook-stage-00000000-0000-0000-0000-000000000004.tmp');
+  const displacedPath = join(parent, 'codebook', '.codebook-displaced-00000000-0000-0000-0000-000000000004.tmp');
+  const retiredPath = join(receiptDirectory, 'retired-00000000-0000-0000-0000-000000000004.SKILL.md');
+  await writeFile(stagedPath, NEXT_SKILL); const staged = await lstat(stagedPath);
+  await writeFile(join(receiptDirectory, 'pending.json'), JSON.stringify({ schemaVersion: 1, targetPath: paths.targetPath, stagedPath,
+    skillSha256: createHash('sha256').update(NEXT_SKILL).digest('hex'), skillVersion: '1.0.1', extensionVersion: '0.2.3',
+    device: staged.dev, inode: staged.ino, previous, displacedPath, retiredPath }));
+  await rename(paths.targetPath, displacedPath);
+  // Act
+  const result = await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  // Assert
+  assert.equal(result.status, 'updated'); assert.equal(await readFile(paths.targetPath, 'utf8'), NEXT_SKILL);
+  assert.equal(await readFile(retiredPath, 'utf8'), INITIAL_SKILL);
+  await assert.rejects(lstat(displacedPath), { code: 'ENOENT' });
+  await assert.rejects(lstat(join(receiptDirectory, 'pending.json')), { code: 'ENOENT' });
+});
+
+test('an interrupted removal retains its adjacent fallback backup without deleting unrelated Cursor files', async context => {
+  // Arrange
+  const paths = await fixture(context), receiptDirectory = join(paths.storageRoot, 'cursor-skill');
+  await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  const owner = JSON.parse(await readFile(join(receiptDirectory, 'receipt.json'), 'utf8'));
+  const displacedPath = join(paths.homeRoot, '.cursor', 'skills', 'codebook', '.codebook-displaced-00000000-0000-0000-0000-000000000005.tmp');
+  const retiredPath = join(paths.homeRoot, '.cursor', 'skills', 'codebook', '.codebook-retired-00000000-0000-0000-0000-000000000005.tmp');
+  const note = join(paths.homeRoot, '.cursor', 'skills', 'codebook', 'learner.txt');
+  await writeFile(note, 'Keep this file');
+  await writeFile(join(receiptDirectory, 'removal.json'), JSON.stringify({ schemaVersion: 1, targetPath: paths.targetPath, displacedPath, retiredPath, owner }));
+  await rename(paths.targetPath, displacedPath);
+  // Act
+  const removed = await removeManagedCursorSkill(paths.storageRoot, paths.homeRoot);
+  const restored = await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  // Assert
+  assert.equal(removed.status, 'removed'); assert.equal(restored.status, 'restored');
+  assert.equal(await readFile(note, 'utf8'), 'Keep this file');
+  assert.equal(await readFile(paths.targetPath, 'utf8'), INITIAL_SKILL);
+  assert.equal(await readFile(retiredPath, 'utf8'), INITIAL_SKILL);
+  await assert.rejects(lstat(displacedPath), { code: 'ENOENT' });
 });
 
 test('removing the managed skill leaves a user file in the same directory untouched', async context => {
@@ -103,6 +227,6 @@ test('a symlinked Cursor skill directory cannot redirect installation to unrelat
   await mkdir(join(paths.homeRoot, '.cursor', 'skills'), { recursive: true }); await mkdir(unrelated);
   await symlink(unrelated, join(paths.homeRoot, '.cursor', 'skills', 'codebook'));
   // Act / Assert
-  await assert.rejects(deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot), /already exists/);
+  await assert.rejects(deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot), /non-directory skill path/);
   assert.deepEqual(await readFile(paths.sourcePath, 'utf8'), INITIAL_SKILL);
 });

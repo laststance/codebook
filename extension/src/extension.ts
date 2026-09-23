@@ -58,7 +58,13 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
         throw error;
       }
     })();
-    try { running = await attempt; notifyMcpDefinitions(); return running.descriptorPath; }
+    try {
+      running = await attempt;
+      // A normal Stop then Start must restore an already configured Cursor chat connection.
+      if (isCursorHost && setupMatchesCurrentWorkspace()) registerCursorConnection();
+      notifyMcpDefinitions();
+      return running.descriptorPath;
+    }
     finally { if (starting === attempt) starting = undefined; }
   };
   const stop = async () => {
@@ -91,10 +97,12 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
   const registerCursorConnection = () => {
     if (!running) throw new Error('Codebook server is not running. Run Codebook: Set Up AI Chat again.');
     if (!vscode.cursor?.mcp?.registerServer) throw new Error('This Cursor version does not expose MCP registration to Codebook. Update Cursor or use the public manual connection setup.');
-    if (registeredCursorServer) vscode.cursor.mcp.unregisterServer(registeredCursorServer);
     const name = `codebook-${running.service.instanceId}`;
-    vscode.cursor.mcp.registerServer({ name, server: { url: running.endpoint.descriptor.url,
-      headers: { Authorization: `Bearer ${running.endpoint.descriptor.token}` } } });
+    if (registeredCursorServer === name) return;
+    if (registeredCursorServer) vscode.cursor.mcp.unregisterServer(registeredCursorServer);
+    // Cursor's installed HTTP integration omits configured headers; a local stdio child reads only this window's private descriptor.
+    vscode.cursor.mcp.registerServer({ name, server: { command: vscode.workspace.getConfiguration('codebook').get<string>('nodeExecutable', 'node'),
+      args: [join(context.extensionPath, 'dist/cursorMcpBridge.js'), running.descriptorPath], env: {} } });
     registeredCursorServer = name;
   };
   const setupAiChat = async () => {

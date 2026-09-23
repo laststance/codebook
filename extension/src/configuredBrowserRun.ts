@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -23,7 +24,7 @@ import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint';
 import { StudyError } from './errors';
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor';
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments';
-import { assertDevelopmentWorkspace } from './utils/assertDevelopmentWorkspace';
+import { assertDevelopmentWorkspace, type DevelopmentLockIdentity } from './utils/assertDevelopmentWorkspace';
 import { createBundleVerifier } from './utils/createBundleVerifier';
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle';
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer';
@@ -56,6 +57,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly sources: RepositorySourceService;
   private preparedSources?: Awaited<ReturnType<RepositorySourceService['prepare']>>;
   private app?: ReturnType<typeof launchDevelopmentServer>;
+  private ownedDevelopmentLock?: DevelopmentLockIdentity;
   private preparation?: Promise<void>;
   private cleanupPromise?: Promise<void>;
   private selected?: vscode.DebugSession;
@@ -99,6 +101,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     for (let ancestor: vscode.DebugSession | undefined = session; ancestor; ancestor = ancestor.parentSession) if (ancestor.configuration.name === `codebook repository ${this.id}`) return true;
     return false;
   }
+  /** Supplies the exact Next lock only while this configured app is still running; status can recheck other prerequisites. @example run.ownsDevelopmentLock() // { dev, ino } */
+  ownsDevelopmentLock(): DevelopmentLockIdentity | undefined {
+    return !this.cleaning && !this.cleaned && this.app?.isRunning() ? this.ownedDevelopmentLock : undefined;
+  }
   /** Adopts late debugger acquisitions before cancellation can finish. @example run.addSession(child) */
   addSession(session: vscode.DebugSession): void {
     this.sessions.set(session.id, session); this.activeSessions.add(session.id);
@@ -119,6 +125,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.verifySources(); await assertDevelopmentWorkspace(this.options.workspace, this.abort.signal); this.alive();
     this.app = launchDevelopmentServer(this.options.workspace, this.options.node, (type, detail) => this.evidence.record(type, detail));
     this.origin = await this.app.ready(this.abort.signal); this.alive();
+    const developmentLock = await lstat(join(this.options.workspace, '.next/dev/lock')).catch(error => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (developmentLock?.isFile() && !developmentLock.isSymbolicLink()) this.ownedDevelopmentLock = { dev: developmentLock.dev, ino: developmentLock.ino };
     const acquired = await readDevelopmentBundle(this.options.workspace, this.definition.configuration.source, this.abort.signal); this.alive();
     this.bundle = acquired.bundle; this.verifier = createBundleVerifier(this.bundle);
     await this.evidence.save('sealed-source.ts', this.bundle.source); this.alive();

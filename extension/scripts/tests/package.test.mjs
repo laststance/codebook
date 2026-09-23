@@ -54,7 +54,7 @@ test('a real VSIX loads outside the checkout and preserves exact fixture maps, p
   const checked = await verifyPackageContent(original);
   // Assert
   assert.equal(receipt.isolatedModuleLoad, true); assert.equal(checked.extension.version, '0.2.3'); assert.equal(checked.extension.apiVersion, '1.5');
-  assert.equal(checked.entries, 32); assert.equal(receipt.dependencies.length, 12);
+  assert.equal(checked.entries, 35); assert.equal(receipt.dependencies.length, 14);
   assert.deepEqual(original.get('extension/skills/codebook/SKILL.md'), await readFile(join(repository, 'extension/skills/codebook/SKILL.md')));
   for (const path of ['fixture/server.mts', 'fixture/client.mts', 'fixture/constants.mts', 'fixture/index.html', 'build/server.mjs', 'build/server.mjs.map', 'build/client.mjs', 'build/client.mjs.map', 'build/constants.mjs', 'build/constants.mjs.map']) {
     assert.deepEqual(original.get(`extension/dist/demo/${path}`), await readFile(join(repository, 'experiments/cycle-0004', path)));
@@ -170,6 +170,16 @@ test('an archive with a non-codebook skill body is rejected even when its self-d
   const path = await writeArchive(entries, 'wrong-skill-body');
   // Act / Assert
   await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /canonical versioned codebook skill/);
+});
+
+test('a VSIX cannot ship a credential in its bundled skill even when its self-declared hash matches', async () => {
+  // Arrange
+  const entries = new Map(original);
+  const skill = entries.get('extension/skills/codebook/SKILL.md').toString('utf8');
+  replaceFile(entries, 'skills/codebook/SKILL.md', Buffer.from(`${skill}\nAuthorization: Bearer private-token\n`));
+  const path = await writeArchive(entries, 'skill-credential');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /connection-like or temporary identity material/);
 });
 
 test('an archive whose chat contribution points outside its bundled skill is rejected', async () => {

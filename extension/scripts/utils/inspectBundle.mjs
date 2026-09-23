@@ -7,9 +7,10 @@ import { COMPILED_DIRECTORIES } from './packageConstants.mjs';
 /** Inventories actual emitted inputs, bundled dependency notices and native externals before a VSIX can be staged. @example await inspectBundle(metafile, repository, capturedInputs) */
 export async function inspectBundle(metafile, repository, capturedInputs) {
   const outputs = Object.values(metafile.outputs);
-  if (outputs.length !== 1) throw new Error('The extension must produce one JavaScript bundle.');
-  const externals = [...new Set(outputs[0].imports.map(value => value.path))].sort();
-  if (outputs[0].imports.some(value => !value.external || (value.path !== 'vscode' && !isBuiltin(value.path)))) throw new Error('Bundle contains an unresolved non-native import.');
+  if (outputs.length < 1 || outputs.length > 2) throw new Error('Unexpected JavaScript bundle count.');
+  const imports = outputs.flatMap(output => output.imports);
+  const externals = [...new Set(imports.map(value => value.path))].sort();
+  if (imports.some(value => !value.external || (value.path !== 'vscode' && !isBuiltin(value.path)))) throw new Error('Bundle contains an unresolved non-native import.');
   const root = await realpath(repository), packages = new Map(), inputs = [], noticeFiles = new Map();
   for (const input of Object.keys(metafile.inputs).sort()) {
     const absolute = await realpath(resolve(root, input)), bytes = capturedInputs.get(absolute);
