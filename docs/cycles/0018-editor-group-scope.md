@@ -28,6 +28,8 @@ Before implementation, Raphtalia required the final ten-review gate to become ma
 
 During the blank-primary diagnostic, the owner added [D023 / goal version 5](../../DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21): one common thin `codebook` skill in the VSIX, explicit `/codebook` use in standard Copilot Chat and Cursor Agent, safe skill deployment/lifecycle and correct MCP onboarding. The documentation update adds G12 and strengthens the final protocol without altering G01–G11 or prior final steps 1–7. [The required development plan](../plans/bundled-codebook-skill.md) records implementation and ordinary-install verification as outstanding. This remains the only active cycle; finish its bounded scope repair before selecting the skill/onboarding increment. The final candidate and ten-reviewer campaign remain unstarted, including after these document changes.
 
+[G12 integration reconnaissance](../plans/bundled-codebook-skill.md#integration-reconnaissance-2026-09-23) on 2026-09-23 records official skill/MCP entry points and the current per-instance connection boundary as future design candidates. It adds no Cycle 0018 implementation, installed chat evidence or second active cycle; the existing ship review stop and delivery status are unchanged.
+
 ## Hypothesis and scope
 
 - Hypothesis: explicit target-grid reservation and layout-scoped admission can repair cold entry without weakening global group identity/foreign-tab guards.
