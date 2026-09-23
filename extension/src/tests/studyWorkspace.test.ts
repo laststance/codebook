@@ -94,7 +94,8 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       scrollReadingRange(range, revealType);
     },
   });
-  const tabChangeListeners = new Set<() => void>();
+  type TabChanges = { opened: Tab[]; closed: Tab[]; changed: Tab[] };
+  const tabChangeListeners = new Set<(event?: TabChanges) => void>();
   const groupChangeListeners = new Set<(event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => void>();
   const changedGroups = (event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => { for (const listener of groupChangeListeners) listener(event); };
   let sourceProvider = async (_uri: Uri) => '';
@@ -460,7 +461,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           const displayed = nextSourceDisplay; nextSourceDisplay = undefined; displayed?.(editor);
           return lastSourceEditor = editor;
         },
-        tabGroups: { all: groups, get activeTabGroup() { return activeTabGroup; }, onDidChangeTabs: (callback: () => void) => { tabChangeListeners.add(callback); return { dispose() { tabChangeListeners.delete(callback); } }; }, onDidChangeTabGroups: (callback: typeof changedGroups) => { groupChangeListeners.add(callback); return { dispose() { groupChangeListeners.delete(callback); } }; }, close: async (tabs: Tab[]) => { for (const group of groups) group.tabs = group.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
+        tabGroups: { all: groups, get activeTabGroup() { return activeTabGroup; }, onDidChangeTabs: (callback: (event: TabChanges) => void) => { const notify = (event: TabChanges = { opened: [], closed: [], changed: [] }) => callback(event); tabChangeListeners.add(notify); return { dispose() { tabChangeListeners.delete(notify); } }; }, onDidChangeTabGroups: (callback: typeof changedGroups) => { groupChangeListeners.add(callback); return { dispose() { groupChangeListeners.delete(callback); } }; }, close: async (tabs: Tab[]) => { for (const group of groups) group.tabs = group.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
       workspace: { textDocuments, registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
         openTextDocument: async (uri: Uri) => {
           const held = nextOpen; nextOpen = undefined; if (held) { held.entered(); await held.wait; }
@@ -526,6 +527,12 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     deferKeptFocusEcho() { deferKeptFocusEcho = true; asynchronousLayoutReads = true; },
     deferMovedPanelPlacement(kind: string) { deferredMovedPanelPlacement = kind; asynchronousLayoutReads = true; },
     focusedPanel: () => activeTabGroup.activeTab?.input instanceof TabInputWebview ? activeTabGroup.activeTab.input.viewType : undefined,
+    /** Opens a real modeled Wiki tab so cold-entry tests can retain or clear a background text receipt. @example const wiki = harness.openWiki(); */
+    openWiki() { const wiki = panel('codebook.repositoryWiki', 'Repository Wiki', { viewColumn: 2, preserveFocus: true }); wiki.reveal(undefined, false); return wiki; },
+    /** Emits a tab-only learner change so registration tests cannot rely on a text-editor notification. @example harness.focusExistingWebviewTab(wiki.nativeTab); */
+    focusExistingWebviewTab(tab: Tab) { const group = groups.find(group => group.tabs.includes(tab)); assert.ok(group); assert.ok(tab.input instanceof TabInputWebview); group.activeTab = tab; activeTabGroup = group; for (const listener of tabChangeListeners) listener(); },
+    /** Emits real close/open membership changes so cold-focus tests distinguish replacement from wrapper refresh. @example harness.replaceActiveWebviewTab(); */
+    replaceActiveWebviewTab() { const previous = activeTabGroup.activeTab; assert.ok(previous?.input instanceof TabInputWebview); const replacement = { ...previous, input: new TabInputWebview(previous.input.viewType) }; activeTabGroup.tabs = activeTabGroup.tabs.map(tab => tab === previous ? replacement : tab); activeTabGroup.activeTab = replacement; for (const listener of tabChangeListeners) listener({ opened: [replacement], closed: [previous], changed: [] }); return replacement; },
     focusedSource: focusedSourceEditor,
     focusListenerCount: () => activeEditorListeners.size + selectionListeners.size + tabChangeListeners.size + groupChangeListeners.size + [...panels].reduce((count, panel) => count + panel.viewListenerCount(), 0),
     retainRepositoryFocus: repositoryBoundary.RepositoryReader.prototype['retainNativeFocus'],
@@ -1516,6 +1523,219 @@ test('first Study entry accepts its application tab registering during the initi
     assert.equal(harness.reader.inspect().view!.errors.length, 0);
     assert.equal(harness.runtimes.length, 0);
   } finally { await harness.close(); }
+});
+
+for (const textReceipt of ['retained', 'cleared', 'cleared before registration', 'cleared during layout'] as const) test(`cold Study opens from Wiki when the covered background text receipt is ${textReceipt}`, async () => {
+  // Arrange: ordinary VS Code keeps the most recent text editor while Wiki owns another group.
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+  const draft = harness.focusMutableDraft(), held = harness.holdTextFocusClear('codebook.repositoryWiki');
+  const wiki = harness.openWiki(), registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
+  const layout = textReceipt === 'cleared during layout' ? harness.holdNextCommand('vscode.getEditorLayout') : undefined;
+  const opening = harness.reader.open(); void opening.catch(() => undefined);
+  try {
+    await waitUntil(() => harness.panelColumn('codebook.scopedBrowser') !== undefined, 'pending native application', 1_000);
+    assert.equal(harness.groups[1]!.activeTab, wiki.nativeTab);
+    assert.equal(harness.focusedSource(), draft.editor);
+    // Act: creation covers that background editor without changing the native Wiki tab.
+    if (textReceipt === 'cleared before registration') { held.release(); await waitUntil(() => harness.focusedSource() === undefined, 'early background text clear', 1_000); }
+    registerPanel();
+    if (textReceipt === 'cleared') { held.release(); await Promise.resolve(); }
+    if (layout) { await layout.started; held.release(); await waitUntil(() => harness.focusedSource() === undefined, 'late background text clear', 1_000); layout.release(); }
+    await opening;
+    // Assert
+    assert.equal(harness.reader.presentationState().state, 'open');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.groups.some(group => group.tabs.includes(wiki.nativeTab)), true);
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); registerPanel(); layout?.release(); await opening.catch(() => undefined); await harness.close(); }
+});
+
+for (const clearAt of ['before registration', 'during layout'] as const) for (const departure of ['different webview', 'webview roundtrip', 'different text', 'text roundtrip'] as const) test(`cold Wiki-to-Study layout preserves ${departure} when background text clears ${clearAt}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] });
+  const draft = harness.focusMutableDraft(), otherWiki = harness.openWiki(); draft.focus();
+  const held = harness.holdTextFocusClear('codebook.repositoryWiki'), wiki = harness.openWiki();
+  const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser'), layout = harness.holdNextCommand('vscode.getEditorLayout');
+  const opening = harness.reader.open(), rejected = assert.rejects(opening, /Native pane, group or focus changed/);
+  try {
+    await waitUntil(() => harness.panelColumn('codebook.scopedBrowser') !== undefined, 'pending native application', 1_000);
+    if (clearAt === 'before registration') { held.release(); await waitUntil(() => harness.focusedSource() === undefined, 'early background text clear', 1_000); }
+    registerPanel(); await layout.started;
+    // Act: the clear belongs to background coverage, but the native Wiki tab no longer belongs to this Open.
+    held.release(); await waitUntil(() => harness.focusedSource() === undefined, 'late background text clear', 1_000);
+    if (departure.includes('text')) draft.focus();
+    else harness.focusExistingWebviewTab(otherWiki.nativeTab);
+    if (departure.endsWith('roundtrip')) harness.focusExistingWebviewTab(wiki.nativeTab);
+    layout.release(); await rejected;
+    // Assert
+    assert.equal(harness.groups[1]!.activeTab, departure === 'different webview' ? otherWiki.nativeTab : wiki.nativeTab);
+    assert.equal(harness.groups[1]!.tabs.includes(wiki.nativeTab), true);
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.reader.presentationState().state, 'closed');
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); registerPanel(); layout.release(); await opening.catch(() => undefined); await harness.close(); }
+});
+
+for (const replaceAt of ['registration', 'layout'] as const) test(`cold Study rejects closing Wiki and opening a lookalike during ${replaceAt}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] });
+  const draft = harness.focusMutableDraft(), held = harness.holdTextFocusClear('codebook.repositoryWiki'), wiki = harness.openWiki();
+  const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
+  const layout = replaceAt === 'layout' ? harness.holdNextCommand('vscode.getEditorLayout') : undefined;
+  const opening = harness.reader.open(), rejected = assert.rejects(opening, /Native pane|Native panes/);
+  try {
+    await waitUntil(() => harness.panelColumn('codebook.scopedBrowser') !== undefined, 'pending native application', 1_000);
+    held.release(); await waitUntil(() => harness.focusedSource() === undefined, 'background text clear', 1_000);
+    if (layout) { registerPanel(); await layout.started; }
+    // Act: identical type/title/content cannot confer the closed tab's focus ownership on a new tab.
+    const replacement = harness.replaceActiveWebviewTab(); registerPanel(); layout?.release(); await rejected;
+    // Assert
+    assert.equal(harness.groups[1]!.activeTab, replacement);
+    assert.equal(harness.groups[1]!.tabs.includes(wiki.nativeTab), false);
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.reader.presentationState().state, 'closed');
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); registerPanel(); layout?.release(); await opening.catch(() => undefined); await harness.close(); }
+});
+
+test('failed cold application creation releases temporary native listeners and preserves learner panes', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const draft = harness.focusMutableDraft(), listeners = harness.focusListenerCount();
+  harness.failNextPanelCreation('codebook.scopedBrowser');
+  try {
+    // Act
+    await assert.rejects(harness.reader.open(), /Injected native panel creation failure/);
+    // Assert
+    assert.equal(harness.focusListenerCount(), listeners);
+    assert.equal(harness.groups[0]!.activeTab, draft.tab);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.counts().panels, 0);
+    assert.equal(harness.runtimes.length, 0);
+    assert.equal(harness.reader.presentationState().state, 'closed');
+  } finally { await harness.close(); }
+});
+
+test('presentation preserves a replacement Wiki while its prior background source receipt remains visible', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let releaseCapture = () => {}, releaseText = () => {}, changing: Promise<unknown> | undefined;
+  try {
+    await harness.reader.open();
+    const draft = harness.focusMutableDraft('background-notes.txt', 1);
+    const held = harness.holdTextFocusClear('codebook.repositoryWiki'); releaseText = held.release;
+    harness.openWiki();
+    const panel = harness.reader['contextPanel']; assert.ok(panel);
+    const originalPost = panel.webview.postMessage.bind(panel.webview), state = harness.reader.presentationState();
+    let observed!: () => void;
+    const captureStarted = new Promise<void>(resolve => { observed = resolve; });
+    panel.webview.postMessage = message => {
+      if (message.type !== 'capture-presentation-pose') return originalPost(message);
+      releaseCapture = () => { void originalPost(message); }; observed(); return Promise.resolve(true);
+    };
+    changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    const rejected = assert.rejects(changing, { code: 'PRESENTATION_UNAVAILABLE', causeDetail: /Native pane, group or focus changed/ });
+    await captureStarted;
+    const commandsBeforeDeparture = [...harness.commands];
+    // Act: a group wrapper can legitimately refresh after a learner closes the old Wiki and opens a new one.
+    const replacement = harness.replaceActiveWebviewTab(); harness.replaceEditorGroup('wrapper', 2);
+    releaseCapture(); await rejected;
+    // Assert
+    assert.equal(harness.groups[1]!.activeTab, replacement);
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.runtimes.length, 0);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(harness.commands, commandsBeforeDeparture);
+  } finally { releaseCapture(); releaseText(); await changing?.catch(() => undefined); await harness.close(); }
+});
+
+for (const refreshAt of ['registration', 'layout'] as const) test(`cold Study accepts a verified Wiki group and tab wrapper refresh during ${refreshAt}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const draft = harness.focusMutableDraft(), held = harness.holdTextFocusClear('codebook.repositoryWiki');
+  const wiki = harness.openWiki();
+  const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
+  const layout = refreshAt === 'layout' ? harness.holdNextCommand('vscode.getEditorLayout') : undefined;
+  const opening = harness.reader.open(); void opening.catch(() => undefined);
+  try {
+    await waitUntil(() => harness.panelColumn('codebook.scopedBrowser') !== undefined, 'pending native application', 1_000);
+    held.release(); await waitUntil(() => harness.focusedSource() === undefined, 'background text clear', 1_000);
+    if (layout) { registerPanel(); await layout.started; }
+    // Act: the host reports changed wrappers without closing or opening the underlying Wiki tab.
+    wiki.refreshTabWrapper(); harness.replaceEditorGroup('wrapper', 2); registerPanel(); layout?.release(); await opening;
+    // Assert
+    assert.equal(harness.reader.presentationState().state, 'open');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.reader.inspect().view!.errors.length, 0);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); registerPanel(); layout?.release(); await opening.catch(() => undefined); await harness.close(); }
+});
+
+test('cold Wiki-to-Study registration rejects clearing text in a group the new application does not cover', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] });
+  const draft = harness.focusMutableDraft('third-group-notes.txt', 3), held = harness.holdTextFocusClear('codebook.repositoryWiki');
+  const wiki = harness.openWiki(), registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
+  const opening = harness.reader.open(), rejected = assert.rejects(opening, /Native panes or learner focus changed/);
+  try {
+    await waitUntil(() => harness.panelColumn('codebook.scopedBrowser') !== undefined, 'pending native application', 1_000);
+    // Act: this clear cannot be explained by the requested first-column application.
+    registerPanel(); held.release(); await rejected;
+    // Assert
+    assert.equal(harness.groups[1]!.activeTab, wiki.nativeTab);
+    assert.equal(harness.groups[2]!.activeTab, draft.tab);
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.reader.presentationState().state, 'closed');
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); registerPanel(); await opening.catch(() => undefined); await harness.close(); }
+});
+
+for (const departure of ['different webview', 'webview roundtrip', 'different text', 'text roundtrip'] as const) test(`${departure} during cold Wiki-to-Study registration preserves the newer learner choice`, async () => {
+  // Arrange: both webviews already exist, so switching them does not change tab contents or group count.
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] });
+  const otherDraft = harness.focusMutableDraft('other-notes.txt', 2), source = harness.focusMutableDraft();
+  const otherWiki = harness.openWiki(); source.focus();
+  const held = harness.holdTextFocusClear('codebook.repositoryWiki'), wiki = harness.openWiki();
+  const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
+  const opening = harness.reader.open();
+  const rejected = assert.rejects(opening, /Native panes or learner focus changed/);
+  try {
+    await waitUntil(() => harness.panelColumn('codebook.scopedBrowser') !== undefined, 'pending native application', 1_000);
+    // Act: deliver an actual tab-only event; unchanged background text cannot hide a newer webview choice.
+    if (departure.includes('text')) otherDraft.focus();
+    else harness.focusExistingWebviewTab(otherWiki.nativeTab);
+    if (departure.endsWith('roundtrip')) harness.focusExistingWebviewTab(wiki.nativeTab);
+    registerPanel(); await rejected;
+    // Assert
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.reader.presentationState().state, 'closed');
+    assert.equal(source.document.getText(), 'Original learner draft.\n');
+    assert.equal(otherDraft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.groups[1]!.tabs.includes(otherDraft.tab), true);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { held.release(); registerPanel(); await opening.catch(() => undefined); await harness.close(); }
 });
 
 test('first Study entry does not resize chat while a new application panel only reports optimistic focus', async () => {

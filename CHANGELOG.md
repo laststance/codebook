@@ -2,7 +2,7 @@
 
 ## [0.2.2.0] - 2026-09-23
 
-Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. Ordinary installed 0.2.2 candidate v29 demonstrates the functional schedule and neutral bootstrap separately in both editors. Its subsequent v30 cold Wiki trial fails on native activation notifications; the source correction still requires a new same-candidate installed verification. The explicit `/codebook` skill, full real-repository usefulness, owner acceptance and final independent editor-AI trials remain unfinished.
+Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. Ordinary installed candidate v31 completes the functional Cursor schedule but fails VS Code's first cold Study after Wiki opens. A source correction preserves native Wiki ownership when Application clears a covered background text-editor receipt; it passes 993 product/shared and 96 package checks and a zero-finding CodeRabbit supplement, while a new unchanged candidate's complete both-host validation and the stopped ship review gate remain pending. G12 and final editor-AI acceptance remain unimplemented/unstarted.
 
 ### Fixed
 
@@ -11,6 +11,7 @@ Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki en
 - Confirm native and inner-document focus before declaring a layout ready. Preserve newer learner navigation and selection, including tab/selection departures followed by return during cold Wiki scope acquisition. Cancel stale or failed handoffs, drain adopted renderer work, and bound pose delivery and recovery instead of waiting indefinitely.
 - Retain native group identity when Cursor refreshes wrappers during an exact, currently owned predecessor/successor overlap. Continue rejecting ambiguous, moved, additional and unowned tabs.
 - Accept the measured missing-editor and initial-caret stages when opening an exact copied Wiki citation, while preserving newer input and observed group/selection detours.
+- Preserve the active Wiki tab when first Application registration covers its background source; reject unrelated text clears, tab-only learner departures or roundtrips, and closed/reopened lookalikes. Release temporary observers if native Application creation fails.
 - Show a visible failure when cold Wiki entry is refused. Keep replacement readers noninteractive with neutral loading guidance until their first complete snapshot, avoiding an unrelated checkout title and premature controls.
 
 ### Changed

@@ -121,6 +121,7 @@ export class StudyWorkspace {
   private repositoryLayoutOrigin?: { origin: NonNullable<StudyWorkspace['repositoryOrigin']>; navigation?: number; layout: unknown; groups: NonNullable<StudyWorkspace['layoutReceipt']>['groups']; preservesOtherParts: (mainCount: number) => boolean };
   private repositoryLayoutRestored?: { signature: string; studyLayout: unknown; groups: NonNullable<StudyWorkspace['layoutReceipt']>['groups']; before: ReturnType<StudyWorkspace['studyPanePositions']>; after: ReturnType<StudyWorkspace['studyPanePositions']> };
   private readonly editorGroupIdentities = new WeakMap<vscode.TabGroup, symbol>();
+  private readonly webviewCloseRevisions = new Map<string, number>();
   private observedEditorGroups: { group: vscode.TabGroup; column: vscode.ViewColumn }[] = [];
   private disposed = false;
   private lifetime = 0;
@@ -515,13 +516,27 @@ export class StudyWorkspace {
   private retainPresentationPlacement(retainFocus = true): () => void {
     const transition = this.presentationTransition, lifetime = this.lifetime;
     const panes = this.studyPanePositions(), groups = vscode.window.tabGroups.all.map(group => ({ group, column: group.viewColumn }));
-    const focusedGroup = this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup);
+    const nativeGroup = vscode.window.tabGroups.activeTabGroup, focusedTab = nativeGroup.activeTab;
+    const focusedGroup = this.editorGroupIdentities.get(nativeGroup);
+    const focusedWebview = focusedTab?.input instanceof vscode.TabInputWebview ? focusedTab.input.viewType : undefined;
+    const focusedWebviewCloseRevision = focusedWebview === undefined ? undefined : this.webviewCloseRevisions.get(focusedWebview);
+    const backgroundSourceColumn = vscode.window.activeTextEditor?.viewColumn, registeringApp = this.initialAppPlacement?.panel;
+    const coveredBackgroundSource = Boolean(registeringApp && registeringApp === this.app && focusedWebview !== undefined
+      && backgroundSourceColumn !== undefined && backgroundSourceColumn === registeringApp.viewColumn && backgroundSourceColumn !== nativeGroup.viewColumn);
     // Only owned active webviews make the last-text receipt irrelevant; elsewhere its changes still protect learner focus.
     const focusedSource = () => this.app?.active || this.contextPanel?.active ? undefined : vscode.window.activeTextEditor?.document.uri.toString();
     const source = focusedSource(), appActive = this.app?.active, contextActive = this.contextPanel?.active;
     return () => {
+      const active = vscode.window.tabGroups.activeTabGroup;
+      const sameWebviewTab = active.activeTab === focusedTab || Boolean(active !== nativeGroup && focusedGroup && focusedGroup === this.editorGroupIdentities.get(active)
+        && active.activeTab?.input instanceof vscode.TabInputWebview && active.activeTab.input.viewType === focusedWebview
+        && nativeGroup.tabs.filter(tab => tab.input instanceof vscode.TabInputWebview && tab.input.viewType === focusedWebview).length === 1
+        && active.tabs.filter(tab => tab.input instanceof vscode.TabInputWebview && tab.input.viewType === focusedWebview).length === 1);
+      // The cold app may clear its covered text receipt after registration, while the same native Wiki survives this passive read.
+      const sameSource = source === focusedSource() || coveredBackgroundSource && registeringApp === this.app && focusedSource() === undefined;
       const sameFocus = !retainFocus || focusedGroup === this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup)
-        && source === focusedSource() && appActive === this.app?.active && contextActive === this.contextPanel?.active;
+        && (focusedWebview === undefined || sameWebviewTab && focusedWebviewCloseRevision === this.webviewCloseRevisions.get(focusedWebview))
+        && sameSource && appActive === this.app?.active && contextActive === this.contextPanel?.active;
       if (this.sameEditorGroups(groups, vscode.window.tabGroups.all) && this.sameStudyPanePositions(panes) && sameFocus) return;
       // Retire only this operation's focus ownership; an older passive read cannot suppress a newer transition's recovery.
       if (transition === this.presentationTransition && lifetime === this.lifetime) this.presentationMovedFocus = false;
@@ -1663,29 +1678,52 @@ export class StudyWorkspace {
     const owned = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputWebview && ['codebook.scopedBrowser', 'mainThreadWebview-codebook.scopedBrowser'].includes(tab.input.viewType);
     const contents = (group: vscode.TabGroup) => JSON.stringify(group.tabs.filter(tab => !owned(tab)).map(tab => [tab.label, tab.input, tab.isDirty, tab.isPreview, tab.isPinned]));
     const previous = vscode.window.tabGroups.all.map(group => ({ column: group.viewColumn, contents: contents(group) }));
-    const focusedColumn = vscode.window.tabGroups.activeTabGroup.viewColumn, focusedSource = vscode.window.activeTextEditor?.document.uri.toString();
+    const focusedGroup = vscode.window.tabGroups.activeTabGroup, focusedColumn = focusedGroup.viewColumn, focusedTab = focusedGroup.activeTab;
+    const focusedEditor = vscode.window.activeTextEditor, focusedSource = focusedEditor?.document.uri.toString(), focusedSourceColumn = focusedEditor?.viewColumn;
+    const focusedGroupIdentity = this.editorGroupIdentities.get(focusedGroup);
+    const focusedWebview = focusedTab?.input instanceof vscode.TabInputWebview ? focusedTab.input.viewType : undefined;
+    let focusedWebviewClosed = false;
     const openedGroups: vscode.TabGroup[] = [], closedGroups: vscode.TabGroup[] = [];
-    const changes = vscode.window.tabGroups.onDidChangeTabGroups(event => { openedGroups.push(...event.opened); closedGroups.push(...event.closed); this.confirmInitialAppRegistration(); });
-    const panel = vscode.window.createWebviewPanel('codebook.scopedBrowser', 'codebook · Application', { viewColumn: STUDY_PRESENTATIONS[this.presentationMode].appColumn, preserveFocus: true }, { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true });
+    const changes = [vscode.window.tabGroups.onDidChangeTabGroups(event => { openedGroups.push(...event.opened); closedGroups.push(...event.closed); this.confirmInitialAppRegistration(); }),
+      vscode.window.tabGroups.onDidChangeTabs(event => {
+        // A close/open replacement cannot inherit the original webview's authority through its view type.
+        focusedWebviewClosed ||= focusedWebview !== undefined && event.closed.some(tab => tab.input instanceof vscode.TabInputWebview && tab.input.viewType === focusedWebview);
+        this.confirmInitialAppRegistration();
+      })];
+    let panel: vscode.WebviewPanel;
+    try {
+      panel = vscode.window.createWebviewPanel('codebook.scopedBrowser', 'codebook · Application', { viewColumn: STUDY_PRESENTATIONS[this.presentationMode].appColumn, preserveFocus: true }, { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true });
+    } catch (error) {
+      // No panel disposal event can release registration observers when native creation itself fails.
+      for (const change of changes) change.dispose();
+      throw error;
+    }
     this.bindApplicationPanel(panel);
     // MCP can create the app before Open reserves its destination; retain that unfinished placement across callers.
-    this.initialAppPlacement = { panel, column: panel.viewColumn, registration: { dispose: () => changes.dispose(), ready: () => {
+    this.initialAppPlacement = { panel, column: panel.viewColumn, registration: { dispose: () => { for (const change of changes) change.dispose(); }, ready: () => {
       const current = vscode.window.tabGroups.all, appGroups = current.filter(group => group.tabs.some(owned));
       const appGroup = appGroups.length === 1 ? appGroups[0] : undefined;
       const extra = current.filter(group => !previous.some(entry => entry.column === group.viewColumn));
       // Only the newly requested app may add a group; closed/replaced groups and foreign tab changes retire creation ownership.
-      const retained = previous.every(entry => current.some(group => group.viewColumn === entry.column && contents(group) === entry.contents))
+      const retained = !focusedWebviewClosed && previous.every(entry => current.some(group => group.viewColumn === entry.column && contents(group) === entry.contents))
         && extra.every(group => group === appGroup && contents(group) === '[]') && !closedGroups.length
         && openedGroups.every(group => !previous.some(entry => entry.column === group.viewColumn) && group.viewColumn === appGroup?.viewColumn);
       const active = vscode.window.tabGroups.activeTabGroup, currentSource = vscode.window.activeTextEditor?.document.uri.toString();
-      const sameFocus = active.viewColumn === focusedColumn && (currentSource === focusedSource
-        || active === appGroup && active.activeTab && owned(active.activeTab) && panel.active && currentSource === undefined);
+      // Native Wiki focus can survive when covering its background source clears VS Code's last text editor.
+      const sameWebviewTab = active.activeTab === focusedTab || Boolean(active !== focusedGroup && focusedGroupIdentity && focusedGroupIdentity === this.editorGroupIdentities.get(active)
+        && active.activeTab?.input instanceof vscode.TabInputWebview && active.activeTab.input.viewType === focusedWebview
+        && focusedGroup.tabs.filter(tab => tab.input instanceof vscode.TabInputWebview && tab.input.viewType === focusedWebview).length === 1
+        && active.tabs.filter(tab => tab.input instanceof vscode.TabInputWebview && tab.input.viewType === focusedWebview).length === 1);
+      const coveredBackgroundSource = currentSource === undefined && focusedSourceColumn !== undefined && focusedSourceColumn === (appGroup?.viewColumn ?? panel.viewColumn) && focusedSourceColumn !== focusedColumn;
+      const sameFocus = active.viewColumn === focusedColumn && (focusedWebview !== undefined
+        ? sameWebviewTab && (currentSource === focusedSource || coveredBackgroundSource)
+        : currentSource === focusedSource || active === appGroup && active.activeTab && owned(active.activeTab) && panel.active && currentSource === undefined);
       if (!retained || !sameFocus) throw new Error('Native panes or learner focus changed while the new application registered; the arrangement was preserved.');
       // Wrapper flags are optimistic: await the actual tab, column and text-focus acknowledgement before passive layout guards.
       return Boolean(appGroup && appGroup.activeTab && owned(appGroup.activeTab) && panel.viewColumn === appGroup.viewColumn && panel.visible
         && (active !== appGroup || !vscode.window.activeTextEditor));
     } } };
-    panel.onDidDispose(() => changes.dispose());
+    panel.onDidDispose(() => { for (const change of changes) change.dispose(); });
     this.confirmInitialAppRegistration();
     return panel;
   }
@@ -1757,6 +1795,13 @@ export class StudyWorkspace {
     if (this.outline) return;
     this.observeEditorGroups();
     this.disposables.push(vscode.window.tabGroups.onDidChangeTabGroups(event => this.observeEditorGroups(event)));
+    this.disposables.push(vscode.window.tabGroups.onDidChangeTabs(event => {
+      // Real closure ends every existing focus receipt for that type; wrapper refresh alone does not close a tab.
+      for (const tab of event.closed) if (tab.input instanceof vscode.TabInputWebview) {
+        const kind = tab.input.viewType;
+        this.webviewCloseRevisions.set(kind, (this.webviewCloseRevisions.get(kind) ?? 0) + 1);
+      }
+    }));
     this.highlight = vscode.window.createTextEditorDecorationType({ isWholeLine: true, backgroundColor: new vscode.ThemeColor('editor.stackFrameHighlightBackground') });
     this.disposables.push(vscode.workspace.registerTextDocumentContentProvider(STUDY_SOURCE_SCHEME, { provideTextDocumentContent: uri => this.provideSource(uri) }));
     this.outline = vscode.window.createTreeView('codebook.learningOutline', { manageCheckboxStateManually: true, treeDataProvider: {
@@ -1855,7 +1900,21 @@ export class StudyWorkspace {
   private async readMainEditorGrid(signal: AbortSignal | undefined, assertCurrent: () => void, acquireSourceFocus?: () => Promise<() => void>, beforeScopeFocus?: (acquire?: RepositoryFocusTarget) => void) {
     let assertAcquiredFocus = () => {};
     const assertInitial = this.retainPresentationPlacement();
-    let layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent(); assertInitial();
+    const initialTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const initialWebview = initialTab?.input instanceof vscode.TabInputWebview ? initialTab.input.viewType : undefined;
+    let initialFocusError: unknown, layout: unknown;
+    // Passive measurement must remember learner departures even if the original tab is active again when its response arrives.
+    const retainInitial = () => { if (initialFocusError !== undefined) return; try { assertInitial(); } catch (error) { initialFocusError = error; } };
+    const initialChanges = [vscode.window.tabGroups.onDidChangeTabs(event => {
+      // Verified wrapper refresh has no close event; a new lookalike is a different learner-owned tab.
+      if (initialWebview !== undefined && event.closed.some(tab => tab.input instanceof vscode.TabInputWebview && tab.input.viewType === initialWebview)) initialFocusError ??= new Error('Native pane, group or focus changed while presentation waited; the original webview tab was closed.');
+      retainInitial();
+    }), vscode.window.tabGroups.onDidChangeTabGroups(retainInitial), vscode.window.onDidChangeActiveTextEditor(retainInitial)];
+    try {
+      layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'); assertCurrent();
+      if (initialFocusError !== undefined) throw initialFocusError;
+      assertInitial();
+    } finally { for (const subscription of initialChanges) subscription.dispose(); }
     let count = editorLayoutGroupCount(layout);
     if (count === undefined || count > vscode.window.tabGroups.all.length) throw new Error('The editor did not expose a valid measured grid; existing panes were preserved.');
     const firstFocused = () => this.hasMainEditorFocus(vscode.ViewColumn.One);

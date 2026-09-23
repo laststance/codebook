@@ -156,3 +156,7 @@ Sequential implementation, no parallelization opportunity: H1 precedes H2/H3, wh
 **VERDICT:** H1–H4 and H5's complete unchanged v25b both-host development schedule pass for their recorded source cuts. Continue H6: finish review of post-v25b failure-path repairs, repackage and repeat the sequential both-host schedule, verify current CI/archive correspondence, then deliver. H5's earlier success does not certify later source changes; final acceptance remains unstarted.
 
 NO UNRESOLVED DECISIONS
+
+### v31 follow-up — cold Study registration
+
+The [v31 installed trial](../cycles/evidence/0018/installed-v31-validation.md) completes Cursor's frozen schedule but fails first VS Code Study after cold Wiki succeeds. A logging-only reproduction retains native Wiki/window focus while the covered background text editor disappears. The [bounded registration repair](../cycles/evidence/0018/cold-study-registration.md) passes 33 focused checks, 993 product/shared, 96 package checks and four typechecks on unchanged 276 inputs. Three reused delegated fixing passes remain non-converged, with confirmed findings corrected in the parent/provider follow-up. The ship workflow remains stopped at its three-fix-cycle bound; a separately authorized new unchanged candidate trial in both hosts is pending. H8 and H6 remain open; earlier native successes retain their original sources and cannot close this gate. G12 and final trials remain mandatory and unstarted.
