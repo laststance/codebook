@@ -1,14 +1,14 @@
 # Changelog
 
-## [0.2.3.0] - 2026-09-23 (development candidate)
+## [0.2.3.0] - 2026-09-25 (development candidate)
 
-Cycle 0019 adds the common versioned `codebook` skill to the VSIX, registers it through VS Code `contributes.chatSkills`, and introduces an ordinary editor-chat setup command. The source routes VS Code through a workspace-local MCP provider and Cursor through receipt-protected user-skill deployment plus per-instance MCP registration. Development VSIX trials discovered `/codebook` and AI-owned MCP calls in both standard chats; one Cursor question completed a source/runtime observation, while VS Code's natural runtime trial did not. The latest source repairs idle-session recovery, immediate bridge-session release and interrupted skill deployment, with 1013 product/shared and 100 package checks passing. Same clean VSIX, both-host restart, complete G12 and final acceptance remain unverified. The previous 0.2.2 preview remains the latest merged version.
+Cycle 0019 adds the common versioned `codebook` skill to the VSIX, registers it through VS Code `contributes.chatSkills`, and introduces an ordinary editor-chat setup command. The source routes VS Code through a workspace-local MCP provider and Cursor through receipt-protected user-skill deployment plus per-instance MCP registration. Dirty development VSIX trials discovered `/codebook` and AI-owned MCP calls in both standard chats. On the known theme target, the same `7eea2bd9…` VSIX supported AI-owned source/runtime observations and saved recordings in both hosts; later dashboard Copilot trials failed before input and remain recorded. A newer same-archive dashboard development pair on dirty VSIX `55172940…` completed AI-owned menu observation and saved recordings in Cursor Agent and subscribed VS Code Claude Code; the latter passed its first Study reveal, while later manual Restore failed after chat/Wiki focus in both editors. The current dirty source passes 925/925 extension and 101/101 package tests after further ownership, resource-result and package-boundary repairs; those latest repairs still need installed verification. Same clean-candidate installed chat behavior, complete G12 and final acceptance remain unverified. The previous 0.2.2 preview remains the latest merged version.
 
 ### Added
 
 - A thin status-first skill that uses public Codebook help and distinguishes observed facts, source inference and unknowns without marking learner understanding.
 - Cursor skill ownership, update, removal and restoration controls that refuse unowned or edited same-name files; private receipts include content hash and file identity.
-- A single setup command for a trusted current workspace, with host-specific MCP registration and same-workspace restart handling. Normal installed chat behavior remains the next validation gate.
+- A single setup command for a trusted current workspace, with host-specific MCP registration and same-workspace restart handling. Same clean-candidate installed chat behavior remains unverified.
 - Bounded bridge reconnection after an expired upstream session, immediate session termination on child exit, and journaled recovery for interrupted Cursor skill installation, update and removal.
 
 ## [0.2.2.0] - 2026-09-23

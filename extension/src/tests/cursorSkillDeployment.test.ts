@@ -68,6 +68,25 @@ test('a same-byte manual replacement does not inherit the old file ownership rec
   assert.equal(await readFile(paths.targetPath, 'utf8'), INITIAL_SKILL);
 });
 
+test('an unchanged managed Cursor skill remains usable after a volume device number changes', async context => {
+  // Arrange: macOS may assign a new device number to the same mounted volume after restart.
+  const paths = await fixture(context);
+  await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  const receiptPath = join(paths.storageRoot, 'cursor-skill', 'receipt.json');
+  const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
+  await writeFile(receiptPath, JSON.stringify({ ...receipt, device: receipt.device + 1 }));
+  // Act
+  const reconnected = await verifyManagedCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  await writeFile(paths.sourcePath, NEXT_SKILL);
+  const updated = await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  const verified = await verifyManagedCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  // Assert
+  assert.equal(reconnected.status, 'current');
+  assert.equal(updated.status, 'updated');
+  assert.equal(verified.status, 'current');
+  assert.equal(await readFile(paths.targetPath, 'utf8'), NEXT_SKILL);
+});
+
 test('an owned skill updates to the new package, then explicit removal and restore preserve its receipt', async context => {
   // Arrange
   const paths = await fixture(context), original = await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);

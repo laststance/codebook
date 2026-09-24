@@ -12,6 +12,8 @@ import { learningItemSchema } from './identitySchemas';
 import { RepositoryReader } from './repositoryReader';
 import { repositorySelectionSchema } from './learnerSchemas';
 import { repositoryActionSchema } from './repositoryView';
+import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable';
+import { refreshCursorMcpCatalog, removeOwnedCursorMcpCatalog } from './utils/refreshCursorMcpCatalog';
 
 let stopExtension: (() => Promise<void>) | undefined;
 
@@ -61,7 +63,10 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     try {
       running = await attempt;
       // A normal Stop then Start must restore an already configured Cursor chat connection.
-      if (isCursorHost && setupMatchesCurrentWorkspace()) registerCursorConnection();
+      if (isCursorHost && setupMatchesCurrentWorkspace()) {
+        try { await registerCursorConnection(); }
+        catch (error) { void vscode.window.showWarningMessage(`Codebook agent server started, but Cursor MCP registration failed: ${String(error)}. Run Codebook: Set Up AI Chat to repair the connection.`); }
+      }
       notifyMcpDefinitions();
       return running.descriptorPath;
     }
@@ -94,27 +99,32 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     await vscode.env.clipboard.writeText(JSON.stringify({ mcpServers: { codebook: { type: 'http', url: descriptor.url, headers: { Authorization: `Bearer ${descriptor.token}` } } } }, null, 2));
     void vscode.window.showInformationMessage('Codebook connection copied. This credential grants access to the selected workspace; recopy after restart.');
   };
-  const registerCursorConnection = () => {
+  const registerCursorConnection = async (validatedNodeExecutable?: string) => {
     if (!running) throw new Error('Codebook server is not running. Run Codebook: Set Up AI Chat again.');
     if (!vscode.cursor?.mcp?.registerServer) throw new Error('This Cursor version does not expose MCP registration to Codebook. Update Cursor or use the public manual connection setup.');
     const name = `codebook-${running.service.instanceId}`;
-    if (registeredCursorServer === name) return;
+    if (registeredCursorServer === name) { await refreshCursorMcpCatalog(context.globalStorageUri.fsPath); return; }
+    const nodeExecutable = validatedNodeExecutable ?? await resolveExternalNodeExecutable(vscode.workspace.getConfiguration('codebook').get<string>('nodeExecutable', 'node'));
     if (registeredCursorServer) vscode.cursor.mcp.unregisterServer(registeredCursorServer);
     // Cursor's installed HTTP integration omits configured headers; a local stdio child reads only this window's private descriptor.
-    vscode.cursor.mcp.registerServer({ name, server: { command: vscode.workspace.getConfiguration('codebook').get<string>('nodeExecutable', 'node'),
+    vscode.cursor.mcp.registerServer({ name, server: { command: nodeExecutable,
       args: [join(context.extensionPath, 'dist/cursorMcpBridge.js'), running.descriptorPath], env: {} } });
     registeredCursorServer = name;
+    await refreshCursorMcpCatalog(context.globalStorageUri.fsPath);
   };
   const setupAiChat = async () => {
     requireWorkspace();
+    const cursorNodeExecutable = isCursorHost ? await resolveExternalNodeExecutable(vscode.workspace.getConfiguration('codebook').get<string>('nodeExecutable', 'node')) : undefined;
     if (isCursorHost) await deployCursorSkill(context.extensionPath, context.globalStorageUri.fsPath);
     else if (!vscode.lm?.registerMcpServerDefinitionProvider) throw new Error('This VS Code version cannot register the Codebook MCP provider. Update VS Code.');
     await start();
-    if (isCursorHost) registerCursorConnection();
+    if (isCursorHost) await registerCursorConnection(cursorNodeExecutable);
     if (!running) throw new Error('Codebook server did not start.');
     await context.workspaceState.update('codebook.aiChatSetup', { workspace: running.endpoint.descriptor.workspace });
     notifyMcpDefinitions();
-    void vscode.window.showInformationMessage('Codebook AI chat is ready for this workspace. Open a new chat and choose /codebook.');
+    void vscode.window.showInformationMessage(isCursorHost
+      ? 'Codebook skill and workspace setup saved. Check Cursor Customize > MCPs for Codebook before using /codebook; if absent, close and reopen this work window.'
+      : 'Codebook AI chat is ready for this workspace. Open a new chat and choose /codebook.');
   };
   if (!isCursorHost && vscode.lm?.registerMcpServerDefinitionProvider && vscode.EventEmitter && vscode.McpHttpServerDefinition && vscode.Uri) {
     const changes = new vscode.EventEmitter<void>();
@@ -147,12 +157,19 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     vscode.commands.registerCommand('codebook.setupAiChat', setupAiChat),
     vscode.commands.registerCommand('codebook.removeManagedCursorSkill', async () => {
       if (!isCursorHost) throw new Error('This command is available in Cursor only.');
-      const choice = await vscode.window.showWarningMessage('Remove the Codebook-owned user skill from Cursor? Other Cursor windows share this skill.', { modal: true }, 'Remove managed skill');
+      const choice = await vscode.window.showWarningMessage('Remove the Codebook-owned user skill and its unchanged empty MCP catalog config from Cursor? Other Cursor windows share this skill.', { modal: true }, 'Remove managed skill');
       if (choice !== 'Remove managed skill') return;
       await removeManagedCursorSkill(context.globalStorageUri.fsPath);
       await context.workspaceState.update('codebook.aiChatSetup', undefined);
       if (registeredCursorServer) { vscode.cursor?.mcp?.unregisterServer(registeredCursorServer); registeredCursorServer = undefined; }
-      void vscode.window.showInformationMessage('Managed Cursor skill removed. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.');
+      try {
+        const catalogCleanup = await removeOwnedCursorMcpCatalog(context.globalStorageUri.fsPath);
+        void vscode.window.showInformationMessage(catalogCleanup === 'removed'
+          ? 'Managed Cursor skill removed; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.'
+          : 'Managed Cursor skill removed. Existing or changed Cursor MCP config preserved. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.');
+      } catch (error) {
+        void vscode.window.showWarningMessage(`Managed Cursor skill removed, but its empty MCP catalog config cleanup is incomplete: ${String(error)}. No unverified file was deleted; inspect the private recovery record, restore setup, then retry removal.`);
+      }
     }),
     vscode.commands.registerCommand('codebook.restoreManagedCursorSkill', async () => {
       if (!isCursorHost) throw new Error('This command is available in Cursor only.');
@@ -188,7 +205,6 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
       if (!setupMatchesCurrentWorkspace()) throw new Error('The selected workspace changed after setup');
       if (isCursorHost) await verifyManagedCursorSkill(context.extensionPath, context.globalStorageUri.fsPath);
       await start();
-      if (isCursorHost) registerCursorConnection();
       notifyMcpDefinitions();
     })().catch(error => { void vscode.window.showWarningMessage(`Codebook AI chat did not reconnect: ${String(error)}. Run Codebook: Set Up AI Chat.`); });
   }

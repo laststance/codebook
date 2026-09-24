@@ -197,8 +197,10 @@ test('a failed prerequisite becomes an actionable terminal record and never crea
     // Act
     await harness.service.record(receipt).preparation; await harness.service.stop(receipt);
     const state = harness.service.state(harness.service.record(receipt));
+    const listedRun = (await harness.service.status()).runs.find(run => run.runId === receipt.runId);
     // Assert
     assert.equal(harness.runtimes.length, 0); assert.equal(state.error?.code, 'PREREQUISITE_MISSING'); assert.match(state.terminalReason!, /nodeExecutable/);
+    assert.equal(listedRun?.error?.code, 'PREREQUISITE_MISSING'); assert.match(listedRun?.terminalReason ?? '', /nodeExecutable/);
   } finally { await harness.close(); }
 });
 

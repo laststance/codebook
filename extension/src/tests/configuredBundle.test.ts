@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { REPOSITORY_JAVASCRIPT_LIMIT_BYTES } from '../constants';
+import { REPOSITORY_CHUNK_LIMIT_BYTES, REPOSITORY_JAVASCRIPT_LIMIT_BYTES } from '../constants';
 import { createBundleVerifier } from '../utils/createBundleVerifier';
 import { extractDevelopmentModule } from '../utils/extractDevelopmentModule';
 import { sameScriptUrl } from '../utils/sameScriptUrl';
+import { sourceMapMappedPositions } from '../utils/sourceMapMappedPositions';
 import type { BundleSource } from '../repositoryBundle';
 
 const source = 'setTheme(otherTheme);\n';
@@ -31,6 +32,33 @@ test('a multi-source bundle pause identifies the exact original and native sourc
   // Assert
   assert.equal(result.scriptId, 'selected-script');
   assert.deepEqual(result.mapping, { generatedLine: 0, generatedColumn: 0, originalSource: '/repo/src/theme.tsx', originalLine: 0, originalColumn: 0, name: undefined });
+});
+
+test('a failed source stop can show mapped coordinates only for the selected cited source', () => {
+  // Arrange: the first map source is foreign; the selected source has two mapped lines and multiple columns on one line.
+  const citedSource = 'first();\nsecond();\nthird();\n';
+  const verifier = createBundleVerifier({ ...bundle, source: citedSource,
+    sourceMap: JSON.stringify({ ...payload, sourcesContent: ['other();', citedSource], mappings: 'ACAE,EAAE;AACA;AACA' }) });
+  // Act
+  const result = verifier.mappedPositions(2, 3);
+  // Assert: positions are one-based and constrained to the citation; the map does not certify debugger binding.
+  assert.deepEqual(result, { positions: [{ line: 2, column: 5 }, { line: 3, column: 5 }], complete: true });
+});
+
+test('delimiter-only source maps report partial hints after bounded empty lines or segments', () => {
+  // Arrange
+  const emptyLines = `AAAA;${';'.repeat(100_000)}`;
+  const emptySegments = `AAAA,${','.repeat(200_000)}`;
+  // Act / Assert
+  assert.deepEqual(sourceMapMappedPositions(emptyLines, 0, 1, 1), { positions: [{ line: 1, column: 1 }], complete: false });
+  assert.deepEqual(sourceMapMappedPositions(emptySegments, 0, 1, 1), { positions: [{ line: 1, column: 1 }], complete: false });
+});
+
+test('an oversized undelimited source map tail reports partial hints before decoding it', () => {
+  // Arrange
+  const mappings = `AAAA;${'A'.repeat(4_194_305)}`;
+  // Act / Assert
+  assert.deepEqual(sourceMapMappedPositions(mappings, 0, 1, 1), { positions: [{ line: 1, column: 1 }], complete: false });
 });
 
 test('source aliases and duplicate originals cannot impersonate a unique bundle source', () => {
@@ -98,7 +126,9 @@ test('missing, duplicate and oversized evaluated modules cannot become a sealed 
   // Act / Assert
   assert.equal(extractDevelopmentModule('', sourcePath, source, '/repo/layout.js', 'webpack-internal:///theme.tsx'), undefined);
   assert.throws(() => extractDevelopmentModule(chunk + chunk, sourcePath, source, '/repo/layout.js', 'webpack-internal:///theme.tsx'), /Ambiguous evaluated module/);
-  assert.throws(() => extractDevelopmentModule('a'.repeat(REPOSITORY_JAVASCRIPT_LIMIT_BYTES + 1), sourcePath, source, '/repo/layout.js', 'webpack-internal:///theme.tsx'), /exceeds byte limit/);
+  assert.throws(() => extractDevelopmentModule('a'.repeat(REPOSITORY_CHUNK_LIMIT_BYTES + 1), sourcePath, source, '/repo/layout.js', 'webpack-internal:///theme.tsx'), /Application chunk exceeds byte limit/);
+  const oversizedModule = `work();${'x'.repeat(REPOSITORY_JAVASCRIPT_LIMIT_BYTES)}\n//# sourceURL=webpack-internal:///theme.tsx\n`;
+  assert.throws(() => extractDevelopmentModule(`eval(${JSON.stringify(oversizedModule)});`, sourcePath, source, '/repo/layout.js', 'webpack-internal:///theme.tsx'), /Selected JavaScript module exceeds byte limit/);
 });
 
 test('Next webpack placeholder metadata keeps the final selected module available without executing it', () => {

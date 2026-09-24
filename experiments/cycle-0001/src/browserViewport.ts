@@ -162,7 +162,8 @@ export class BrowserViewport {
     if (this.historical) return;
     signal.throwIfAborted(); this.restorePanelContents();
     this.suspendRenderer();
-    this.panel.reveal(this.lease ? undefined : vscode.ViewColumn.One, Boolean(this.lease));
+    // Refresh a visible renderer without reselecting its native tab over the learner's Study focus.
+    if (!this.panel.visible) this.panel.reveal(this.lease ? undefined : vscode.ViewColumn.One, Boolean(this.lease));
     this.requestReadiness();
     await waitUntil(() => this.panel.visible && this.epoch, 'owned viewport ready', ACTIVE_TIMEOUT_MS, signal);
   }

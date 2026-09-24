@@ -8,7 +8,7 @@ import { PairedRun } from 'codebook-cycle-0004/dist/run';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import type { HostConfiguration } from 'codebook-cycle-0001/dist/hostBrowser';
 import { z } from 'zod';
-import { MAX_EVENTS, MAX_QUEUED_EVIDENCE_BYTES, MAX_RETAINED_EVENT_BYTES, MIN_NODE_MAJOR_VERSION, PREREQUISITE_TIMEOUT_MS, SOURCE_LIMIT_BYTES } from './constants';
+import { MAX_EVENTS, MAX_QUEUED_EVIDENCE_BYTES, MAX_RETAINED_EVENT_BYTES, PREREQUISITE_TIMEOUT_MS, SOURCE_LIMIT_BYTES } from './constants';
 import { StudyError } from './errors';
 import type { RuntimeControl, RuntimeDefinition, RuntimeSnapshot, StudyEnvironment, StudyRuntime } from './runtime';
 import { ConfiguredBrowserRun } from './configuredBrowserRun';
@@ -18,6 +18,7 @@ import type { BrowserViewportFactory } from 'codebook-cycle-0001/dist/browserVie
 import { assertDevelopmentWorkspace, type DevelopmentLockIdentity } from './utils/assertDevelopmentWorkspace';
 import { checkDemoFiles } from './utils/checkDemoFiles';
 import { getDemoRoot } from './utils/getDemoRoot';
+import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable';
 
 export interface StudyPresentation {
   createViewport: BrowserViewportFactory;
@@ -29,7 +30,6 @@ export interface StudyPresentation {
 const executeFile = promisify(execFile);
 const buildSchema = z.object({ revision: z.string(), dirty: z.boolean(), sourceHash: z.string() });
 const productSchema = z.object({ version: z.string(), commit: z.string(), vscodeVersion: z.string().optional() });
-const nodeSchema = z.object({ version: z.string(), executable: z.string() });
 
 /** Rejects unsupported execution contexts even when extension trust support is manually overridden. @example requireWorkspace() */
 export function requireWorkspace(): string {
@@ -69,10 +69,7 @@ export async function createEnvironment(context: Pick<vscode.ExtensionContext, '
     if (!vscode.extensions.getExtension('ms-vscode.js-debug')) missing.push('Enable the bundled JavaScript Debugger (ms-vscode.js-debug).');
     const configuration = vscode.workspace.getConfiguration('codebook');
     try {
-      const result = await executeFile(configuration.get<string>('nodeExecutable', 'node'), ['-p', 'JSON.stringify({version:process.versions.node,executable:process.execPath})'], { timeout: PREREQUISITE_TIMEOUT_MS });
-      const node = nodeSchema.parse(JSON.parse(result.stdout));
-      if (Number(node.version.split('.')[0]) < MIN_NODE_MAJOR_VERSION || node.executable === process.execPath) throw new Error('Expected external Node >=24, not Electron.');
-      nodeExecutable = node.executable;
+      nodeExecutable = await resolveExternalNodeExecutable(configuration.get<string>('nodeExecutable', 'node'));
     } catch { missing.push('codebook.nodeExecutable: configure an executable external Node.js >=24.'); }
     try {
       const binary = configuration.get<string>('chromeExecutable', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
@@ -88,14 +85,25 @@ export async function createEnvironment(context: Pick<vscode.ExtensionContext, '
     assertWorkspace() { if (requireWorkspace() !== workspace) throw new StudyError('STALE_INSTANCE', 'Workspace identity changed; reconnect before reading or publishing repository content.'); },
     prerequisites: async () => {
       let ownedConfiguredLock: DevelopmentLockIdentity | undefined;
+      let preparingConfiguredRun = false, releasingConfiguredRun = false;
       // Only one live configured run may own this workspace lock; status still checks the surrounding build.
       for (const run of runs.values()) {
-        if (run instanceof ConfiguredBrowserRun) ownedConfiguredLock = run.ownsDevelopmentLock();
+        if (run instanceof ConfiguredBrowserRun) {
+          preparingConfiguredRun ||= run.view().status === 'preparing';
+          releasingConfiguredRun ||= run.isCleaning();
+          ownedConfiguredLock = run.ownsDevelopmentLock();
+        }
         if (ownedConfiguredLock) break;
       }
-      const [{ ready, missing }, demo, configured] = await Promise.all([resolvePrerequisites(), checkDemoFiles(templateRoot),
+      const [{ ready, missing }, demo, checkedConfigured] = await Promise.all([resolvePrerequisites(), checkDemoFiles(templateRoot),
         // Even during a run, recheck dependencies and directories; only its exact live lock is permitted.
         assertDevelopmentWorkspace(workspace, new AbortController().signal, ownedConfiguredLock).then(() => [], error => [String(error)])]);
+      // A preparing run may have created its lock before it has sealed ownership; never label that interval foreign.
+      const configured = releasingConfiguredRun
+        ? [...checkedConfigured.filter(message => !message.includes('Next development build lock')), 'Codebook is releasing its managed run. Read the current run error and retry Stop if cleanup fails.']
+        : preparingConfiguredRun
+        ? [...checkedConfigured.filter(message => !message.includes('Next development build lock')), 'Codebook is preparing its managed repository run. Poll the current run; do not stop its process or remove its lock.']
+        : checkedConfigured;
       const check = (specific: string[]) => ({ ready: ready && specific.length === 0, missing: [...missing, ...specific] });
       return { ready, missing, profiles: { 'paired-cart-demo': check(demo), 'checkout-demo': check(demo), 'repository-browser': check(configured) } };
     },

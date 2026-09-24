@@ -24,7 +24,7 @@ import { CONFIGURED_PROFILE } from './configuredProfile';
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy';
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes';
 import type { StudyWorkspace } from './studyWorkspace';
-import type { PresentationCommand } from './presentationSchemas';
+import type { PresentationCommand, ReturnCurrentCommand } from './presentationSchemas';
 import { PRESENTATION_MODE_IDS, STUDY_PRESENTATIONS } from './constants';
 
 export interface Explanation {
@@ -56,7 +56,7 @@ export class StudyService {
   readonly records = new Map<string, StudyRecord>();
   recordings?: RecordingStore;
   playbackController?: PlaybackController;
-  presentationController?: Pick<StudyWorkspace, 'readPresentationState' | 'changePresentation' | 'assertPresentationIdle'>;
+  presentationController?: Pick<StudyWorkspace, 'readPresentationState' | 'changePresentation' | 'returnToCurrent' | 'assertPresentationIdle'>;
   repository?: RepositoryBookStore;
   repositoryPublished?: () => Promise<void>;
   repositoryReader?: (input: OpenBookInput, signal: AbortSignal) => Promise<{ bookId: string; revision: number; nodeId: string; anchorIndex: number; sourceUri: string }>;
@@ -85,18 +85,22 @@ export class StudyService {
     const profilePrerequisites = 'profiles' in prerequisites ? prerequisites.profiles : undefined;
     const commonPrerequisites = { ready: prerequisites.ready, missing: prerequisites.missing };
     return { instanceId: this.instanceId, apiVersion: API_VERSION, workspace: this.environment.workspace,
-      host: this.environment.host, build: this.environment.build, prerequisites, stopping: this.stopping,
+      host: this.environment.host, build: { ...this.environment.build, scope: 'codebook-extension-source' }, workspaceGitStatus: 'not-inspected', prerequisites, stopping: this.stopping,
       profiles: [...PROFILE_IDS.map(id => {
         const definition = STUDY_PROFILES[id];
         const catalog = { ...definition, items: definition.items.map(item => ({ ...item, expectedValues: stopExpectations('<runtimeRunId>', item) })), expectations: definition.actions.map(action => ({ actionId: action.id, ...actionExpectations('<runtimeRunId>', action.id) })) };
         return { ...catalog, catalogHash: sha256(JSON.stringify(catalog)), prerequisites: profilePrerequisites?.[id] ?? commonPrerequisites };
       }), { ...CONFIGURED_PROFILE, prerequisites: profilePrerequisites?.[REPOSITORY_BROWSER_PROFILE] ?? commonPrerequisites }],
-      capabilities: ['start', 'add-to-cart', 'checkout', REPOSITORY_BROWSER_ACTION, 'pause-evidence', 'continue', 'explain', 'reveal-source', 'stop', 'historical-resources'],
+      capabilities: ['start', 'add-to-cart', 'checkout', REPOSITORY_BROWSER_ACTION, 'pause-evidence', 'continue', 'explain', 'reveal-source', 'stop', 'historical-resources', 'return-current-reader'],
       limits: { activeRuns: 1, retainedRuns: MAX_RUNS, explanationsPerRun: MAX_EXPLANATIONS, activeTimeoutMs: ACTIVE_TIMEOUT_MS, runTimeoutMs: RUN_TIMEOUT_MS, timeoutFieldsApplyTo: 'paired-cart-demo; use each selected profile.limits for other profiles' },
-      runs: [...this.records.values()].map(record => ({ runId: record.id, uri: this.uri(record.id), state: this.state(record).state })),
+      runs: [...this.records.values()].map(record => {
+        const run = this.state(record);
+        // Surface the current failure beside its run URI so status polling cannot misdiagnose post-cleanup locks.
+        return { runId: record.id, uri: this.uri(record.id), state: run.state, terminalReason: run.terminalReason, error: run.error };
+      }),
       recording: this.recordings ? { libraryUri: `codebook://${this.instanceId}/library`, playbackUri: `codebook://${this.instanceId}/playback`, playbackAvailable: Boolean(this.playbackController), limits: this.recordings.limits,
         instructions: 'Saved recordings survive server/runtime exit. Discover their study IDs using libraryUri; current-instance URIs and playback revisions must be copied, not guessed. Playback never starts, clicks or continues a run.' } : undefined,
-      presentation: this.presentationController ? { ...await this.presentationState(this.instanceId), instructions: 'Select the same learner workspace in three modes. Copy presentationId and presentationControlRevision as expectedRevision. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.' } : undefined,
+      presentation: this.presentationController ? { ...await this.presentationState(this.instanceId), instructions: 'Select the same learner workspace in three modes. Copy presentationId and presentationControlRevision as expectedRevision for mode changes. If the reader follows saved history or Recording while a new run needs its live application, use codebook_return_current with reader.contentRevision as expectedRevision. It preserves saved history and never sends application input. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.' } : undefined,
       repository: { ...repository, catalogUri: `codebook://${this.instanceId}/repository`, helpUri: 'codebook://help/repository', readerAvailable: Boolean(this.repositoryReader),
         scope: 'Trusted local selected workspace at its Git working-tree root; tracked eligible UTF-8 text only. No runtime adapter or Chrome/debugger is required for source authoring.',
         limits: { documentBytes: BOOK_INPUT_LIMIT_BYTES, httpEnvelopeBytes: HTTP_BODY_LIMIT_BYTES, sourceBytes: REPOSITORY_SOURCE_LIMIT_BYTES, sourcesPerRevision: BOOK_MAX_SOURCES },
@@ -167,6 +171,14 @@ export class StudyService {
     this.assertMutable(input.instanceId); this.environment.assertWorkspace?.();
     if (!this.presentationController) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The Study reader is unavailable in this host.');
     await this.presentationController.changePresentation(input);
+    return this.presentationState(input.instanceId);
+  }
+
+  /** Returns only the current reader from selected history to live execution through a versioned native control. @example await service.returnToCurrent({instanceId,presentationId,expectedRevision:4}) */
+  async returnToCurrent(input: ReturnCurrentCommand) {
+    this.assertMutable(input.instanceId); this.environment.assertWorkspace?.();
+    if (!this.presentationController) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The Study reader is unavailable in this host.');
+    await this.presentationController.returnToCurrent(input);
     return this.presentationState(input.instanceId);
   }
 
@@ -344,7 +356,9 @@ export class StudyService {
       !record.stopped ? 'stop' : undefined, 'read-history'].filter(value => value !== undefined);
     const material = { instanceId: this.instanceId, runId: record.id, runtimeRunId: runtime?.runId, profile: record.profile,
       state: record.stopped ? 'stopped' : record.stopping ? 'stopping' : terminalReason ? 'failed' : !record.prepared ? 'preparing' : runtime?.status ?? 'preparing',
-      runtimeState: runtime?.status, createdAt: new Date(record.createdAt).toISOString(), deadlineAt: new Date(record.deadlineAt).toISOString(), activeTimeoutMs: ACTIVE_TIMEOUT_MS,
+      runtimeState: runtime?.status, createdAt: new Date(record.createdAt).toISOString(), deadlineAt: new Date(record.deadlineAt).toISOString(),
+      preparationDeadlineAt: record.profile === REPOSITORY_BROWSER_PROFILE ? new Date(record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS).toISOString() : undefined,
+      activeTimeoutMs: ACTIVE_TIMEOUT_MS,
       nextActions, participants, operation: record.action?.receipt, operations: [...record.actions.values()].map(action => action.receipt), observed: runtime?.observed, links: runtime?.links,
       // Dispatch and ACK change recoverable evidence even while the runtime remains in the same acting state.
       operationProgress: runtime?.profile === REPOSITORY_BROWSER_PROFILE && runtime.operation ? { ...runtime.operation, continuedPause: runtime.operation.continuedPause && { ...runtime.operation.continuedPause } } : undefined,
@@ -380,7 +394,11 @@ export class StudyService {
     const recordedStudyOutcome = studyOutcome === 'not-demonstrated' ? 'not-demonstrated' : studyOutcome === 'partial' ? 'partial' : studyOutcome !== 'demonstrated' ? 'pending'
       : recording.status === 'finalized' && recording.contextStatus === 'saved' ? 'demonstrated'
       : recording.status === 'recording' || recording.contextStatus === 'pending' ? 'pending' : 'partial';
-    return { ...material, materialSignature, historyOutcome, studyOutcome, recording, recordedStudyOutcome };
+    // A fresh clock reading guides preparation polling without changing durable evidence identity.
+    const observedAtMs = record.profile === REPOSITORY_BROWSER_PROFILE && material.state === 'preparing' ? this.now() : undefined;
+    const preparationRemainingMs = observedAtMs === undefined ? undefined : Math.max(0, record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS - observedAtMs);
+    return { ...material, observedAt: observedAtMs === undefined ? undefined : new Date(observedAtMs).toISOString(), preparationRemainingMs,
+      materialSignature, historyOutcome, studyOutcome, recording, recordedStudyOutcome };
   }
 
   /** Prevents late acquisitions escaping shutdown while preserving retryable cleanup failures. @example await service.shutdown() */

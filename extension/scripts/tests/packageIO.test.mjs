@@ -185,6 +185,17 @@ test('dependency inspection rejects a non-native emitted import before staging a
   await assert.rejects(inspectBundle(metafile, fixture.repository, new Map()), /unresolved non-native import/);
 });
 
+test('package inspection rejects a VS Code import in the standalone Cursor MCP bridge', async context => {
+  // Arrange
+  const fixture = await sourceFixture(context);
+  const metafile = { inputs: {}, outputs: {
+    'dist/extension.js': { imports: [{ path: 'vscode', external: true }] },
+    'dist/cursorMcpBridge.js': { imports: [{ path: 'vscode', external: true }] },
+  } };
+  // Act / Assert
+  await assert.rejects(inspectBundle(metafile, fixture.repository, new Map()), /Cursor MCP bridge contains an editor-only import/);
+});
+
 test('a bundled dependency without its license text prevents package staging', async context => {
   // Arrange
   const fixture = await sourceFixture(context), dependency = join(fixture.repository, 'extension/node_modules/example'); await mkdir(dependency, { recursive: true });

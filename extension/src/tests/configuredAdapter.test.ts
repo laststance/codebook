@@ -17,6 +17,7 @@ import { repositoryHarness } from './utils/repositoryHarness';
 import { assertConfiguredSourceDocuments } from '../utils/assertConfiguredSourceDocuments';
 import { configuredDefinitionSchema } from '../configuredStudySchemas';
 import { createConfiguredStudy } from './utils/createConfiguredStudy';
+import { REPOSITORY_CHUNK_LIMIT_BYTES, REPOSITORY_JAVASCRIPT_LIMIT_BYTES } from '../constants';
 
 test('unchanged native BOM and mixed-EOL source buffers pass identity guards while actual edits still reject', () => {
   // Arrange
@@ -48,6 +49,42 @@ for (const path of ['src/ordinary.tsx', 'components/deep/another.ts']) test(`con
   assert.equal(sameScriptUrl(acquired.bundle.scriptUrl, `webpack-internal:///(app-pages-browser)/${path}`), true);
   await writeFile(join(build, 'unrelated.js'), `eval(${JSON.stringify(script)});`);
   await assert.rejects(readDevelopmentBundle(directory, { path, hash: sha256(source), line: 1, column: 1 }), /Ambiguous application source chunk/);
+});
+
+test('a source from another route reports the root-page mismatch before browser input', async context => {
+  // Arrange
+  const { directory, track } = await repositoryHarness(context);
+  const selectedPath = 'src/dashboard/Header.tsx', selectedSource = 'export const dashboard = true;\n';
+  const rootPath = 'src/home/HeaderNav.tsx', rootSource = 'export const home = true;\n';
+  await track(selectedPath, selectedSource); await track(rootPath, rootSource);
+  const build = join(directory, '.next/dev'), manifestPath = join(build, 'server/app/page_client-reference-manifest.js');
+  await mkdir(dirname(manifestPath), { recursive: true });
+  const map = JSON.stringify({ version: 3, sources: [join(await realpath(directory), rootPath)], sourcesContent: [rootSource], names: [], mappings: 'AAAA' });
+  const script = `${rootSource}//# sourceMappingURL=data:application/json;base64,${Buffer.from(map).toString('base64')}\n//# sourceURL=webpack-internal:///(app-pages-browser)/./${rootPath}\n`;
+  await writeFile(join(build, 'root.js'), `eval(${JSON.stringify(script)});`);
+  await writeFile(manifestPath, `globalThis.__RSC_MANIFEST["/page"]=${JSON.stringify({ clientModules: { [rootPath]: { chunks: ['root.js'] } } })};`);
+  // Act / Assert
+  await assert.rejects(readDevelopmentBundle(directory, { path: selectedPath, hash: sha256(selectedSource), line: 1, column: 1 }), /Selected source is absent from the root application route chunks; verify that it belongs to the launched page/);
+});
+
+test('a large root chunk yields its bounded selected module without executing unrelated bytes', async context => {
+  // Arrange
+  const { directory, track } = await repositoryHarness(context), path = 'src/selected.tsx', source = 'const answer = 42;\n';
+  await track(path, source);
+  const build = join(directory, '.next/dev'), manifestPath = join(build, 'server/app/page_client-reference-manifest.js');
+  await mkdir(dirname(manifestPath), { recursive: true });
+  const map = JSON.stringify({ version: 3, sources: [join(await realpath(directory), path)], sourcesContent: [source], names: [], mappings: 'AAAA' });
+  const script = `${source}//# sourceMappingURL=data:application/json;base64,${Buffer.from(map).toString('base64')}\n//# sourceURL=webpack-internal:///(app-pages-browser)/./${path}\n`;
+  const chunk = `/*${'x'.repeat(REPOSITORY_JAVASCRIPT_LIMIT_BYTES)}*/\neval(${JSON.stringify(script)});`;
+  await writeFile(join(build, 'large.js'), chunk);
+  await writeFile(manifestPath, `globalThis.__RSC_MANIFEST["/page"]=${JSON.stringify({ clientModules: { [path]: { chunks: ['large.js'] } } })};`);
+  // Act
+  const acquired = await readDevelopmentBundle(directory, { path, hash: sha256(source), line: 1, column: 1 });
+  // Assert
+  assert.equal(Buffer.byteLength(chunk) > REPOSITORY_JAVASCRIPT_LIMIT_BYTES, true);
+  assert.equal(Buffer.byteLength(chunk) < REPOSITORY_CHUNK_LIMIT_BYTES, true);
+  assert.equal(acquired.bundle.javascript, script);
+  assert.equal(acquired.bundle.chunkHash, sha256(chunk));
 });
 
 test('configured build reads reject linked files linked ancestors directory targets oversized bytes and invalid UTF-8 without following outside data', async context => {
@@ -132,17 +169,32 @@ test('a pause invalidated while an evaluation response is delayed cannot publish
 
 test('DOM configuration compares literal text and attributes and refuses duplicate disabled hidden or obscured click targets', () => {
   // Arrange: a pure DOM-boundary model, not browser layout or native UI evidence.
-  let visible = true, disabled = false, duplicates = false, obscured = false;
-  const element = { isConnected: true, textContent: 'Ready', getAttribute: (name: string) => name === 'data-state' ? 'idle' : null, matches: () => disabled, contains: () => false, getBoundingClientRect: () => ({ x: 10, y: 20, width: 40, height: 30 }) };
+  let visible = true, disabled = false, duplicates = false, obscured = false, attributeValue = 'idle';
+  const element = { isConnected: true, textContent: 'Ready', getAttribute: (name: string) => name === 'data-state' ? attributeValue : null, matches: () => disabled, contains: () => false, getBoundingClientRect: () => ({ x: 10, y: 20, width: 40, height: 30 }) };
   const selector = 'button[title="literal; globalThis.injected = true"]';
   const environment = { document: { querySelectorAll: (input: string) => input === selector ? duplicates ? [element, element] : [element] : [], elementFromPoint: () => obscured ? {} : element }, getComputedStyle: () => ({ display: 'block', visibility: visible ? 'visible' : 'hidden', opacity: '1' }) };
   const expression = configuredDomExpression([{ kind: 'visible', selector }, { kind: 'text', selector, equals: 'Ready' }, { kind: 'attribute', selector, attribute: 'data-state', equals: 'idle' }], selector);
   const read = () => JSON.parse(JSON.stringify(runInNewContext(expression, environment)));
   // Act / Assert
   assert.deepEqual(read(), { ready: true, x: 30, y: 35 }); assert.equal('injected' in environment, false);
-  duplicates = true; assert.deepEqual(read(), { ready: false }); duplicates = false;
-  disabled = true; assert.deepEqual(read(), { ready: false }); disabled = false;
-  visible = false; assert.deepEqual(read(), { ready: false }); visible = true;
-  obscured = true; assert.deepEqual(read(), { ready: false }); obscured = false;
-  element.textContent = 'Different'; assert.deepEqual(read(), { ready: false });
+  duplicates = true; assert.deepEqual(read(), { ready: false, failure: { conditionIndex: 0, reason: 'selector-not-unique' } }); duplicates = false;
+  disabled = true; assert.deepEqual(read(), { ready: false, failure: { reason: 'click-target-disabled' } }); disabled = false;
+  visible = false; assert.deepEqual(read(), { ready: false, failure: { conditionIndex: 0, reason: 'not-visible' } }); visible = true;
+  obscured = true; assert.deepEqual(read(), { ready: false, failure: { reason: 'click-target-obscured' } }); obscured = false;
+  element.textContent = 'Different'; assert.deepEqual(read(), { ready: false, failure: { conditionIndex: 1, reason: 'text-mismatch' } });
+  element.textContent = 'Ready'; attributeValue = 'other';
+  assert.deepEqual(read(), { ready: false, failure: { conditionIndex: 2, reason: 'attribute-mismatch' } });
+});
+
+test('configured browser checks identify absent condition and click elements separately from duplicates', () => {
+  // Arrange
+  const environment = { document: { querySelectorAll: () => [], elementFromPoint: () => null } };
+  const condition = configuredDomExpression([{ kind: 'visible', selector: '#missing-condition' }], '#button');
+  const click = configuredDomExpression([], '#missing-button');
+  // Act
+  const conditionResult = JSON.parse(JSON.stringify(runInNewContext(condition, environment)));
+  const clickResult = JSON.parse(JSON.stringify(runInNewContext(click, environment)));
+  // Assert
+  assert.deepEqual(conditionResult, { ready: false, failure: { conditionIndex: 0, reason: 'selector-missing' } });
+  assert.deepEqual(clickResult, { ready: false, failure: { reason: 'click-target-missing' } });
 });

@@ -5,7 +5,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListResourcesRequestSchema, ListResourceTemplatesRequestSchema, ListToolsRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { connectionSchema } from './utils/connectionSchema';
-import { EXTENSION_VERSION } from './constants';
+import { CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS, EXTENSION_VERSION } from './constants';
 
 /** Bridges Cursor's stdio MCP transport to the authenticated instance selected by its extension window. @example await runCursorMcpBridge('/private/current.connection.json') */
 export async function runCursorMcpBridge(descriptorPath: string): Promise<void> {
@@ -52,11 +52,17 @@ export async function runCursorMcpBridge(descriptorPath: string): Promise<void> 
   const server = new Server(active.client.getServerVersion() ?? { name: 'codebook', version: EXTENSION_VERSION }, {
     capabilities: { tools: capabilities?.tools ?? {}, resources: capabilities?.resources ?? {} }, instructions: active.client.getInstructions(),
   });
-  server.setRequestHandler(ListToolsRequestSchema, request => forward(client => client.listTools(request.params)));
-  server.setRequestHandler(CallToolRequestSchema, request => forward(client => client.callTool(request.params)));
-  server.setRequestHandler(ListResourcesRequestSchema, request => forward(client => client.listResources(request.params)));
-  server.setRequestHandler(ListResourceTemplatesRequestSchema, request => forward(client => client.listResourceTemplates(request.params)));
-  server.setRequestHandler(ReadResourceRequestSchema, request => forward(client => client.readResource(request.params)));
+  server.setRequestHandler(ListToolsRequestSchema, (request, extra) => forward(client => client.listTools(request.params,
+    { signal: extra.signal, timeout: CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS })));
+  // callTool takes its request options after the optional result schema, unlike discovery and resource reads.
+  server.setRequestHandler(CallToolRequestSchema, (request, extra) => forward(client => client.callTool(request.params, undefined,
+    { signal: extra.signal, timeout: CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS })));
+  server.setRequestHandler(ListResourcesRequestSchema, (request, extra) => forward(client => client.listResources(request.params,
+    { signal: extra.signal, timeout: CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS })));
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, (request, extra) => forward(client => client.listResourceTemplates(request.params,
+    { signal: extra.signal, timeout: CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS })));
+  server.setRequestHandler(ReadResourceRequestSchema, (request, extra) => forward(client => client.readResource(request.params,
+    { signal: extra.signal, timeout: CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS })));
   const stdio = new StdioServerTransport();
   let stopping: Promise<void> | undefined;
   const shutdown = () => stopping ??= (async () => {

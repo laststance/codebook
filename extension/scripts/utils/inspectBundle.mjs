@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isBuiltin } from 'node:module';
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { COMPILED_DIRECTORIES } from './packageConstants.mjs';
 
 /** Inventories actual emitted inputs, bundled dependency notices and native externals before a VSIX can be staged. @example await inspectBundle(metafile, repository, capturedInputs) */
@@ -11,6 +11,9 @@ export async function inspectBundle(metafile, repository, capturedInputs) {
   const imports = outputs.flatMap(output => output.imports);
   const externals = [...new Set(imports.map(value => value.path))].sort();
   if (imports.some(value => !value.external || (value.path !== 'vscode' && !isBuiltin(value.path)))) throw new Error('Bundle contains an unresolved non-native import.');
+  // The standalone Cursor bridge runs in Node, where the extension host's vscode module does not exist.
+  for (const [path, output] of Object.entries(metafile.outputs)) if (basename(path) === 'cursorMcpBridge.js'
+    && output.imports.some(value => !isBuiltin(value.path))) throw new Error('Cursor MCP bridge contains an editor-only import.');
   const root = await realpath(repository), packages = new Map(), inputs = [], noticeFiles = new Map();
   for (const input of Object.keys(metafile.inputs).sort()) {
     const absolute = await realpath(resolve(root, input)), bytes = capturedInputs.get(absolute);
