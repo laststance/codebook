@@ -574,6 +574,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     reportSourceEditorInColumn(column: number) { reportedSourceColumn = column; },
     invalidateNextSourceRender() { nextSourceDisplay = () => { reader['revision']++; }; },
     failCurrentSourceOpen() { sourceOpenFailure = true; },
+    restoreCurrentSourceOpen() { sourceOpenFailure = false; },
     abortAfterNextSourceDisplay(cancellation: AbortController) { nextSourceDisplay = () => cancellation.abort(); },
     clearDecorations() { decoratedColumns.length = 0; }, decoratedColumns: () => [...decoratedColumns],
     moveSource(column: number) {
@@ -1237,7 +1238,7 @@ test('Return to Current keeps presentation admission closed until its saved-hist
   } finally { releaseRefresh(); await returning?.catch(() => undefined); await presentation?.catch(() => undefined); await harness.close(); }
 });
 
-test('Return to Current reports failure when the current source cannot appear in the native reader', async () => {
+test('Return to Current reports a failed native source and retries after the source becomes readable', async () => {
   // Arrange
   const harness = await workspaceHarness();
   try {
@@ -1254,6 +1255,11 @@ test('Return to Current reports failure when the current source cannot appear in
     assert.equal(harness.reader.presentationState().reader.followingCurrentRun, true);
     assert.equal(harness.reader['sourceReady'](), false);
     assert.ok(harness.reader.inspect().view!.errors.some(error => error.includes('Injected current source open failure')));
+    harness.restoreCurrentSourceOpen();
+    const retry = harness.reader.presentationState();
+    const recovered = await harness.reader.returnToCurrent({ presentationId: retry.presentationId, expectedRevision: retry.reader.contentRevision });
+    assert.equal(recovered.reader.followingCurrentRun, true);
+    assert.equal(harness.reader['sourceReady'](), true);
   } finally { await harness.close(); }
 });
 

@@ -135,8 +135,10 @@ export async function configuredRuntimeHarness(context: TestContext, control?: R
         return waitUntil(read, description, 0, signal);
       }
       if (rejectBinding && description.startsWith('exact repository breakpoint binding')) {
+        signal?.throwIfAborted();
         await read();
-        throw new Error(`Timed out waiting for ${description}`);
+        signal?.throwIfAborted();
+        return waitUntil(read, description, 0, signal);
       }
       return waitUntil(read, description, timeoutMs, signal);
     } },

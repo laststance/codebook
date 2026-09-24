@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { refreshCursorMcpCatalog, removeOwnedCursorMcpCatalog } from '../utils/refreshCursorMcpCatalog';
+import { captureOwnedCursorMcpCatalogGeneration, refreshCursorMcpCatalog, removeOwnedCursorMcpCatalog } from '../utils/refreshCursorMcpCatalog';
 
 test('Cursor MCP discovery refresh preserves the bytes of an existing user config', async context => {
   // Arrange
@@ -33,6 +33,81 @@ test('Cursor MCP discovery refresh creates a private empty config for a first-ti
   // Assert
   assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), { mcpServers: {} });
   assert.equal(config.mode & 0o777, 0o600);
+});
+
+test('an earlier Cursor removal cannot retire the empty catalog refreshed by a newer setup', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const storageRoot = join(directory, 'storage'), configPath = join(directory, 'mcp.json');
+  const firstRefresh = await refreshCursorMcpCatalog(storageRoot, directory);
+  assert.ok(firstRefresh);
+  const removalGeneration = await captureOwnedCursorMcpCatalogGeneration(storageRoot, directory);
+  assert.ok(removalGeneration);
+  const secondRefresh = await refreshCursorMcpCatalog(storageRoot, directory);
+  assert.ok(secondRefresh);
+
+  // Act
+  const staleCleanup = await removeOwnedCursorMcpCatalog(storageRoot, directory, removalGeneration);
+
+  // Assert
+  assert.equal(staleCleanup, 'preserved');
+  assert.equal(await readFile(configPath, 'utf8'), '{"mcpServers":{}}\n');
+  assert.equal(await removeOwnedCursorMcpCatalog(storageRoot, directory, secondRefresh), 'removed');
+  await assert.rejects(lstat(configPath), { code: 'ENOENT' });
+});
+
+test('Cursor MCP setup recovers ownership after an interrupted atomic config publication', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const storageRoot = join(directory, 'storage'), receiptDirectory = join(storageRoot, 'cursor-mcp-catalog');
+  await mkdir(receiptDirectory, { recursive: true });
+  const configPath = join(directory, 'mcp.json');
+  const stagedPath = join(directory, '.codebook-123e4567-e89b-12d3-a456-426614174000.mcp.json');
+  await writeFile(stagedPath, '{"mcpServers":{}}\n', { mode: 0o600 });
+  const staged = await lstat(stagedPath);
+  const owner = { schemaVersion: 1, targetPath: configPath,
+    sha256: 'e93fc8db2b1bd77107fe6c758bca9545fa864cf7cce8ab93a7b2b93a1d566a7b',
+    device: staged.dev, inode: staged.ino, installed: true };
+  await writeFile(join(receiptDirectory, 'pending-creation.json'), JSON.stringify({ schemaVersion: 1, owner, stagedPath }));
+  await link(stagedPath, configPath);
+
+  // Act
+  await refreshCursorMcpCatalog(storageRoot, directory);
+
+  // Assert
+  assert.equal(JSON.parse(await readFile(join(receiptDirectory, 'receipt.json'), 'utf8')).inode, staged.ino);
+  await assert.rejects(lstat(stagedPath), { code: 'ENOENT' });
+  await assert.rejects(lstat(join(receiptDirectory, 'pending-creation.json')), { code: 'ENOENT' });
+  assert.equal(await removeOwnedCursorMcpCatalog(storageRoot, directory), 'removed');
+  await assert.rejects(lstat(configPath), { code: 'ENOENT' });
+});
+
+test('Cursor MCP removal retires a config published before its ownership receipt was saved', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const storageRoot = join(directory, 'storage'), receiptDirectory = join(storageRoot, 'cursor-mcp-catalog');
+  await mkdir(receiptDirectory, { recursive: true });
+  const configPath = join(directory, 'mcp.json');
+  const stagedPath = join(directory, '.codebook-123e4567-e89b-12d3-a456-426614174000.mcp.json');
+  await writeFile(stagedPath, '{"mcpServers":{}}\n', { mode: 0o600 });
+  const staged = await lstat(stagedPath);
+  await writeFile(join(receiptDirectory, 'pending-creation.json'), JSON.stringify({ schemaVersion: 1,
+    owner: { schemaVersion: 1, targetPath: configPath,
+      sha256: 'e93fc8db2b1bd77107fe6c758bca9545fa864cf7cce8ab93a7b2b93a1d566a7b',
+      device: staged.dev, inode: staged.ino, installed: true }, stagedPath }));
+  await link(stagedPath, configPath);
+
+  // Act
+  const result = await removeOwnedCursorMcpCatalog(storageRoot, directory);
+
+  // Assert
+  assert.equal(result, 'removed');
+  await assert.rejects(lstat(configPath), { code: 'ENOENT' });
+  await assert.rejects(lstat(stagedPath), { code: 'ENOENT' });
+  await assert.rejects(lstat(join(receiptDirectory, 'pending-creation.json')), { code: 'ENOENT' });
 });
 
 test('Cursor MCP setup waits for another window to release its brief catalog write', async context => {
