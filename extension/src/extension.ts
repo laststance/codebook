@@ -134,8 +134,9 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
       provideMcpServerDefinitions: () => {
         if (!running || !setupMatchesCurrentWorkspace()) return [];
         const descriptor = running.endpoint.descriptor;
+        // Discovery runs eagerly; only the start-time resolver may receive the short-lived bearer.
         return [new vscode.McpHttpServerDefinition('Codebook', vscode.Uri.parse(descriptor.url),
-          { Authorization: `Bearer ${descriptor.token}` }, `${EXTENSION_VERSION}-${running.service.instanceId}`)];
+          {}, `${EXTENSION_VERSION}-${running.service.instanceId}`)];
       },
       resolveMcpServerDefinition: async definition => {
         if (!setupMatchesCurrentWorkspace()) throw new Error('Run Codebook: Set Up AI Chat for this workspace.');

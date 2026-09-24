@@ -61,7 +61,7 @@ async function boundary(context: { after: (callback: () => Promise<void>) => voi
     failNextCatalogRefresh() { failCatalogRefresh = true; }, warnings: () => warnings };
 }
 
-test('VS Code setup exposes only the current workspace MCP credentials and refreshes them after stop', async context => {
+test('VS Code discovers Codebook without credentials and supplies the current token only when starting it', async context => {
   // Arrange
   const editor = await boundary(context, 'Visual Studio Code'), provider = editor.provider();
   assert.ok(provider); assert.equal(provider.provideMcpServerDefinitions().length, 0);
@@ -69,6 +69,8 @@ test('VS Code setup exposes only the current workspace MCP credentials and refre
     // Act
     await editor.commands.get('codebook.setupAiChat')!();
     const initial = provider.provideMcpServerDefinitions()[0]!;
+    assert.equal(Object.keys(initial.headers).length, 0);
+    assert.equal(JSON.stringify(initial).includes('token-instance-1'), false);
     await editor.commands.get('codebook.stopAgentServer')!();
     const afterStop = provider.provideMcpServerDefinitions();
     const refreshed = await provider.resolveMcpServerDefinition(initial);

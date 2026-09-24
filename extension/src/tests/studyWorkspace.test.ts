@@ -6003,13 +6003,17 @@ test('real MCP presentation discovery and control preserve identities across res
 test('editor AI can return a saved recording to its current run without repeating application input or losing history', async () => {
   // Arrange
   const harness = await recordedReaderHarness();
-  await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
-  const service = harness.service, next = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'after-saved-recording' });
-  await service.record(next).preparation;
-  const endpoint = await startServer(service);
-  const transport = new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } } });
-  const client = new Client({ name: 'reader-return-contract-test', version: '1.0' }); await client.connect(transport);
+  const service = harness.service;
+  let next: ReturnType<typeof service.start> | undefined;
+  let endpoint: Awaited<ReturnType<typeof startServer>> | undefined;
+  let client: Client | undefined;
   try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    next = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'after-saved-recording' });
+    await service.record(next).preparation;
+    endpoint = await startServer(service);
+    const transport = new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } } });
+    client = new Client({ name: 'reader-return-contract-test', version: '1.0' }); await client.connect(transport);
     const status = await client.callTool({ name: 'codebook_status', arguments: {} });
     const discovered = z.object({ data: z.object({ instanceId: z.string(), presentation: z.object({ presentationId: z.string(), reader: z.object({ contentRevision: z.number(), contentTab: z.literal('recording'), followingCurrentRun: z.literal(false) }) }) }) }).parse(status.structuredContent).data;
     const input = { instanceId: discovered.instanceId, presentationId: discovered.presentation.presentationId, expectedRevision: discovered.presentation.reader.contentRevision };
@@ -6030,7 +6034,16 @@ test('editor AI can return a saved recording to its current run without repeatin
     const library = await harness.reader.learningStorage();
     assert.equal((await library.readStudy(harness.studyId)).id, harness.studyId);
     assert.equal((await library.readProgress()).decisions.length, 0);
-  } finally { await client.close(); await endpoint.close(); await service.stop(next); await harness.close(); }
+  } finally {
+    try { await client?.close(); }
+    finally {
+      try { await endpoint?.close(); }
+      finally {
+        try { if (next) await service.stop(next); }
+        finally { await harness.close(); }
+      }
+    }
+  }
 });
 
 test('an unknown presentation preference survives opening and a cancelled picker until an explicit replacement', async () => {

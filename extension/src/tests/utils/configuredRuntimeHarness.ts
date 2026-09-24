@@ -126,13 +126,13 @@ export async function configuredRuntimeHarness(context: TestContext, control?: R
     './utils/assertDevelopmentWorkspace': { assertDevelopmentWorkspace: async () => undefined },
     './utils/launchDevelopmentServer': { launchDevelopmentServer: () => ({ ready: async () => { releases.push('application acquired'); return 'http://127.0.0.1:4321'; }, close: async () => { releases.push('application'); } }) },
     'codebook-cycle-0001/dist/utils/waitUntil': { waitUntil: async <Value>(read: () => Value | Promise<Value>, description: string, timeoutMs?: number, signal?: AbortSignal) => {
-      // A deliberately disabled readiness condition is stable; inspect it once and keep the real timeout wording.
+      // A deliberately disabled readiness condition is stable; inspect it once, then use the real timeout contract.
       if (!ready && description.startsWith('configured before conditions')) {
         signal?.throwIfAborted();
         const value = await read();
         signal?.throwIfAborted();
         if (value) return value;
-        throw new Error(`Timed out waiting for ${description}`);
+        return waitUntil(read, description, 0, signal);
       }
       if (rejectBinding && description.startsWith('exact repository breakpoint binding')) {
         await read();
