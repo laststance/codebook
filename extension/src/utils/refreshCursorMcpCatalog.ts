@@ -84,9 +84,9 @@ async function recoverRemoval(pendingPath: string, receiptPath: string, targetPa
 }
 
 /** Waits briefly for another active Cursor window's catalog writer without displacing an interrupted lock. @example await withCatalogLockRetry(() => withStorageLock('/private', update)) */
-async function withCatalogLockRetry(operation: () => Promise<void>): Promise<void> {
+async function withCatalogLockRetry<Result>(operation: () => Promise<Result>): Promise<Result> {
   for (let retry = 0; ; retry += 1) {
-    try { await operation(); return; }
+    try { return await operation(); }
     catch (error) {
       const cause = error instanceof Error ? error.cause : undefined;
       if (!(cause instanceof Error && 'code' in cause && cause.code === 'EEXIST') || retry >= CURSOR_MCP_CATALOG_LOCK_RETRIES) throw error;
@@ -138,7 +138,7 @@ export async function refreshCursorMcpCatalog(storageRoot: string, cursorDirecto
 /** Retires only Codebook's unchanged empty Cursor catalog after explicit managed-skill removal. @example await removeOwnedCursorMcpCatalog('/private', '/home/user/.cursor') */
 export async function removeOwnedCursorMcpCatalog(storageRoot: string, cursorDirectory = join(homedir(), '.cursor')): Promise<CursorCatalogCleanup> {
   const storageDirectory = join(storageRoot, 'cursor-mcp-catalog');
-  return withStorageLock(storageDirectory, async () => {
+  return withCatalogLockRetry(() => withStorageLock(storageDirectory, async () => {
     await regularDirectory(cursorDirectory);
     const targetPath = join(cursorDirectory, 'mcp.json'), receiptPath = join(storageDirectory, 'receipt.json');
     const pendingPath = join(storageDirectory, 'pending-removal.json');
@@ -161,5 +161,5 @@ export async function removeOwnedCursorMcpCatalog(storageRoot: string, cursorDir
     await atomicPrivateWrite(receiptPath, { ...owner, installed: false, retiredPath }, CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES);
     await unlink(pendingPath);
     return 'removed';
-  });
+  }));
 }

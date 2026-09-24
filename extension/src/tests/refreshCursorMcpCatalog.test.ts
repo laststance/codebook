@@ -116,6 +116,40 @@ test('removing the managed Cursor skill retires only its unchanged empty MCP cat
   assert.equal(await readFile(join(storageRoot, 'cursor-mcp-catalog', retired[0]!), 'utf8'), '{"mcpServers":{}}\n');
 });
 
+test('removing a managed Cursor MCP catalog waits for a brief competing setup write', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const storageRoot = join(directory, 'storage'), configPath = join(directory, 'mcp.json');
+  await refreshCursorMcpCatalog(storageRoot, directory);
+  const lockPath = join(storageRoot, 'cursor-mcp-catalog', 'writer.lock');
+  await writeFile(lockPath, '{"pid":12345}');
+  const released = delay(20).then(() => unlink(lockPath));
+
+  // Act
+  const removal = removeOwnedCursorMcpCatalog(storageRoot, directory);
+  await released;
+
+  // Assert
+  assert.equal(await removal, 'removed');
+  await assert.rejects(lstat(configPath), { code: 'ENOENT' });
+});
+
+test('removing a managed Cursor MCP catalog preserves an interrupted writer lock and its owned config', async context => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const storageRoot = join(directory, 'storage'), configPath = join(directory, 'mcp.json');
+  await refreshCursorMcpCatalog(storageRoot, directory);
+  const lockPath = join(storageRoot, 'cursor-mcp-catalog', 'writer.lock');
+  await writeFile(lockPath, '{"pid":12345}');
+
+  // Act / Assert
+  await assert.rejects(removeOwnedCursorMcpCatalog(storageRoot, directory), /locked by another writer/);
+  assert.equal(await readFile(lockPath, 'utf8'), '{"pid":12345}');
+  assert.equal(await readFile(configPath, 'utf8'), '{"mcpServers":{}}\n');
+});
+
 test('removing a managed Cursor MCP catalog still recognizes its unchanged file after volume device drift', async context => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'));

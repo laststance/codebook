@@ -37,14 +37,18 @@ type PendingRemoval = { schemaVersion: 1; targetPath: string; displacedPath: str
 
 export type CursorSkillResult = { status: 'installed' | 'updated' | 'restored' | 'current' | 'removed'; path: string; sha256: string; version: string };
 
+/** Classifies absent-file reads during {@link deployCursorSkill} without masking other I/O failures. @param error - File operation failure. @returns True only for `ENOENT`. @example isMissing(Object.assign(new Error('missing'), { code: 'ENOENT' })) // => true */
 function isMissing(error: unknown): boolean { return error instanceof Error && 'code' in error && error.code === 'ENOENT'; }
 
+/** Identifies skill bytes for {@link deployCursorSkill} receipts and ownership checks. @param bytes - Exact skill body. @returns Its lowercase SHA-256 digest. @example sha256(Buffer.from('a')) // => 'ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb' */
 function sha256(bytes: Buffer): string { return createHash('sha256').update(bytes).digest('hex'); }
 
+/** Inspects a skill path before {@link deployCursorSkill} changes it, treating only absence as empty. @param path - Exact file or directory path. @returns Its status, or undefined when absent. @example await inspectedPath('/missing/codebook') // => undefined */
 async function inspectedPath(path: string): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
   try { return await lstat(path); } catch (error) { if (isMissing(error)) return undefined; throw error; }
 }
 
+/** Reads a regular skill file for {@link deployCursorSkill} without accepting symlink targets. @param path - Exact file path. @returns Its bytes, or undefined when absent. @example await regularFile('/missing/SKILL.md') // => undefined */
 async function regularFile(path: string): Promise<Buffer | undefined> {
   const status = await inspectedPath(path);
   if (!status) return undefined;
@@ -52,6 +56,7 @@ async function regularFile(path: string): Promise<Buffer | undefined> {
   return readFile(path);
 }
 
+/** Creates or verifies a private parent when {@link deployCursorSkill} prepares its owned paths. @param path - Directory to inspect. @returns After a regular directory exists. @example await ensureDirectory('/private/cursor-skill') // => resolves */
 async function ensureDirectory(path: string): Promise<void> {
   const existing = await inspectedPath(path);
   if (!existing) await mkdir(path, { mode: PRIVATE_DIRECTORY_MODE });
@@ -59,6 +64,7 @@ async function ensureDirectory(path: string): Promise<void> {
   if (!status.isDirectory() || status.isSymbolicLink()) throw new Error(`Codebook will not follow a non-directory skill path: ${path}`);
 }
 
+/** Rejects redirected skill parents before {@link deployCursorSkill} reads or replaces a body. @param homeRoot - Cursor user home. @returns After all parents are regular directories. @example await assertSkillParents('/home/user') // => resolves */
 async function assertSkillParents(homeRoot: string): Promise<void> {
   for (const path of [join(homeRoot, '.cursor'), join(homeRoot, '.cursor', 'skills'), join(homeRoot, '.cursor', 'skills', 'codebook')]) {
     const status = await inspectedPath(path);
@@ -66,6 +72,7 @@ async function assertSkillParents(homeRoot: string): Promise<void> {
   }
 }
 
+/** Validates a private owner receipt before {@link deployCursorSkill} trusts prior installation. @param value - Parsed journal data. @param targetPath - Expected managed skill path. @returns A validated receipt. @example parseReceipt(record, '/home/user/.cursor/skills/codebook/SKILL.md') // => SkillReceipt */
 function parseReceipt(value: unknown, targetPath: string): SkillReceipt {
   if (typeof value !== 'object' || value === null || !('schemaVersion' in value) || value.schemaVersion !== 1 ||
     !('targetPath' in value) || value.targetPath !== targetPath || !('skillSha256' in value) || typeof value.skillSha256 !== 'string' ||
@@ -79,6 +86,7 @@ function parseReceipt(value: unknown, targetPath: string): SkillReceipt {
     extensionVersion: value.extensionVersion, installed: value.installed, device: value.device, inode: value.inode };
 }
 
+/** Loads an optional private receipt for {@link deployCursorSkill} without treating missing as corruption. @param path - Receipt path. @param targetPath - Expected skill path. @returns A validated receipt, or undefined. @example await readReceipt('/private/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md') // => undefined when absent */
 async function readReceipt(path: string, targetPath: string): Promise<SkillReceipt | undefined> {
   const bytes = await regularFile(path);
   return bytes ? parseReceipt(JSON.parse(bytes.toString('utf8')), targetPath) : undefined;
@@ -92,6 +100,7 @@ function isRetiredPath(candidate: unknown, recordPath: string, targetPath: strin
   );
 }
 
+/** Validates interrupted setup coordinates before {@link deployCursorSkill} resumes publication. @param path - Pending setup journal. @param targetPath - Expected skill path. @returns A validated pending setup, or undefined. @example await readPending('/private/pending.json', '/home/user/.cursor/skills/codebook/SKILL.md') // => undefined when absent */
 async function readPending(path: string, targetPath: string): Promise<PendingSkill | undefined> {
   const bytes = await regularFile(path);
   if (!bytes) return undefined;
@@ -117,6 +126,7 @@ async function readPending(path: string, targetPath: string): Promise<PendingSki
   return value as PendingSkill;
 }
 
+/** Validates interrupted removal coordinates before {@link deployCursorSkill} or cleanup recovers. @param path - Pending removal journal. @param targetPath - Expected skill path. @returns A validated pending removal, or undefined. @example await readPendingRemoval('/private/removal.json', '/home/user/.cursor/skills/codebook/SKILL.md') // => undefined when absent */
 async function readPendingRemoval(path: string, targetPath: string): Promise<PendingRemoval | undefined> {
   const bytes = await regularFile(path);
   if (!bytes) return undefined;
@@ -138,6 +148,7 @@ async function matchesOwnedFile(path: string, owner: Pick<SkillReceipt, 'skillSh
   return sha256(bytes) === owner.skillSha256 && (await lstat(path)).ino === status.ino;
 }
 
+/** Stages new bytes privately before {@link deployCursorSkill} atomically replaces an owned skill. @param directory - Owned staging directory. @param bytes - Complete skill body. @returns Path to the staged regular file. @example await writeStagedBytes('/private/cursor-skill', Buffer.from('skill')) // => staged path */
 async function writeStagedBytes(directory: string, bytes: Buffer): Promise<string> {
   const path = join(directory, `.codebook-stage-${randomUUID()}.tmp`), handle = await open(path, 'wx', PRIVATE_FILE_MODE);
   try { await handle.writeFile(bytes); await handle.sync(); }
@@ -145,10 +156,12 @@ async function writeStagedBytes(directory: string, bytes: Buffer): Promise<strin
   await handle.close(); return path;
 }
 
+/** Removes only a matching abandoned stage while {@link deployCursorSkill} recovers setup. @param pending - Validated stage receipt. @returns After any owned stage is removed. @example await removeOwnedStage(pending) // => resolves */
 async function removeOwnedStage(pending: PendingSkill): Promise<void> {
   if (await matchesOwnedFile(pending.stagedPath, pending)) await unlink(pending.stagedPath);
 }
 
+/** Retains the actual displaced skill during {@link deployCursorSkill} recovery, then checks its bytes. @param path - Displaced live path. @param retiredPath - Private retention path. @param owner - Prior owner receipt. @returns After the displacement is safely retained. @example await retireDisplaced('/home/user/.cursor/skills/codebook/.codebook-displaced-id.tmp', '/private/retired-id.SKILL.md', receipt) // => resolves */
 async function retireDisplaced(path: string, retiredPath: string, owner: SkillReceipt): Promise<void> {
   const displaced = await inspectedPath(path), retired = await inspectedPath(retiredPath);
   if (displaced && retired) throw new Error('Cursor skill displacement and private retention both exist; Codebook preserved both for inspection.');
@@ -158,12 +171,14 @@ async function retireDisplaced(path: string, retiredPath: string, owner: SkillRe
     throw new Error('The displaced Cursor skill changed; Codebook retained its actual bytes privately for recovery.');
 }
 
+/** Completes a pending displacement before {@link deployCursorSkill} publishes another body. @param pending - Validated setup journal. @returns After prior bytes are retained. @example await removeOwnedDisplacement(pending) // => resolves */
 async function removeOwnedDisplacement(pending: PendingSkill): Promise<void> {
   if (!pending.displacedPath) return;
   if (!pending.previous || !pending.retiredPath) throw new Error('Cursor skill displacement has no complete recovery record.');
   await retireDisplaced(pending.displacedPath, pending.retiredPath, pending.previous);
 }
 
+/** Finishes or rejects an interrupted skill removal before {@link deployCursorSkill} reuses its receipt. @param path - Removal journal. @param receiptPath - Owner receipt path. @param targetPath - Managed skill path. @returns The recovered owner and completion flag, or undefined. @example await recoverRemoval('/private/removal.json', '/private/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md') // => undefined when absent */
 async function recoverRemoval(path: string, receiptPath: string, targetPath: string): Promise<{ owner: SkillReceipt; completed: boolean } | undefined> {
   const pending = await readPendingRemoval(path, targetPath);
   if (!pending) return undefined;
@@ -185,6 +200,7 @@ async function recoverRemoval(path: string, receiptPath: string, targetPath: str
   return { owner: pending.owner, completed: !target };
 }
 
+/** Reads the installed canonical skill when {@link deployCursorSkill} starts setup. @param extensionPath - Installed VSIX root. @returns Exact bytes, version and digest. @example await packageSkill('/extensions/laststance.codebook-0.2.3') // => { bytes, version, sha256 } */
 async function packageSkill(extensionPath: string): Promise<{ bytes: Buffer; version: string; sha256: string }> {
   const path = join(extensionPath, SKILL_RELATIVE_PATH), bytes = await regularFile(path);
   if (!bytes) throw new Error('This Codebook installation is missing its bundled skill. Reinstall the VSIX.');

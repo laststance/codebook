@@ -99,6 +99,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const groupChangeListeners = new Set<(event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => void>();
   const changedGroups = (event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => { for (const listener of groupChangeListeners) listener(event); };
   let sourceProvider = async (_uri: Uri) => '';
+  let sourceOpenFailure = false;
   let delayedPanelKind: string | undefined;
   let deferredPanelRegistration = false;
   let registerDelayedPanel = () => {};
@@ -370,6 +371,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   /** Resolves displayed URIs through the fake workspace loader so native source tabs keep real document text. @example (await openSourceDocument(Uri.file(path))).getText() */
   const openSourceDocument = async (uri: Uri) => {
     const held = nextOpen; nextOpen = undefined; if (held) { held.entered(); await held.wait; }
+    if (sourceOpenFailure && uri.scheme !== 'file') throw new Error('Injected current source open failure');
     const text = uri.scheme === 'file' ? await readFile(uri.fsPath, 'utf8') : await sourceProvider(uri), normalized = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
     return { uri, getText: () => normalized, validatePosition: (position: Position) => { const lines = normalized.split('\n'), line = Math.min(position.line, lines.length - 1); return new Position(line, Math.min(position.character, lines[line]!.length)); } };
   };
@@ -571,6 +573,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     restoreSourceFocusOnArrange() { sourceFocusOnArrange = lastSourceEditor; },
     reportSourceEditorInColumn(column: number) { reportedSourceColumn = column; },
     invalidateNextSourceRender() { nextSourceDisplay = () => { reader['revision']++; }; },
+    failCurrentSourceOpen() { sourceOpenFailure = true; },
     abortAfterNextSourceDisplay(cancellation: AbortController) { nextSourceDisplay = () => cancellation.abort(); },
     clearDecorations() { decoratedColumns.length = 0; }, decoratedColumns: () => [...decoratedColumns],
     moveSource(column: number) {
@@ -1232,6 +1235,26 @@ test('Return to Current keeps presentation admission closed until its saved-hist
       { code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'A presentation change or reader close is pending. Read its state before another control.' });
     assert.equal(harness.reader.presentationState().reader.followingCurrentRun, true);
   } finally { releaseRefresh(); await returning?.catch(() => undefined); await presentation?.catch(() => undefined); await harness.close(); }
+});
+
+test('Return to Current reports failure when the current source cannot appear in the native reader', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    await harness.reader.open();
+    await harness.reader.select('paired-cart-demo/server');
+    const state = harness.reader.presentationState();
+    harness.failCurrentSourceOpen();
+
+    // Act
+    const returning = harness.reader.returnToCurrent({ presentationId: state.presentationId, expectedRevision: state.reader.contentRevision });
+
+    // Assert
+    await assert.rejects(returning, { code: 'EVIDENCE_UNAVAILABLE' });
+    assert.equal(harness.reader.presentationState().reader.followingCurrentRun, true);
+    assert.equal(harness.reader['sourceReady'](), false);
+    assert.ok(harness.reader.inspect().view!.errors.some(error => error.includes('Injected current source open failure')));
+  } finally { await harness.close(); }
 });
 
 test('Return to Current rejects a revision from before the learner changed content tabs', async () => {
