@@ -11,6 +11,11 @@ Cycle 0019 adds the common versioned `codebook` skill to the VSIX, registers it 
 - A single setup command for a trusted current workspace, with host-specific MCP registration and same-workspace restart handling. Same clean-candidate installed chat behavior remains unverified.
 - Bounded bridge reconnection after an expired upstream session, immediate session termination on child exit, and journaled recovery for interrupted Cursor skill installation, update and removal.
 
+### Fixed
+
+- Serialize overlapping Cursor AI Chat setup and registration, reject readiness when another window removes the shared skill, and preserve a newer window's MCP catalog during stale cleanup. Publish the first owned empty catalog through a recoverable journal.
+- Retry a failed native source reveal when returning from saved history, and report unavailable evidence if the current source still cannot be shown.
+
 ## [0.2.2.0] - 2026-09-23
 
 Private preview 0.2.2 / MCP API 1.5. This increment repairs native Study/Wiki entry and presentation transfer. The same normally installed v32 candidate passes the complete frozen VS Code and Cursor development schedules, including v31's cold Study regression, with inspected video and protected original work. Source and same-source CI pass 993 product/shared and 96 package checks. [PR #24](https://github.com/laststance/codebook/pull/24) merged; exact-main CI succeeded and its downloaded VSIX matches all 276 source inputs and 29/31 installed-v32 entries, with only revision metadata/reference differences. The three reused delegated fixing passes retain non-convergence and the later current-head CodeRabbit pass has one minor packaged README status finding. The main CI artifact was package-compared, not natively executed. Visible loading and broader UX remain open. G12 and final editor-AI acceptance remain unimplemented/unstarted; no publication is claimed.
