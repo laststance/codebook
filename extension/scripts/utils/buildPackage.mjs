@@ -37,7 +37,7 @@ export async function buildPackage(repository, output, runCommand = runPackageCo
     const build = JSON.parse(await readFile(join(extensionRoot, 'dist/build.json'), 'utf8'));
     assert.deepEqual(build, { ...before, extensionVersion: compiled.EXTENSION_VERSION, apiVersion: compiled.API_VERSION }, 'Compiled metadata does not match package inputs.');
     const capturedInputs = new Map();
-    const result = await bundle({ absWorkingDir: repository, entryPoints: { extension: 'extension/dist/extension.js', cursorMcpBridge: 'extension/dist/cursorMcpBridge.js' },
+    const result = await bundle({ absWorkingDir: repository, entryPoints: { extension: 'extension/dist/extension.js', cursorMcpBridge: 'extension/dist/cursorMcpBridgeEntry.js' },
       outdir: join(stage, 'dist'), bundle: true,
       platform: 'node', target: 'node24', format: 'cjs', external: ['vscode'], metafile: true, write: false, logLevel: 'silent',
       plugins: [{ name: 'capture-bundle-inputs', setup(builder) { builder.onLoad({ filter: /\.(?:[cm]?js|json)$/, namespace: 'file' }, async ({ path }) => {
@@ -73,6 +73,12 @@ export async function buildPackage(repository, output, runCommand = runPackageCo
     files.set(PACKAGE_MANIFEST_PATH, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
     for (const [file, content] of files) { const path = join(stage, file); await mkdir(dirname(path), { recursive: true }); await writeFile(path, content); }
     await runCommand(process.execPath, ['--check', join(stage, 'dist/cursorMcpBridge.js')], repository);
+    // A syntax-valid bridge can still exit without entering its bundled CLI; require the fixed recovery path.
+    let bridgeStartupFailure;
+    try { await runCommand(process.execPath, [join(stage, 'dist/cursorMcpBridge.js'), join(stage, 'missing.connection.json')], repository); }
+    catch (error) { bridgeStartupFailure = error; }
+    assert.equal(bridgeStartupFailure?.code, 1, 'Bundled Cursor MCP bridge did not reject an unavailable connection descriptor.');
+    assert.equal(bridgeStartupFailure.stderr.trim(), 'Codebook Cursor MCP bridge could not connect. Run Codebook: Set Up AI Chat in this Cursor window.');
     const vsce = join(dirname(vsceManifestPath), 'vsce');
     await runCommand(process.execPath, [vsce, 'package', '--out', candidate, '--no-dependencies', '--skip-license', '--no-rewrite-relative-links', '--no-gitHubIssueLinking', '--no-gitLabIssueLinking'], stage);
     const archiveBytes = await readVsixBytes(candidate);

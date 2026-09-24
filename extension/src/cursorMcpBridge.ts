@@ -79,13 +79,3 @@ export async function runCursorMcpBridge(descriptorPath: string): Promise<void> 
   process.once('SIGTERM', stopForSignal);
   process.once('SIGINT', stopForSignal);
 }
-
-if (require.main === module) {
-  const descriptorPath = process.argv[2];
-  if (!descriptorPath) throw new Error('Codebook Cursor MCP bridge requires the current private connection descriptor.');
-  void runCursorMcpBridge(descriptorPath).catch(() => {
-    // Input-derived parse errors can contain descriptor fragments, so stderr must never echo the exception.
-    console.error('Codebook Cursor MCP bridge could not connect. Run Codebook: Set Up AI Chat in this Cursor window.');
-    process.exitCode = 1;
-  });
-}

@@ -19,7 +19,7 @@ test('Cursor stdio bridge exposes the current authenticated Codebook instance wi
   context.after(async () => { await endpoint.close(); await harness.close(); await rm(directory, { recursive: true, force: true }); });
   const descriptorPath = join(directory, 'current.connection.json');
   await writeFile(descriptorPath, JSON.stringify(endpoint.descriptor), { mode: 0o600 });
-  const arguments_ = [join(__dirname, '../cursorMcpBridge.js'), descriptorPath];
+  const arguments_ = [join(__dirname, '../cursorMcpBridgeEntry.js'), descriptorPath];
   assert.doesNotMatch(JSON.stringify(arguments_), new RegExp(endpoint.descriptor.token));
   const transport = new StdioClientTransport({ command: process.execPath, args: arguments_, stderr: 'pipe' });
   const client = new Client({ name: 'cursor-stdio-bridge-test', version: '1.0' });
@@ -51,7 +51,7 @@ test('closing Cursor MCP bridges releases server session slots before the next s
   await writeFile(descriptorPath, JSON.stringify(endpoint.descriptor), { mode: 0o600 });
   // Act / Assert
   for (let index = 0; index < 9; index += 1) {
-    const transport = new StdioClientTransport({ command: process.execPath, args: [join(__dirname, '../cursorMcpBridge.js'), descriptorPath], stderr: 'pipe' });
+    const transport = new StdioClientTransport({ command: process.execPath, args: [join(__dirname, '../cursorMcpBridgeEntry.js'), descriptorPath], stderr: 'pipe' });
     const client = new Client({ name: 'cursor-restart-test', version: '1.0' });
     let childError = '';
     transport.stderr?.on('data', chunk => { childError += String(chunk); });
@@ -70,7 +70,7 @@ test('a malformed private descriptor cannot leak credential fragments through Cu
   const descriptorPath = join(directory, 'broken.connection.json'), secretMarker = 'PRIVATE_TOKEN_FRAGMENT';
   await writeFile(descriptorPath, `{"url":"http://127.0.0.1","token":${secretMarker}}`, { mode: 0o600 });
   // Act
-  const child = spawn(process.execPath, [join(__dirname, '../cursorMcpBridge.js'), descriptorPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [join(__dirname, '../cursorMcpBridgeEntry.js'), descriptorPath], { stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += String(chunk); });
   const [exitCode] = await once(child, 'exit');
