@@ -311,7 +311,7 @@ export class StudyWorkspace {
         await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors');
         transition.cancellation.signal.throwIfAborted(); this.assertLifetime(lifetime);
         focusedPane.assertCurrent();
-        await this.arrange(transition.cancellation.signal, 'study');
+        await this.arrange(transition.cancellation.signal, 'study', false, undefined, focusedPane.beforeScopeFocus);
         transition.cancellation.signal.throwIfAborted(); this.assertLifetime(lifetime);
         focusedPane.assertCurrent();
         if (!vscode.window.state.focused || transition.runtimeIdentity !== this.assertPresentationAdmission() || !this.hasStudyPaneColumns()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Study focus or evidence changed during Restore. Inspect the current panes before retrying.');
@@ -319,7 +319,7 @@ export class StudyWorkspace {
           this.presentationConfirmed = true; this.requestedPresentation = undefined; this.presentationReason = undefined;
           this.errors.delete('presentation'); this.publish();
           await this.savePresentationPreference(input.mode, transition.id);
-        } else if (await this.hasRetainedStudyTopology(transition.cancellation.signal)) {
+        } else if (await this.hasRetainedStudyTopology(transition.cancellation.signal, focusedPane.beforeScopeFocus)) {
           focusedPane.assertCurrent();
           await this.readStudyPane('context', transition.cancellation.signal);
           this.errors.delete('layout');
@@ -693,8 +693,8 @@ export class StudyWorkspace {
     } finally { focusedPane.dispose(); }
   }
 
-  /** Rejects a newer native tab choice while Read or Restore waits on a host command, without treating delayed inner webview focus as departure. @param requireOwned - Require the starting tab to be a Codebook pane. @example const focus = this.trackFocusedStudyPane(); focus.assertCurrent(); focus.dispose() */
-  private trackFocusedStudyPane(requireOwned = true): { assertCurrent(): void; dispose(): void } {
+  /** Watches Read and Restore from the selected pane so later learner navigation wins over host commands; Restore announces its temporary main-part focus before measuring layout. @param requireOwned - Require the starting tab to be a Codebook pane. @example const focus = this.trackFocusedStudyPane(); focus.assertCurrent(); focus.dispose() */
+  private trackFocusedStudyPane(requireOwned = true): { assertCurrent(): void; beforeScopeFocus(acquire?: RepositoryFocusTarget): void; dispose(): void } {
     const group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
     const expectedColumn = group.viewColumn;
     const panes = this.studyPanePositions(), sourceUri = this.sourceUri?.toString();
@@ -710,12 +710,25 @@ export class StudyWorkspace {
         && (textUri !== undefined ? current instanceof vscode.TabInputText && current.uri.toString() === textUri
           : webviewKind !== undefined ? current instanceof vscode.TabInputWebview && current.viewType === webviewKind : current === undefined);
     };
-    let departed = false;
-    const observe = () => { if (!retainsFocus()) departed = true; };
+    let departed = false, borrowed: RepositoryFocusTarget | undefined, pendingBorrow: RepositoryFocusTarget | undefined;
+    const observe = () => {
+      if (departed) return;
+      if (pendingBorrow?.matchesGroup()) {
+        // Only the announced native target can replace the old focus; returning to the original pane ends the borrow.
+        borrowed = retainsFocus() ? undefined : pendingBorrow; pendingBorrow = undefined;
+      } else if (!(borrowed?.matchesGroup() ?? retainsFocus())) departed = true;
+    };
+    const assertRetained = () => { observe(); if (departed) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The learner changed native tab focus while the Study layout command was pending. The newer choice was preserved.'); };
     const subscriptions = [vscode.window.tabGroups.onDidChangeTabs(observe), vscode.window.tabGroups.onDidChangeTabGroups(observe),
       vscode.window.onDidChangeActiveTextEditor(observe), vscode.window.onDidChangeWindowState(observe)];
     return {
-      assertCurrent() { observe(); if (departed) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The learner changed native tab focus while the Study layout command was pending. The newer choice was preserved.'); },
+      assertCurrent() { assertRetained(); if (borrowed || pendingBorrow || !retainsFocus()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The Study pane did not regain native focus after layout measurement.'); },
+      beforeScopeFocus(acquire) {
+        assertRetained();
+        if (!acquire || pendingBorrow) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The Study scope focus target could not be retained safely.');
+        pendingBorrow = acquire;
+        observe();
+      },
       dispose() { for (const subscription of subscriptions) subscription.dispose(); },
     };
   }
@@ -2343,8 +2356,8 @@ export class StudyWorkspace {
   }
 
   /** Accepts a host-clamped Study topology while withholding the proportional layout receipt; cold Open and Restore use this boundary. @example await this.hasRetainedStudyTopology() */
-  private async hasRetainedStudyTopology(signal?: AbortSignal): Promise<boolean> {
-    const grid = await this.readMainEditorGrid(signal, () => signal?.throwIfAborted());
+  private async hasRetainedStudyTopology(signal?: AbortSignal, beforeScopeFocus?: (acquire?: RepositoryFocusTarget) => void): Promise<boolean> {
+    const grid = await this.readMainEditorGrid(signal, () => signal?.throwIfAborted(), undefined, beforeScopeFocus);
     const parsed = editorLayoutSchema.safeParse(grid.layout);
     return grid.groups.length === STUDY_EDITOR_GROUP_COUNT && grid.preservesOtherParts(STUDY_EDITOR_GROUP_COUNT)
       && parsed.success && parsed.data.orientation === HORIZONTAL_EDITOR_ORIENTATION && parsed.data.groups.length === 2
@@ -2452,7 +2465,7 @@ export class StudyWorkspace {
   }
 
   /** Switches explicit reader entry between owned layouts without merging groups or replacing manual arrangements. @example await this.arrange(signal, 'repository', true) */
-  private async arrange(signal?: AbortSignal, mode: 'study' | 'repository' = 'study', ownedOnly = false, focus?: RepositoryLayoutFocus): Promise<void> {
+  private async arrange(signal?: AbortSignal, mode: 'study' | 'repository' = 'study', ownedOnly = false, focus?: RepositoryLayoutFocus, beforeScopeFocus?: (acquire?: RepositoryFocusTarget) => void): Promise<void> {
     await this.withLayout(signal, async (lifetime, assertCurrent) => {
       // A retained Study layout still queues Wiki entry; hand off its original focus before reading or returning early.
       focus?.begin();
@@ -2460,7 +2473,7 @@ export class StudyWorkspace {
         const receipt = this.layoutReceipt;
         if (!receipt || receipt.mode === mode) return;
         if (!this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all)) { this.layoutReceipt = undefined; return; }
-        const { layout } = await this.readMainEditorGrid(signal, assertCurrent, focus?.acquireSourceFocus);
+        const { layout } = await this.readMainEditorGrid(signal, assertCurrent, focus?.acquireSourceFocus, beforeScopeFocus);
         // Structure, sizes and native group identities must all still match our last completed arrangement.
         const groups = vscode.window.tabGroups.all;
         if (receipt !== this.layoutReceipt || JSON.stringify(layout) !== receipt.signature || !this.sameEditorGroups(receipt.groups, groups)
@@ -2468,7 +2481,7 @@ export class StudyWorkspace {
         // Reentry already restored its known Study grid; promote its validated receipt without overwriting geometry again.
         if (mode === 'study' && receipt.mode === 'study-reentry') { this.layoutReceipt = { ...receipt, mode, panes: this.studyPanePositions(), sourceTargetColumn: undefined }; this.errors.delete('layout'); this.publish(); return; }
       }
-      const grid = await this.readMainEditorGrid(signal, assertCurrent, focus?.acquireSourceFocus);
+      const grid = await this.readMainEditorGrid(signal, assertCurrent, focus?.acquireSourceFocus, beforeScopeFocus);
       if (grid.groups.length > STUDY_EDITOR_GROUP_COUNT) { this.layoutReceipt = undefined; this.report('layout', new Error('Existing editor groups were preserved. Use the focus commands or arrange the Codebook panes manually.')); return; }
       this.layoutReceipt = undefined;
       const retainedGroups = grid.groups;

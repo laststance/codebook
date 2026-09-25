@@ -2899,6 +2899,53 @@ test('Restore after focused reading recovers the confirmed Study layout when nat
   } finally { await harness.close(); }
 });
 
+test('Restore beside a separate editor part keeps the selected explanation after borrowing primary focus', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const chat = harness.addSeparateEditorPart();
+  harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  try {
+    await harness.reader.open();
+    await harness.reader.action('read-context');
+
+    // Act
+    await harness.reader.action('arrange');
+
+    // Assert
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.reader.presentationState().state, 'open');
+    assert.doesNotMatch(harness.reader.presentationState().reason ?? '', /learner changed native tab focus/i);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { await harness.close(); }
+});
+
+test('Restore beside a separate editor part preserves a learner tab chosen during its focus borrow', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const chat = harness.addSeparateEditorPart();
+  harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    await harness.reader.action('read-context');
+    const held = harness.holdNextCommand('workbench.action.focusFirstEditorGroup'); release = held.release;
+
+    // Act
+    const restoring = harness.reader.action('arrange');
+    await held.started;
+    const draft = harness.focusMutableDraft('newer-scope-notes.txt', 3);
+    release(); await restoring;
+
+    // Assert
+    assert.equal(harness.groups.find(group => group.viewColumn === 3)?.activeTab, draft.tab);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.match(harness.reader.presentationState().reason ?? '', /learner changed native tab focus/i);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { release(); await harness.close(); }
+});
+
 test('successful Study reading clears an earlier background-window reading error', async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
@@ -3035,8 +3082,8 @@ test('constrained Restore leaves the learner draft active when a later topology 
     await harness.reader.open(); await harness.reader.action('read-app');
     const checkTopology = harness.reader['hasRetainedStudyTopology'].bind(harness.reader);
     let newerDraft: ReturnType<typeof harness.focusMutableDraft> | undefined;
-    harness.reader['hasRetainedStudyTopology'] = async signal => {
-      const retained = await checkTopology(signal);
+    harness.reader['hasRetainedStudyTopology'] = async (signal, beforeScopeFocus) => {
+      const retained = await checkTopology(signal, beforeScopeFocus);
       if (retained) newerDraft = harness.focusMutableDraft('later-topology-notes.txt', 3);
       return retained;
     };
