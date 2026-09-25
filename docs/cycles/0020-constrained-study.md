@@ -1,13 +1,13 @@
 # Cycle 0020 — Readable Study at constrained editor sizes
 
-Type: hardening  
-Status: planning  
-Result: pending  
-Delivery: local-only  
-Goal version: 5  
-Tracking issue: [#27](https://github.com/laststance/codebook/issues/27)  
-Goal issue: [#1](https://github.com/laststance/codebook/issues/1)  
-Goal links: G07, G11; G12 only for an explicitly identified editor-chat development check  
+Type: hardening
+Status: implementing and validating
+Result: partial; VS Code development observation, Cursor native validation pending
+Delivery: [Draft PR #28](https://github.com/laststance/codebook/pull/28), not merged
+Goal version: 5
+Tracking issue: [#27](https://github.com/laststance/codebook/issues/27)
+Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
+Goal links: G07, G11; G12 only for an explicitly identified editor-chat development check
 Source state: merged [PR #26](https://github.com/laststance/codebook/pull/26), `ffb9eb9043b01a52d04306aae6056c5f558f63b2`, after [Cycle 0019](0019-bundled-codebook-skill.md)
 
 ## Question and expected value
@@ -31,7 +31,7 @@ On 2026-09-25, the driving agent freshly read [Goal Issue #1](https://github.com
 1. Reproduce the exact source cut and inspect native groups, grid proportions, focus, viewport and reader output. Use `/investigate` if the failure remains unexplained.
 2. Compare the observed layout with the existing arrangement and responsive UI contracts. Use `/plan-design-review` for any new learner-facing focus behavior; use `/plan-eng-review` for a material native-layout change.
 3. Add a behavior-focused failing control, implement the narrow repair, then run focused and full checks. Package one clean VSIX.
-4. Normally install that VSIX in both editors. Record separate host/version, viewport, zoom, videos and inspected transition frames. Keep any AI chat trial separate; in VS Code use [D025](../../DECISIONS.md#d025--use-the-available-vs-code-chat-in-credit-conscious-order-2026-09-25): Copilot Chat Auto, then Claude Code MAX20 if unavailable, then Codex if unavailable.
+4. Normally install that VSIX in both editors. Use normal window size and zoom as the main usability trial; retain 1240×776 at 200% zoom as the targeted Cycle 0019 regression. Record separate host/version, viewport, zoom, videos and inspected transition frames. Keep any AI chat trial separate; in VS Code use [D025](../../DECISIONS.md#d025--use-the-available-vs-code-chat-in-credit-conscious-order-2026-09-25): Copilot Chat Auto, then Claude Code MAX20 if unavailable, then Codex if unavailable.
 5. Run `/review`, CodeRabbit CLI and CodeRabbit hosted PR review, resolve actionable findings, verify current-head CI and native/source correspondence, and deliver this bounded cycle through its PR. The initial Draft PR description includes `@coderabbitai ignore`; remove it when Ready to activate hosted review.
 
 ## Validation contract
@@ -47,21 +47,25 @@ Expectations frozen before implementation; exact installed versions and artifact
 
 ## Attempts and evidence
 
-Cycle selection only. The inherited [Cycle 0019 compact failure](evidence/0019/isolated-claude-layout-restart-20260925.md) belongs to an earlier VSIX and does not yet reproduce this merged source. The repository [CodeRabbit configuration](../../.coderabbit.yaml) already enables hosted automatic PR review with Drafts excluded; this cycle makes the enabled setting and no auto-pause explicit, then validates it. No Cycle 0020 product result or final reviewer credit exists yet.
+The inherited [Cycle 0019 compact failure](evidence/0019/isolated-claude-layout-restart-20260925.md) belongs to an earlier VSIX. Its host-clamped 220/220 outer, 70/70 inner native grid explained why a fixed proportional receipt could not certify the three-pane Study at 200% zoom. Cycle 0020 now accepts the retained three owned destinations as an unconfirmed state, focuses one pane on Read, and tries Restore without claiming a split the host did not retain. `extension/src/studyWorkspace.ts`, its UI/command declarations and behavior-focused `extension/src/tests/studyWorkspace.test.ts` contain the implementation and regression controls. Focus and captured-source cursor races found during CodeRabbit CLI/adversarial review were reproduced red-before and pass after repair. A later installed VS Code observation exposed a stale background-window reading error after successful retry; the error is now scoped to reading and cleared on success, with a focused regression test. The final full run and clean archive check remain pending at this document update.
+
+The [installed development record](evidence/0020/installed-layout-development.md) identifies the dirty VSIX, isolated VS Code 1.139.0 host, 1240×776 viewport, both zoom levels, actual Read/Restore controls, line-55/column-25 source retention, and measured three-group normal-zoom grid. At 200% zoom, cold Open showed an honestly unconfirmed focused explanation; the complete high-zoom transition schedule and video were not captured. The same archive installed into isolated Cursor 3.22.8, but Computer Use selected the owner's unrelated work window even after a separate test process was relaunched; Cursor native UI behavior remains unverified. That dirty archive predates the scoped-error fix and is not final candidate proof. No final reviewer credit exists.
+
+The repository [CodeRabbit configuration](../../.coderabbit.yaml) enables hosted automatic PR review with Drafts excluded and no auto-pause. Two CLI passes reviewed implementation cuts; the later pass found only duplicate minor documentation-staleness suggestions addressed by this record. Hosted review remains disabled while PR #28 is Draft with `@coderabbitai ignore`; Ready conversion and current-head hosted review are delivery steps.
 
 ## Result and decision
 
-- Result: pending.
-- Findings: pending reproduction and root-cause evidence.
-- Keep / revise / replace: pending.
-- Evidence that can update goal state: actual installed-host reading and Restore evidence only after observed PASS.
-- Remaining gaps and regression obligations: all G01–G12 integrated and final acceptance conditions remain open.
-- Delivery state and proof: local branch `codex/cycle-0020-readable-study`; Issue #27 open; Goal #1 open.
+- Result: partial. The measured VS Code normal-zoom development cut reached all three readers and Restore; the high-zoom cold entry reported its native limitation truthfully. The final source cut and Cursor have not completed native validation. The final source checks passed 949/949 extension tests, 101/101 package tests and TypeScript typecheck.
+- Findings: native minimum dimensions clamp the high-zoom grid; asynchronous host commands can race with a newer learner tab choice; reopening captured source with an explicit selection reset the learner cursor. Regression tests cover each repaired race and the focused fallback.
+- Keep / revise / replace: keep focused reading plus an honest unconfirmed layout state. Use normal geometry as the primary usability trial and high zoom as a focused regression.
+- Evidence that can update goal state: the source-matched installed-host reading and Restore evidence only after both hosts and required recordings pass.
+- Remaining gaps and regression obligations: final clean VSIX/source correspondence; normal/high-zoom video and frame inspection; Cursor native trial; preserved item/playhead/progress/foreign work in both hosts; integrated G01–G12 and final acceptance.
+- Delivery state and proof: branch `codex/cycle-0020-readable-study`; [Draft PR #28](https://github.com/laststance/codebook/pull/28), Issue #27 open, Goal #1 open.
 
 ## Handoff
 
-- Exact next action: reproduce high-zoom Study/Restore on the merged source in a dedicated normal VS Code window, then trace the layout/focus code against the native receipt before changing it.
-- Changed files / branch / active processes: `codex/cycle-0020-readable-study`; no cycle-owned editor or target process started yet.
+- Exact next action: build and install one clean source-matched VSIX, repeat the normal/high-zoom Read/Restore trial, then obtain a selectable isolated Cursor native window and complete the paired video/state schedule. Submit the branch for hosted CodeRabbit review after updating the PR from Draft.
+- Changed files / branch / active processes: `codex/cycle-0020-readable-study`; isolated `/tmp/cb20qa` VS Code and `/tmp/cb20cursorqa` Cursor profiles and their test target may be running. The owner's Cursor Agents window must not be used as the test target.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: none; D025 applies unchanged.
 - At most one next candidate and why (after evidence): select only after this cycle's result.

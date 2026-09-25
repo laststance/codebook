@@ -1,0 +1,16 @@
+{
+  "layout": {
+    "orientation": 0,
+    "groups": [
+      { "size": 309, "groups": [{ "size": 160 }, { "size": 159 }] },
+      { "size": 253 }
+    ]
+  },
+  "groups": [
+    { "column": 1, "tabs": 1, "activeKind": "mainThreadWebview-codebook.scopedBrowser" },
+    { "column": 2, "tabs": 1, "activeKind": "text-or-other" },
+    { "column": 3, "tabs": 1, "activeKind": "mainThreadWebview-codebook.studyContext" }
+  ],
+  "zoomLevel": 0,
+  "activeColumn": 3
+}
