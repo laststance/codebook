@@ -1,9 +1,9 @@
 # Cycle 0024 — Ordinary `/codebook` runtime on a second repository
 
 Type: experiment
-Status: planning
-Result: pending
-Delivery: pending
+Status: validating; bounded two-host development result demonstrated, delivery review pending
+Result: bounded two-host development result demonstrated
+Delivery: [Draft PR #37](https://github.com/laststance/codebook/pull/37) open; review and merge pending
 Goal version: 5
 Tracking issue: [#36](https://github.com/laststance/codebook/issues/36)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -48,21 +48,27 @@ On 2026-09-26, the driver freshly read open Goal #1, PRODUCT_GOAL.md version 5, 
 
 ## Attempts and evidence
 
-Pending. These are development trials; final reviewer count stays **0/10**.
+[The host-specific development evidence](evidence/0024/ordinary-two-host-theme-20260926.md) records the frozen package, target commit and question; five separate runtime attempts; exact source/value, Study and recording identities; native Wiki/replay; renderer videos and inspected frames; and owner-state restoration. The same clean 35-entry VSIX was installed in separate VS Code 1.139.1 and Cursor 3.22.8 directories. Both ordinary `/codebook` chats called the correct work-window MCP, chose source/stop/action through public help and reached real `ThemeToggle.tsx:19` execution without operator-supplied selectors or values.
+
+VS Code Copilot Chat Auto routed to GPT-5.6 Luna. Its first selector assumption failed before input; its second broad after condition clicked and paused but did not verify. The third run `13e64256…` demonstrated dark-to-light after the AI narrowed the after selector, saved a complete 14-frame recording and linked Wiki revision 2. The actual captured values were the document class and URL; `otherTheme = light` in its answer was source-derived, not a captured local variable.
+
+Cursor Agent Grok 4.7 High Fast first paused and captured `otherTheme = dark`, but its request for `resolvedTheme` from outside the frame was refused as potentially side-effecting, so run `6ce653b5…` remained not-demonstrated. The AI revised the required values and run `46dacb51…` demonstrated light-to-dark, with actual `otherTheme = dark`, `html.dark`, a changed button and a complete 13-frame recording. Native saved playback showed white/sun at its 31.73 s pause and dark/moon at its 59.63 s endpoint. Its answer distinguished observation from source inference.
+
+Both Wiki View observation and View recording worked after the runs stopped, with understanding unchecked. Read explanation used the focused fallback without the user's screenshot error, while explicitly leaving three-pane restoration unconfirmed. The VS Code and Cursor renderer recordings were inspected at multiple frames and remain private; their host-specific direction and values are not combined. The owner Cursor skill 1.0.10 was restored through its valid managed receipt, owner settings/default extensions retained baseline hashes, the two target clones stayed clean, the original unrelated edit stayed intact and dedicated processes exited. The ignored private manifest preserves stable paths and checksums. These are development trials; final reviewer count stays **0/10**.
 
 ## Result and decision
 
-- Result: pending.
-- Findings: pending.
-- Keep / revise / replace: pending.
-- Evidence that can update goal state: pending.
-- Remaining gaps and regression obligations: full checkout, third intended-use context, broad repositories, three-mode and integrated G01–G12, owner acceptance and final reviewers remain open.
-- Delivery state and proof: pending.
+- Result: demonstrated for this frozen ordinary-chat theme question on one familiar second repository in both hosts, after truthful failed attempts.
+- Findings: source-grounded AI retries can reach a real pause, captured value, continuation, visible theme change and durable replay. VS Code's initial theme and after-selector assumptions, and Cursor's unavailable expression, remain concrete first-try robustness gaps. Read explanation reaches a focused fallback; this trial does not prove the intended three-pane layout.
+- Keep / revise / replace: keep the current package for the next bounded question. No product-source change was needed here; preserve the failed runs as regression examples rather than treating the successful retries as first-try success.
+- Evidence that can update goal state: ordinary Copilot Chat Auto and Cursor Agent independently demonstrated one real second-repository action with the same clean VSIX. This advances G01/G03/G04/G06/G10/G11/G12 evidence only within the described target and question; it does not close any final capability alone.
+- Remaining gaps and regression obligations: first-try selector/value robustness, full checkout, unfamiliar and diverse repositories, all three native display modes, integrated G01–G12, owner acceptance and final reviewers remain open.
+- Delivery state and proof: Draft PR #37 is open; local/hosted review, checks, merge and Issue #36 closure are pending.
 
 ## Handoff
 
-- Exact next action: freeze the last clean VSIX and create the isolated target clone, then run the first ordinary VS Code chat before Cursor.
-- Changed files / branch / active processes: `codex/cycle-0024-ordinary-repo-chat`; no trial process started.
+- Exact next action: complete PR #37 review and CI on the recorded result, then merge and close Issue #36 if its outcome remains demonstrated. Select the next cycle only after the goal-gap check.
+- Changed files / branch / active processes: `codex/cycle-0024-ordinary-repo-chat`; evidence and cycle/state records changed; no dedicated trial process remains.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 unchanged.
-- At most one next candidate and why: select only after this two-host result.
+- At most one next candidate and why: an unfamiliar repository run would test whether AI discovery and runtime support generalize beyond the two familiar targets; select after this cycle's delivery.
