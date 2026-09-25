@@ -113,6 +113,18 @@
         "title": "Codebook: Focus Explanation"
       },
       {
+        "command": "codebook.study.read-app",
+        "title": "Codebook: Read Application"
+      },
+      {
+        "command": "codebook.study.read-source",
+        "title": "Codebook: Read Captured Source"
+      },
+      {
+        "command": "codebook.study.read-context",
+        "title": "Codebook: Read Explanation"
+      },
+      {
         "command": "codebook.study.outline",
         "title": "Codebook: Show Learning Outline"
       },

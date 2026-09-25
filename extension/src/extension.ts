@@ -281,7 +281,7 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     vscode.commands.registerCommand('codebook.selectLearningItem', itemId => workspace().select(learningItemSchema.parse(itemId))),
     vscode.commands.registerCommand('codebook.selectStudyProfile', profile => workspace().selectProfile(profileSchema.parse(profile))),
     vscode.commands.registerCommand('codebook.markUnderstanding', understood => { if (understood !== undefined && typeof understood !== 'boolean') throw new Error('Understanding requires a boolean learner choice.'); return workspace().understand(understood); }),
-    ...(['run', 'click', 'continue', 'stop', 'return-current', 'return-wiki', 'source', 'current-file', 'focus-app', 'focus-context', 'outline', 'arrange', 'retry'] as const).map(action => vscode.commands.registerCommand(`codebook.study.${action}`, () => workspace().action(action))),
+    ...(['run', 'click', 'continue', 'stop', 'return-current', 'return-wiki', 'source', 'current-file', 'focus-app', 'focus-context', 'read-app', 'read-source', 'read-context', 'outline', 'arrange', 'retry'] as const).map(action => vscode.commands.registerCommand(`codebook.study.${action}`, () => workspace().action(action))),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       void (async () => {
         try { await context.workspaceState.update('codebook.aiChatSetup', undefined); }

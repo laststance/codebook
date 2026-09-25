@@ -1,9 +1,9 @@
 # Cycle 0019 — Bundled codebook skill and editor chat onboarding
 
 Type: product-increment\
-Status: implementing\
+Status: closed\
 Result: bounded G12 development result demonstrated; final goal partial\
-Delivery: [Ready PR #26](https://github.com/laststance/codebook/pull/26); clean-source development VSIX, no frozen final candidate\
+Delivery: [PR #26 merged](https://github.com/laststance/codebook/pull/26) as `ffb9eb9043b01a52d04306aae6056c5f558f63b2`; Issue #25 closed, no frozen final candidate\
 Goal version: 5\
 Tracking issue: https://github.com/laststance/codebook/issues/25\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -11,6 +11,8 @@ Goal links: G12, G01–G11 as regressions, final acceptance steps 8–9\
 Implementation base: `02e1e16a8bcf72e30fbb8d1ce8d3bf43dfb87823`\
 Branch: `codex/cycle-0019-bundled-codebook-skill`\
 Source state: [Cycle 0018](0018-editor-group-scope.md) and its [delivery record](evidence/0018/delivery-pr24-20260923.md)
+
+Closure update (2026-09-25): the final `9a4820f…` PR head received CodeRabbit `APPROVED` with zero unresolved threads, and [current-head CI](https://github.com/laststance/codebook/actions/runs/36084577725) passed 1089 product/shared and 101 package checks. The PR was squash-merged, and Issue #25 closed at merge. The owner then explicitly resumed the still-open Goal #1; [Cycle 0020](0020-constrained-study.md) now owns the compact/high-zoom Study follow-up. Later paragraphs below preserve their source-cut historical status rather than rewriting the sequence.
 
 ## Question and expected value
 
@@ -145,7 +147,7 @@ Clean `79ad3a4…` passed [PR merge-ref CI](https://github.com/laststance/codebo
 
 ## Handoff
 
-- Exact next action: inspect the latest [PR #26](https://github.com/laststance/codebook/pull/26) head, CI, formal CodeRabbit review and threads; address any actionable finding, then merge with the existing Issue #25 closing reference once the gates are clean. Stop immediately after merge at the owner’s direction; do not open a new cycle. Retain compact/high-zoom and later Restore failures as separate G07 evidence, and keep standard Copilot Chat/final acceptance explicit.
+- Exact next action at the original handoff: PR #26 review and merge, now completed as recorded above. After the owner's explicit resume, follow [Cycle 0020](0020-constrained-study.md) for compact/high-zoom and later Restore failures; keep standard Copilot Chat and final acceptance explicit.
 - Changed files / branch / active processes: `codex/cycle-0019-bundled-codebook-skill`; `b319459…` contains the latest functional repair and passing source tests. Skill 1.0.14 is unchanged. No test-owned editor work window or Codebook Agent Server remains active; the target tree and prior owner profile/skill/MCP bytes were preserved after the `c091212…` development pair. The user’s independent VS Code window is not part of this test.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D025 records the owner’s next-cycle VS Code chat verification order and acceptance of the qualified Claude development evidence for this PR. No G01–G12 product outcome or final-review rule was removed.

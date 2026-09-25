@@ -108,6 +108,8 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let nextPrimaryFocusResponse: { wait: Promise<void>; entered(): void } | undefined;
   let nextLayoutResponse: { wait: Promise<void>; entered(): void } | undefined;
   const commands: string[] = [];
+  let constrainStudyGrid = false;
+  let hideGridWhileMaximized = false;
   let editorLayout: unknown = { orientation: 0, groups: [{}] };
   let nextMovedPanelLayout: unknown;
   let nativeLayout = false, cursorGroupWrappers = false, cursorTwoEventContraction = false, explicitEditorLayout = false, maximizedEditorGroup = false;
@@ -398,6 +400,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           }
         }
         if (name === 'workbench.action.toggleMaximizeEditorGroup') maximizedEditorGroup = !maximizedEditorGroup;
+        if (name === 'workbench.action.maximizeEditorHideSidebar') maximizedEditorGroup = true;
         if (name === 'workbench.action.focusFirstEditorGroup') {
           const previousEditor = focusedSourceEditor(), previousGroup = activeTabGroup, primaryGroup = groups.find(group => group.viewColumn === 1)!;
           const primaryEditor = visibleSourceEditors.find(editor => editor.group === primaryGroup);
@@ -415,6 +418,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         }
         if (name === 'vscode.getEditorLayout') {
           if (asynchronousLayoutReads) await new Promise<void>(resolve => setImmediate(resolve));
+          if (hideGridWhileMaximized && maximizedEditorGroup) return undefined;
           const layout = JSON.parse(JSON.stringify(separateEditorPart?.focused ? separatePartLayoutReport ?? separateEditorPart.layout : editorLayout, (key, value) => key === 'groups' && Array.isArray(value) ? value.map(group => ({ size: 1, ...group })) : value));
           // The accepted grid settles without a second mutation; its first read can still contain native transient pixels.
           if (settlementPending) { editorLayout = structuredClone(settledLayout); settlementPending = false; }
@@ -425,8 +429,9 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           maximizedEditorGroup = false;
           // The public layout command changes the active part even while TabGroups still reports the old main active group.
           if (separateEditorPart?.focused) { separateEditorPart.layout = structuredClone(layout); return; }
-          settledLayout = structuredClone(layout);
-          editorLayout = transientLayout ? { orientation: 0, groups: [{ size: 0.5, groups: [{ size: 0.5 }, { size: 475.83333333333326 }] }, { size: 659.5 }] } : structuredClone(layout);
+          settledLayout = constrainStudyGrid && nativeGroupCount(layout) === 3
+            ? { orientation: 0, groups: [{ size: 220, groups: [{ size: 70 }, { size: 70 }] }, { size: 220 }] } : structuredClone(layout);
+          editorLayout = transientLayout ? { orientation: 0, groups: [{ size: 0.5, groups: [{ size: 0.5 }, { size: 475.83333333333326 }] }, { size: 659.5 }] } : structuredClone(settledLayout);
           settlementPending = transientLayout;
           if (nativeLayout) {
             const count = nativeGroupCount(layout);
@@ -469,11 +474,14 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           if (!options?.preserveFocus) { activeTabGroup = group; innerFocusedPanel = undefined; if (separateEditorPart) separateEditorPart.focused = false; }
           if (options?.preview !== undefined) tab.isPreview = options.preview;
           const editor = sourceEditor(sourceDocument, group, reportedSourceColumn);
+          const previous = visibleSourceEditors.find(value => value.group === group && value.document.uri.toString() === sourceDocument.uri.toString());
+          // Revealing an existing native document without a selection keeps its learner cursor.
+          if (!options?.selection && previous) editor.selections = previous.selections;
           // An explicit native selection reveals its statement even when playback reopens the same document.
           if (options?.selection) { editor.selections = [{ active: options.selection.start, anchor: options.selection.start }]; scrollReadingRange(options.selection); }
           // Native wrappers share selection state, while the deliberate stale-column control keeps its returned wrapper separate.
-          const previous = visibleSourceEditors.findIndex(value => value.group === group && value.document.uri.toString() === sourceDocument.uri.toString());
-          if (previous >= 0) visibleSourceEditors.splice(previous, 1);
+          const previousIndex = visibleSourceEditors.findIndex(value => value.group === group && value.document.uri.toString() === sourceDocument.uri.toString());
+          if (previousIndex >= 0) visibleSourceEditors.splice(previousIndex, 1);
           const visible = Object.assign(sourceEditor(sourceDocument, group), { group });
           Object.defineProperty(visible, 'selections', { get: () => editor.selections, set: (selections: SourceEditor['selections']) => { editor.selections = selections; for (const listener of selectionListeners) listener(); } });
           visibleSourceEditors.push(visible);
@@ -608,6 +616,8 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       activeTabGroup = groups[0]!; activeTabGroup.activeTab = activeTabGroup.tabs[0];
       changedGroups({ opened: [...groups], closed: previous, changed: [] });
     },
+    constrainStudyGrid() { constrainStudyGrid = true; },
+    hideGridWhileMaximized() { hideGridWhileMaximized = true; },
     /** Adds a real separate-part boundary without changing the main leaf count, matching the recorded Cursor probe. @example const chat = harness.addSeparateEditorPart(); chat.focus(); */
     addSeparateEditorPart() {
       assert.equal(nativeLayout, true); assert.equal(separateEditorPart, undefined);
@@ -2788,6 +2798,450 @@ test('first configured Study pause keeps captured source visible beside Context 
     const observation = harness.reader.inspect().view!.model.observation;
     assert.ok(observation?.actionId === 'repository-click');
     assert.equal(observation.values['value:enabled'], false);
+  } finally { await harness.close(); }
+});
+
+test('compact Study opens a readable explanation when native minimum widths prevent the requested split', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] }); harness.constrainStudyGrid();
+  harness.suppressNativeInnerFocus();
+  const draft = harness.focusMutableDraft();
+  try {
+    // Act
+    await harness.reader.open();
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.sourceColumn(), 2);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.maximizedEditorGroup(), true);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.match(harness.reader.presentationState().reason ?? '', /focused explanation/i);
+    assert.equal(harness.groups.some(group => group.tabs.includes(draft.tab)), true);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+  } finally { await harness.close(); }
+});
+
+test('compact Study remains open when its optional first explanation read loses window focus', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] }); harness.constrainStudyGrid();
+  const readStudyPane = harness.reader['readStudyPane'].bind(harness.reader);
+  harness.reader['readStudyPane'] = (region, signal) => {
+    harness.changeWindowFocus(false);
+    return readStudyPane(region, signal);
+  };
+  try {
+    // Act
+    await harness.reader.open();
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.sourceColumn(), 2);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal(harness.reader.inspect().view!.errors.some(error => error.includes('Focus the Codebook work window')), true);
+  } finally { harness.changeWindowFocus(true); await harness.close(); }
+});
+
+test('Read Explanation opens Study when the command runs before Open Study Workspace', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    assert.equal(harness.reader.inspect().opened, false);
+
+    // Act
+    await harness.reader.action('read-context');
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.maximizedEditorGroup(), true);
+    assert.match(harness.reader.presentationState().reason ?? '', /Focused explanation/);
+  } finally { await harness.close(); }
+});
+
+test('Read Explanation stays readable when opening Study first needs a compact-layout focus', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  harness.constrainStudyGrid();
+  harness.suppressNativeInnerFocus();
+  try {
+    // Act
+    await harness.reader.action('read-context');
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.maximizedEditorGroup(), true);
+    assert.match(harness.reader.presentationState().reason ?? '', /Focused explanation/);
+  } finally { await harness.close(); }
+});
+
+test('Read Explanation does not maximize after the work window leaves and returns during cold Open', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const openStudy = harness.reader.open.bind(harness.reader);
+  harness.reader.open = async (signal, origin) => {
+    await openStudy(signal, origin);
+    harness.changeWindowFocus(false);
+    harness.changeWindowFocus(true);
+  };
+  try {
+    // Act
+    await assert.rejects(harness.reader.action('read-context'), /work window lost focus/i);
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.commands.filter(command => command === 'workbench.action.maximizeEditorHideSidebar').length, 0);
+    assert.doesNotMatch(harness.reader.presentationState().reason ?? '', /Focused explanation/);
+  } finally { await harness.close(); }
+});
+
+test('Read Explanation leaves a closed Study and foreign window untouched when unfocused', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  harness.changeWindowFocus(false);
+  try {
+    // Act
+    await assert.rejects(harness.reader.action('read-context'), /Focus the Codebook work window/);
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, false);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.maximizedEditorGroup(), false);
+  } finally { harness.changeWindowFocus(true); await harness.close(); }
+});
+
+test('Read Application does not maximize after the work window leaves during its webview reveal', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open();
+    const application = harness.reader['app']!;
+    const reveal = application.reveal.bind(application);
+    application.reveal = (column, preserveFocus) => {
+      reveal(column, preserveFocus);
+      harness.changeWindowFocus(false);
+      harness.changeWindowFocus(true);
+    };
+    const maximizations = harness.commands.filter(command => command === 'workbench.action.maximizeEditorHideSidebar').length;
+
+    // Act
+    await assert.rejects(harness.reader.action('read-app'), /work window lost focus/i);
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.commands.filter(command => command === 'workbench.action.maximizeEditorHideSidebar').length, maximizations);
+    assert.doesNotMatch(harness.reader.presentationState().reason ?? '', /Focused application/);
+  } finally { await harness.close(); }
+});
+
+test('compact Study reads each pane and Restore returns promptly to an honest focused state', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] }); harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    const selection = harness.reader.inspect().view!.model.selection, source = harness.reader.inspect().sourceUri;
+    const bundle = harness.controller.bundle(), panels = harness.nativePanels();
+    const progress = await (await harness.reader.learningStorage()).readProgress();
+
+    // Act
+    await harness.reader.action('read-app');
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser'); assert.equal(harness.maximizedEditorGroup(), true);
+    await harness.reader.action('read-source');
+    assert.equal(harness.sourceColumn(), 2); assert.equal(harness.maximizedEditorGroup(), true);
+    await harness.reader.action('read-context');
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext'); assert.equal(harness.maximizedEditorGroup(), true);
+    await harness.reader.action('arrange');
+
+    // Assert
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext'); assert.equal(harness.maximizedEditorGroup(), true);
+    assert.equal(harness.reader.presentationState().state, 'open');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.match(harness.reader.presentationState().reason ?? '', /focused explanation/i);
+    assert.equal(harness.nativePanels()[0], panels[0]); assert.equal(harness.nativePanels()[1], panels[1]);
+    assert.deepEqual(harness.reader.inspect().view!.model.selection, selection);
+    assert.equal(harness.reader.inspect().sourceUri, source);
+    assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.controller.state().presentedMs, 100);
+    assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
+    assert.equal(harness.runtimes[0]!.dispatches, 1);
+  } finally { await harness.close(); }
+});
+
+test('Restore after focused reading recovers the confirmed Study layout when native space is available', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open();
+    await harness.reader.action('read-app');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+
+    // Act
+    await harness.reader.action('arrange');
+
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.maximizedEditorGroup(), false);
+    assert.equal(harness.reader.presentationState().reason, undefined);
+  } finally { await harness.close(); }
+});
+
+test('Restore beside a separate editor part keeps the selected explanation after borrowing primary focus', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const chat = harness.addSeparateEditorPart();
+  harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  try {
+    await harness.reader.open();
+    await harness.reader.action('read-context');
+
+    // Act
+    await harness.reader.action('arrange');
+
+    // Assert
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.reader.presentationState().state, 'open');
+    assert.doesNotMatch(harness.reader.presentationState().reason ?? '', /learner changed native tab focus/i);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { await harness.close(); }
+});
+
+test('Restore beside a separate editor part preserves a learner tab chosen during its focus borrow', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const chat = harness.addSeparateEditorPart();
+  harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    await harness.reader.action('read-context');
+    const held = harness.holdNextCommand('workbench.action.focusFirstEditorGroup'); release = held.release;
+
+    // Act
+    const restoring = harness.reader.action('arrange');
+    await held.started;
+    const draft = harness.focusMutableDraft('newer-scope-notes.txt', 3);
+    release(); await restoring;
+
+    // Assert
+    assert.equal(harness.groups.find(group => group.viewColumn === 3)?.activeTab, draft.tab);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.match(harness.reader.presentationState().reason ?? '', /learner changed native tab focus/i);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { release(); await harness.close(); }
+});
+
+test('Restore stops after the learner leaves the work window during its primary focus borrow', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const chat = harness.addSeparateEditorPart();
+  harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    await harness.reader.action('read-context');
+    const held = harness.holdNextPrimaryFocusResponse(); release = held.release;
+    const restoring = harness.reader.action('arrange');
+    await held.started;
+    const layoutChanges = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+
+    // Act
+    harness.changeWindowFocus(false);
+    harness.changeWindowFocus(true);
+    release(); await restoring;
+
+    // Assert
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, layoutChanges);
+    assert.match(harness.reader.presentationState().reason ?? '', /learner changed native tab focus/i);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { release(); await harness.close(); }
+});
+
+test('successful Study reading clears an earlier background-window reading error', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open();
+    harness.changeWindowFocus(false);
+    harness.receive({ type: 'action', revision: harness.reader.inspect().view!.revision, action: 'read-app' });
+    await waitUntil(() => harness.reader.inspect().view!.errors.some(error => error.includes('Focus the Codebook work window')), 'background reading error', 1_000);
+
+    // Act
+    harness.changeWindowFocus(true);
+    await harness.reader.action('read-app');
+
+    // Assert
+    assert.equal(harness.reader.inspect().view!.errors.some(error => error.includes('Focus the Codebook work window')), false);
+    assert.match(harness.reader.presentationState().reason ?? '', /Focused application/);
+  } finally { await harness.close(); }
+});
+
+test('reading a Study pane does not claim focus after the learner selects a draft during native maximization', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    const held = harness.holdNextCommand('workbench.action.maximizeEditorHideSidebar'); release = held.release;
+
+    // Act
+    const reading = harness.reader.action('read-app');
+    await held.started;
+    const draft = harness.focusMutableDraft('later-learner-notes.txt', 1);
+    release();
+
+    // Assert
+    await assert.rejects(reading, /focus changed|learner.*focus/i);
+    assert.equal(harness.groups.find(group => group.viewColumn === 1)?.activeTab, draft.tab);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.doesNotMatch(harness.reader.presentationState().reason ?? '', /Focused application/);
+  } finally { release(); await harness.close(); }
+});
+
+test('Read captured source keeps the learner cursor when the selected source is already displayed', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); await harness.reader.action('source');
+    harness.changeFocusedSourceSelection(46); harness.retainReadingRange(40, 50);
+    await harness.reader.action('read-app');
+
+    // Act
+    await harness.reader.action('read-source');
+
+    // Assert
+    assert.equal(harness.focusedSource()?.selections[0]?.active.line, 46);
+    assert.equal(harness.isReadingLineVisible(46), true);
+  } finally { await harness.close(); }
+});
+
+test('Read captured source accepts an unchanged settings tab before focusing its owned source', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); await harness.reader.action('focus-context');
+    const settings = harness.addOpaqueTab('Settings', 3);
+    const explanationGroup = harness.groups.find(group => group.viewColumn === 3)!;
+    explanationGroup.activeTab = settings;
+
+    // Act
+    await harness.reader.action('read-source');
+
+    // Assert
+    assert.equal(harness.sourceColumn(), 2);
+    assert.equal(harness.focusedSource()?.document.uri.toString(), harness.reader.inspect().sourceUri);
+    assert.equal(explanationGroup.tabs.includes(settings), true);
+  } finally { await harness.close(); }
+});
+
+test('Read captured source preserves a newer draft choice while its existing document opens', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.open(); await harness.reader.action('read-app');
+    const held = harness.holdNextSource(); release = held.release;
+
+    // Act
+    const reading = harness.reader.action('read-source');
+    await held.started;
+    const draft = harness.focusMutableDraft('newer-source-notes.txt', 1);
+    release();
+
+    // Assert
+    await assert.rejects(reading, /focus changed|learner.*focus/i);
+    assert.equal(harness.groups.find(group => group.viewColumn === 1)?.activeTab, draft.tab);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.doesNotMatch(harness.reader.presentationState().reason ?? '', /Focused source/);
+  } finally { release(); await harness.close(); }
+});
+
+test('Restore does not rearrange Study after the learner selects a draft during native unmaximize', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await harness.reader.open(); await harness.reader.action('read-app');
+    const previousArrangements = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+    const held = harness.holdNextCommand('workbench.action.minimizeOtherEditors'); release = held.release;
+
+    // Act
+    const restoring = harness.reader.action('arrange');
+    await held.started;
+    const draft = harness.focusMutableDraft('later-restore-notes.txt', 3);
+    release(); await restoring;
+
+    // Assert
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, previousArrangements);
+    assert.equal(harness.groups.find(group => group.viewColumn === 3)?.activeTab, draft.tab);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+  } finally { release(); await harness.close(); }
+});
+
+test('constrained Restore keeps a later learner draft active while the native layout receipt settles', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] }); harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  let releaseLayout = () => {}, releaseReceipt = () => {};
+  try {
+    await harness.reader.open(); await harness.reader.action('read-app');
+    const layout = harness.holdNextCommand('runCommands'); releaseLayout = layout.release;
+
+    // Act
+    const restoring = harness.reader.action('arrange');
+    await layout.started;
+    const receipt = harness.holdNextCommand('vscode.getEditorLayout'); releaseReceipt = receipt.release;
+    releaseLayout(); await receipt.started;
+    const draft = harness.focusMutableDraft('later-settlement-notes.txt', 3);
+    releaseReceipt(); await restoring;
+
+    // Assert
+    assert.equal(harness.groups.find(group => group.viewColumn === 3)?.activeTab, draft.tab);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.match(harness.reader.presentationState().reason ?? '', /learner changed native tab focus/i);
+  } finally { releaseLayout(); releaseReceipt(); await harness.close(); }
+});
+
+test('constrained Restore leaves the learner draft active when a later topology check completes', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] }); harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  try {
+    await harness.reader.open(); await harness.reader.action('read-app');
+    const checkTopology = harness.reader['hasRetainedStudyTopology'].bind(harness.reader);
+    let newerDraft: ReturnType<typeof harness.focusMutableDraft> | undefined;
+    harness.reader['hasRetainedStudyTopology'] = async (signal, beforeScopeFocus) => {
+      const retained = await checkTopology(signal, beforeScopeFocus);
+      if (retained) newerDraft = harness.focusMutableDraft('later-topology-notes.txt', 3);
+      return retained;
+    };
+
+    // Act
+    await harness.reader.action('arrange');
+
+    // Assert
+    assert.ok(newerDraft);
+    assert.equal(harness.groups.find(group => group.viewColumn === 3)?.activeTab, newerDraft.tab);
+    assert.equal(newerDraft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.match(harness.reader.presentationState().reason ?? '', /learner changed native tab focus/i);
   } finally { await harness.close(); }
 });
 
