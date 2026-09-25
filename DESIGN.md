@@ -11,7 +11,7 @@ This is the stable entry point for GStack design-document discovery. Follow the 
 
 The approved destination is a chat-driven application walkthrough with actual debugger stops, source and runtime-value explanations, recording/replay, a connected wiki/codemap, and learner-owned progress. Architecture B makes the extension the owner of runtime state and evidence while external agents plan and explain through MCP.
 
-[D023](DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21) adds a common thin bundled skill and explicit `/codebook` entry in standard Copilot Chat and Cursor Agent, with safe skill/MCP onboarding. This later requirement supplements the approved baseline and all three layouts. Its [development contract](docs/plans/bundled-codebook-skill.md) remains unimplemented/unverified; do not treat discovery or skill loading as proof of the AI's runtime results.
+[D023](DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21) adds a common thin bundled skill and explicit `/codebook` entry in standard Copilot Chat and Cursor Agent, with safe skill/MCP onboarding. This later requirement supplements the approved baseline and all three layouts. Its [development contract](docs/plans/bundled-codebook-skill.md) is implemented in bounded increments. [Cycle 0021](docs/cycles/0021-ordinary-copilot-chat.md) demonstrates one ordinary VS Code chat result; Cursor Agent and integrated G12 acceptance remain unverified. Discovery or skill loading alone is not proof of the AI's runtime results.
 
 ## Visual direction
 

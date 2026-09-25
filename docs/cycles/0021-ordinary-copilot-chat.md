@@ -1,9 +1,9 @@
 # Cycle 0021 — Clean packaged `/codebook` in ordinary Copilot Chat
 
 Type: experiment
-Status: development trial demonstrated; delivery review pending
+Status: closed; bounded VS Code development question demonstrated
 Result: exact ordinary VS Code Copilot Chat question reached AI-owned click, real pause/values, continuation, verified menu and saved Study/recording on clean `1d73087…`; later clean `ceea371…` repaired the article link through public saved resources without another click
-Delivery: pending
+Delivery: [PR #31](https://github.com/laststance/codebook/pull/31) merged as `7113819260106bddfdc6c0c6acb1c9642807b920`; Issue #30 closed
 Goal version: 5
 Tracking issue: [#30](https://github.com/laststance/codebook/issues/30)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -54,12 +54,12 @@ The [ordinary VS Code development record](evidence/0021/vscode-ordinary-chat-dev
 - Keep / revise / replace: keep public skill/MCP onboarding and the selected source-backed menu route. Publish the structured resource body and canonical Study identity, retaining honest failed states and no repeat click during storage recovery.
 - Evidence that can update goal state: a normal editor chat reached a real repository's observed run, replayable recording and linked article through public surfaces, with separate source-cut identities. This is a qualified G12 development checkpoint, not integrated product acceptance.
 - Remaining gaps and regression obligations: rerun the exact question on the final frozen source cut for final acceptance; independently validate Cursor Agent, fresh-profile setup, broad real repositories, native-pixel motion, integrated G01–G12 and the ten-reviewer campaign. Final reviewer count remains 0/10.
-- Delivery state and proof: pending.
+- Delivery state and proof: [PR #31](https://github.com/laststance/codebook/pull/31) merged as `7113819260106bddfdc6c0c6acb1c9642807b920`. Exact source head `06488bf9246cd0f1e836bab0c2b8fe2784d25c34` received hosted CodeRabbit `APPROVED`, zero unresolved threads, passing package/Socket checks and `MERGEABLE`; local CodeRabbit reviewed all ten changed paths with zero findings. [Package CI](https://github.com/laststance/codebook/actions/runs/36179957571) uploaded a checked 35-entry VSIX with `dirty:false` and the same selected-source hash as the local final cut. Issue #30 closed; Goal #1 remains open.
 
 ## Handoff
 
-- Exact next action: review and deliver PR #31 with current-head checks, then close Issue #30 and select the independent Cursor Agent ordinary-chat cycle while Goal #1 stays open.
-- Changed files / branch / active processes: `codex/cycle-0021-ordinary-chat`; implementation commits are local and the evidence record is pending PR review. Public agent servers and trial windows stopped. Ignored private videos, package archives and the evidence locator remain under `artifacts/cycle-0021/`.
+- Exact next action: run [Cycle 0022](0022-ordinary-cursor-agent.md) / Issue #32 as an independent ordinary Cursor Agent trial while Goal #1 stays open.
+- Changed files / branch / active processes: `codex/cycle-0021-ordinary-chat` merged; public agent servers and trial windows stopped. Ignored private videos, package archives and the evidence locator remain under `artifacts/cycle-0021/`.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 apply unchanged.
 - At most one next candidate and why: ordinary Cursor Agent on the same frozen clean VSIX, because G12 requires an independent editor result and this cycle exercised only VS Code.
