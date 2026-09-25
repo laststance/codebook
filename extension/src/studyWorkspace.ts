@@ -313,12 +313,14 @@ export class StudyWorkspace {
         focusedPane.assertCurrent();
         await this.arrange(transition.cancellation.signal, 'study');
         transition.cancellation.signal.throwIfAborted(); this.assertLifetime(lifetime);
+        focusedPane.assertCurrent();
         if (!vscode.window.state.focused || transition.runtimeIdentity !== this.assertPresentationAdmission() || !this.hasStudyPaneColumns()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Study focus or evidence changed during Restore. Inspect the current panes before retrying.');
         if (this.layoutReceipt && this.sourceReady()) {
           this.presentationConfirmed = true; this.requestedPresentation = undefined; this.presentationReason = undefined;
           this.errors.delete('presentation'); this.publish();
           await this.savePresentationPreference(input.mode, transition.id);
         } else if (await this.hasRetainedStudyTopology(transition.cancellation.signal)) {
+          focusedPane.assertCurrent();
           await this.readStudyPane('context', transition.cancellation.signal);
           this.errors.delete('layout');
         } else throw new StudyError('PRESENTATION_UNAVAILABLE', 'The Study panes changed during Restore. Existing editor work was preserved.');
@@ -1220,8 +1222,12 @@ export class StudyWorkspace {
       if (!this.presentationTransition && !this.enlargedLayoutReceipt) this.presentationConfirmed = Boolean(this.layoutReceipt);
       if (firstOpen && this.presentationMode === 'study-workspace' && !this.layoutReceipt && this.hasStudyPaneColumns()
         && await this.hasRetainedStudyTopology(signal)) {
-        await this.readStudyPane('context', signal);
-        this.errors.delete('layout');
+        // A blocked auxiliary Read must leave the retained, unconfirmed Study available for an explicit retry.
+        try { await this.readStudyPane('context', signal); this.errors.delete('layout'); }
+        catch (error) {
+          signal?.throwIfAborted(); this.assertLifetime(lifetime);
+          this.report('reading', error);
+        }
         this.publish();
       }
       if (request === this.openRequest) this.initialAppPlacement = undefined;

@@ -2824,6 +2824,29 @@ test('compact Study opens a readable explanation when native minimum widths prev
   } finally { await harness.close(); }
 });
 
+test('compact Study remains open when its optional first explanation read loses window focus', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] }); harness.constrainStudyGrid();
+  const readStudyPane = harness.reader['readStudyPane'].bind(harness.reader);
+  harness.reader['readStudyPane'] = (region, signal) => {
+    harness.changeWindowFocus(false);
+    return readStudyPane(region, signal);
+  };
+  try {
+    // Act
+    await harness.reader.open();
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.sourceColumn(), 2);
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal(harness.reader.inspect().view!.errors.some(error => error.includes('Focus the Codebook work window')), true);
+  } finally { harness.changeWindowFocus(true); await harness.close(); }
+});
+
 test('compact Study reads each pane and Restore returns promptly to an honest focused state', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true);
@@ -2977,6 +3000,57 @@ test('Restore does not rearrange Study after the learner selects a draft during 
     assert.equal(draft.document.getText(), 'Original learner draft.\n');
     assert.equal(harness.reader.presentationState().layoutConfirmed, false);
   } finally { release(); await harness.close(); }
+});
+
+test('constrained Restore keeps a later learner draft active while the native layout receipt settles', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] }); harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  let releaseLayout = () => {}, releaseReceipt = () => {};
+  try {
+    await harness.reader.open(); await harness.reader.action('read-app');
+    const layout = harness.holdNextCommand('runCommands'); releaseLayout = layout.release;
+
+    // Act
+    const restoring = harness.reader.action('arrange');
+    await layout.started;
+    const receipt = harness.holdNextCommand('vscode.getEditorLayout'); releaseReceipt = receipt.release;
+    releaseLayout(); await receipt.started;
+    const draft = harness.focusMutableDraft('later-settlement-notes.txt', 3);
+    releaseReceipt(); await restoring;
+
+    // Assert
+    assert.equal(harness.groups.find(group => group.viewColumn === 3)?.activeTab, draft.tab);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.match(harness.reader.presentationState().reason ?? '', /learner changed native tab focus/i);
+  } finally { releaseLayout(); releaseReceipt(); await harness.close(); }
+});
+
+test('constrained Restore leaves the learner draft active when a later topology check completes', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] }); harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  try {
+    await harness.reader.open(); await harness.reader.action('read-app');
+    const checkTopology = harness.reader['hasRetainedStudyTopology'].bind(harness.reader);
+    let newerDraft: ReturnType<typeof harness.focusMutableDraft> | undefined;
+    harness.reader['hasRetainedStudyTopology'] = async signal => {
+      const retained = await checkTopology(signal);
+      if (retained) newerDraft = harness.focusMutableDraft('later-topology-notes.txt', 3);
+      return retained;
+    };
+
+    // Act
+    await harness.reader.action('arrange');
+
+    // Assert
+    assert.ok(newerDraft);
+    assert.equal(harness.groups.find(group => group.viewColumn === 3)?.activeTab, newerDraft.tab);
+    assert.equal(newerDraft.document.getText(), 'Original learner draft.\n');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.match(harness.reader.presentationState().reason ?? '', /learner changed native tab focus/i);
+  } finally { await harness.close(); }
 });
 
 for (const initial of [
