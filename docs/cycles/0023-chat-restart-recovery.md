@@ -1,8 +1,8 @@
 # Cycle 0023 — Public `/codebook` restart and disconnection recovery
 
 Type: experiment
-Status: planning
-Result: pending
+Status: validated; PR delivery in progress
+Result: bounded two-host development result demonstrated
 Delivery: pending
 Goal version: 5
 Tracking issue: [#34](https://github.com/laststance/codebook/issues/34)
@@ -48,21 +48,25 @@ No animation is requested in this lifecycle question. If a visible transition be
 
 ## Attempts and evidence
 
-Pending. These are development trials; final reviewer count stays 0/10.
+The frozen 35-entry CI VSIX from Cycle 0022 (SHA-256 `af0242d06f61760bff3852e4b81ade7b009670303eba41f1bcf3abba124abb15`) was installed into separate VS Code and Cursor extension directories. Both installations had the same clean build metadata and bundled skill 1.0.17 hash. The clean target was a standalone Mantine Analytics Dashboard clone at `370faf0…`, outside the Codebook checkout. The first `/tmp` opening in VS Code was Restricted Mode; the trial continued on a clone under the already trusted `laststance` parent without granting new workspace trust.
+
+[The host-specific development evidence](evidence/0023/ordinary-chat-restart-20260926.md) records the exact question, native chat/tool/Customize observations, package and target hashes, instance IDs, private artifact checksums and owner-state verification. In each ordinary host chat, the AI itself called `codebook_status` against the exact work window. The public Stop Agent Server command removed its connection, and a fresh chat kept `/codebook` discoverable while reporting the MCP unavailable and naming public setup. A full process quit/relaunch produced a new correct-workspace instance without rerunning setup: VS Code `6a05179d…` → `e5765b72…`; Cursor `53988c0c…` → `bf2a262f…`. Both postrestart answers distinguished available demo/source operations from the target app's missing Next.js dependencies and from runtime values that had not been observed.
+
+Cursor Customize showed the loaded skill body at version 1.0.17 and the new-instance MCP with 15 tools/four resources. The owner's previous managed skill 1.0.10 was restored through the receipted deployment routine after the trial; its exact SHA-256 and valid receipt were verified. Both owners' editor settings/default extensions, the target Git tree and trial process cleanup were checked. Five renderer videos and the VS Code status resources remain in the ignored private evidence inventory; this lifecycle experiment does not claim native-pixel motion proof. These are development trials; final reviewer count stays **0/10**.
 
 ## Result and decision
 
-- Result: pending.
-- Findings: pending.
-- Keep / revise / replace: pending.
-- Evidence that can update goal state: pending.
+- Result: demonstrated for the frozen, single-target lifecycle question in both ordinary hosts.
+- Findings: public setup and automatic restart reconnect work with a new exact-workspace instance; a stopped server yields truthful unavailable guidance. The target's missing Next.js installation remains a real prerequisite, not a Codebook restart failure.
+- Keep / revise / replace: keep the current G12 onboarding implementation; use this evidence to choose the next unverified product behavior. No implementation change was needed in this cycle.
+- Evidence that can update goal state: G12 lifecycle evidence advances, but final G12 and integrated acceptance remain partial. The same VSIX did not run this app in this cycle.
 - Remaining gaps and regression obligations: complete G01–G12, broad repositories, original motion, owner acceptance and final review remain open.
-- Delivery state and proof: pending.
+- Delivery state and proof: [Draft PR #35](https://github.com/laststance/codebook/pull/35); review, CI, merge and issue closure pending.
 
 ## Handoff
 
-- Exact next action: inventory the owner profiles and target, freeze one clean package, then run the VS Code connected/disconnected/restarted sequence before Cursor.
-- Changed files / branch / active processes: `codex/cycle-0023-chat-restart`; no new trial process started.
+- Exact next action: commit/push the evidence and state, complete current-head CodeRabbit CLI/hosted review and CI, merge PR #35, close Issue #34, then select the next bounded goal cycle.
+- Changed files / branch / active processes: `codex/cycle-0023-chat-restart`; documentation only, no dedicated trial process running.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 apply unchanged.
-- At most one next candidate and why: select after the lifecycle result.
+- At most one next candidate and why: test a second ordinary two-host repository-browser question on a distinct clean repository after installing its declared dependencies; one Mantine prompt does not establish broad G01/G06/G11 usefulness.
