@@ -1,9 +1,9 @@
 # Cycle 0022 — Clean packaged `/codebook` in ordinary Cursor Agent
 
 Type: experiment
-Status: planning
-Result: pending
-Delivery: pending
+Status: validating; bounded Cursor Agent development question demonstrated
+Result: demonstrated on the standalone target; the earlier nested target is qualified
+Delivery: [Draft PR #33](https://github.com/laststance/codebook/pull/33) open; review, checks and merge pending
 Goal version: 5
 Tracking issue: [#32](https://github.com/laststance/codebook/issues/32)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -47,21 +47,25 @@ Use `/investigate` for a reproduced defect and `/review` for changed implementat
 
 ## Attempts and evidence
 
-Pending. Development evidence only; no final reviewer credit.
+The [ordinary Cursor Agent development record](evidence/0022/cursor-agent-development-20260926.md) separates two clean installed trials of the same `76b9287…` VSIX and frozen target source. The first real click/pause/save result was qualified because the target lived under the Codebook repository, and the Agent consulted Codebook implementation files to learn the browser viewport. The independent second clone lived outside Codebook at `/tmp/cb22-standalone-mantine`. Public setup showed the bundled skill in the normal `/codebook` picker; the Agent's own `codebook_status` named that exact work window, Cursor 3.22.8 and the clean packaged source.
+
+The ordinary Cursor Agent then clicked the actual Burger, paused the following HeaderNav render at line 102, captured `drawerOpened=true`, `tablet_match=true` and `theme.white=#fff`, continued to a verified visible `Menu`, saved a demonstrated terminal Study and complete recording, and published article revision 2 with the saved observation link. Native Wiki-to-observation and Wiki-to-recording navigation passed. The finalized 74.69 s recording replayed from the 38.63 s pause to an open-menu image, with understanding unchecked. The final chat answer separated actual values, source-derived Mantine behavior and uninspected animation frames. The target Git tree stayed clean. A Playwright CLI renderer video, inspected frames, private saved artifacts and native macOS UI observations have separate evidence in the linked record. **No final reviewer credit** was claimed.
+
+The dedicated Cursor process and public Agent Server were stopped. The user's receipted 1.0.10 skill was restored to its exact pretrial bytes with a valid new receipt; settings and default extension hashes remained unchanged. The temporary run's private learning records are retained under Cursor global storage with an ignored checksum locator.
 
 ## Result and decision
 
-- Result: pending.
-- Findings: pending.
-- Keep / revise / replace: pending.
-- Evidence that can update goal state: pending.
-- Remaining gaps and regression obligations: integrated G01–G12, broad repositories, original animation quality and final acceptance remain open.
-- Delivery state and proof: pending.
+- Result: the bounded ordinary Cursor Agent question is demonstrated on one clean VSIX and a standalone real-repository clone; the first trial remains separately qualified by its location under Codebook.
+- Findings: the public skill and MCP surface sufficed without access to Codebook source. A bindable Drawer render line yielded three actual values. The original transition's intermediate motion was not measured.
+- Keep / revise / replace: keep the bundled common skill, public setup and source-backed observed route. No product-source repair was needed for this cycle.
+- Evidence that can update goal state: a normal Cursor Agent invoked the skill, connected to the correct work window, executed and explained a real run, and opened its saved observation and recording through native UI. This is a qualified G12 development checkpoint, not integrated acceptance.
+- Remaining gaps and regression obligations: final fresh-chat rerun on the later frozen candidate; G12 fresh-profile, restart/disconnected and preservation cases; other repositories, native-pixel motion, integrated G01–G12, owner acceptance and the ten-reviewer campaign. Final reviewer count remains 0/10.
+- Delivery state and proof: Draft [PR #33](https://github.com/laststance/codebook/pull/33) is open. Current-head documentation review, CI and hosted review precede merge; Issue #32 and Goal #1 remain open.
 
 ## Handoff
 
-- Exact next action: inventory Cursor's skill ownership receipt and protect its current bytes/settings before installing the clean merged-source VSIX.
-- Changed files / branch / active processes: `codex/cycle-0022-cursor-chat`; no owned Cursor trial process started.
+- Exact next action: finish the Cycle 0022 evidence/state commit on `codex/cycle-0022-cursor-chat`, push it, complete current-head review and CI for PR #33, then merge and close Issue #32 while keeping Goal #1 open.
+- Changed files / branch / active processes: documentation and `.coderabbit.yaml` on `codex/cycle-0022-cursor-chat`; no owned Cursor trial process remains. Private videos, package and checksummed saved-artifact locator remain under ignored `artifacts/cycle-0022/`.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 apply unchanged.
-- At most one next candidate and why: select after this cycle's observed Cursor boundary.
+- At most one next candidate and why: test public G12 restart/disconnected recovery with protected existing skill state, because ordinary chat execution now has one bounded development result per host but that lifecycle gate remains unproven on the current source.
