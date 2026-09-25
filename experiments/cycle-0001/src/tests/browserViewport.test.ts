@@ -332,6 +332,23 @@ test('pane handoff waits for the accepted required paint before detaching its ol
   harness.viewport.close(); assert.equal(replacement.callbacks().receivers.length, 0);
 });
 
+test('refreshing a visible recorded application does not reveal its native pane over Study focus', async () => {
+  // Arrange
+  const renderer = viewportPanel(), harness = await viewportHarness('normal', true, undefined, 'recording', renderer);
+  let nativeReveals = 0;
+  renderer.panel.reveal = () => { nativeReveals++; };
+
+  // Act
+  const refreshing = harness.viewport.reveal(new AbortController().signal);
+  renderer.ready('22222222-2222-2222-2222-222222222222');
+  await refreshing;
+
+  // Assert
+  assert.equal(nativeReveals, 0);
+  assert.equal(renderer.panel.visible, true);
+  harness.viewport.close();
+});
+
 test('live-follow refresh restores an adopted renderer after placement fails without revealing a newer learner tab', async () => {
   // Arrange: a native failure leaves the new panel adopted while the old live pause and lease survive.
   const harness = await viewportHarness('normal', true), replacement = viewportPanel();

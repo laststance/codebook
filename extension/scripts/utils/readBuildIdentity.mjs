@@ -22,7 +22,7 @@ export async function readBuildIdentity(repository, ownedScratchDirectory) {
   for (const name of BUILD_PACKAGES) {
     const directory = join(repository, name);
     const files = ['package.json', 'pnpm-lock.yaml', 'tsconfig.json', ...(name === 'extension' ? ['pnpm-workspace.yaml', 'README.md'] : [])];
-    const parts = ['src', ...(name === 'extension' ? ['scripts', 'patches'] : ['fixture'])];
+    const parts = ['src', ...(name === 'extension' ? ['scripts', 'patches', 'skills'] : ['fixture'])];
     for (const part of parts) {
       const inputDirectory = join(directory, part);
       if (!(await lstat(inputDirectory)).isDirectory()) throw new Error(`Expected source directory: ${name}/${part}`);

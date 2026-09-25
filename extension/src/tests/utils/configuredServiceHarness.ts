@@ -60,8 +60,8 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
   async reveal(): Promise<void> {}
 }
 
-/** Combines real Git/book/storage/service boundaries with explicitly synthetic editor effects. @example const { service, configuration } = await configuredServiceHarness(context) */
-export async function configuredServiceHarness(context: TestContext) {
+/** Combines real Git/book/storage/service boundaries with synthetic editor effects and an optional test clock. @example const { service } = await configuredServiceHarness(context, () => 1000) */
+export async function configuredServiceHarness(context: TestContext, clock = Date.now) {
   let ownedService: StudyService | undefined, ownedBooks: RepositoryBookStore | undefined;
   context.after(async () => { await ownedService?.shutdown(); await ownedBooks?.dispose(); });
   const repository = await repositoryHarness(context), reference = createConfiguredStudy();
@@ -74,7 +74,7 @@ export async function configuredServiceHarness(context: TestContext) {
       if (!definition || typeof definition === 'string') throw new Error('This harness models configured studies only.');
       const runtime = new ControlledConfiguredRuntime(directory, definition); runtimes.push(runtime); return runtime;
     } };
-  const service = new StudyService(environment, join(repository.directory, '.runtime')); service.repository = books;
+  const service = new StudyService(environment, join(repository.directory, '.runtime'), clock); service.repository = books;
   ownedService = service; ownedBooks = books;
   return { ...repository, library, books, environment, runtimes, service, configuration: reference.configuration };
 }

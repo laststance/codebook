@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -14,7 +15,7 @@ import { awaitResponse } from 'codebook-cycle-0001/dist/utils/awaitResponse';
 import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { settleCleanup } from 'codebook-cycle-0001/dist/utils/settleCleanup';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { ACTIVE_TIMEOUT_MS, CONFIGURED_CAPTURE_PHASES, MAX_EVENTS, MAX_QUEUED_EVIDENCE_BYTES, MAX_RETAINED_EVENT_BYTES, REPOSITORY_BROWSER_ACTION, REPOSITORY_BROWSER_PROFILE, REPOSITORY_PAUSE_HOLD_TIMEOUT_MS, REPOSITORY_RUN_TIMEOUT_MS, REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT, REPOSITORY_SETUP_TIMEOUT_MS, REPOSITORY_STACK_FRAME_LIMIT } from './constants';
+import { ACTIVE_TIMEOUT_MS, CONFIGURED_CAPTURE_PHASES, MAX_EVENTS, MAX_QUEUED_EVIDENCE_BYTES, MAX_RETAINED_EVENT_BYTES, REPOSITORY_BINDING_HINT_EDGE_LINES, REPOSITORY_BINDING_HINT_NEAR_LINES, REPOSITORY_BROWSER_ACTION, REPOSITORY_BROWSER_PROFILE, REPOSITORY_PAUSE_HOLD_TIMEOUT_MS, REPOSITORY_RUN_TIMEOUT_MS, REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT, REPOSITORY_SETUP_TIMEOUT_MS, REPOSITORY_STACK_FRAME_LIMIT } from './constants';
 import { configuredDefinitionSchema, type ConfiguredDefinition } from './configuredStudySchemas';
 import type { ConfiguredRuntimeSnapshot, ConfiguredRuntimeView, RuntimeAction, RuntimeControl, RuntimeSnapshot, StudyRuntime } from './runtime';
 import type { BundleSource } from './repositoryBundle';
@@ -23,7 +24,7 @@ import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint';
 import { StudyError } from './errors';
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor';
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments';
-import { assertDevelopmentWorkspace } from './utils/assertDevelopmentWorkspace';
+import { assertDevelopmentWorkspace, type DevelopmentLockIdentity } from './utils/assertDevelopmentWorkspace';
 import { createBundleVerifier } from './utils/createBundleVerifier';
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle';
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer';
@@ -38,7 +39,8 @@ interface ConfiguredBrowserOptions {
   control?: RuntimeControl;
 }
 type Continuation = { pause: PauseIdentity; response: boolean; dap: boolean; cdp: boolean; afterStarted: boolean };
-const domResultSchema = z.object({ ready: z.boolean(), x: z.number().finite().optional(), y: z.number().finite().optional() });
+const domResultSchema = z.object({ ready: z.boolean(), x: z.number().finite().optional(), y: z.number().finite().optional(),
+  failure: z.object({ conditionIndex: z.number().int().nonnegative().optional(), reason: z.enum(['selector-missing', 'selector-not-unique', 'not-visible', 'text-mismatch', 'attribute-mismatch', 'click-target-missing', 'click-target-not-unique', 'click-target-not-visible', 'click-target-disabled', 'click-target-obscured']) }).optional() });
 const bindingSchema = z.object({ verified: z.literal(true), line: z.number().int(), column: z.number().int() });
 
 /** Owns one configured browser operation and its exact source/pause receipts through the shared Study lifecycle. @example await new ConfiguredBrowserRun(options).prepare() */
@@ -56,6 +58,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly sources: RepositorySourceService;
   private preparedSources?: Awaited<ReturnType<RepositorySourceService['prepare']>>;
   private app?: ReturnType<typeof launchDevelopmentServer>;
+  private ownedDevelopmentLock?: DevelopmentLockIdentity;
   private preparation?: Promise<void>;
   private cleanupPromise?: Promise<void>;
   private selected?: vscode.DebugSession;
@@ -99,6 +102,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     for (let ancestor: vscode.DebugSession | undefined = session; ancestor; ancestor = ancestor.parentSession) if (ancestor.configuration.name === `codebook repository ${this.id}`) return true;
     return false;
   }
+  /** Supplies the exact Next lock only while this configured app is still running; status can recheck other prerequisites. @example run.ownsDevelopmentLock() // { dev, ino } */
+  ownsDevelopmentLock(): DevelopmentLockIdentity | undefined {
+    return !this.cleaning && !this.cleaned && this.app?.isRunning() ? this.ownedDevelopmentLock : undefined;
+  }
+  /** Identifies owned teardown for prerequisite reads after the exact lock receipt becomes unavailable. @example run.isCleaning() // true during Stop */
+  isCleaning(): boolean { return this.cleaning && !this.cleaned; }
   /** Adopts late debugger acquisitions before cancellation can finish. @example run.addSession(child) */
   addSession(session: vscode.DebugSession): void {
     this.sessions.set(session.id, session); this.activeSessions.add(session.id);
@@ -119,6 +128,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.verifySources(); await assertDevelopmentWorkspace(this.options.workspace, this.abort.signal); this.alive();
     this.app = launchDevelopmentServer(this.options.workspace, this.options.node, (type, detail) => this.evidence.record(type, detail));
     this.origin = await this.app.ready(this.abort.signal); this.alive();
+    const developmentLock = await lstat(join(this.options.workspace, '.next/dev/lock')).catch(error => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (developmentLock?.isFile() && !developmentLock.isSymbolicLink()) this.ownedDevelopmentLock = { dev: developmentLock.dev, ino: developmentLock.ino };
     const acquired = await readDevelopmentBundle(this.options.workspace, this.definition.configuration.source, this.abort.signal); this.alive();
     this.bundle = acquired.bundle; this.verifier = createBundleVerifier(this.bundle);
     await this.evidence.save('sealed-source.ts', this.bundle.source); this.alive();
@@ -129,9 +143,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       sourceHash: this.verifier.hashes.typescript, javascriptHash: this.verifier.hashes.javascript, mapHash: this.verifier.hashes.sourceMap };
     this.manifest = { ...bound, hash: sha256(JSON.stringify(bound)) };
     this.evidence.record('source.sealed', { ...bound, discovery: acquired.discovery, scriptUrl: this.bundle.scriptUrl, chunkHash: this.bundle.chunkHash });
-    // Raw source tabs are learner-owned; only a breakpoint is acquired here, never a file editor.
     const position = this.definition.configuration.source;
-    this.breakpoint = new OwnedRepositoryBreakpoint(this.bundle.sourcePath, position.line, position.column);
     await this.browser.launch({ name: `codebook repository ${this.id}`, type: 'pwa-chrome', request: 'launch', url: 'about:blank', webRoot: this.options.workspace,
       sourceMaps: true, sourceMapPathOverrides: { 'webpack://_N_E/./*': `${this.options.workspace}/*` }, timeout: ACTIVE_TIMEOUT_MS }, this.abort.signal); this.alive();
     await this.selectPage(); this.alive();
@@ -162,11 +174,40 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.waitForDom('before'); this.alive();
     const executed = await cdp.request('Debugger.getScriptSource', { scriptId: this.script!.scriptId }); this.alive();
     if (sha256(executed.scriptSource) !== this.verifier.hashes.javascript) throw new Error('Pre-input executed module differs from sealed bundle');
-    const binding = await waitUntil(async () => {
-      const result = await awaitResponse(this.selected!.getDebugProtocolBreakpoint(this.breakpoint!.breakpoint), 'repository binding', this.abort.signal);
-      const parsed = bindingSchema.safeParse(result);
-      return parsed.success && parsed.data.line === position.line && parsed.data.column === position.column ? parsed.data : undefined;
-    }, 'exact repository breakpoint binding', ACTIVE_TIMEOUT_MS, this.abort.signal); this.alive();
+    // Arm only after hydration: VS Code can otherwise stop on the selected source before Codebook sends learner input.
+    this.breakpoint = new OwnedRepositoryBreakpoint(this.bundle.sourcePath, position.line, position.column);
+    let binding: z.infer<typeof bindingSchema>;
+    try {
+      binding = await waitUntil(async () => {
+        const result = await awaitResponse(this.selected!.getDebugProtocolBreakpoint(this.breakpoint!.breakpoint), 'repository binding', this.abort.signal);
+        const parsed = bindingSchema.safeParse(result);
+        return parsed.success && parsed.data.line === position.line && parsed.data.column === position.column ? parsed.data : undefined;
+      }, `exact repository breakpoint binding at source ${position.line}:${position.column}; choose an executable statement reached by the requested action`, ACTIVE_TIMEOUT_MS, this.abort.signal);
+    } catch (error) {
+      const failureMessage = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' ? error.message : String(error);
+      if (!failureMessage.startsWith('Timed out waiting for exact repository breakpoint binding')) throw error;
+      const anchor = this.definition.descriptor.anchors[this.definition.configuration.book.anchorIndex]!;
+      let hint: string;
+      try {
+        const mapped = this.verifier!.mappedPositions(anchor.startLine, anchor.endLine);
+        const mappedPositions = mapped.positions;
+        const edgeCount = REPOSITORY_BINDING_HINT_EDGE_LINES, nearCount = REPOSITORY_BINDING_HINT_NEAR_LINES;
+        // Keep the citation's boundaries and the attempted line represented when a long map needs a bounded hint.
+        const sampled = mappedPositions.length <= edgeCount * 2 + nearCount ? mappedPositions : [...new Map([
+          ...mappedPositions.slice(0, edgeCount),
+          ...mappedPositions.toSorted((left, right) => Math.abs(left.line - position.line) - Math.abs(right.line - position.line)).slice(0, nearCount),
+          ...mappedPositions.slice(-edgeCount),
+        ].map(candidate => [candidate.line, candidate])).values()].sort((left, right) => left.line - right.line);
+        const locations = sampled.map(candidate => `${candidate.line}:${candidate.column}`).join(', ');
+        const qualifier = mapped.complete ? '' : ' (partial map scan)';
+        this.evidence.record('breakpoint.mapping-hints', { requested: position, citation: { startLine: anchor.startLine, endLine: anchor.endLine }, mappedLineCount: mappedPositions.length, returnedLineCount: sampled.length, complete: mapped.complete });
+        hint = `Frozen source map positions in the selected citation${qualifier}: ${locations || 'none'}. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.`;
+      } catch {
+        throw error;
+      }
+      throw new Error(`${failureMessage}. ${hint}`);
+    }
+    this.alive();
     this.evidence.record('breakpoint.bound', binding); await this.verifySources();
     await this.browser.reveal(this.abort.signal); this.alive(); await this.capture('before'); this.alive();
     clearTimeout(this.progressTimer); this.status = 'ready'; await this.persist();
@@ -231,7 +272,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.cleaning || session.id !== this.selected?.id) return;
     if (event.event === 'stopped') {
       const body: DebugProtocol.StoppedEvent['body'] = event.body;
-      if (!Number.isInteger(body.threadId) || !this.operation?.inputDispatched || this.acceptedStop) { this.fail('Unexpected or additional browser stop invalidated the one-pause operation'); return; }
+      if (!Number.isInteger(body.threadId) || !this.operation?.inputDispatched || this.acceptedStop) {
+        // Preserve the rejected stop's kind without recording debugger payloads or assuming a startup pause is harmless.
+        this.evidence.record('dap.rejected-stop', { reason: body.reason, threadIdValid: Number.isInteger(body.threadId), inputDispatched: this.operation?.inputDispatched ?? false, acceptedStop: this.acceptedStop });
+        this.fail('Unexpected or additional browser stop invalidated the one-pause operation'); return;
+      }
       this.acceptedStop = true; const pause = this.gate.stop(session.id, body.threadId!); this.status = 'paused-browser';
       this.progressDeadline(REPOSITORY_PAUSE_HOLD_TIMEOUT_MS, 'Repository pause hold deadline exceeded');
       this.evidence.record('dap.stopped', { ...pause, reason: body.reason }); this.track(this.inspect(pause));
@@ -334,7 +379,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return domResultSchema.parse(response.result.value);
   }
   /** Polls conditions without repeating application input; setup and after verification call it. @example await this.waitForDom('after') */
-  private async waitForDom(phase: 'before' | 'after'): Promise<void> { await waitUntil(async () => (await this.readDom(phase)).ready, `configured ${phase} conditions`, ACTIVE_TIMEOUT_MS, this.abort.signal); }
+  private async waitForDom(phase: 'before' | 'after'): Promise<void> {
+    let lastResult: z.infer<typeof domResultSchema> | undefined;
+    const timeoutMessage = `Timed out waiting for configured ${phase} conditions`;
+    try {
+      await waitUntil(async () => { lastResult = await this.readDom(phase); return lastResult.ready; }, `configured ${phase} conditions`, ACTIVE_TIMEOUT_MS, this.abort.signal);
+    } catch (error) {
+      if (!error || typeof error !== 'object' || !('message' in error) || error.message !== timeoutMessage || !lastResult?.failure) throw error;
+      const { conditionIndex, reason } = lastResult.failure;
+      const condition = conditionIndex === undefined ? 'click target' : `condition ${conditionIndex + 1} (${this.definition.configuration.action[phase][conditionIndex]?.kind ?? 'unknown'})`;
+      const classHint = reason === 'attribute-mismatch' ? ' An attribute condition compares the entire value; use a CSS class selector to test class membership.' : '';
+      throw new Error(`${timeoutMessage}: ${condition} ${reason}.${classHint}`);
+    }
+  }
   /** Revalidates all cited disk identities and open buffers at effect/pause/continue boundaries without owning raw tabs. @example await this.verifySources() */
   private async verifySources(): Promise<void> {
     this.alive(); assertConfiguredSourceDocuments(this.options.workspace, this.definition, vscode.workspace.textDocuments);

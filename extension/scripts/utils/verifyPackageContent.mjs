@@ -7,7 +7,7 @@ import { PACKAGE_MANIFEST_PATH } from './packageConstants.mjs';
 // The checker independently enforces the shipped fixture format; packaging compares it with the runtime contract.
 export const REQUIRED_DEMO_FILES = ['fixture/server.mts', 'fixture/client.mts', 'fixture/constants.mts', 'fixture/index.html',
   'build/server.mjs', 'build/server.mjs.map', 'build/client.mjs', 'build/client.mjs.map', 'build/constants.mjs', 'build/constants.mjs.map'];
-export const REQUIRED_PACKAGE_FILES = ['package.json', 'readme.md', 'dist/extension.js', 'dist/build.json', 'src/assets/book.svg', 'THIRD_PARTY_NOTICES.md', ...REQUIRED_DEMO_FILES.map(file => `dist/demo/${file}`)];
+export const REQUIRED_PACKAGE_FILES = ['package.json', 'readme.md', 'dist/extension.js', 'dist/cursorMcpBridge.js', 'dist/build.json', 'src/assets/book.svg', 'skills/codebook/SKILL.md', 'THIRD_PARTY_NOTICES.md', ...REQUIRED_DEMO_FILES.map(file => `dist/demo/${file}`)];
 
 /** Checks a closed file inventory, metadata, notices and manifest references without loading extension code. @example await verifyPackageContent(entries, expectedStageFiles) */
 export async function verifyPackageContent(entries, expectedFiles) {
@@ -56,7 +56,7 @@ export async function verifyPackageContent(entries, expectedFiles) {
   assert.equal(createHash('sha256').update(build.sourceHashes.join('\n')).digest('hex'), build.sourceHash, 'Source provenance mismatch.');
   assert.ok(build.sourceHashes.some(value => value.startsWith('extension/patches/@modelcontextprotocol__sdk@')), 'Missing SDK patch provenance.');
   for (const key of ['dependencies', 'devDependencies', 'optionalDependencies', 'scripts']) assert.equal(extension[key], undefined, `Installed manifest retains ${key}.`);
-  const referenced = [extension.main, ...Object.values(extension.contributes?.viewsContainers ?? {}).flat().map(container => container.icon)];
+  const referenced = [extension.main, ...Object.values(extension.contributes?.viewsContainers ?? {}).flat().map(container => container.icon), ...Object.values(extension.contributes?.chatSkills ?? {}).flat().map(skill => skill.path)];
   for (const reference of referenced) {
     assert.equal(typeof reference, 'string', 'Missing manifest file reference.');
     const path = reference.replace(/^\.\//, '');
@@ -64,6 +64,12 @@ export async function verifyPackageContent(entries, expectedFiles) {
     bytes(path);
   }
   assert.equal(extension.main, './dist/extension.js', 'Unexpected extension entry.');
+  assert.deepEqual(extension.contributes?.chatSkills, [{ path: './skills/codebook/SKILL.md' }], 'Bundled chat skill registration differs from its source.');
+  assert.deepEqual(extension.contributes?.mcpServerDefinitionProviders, [{ id: 'laststance.codebook.currentWorkspace', label: 'Codebook current workspace' }], 'Codebook MCP provider contribution is missing.');
+  assert.ok(extension.contributes?.commands?.some(command => command.command === 'codebook.setupAiChat'), 'Ordinary editor chat setup command is missing.');
+  const skill = bytes('skills/codebook/SKILL.md').toString('utf8');
+  assert.match(skill, /^---\nname: codebook\ndescription: [^\n]+\nmetadata:\n  version: "\d+\.\d+\.\d+"\n---\n/, 'Missing canonical versioned codebook skill.');
+  assert.doesNotMatch(skill, /\b(?:Authorization\s*:|Bearer\s+\S+|https?:\/\/(?:127\.0\.0\.1|localhost)\b|[a-f0-9]{64}\b)/i, 'Bundled skill contains connection-like or temporary identity material.');
   const rawXml = entries.get('extension.vsixmanifest').toString('utf8');
   assert.ok(!/<!DOCTYPE|<!ENTITY/i.test(rawXml), 'Unsupported XML declaration.');
   const xml = await parseStringPromise(rawXml), identity = xml.PackageManifest?.Metadata?.[0]?.Identity?.[0]?.$;

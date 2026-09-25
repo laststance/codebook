@@ -33,8 +33,55 @@ test('MCP discovery declares application execution effects without broadening so
       assert.equal(annotations?.readOnlyHint, false); assert.equal(annotations?.destructiveHint, true); assert.equal(annotations?.openWorldHint, true);
     }
     assert.equal(discovery.tools.find(tool => tool.name === 'codebook_source')!.annotations?.readOnlyHint, true);
+    assert.equal(discovery.tools.find(tool => tool.name === 'codebook_read_resource')!.annotations?.readOnlyHint, true);
     assert.equal(discovery.tools.find(tool => tool.name === 'codebook_publish_book')!.annotations?.openWorldHint, false);
     assert.equal(harness.runtimes.length, 0);
+  } finally { await connection.close(); await endpoint.close(); await harness.close(); }
+});
+
+test('status identifies extension build changes without claiming that the target workspace changed', async () => {
+  // Arrange
+  const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
+  try {
+    // Act
+    const discovery = await connection.client.listTools();
+    const result = await connection.client.callTool({ name: 'codebook_status', arguments: {} });
+    const status = z.object({ data: z.object({ build: z.object({ dirty: z.boolean(), scope: z.string() }), workspaceGitStatus: z.string() }) }).parse(result.structuredContent).data;
+    // Assert
+    assert.match(discovery.tools.find(tool => tool.name === 'codebook_status')!.description!, /packaged Codebook extension source, not the target repository/);
+    assert.equal(status.build.dirty, true);
+    assert.equal(status.build.scope, 'codebook-extension-source');
+    assert.equal(status.workspaceGitStatus, 'not-inspected');
+  } finally { await connection.close(); await endpoint.close(); await harness.close(); }
+});
+
+test('tool-only editor chats can read the same public help and current run as MCP resource clients', async () => {
+  // Arrange
+  const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
+  try {
+    // Act
+    const helpUri = 'codebook://help/repository-browser';
+    const helpTool = await connection.client.callTool({ name: 'codebook_read_resource', arguments: { uri: helpUri } });
+    const helpResource = await connection.client.readResource({ uri: helpUri });
+    const started = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: PROFILE_ID, key: 'resource-tool' } });
+    const receipt = z.object({ data: receiptSchema }).parse(started.structuredContent).data;
+    await harness.service.record(receipt).preparation;
+    const runTool = await connection.client.callTool({ name: 'codebook_read_resource', arguments: { uri: receipt.runUri } });
+    const runResource = await connection.client.readResource({ uri: receipt.runUri });
+    const foreign = await connection.client.callTool({ name: 'codebook_read_resource', arguments: { uri: 'codebook://not-this-instance/runs/00000000-0000-4000-8000-000000000000' } });
+    // Assert
+    const textContent = z.object({ type: z.literal('text'), text: z.string() });
+    const resourceMetadata = z.object({ ok: z.literal(true), uri: z.string(), mimeType: z.literal('application/json') });
+    const helpContent = helpResource.contents[0], runContent = runResource.contents[0];
+    assert.ok(helpContent && 'text' in helpContent); assert.ok(runContent && 'text' in runContent);
+    assert.equal(resourceMetadata.parse(helpTool.structuredContent).uri, helpUri);
+    assert.equal(resourceMetadata.parse(runTool.structuredContent).uri, receipt.runUri);
+    assert.equal(Object.hasOwn(helpTool.structuredContent ?? {}, 'text'), false);
+    assert.equal(Object.hasOwn(runTool.structuredContent ?? {}, 'text'), false);
+    assert.equal(z.array(textContent).parse(helpTool.content)[0]?.text, helpContent.text);
+    assert.equal(z.array(textContent).parse(runTool.content)[0]?.text, runContent.text);
+    assert.equal(foreign.isError, true); assert.match(JSON.stringify(foreign.structuredContent), /STALE_INSTANCE/);
+    assert.equal(harness.runtimes.length, 1);
   } finally { await connection.close(); await endpoint.close(); await harness.close(); }
 });
 
@@ -55,7 +102,7 @@ test('real MCP discovery, action and reconnect retain one runtime and one click 
     const repeated = await second.client.callTool({ name: 'codebook_action', arguments: arguments_ });
     const state = await second.client.readResource({ uri: receipt.runUri });
     // Assert
-    assert.deepEqual(discovery.tools.map(tool => tool.name).sort(), ['codebook_action', 'codebook_continue', 'codebook_explain', 'codebook_open_book', 'codebook_playback', 'codebook_presentation', 'codebook_publish_book', 'codebook_reveal', 'codebook_source', 'codebook_sources', 'codebook_start', 'codebook_status', 'codebook_stop']);
+    assert.deepEqual(discovery.tools.map(tool => tool.name).sort(), ['codebook_action', 'codebook_continue', 'codebook_explain', 'codebook_open_book', 'codebook_playback', 'codebook_presentation', 'codebook_publish_book', 'codebook_read_resource', 'codebook_return_current', 'codebook_reveal', 'codebook_source', 'codebook_sources', 'codebook_start', 'codebook_status', 'codebook_stop']);
     assert.equal(templates.resourceTemplates.length, 17); assert.equal(accepted.isError, undefined);
     assert.deepEqual(repeated.structuredContent, accepted.structuredContent); assert.equal(harness.runtimes[0]?.dispatches, 1);
     assert.match(JSON.stringify(state), /paused-server/);
@@ -198,7 +245,7 @@ test('deleting an in-flight MCP session settles its HTTP response and preserves 
     }
     // Assert
     const recovered = await connect(endpoint.descriptor);
-    try { assert.equal((await recovered.client.listTools()).tools.length, 13); }
+    try { assert.equal((await recovered.client.listTools()).tools.length, 15); }
     finally { await recovered.close(); }
     assert.equal(harness.runtimes[0]?.dispatches, 1); assert.equal(harness.runtimes[0]?.stopped, false);
   } finally { await endpoint.close(); await harness.close(); }
@@ -217,7 +264,7 @@ test('cancelled MCP calls release HTTP capacity without closing their shared ses
       const pending = assert.rejects(connection.client.callTool({ name: 'codebook_status', arguments: {} }, undefined, { signal: abort.signal }));
       try { await waitUntil(() => entered, 'held cancellable status', 1_000); abort.abort(); await pending; }
       finally { release(); }
-      assert.equal((await connection.client.listTools()).tools.length, 13);
+      assert.equal((await connection.client.listTools()).tools.length, 15);
     }
     // Assert
     assert.equal((await connection.client.listResourceTemplates()).resourceTemplates.length, 17);

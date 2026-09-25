@@ -88,8 +88,9 @@ export async function startServer(service: StudyService, now = Date.now) {
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(DYNAMIC_PORT, LOOPBACK_ADDRESS, () => { server.removeListener('error', reject); resolve(); }); });
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing loopback address');
   origin = `http://${LOOPBACK_ADDRESS}:${address.port}`;
-  const expire = () => { for (const session of sessions.values()) if (!session.active && now() - session.lastSeen >= SESSION_IDLE_TIMEOUT_MS) void session.protocol.close(); };
-  const timer = setInterval(expire, MAINTENANCE_INTERVAL_MS); timer.unref();
+  const expire = async () => { await Promise.allSettled([...sessions.values()].filter(session => !session.active && now() - session.lastSeen >= SESSION_IDLE_TIMEOUT_MS)
+    .map(session => session.protocol.close())); };
+  const timer = setInterval(() => { void expire(); }, MAINTENANCE_INTERVAL_MS); timer.unref();
   const descriptor: ConnectionDescriptor = { url: `${origin}/mcp`, token, instanceId: service.instanceId, workspace: service.environment.workspace, apiVersion: API_VERSION };
   let closePromise: Promise<void> | undefined;
   return { descriptor, expire,

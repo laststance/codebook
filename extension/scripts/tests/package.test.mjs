@@ -53,8 +53,9 @@ test('a real VSIX loads outside the checkout and preserves exact fixture maps, p
   // Arrange / Act
   const checked = await verifyPackageContent(original);
   // Assert
-  assert.equal(receipt.isolatedModuleLoad, true); assert.equal(checked.extension.version, '0.2.2'); assert.equal(checked.extension.apiVersion, '1.5');
-  assert.equal(checked.entries, 31); assert.equal(receipt.dependencies.length, 12);
+  assert.equal(receipt.isolatedModuleLoad, true); assert.equal(checked.extension.version, '0.2.3'); assert.equal(checked.extension.apiVersion, '1.5');
+  assert.equal(checked.entries, 35); assert.equal(receipt.dependencies.length, 14);
+  assert.deepEqual(original.get('extension/skills/codebook/SKILL.md'), await readFile(join(repository, 'extension/skills/codebook/SKILL.md')));
   for (const path of ['fixture/server.mts', 'fixture/client.mts', 'fixture/constants.mts', 'fixture/index.html', 'build/server.mjs', 'build/server.mjs.map', 'build/client.mjs', 'build/client.mjs.map', 'build/constants.mjs', 'build/constants.mjs.map']) {
     assert.deepEqual(original.get(`extension/dist/demo/${path}`), await readFile(join(repository, 'experiments/cycle-0004', path)));
   }
@@ -153,7 +154,7 @@ for (const method of ['openPromise', 'fromBufferPromise']) {
   assert.equal(result.stderr, '');
 });
 
-for (const file of ['dist/demo/fixture/index.html', 'dist/demo/build/server.mjs.map', 'dist/extension.js', 'src/assets/book.svg']) {
+for (const file of ['dist/demo/fixture/index.html', 'dist/demo/build/server.mjs.map', 'dist/extension.js', 'src/assets/book.svg', 'skills/codebook/SKILL.md']) {
   test(`a VSIX missing ${file} is rejected before installation`, async () => {
     // Arrange
     const entries = new Map(original); entries.delete(`extension/${file}`); const path = await writeArchive(entries, `missing-${file.replaceAll('/', '-')}`);
@@ -161,6 +162,35 @@ for (const file of ['dist/demo/fixture/index.html', 'dist/demo/build/server.mjs.
     await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /missing or extra|Missing package file/);
   });
 }
+
+test('an archive with a non-codebook skill body is rejected even when its self-declared hash matches', async () => {
+  // Arrange
+  const entries = new Map(original);
+  replaceFile(entries, 'skills/codebook/SKILL.md', Buffer.from('---\nname: other\ndescription: Wrong skill.\n---\n'));
+  const path = await writeArchive(entries, 'wrong-skill-body');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /canonical versioned codebook skill/);
+});
+
+test('a VSIX cannot ship a credential in its bundled skill even when its self-declared hash matches', async () => {
+  // Arrange
+  const entries = new Map(original);
+  const skill = entries.get('extension/skills/codebook/SKILL.md').toString('utf8');
+  replaceFile(entries, 'skills/codebook/SKILL.md', Buffer.from(`${skill}\nAuthorization: Bearer private-token\n`));
+  const path = await writeArchive(entries, 'skill-credential');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /connection-like or temporary identity material/);
+});
+
+test('an archive whose chat contribution points outside its bundled skill is rejected', async () => {
+  // Arrange
+  const entries = new Map(original), extension = JSON.parse(entries.get('extension/package.json'));
+  extension.contributes.chatSkills = [{ path: './skills/other/SKILL.md' }];
+  replaceFile(entries, 'package.json', Buffer.from(JSON.stringify(extension)));
+  const path = await writeArchive(entries, 'wrong-skill-reference');
+  // Act / Assert
+  await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /Missing package file|registration differs/);
+});
 
 test('removing the icon from both archive and self-declared inventory still violates the package contract', async () => {
   // Arrange

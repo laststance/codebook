@@ -13,6 +13,11 @@ export const presentationCommandSchema = z.strictObject({
 });
 export type PresentationCommand = z.infer<typeof presentationCommandSchema>;
 export type PresentationIntent = Omit<PresentationCommand, 'instanceId'>;
+export const returnCurrentCommandSchema = z.strictObject({
+  instanceId: z.uuid(), presentationId: z.uuid(), expectedRevision: z.number().int().nonnegative(),
+});
+export type ReturnCurrentCommand = z.infer<typeof returnCurrentCommandSchema>;
+export type ReturnCurrentIntent = Omit<ReturnCurrentCommand, 'instanceId'>;
 const readingOffsetSchema = z.number().finite().nonnegative().max(PRESENTATION_READING_LIMIT_PX);
 export const presentationReadingPoseSchema = z.strictObject({
   anchorId: z.enum(PRESENTATION_READING_ANCHORS).optional(), fraction: z.number().min(0).max(1),
@@ -45,6 +50,7 @@ export const presentationPoseInvalidatedSchema = z.strictObject({ type: z.litera
 export interface PresentationState {
   presentationId: string;
   presentationControlRevision: number;
+  reader: { contentRevision: number; contentTab: 'overview' | 'live' | 'recording'; followingCurrentRun: boolean };
   mode: PresentationMode;
   requestedMode?: PresentationMode;
   state: 'closed' | 'open' | 'applying';

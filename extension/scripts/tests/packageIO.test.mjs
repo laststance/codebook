@@ -25,7 +25,7 @@ async function sourceFixture(context, objectFormat = 'sha1') {
   const { directory, output } = await outputFixture(context), repository = join(directory, 'repository');
   for (const name of BUILD_PACKAGES) {
     const root = join(repository, name);
-    for (const part of ['src', 'fixture', 'scripts', 'patches']) await mkdir(join(root, part), { recursive: true });
+    for (const part of ['src', 'fixture', 'scripts', 'patches', 'skills']) await mkdir(join(root, part), { recursive: true });
     for (const file of ['pnpm-lock.yaml', 'pnpm-workspace.yaml', 'README.md']) await writeFile(join(root, file), 'fixture\n');
     await writeFile(join(root, 'package.json'), JSON.stringify({ name: name.replaceAll('/', '-'), version: '0.2.1' }));
     await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { module: 'Node16', moduleResolution: 'Node16', strict: true, noEmit: true, types: [] }, include: ['src'] }));
@@ -183,6 +183,17 @@ test('dependency inspection rejects a non-native emitted import before staging a
   const fixture = await sourceFixture(context), metafile = { inputs: {}, outputs: { bundle: { imports: [{ path: 'bufferutil', external: true }] } } };
   // Act / Assert
   await assert.rejects(inspectBundle(metafile, fixture.repository, new Map()), /unresolved non-native import/);
+});
+
+test('package inspection rejects a VS Code import in the standalone Cursor MCP bridge', async context => {
+  // Arrange
+  const fixture = await sourceFixture(context);
+  const metafile = { inputs: {}, outputs: {
+    'dist/extension.js': { imports: [{ path: 'vscode', external: true }] },
+    'dist/cursorMcpBridge.js': { imports: [{ path: 'vscode', external: true }] },
+  } };
+  // Act / Assert
+  await assert.rejects(inspectBundle(metafile, fixture.repository, new Map()), /Cursor MCP bridge contains an editor-only import/);
 });
 
 test('a bundled dependency without its license text prevents package staging', async context => {

@@ -5,6 +5,7 @@ import type { Protocol } from 'devtools-protocol';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
 import { bundleSchema, mapSchema, type BundleSource } from '../repositoryBundle';
 import { isSourcePosition } from './isSourcePosition';
+import { sourceMapMappedPositions } from './sourceMapMappedPositions';
 
 /** Seals one parsed map for {@link ConfiguredBrowserRun} before input, rejecting ambiguous originals without changing legacy verification. @example createBundleVerifier(bundle).hashes.sourceMap.length // 64 */
 export function createBundleVerifier(input: BundleSource) {
@@ -19,6 +20,8 @@ export function createBundleVerifier(input: BundleSource) {
   const hashes = Object.freeze({ typescript: sha256(bundle.source), javascript: sha256(bundle.javascript), sourceMap: sha256(bundle.sourceMap) });
   return {
     hashes,
+    /** Reports frozen-map positions inside the selected citation after an exact binding timeout; callers must still verify a real pause. @example verifier.mappedPositions(1, 3).positions // [{ line: 1, column: 1 }] */
+    mappedPositions(startLine: number, endLine: number) { return sourceMapMappedPositions(payload.mappings, matches[0]!, startLine, endLine); },
     /** Confirms exact source and generated coordinates for the guarded paused inspector. @example verifier.verify(js, tsx, location, 'script-1', 19, 5) */
     verify(executed: string, local: string, location: Protocol.Debugger.Location, scriptId: string, frameLine: number, frameColumn: number) {
       if (sha256(executed) !== hashes.javascript) throw new Error('Executed JavaScript differs from frozen module');

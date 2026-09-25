@@ -3,8 +3,9 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod';
 import type { ConnectionDescriptor } from './server';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { connectionSchema } from './utils/connectionSchema';
 
-export const connectionSchema = z.object({ url: z.url(), token: z.string(), instanceId: z.uuid(), workspace: z.string(), apiVersion: z.string() });
+export { connectionSchema };
 const outcomeSchema = z.discriminatedUnion('ok', [z.object({ ok: z.literal(true), data: z.unknown() }), z.object({ ok: z.literal(false), error: z.object({ code: z.string(), message: z.string(), recovery: z.string() }) })]);
 
 /** Uses only the public MCP protocol for examples and native validation, keeping credentials out of transcripts. @example const agent = await StudyClient.connect(descriptor) */

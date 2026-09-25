@@ -3,7 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { setImmediate } from 'node:timers/promises';
 import { z } from 'zod';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { REPOSITORY_DISCOVERY_CANDIDATE_LIMIT, REPOSITORY_DISCOVERY_LIMIT_BYTES, REPOSITORY_DISCOVERY_TIMEOUT_MS, REPOSITORY_JAVASCRIPT_LIMIT_BYTES, REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants';
+import { REPOSITORY_CHUNK_LIMIT_BYTES, REPOSITORY_DISCOVERY_CANDIDATE_LIMIT, REPOSITORY_DISCOVERY_LIMIT_BYTES, REPOSITORY_DISCOVERY_TIMEOUT_MS, REPOSITORY_JAVASCRIPT_LIMIT_BYTES, REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants';
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas';
 import type { BundleSource } from '../repositoryBundle';
 import { extractDevelopmentModule } from './extractDevelopmentModule';
@@ -37,7 +37,7 @@ export async function readDevelopmentBundle(workspace: string, selected: Reposit
   for (const candidate of candidates) {
     const buildRoot = resolve(root, '.next/dev'), chunkPath = resolve(buildRoot, candidate);
     if (!chunkPath.startsWith(`${buildRoot}${sep}`)) throw new Error('Declared chunk escapes the selected build');
-    const chunk = await read(chunkPath, REPOSITORY_JAVASCRIPT_LIMIT_BYTES), bundle = extractDevelopmentModule(chunk, sourcePath, source, chunkPath, scriptUrl, deadline);
+    const chunk = await read(chunkPath, REPOSITORY_CHUNK_LIMIT_BYTES), bundle = extractDevelopmentModule(chunk, sourcePath, source, chunkPath, scriptUrl, deadline);
     if (bundle) bundles.push(bundle);
     if (bundles.length > 1) throw new Error('Ambiguous application source chunk');
     // Yield between bounded chunks so state/stop remain responsive during preparation.
@@ -45,6 +45,7 @@ export async function readDevelopmentBundle(workspace: string, selected: Reposit
   }
   if (performance.now() >= deadline) throw new Error('Build discovery resource limit exceeded');
   signal?.throwIfAborted();
-  if (bundles.length !== 1) throw new Error('Missing application source chunk');
+  // An unchanged tracked file may still belong to a route outside the launched root page.
+  if (bundles.length !== 1) throw new Error('Selected source is absent from the root application route chunks; verify that it belongs to the launched page');
   return { bundle: bundles[0]!, discovery: { readBytes, durationMs: performance.now() - started, candidates: [...candidates], manifestHash: sha256(manifest) } };
 }

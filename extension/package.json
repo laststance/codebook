@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -24,6 +24,17 @@
     "virtualWorkspaces": false
   },
   "contributes": {
+    "chatSkills": [
+      {
+        "path": "./skills/codebook/SKILL.md"
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "laststance.codebook.currentWorkspace",
+        "label": "Codebook current workspace"
+      }
+    ],
     "commands": [
       {
         "command": "codebook.startAgentServer",
@@ -36,6 +47,18 @@
       {
         "command": "codebook.copyAgentConnection",
         "title": "Codebook: Copy Agent Connection"
+      },
+      {
+        "command": "codebook.setupAiChat",
+        "title": "Codebook: Set Up AI Chat"
+      },
+      {
+        "command": "codebook.removeManagedCursorSkill",
+        "title": "Codebook: Remove Managed Cursor Skill"
+      },
+      {
+        "command": "codebook.restoreManagedCursorSkill",
+        "title": "Codebook: Restore Managed Cursor Skill"
       },
       {
         "command": "codebook.openStudyWorkspace",

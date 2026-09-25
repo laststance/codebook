@@ -146,7 +146,7 @@ knowledge_base:
       - "DECISIONS.md"
       - "DESIGN.md"
       # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
-      - files: "docs/cycles/0018-editor-group-scope.md"
+      - files: "docs/cycles/0019-bundled-codebook-skill.md"
         applyTo: "**/*"
       - files: "docs/designs/codebook.md"
         applyTo: "extension/src/**"

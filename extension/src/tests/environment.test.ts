@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadModule } from './utils/loadModule';
@@ -25,6 +25,7 @@ test('the configured environment routes only owned DAP responses and reveals imm
   const directory = await mkdtemp(join(tmpdir(), 'codebook-environment-')); context.after(() => rm(directory, { recursive: true, force: true }));
   await writeFile(join(directory, 'product.json'), JSON.stringify({ version: '3.21.13', commit: 'fixture' }));
   const filesystem = await import('node:fs/promises'), accesses: string[] = [], messages: string[] = [], instances: SelectedRun[] = [];
+  let ownedLock: { dev: number; ino: number } | undefined, runStatus: 'preparing' | 'ready' = 'ready', cleaning = false;
   let factory: DebugAdapterTrackerFactory | undefined, revealed = false;
   class SelectedRun {
     readonly id = 'configured-run'; readonly activeSessions = new Set<string>(); readonly evidence = { record() {} };
@@ -32,14 +33,20 @@ test('the configured environment routes only owned DAP responses and reveals imm
     owner(session: DebugSession) { return session.id === 'selected'; }
     addSession(session: DebugSession) { this.activeSessions.add(session.id); }
     onRequest() { messages.push('request'); } onResponse() { messages.push('response'); } onEvent() { messages.push('event'); }
-    view() { return { cleaned: false }; } terminated() {} fail() { messages.push('failed'); }
+    view() { return { status: runStatus, cleaned: false }; } terminated() {} fail() { messages.push('failed'); }
+    ownsDevelopmentLock() { return ownedLock; }
+    isCleaning() { return cleaning; }
   }
   const disposable = { dispose() {} };
   const boundary = await loadModule<typeof import('../environment')>(resolve(__dirname, '../environment.js'), {
     './configuredBrowserRun': { ConfiguredBrowserRun: SelectedRun },
     './utils/checkDemoFiles': { checkDemoFiles: async () => ['Bundled demo files are missing or unreadable. Reinstall Codebook.'] },
+    './utils/resolveExternalNodeExecutable': { resolveExternalNodeExecutable: async () => '/external/node' },
     'codebook-cycle-0004/dist/run': { PairedRun: class { constructor() { throw new Error('Demo must not launch'); } } },
-    'node:fs/promises': { ...filesystem, access: async (path: string) => { accesses.push(path); if (path.includes('/dist/demo/')) throw new Error('No installed demo fixtures'); } },
+    'node:fs/promises': { ...filesystem, access: async (path: string) => {
+      accesses.push(path);
+      if (path.includes('/dist/demo/')) throw new Error('No installed demo fixtures');
+    } },
     'node:util': { promisify: () => async (file: string) => ({ stdout: file === 'node' ? JSON.stringify({ version: '24.21.0', executable: '/external/node' }) : 'Chrome fixture' }) },
     vscode: { workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }], getConfiguration: () => ({ get: (_key: string, fallback: string) => fallback }) },
       env: { appRoot: directory, appName: 'Cursor' }, version: '1.128.0', extensions: { getExtension: () => ({}) },
@@ -47,11 +54,45 @@ test('the configured environment routes only owned DAP responses and reveals imm
   });
   const environment = await boundary.createEnvironment({ extensionPath: resolve(__dirname, '../..') }, { createViewport: () => { throw new Error('No renderer acquisition in a factory test'); }, prepareSource: async () => { throw new Error('Raw source must not open'); }, revealSource: async () => revealed });
   context.after(() => environment.dispose());
+  await mkdir(join(directory, 'node_modules/next/dist/bin'), { recursive: true });
+  const nextExecutable = join(directory, 'node_modules/next/dist/bin/next');
+  await writeFile(nextExecutable, 'Next fixture');
+  await mkdir(join(directory, '.next/dev'), { recursive: true });
+  await writeFile(join(directory, '.next/dev/lock'), 'owned run fixture');
+  const lockStatus = await lstat(join(directory, '.next/dev/lock'));
+  ownedLock = { dev: lockStatus.dev, ino: lockStatus.ino };
+  assert.equal((await environment.prerequisites()).profiles?.['repository-browser']?.ready, false);
   const cancellation = new AbortController(), control = { signal: cancellation.signal, deadlineAt: 600000, preparationDeadlineAt: 90000 };
   const fixture = createConfiguredStudy();
   const definition = configuredDefinitionSchema.parse({ configuration: fixture.configuration, configurationHash: fixture.configurationHash, descriptor: fixture.descriptor });
   // Act
   const runtime = await environment.createRuntime(join(directory, 'runtime'), definition, control), selected = instances[0]!;
+  runStatus = 'preparing'; ownedLock = undefined;
+  const preparing = await environment.prerequisites();
+  assert.equal(preparing.profiles?.['repository-browser']?.ready, false);
+  assert.match(preparing.profiles?.['repository-browser']?.missing.join(' ') ?? '', /Poll the current run; do not stop its process/);
+  assert.doesNotMatch(preparing.profiles?.['repository-browser']?.missing.join(' ') ?? '', /belongs to another process/);
+  runStatus = 'ready'; ownedLock = { dev: lockStatus.dev, ino: lockStatus.ino };
+  assert.equal((await environment.prerequisites()).profiles?.['repository-browser']?.ready, true);
+  cleaning = true; ownedLock = undefined;
+  const releasing = await environment.prerequisites();
+  assert.equal(releasing.profiles?.['repository-browser']?.ready, false);
+  assert.match(releasing.profiles?.['repository-browser']?.missing.join(' ') ?? '', /releasing its managed run/);
+  assert.doesNotMatch(releasing.profiles?.['repository-browser']?.missing.join(' ') ?? '', /belongs to another process/);
+  cleaning = false; ownedLock = { dev: lockStatus.dev, ino: lockStatus.ino };
+  const lockPath = join(directory, '.next/dev/lock'), ownedLockBackup = join(directory, '.next/dev/lock.owned');
+  await rename(lockPath, ownedLockBackup);
+  await writeFile(lockPath, 'foreign lock');
+  const replacedDuringRun = await environment.prerequisites();
+  assert.equal(replacedDuringRun.profiles?.['repository-browser']?.ready, false);
+  assert.match(replacedDuringRun.profiles?.['repository-browser']?.missing.join(' ') ?? '', /lock/);
+  await rm(lockPath);
+  await rename(ownedLockBackup, lockPath);
+  await rm(nextExecutable);
+  const missingDuringRun = await environment.prerequisites();
+  assert.equal(missingDuringRun.profiles?.['repository-browser']?.ready, false);
+  assert.match(missingDuringRun.profiles?.['repository-browser']?.missing.join(' ') ?? '', /Next/);
+  await writeFile(nextExecutable, 'Next fixture');
   const session: DebugSession = { id: 'selected', type: 'pwa-chrome', name: 'selected', workspaceFolder: undefined, configuration: { type: 'pwa-chrome', request: 'launch', name: 'selected' }, customRequest: async () => ({}), getDebugProtocolBreakpoint: async () => undefined };
   const tracker = await factory!.createDebugAdapterTracker(session);
   tracker?.onWillReceiveMessage?.({ type: 'request', command: 'setBreakpoints' }); tracker?.onDidSendMessage?.({ type: 'response', command: 'setBreakpoints' }); tracker?.onDidSendMessage?.({ type: 'event', event: 'stopped' });

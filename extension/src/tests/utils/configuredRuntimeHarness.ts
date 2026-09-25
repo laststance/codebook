@@ -4,6 +4,7 @@ import type { TestContext } from 'node:test';
 import type { DebugSession } from 'vscode';
 import type { ViewportRecordingObserver } from 'codebook-cycle-0001/dist/browserViewport';
 import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
 import { configuredDefinitionSchema } from '../../configuredStudySchemas';
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun';
 import type { RuntimeControl } from '../../runtime';
@@ -23,7 +24,7 @@ export async function configuredRuntimeHarness(context: TestContext, control?: R
   const bundle: BundleSource = { sourcePath, source, javascript, sourceMap: JSON.stringify({ version: 3, sources: [sourcePath], sourcesContent: [source], names: [], mappings: 'AAAA' }), mapSource: sourcePath, scriptUrl: 'webpack-internal:///(app-pages-browser)/./src/theme.ts', chunkPath: join(repository.directory, '.next/dev/chunk.js'), chunkHash: '0'.repeat(64) };
   const releases: string[] = [], mouse: { type?: string; timeout?: number }[] = [], commands: string[] = [], listeners = new Map<string, (event: unknown) => void>();
   const timers = new Map<number, { at: number; callback: () => void }>(); let clock = 0, timerId = 0, requestSequence = 0;
-  let emitInputPause = true, emitPreparationResume = false, removedAck = true, bound = false, ready = true, inputResolve = () => {}, inputReject = (_error: Error) => {}, onClose = () => {}, heldPhase: string | undefined, releaseCapture = () => {}, captureEntered = () => {};
+  let emitInputPause = true, emitPreparationResume = false, stopAtStartupBreakpoint = false, removedAck = true, bound = false, rejectBinding = false, ready = true, inputResolve = () => {}, inputReject = (_error: Error) => {}, onClose = () => {}, heldPhase: string | undefined, releaseCapture = () => {}, captureEntered = () => {};
   let run: ConfiguredBrowserRun;
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined;
   let rejectedCapture: string | undefined, requiredValueUnavailable = false;
@@ -64,9 +65,14 @@ export async function configuredRuntimeHarness(context: TestContext, control?: R
     on(event: string, listener: (value: unknown) => void) { listeners.set(event, listener); }, async subscribe() {}, aggregateScreencastTelemetry() {},
     close() { if (this.closed) return; this.closed = true; releases.push('cdp'); inputReject(new Error('CDP disconnected')); rejectContinuation(new Error('DAP disconnected')); onClose(); },
     async request(method: string, parameters?: { expression?: string; type?: string }, timeout?: number) {
-      if (method === 'Runtime.evaluate') return { result: { value: parameters?.expression === 'location.href' ? 'about:blank' : parameters?.expression === 'location.origin' ? 'http://127.0.0.1:4321' : { ready, x: 12, y: 18 } } };
+      if (method === 'Runtime.evaluate') return { result: { value: parameters?.expression === 'location.href' ? 'about:blank' : parameters?.expression === 'location.origin' ? 'http://127.0.0.1:4321'
+        : ready ? { ready: true, x: 12, y: 18 } : { ready: false, failure: { conditionIndex: 0, reason: 'not-visible' } } } };
       if (method === 'Page.navigate') {
-        bound = true;
+        bound = !rejectBinding;
+        // VS Code can surface a bound source stop during hydration when Codebook arms its breakpoint too early.
+        if (stopAtStartupBreakpoint && breakpoints.some(breakpoint => breakpoint.id === 'owned-breakpoint')) {
+          run.onEvent(selected, { seq: ++requestSequence, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
+        }
         // js-debug can resume internal source-map stops without exposing a DAP stop.
         if (emitPreparationResume) emitCdpPause();
         listeners.get('Debugger.scriptParsed')?.({ scriptId: 'actual', url: bundle.scriptUrl, executionContextId: 1 });
@@ -119,13 +125,32 @@ export async function configuredRuntimeHarness(context: TestContext, control?: R
     './utils/readDevelopmentBundle': { readDevelopmentBundle: async () => ({ bundle, discovery: {} }) },
     './utils/assertDevelopmentWorkspace': { assertDevelopmentWorkspace: async () => undefined },
     './utils/launchDevelopmentServer': { launchDevelopmentServer: () => ({ ready: async () => { releases.push('application acquired'); return 'http://127.0.0.1:4321'; }, close: async () => { releases.push('application'); } }) },
+    'codebook-cycle-0001/dist/utils/waitUntil': { waitUntil: async <Value>(read: () => Value | Promise<Value>, description: string, timeoutMs?: number, signal?: AbortSignal) => {
+      // A deliberately disabled readiness condition is stable; inspect it once, then use the real timeout contract.
+      if (!ready && description.startsWith('configured before conditions')) {
+        signal?.throwIfAborted();
+        const value = await read();
+        signal?.throwIfAborted();
+        if (value) return value;
+        return waitUntil(read, description, 0, signal);
+      }
+      if (rejectBinding && description.startsWith('exact repository breakpoint binding')) {
+        signal?.throwIfAborted();
+        await read();
+        signal?.throwIfAborted();
+        return waitUntil(read, description, 0, signal);
+      }
+      return waitUntil(read, description, timeoutMs, signal);
+    } },
   }, { setTimeout: (callback: () => void, delay: number) => { const id = ++timerId; timers.set(id, { at: clock + delay, callback }); return id; }, clearTimeout: (id: number) => { timers.delete(id); } });
   run = owned = new runtimeModule.ConfiguredBrowserRun({ directory: join(repository.directory, '.runtime'), workspace: repository.directory, node: process.execPath, host: { id: 'vscode', productVersion: 'test', apiVersion: 'test', commit: 'test' }, definition, control, assertWorkspace() {}, revealSource: async () => { releases.push('captured source'); } });
   return { ...repository, run, definition, documents, breakpoints, userBreakpoint, mouse, commands, releases, emitPause, emitCdpPause,
+    rejectBreakpointBinding() { rejectBinding = true; },
     observeRecording(observer: () => ViewportRecordingObserver | undefined) { recordingObserver = observer; },
     rejectCapture(phase: string) { rejectedCapture = phase; }, requireUnavailableValue() { requiredValueUnavailable = true; },
     suppressInputPause() { emitInputPause = false; },
     resumeDuringPreparation() { emitPreparationResume = true; },
+    stopOnStartupWhenOwnedBreakpointPresent() { stopAtStartupBreakpoint = true; },
     hideViewportOnPause() { hideViewportAtPause = true; },
     manualResume() { listeners.get('Debugger.resumed')?.({}); },
     holdContinuation() {

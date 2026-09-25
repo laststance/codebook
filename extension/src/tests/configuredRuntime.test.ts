@@ -17,6 +17,45 @@ test('internal browser setup stops do not consume the configured learning pause 
   assert.equal(commands.filter(command => command === 'continue').length, 1);
 });
 
+test('VS Code startup cannot hit Codebook’s click breakpoint before the learner input', async context => {
+  // Arrange: the installed host can report a breakpoint stop while the page hydrates.
+  const { run, stopOnStartupWhenOwnedBreakpointPresent, mouse, commands } = await configuredRuntimeHarness(context);
+  stopOnStartupWhenOwnedBreakpointPresent();
+  // Act
+  await run.prepare();
+  run.action('one', 'repository-click');
+  const snapshot = await waitUntil(() => run.view().snapshots[0], 'configured learning pause');
+  await run.continue('browser', snapshot.pause); await waitUntil(() => run.view().status === 'completed', 'configured completion'); await run.stop();
+  // Assert: the only accepted debugger stop follows Codebook's own click.
+  assert.equal(run.view().finalOutcome, 'demonstrated'); assert.equal(run.view().snapshots.length, 1); assert.equal(mouse.length, 2);
+  assert.equal(commands.filter(command => command === 'continue').length, 1);
+});
+
+test('an unbound configured stop reports sealed map positions as unverified hints without clicking the application', async context => {
+  // Arrange: the debugger refuses an exact binding even though the frozen source map has a matching coordinate.
+  const { run, rejectBreakpointBinding, mouse } = await configuredRuntimeHarness(context);
+  rejectBreakpointBinding();
+  // Act
+  await assert.rejects(run.prepare(), (error: unknown) => {
+    assert.ok(error && typeof error === 'object' && 'message' in error && typeof error.message === 'string');
+    assert.match(error.message, /^Timed out waiting for exact repository breakpoint binding at source 1:1/);
+    assert.match(error.message, /Frozen source map positions in the selected citation: 1:1\. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them/);
+    return true;
+  });
+  await run.stop();
+  // Assert: a mapping hint cannot authorize input or mark the run demonstrated.
+  assert.equal(mouse.length, 0);
+  assert.equal(run.view().finalOutcome, 'not-demonstrated');
+});
+
+test('an unsatisfied before condition names the failing predicate without clicking the application', async context => {
+  // Arrange: preparation observes a consistently hidden declared element.
+  const { run, setReady, mouse } = await configuredRuntimeHarness(context); setReady(false);
+  // Act / Assert
+  await assert.rejects(run.prepare(), /configured before conditions: condition 1 \(visible\) not-visible/);
+  await run.stop(); assert.equal(mouse.length, 0); assert.equal(run.view().finalOutcome, 'not-demonstrated');
+});
+
 test('a real debugger stop before configured input still fails instead of being ignored as browser setup', async context => {
   // Arrange
   const { run, emitPause, mouse, commands } = await configuredRuntimeHarness(context); await run.prepare();

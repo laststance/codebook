@@ -129,9 +129,43 @@ test('stopping a held runtime preparation delivers cancellation before waiting f
   };
   const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'held-setup', configuration }); await started;
   // Act
+  const preparing = service.state(service.record(receipt));
   await service.stop(receipt);
   // Assert
+  assert.equal(preparing.state, 'preparing'); assert.equal(new Date(preparing.preparationDeadlineAt!).getTime() - new Date(preparing.createdAt).getTime(), 90_000);
   assert.equal(runtimes[0]?.releases, 1); assert.equal(runtimes[0]?.dispatches, 0); assert.equal(service.state(service.record(receipt)).cleaned, true);
+});
+
+test('repository preparation reports its remaining time without changing evidence identity', async context => {
+  // Arrange
+  let currentTimeMs = Date.now();
+  const { service, configuration, environment } = await configuredServiceHarness(context, () => currentTimeMs);
+  const createRuntime = environment.createRuntime;
+  let enteredPreparation = () => {};
+  const preparationStarted = new Promise<void>(resolve => { enteredPreparation = resolve; });
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await createRuntime(...arguments_), prepare = runtime.prepare.bind(runtime), stop = runtime.stop.bind(runtime);
+    let releasePreparation = () => {};
+    const barrier = new Promise<void>(resolve => { releasePreparation = resolve; });
+    runtime.prepare = async () => { await prepare(); enteredPreparation(); await barrier; };
+    runtime.stop = async () => { releasePreparation(); await stop(); };
+    return runtime;
+  };
+  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'remaining-preparation-time', configuration });
+  await preparationStarted;
+  const record = service.record(receipt), initialState = service.state(record);
+
+  // Act
+  currentTimeMs += 11_000;
+  const laterState = service.state(record);
+  await service.stop(receipt);
+
+  // Assert
+  assert.equal(initialState.state, 'preparing'); assert.equal(laterState.state, 'preparing');
+  assert.equal(initialState.preparationRemainingMs, 90_000); assert.equal(laterState.preparationRemainingMs, 79_000);
+  assert.equal(Date.parse(laterState.observedAt!) + laterState.preparationRemainingMs!, Date.parse(laterState.preparationDeadlineAt!));
+  assert.equal(initialState.materialSignature, laterState.materialSignature);
+  assert.equal(service.state(record).preparationRemainingMs, undefined);
 });
 
 test('profile variants reject missing configuration demo extras and foreign action or participant without input', async context => {

@@ -97,7 +97,7 @@ test('explicit MCP cancellation during preparation prevents a new publication wh
     await waitUntil(() => signal?.aborted, 'request cancellation reached preparation', 2_000); release(); await store.flush();
     // Assert
     assert.deepEqual(await readFile(join(harness.library.directory, 'source.book.v2.json')), before);
-    assert.equal((await harness.client.listTools()).tools.length, 13); assert.equal(harness.runtimes.length, 0);
+    assert.equal((await harness.client.listTools()).tools.length, 15); assert.equal(harness.runtimes.length, 0);
   } finally { release(); await harness.close(); }
 });
 
@@ -132,7 +132,7 @@ test('MCP cancellation reaches an accepted article open before pending reader wo
     const rejected = assert.rejects(pending, /Abort|cancel/i); await entered; cancellation.abort(); await rejected;
     await waitUntil(() => signal?.aborted, 'MCP cancellation reaches article reader', 2_000); release();
     // Assert
-    assert.equal((await harness.client.listTools()).tools.length, 13); assert.equal(opened, false); assert.equal(harness.runtimes.length, 0);
+    assert.equal((await harness.client.listTools()).tools.length, 15); assert.equal(opened, false); assert.equal(harness.runtimes.length, 0);
   } finally { release(); await harness.close(); }
 });
 

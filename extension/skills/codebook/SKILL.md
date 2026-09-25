@@ -1,0 +1,24 @@
+---
+name: codebook
+description: Use Codebook's observed source and runtime evidence to explain a web app through the current editor workspace.
+metadata:
+  version: "1.0.14"
+---
+
+# Codebook
+
+Use this skill for the user's request in the current editor workspace. Begin with `codebook_status` to confirm the workspace, instance, available capabilities and prerequisites. If the Codebook tools are missing or the connection is unavailable, say what is missing and direct the user to **Codebook: Set Up AI Chat** in this editor. Do not claim an observed result from a generic source explanation.
+
+`codebook_status.build.dirty` describes the packaged Codebook extension source, not the target repository. Do not claim the workspace has uncommitted changes unless its Git state was checked separately.
+
+Follow the public Codebook help/resources and the returned current state to select only the tools needed for the request. If this chat cannot open a returned MCP resource URI, use `codebook_read_resource` with that exact URI. When relevant, inspect source, operate the application, pause execution, read actual values, explain the relationship, continue from the **current** run state using its returned arguments, and save or replay a recording. Do not invent stop locations, values or repository-specific steps.
+
+For a request requiring runtime observation, read the selected profile's public help and verify that the source and visible control belong to its launched route. Choose a mapped source statement reached by the action or a resulting state-driven render, then use Codebook's managed run before launching a separate development server or browser; an independent server can take the app's build lock and prevent Codebook from controlling execution. Poll the returned run resource for readiness or the actual failure cause, and follow its source and run prerequisites. If the source chunk is missing or a stop cannot bind, read the reported failure and check the route and another executable location before concluding that runtime observation requires application edits. An exact-binding timeout may list positions from the frozen source map. Those positions are mapping hints only; inspect the cited source and choose a statement the action can reach. When a library owns the click callback, inspect the component's state-driven render as well as the JSX event property. Use the exact listed column when trying a mapped position, and require a real bound pause before claiming any value.
+
+Before starting a new run with an open presentation, read `presentation.reader.followingCurrentRun`. A `contentTab` of `live` alone does not prove the reader follows the current run. If `followingCurrentRun` is `false`, use `codebook_return_current` with the current reader revision and verify that the returned state is `true` before starting. This only changes the selected view; do not repeat an application action to recover the reader.
+
+While a Codebook run is preparing or active, poll that run's returned state until it becomes ready or terminal, or reaches its published preparation deadline. During repository preparation, use `preparationRemainingMs` from the **current** run resource: a positive value means the deadline has not expired, regardless of local time-zone display. An unchanged preparing state is normal while the app loads; do not stop it early unless the user cancels. Do not kill processes or remove build locks to assist it; use Codebook's stop operation for owned resources. If a foreign lock remains after no Codebook run is active, report the condition instead of stopping another process on the user's behalf.
+
+After stopping a run, read its current run resource until history and recording receipts settle. Claim a saved study only when `studyOutcome` is `demonstrated`, and claim a replayable recording only when `recordedStudyOutcome` is `demonstrated`; `finalOutcome` alone describes runtime evidence, not durable storage. Report any storage limit or failed receipt even if the click, pause and screen checks succeeded.
+
+Separate directly observed facts, source-based inferences and unverified points in the answer. Use connection identifiers only in tool arguments; do not repeat credentials, endpoints or temporary instance IDs in chat prose. If a prerequisite or capability is unavailable, explain the limit and the next normal setup step. The learner alone decides whether an understanding check is complete; never mark one on their behalf.

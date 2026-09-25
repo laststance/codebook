@@ -11,16 +11,21 @@ function inspectDom(conditions: RepositoryConfiguration['action']['before'], sel
     const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
     return element.isConnected && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse' && style.opacity !== '0';
   };
-  for (const condition of conditions) {
+  for (const [conditionIndex, condition] of conditions.entries()) {
     const elements = document.querySelectorAll(condition.selector), element = elements[0];
-    if (elements.length !== 1 || !element) return { ready: false };
-    if (condition.kind === 'visible' && !visible(element)) return { ready: false };
-    if (condition.kind === 'text' && element.textContent !== condition.equals) return { ready: false };
-    if (condition.kind === 'attribute' && element.getAttribute(condition.attribute) !== condition.equals) return { ready: false };
+    // Return only the failed predicate, never page text or attribute values.
+    if (elements.length === 0) return { ready: false, failure: { conditionIndex, reason: 'selector-missing' } };
+    if (elements.length !== 1 || !element) return { ready: false, failure: { conditionIndex, reason: 'selector-not-unique' } };
+    if (condition.kind === 'visible' && !visible(element)) return { ready: false, failure: { conditionIndex, reason: 'not-visible' } };
+    if (condition.kind === 'text' && element.textContent !== condition.equals) return { ready: false, failure: { conditionIndex, reason: 'text-mismatch' } };
+    if (condition.kind === 'attribute' && element.getAttribute(condition.attribute) !== condition.equals) return { ready: false, failure: { conditionIndex, reason: 'attribute-mismatch' } };
   }
   if (selector === undefined) return { ready: true };
   const elements = document.querySelectorAll(selector), element = elements[0];
-  if (elements.length !== 1 || !element || !visible(element) || element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return { ready: false };
+  if (elements.length === 0) return { ready: false, failure: { reason: 'click-target-missing' } };
+  if (elements.length !== 1 || !element) return { ready: false, failure: { reason: 'click-target-not-unique' } };
+  if (!visible(element)) return { ready: false, failure: { reason: 'click-target-not-visible' } };
+  if (element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return { ready: false, failure: { reason: 'click-target-disabled' } };
   const rect = element.getBoundingClientRect(), x = rect.x + rect.width / 2, y = rect.y + rect.height / 2, hit = document.elementFromPoint(x, y);
-  return hit && (hit === element || element.contains(hit)) ? { ready: true, x, y } : { ready: false };
+  return hit && (hit === element || element.contains(hit)) ? { ready: true, x, y } : { ready: false, failure: { reason: 'click-target-obscured' } };
 }
