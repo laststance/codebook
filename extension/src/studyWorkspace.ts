@@ -713,6 +713,8 @@ export class StudyWorkspace {
     let departed = false, borrowed: RepositoryFocusTarget | undefined, pendingBorrow: RepositoryFocusTarget | undefined;
     const observe = () => {
       if (departed) return;
+      // Leaving the work window revokes Restore even if focus returns before native measurement completes.
+      if (!vscode.window.state.focused) { departed = true; return; }
       if (pendingBorrow?.matchesGroup()) {
         // Only the announced native target can replace the old focus; returning to the original pane ends the borrow.
         borrowed = retainsFocus() ? undefined : pendingBorrow; pendingBorrow = undefined;

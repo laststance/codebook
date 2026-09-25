@@ -2946,6 +2946,34 @@ test('Restore beside a separate editor part preserves a learner tab chosen durin
   } finally { release(); await harness.close(); }
 });
 
+test('Restore stops after the learner leaves the work window during its primary focus borrow', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const chat = harness.addSeparateEditorPart();
+  harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  let release = () => {};
+  try {
+    await harness.reader.open();
+    await harness.reader.action('read-context');
+    const held = harness.holdNextPrimaryFocusResponse(); release = held.release;
+    const restoring = harness.reader.action('arrange');
+    await held.started;
+    const layoutChanges = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+
+    // Act
+    harness.changeWindowFocus(false);
+    harness.changeWindowFocus(true);
+    release(); await restoring;
+
+    // Assert
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, layoutChanges);
+    assert.match(harness.reader.presentationState().reason ?? '', /learner changed native tab focus/i);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
+  } finally { release(); await harness.close(); }
+});
+
 test('successful Study reading clears an earlier background-window reading error', async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
