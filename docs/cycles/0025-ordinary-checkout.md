@@ -1,9 +1,9 @@
 # Cycle 0025 — Ordinary two-host cart-to-confirmation walkthrough
 
 Type: experiment
-Status: planning
-Result: pending
-Delivery: pending
+Status: validating
+Result: falsified for the paired ordinary-chat question
+Delivery: Draft [PR #39](https://github.com/laststance/codebook/pull/39), pending review and merge
 Goal version: 5
 Tracking issue: [#38](https://github.com/laststance/codebook/issues/38)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -47,25 +47,32 @@ The required causal links are the five action→request→server→response→br
 1. Inventory source/VSIX, clean separate trial workspaces, owner settings/skills/extensions/windows/processes and existing learning storage. Keep all account material private. Install the same VSIX into isolated editor extension directories; use public setup and ordinary `/codebook` in VS Code Copilot Chat Auto first.
 2. Observe the AI's status, profile/help discovery, immutable manifest read before input, exact action/pause/continue sequence, four source/value bindings, link outcome, final screen, saved Wiki/Study and offline recording. Capture native UI, Playwright CLI video and inspected frames. Preserve all failed attempts and revise the hypothesis before retrying.
 3. Repeat independently in Cursor Agent without injecting VS Code's hidden tool plan. Protect and later restore the owner's older managed Cursor skill through ownership checks. Keep host, source, viewport, theme, chat model and replay evidence separate.
-4. If a product defect reproduces, apply `/investigate` before a narrow repair. Review and deliver this cycle through its own Draft-to-Ready PR and exact-head checks. No final reviewer begins here.
+4. If a product defect reproduces, apply `/investigate` before a narrow repair. Preserve this unchanged-package experiment as a bounded result; select a separate repair cycle from the observed boundary. Review and deliver this cycle through its own Draft-to-Ready PR and exact-head checks. No final reviewer begins here.
 
 ## Attempts and evidence
 
-Pending. Final reviewer count remains **0/10**.
+[Host-separated development evidence](evidence/0025/ordinary-checkout-20260926.md) records the frozen package, question, owner baseline/cleanup, run identities, native UI, saved archives, Playwright CLI editor videos and inspected film frames. The same clean VSIX was installed separately in VS Code 1.139.1 and Cursor 3.22.8; the sandbox made no payment.
+
+1. Ordinary VS Code Copilot Chat Auto routed to GPT-6 Luna. Its AI discovered the correct instance, read the manifest, clicked Add to cart, observed the server and browser cart stops and actual cart count 0→1. At each image-returning `codebook_read_resource`, the chat request failed with `400 invalid_request_body / Error while downloading file. Upstream status code: 404`. The local PNG existed and Codebook's saved Study was terminal but `not-demonstrated`; Checkout was never dispatched. One public Try Again repeated the same failure, then the trial stopped. The Copilot extension log independently records the upstream 404 immediately after the image tool path. This locates an integration boundary, but not the upstream URL lifecycle root cause.
+2. A separate Claude Code Opus 5.5 High fallback used the same installed VSIX with a temporary private bridge. Its AI executed both actions and all four real pauses; the terminal saved Study and complete recording showed 11 observed links and final selected confirmation. This is a qualified development result outside public standard Copilot onboarding. The bridge and trial process were cleaned up.
+3. Ordinary Cursor Agent Grok 4.7 High/Fast used the same frozen question and a separate empty work folder. Its AI discovered public Codebook setup, performed both actions, inspected and continued all four pauses, then described selected values and the visible order confirmation. The saved Study was terminal `demonstrated`, with four observations, seven captures and 11 observed links. Native offline replay and the complete 33-frame application film showed cart state and purchase confirmation; the separate editor-renderer video was inspected. The owner-managed skill 1.0.10 and owner settings/default extension hashes were restored or remained unchanged; the dedicated Cursor process exited.
+4. Both successful runtime chats answered in chat but called no `codebook_explain`: all four saved observations in each archive contain zero interpretations, and the native Recording says no explanation was available. The public studies help asks for an explanation at each pause; the thin skill only says to explain the relationship. This is a guidance hypothesis for a future product repair, not synchronized recorded-explanation proof.
+
+Final reviewer count remains **0/10**.
 
 ## Result and decision
 
-- Result: pending.
-- Findings: pending.
-- Keep / revise / replace: pending.
-- Evidence that can update goal state: pending.
-- Remaining gaps: real-repository intended uses, integrated three-mode and constrained native UX, owner acceptance and final reviewers remain open regardless of this sandbox result.
-- Delivery state and proof: pending.
+- Result: **falsified**. One frozen package did not complete the specified paired ordinary-chat checkout. Cursor's runtime/recording path passed structurally, VS Code Copilot stopped before Checkout, and neither completed chat persisted an explanation.
+- Findings: local image bytes and the same image type in Claude rule out a missing Codebook PNG, while Copilot's CAPI reports an upstream 404 after image-returning tool results. The exact provider file-relay cause is not established. Captured source/values and recorded application frames do not themselves create agent interpretation entries.
+- Keep / revise / replace: keep the frozen question, action/causal-link oracle and host separation; revise the Copilot image handoff hypothesis in the next cycle. Do not repeat the identical image tool attempt without a changed mechanism.
+- Evidence that can update goal state: Cursor ordinary-chat sandbox execution and replay add one qualified G01/G03/G04/G12 development result. They do not establish a two-host standard-chat checkout or synchronized explanation, so G01/G04/G12 remain partial.
+- Remaining gaps: Copilot image transport, per-pause saved explanations, real-repository intended uses, integrated three-mode and constrained native UX, owner acceptance and final reviewers remain open.
+- Delivery state and proof: Draft PR #39; exact-head review/check/merge pending.
 
 ## Handoff
 
-- Exact next action: verify the frozen VSIX and inventory the two isolated trial hosts, then submit the preregistered checkout question in ordinary VS Code Copilot Chat Auto before Cursor.
-- Changed files / branch / active processes: `codex/cycle-0025-ordinary-checkout`; no trial process started.
+- Exact next action: finish record review and delivery for PR #39 without claiming the paired result passed; then select a narrow Copilot image-handoff repair experiment.
+- Changed files / branch / active processes: `codex/cycle-0025-ordinary-checkout`; record changes only. Both dedicated editor processes and trial servers exited; owner settings/default extensions and managed Cursor skill are at baseline.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 unchanged.
-- At most one next candidate and why: select only after the checkout result; unfamiliar repositories remain a G10 gap.
+- At most one next candidate and why: investigate the Copilot image-return 404 with a controlled text/receipt versus image handoff, because the standard VS Code chat cannot reach Checkout while that request fails.
