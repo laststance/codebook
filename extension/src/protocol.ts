@@ -21,7 +21,13 @@ async function resourceToolResult(service: StudyService, uri: string): Promise<C
   try {
     const resource = await readResource(service, uri);
     if ('blob' in resource) return { content: [{ type: 'image', data: resource.blob, mimeType: resource.mimeType }], structuredContent: { ok: true, uri: resource.uri, mimeType: resource.mimeType } };
-    return { content: [{ type: 'text', text: resource.text }], structuredContent: { ok: true, uri: resource.uri, mimeType: resource.mimeType } };
+    const content: CallToolResult['content'] = [{ type: 'text', text: resource.text }];
+    // Some editor chats expose only structured results, so carry the guarded body there too.
+    if (resource.mimeType === 'application/json') {
+      const data: unknown = JSON.parse(resource.text);
+      return { content, structuredContent: { ok: true, uri: resource.uri, mimeType: resource.mimeType, data } };
+    }
+    return { content, structuredContent: { ok: true, uri: resource.uri, mimeType: resource.mimeType, text: resource.text } };
   } catch (error) {
     const failure = domainError(error).describe();
     return { isError: true, content: [{ type: 'text', text: JSON.stringify(failure) }], structuredContent: { ok: false, error: failure } };
