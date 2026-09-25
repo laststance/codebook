@@ -2883,6 +2883,27 @@ test('Read Explanation stays readable when opening Study first needs a compact-l
   } finally { await harness.close(); }
 });
 
+test('Read Explanation does not maximize after the work window leaves and returns during cold Open', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const openStudy = harness.reader.open.bind(harness.reader);
+  harness.reader.open = async (signal, origin) => {
+    await openStudy(signal, origin);
+    harness.changeWindowFocus(false);
+    harness.changeWindowFocus(true);
+  };
+  try {
+    // Act
+    await assert.rejects(harness.reader.action('read-context'), /work window lost focus/i);
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.commands.filter(command => command === 'workbench.action.maximizeEditorHideSidebar').length, 0);
+    assert.doesNotMatch(harness.reader.presentationState().reason ?? '', /Focused explanation/);
+  } finally { await harness.close(); }
+});
+
 test('Read Explanation leaves a closed Study and foreign window untouched when unfocused', async () => {
   // Arrange
   const harness = await workspaceHarness(false);
@@ -2897,6 +2918,31 @@ test('Read Explanation leaves a closed Study and foreign window untouched when u
     assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
     assert.equal(harness.maximizedEditorGroup(), false);
   } finally { harness.changeWindowFocus(true); await harness.close(); }
+});
+
+test('Read Application does not maximize after the work window leaves during its webview reveal', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open();
+    const application = harness.reader['app']!;
+    const reveal = application.reveal.bind(application);
+    application.reveal = (column, preserveFocus) => {
+      reveal(column, preserveFocus);
+      harness.changeWindowFocus(false);
+      harness.changeWindowFocus(true);
+    };
+    const maximizations = harness.commands.filter(command => command === 'workbench.action.maximizeEditorHideSidebar').length;
+
+    // Act
+    await assert.rejects(harness.reader.action('read-app'), /work window lost focus/i);
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.commands.filter(command => command === 'workbench.action.maximizeEditorHideSidebar').length, maximizations);
+    assert.doesNotMatch(harness.reader.presentationState().reason ?? '', /Focused application/);
+  } finally { await harness.close(); }
 });
 
 test('compact Study reads each pane and Restore returns promptly to an honest focused state', async () => {
@@ -3081,6 +3127,25 @@ test('Read captured source keeps the learner cursor when the selected source is 
     // Assert
     assert.equal(harness.focusedSource()?.selections[0]?.active.line, 46);
     assert.equal(harness.isReadingLineVisible(46), true);
+  } finally { await harness.close(); }
+});
+
+test('Read captured source accepts an unchanged settings tab before focusing its owned source', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open(); await harness.reader.action('focus-context');
+    const settings = harness.addOpaqueTab('Settings', 3);
+    const explanationGroup = harness.groups.find(group => group.viewColumn === 3)!;
+    explanationGroup.activeTab = settings;
+
+    // Act
+    await harness.reader.action('read-source');
+
+    // Assert
+    assert.equal(harness.sourceColumn(), 2);
+    assert.equal(harness.focusedSource()?.document.uri.toString(), harness.reader.inspect().sourceUri);
+    assert.equal(explanationGroup.tabs.includes(settings), true);
   } finally { await harness.close(); }
 });
 

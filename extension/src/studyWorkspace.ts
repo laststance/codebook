@@ -651,48 +651,64 @@ export class StudyWorkspace {
   /** Opens a closed reader for a focused Read command, then makes its owned pane readable without changing the selected item or run. @example await this.readStudyPane('source') */
   private async readStudyPane(region: 'app' | 'source' | 'context', signal?: AbortSignal): Promise<void> {
     if (!vscode.window.state.focused) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Focus the Codebook work window before reading a pane.');
-    // A palette Read is an explicit entry after startup or Close; establish the owned panes before focusing one.
-    if (!this.opened) await this.open(signal);
-    const selection = JSON.stringify(this.selection), bundle = this.recordingActive ? this.playback?.bundle() : undefined;
-    const assertPlacement = this.retainPresentationPlacement(false);
-    if (region === 'source') {
-      const sourceColumn = this.studyPanePositions().sourceColumn;
-      if (this.sourceReady() && this.sourceUri && sourceColumn) {
-        // Reopen the existing native tab without a selection so a learner's cursor and scroll stay in place.
-        const originalTab = this.trackFocusedStudyPane(false);
-        let document: vscode.TextDocument;
-        try {
-          document = await vscode.workspace.openTextDocument(this.sourceUri);
-          signal?.throwIfAborted(); originalTab.assertCurrent(); assertPlacement();
-        } finally { originalTab.dispose(); }
-        await vscode.window.showTextDocument(document, { viewColumn: sourceColumn, preserveFocus: false, preview: false });
-      } else await this.renderSelection(false, false, signal);
-      if (!this.sourceReady() || vscode.window.activeTextEditor?.document.uri.toString() !== this.sourceUri?.toString()) throw new StudyError('EVIDENCE_UNAVAILABLE', 'The selected captured source is not visible in its native pane.');
-    } else {
-      const panel = region === 'app' ? this.app : this.contextPanel;
-      if (!panel) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The requested Study pane is unavailable. Open Study and try again.');
-      const kind = region === 'app' ? 'codebook.scopedBrowser' : 'codebook.studyContext';
-      panel.reveal(undefined, false);
-      // At minimum widths the offscreen webview cannot acknowledge inner focus until its owned tab is maximized.
-      await waitUntil(() => {
-        const group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
-        return group.viewColumn === panel.viewColumn && input instanceof vscode.TabInputWebview
-          && [kind, `mainThreadWebview-${kind}`].includes(input.viewType) && panel.visible;
-      }, 'owned Study pane tab', PRESENTATION_READY_TIMEOUT_MS, signal);
-    }
-    signal?.throwIfAborted(); assertPlacement();
-    if (selection !== JSON.stringify(this.selection) || bundle && bundle !== this.playback?.bundle()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The selected study changed while reading a pane. Inspect its current state.');
-    const focusedPane = this.trackFocusedStudyPane();
+    const focusLoss = new AbortController();
+    const focusLost = new StudyError('PRESENTATION_UNAVAILABLE', 'The Codebook work window lost focus during Read. Retry Read from that window.');
+    const windowFocus = vscode.window.onDidChangeWindowState(state => {
+      if (!state.focused) focusLoss.abort(focusLost);
+    });
+    const readSignal = signal ? AbortSignal.any([signal, focusLoss.signal]) : focusLoss.signal;
+    const assertReadFocus = () => { readSignal.throwIfAborted(); if (!vscode.window.state.focused) throw focusLost; };
     try {
-      // Maximize may settle after a newer learner tab choice; only its original owned target may publish Read success.
-      await vscode.commands.executeCommand('workbench.action.maximizeEditorHideSidebar');
-      signal?.throwIfAborted(); focusedPane.assertCurrent(); assertPlacement();
+      // Keep the departure latch through Open, source acquisition, pane reveal and native maximization.
+      if (!this.opened) await this.open(readSignal);
+      assertReadFocus();
+      const selection = JSON.stringify(this.selection), bundle = this.recordingActive ? this.playback?.bundle() : undefined;
+      const assertPlacement = this.retainPresentationPlacement(false);
+      if (region === 'source') {
+        const sourceColumn = this.studyPanePositions().sourceColumn;
+        if (this.sourceReady() && this.sourceUri && sourceColumn) {
+          // Reopen the existing native tab without a selection so a learner's cursor and scroll stay in place.
+          const originalTab = this.trackFocusedStudyPane(false);
+          let document: vscode.TextDocument;
+          try {
+            document = await vscode.workspace.openTextDocument(this.sourceUri);
+            assertReadFocus(); originalTab.assertCurrent(); assertPlacement();
+          } finally { originalTab.dispose(); }
+          await vscode.window.showTextDocument(document, { viewColumn: sourceColumn, preserveFocus: false, preview: false });
+          assertReadFocus();
+        } else {
+          assertReadFocus();
+          await this.renderSelection(false, false, readSignal);
+          assertReadFocus();
+        }
+        if (!this.sourceReady() || vscode.window.activeTextEditor?.document.uri.toString() !== this.sourceUri?.toString()) throw new StudyError('EVIDENCE_UNAVAILABLE', 'The selected captured source is not visible in its native pane.');
+      } else {
+        const panel = region === 'app' ? this.app : this.contextPanel;
+        if (!panel) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The requested Study pane is unavailable. Open Study and try again.');
+        const kind = region === 'app' ? 'codebook.scopedBrowser' : 'codebook.studyContext';
+        assertReadFocus(); panel.reveal(undefined, false);
+        // At minimum widths the offscreen webview cannot acknowledge inner focus until its owned tab is maximized.
+        await waitUntil(() => {
+          const group = vscode.window.tabGroups.activeTabGroup, input = group.activeTab?.input;
+          return group.viewColumn === panel.viewColumn && input instanceof vscode.TabInputWebview
+            && [kind, `mainThreadWebview-${kind}`].includes(input.viewType) && panel.visible;
+        }, 'owned Study pane tab', PRESENTATION_READY_TIMEOUT_MS, readSignal);
+        assertReadFocus();
+      }
+      assertReadFocus(); assertPlacement();
       if (selection !== JSON.stringify(this.selection) || bundle && bundle !== this.playback?.bundle()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The selected study changed while reading a pane. Inspect its current state.');
-      if (region === 'source' && !this.sourceReady()) throw new StudyError('EVIDENCE_UNAVAILABLE', 'The selected captured source is no longer visible in its native pane.');
-      this.layoutReceipt = undefined; this.enlargedLayoutReceipt = undefined; this.presentationConfirmed = false;
-      this.presentationReason = `Focused ${region === 'app' ? 'application' : region === 'source' ? 'source' : 'explanation'}. The three-pane Study split is not confirmed. Use Read application/source/explanation or Restore layout.`;
-      this.lastActiveRegion = region; this.errors.delete('reading'); this.publish();
-    } finally { focusedPane.dispose(); }
+      const focusedPane = this.trackFocusedStudyPane();
+      try {
+        // Maximize may settle after a newer learner tab choice; only its original owned target may publish Read success.
+        assertReadFocus(); await vscode.commands.executeCommand('workbench.action.maximizeEditorHideSidebar');
+        assertReadFocus(); focusedPane.assertCurrent(); assertPlacement();
+        if (selection !== JSON.stringify(this.selection) || bundle && bundle !== this.playback?.bundle()) throw new StudyError('PRESENTATION_UNAVAILABLE', 'The selected study changed while reading a pane. Inspect its current state.');
+        if (region === 'source' && !this.sourceReady()) throw new StudyError('EVIDENCE_UNAVAILABLE', 'The selected captured source is no longer visible in its native pane.');
+        this.layoutReceipt = undefined; this.enlargedLayoutReceipt = undefined; this.presentationConfirmed = false;
+        this.presentationReason = `Focused ${region === 'app' ? 'application' : region === 'source' ? 'source' : 'explanation'}. The three-pane Study split is not confirmed. Use Read application/source/explanation or Restore layout.`;
+        this.lastActiveRegion = region; this.errors.delete('reading'); this.publish();
+      } finally { focusedPane.dispose(); }
+    } finally { windowFocus.dispose(); }
   }
 
   /** Watches Read and Restore from the selected pane so later learner navigation wins over host commands; Restore announces its temporary main-part focus before measuring layout. @param requireOwned - Require the starting tab to be a Codebook pane. @example const focus = this.trackFocusedStudyPane(); focus.assertCurrent(); focus.dispose() */
@@ -710,7 +726,7 @@ export class StudyWorkspace {
       const active = vscode.window.tabGroups.activeTabGroup, current = active.activeTab?.input;
       return vscode.window.state.focused && active.viewColumn === expectedColumn
         && (textUri !== undefined ? current instanceof vscode.TabInputText && current.uri.toString() === textUri
-          : webviewKind !== undefined ? current instanceof vscode.TabInputWebview && current.viewType === webviewKind : current === undefined);
+          : webviewKind !== undefined ? current instanceof vscode.TabInputWebview && current.viewType === webviewKind : current === input);
     };
     let departed = false, borrowed: RepositoryFocusTarget | undefined, pendingBorrow: RepositoryFocusTarget | undefined;
     const observe = () => {
