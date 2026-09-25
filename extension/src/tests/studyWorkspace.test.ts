@@ -2847,6 +2847,58 @@ test('compact Study remains open when its optional first explanation read loses 
   } finally { harness.changeWindowFocus(true); await harness.close(); }
 });
 
+test('Read Explanation opens Study when the command runs before Open Study Workspace', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    assert.equal(harness.reader.inspect().opened, false);
+
+    // Act
+    await harness.reader.action('read-context');
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.maximizedEditorGroup(), true);
+    assert.match(harness.reader.presentationState().reason ?? '', /Focused explanation/);
+  } finally { await harness.close(); }
+});
+
+test('Read Explanation stays readable when opening Study first needs a compact-layout focus', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  harness.constrainStudyGrid();
+  harness.suppressNativeInnerFocus();
+  try {
+    // Act
+    await harness.reader.action('read-context');
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, true);
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.maximizedEditorGroup(), true);
+    assert.match(harness.reader.presentationState().reason ?? '', /Focused explanation/);
+  } finally { await harness.close(); }
+});
+
+test('Read Explanation leaves a closed Study and foreign window untouched when unfocused', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  harness.changeWindowFocus(false);
+  try {
+    // Act
+    await assert.rejects(harness.reader.action('read-context'), /Focus the Codebook work window/);
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, false);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.maximizedEditorGroup(), false);
+  } finally { harness.changeWindowFocus(true); await harness.close(); }
+});
+
 test('compact Study reads each pane and Restore returns promptly to an honest focused state', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true);

@@ -648,9 +648,11 @@ export class StudyWorkspace {
     } finally { for (const subscription of focusChanges) subscription.dispose(); }
   }
 
-  /** Makes one owned Study pane readable without changing the selected item or run; public Read controls call it at narrow sizes. @example await this.readStudyPane('source') */
+  /** Opens a closed reader for a focused Read command, then makes its owned pane readable without changing the selected item or run. @example await this.readStudyPane('source') */
   private async readStudyPane(region: 'app' | 'source' | 'context', signal?: AbortSignal): Promise<void> {
-    if (!this.opened || !vscode.window.state.focused) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Focus the Codebook work window and open Study before reading a pane.');
+    if (!vscode.window.state.focused) throw new StudyError('PRESENTATION_UNAVAILABLE', 'Focus the Codebook work window before reading a pane.');
+    // A palette Read is an explicit entry after startup or Close; establish the owned panes before focusing one.
+    if (!this.opened) await this.open(signal);
     const selection = JSON.stringify(this.selection), bundle = this.recordingActive ? this.playback?.bundle() : undefined;
     const assertPlacement = this.retainPresentationPlacement(false);
     if (region === 'source') {
