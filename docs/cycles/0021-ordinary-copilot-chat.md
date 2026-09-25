@@ -1,8 +1,8 @@
 # Cycle 0021 — Clean packaged `/codebook` in ordinary Copilot Chat
 
 Type: experiment
-Status: planning
-Result: pending
+Status: development trial demonstrated; delivery review pending
+Result: exact ordinary VS Code Copilot Chat question reached AI-owned click, real pause/values, continuation, verified menu and saved Study/recording on clean `1d73087…`; later clean `ceea371…` repaired the article link through public saved resources without another click
 Delivery: pending
 Goal version: 5
 Tracking issue: [#30](https://github.com/laststance/codebook/issues/30)
@@ -45,21 +45,21 @@ On 2026-09-26, the driver freshly read [Goal #1](https://github.com/laststance/c
 
 ## Attempts and evidence
 
-Pending. Development evidence only; no final reviewer credit.
+The [ordinary VS Code development record](evidence/0021/vscode-ordinary-chat-development-20260926.md) separates five installed cuts and preserves the prior failures. On a clean `1d73087…` VSIX, Copilot Chat Auto read the structured Codebook help, used the correct work-window MCP, published a source article, recovered from unbound stops, clicked the actual menu once, captured `drawerOpened=true` and `tablet_match=true`, continued, verified the visible dialog, and saved a demonstrated Study and finalized recording. Its article link then failed because it used a debugger session ID as `studyId`. The current clean `ceea371…` VSIX exposes canonical `studyId` in the public run resource; the bundled skill and help identify the correct link fields. In the same ordinary chat after reinstall, Copilot found the saved Study through public resources, published linked article revision 2, opened it, and reached the observation and finalized recording through the native Wiki. It did not repeat the application click. The final VSIX passed 962/962 extension tests, 101/101 package tests, typecheck and checked archive validation. Renderer videos and inspected frames are private, with their hashes in the evidence record. These are development observations and carry **zero** final-reviewer credit.
 
 ## Result and decision
 
-- Result: pending.
-- Findings: pending.
-- Keep / revise / replace: pending.
-- Evidence that can update goal state: pending.
-- Remaining gaps and regression obligations: Cursor Agent, broad real repositories, native-pixel motion, integrated G01–G12 and final acceptance remain open.
+- Result: the bounded VS Code ordinary-chat entry is demonstrated on the clean `1d73087…` VSIX for the exact question and observed saved outcome; the article-link recovery is demonstrated separately on clean `ceea371…`.
+- Findings: Copilot's structured-result handling hid resource bodies until `data`/`text` were included; unbindable JSX properties and invented DOM selectors blocked earlier runs; the correct saved Study identity was not explicit in the run resource, leading to a failed article revision despite a successful recorded run.
+- Keep / revise / replace: keep public skill/MCP onboarding and the selected source-backed menu route. Publish the structured resource body and canonical Study identity, retaining honest failed states and no repeat click during storage recovery.
+- Evidence that can update goal state: a normal editor chat reached a real repository's observed run, replayable recording and linked article through public surfaces, with separate source-cut identities. This is a qualified G12 development checkpoint, not integrated product acceptance.
+- Remaining gaps and regression obligations: rerun the exact question on the final frozen source cut for final acceptance; independently validate Cursor Agent, fresh-profile setup, broad real repositories, native-pixel motion, integrated G01–G12 and the ten-reviewer campaign. Final reviewer count remains 0/10.
 - Delivery state and proof: pending.
 
 ## Handoff
 
-- Exact next action: inspect the current host/VSIX/skill/Copilot state and protect the signed-in profile before the public setup trial.
-- Changed files / branch / active processes: `codex/cycle-0021-ordinary-chat`; no owned test process started.
+- Exact next action: review and deliver PR #31 with current-head checks, then close Issue #30 and select the independent Cursor Agent ordinary-chat cycle while Goal #1 stays open.
+- Changed files / branch / active processes: `codex/cycle-0021-ordinary-chat`; implementation commits are local and the evidence record is pending PR review. Public agent servers and trial windows stopped. Ignored private videos, package archives and the evidence locator remain under `artifacts/cycle-0021/`.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 apply unchanged.
-- At most one next candidate and why: select after this cycle's observed chat boundary.
+- At most one next candidate and why: ordinary Cursor Agent on the same frozen clean VSIX, because G12 requires an independent editor result and this cycle exercised only VS Code.

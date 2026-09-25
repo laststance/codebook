@@ -2,7 +2,7 @@
 
 Updated: 2026-09-26\
 Product stage: configured core execution, offline replay and restart demonstrated separately in both editors; complete cross-host and installed usefulness unverified\
-Active cycle: [0021 — Clean packaged `/codebook` in ordinary Copilot Chat](docs/cycles/0021-ordinary-copilot-chat.md) — planning\
+Active cycle: [0021 — Clean packaged `/codebook` in ordinary Copilot Chat](docs/cycles/0021-ordinary-copilot-chat.md) — development demonstrated; PR review and delivery pending\
 Last cycle: [0020 — Readable Study at constrained editor sizes](docs/cycles/0020-constrained-study.md) — bounded development result demonstrated; PR #28 and closure PR #29 merged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#30](https://github.com/laststance/codebook/issues/30) — open\
@@ -214,7 +214,7 @@ The record-only `b69c391…` head passed [PR merge-ref CI](https://github.com/la
 
 ## Exact resume action
 
-Immediate next action (2026-09-26 JST): run [Cycle 0021](docs/cycles/0021-ordinary-copilot-chat.md) / [Issue #30](https://github.com/laststance/codebook/issues/30) on branch `codex/cycle-0021-ordinary-chat`. First inventory the clean merged VSIX, exact bundled skill, ordinary signed-in VS Code Copilot Chat with model Auto, reversible extension/profile state and clean `mantine-analytics-preflight` target. Then use public setup and send the already preregistered `/codebook` menu question once, recording loaded skill identity, AI-owned `codebook_status`/runtime results and video/frames. Investigate an actual failure before changing source. Preserve owner extension, settings, tabs and target tree. Cursor Agent, native-pixel motion, broad repository support, integrated G01–G12 and final ten-reviewer acceptance remain separate Goal #1 obligations.
+Immediate next action (2026-09-26 JST): review and deliver [Cycle 0021](docs/cycles/0021-ordinary-copilot-chat.md) / [PR #31](https://github.com/laststance/codebook/pull/31), then close Issue #30 and select a Cursor Agent ordinary-chat cycle. The [VS Code development record](docs/cycles/evidence/0021/vscode-ordinary-chat-development-20260926.md) has the exact `/codebook` question answered with AI-owned real click, pause, actual values, continuation, verified menu and saved Study/recording on clean `1d73087…`. Clean `ceea371…` exposes the canonical saved Study ID and the same ordinary chat linked its prior observation to article revision 2 without another click. The final clean VSIX passed 962/962 extension tests, 101/101 package tests and typecheck. Keep source cuts separate, preserve the owner profile and target tree, and count no development run toward the final ten-reviewer streak. Cursor Agent, fresh-profile setup, native-pixel motion, broad repository support and integrated G01–G12 remain open under Goal #1.
 
 D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answers remain authoritative: approved B, compact understand, all-citation Review needed with retained history, a narrow single article column, exact reading return, complete-citation progress identity and short publication writer ownership. Do not re-ask these choices. The app goal remains active.
 
