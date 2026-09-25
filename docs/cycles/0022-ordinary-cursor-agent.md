@@ -1,9 +1,9 @@
 # Cycle 0022 — Clean packaged `/codebook` in ordinary Cursor Agent
 
 Type: experiment
-Status: validating; bounded Cursor Agent development question demonstrated
+Status: closed; bounded Cursor Agent development question demonstrated
 Result: demonstrated on the standalone target; the earlier nested target is qualified
-Delivery: [Draft PR #33](https://github.com/laststance/codebook/pull/33) open; review, checks and merge pending
+Delivery: [PR #33](https://github.com/laststance/codebook/pull/33) merged as `348eddfc526a4a5d5e28379c95874964bb67b6da`; Issue #32 closed
 Goal version: 5
 Tracking issue: [#32](https://github.com/laststance/codebook/issues/32)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -60,12 +60,12 @@ The dedicated Cursor process and public Agent Server were stopped. The user's re
 - Keep / revise / replace: keep the bundled common skill, public setup and source-backed observed route. No product-source repair was needed for this cycle.
 - Evidence that can update goal state: a normal Cursor Agent invoked the skill, connected to the correct work window, executed and explained a real run, and opened its saved observation and recording through native UI. This is a qualified G12 development checkpoint, not integrated acceptance.
 - Remaining gaps and regression obligations: final fresh-chat rerun on the later frozen candidate; G12 fresh-profile, restart/disconnected and preservation cases; other repositories, native-pixel motion, integrated G01–G12, owner acceptance and the ten-reviewer campaign. Final reviewer count remains 0/10.
-- Delivery state and proof: Draft [PR #33](https://github.com/laststance/codebook/pull/33) is open. Current-head documentation review, CI and hosted review precede merge; Issue #32 and Goal #1 remain open.
+- Delivery state and proof: [PR #33](https://github.com/laststance/codebook/pull/33) merged as `348eddfc526a4a5d5e28379c95874964bb67b6da`. Exact head `abf6af8b50b889e0bce81fcb2a9d81d8d255bfa4` passed local CodeRabbit review across six paths with zero findings, hosted `APPROVED` with zero unresolved threads and `MERGEABLE`, and [package CI](https://github.com/laststance/codebook/actions/runs/36187025973) with 1110/1110 product/shared and 101/101 package checks. Its 35-entry clean VSIX matched the installed trial archive outside two build metadata files. Issue #32 closed; Goal #1 remains open.
 
 ## Handoff
 
-- Exact next action: finish the Cycle 0022 evidence/state commit on `codex/cycle-0022-cursor-chat`, push it, complete current-head review and CI for PR #33, then merge and close Issue #32 while keeping Goal #1 open.
-- Changed files / branch / active processes: documentation and `.coderabbit.yaml` on `codex/cycle-0022-cursor-chat`; no owned Cursor trial process remains. Private videos, package and checksummed saved-artifact locator remain under ignored `artifacts/cycle-0022/`.
+- Exact next action: run [Cycle 0023](0023-chat-restart-recovery.md) / Issue #34 on the merged source while Goal #1 stays open.
+- Changed files / branch / active processes: `codex/cycle-0022-cursor-chat` merged and removed; no owned Cursor trial process remains. Private videos, package and checksummed saved-artifact locator remain under ignored `artifacts/cycle-0022/`.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 apply unchanged.
 - At most one next candidate and why: test public G12 restart/disconnected recovery with protected existing skill state, because ordinary chat execution now has one bounded development result per host but that lifecycle gate remains unproven on the current source.
