@@ -2,7 +2,7 @@
 name: codebook
 description: Use Codebook's observed source and runtime evidence to explain a web app through the current editor workspace.
 metadata:
-  version: "1.0.16"
+  version: "1.0.17"
 ---
 
 # Codebook
@@ -20,5 +20,7 @@ Before starting a new run with an open presentation, read `presentation.reader.f
 While a Codebook run is preparing or active, poll that run's returned state until it becomes ready or terminal, or reaches its published preparation deadline. During repository preparation, use `preparationRemainingMs` from the **current** run resource: a positive value means the deadline has not expired, regardless of local time-zone display. An unchanged preparing state is normal while the app loads; do not stop it early unless the user cancels. Do not kill processes or remove build locks to assist it; use Codebook's stop operation for owned resources. If a foreign lock remains after no Codebook run is active, report the condition instead of stopping another process on the user's behalf.
 
 After stopping a run, read its current run resource until history and recording receipts settle. Claim a saved study only when `studyOutcome` is `demonstrated`, and claim a replayable recording only when `recordedStudyOutcome` is `demonstrated`; `finalOutcome` alone describes runtime evidence, not durable storage. Report any storage limit or failed receipt even if the click, pause and screen checks succeeded.
+
+When linking an observed moment in a later article revision, copy `studyId` from that run's resource and `observationId` from its `observations[].id`. The runtime session ID inside a pause or artifact path is a different identity and cannot locate the saved Study archive. Publish the link only after the run's saved history is confirmed; retry a failed publication with a new key only after correcting its input.
 
 Separate directly observed facts, source-based inferences and unverified points in the answer. Use connection identifiers only in tool arguments; do not repeat credentials, endpoints or temporary instance IDs in chat prose. If a prerequisite or capability is unavailable, explain the limit and the next normal setup step. The learner alone decides whether an understanding check is complete; never mark one on their behalf.

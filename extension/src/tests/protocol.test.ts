@@ -78,6 +78,7 @@ test('tool-only editor chats receive public help and current run data in structu
     assert.equal(structuredResource.parse(runTool.structuredContent).uri, receipt.runUri);
     assert.deepEqual(structuredResource.parse(helpTool.structuredContent).data, JSON.parse(helpContent.text));
     assert.deepEqual(structuredResource.parse(runTool.structuredContent).data, JSON.parse(runContent.text));
+    assert.match(helpContent.text, /Copy studyId from the terminal run resource and observationId/);
     assert.equal(z.array(textContent).parse(helpTool.content)[0]?.text, helpContent.text);
     assert.equal(z.array(textContent).parse(runTool.content)[0]?.text, runContent.text);
     assert.equal(foreign.isError, true); assert.match(JSON.stringify(foreign.structuredContent), /STALE_INSTANCE/);
