@@ -1,9 +1,9 @@
 # Cycle 0023 — Public `/codebook` restart and disconnection recovery
 
 Type: experiment
-Status: validated; PR delivery in progress
+Status: closed; bounded two-host development result demonstrated
 Result: bounded two-host development result demonstrated
-Delivery: pending
+Delivery: [PR #35](https://github.com/laststance/codebook/pull/35) merged as `a0e9e1f570113c0d938e0d96c4cc388228ffc4cc`; Issue #34 closed
 Goal version: 5
 Tracking issue: [#34](https://github.com/laststance/codebook/issues/34)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -61,12 +61,12 @@ Cursor Customize showed the loaded skill body at version 1.0.17 and the new-inst
 - Keep / revise / replace: keep the current G12 onboarding implementation; use this evidence to choose the next unverified product behavior. No implementation change was needed in this cycle.
 - Evidence that can update goal state: G12 lifecycle evidence advances, but final G12 and integrated acceptance remain partial. The same VSIX did not run this app in this cycle.
 - Remaining gaps and regression obligations: complete G01–G12, broad repositories, original motion, owner acceptance and final review remain open.
-- Delivery state and proof: [Draft PR #35](https://github.com/laststance/codebook/pull/35); review, CI, merge and issue closure pending.
+- Delivery state and proof: [PR #35](https://github.com/laststance/codebook/pull/35) merged as `a0e9e1f570113c0d938e0d96c4cc388228ffc4cc` on 2026-09-26 JST. Exact head `daf882f7c82bf743ce82b6dd170fb61588669991` received a complete five-file CodeRabbit CLI review with zero findings, hosted `APPROVED` on the same head, zero unresolved threads and `MERGEABLE / CLEAN` before merge. [Package CI](https://github.com/laststance/codebook/actions/runs/36191210033) passed 1110/1110 product/shared and 101/101 package checks; both Socket checks passed. Issue #34 closed at merge; Goal #1 remains open.
 
 ## Handoff
 
-- Exact next action: commit/push the evidence and state, complete current-head CodeRabbit CLI/hosted review and CI, merge PR #35, close Issue #34, then select the next bounded goal cycle.
-- Changed files / branch / active processes: `codex/cycle-0023-chat-restart`; documentation only, no dedicated trial process running.
+- Exact next action: run [Cycle 0024](0024-ordinary-repository-chat.md) / Issue #36 on a second repository and retain the host-specific AI-owned runtime result or exact failure.
+- Changed files / branch / active processes: `codex/cycle-0023-chat-restart` merged and removed; no dedicated trial process running. Private videos and the checksummed locator remain under ignored `artifacts/cycle-0023/`.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 apply unchanged.
-- At most one next candidate and why: test a second ordinary two-host repository-browser question on a distinct clean repository after installing its declared dependencies; one Mantine prompt does not establish broad G01/G06/G11 usefulness.
+- At most one next candidate and why: Cycle 0024 tests ordinary AI-owned source/runtime execution on `laststance/laststance.io`; Cycle 0023 proved only connection lifecycle.
