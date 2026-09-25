@@ -388,6 +388,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           return;
         }
         if (name === 'workbench.action.keepEditor' && activeTabGroup.activeTab) activeTabGroup.activeTab.isPreview = false;
+        if (name === 'workbench.action.minimizeOtherEditors') maximizedEditorGroup = false;
         if (name === 'workbench.action.toggleMaximizeEditorGroup') maximizedEditorGroup = !maximizedEditorGroup;
         if (name === 'workbench.action.focusFirstEditorGroup') {
           const previousEditor = focusedSourceEditor(), previousGroup = activeTabGroup, primaryGroup = groups.find(group => group.viewColumn === 1)!;
@@ -5259,7 +5260,7 @@ test('the Study header Restore exits a maximized pane while keeping the settled 
   } finally { await harness.close(); }
 });
 
-test('Restore after repeated Enlarge actions keeps the original recording panes and playhead', async () => {
+test('switching Enlarge between Study panes keeps the target maximized and Restore preserves the recording', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
@@ -5267,8 +5268,11 @@ test('Restore after repeated Enlarge actions keeps the original recording panes 
     harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
     const panels = harness.nativePanels(), bundle = harness.controller.bundle();
     await harness.reader.action('enlarge-app');
+    assert.equal(harness.maximizedEditorGroup(), true);
     await harness.reader.action('enlarge-context');
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext'); assert.equal(harness.maximizedEditorGroup(), true);
     await harness.reader.action('enlarge-app');
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser'); assert.equal(harness.maximizedEditorGroup(), true);
     const state = harness.reader.presentationState();
     // Act
     await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: state.mode, action: 'restore' });

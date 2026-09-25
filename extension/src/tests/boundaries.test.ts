@@ -68,7 +68,9 @@ test('a failed cleanup remains retryable and cannot report cleaned history', asy
     runtime.stop = async () => { throw new Error('Owned process still alive'); };
     // Act / Assert
     await assert.rejects(service.stop(receipt), /still alive/); assert.equal(service.state(record).cleaned, false);
+    assert.match(JSON.stringify((await service.status()).runs.find(run => run.runId === receipt.runId)), /"cleanupError":\{[^}]*Owned process still alive/);
     runtime.stop = originalStop; await service.stop(receipt); assert.equal(service.state(record).cleaned, true);
+    assert.doesNotMatch(JSON.stringify((await service.status()).runs.find(run => run.runId === receipt.runId)), /"cleanupError":/);
   } finally { await harness.close(); }
 });
 
@@ -83,7 +85,7 @@ test('bounded evidence reads reject oversized and missing bytes with an actionab
   } finally { await harness.close(); }
 });
 
-test('a persistent cleanup failure stops automatic retries and remains explicitly retryable', async () => {
+test('a persistent cleanup failure stays visible in status without automatic retries and remains explicitly retryable', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
   const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'failed-storage' }), record = service.record(receipt);
@@ -97,9 +99,11 @@ test('a persistent cleanup failure stops automatic retries and remains explicitl
     // Assert
     assert.equal(attempts, 1); assert.equal(service.state(record).cleaned, false);
     assert.match(service.state(record).cleanupError!.cause, /Persistent disk failure/);
+    assert.match(JSON.stringify((await service.status()).runs.find(run => run.runId === receipt.runId)), /"cleanupError":\{[^}]*Persistent disk failure/);
     await assert.rejects(service.stop(receipt), /Persistent disk failure/); assert.equal(attempts, 2);
     runtime.stop = originalStop; await service.stop(receipt);
     assert.equal(service.state(record).cleaned, true); assert.equal(service.state(record).cleanupError, undefined);
+    assert.doesNotMatch(JSON.stringify((await service.status()).runs.find(run => run.runId === receipt.runId)), /"cleanupError":/);
   } finally { runtime.stop = originalStop; await harness.close(); }
 });
 

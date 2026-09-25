@@ -96,7 +96,7 @@ export class StudyService {
       runs: [...this.records.values()].map(record => {
         const run = this.state(record);
         // Surface the current failure beside its run URI so status polling cannot misdiagnose post-cleanup locks.
-        return { runId: record.id, uri: this.uri(record.id), state: run.state, terminalReason: run.terminalReason, error: run.error };
+        return { runId: record.id, uri: this.uri(record.id), state: run.state, terminalReason: run.terminalReason, error: run.error, cleanupError: run.cleanupError };
       }),
       recording: this.recordings ? { libraryUri: `codebook://${this.instanceId}/library`, playbackUri: `codebook://${this.instanceId}/playback`, playbackAvailable: Boolean(this.playbackController), limits: this.recordings.limits,
         instructions: 'Saved recordings survive server/runtime exit. Discover their study IDs using libraryUri; current-instance URIs and playback revisions must be copied, not guessed. Playback never starts, clicks or continues a run.' } : undefined,

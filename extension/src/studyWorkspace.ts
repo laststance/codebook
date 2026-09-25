@@ -1163,6 +1163,8 @@ export class StudyWorkspace {
         : previous?.mode === this.presentationMode && previous.receipt === this.layoutReceipt ? previous.receipt : undefined;
       // Confirm native app focus so the editor widens the recorded application rather than another pane.
       await this.focusPresentationPanel(this.app);
+      // Expanding exits any previous maximization, so the next toggle maximizes this pane.
+      await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors');
       await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
       this.enlargedLayoutReceipt = receipt ? { receipt, mode: this.presentationMode } : undefined;
       this.lastActiveRegion = 'app'; this.presentationConfirmed = false; this.publish();
@@ -1174,6 +1176,8 @@ export class StudyWorkspace {
         : previous?.mode === this.presentationMode && previous.receipt === this.layoutReceipt ? previous.receipt : undefined;
       // Wait for the owned explanation tab before resizing, even if Cursor reports focus late.
       await this.focusPresentationPanel(this.contextPanel);
+      // Expanding exits any previous maximization, so the next toggle maximizes this pane.
+      await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors');
       await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
       this.enlargedLayoutReceipt = receipt ? { receipt, mode: this.presentationMode } : undefined; this.presentationConfirmed = false; this.publish();
     }
