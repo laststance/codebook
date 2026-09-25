@@ -15,6 +15,8 @@ Cycle 0019 adds the common versioned `codebook` skill to the VSIX, registers it 
 
 - Serialize overlapping Cursor AI Chat setup and registration, reject readiness when another window removes the shared skill, and preserve a newer window's MCP catalog during stale cleanup. Publish the first owned empty catalog through a recoverable journal.
 - Retry a failed native source reveal when returning from saved history, and report unavailable evidence if the current source still cannot be shown.
+- Expose a run's cleanup failure in the compact status list so editor chats can see a failed release without first opening the full run resource.
+- Exit any maximized editor group before switching Enlarge to the requested Application or Context pane, then maximize that pane while retaining the original Restore receipt.
 
 ## [0.2.2.0] - 2026-09-23
 
