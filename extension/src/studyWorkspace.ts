@@ -119,7 +119,7 @@ export class StudyWorkspace {
   private closingPromise?: Promise<void>;
   private arranging?: Promise<void>;
   private layoutReceipt?: { mode: 'study' | 'repository' | 'study-reentry'; signature: string; groups: { group: vscode.TabGroup; column: vscode.ViewColumn }[]; panes: ReturnType<StudyWorkspace['studyPanePositions']>; sourceTargetColumn?: vscode.ViewColumn; pendingPanes?: ReturnType<StudyWorkspace['studyPanePositions']> };
-  private enlargedLayoutReceipt?: { receipt: NonNullable<StudyWorkspace['layoutReceipt']>; mode: PresentationMode };
+  private enlargedLayoutReceipt?: { receipt: NonNullable<StudyWorkspace['layoutReceipt']>; mode: PresentationMode; expandedSignature: string };
   private repositoryLayoutOrigin?: { origin: NonNullable<StudyWorkspace['repositoryOrigin']>; navigation?: number; layout: unknown; groups: NonNullable<StudyWorkspace['layoutReceipt']>['groups']; preservesOtherParts: (mainCount: number) => boolean };
   private repositoryLayoutRestored?: { signature: string; studyLayout: unknown; groups: NonNullable<StudyWorkspace['layoutReceipt']>['groups']; before: ReturnType<StudyWorkspace['studyPanePositions']>; after: ReturnType<StudyWorkspace['studyPanePositions']> };
   private readonly editorGroupIdentities = new WeakMap<vscode.TabGroup, symbol>();
@@ -319,7 +319,7 @@ export class StudyWorkspace {
       // A late switch between owned Study and Application changes focus, but leaves the measured main grid intact.
       const layout = await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout');
       assertCurrent();
-      if (!retained() || JSON.stringify(layout) !== receipt.signature || runtimeIdentity !== this.assertPresentationAdmission()) return;
+      if (!retained() || JSON.stringify(layout) !== enlarged.expandedSignature || runtimeIdentity !== this.assertPresentationAdmission()) return;
       // Editor-layout reads omit maximization, so reapplying the measured grid must clear it before confirmation.
       await vscode.commands.executeCommand('vscode.setEditorLayout', JSON.parse(receipt.signature));
       assertCurrent();
@@ -602,6 +602,34 @@ export class StudyWorkspace {
         assertOwnedFocus();
       } });
     } finally { for (const subscription of focusChanges) subscription.dispose(); }
+  }
+
+  /** Enlarges an owned pane while retaining the measured grid that {@link tryConfirmEnlargedLayout} restores. Called by both Study Enlarge actions. @example await this.enlargePresentationPanel(this.app!, 'app') */
+  private async enlargePresentationPanel(panel: vscode.WebviewPanel, region: 'app' | 'context'): Promise<void> {
+    const previous = this.enlargedLayoutReceipt, confirmed = this.presentationState().layoutConfirmed;
+    const receipt = confirmed ? this.layoutReceipt
+      : previous?.mode === this.presentationMode && previous.receipt === this.layoutReceipt ? previous.receipt : undefined;
+    const expectedSignature = confirmed ? receipt?.signature : previous?.expandedSignature;
+    // Native focus must belong to the requested pane before Expand or Maximize changes the editor grid.
+    await this.focusPresentationPanel(panel);
+    const before = receipt ? await this.readPassivePresentationLayout() : undefined;
+    const retained = Boolean(receipt && before !== undefined && JSON.stringify(before) === expectedSignature
+      && this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) && this.sameStudyPanePositions(receipt.panes));
+    const assertRetained = this.retainPresentationPlacement();
+    this.enlargedLayoutReceipt = undefined; this.presentationConfirmed = false;
+    try {
+      // Expand exits any previous maximization and can change group sizes; capture those sizes before Maximize.
+      await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors');
+      assertRetained();
+      const expanded = retained ? await this.readPassivePresentationLayout() : undefined;
+      assertRetained();
+      await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
+      assertRetained();
+      if (retained && expanded !== undefined && receipt) {
+        this.enlargedLayoutReceipt = { receipt, mode: this.presentationMode, expandedSignature: JSON.stringify(expanded) };
+      }
+      this.lastActiveRegion = region;
+    } finally { this.publish(); }
   }
 
   /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @example const assertRetained = this.retainPresentationPlacement(); */
@@ -1158,28 +1186,11 @@ export class StudyWorkspace {
     if (action === 'focus-context') { this.contextPanel?.reveal(undefined, false); this.lastActiveRegion = 'context'; }
     if (action === 'enlarge-app') {
       if (!this.app) throw new Error('Open an application observation before enlarging it.');
-      const previous = this.enlargedLayoutReceipt;
-      const receipt = this.presentationState().layoutConfirmed ? this.layoutReceipt
-        : previous?.mode === this.presentationMode && previous.receipt === this.layoutReceipt ? previous.receipt : undefined;
-      // Confirm native app focus so the editor widens the recorded application rather than another pane.
-      await this.focusPresentationPanel(this.app);
-      // Expanding exits any previous maximization, so the next toggle maximizes this pane.
-      await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors');
-      await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
-      this.enlargedLayoutReceipt = receipt ? { receipt, mode: this.presentationMode } : undefined;
-      this.lastActiveRegion = 'app'; this.presentationConfirmed = false; this.publish();
+      await this.enlargePresentationPanel(this.app, 'app');
     }
     if (action === 'enlarge-context') {
       if (!this.contextPanel) throw new Error('Open a study explanation before enlarging it.');
-      const previous = this.enlargedLayoutReceipt;
-      const receipt = this.presentationState().layoutConfirmed ? this.layoutReceipt
-        : previous?.mode === this.presentationMode && previous.receipt === this.layoutReceipt ? previous.receipt : undefined;
-      // Wait for the owned explanation tab before resizing, even if Cursor reports focus late.
-      await this.focusPresentationPanel(this.contextPanel);
-      // Expanding exits any previous maximization, so the next toggle maximizes this pane.
-      await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors');
-      await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
-      this.enlargedLayoutReceipt = receipt ? { receipt, mode: this.presentationMode } : undefined; this.presentationConfirmed = false; this.publish();
+      await this.enlargePresentationPanel(this.contextPanel, 'context');
     }
     if (action === 'outline') await vscode.commands.executeCommand('codebook.learningOutline.focus');
     if (action === 'arrange') {

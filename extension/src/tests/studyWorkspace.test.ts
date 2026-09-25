@@ -388,7 +388,15 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           return;
         }
         if (name === 'workbench.action.keepEditor' && activeTabGroup.activeTab) activeTabGroup.activeTab.isPreview = false;
-        if (name === 'workbench.action.minimizeOtherEditors') maximizedEditorGroup = false;
+        if (name === 'workbench.action.minimizeOtherEditors') {
+          maximizedEditorGroup = false;
+          // Native Expand also changes group proportions while exiting maximization.
+          const layout = structuredClone(editorLayout);
+          if (layout && typeof layout === 'object' && 'groups' in layout && Array.isArray(layout.groups) && layout.groups.length > 1) {
+            for (const [index, group] of layout.groups.entries()) if (group && typeof group === 'object') group.size = index === 0 ? 0.8 : 0.2 / (layout.groups.length - 1);
+            editorLayout = layout;
+          }
+        }
         if (name === 'workbench.action.toggleMaximizeEditorGroup') maximizedEditorGroup = !maximizedEditorGroup;
         if (name === 'workbench.action.focusFirstEditorGroup') {
           const previousEditor = focusedSourceEditor(), previousGroup = activeTabGroup, primaryGroup = groups.find(group => group.viewColumn === 1)!;
@@ -5273,6 +5281,8 @@ test('switching Enlarge between Study panes keeps the target maximized and Resto
     assert.equal(harness.focusedPanel(), 'codebook.studyContext'); assert.equal(harness.maximizedEditorGroup(), true);
     await harness.reader.action('enlarge-app');
     assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser'); assert.equal(harness.maximizedEditorGroup(), true);
+    // Restore must not need to reopen source after Enlarge changes only geometry.
+    harness.failCurrentSourceOpen();
     const state = harness.reader.presentationState();
     // Act
     await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: state.mode, action: 'restore' });
