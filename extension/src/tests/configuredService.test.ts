@@ -204,6 +204,26 @@ test('configured explanations retain actual false and null facts while unavailab
   assert.deepEqual(await readResource(service, `${snapshotUri}/source/typescript`), source); assert.equal(service.state(record).participants.browser.resumable, false);
 });
 
+test('a repository run exposes the Study link identity separately from its debugger session identity', async context => {
+  // Arrange
+  const { service, configuration } = await configuredServiceHarness(context);
+  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'saved-study-link', configuration }), record = service.record(receipt);
+  await record.preparation;
+  service.action({ ...receipt, key: 'click', action: 'repository-click' });
+  await service.continue(service.state(record).participants.browser.continueArguments!);
+  await service.stop(receipt);
+
+  // Act
+  const resource = await readResource(service, receipt.runUri);
+  assert.ok('text' in resource);
+  const state = z.object({ instanceId: z.string(), runId: z.string(), studyId: z.string(), runtimeRunId: z.string(), observations: z.array(z.object({ id: z.string() })) }).parse(JSON.parse(resource.text));
+
+  // Assert
+  assert.equal(state.studyId, `${state.instanceId}_${state.runId}`);
+  assert.notEqual(state.studyId, `${state.instanceId}_${state.runtimeRunId}`);
+  assert.equal(state.observations.length, 1);
+});
+
 test('real SDK accepts the bounded configured object and reconnects to the original input receipt without a second dispatch', async context => {
   // Arrange: HTTP/SDK/storage are real, editor effects remain the explicitly synthetic harness.
   const { service, configuration, runtimes } = await configuredServiceHarness(context), endpoint = await startServer(service);

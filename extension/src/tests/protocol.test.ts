@@ -55,7 +55,7 @@ test('status identifies extension build changes without claiming that the target
   } finally { await connection.close(); await endpoint.close(); await harness.close(); }
 });
 
-test('tool-only editor chats can read the same public help and current run as MCP resource clients', async () => {
+test('tool-only editor chats receive public help and current run data in structured results', async () => {
   // Arrange
   const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
   try {
@@ -71,13 +71,14 @@ test('tool-only editor chats can read the same public help and current run as MC
     const foreign = await connection.client.callTool({ name: 'codebook_read_resource', arguments: { uri: 'codebook://not-this-instance/runs/00000000-0000-4000-8000-000000000000' } });
     // Assert
     const textContent = z.object({ type: z.literal('text'), text: z.string() });
-    const resourceMetadata = z.object({ ok: z.literal(true), uri: z.string(), mimeType: z.literal('application/json') });
+    const structuredResource = z.object({ ok: z.literal(true), uri: z.string(), mimeType: z.literal('application/json'), data: z.unknown() });
     const helpContent = helpResource.contents[0], runContent = runResource.contents[0];
     assert.ok(helpContent && 'text' in helpContent); assert.ok(runContent && 'text' in runContent);
-    assert.equal(resourceMetadata.parse(helpTool.structuredContent).uri, helpUri);
-    assert.equal(resourceMetadata.parse(runTool.structuredContent).uri, receipt.runUri);
-    assert.equal(Object.hasOwn(helpTool.structuredContent ?? {}, 'text'), false);
-    assert.equal(Object.hasOwn(runTool.structuredContent ?? {}, 'text'), false);
+    assert.equal(structuredResource.parse(helpTool.structuredContent).uri, helpUri);
+    assert.equal(structuredResource.parse(runTool.structuredContent).uri, receipt.runUri);
+    assert.deepEqual(structuredResource.parse(helpTool.structuredContent).data, JSON.parse(helpContent.text));
+    assert.deepEqual(structuredResource.parse(runTool.structuredContent).data, JSON.parse(runContent.text));
+    assert.match(helpContent.text, /Copy studyId from the terminal run resource and observationId/);
     assert.equal(z.array(textContent).parse(helpTool.content)[0]?.text, helpContent.text);
     assert.equal(z.array(textContent).parse(runTool.content)[0]?.text, runContent.text);
     assert.equal(foreign.isError, true); assert.match(JSON.stringify(foreign.structuredContent), /STALE_INSTANCE/);

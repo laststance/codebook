@@ -354,7 +354,7 @@ export class StudyService {
     const nextActions = [canControl && record.prepared && runtime?.status === 'ready' ? runtime.nextAction : undefined,
       participants.server?.resumable ? 'continue-server' : undefined, participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined, 'read-history'].filter(value => value !== undefined);
-    const material = { instanceId: this.instanceId, runId: record.id, runtimeRunId: runtime?.runId, profile: record.profile,
+    const material = { instanceId: this.instanceId, runId: record.id, studyId: `${this.instanceId}_${record.id}`, runtimeRunId: runtime?.runId, profile: record.profile,
       state: record.stopped ? 'stopped' : record.stopping ? 'stopping' : terminalReason ? 'failed' : !record.prepared ? 'preparing' : runtime?.status ?? 'preparing',
       runtimeState: runtime?.status, createdAt: new Date(record.createdAt).toISOString(), deadlineAt: new Date(record.deadlineAt).toISOString(),
       preparationDeadlineAt: record.profile === REPOSITORY_BROWSER_PROFILE ? new Date(record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS).toISOString() : undefined,
