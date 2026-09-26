@@ -15,6 +15,8 @@ Both the Application and Study webviews stayed visually blank throughout the rec
 
 After the run, `Developer: Reload Webviews` did not recover either pane. `Developer: Reload Window` reset the editor layout, but reopening the saved Study from Learning Outline again produced black Application and Study panes while the captured source editor painted normally. The dedicated window was closed and only its identified launch process was terminated. The renderer log contained an extension-host `Unexpected SIGPIPE`, a missing Copilot tool result file, remote embeddings 404s and reload-related channel closure; it did not identify a Codebook webview paint exception. None of those entries alone establishes the cause.
 
+A new dedicated VS Code process with the same installed VSIX and saved trial workspace did paint both webviews. Reopening the previous partial Study showed the historical Application error and Study Overview in native pixels; selecting Live showed its saved interpretation and the captured-values heading. This is a display preflight and a process-lifetime distinction, not a new checkout run or proof that the first value fits the paused native viewport. The historical run remains invalid.
+
 The ignored 539.44-second renderer recording and inspected frames at 150, 300 and 500 seconds are bound in [media-manifest.json](media-manifest.json). At 300 seconds source and chat are visible while the Codebook webviews are black. At 500 seconds the maximized Study webview is still black. This does not test whether the 0.2.11 long-interpretation layout works in native pixels. Cursor was not run on this invalid cut.
 
 ## Revised hypothesis
