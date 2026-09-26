@@ -1,9 +1,9 @@
 # Cycle 0024 — Ordinary `/codebook` runtime on a second repository
 
 Type: experiment
-Status: validating; bounded two-host development result demonstrated, delivery review pending
+Status: closed; bounded two-host development result demonstrated
 Result: bounded two-host development result demonstrated
-Delivery: [Draft PR #37](https://github.com/laststance/codebook/pull/37) open; review and merge pending
+Delivery: [PR #37](https://github.com/laststance/codebook/pull/37) merged as `af02804108d6d4619682ffca853d2ca314af6791`; Issue #36 closed
 Goal version: 5
 Tracking issue: [#36](https://github.com/laststance/codebook/issues/36)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -63,12 +63,12 @@ Both Wiki View observation and View recording worked after the runs stopped, wit
 - Keep / revise / replace: keep the current package for the next bounded question. No product-source change was needed here; preserve the failed runs as regression examples rather than treating the successful retries as first-try success.
 - Evidence that can update goal state: ordinary Copilot Chat Auto and Cursor Agent independently demonstrated one real second-repository action with the same clean VSIX. This advances G01/G03/G04/G06/G10/G11/G12 evidence only within the described target and question; it does not close any final capability alone.
 - Remaining gaps and regression obligations: first-try selector/value robustness, full checkout, unfamiliar and diverse repositories, all three native display modes, integrated G01–G12, owner acceptance and final reviewers remain open.
-- Delivery state and proof: Draft PR #37 is open; local/hosted review, checks, merge and Issue #36 closure are pending.
+- Delivery state and proof: [PR #37](https://github.com/laststance/codebook/pull/37) merged as `af02804108d6d4619682ffca853d2ca314af6791` on 2026-09-26 JST and Issue #36 closed. Exact head `b06f5d5fcb278c64053fe873cf12bd79cef28bed` received a complete five-file CodeRabbit CLI review with zero findings, hosted `APPROVED` on that same head, zero review threads, all-success Socket checks and `MERGEABLE / CLEAN` before merge. [Package CI](https://github.com/laststance/codebook/actions/runs/36195961266) passed 1110/1110 product/shared and 101/101 package checks. Goal #1 remains open.
 
 ## Handoff
 
-- Exact next action: complete PR #37 review and CI on the recorded result, then merge and close Issue #36 if its outcome remains demonstrated. Select the next cycle only after the goal-gap check.
-- Changed files / branch / active processes: `codex/cycle-0024-ordinary-repo-chat`; evidence and cycle/state records changed; no dedicated trial process remains.
+- Exact next action: run [Cycle 0025](0025-ordinary-checkout.md) / Issue #38 against the unchanged clean VSIX, asking the natural cart-to-confirmation question in both ordinary chats.
+- Changed files / branch / active processes: `codex/cycle-0024-ordinary-repo-chat` merged and removed; no dedicated trial process remains. Private videos and checksummed Studies remain in ignored `artifacts/cycle-0024/` and editor storage.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 unchanged.
-- At most one next candidate and why: an unfamiliar repository run would test whether AI discovery and runtime support generalize beyond the two familiar targets; select after this cycle's delivery.
+- At most one next candidate and why: the goal-gap check selected a complete ordinary-chat sandbox checkout before another unfamiliar repository. G01's one-request cart-to-confirmation chain is farther from current clean-VSIX ordinary-chat proof than another one-click repository action. Unfamiliar repositories remain a separate G10 obligation after this bounded test.
