@@ -1,6 +1,6 @@
 # Cycle 0028 OCR review
 
-Host-agent review using open-code-review-delegate, not independent external-provider approval. Scope: base `414d1b07a4b354b5d7344a63735e1730aca672dd` through implementation `f24110c`; CodeRabbit CLI is separate and pending.
+Host-agent review using open-code-review-delegate, not independent external-provider approval. Scope: base `414d1b07a4b354b5d7344a63735e1730aca672dd` through implementation `f24110c`; CodeRabbit CLI is separate.
 
 ## Deterministic scope and coverage
 
@@ -25,6 +25,6 @@ Checked skill ordering, preserved mode selection, current identity/revision, lay
 
 One low documentation finding: the active cycle still said not implemented after the guidance commit. Corrected to candidate committed / installed validation and review pending, with the next action updated. Also clarified that initial repository inventory is not the final trial mapping freeze. No actionable implementation finding in this bounded diff. Later evidence-only additions require refreshed coverage; this report does not certify unreviewed future source.
 
-CodeRabbit CLI independently reported five minor documentation findings on f24110c: two stale PROJECT_STATE entries, stale cycle delivery status (overlapping the OCR finding), and broken relative links after archiving version 5. The fifth identified ambiguous ordering of provisional owner feedback and final approval in PRODUCT_GOAL; final owner acceptance now explicitly follows both stages and artifact validity. All were verified and corrected. Archive wording stays historical; only its links were rebased. Provider completion/any further findings remain pending.
+CodeRabbit CLI independently reported five minor documentation findings on f24110c: two stale PROJECT_STATE entries, stale cycle delivery status (overlapping the OCR finding), and broken relative links after archiving version 5. The fifth identified ambiguous owner-acceptance/final-closure wording. The completed provider pass later offered the contradictory ordering suggestion as finding 10; the final resolution preserves the owner's requested separate acceptance without inventing a timing gate, while requiring both stages and artifact validity before goal closure. All factual documentation issues were verified and corrected. Archive wording stays historical; only its links were rebased. The provider completed on f24110c: 20 reviewed files, 10 minor notifications covering five topics. Findings 6–9 duplicate findings 1–4; finding 10 qualifies the owner-ordering topic. No implementation defect was reported. The later record changes have direct/OCR review, not a claimed zero-finding provider pass.
 
 Validation complete: 966 extension tests + 45 Cycle 0004 tests + 103 Cycle 0001/0010 tests = 1114/1114 product/shared tests, with zero failures/skips. Package suite passes 101/101. Typecheck passes. The earlier concurrent-build attempt remains invalidated, not omitted.

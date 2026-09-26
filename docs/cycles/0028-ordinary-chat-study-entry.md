@@ -3,7 +3,7 @@
 Type: product increment
 Status: implementing
 Result: pending
-Delivery: candidate implementation committed; installed validation and review pending
+Delivery: 0.2.5 native failure retained; 0.2.6 repair validation and installed retest pending
 Goal version: 6
 Tracking issue: [#44](https://github.com/laststance/codebook/issues/44)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -58,12 +58,12 @@ Pin exact host/client/source/VSIX, workspace, viewport/theme and recording metho
 
 ## Attempts and evidence
 
-Development probe: 3/3 actual-MCP transport cases pass for a closed default Study reader and saved Living/Guided preference, with zero runtime starts, preserved dirty work and unchanged learner progress. The first run had two harness setup failures because preferences were seeded after reader construction; constructing the reader after seeding fixed the test setup. Logs: ignored `artifacts/cycle-0028/cold-entry-probe.log` and `cold-entry-probe-harness-error.log`. No native result on this cycle yet. Prior source inspection found that server attachment/status do not open Study, runtime viewport creation opens Application, and skill 1.0.18 handles only an already-open historical presentation. Existing `performPresentation` can open a closed reader, but the actual MCP presentation test currently pre-opens it; this is the first question to verify.
+Development probe: 3/3 actual-MCP transport cases pass for a closed default Study reader and saved Living/Guided preference, with zero runtime starts, preserved dirty work and unchanged learner progress. The first run had two harness setup failures because preferences were seeded after reader construction; constructing the reader after seeding fixed the test setup. Logs: ignored `artifacts/cycle-0028/cold-entry-probe.log` and `cold-entry-probe-harness-error.log`. The later first installed trial is recorded below. Prior source inspection found that server attachment/status do not open Study, runtime viewport creation opens Application, and skill 1.0.18 handles only an already-open historical presentation. Existing `performPresentation` can open a closed reader, but the actual MCP presentation test currently pre-opens it; this is the first question to verify.
 
 ## Result and handoff
 
 - Result: pending.
-- Exact next action: finish sequential validation and review, freeze the 0.2.5 / skill 1.0.19 archive, then verify ordinary AI-owned presentation entry in both installed hosts. Continue detailed required-project mapping before selecting the next runtime-support increment; keep new acceptance rows NOT RUN until normal packaged practical trials occur.
+- Exact next action: validate and freeze 0.2.6 / skill 1.0.20 after the retained 0.2.5 failure, then verify Live entry and actual reading visibility in both installed hosts. Continue detailed required-project mapping before selecting the next runtime-support increment; keep new acceptance rows NOT RUN until normal packaged practical trials occur.
 - Current state: clean cycle branch at selection; no owned native trial process running.
 - One next candidate: decide from this cycle's observed outcome; full connected learning/three-mode and intended-use acceptance remain required.
 
@@ -75,10 +75,16 @@ All nine fixed targets require actual revision/runtime inspection. Required TS/J
 
 ## Implementation checkpoint
 
-The common skill is now 1.0.19, with conditional current-mode presentation opening before runtime input and an open/layout-confirmed completion check. Public discovery guidance mirrors that entry requirement. Candidate extension 0.2.5 distinguishes installation from the prior 0.2.4. Focused cold-entry/stale/return-history checks pass 5/5; package tests pass 101/101. Installed chat validation is pending.
+The first candidate common skill was 1.0.19, with conditional current-mode presentation opening before runtime input and an open/layout-confirmed completion check. Public discovery guidance mirrors that entry requirement. Candidate extension 0.2.5 distinguishes installation from the prior 0.2.4. Focused cold-entry/stale/return-history checks pass 5/5; package tests pass 101/101. Its later installed result is recorded below.
 
 The first broad product run was invalidated by concurrent package validation rebuilding/removing dist while runtime-loaded harness tests still needed it (ENOENT for dist/studyWorkspace.js). Preserve `artifacts/cycle-0028/full-tests-build-interference.log`; the sequential rerun after packaging completes passes 966/966 product checks. This is driver test interference, not a demonstrated product regression. No concurrent builds/packages are permitted during the corrected product run.
 
 Initial read-only inspection now pins eight supplied repository revisions in ACCEPTANCE_MATRIX.md and identifies Web/Node/Chrome Extension/library test/Example requirements. The private work application's manifest/path inventory and unchanged pre-existing dirty state are retained only in private metadata; deeper mapping remains pending. All new acceptance rows remain NOT RUN.
 
-Validation checkpoint: corrected sequential product/shared checks pass 1114/1114 (966 extension + 45 paired-runtime + 103 other shared tests), package regressions 101/101, typecheck passes. CodeRabbit CLI has reported five minor documentation findings; all verified and corrected. OCR reviewed all 6 eligible and 14 excluded entries. Native trials, provider completion, final current-head review/CI and delivery remain pending.
+Validation checkpoint: corrected sequential product/shared checks pass 1114/1114 (966 extension + 45 paired-runtime + 103 other shared tests), package regressions 101/101, typecheck passes. CodeRabbit CLI completed on f24110c with 20 files / 10 minor notifications across five documentation topics; fixes and the conflicting owner-ordering suggestions are accounted for in the OCR review record. OCR reviewed all 6 eligible and 14 excluded entries. That checkpoint predates the failed VS Code native trial below; corrected-candidate native trials, final current-head review/CI and delivery remain pending.
+
+## First installed trial and revised hypothesis
+
+[VS Code 0.2.5 evidence](evidence/0028/vscode-025-entry.md): automatic Study opening occurs before input, including public restoration after a grid timeout, but Overview stays selected during all four pauses. The bounded connected-context outcome FAILS. Native reading space is also constrained at owner zoom 2 with debug UI visible; no three-pane usability pass is claimed. Saved explanation/replay results remain development evidence. Cursor on 0.2.5 is unexecuted.
+
+The revised 0.2.6 / skill 1.0.20 guidance requires both current-run following and Live content through existing Return Current. The three cold-entry actual-MCP cases now assert the observed Overview state after opening and the Live state after public return, with unchanged learner work and zero executions. Together with stale/history controls, 5/5 focused checks pass. New broad/package validation, both-host installed evidence and current-cut review remain pending. All nine-project acceptance rows remain NOT RUN.

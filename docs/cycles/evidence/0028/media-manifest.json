@@ -1,0 +1,42 @@
+{
+  "candidate": "0.2.5",
+  "source": "3072cf7459ebd7acb05e6d3d6628e3db1cad79a5",
+  "type": "development failure retained",
+  "files": [
+    {
+      "path": "artifacts/cycle-0028/native/vscode-275.png",
+      "sha256": "ab13d883a6602b61658f7dee16f6fdc2e7b43b2adad6fe26f00d129b76e97d6e",
+      "bytes": 110475
+    },
+    {
+      "path": "artifacts/cycle-0028/native/vscode-100.png",
+      "sha256": "be17383c7bcd69bf2947c596d75b529ed4776de1cfc4e895339c06afdef53adc",
+      "bytes": 120877
+    },
+    {
+      "path": "artifacts/cycle-0028/native/vscode-110.png",
+      "sha256": "edb0fa60760fed59ad8f36f706feaf8e680a258ad90a9b3c1d170541e59867ea",
+      "bytes": 225587
+    },
+    {
+      "path": "artifacts/cycle-0028/native/vscode-190.png",
+      "sha256": "1c2510a20750b3a864e7fcb0484c7cea077cad0ae58bd59198c117dc7c7e2bc0",
+      "bytes": 259667
+    },
+    {
+      "path": "artifacts/cycle-0028/native/vscode-145.png",
+      "sha256": "90157dd82e05a5ee52c7c45330911f8203a9704414632d90c3cca2879b692ef9",
+      "bytes": 259354
+    },
+    {
+      "path": "artifacts/cycle-0028/native/vscode-120.png",
+      "sha256": "ad7d22f02dd84963c2c36d5d9e43b81bdb7819919ebc063666f7b8855be01964",
+      "bytes": 244645
+    },
+    {
+      "path": "artifacts/cycle-0028/native/vscode-copilot-auto.webm",
+      "sha256": "cdb49006e5d5badccd1ca985d9687d9d9eeb38eaf871d7210f1a87783af0c14d",
+      "bytes": 9440169
+    }
+  ]
+}

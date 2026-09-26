@@ -6466,6 +6466,13 @@ for (const mode of ['study-workspace', 'living-book', 'guided-walkthrough']) tes
     assert.equal(opened.isError, undefined, JSON.stringify(opened.structuredContent));
     const state = reader.presentationState();
     assert.equal(state.state, 'open'); assert.equal(state.mode, mode); assert.equal(state.layoutConfirmed, true);
+    assert.equal(state.reader.contentTab, 'overview'); assert.equal(state.reader.followingCurrentRun, true);
+    // A newly opened reader follows the run but still needs the public Live selection before runtime input.
+    const openedState = z.object({ data: z.object({ reader: z.object({ contentRevision: z.number() }) }) }).parse(opened.structuredContent).data;
+    const returned = await client.callTool({ name: 'codebook_return_current', arguments: { instanceId: selected.instanceId, presentationId: selected.presentation.presentationId, expectedRevision: openedState.reader.contentRevision } });
+    assert.equal(returned.isError, undefined, JSON.stringify(returned.structuredContent));
+    assert.equal(reader.presentationState().reader.contentTab, 'live'); assert.equal(reader.presentationState().reader.followingCurrentRun, true);
+    assert.equal(reader.presentationState().mode, mode);
     assert.equal(harness.counts().panels, 2); assert.equal(harness.runtimes.length, 0); assert.equal(harness.service.records.size, 0);
     assert.equal(harness.groups.some(group => group.tabs.includes(draft.tab)), true);
     assert.equal(draft.document.getText(), 'Original learner draft.\n'); assert.equal(draft.tab.isDirty, true);

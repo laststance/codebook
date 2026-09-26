@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.6.0] - 2026-09-26 (development candidate)
+
+Cycle 0028's first 0.2.5 installed VS Code trial opened Study through the ordinary AI chat, but left it on Overview throughout real pauses. Skill 1.0.20 and public discovery now require both Live content and current-run following before input, using the existing protected Return to Current operation. The failed visibility attempt and successful saved replay remain distinct; the new candidate's installed validation is pending.
+
 ## [0.2.5.0] - 2026-09-26 (development candidate)
 
 Cycle 0028 updates the common skill to 1.0.19 and public presentation guidance to open the current/default learner mode before runtime application input. Default and saved-mode cold entry are covered through the actual MCP transport. Installed ordinary-chat validation remains pending. Goal version 6 replaces random consecutive final reviews with the nine mandatory projects and ordered main-agent/independent-junior acceptance stages under D029; no new acceptance pass is claimed.

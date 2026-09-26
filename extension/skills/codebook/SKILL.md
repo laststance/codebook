@@ -2,7 +2,7 @@
 name: codebook
 description: Use Codebook's observed source and runtime evidence to explain a web app through the current editor workspace.
 metadata:
-  version: "1.0.19"
+  version: "1.0.20"
 ---
 
 # Codebook
@@ -19,7 +19,7 @@ For a request requiring runtime observation, read the selected profile's public 
 
 For each committed pause in a runtime explanation request, read its snapshot and source, then save the grounded explanation with `codebook_explain` using the public tool contract. Wait for the committed explanation receipt before continuing. Writing an explanation in chat does not save it to Study or recording. When the request concerns visible behavior, read the returned phase image resources and describe their actual pixels; capture metadata alone is not an image inspection. Preserve observed facts, source-based interpretation and unknowns as separate claims.
 
-Before starting a new run with an open presentation, read `presentation.reader.followingCurrentRun`. A `contentTab` of `live` alone does not prove the reader follows the current run. If `followingCurrentRun` is `false`, use `codebook_return_current` with the current reader revision and verify that the returned state is `true` before starting. This only changes the selected view; do not repeat an application action to recover the reader.
+Before starting a new run with an open presentation, read `presentation.reader.followingCurrentRun` and `presentation.reader.contentTab`. If following is `false` or the content tab is not `live`, use `codebook_return_current` with the current reader revision. Verify both `followingCurrentRun: true` and `contentTab: live` before starting, so pauses show captured values and saved explanations instead of the source-only Overview. This only changes the selected view; do not repeat an application action to recover the reader.
 
 While a Codebook run is preparing or active, poll that run's returned state until it becomes ready or terminal, or reaches its published preparation deadline. During repository preparation, use `preparationRemainingMs` from the **current** run resource: a positive value means the deadline has not expired, regardless of local time-zone display. An unchanged preparing state is normal while the app loads; do not stop it early unless the user cancels. Do not kill processes or remove build locks to assist it; use Codebook's stop operation for owned resources. If a foreign lock remains after no Codebook run is active, report the condition instead of stopping another process on the user's behalf.
 
