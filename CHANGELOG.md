@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.8.0] - 2026-09-26 (development candidate)
+
+- Collapse Study's view and pane controls when a narrow reader first enters Live, placing the observed explanation and values closer to the top while retaining an explicit disclosure to reopen every control. Keep the learner's manually reopened controls visible through subsequent runtime updates.
+- Retain the 0.2.7 Codebook-owned debugger console behavior; the native 0.2.7 trial still placed Live evidence below the visible fold at owner zoom 2. This new candidate requires separate installed VS Code and Cursor reading proof.
+
 ## [0.2.7.0] - 2026-09-26 (development candidate)
 
 Cycle 0028's installed 0.2.6 VS Code trial entered Live before execution and retained grounded explanations at all four pauses, but the owned Node/browser debug launches opened the Debug Console and compressed the application/source/Study reading area. Owned launch configurations now keep that panel closed without changing the user's settings. The same bundled skill 1.0.20 remains in use. New installed layout verification is pending; neither demo run counts toward D029 acceptance.

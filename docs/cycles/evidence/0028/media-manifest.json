@@ -4,7 +4,7 @@
       "version": "0.2.5",
       "source": "3072cf7459ebd7acb05e6d3d6628e3db1cad79a5",
       "vsixSha256": "a9fb8ca8b533eefd8af25de4ee7d52e55b5faf811deca1b6cf6cc7cce2890cee",
-      "result": "FAIL \u2014 Overview remained selected",
+      "result": "FAIL — Overview remained selected",
       "files": [
         {
           "path": "artifacts/cycle-0028/native/vscode-275.png",
@@ -47,7 +47,7 @@
       "version": "0.2.6",
       "source": "5f63fb2309f00983c20f4dcd05dc18e74e5989ac",
       "vsixSha256": "9c50e9d692c9dee1629c32ae1e78b22bb8e331324efb1a641e2ac23889456ed3",
-      "result": "PARTIAL \u2014 Live values and explanations, but debug panel compressed reading area",
+      "result": "PARTIAL — Live values and explanations, but debug panel compressed reading area",
       "files": [
         {
           "path": "artifacts/cycle-0028/native/vscode-026-110.png",
@@ -83,6 +83,49 @@
           "path": "artifacts/cycle-0028/native/vscode-026-copilot-auto.webm",
           "sha256": "c366368eb9baccc02bcf40dd74df5e5abb87233cc52a50a265794f463a1ecb92",
           "bytes": 8305965
+        }
+      ]
+    },
+    {
+      "version": "0.2.7",
+      "source": "050f284ac3ce2afdc96da09b3b40508da48764e8",
+      "vsixSha256": "06cb0ca5308b13b026bddc1344b18e28b2335d19e0e7298c98843660ecb0a4a3",
+      "result": "PARTIAL — Debug Console stayed closed, but Study values remained below the visible fold",
+      "files": [
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-copilot-auto.webm",
+          "sha256": "f32c2e62e58b46c6f65612ec19bd776c1713969fda07323081565edabdfacd81",
+          "bytes": 8800042
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-100.png",
+          "sha256": "a0fe321e748035e02317b5e73a549efc1a32a0a48965e4defa8e1b527f5d700b",
+          "bytes": 243121
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-135.png",
+          "sha256": "5430ab61271969b8a105c1c88c439737c1542b4b205fa155bea25235f3486396",
+          "bytes": 272057
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-170.png",
+          "sha256": "4ac22cb58e6bd7397c1e37a5d7543cfe078df42728acd63847926412e358005a",
+          "bytes": 291868
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-205.png",
+          "sha256": "cd96d19bbc60e89cbb591a80e61b9cf264a5f99b48af88f79e815a66e17f38db",
+          "bytes": 273909
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-235.png",
+          "sha256": "255b092a3f0616268cfd7c8dd9d4335e6cf246f1196104bee862d11b685cc6b8",
+          "bytes": 294929
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-65.png",
+          "sha256": "21f04e85f0b9c2b18da89c5abab59bad930acab8831999be456b818a773d528e",
+          "bytes": 125932
         }
       ]
     }
