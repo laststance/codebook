@@ -62,9 +62,9 @@ Development probe: 3/3 actual-MCP transport cases pass for a closed default Stud
 
 ## Result and handoff
 
-- Result: pending.
-- Exact next action: validate and freeze 0.2.6 / skill 1.0.20 after the retained 0.2.5 failure, then verify Live entry and actual reading visibility in both installed hosts. Continue detailed required-project mapping before selecting the next runtime-support increment; keep new acceptance rows NOT RUN until normal packaged practical trials occur.
-- Current state: clean cycle branch at selection; no owned native trial process running.
+- Result: pending; installed VS Code reading remains unverified on 0.2.11.
+- Exact next action: preflight visible Application and Study pixels in a new dedicated VS Code process using the same clean 0.2.11 VSIX. If visible, rerun the exact ordinary question and inspect recorded pause frames before Cursor. Keep new acceptance rows NOT RUN until normal packaged practical trials occur.
+- Current state: the invalid 0.2.11 trial and failed reload recovery are recorded; its dedicated window and process are closed.
 - One next candidate: decide from this cycle's observed outcome; full connected learning/three-mode and intended-use acceptance remain required.
 
 ## D029 acceptance change and cycle impact
@@ -112,3 +112,5 @@ Candidate 0.2.9 makes the narrow Live runtime strip non-sticky and tries to scro
 The next hypothesis is that a loading snapshot consumes the observation-ID change before the complete render can scroll. Candidate 0.2.10 records an observation as revealed only after the complete Live render scrolls it. The compiled Chromium regression now sends a loading update before the full pause and verifies both evidence visibility and same-pause reading-position preservation, 15/15 passed; the full 966/966 extension tests passed. Package checks and a fresh installed trial remain pending. A fixture pass is not native proof.
 
 [The installed 0.2.10 VS Code trial](evidence/0028/vscode-0210-reader.md) confirms the scroll repair in a real pause: the first Cart mutation shows the interpretation heading and captured values alongside application and source. The same ordinary chat completes all four pauses and recording. Later long saved AI interpretations occupy the Study viewport and hide the values; the reading outcome remains PARTIAL. Cursor is not yet run. Candidate 0.2.11 bounds the long explanation in a keyboard-readable narrow Live region, retaining values in the main reader. A 16/16 compiled Chromium check, including a long interpretation and visible first value at 260×750, passes; native evidence and broad/package validation remain pending.
+
+Candidate 0.2.11 passed 966/966 extension tests, 101/101 package regressions and the 16/16 compiled Chromium checks. Its clean checked VSIX was installed for [a VS Code trial](evidence/0028/vscode-0211-webview-failure.md), but both Codebook webviews remained blank and every phase-image acknowledgement failed. The question also acquired an appended input probe. Although the AI saved four pause explanations, this trial is invalid for native reading acceptance and its durable outcome is partial. Webview and window reloads did not restore pixels. The dedicated process is closed. Do not credit its renderer DOM/AX content as pixels. Preflight visible pixels in a new process, then retest the fixed VSIX with an exact question before Cursor.

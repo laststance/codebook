@@ -195,6 +195,18 @@
         { "path": "artifacts/cycle-0028/native/vscode-0210-frames/115.png", "sha256": "f281aafc3cf2fc6a1710f6b1365b5a2364c93b2a53ce159b3efcae85b044ea40", "bytes": 278988 },
         { "path": "artifacts/cycle-0028/native/vscode-0210-frames/160.png", "sha256": "9f09e2e3e59096397a44ff7d172962c228a2346e685c06a8f2cd7261871f3af2", "bytes": 315652 }
       ]
+    },
+    {
+      "version": "0.2.11",
+      "source": "a58d68fd690751906cc513d7ddf638b45257e11e",
+      "vsixSha256": "2ca23ab41d26c242769f1a62a129ac4af5184666ab6a3b553c1d4505682c6c95",
+      "result": "INVALID for native reading — both Codebook webviews remained visually blank and the question included a probe suffix",
+      "files": [
+        { "path": "artifacts/cycle-0028/native/vscode-0211-copilot-auto.webm", "sha256": "1747d79e1b4f8783ab3e460a281ebf97b3838596ce3dc7fc5721d113afcc7e84", "bytes": 13422694 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211-frames/150.png", "sha256": "a675a8f28c79e66c6fcfe409a8d92fd5722bad59a2b25d0a502d060f4faf2b75", "bytes": 96011 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211-frames/300.png", "sha256": "c6c29e156c516004285d6824c1be448548b640581168d5d13ea7a4f7bedc8f6a", "bytes": 191410 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211-frames/500.png", "sha256": "f8ecfd61ba6a55d5d7f1c64bfd2b175a32109f5810f31653448dcfe3b4fcb4f2", "bytes": 31636 }
+      ]
     }
   ]
 }
