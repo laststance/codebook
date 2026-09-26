@@ -1,7 +1,7 @@
 # Cycle 0027 — Save ordinary-chat pause explanations
 
 Type: product increment
-Status: planning
+Status: implemented; native validation pending
 Result: pending
 Delivery: pending
 Goal version: 5
@@ -45,11 +45,17 @@ Initial product edit scope: `extension/src/service.ts`, `extension/src/resources
 
 Use the ongoing `/investigate` diagnosis loop and `writing-for-agents` skill mechanics for this bounded procedure change. Serena symbol tools reported no active language server, so targeted source reads supplied the current evidence. Context7 was quota-limited; this repair reuses the installed SDK/public contracts already exercised by existing tests.
 
+## Implementation and local checks
+
+The actual MCP regression failed before the repair because both demo profiles omitted `helpUri`; the configured profile remained correct. Status now advertises the canonical existing help outside the scenario catalog hash. Public demo/configured help explicitly names `codebook_explain` and waiting for its committed receipt. Shared bundled skill **1.0.18** requires one persisted interpretation per committed pause before continuation, actual phase-image reads for screen claims, and recording-context verification before claiming explanation replay.
+
+Pinned native pnpm 12.4.2 / Node 24.21.0: extension and configured-experiment builds, extension typecheck, **50/50 focused protocol/service/context tests**, **1111/1111 product/shared tests** and **101/101 package tests** passed. The focused red-before log and complete results are under ignored `artifacts/cycle-0027/`. These checks establish discovery and preserve storage/binding regressions; ordinary host AI behavior is still unverified for this new skill.
+
 ## Result and handoff
 
-- Result: pending implementation and paired installed ordinary-chat evidence.
+- Result: bounded implementation and local checks passed; paired installed ordinary-chat evidence pending.
 - Keep / revise / replace: pending.
-- Immediate next action: commit the planning/closure records and open the initial Draft PR with `@coderabbitai ignore`, then promote the public discovery regression and implement the bounded repair.
+- Immediate next action: freeze a clean VSIX, review the source through CodeRabbit CLI and validate ordinary Copilot Auto / Cursor Agent on that identical artifact. Draft PR #43 retains `@coderabbitai ignore` under D027; merge/issue closure await actual native results and CI.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decision: D027 records the owner's explicit hosted-CodeRabbit skip after its rate limit; local CLI, CI, honest review states and final product acceptance remain separate.
 - Next candidate: choose from actual native findings; broader real-repository and integrated three-mode acceptance remain required.

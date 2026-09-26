@@ -55,6 +55,31 @@ test('status identifies extension build changes without claiming that the target
   } finally { await connection.close(); await endpoint.close(); await harness.close(); }
 });
 
+test('ordinary chats discover readable help for both demo profiles without starting an application', async () => {
+  // Arrange
+  const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
+  try {
+    // Act
+    const result = await connection.client.callTool({ name: 'codebook_status', arguments: {} });
+    const profiles = z.object({ data: z.object({ profiles: z.array(z.object({ id: z.string(), helpUri: z.string().optional() })) }) }).parse(result.structuredContent).data.profiles;
+    // Assert
+    assert.deepEqual(profiles, [
+      { id: 'paired-cart-demo', helpUri: 'codebook://help/studies' },
+      { id: 'checkout-demo', helpUri: 'codebook://help/studies' },
+      { id: 'repository-browser', helpUri: 'codebook://help/repository-browser' },
+    ]);
+    // Read the discovered URIs through the same tool surface that ordinary editor chats use.
+    for (const profile of profiles) {
+      assert.ok(profile.helpUri);
+      const help = await connection.client.callTool({ name: 'codebook_read_resource', arguments: { uri: profile.helpUri } });
+      const resource = z.object({ ok: z.literal(true), uri: z.string(), mimeType: z.string(), data: z.object({ sequence: z.array(z.string()) }) }).parse(help.structuredContent);
+      assert.equal(resource.uri, profile.helpUri); assert.equal(resource.mimeType, 'application/json');
+      assert.ok(resource.data.sequence.length > 0);
+    }
+    assert.equal(harness.runtimes.length, 0);
+  } finally { await connection.close(); await endpoint.close(); await harness.close(); }
+});
+
 test('tool-only editor chats receive public help and current run data in structured results', async () => {
   // Arrange
   const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);

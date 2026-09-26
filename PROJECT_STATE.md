@@ -2,7 +2,7 @@
 
 Updated: 2026-09-26\
 Product stage: configured execution, offline replay, reconnect and a bounded second-repository theme run demonstrated separately in both editors; ordinary checkout demonstrated structurally in Cursor and Copilot with a verified image setting, saved explanations still absent\
-Active cycle: [0027 — Save ordinary-chat pause explanations](docs/cycles/0027-saved-pause-explanations.md) — planning\
+Active cycle: [0027 — Save ordinary-chat pause explanations](docs/cycles/0027-saved-pause-explanations.md) — implemented; paired native validation pending\
 Last cycle: [0026 — Copilot image handoff recovery](docs/cycles/0026-copilot-image-handoff.md) — bounded workaround verified; PR #41 merged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#42](https://github.com/laststance/codebook/issues/42) — open\
@@ -10,7 +10,7 @@ Last cycle issue: [#40](https://github.com/laststance/codebook/issues/40) — cl
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 5
 
-Cycle 0027 selected: expose the existing demo help URI and guide the common thin skill to save one explanation per observed pause before continuation. A public-MCP probe reproduced missing demo help URIs with zero runtime starts. Both-host native acceptance will reuse the unchanged checkout question, require four distinct saved interpretations and actual image reads, and verify their stopped-app replay. Source and native results are pending. D027 keeps hosted CodeRabbit PR reviews skipped after the owner's rate-limit instruction; CLI review and CI remain required.
+Cycle 0027 selected: expose the existing demo help URI and guide the common thin skill to save one explanation per observed pause before continuation. A public-MCP probe reproduced missing demo help URIs with zero runtime starts. Both-host native acceptance will reuse the unchanged checkout question, require four distinct saved interpretations and actual image reads, and verify their stopped-app replay. The actual MCP regression failed before the URI repair; the implementation and common skill 1.0.18 now pass build/typecheck, 50/50 focused checks, 1111/1111 product/shared and 101/101 package tests. Paired native results remain pending on [Draft PR #43](https://github.com/laststance/codebook/pull/43). D027 keeps hosted CodeRabbit PR reviews skipped after the owner's rate-limit instruction; CLI review and CI remain required.
 
 Latest Cycle 0026 delivery: [PR #41](https://github.com/laststance/codebook/pull/41) merged as `76168aace81c19d489a7cbb98f3b7fd4a647366f`; Issue #40 closed. Final head `d74b3b1…` passed CLI review through the completed eight-file cfb3422 pass plus the final two-file incremental pass, both zero findings, and [CI 36209653340](https://github.com/laststance/codebook/actions/runs/36209653340) (1110/1110 product/shared, 101/101 package; both Socket checks; MERGEABLE/CLEAN). Four hosted findings were addressed and verified in resolved threads; final hosted approval was explicitly owner-skipped after rate limiting, and the historical CHANGES_REQUESTED is not labeled APPROVED.
 
@@ -230,7 +230,7 @@ The record-only `b69c391…` head passed [PR merge-ref CI](https://github.com/la
 
 ## Exact resume action
 
-Immediate next action (2026-09-26 JST): implement [Cycle 0027](docs/cycles/0027-saved-pause-explanations.md) / [Issue #42](https://github.com/laststance/codebook/issues/42) on `codex/cycle-0027-saved-pause-explanations`. Promote the public-MCP help-discovery regression, apply the bounded help/skill repair, validate and freeze one clean VSIX, then verify ordinary Copilot Auto and Cursor Agent retain all four pause explanations and image-grounded replay. Dedicated native trials continue under D026 unless actual owner-work interference blocks them; hosted CodeRabbit PR review is skipped under D027. Goal #1 remains open and final review is 0/10.
+Immediate next action (2026-09-26 JST): implement [Cycle 0027](docs/cycles/0027-saved-pause-explanations.md) / [Issue #42](https://github.com/laststance/codebook/issues/42) on `codex/cycle-0027-saved-pause-explanations`. Freeze the locally validated repair as one clean VSIX, review through CodeRabbit CLI, then verify ordinary Copilot Auto and Cursor Agent retain all four pause explanations and image-grounded replay. Dedicated native trials continue under D026 unless actual owner-work interference blocks them; hosted CodeRabbit PR review is skipped under D027. Goal #1 remains open and final review is 0/10.
 
 D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answers remain authoritative: approved B, compact understand, all-citation Review needed with retained history, a narrow single article column, exact reading return, complete-citation progress identity and short publication writer ownership. Do not re-ask these choices. The app goal remains active.
 
