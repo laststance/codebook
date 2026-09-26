@@ -63,9 +63,9 @@ Development probe: 3/3 actual-MCP transport cases pass for a closed default Stud
 ## Result and handoff
 
 - Result: demonstrated for this bounded fixture; the installed VS Code checkout reading trial passes on 0.2.11. Cursor's recovered checkout reading path also passes, but native focus and pane-creation failures qualify ordinary entry; delivery remains open.
-- Exact next action: investigate the Cursor focus refusal and pane-creation race from the retained native failure, apply a bounded correction only if supported, and repeat ordinary Cursor entry on the corrected candidate. Keep new acceptance rows NOT RUN until normal packaged practical trials occur.
+- Exact next action: complete the final current-head review and CI, merge PR #45, and close Issue #44. Keep new acceptance rows NOT RUN until normal packaged practical trials occur. Then pause goal work as the owner requested.
 - Current state: the invalid VS Code 0.2.11 trial remains separate. The fresh-process exact-question Copilot Auto retest passed. Cursor Agent completed the same fixture after public layout recovery; its isolated process is closed and the owner's global skill restored.
-- One next candidate: a focused Cursor admission/layout repair if the failure is attributable to Codebook; full connected learning/three-mode and intended-use acceptance remain required.
+- One next candidate: [Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46) records the owner's new product destination and should be selected only after the paused goal is resumed. The Cursor entry failures remain evidence for later diagnosis.
 
 ## D029 acceptance change and cycle impact
 
