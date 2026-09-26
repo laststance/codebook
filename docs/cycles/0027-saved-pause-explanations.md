@@ -1,0 +1,103 @@
+# Cycle 0027 — Save ordinary-chat pause explanations
+
+Type: product increment
+Status: validating delivery
+Result: demonstrated (bounded paired ordinary-chat outcome)
+Delivery: PR #43 open; paired evidence and reviewed implementation ready; final record-head checks pending
+Goal version: 5
+Tracking issue: [#42](https://github.com/laststance/codebook/issues/42)
+Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
+Goal links: G01, G03, G04, G06, G11, G12
+Implementation base: `76168aace81c19d489a7cbb98f3b7fd4a647366f`, merged [PR #41](https://github.com/laststance/codebook/pull/41)
+Branch: `codex/cycle-0027-saved-pause-explanations`
+
+## Question and expected value
+
+Will discoverable profile help and an explicit save-before-continue procedure make ordinary editor chats retain an explanation for each observed pause, so Study/replay can connect it with the captured source, values and application frame?
+
+Cycles 0025 and 0026 repeatedly completed checkout with zero `codebook_explain` calls and four empty saved interpretation arrays. Both original Cycle 0026 chats lacked the checkout help URI; a later Auto-selected GPT-5.6 Luna run also skipped all image reads. Existing service/storage regressions prove committed explanation persistence and exact source/fact validation when called. The missing boundary is the ordinary agent's discovery and use of those capabilities.
+
+## Goal and design refresh
+
+Before creating this cycle on 2026-09-26, the driver freshly read open Issue #1, PRODUCT_GOAL.md version 5 and the linked approved purpose/design prose, and visually inspected all three approved images. The default Study workspace connects app above source with contextual explanations, actual values and a timeline. Living book and Guided walkthrough remain required. This bounded increment repairs explanation use in standard chats; it does not replace the full integrated two-host, real-repository, three-mode and owner-acceptance destination.
+
+## Bounded plan
+
+1. Add a behavior-focused actual-MCP regression: ordinary status discovery returns the existing studies help URI for both demo profiles, and each returned help URI is readable through the public tool without starting a runtime. Record red before the source fix.
+2. Add the missing URI outside the demo catalog hash. Name `codebook_explain` and its committed receipt in existing demo/configured help. Update the one shared thin skill to save each committed pause before continuation, inspect phase images for screen claims and verify retained recording interpretations; bump its version. Keep repository answers, expected values and stop locations out of the skill.
+3. Run focused protocol/service/recording checks and the existing required product/package gates. Freeze one clean VSIX and its skill/source identity before native trials.
+4. In ordinary VS Code Copilot Chat Auto and Cursor Agent, independently submit the unchanged question below. Use the documented public inline-image setting in the dedicated VS Code workspace. Supply no hidden driver MCP work or per-stop instructions.
+5. Inspect the actual calls and four saved interpretations, then the native stopped-app Study/replay. Record video and inspect motion frames. Review through CodeRabbit CLI and CI; hosted PR review remains owner-skipped under D027. Merge and close Issue #42 together.
+
+## Preregistered native acceptance
+
+Question: `/codebook 商品をカートに入れて購入完了までの処理を、実際の画面操作と停止時の値を見ながら説明して。`
+
+Use the unchanged Cycle 0025 checkout expectation table and 11-link oracle. Each host must independently establish loaded skill identity and correct workspace/instance, read the selected profile help, send both actions once, reach all four bound pauses and save at least one grounded interpretation for each distinct snapshot. Verify exact source/fact binding, all seven captures, all 11 observed links and the selected confirmation. Screen claims require actual image reads. After owned app/debugger shutdown, require matching saved history/recording receipts and native explanation/source/value/frame correspondence. Understanding stays learner-owned and unchecked.
+
+A chat-only explanation, repeated explanation of one snapshot, metadata-only image assertion, hidden driver call, failed storage receipt or second-host inference is not a pass. Preserve failed attempts and change the hypothesis before repeating. Use the same frozen VSIX in both hosts; keep source/skill/package changes separate and final reviewer count **0/10**.
+
+## Evidence and implementation scope
+
+The read-only public-MCP probe against the prior implementation reproduced missing help URIs for `paired-cart-demo` and `checkout-demo`, while `repository-browser` already returned its readable help. Runtime starts were zero. Private red log: `artifacts/cycle-0027/discovery-help-red.log`. An unapplied four-file candidate was prepared while Cycle 0026 awaited delivery; no source change or native PASS is inferred from that preparation.
+
+Initial product edit scope: `extension/src/service.ts`, `extension/src/resources.ts`, `extension/src/tests/protocol.test.ts`, `extension/skills/codebook/SKILL.md`. Reuse the existing explanation API, history checkpoints, recording context and profile-help resources. No new storage schema, UI component, execution engine or automatic understanding behavior is planned. Scope changes require a concrete failing observation.
+
+Use the ongoing `/investigate` diagnosis loop and `writing-for-agents` skill mechanics for this bounded procedure change. Serena symbol tools reported no active language server, so targeted source reads supplied the current evidence. Context7 was quota-limited; this repair reuses the installed SDK/public contracts already exercised by existing tests.
+
+## Implementation and local checks
+
+The actual MCP regression failed before the repair because both demo profiles omitted `helpUri`; the configured profile remained correct. Status now advertises the canonical existing help outside the scenario catalog hash. Public demo/configured help explicitly names `codebook_explain` and waiting for its committed receipt. Shared bundled skill **1.0.18** requires one persisted interpretation per committed pause before continuation, actual phase-image reads for screen claims, and recording-context verification before claiming explanation replay.
+
+Pinned native pnpm 12.4.2 / Node 24.21.0: extension and configured-experiment builds, extension typecheck, **50/50 focused protocol/service/context tests**, **1111/1111 product/shared tests** and **101/101 package tests** passed. The focused red-before log and complete results are under ignored `artifacts/cycle-0027/`. These source checks establish discovery and preserve storage/binding regressions; the later native checkpoints below separately establish ordinary host AI behavior on the frozen candidate.
+
+## Candidate identity preflight
+
+The first clean candidate (`13805998fb1f2164a4b9bb583cad794442eecce3`, extension 0.2.3, VSIX SHA-256 `091e1d0e57f673adf7fd8333e3ce2d0399b8c0bc773038d01eaca77f30bd7232`) remains preserved at `artifacts/cycle-0027/codebook.vsix`. CodeRabbit CLI reviewed ten files and reported one minor stale next-action sentence; that sentence is corrected. CI 36210757888 passed on this source cut.
+
+Cursor's named Cycle 0027 profile registered the isolated candidate folder, but public setup and the native skill view still exposed the shared **1.0.10** skill instead of bundled **1.0.18**. No question was submitted and no runtime was started. The trial window was closed after stopping its server; the owner's running Cursor and baseline extension/settings/skill/MCP configuration hashes were preserved. This is failed identity preflight, not ordinary-chat acceptance. Internal same-version selection/cache behavior remains a hypothesis.
+
+The changed hypothesis uses a distinct **extension 0.2.4** in the named profile, installed through the ordinary extension root so the two version folders can coexist. Extend scope only to version metadata, its package expectation and current candidate documentation. Verify actual loaded identity and preservation of the default profile before proceeding; do not restart the owner's Cursor. The prior 1111/1111 and 101/101 results belong to the earlier 0.2.3 cut. The new candidate requires its own package checks and both-host evidence.
+
+## Native checkpoint: Cursor
+
+Clean extension 0.2.4 candidate `ec6c2b0fb62dda4a9746e3f95874be11ccb43c37` has VSIX SHA-256 `d2caccd1acda4b43a32105aa9cb9bcb46e06ab1058a743971d57119fc97405b4`, 917,479 bytes, selected-source hash `bda25b2fa08ad9653384394db54998df53dfc53b46f3fefc92dedce61f0d10f3`. Skill 1.0.18 hash is `d5dcc162207fae5215ab13cbbac968df1c99e77f374b40faf459391ca9b1310f`. Package checks pass **101/101**; [CI 36211487771](https://github.com/laststance/codebook/actions/runs/36211487771) succeeded. Distinct-version installation selected the expected candidate in the dedicated Cursor profile; the default profile stayed registered to 0.2.3, with baseline bytes intact. Public setup updated the receipted shared skill to the exact bundled bytes, confirmed in its native editor. After the trial, the dedicated window closed while the original Cursor process/window remained running. The existing receipt-protected `deployCursorSkill` helper restored the old installed package's 1.0.10 skill, retaining ownership metadata; all six owner baseline hashes match (`owner-after-cursor.json`). This CLI cleanup is not counted as ordinary-chat onboarding evidence.
+
+Ordinary Cursor Agent (Grok 4.7 High Fast) completed the unchanged question in 3m27s with no follow-up instructions or driver MCP work. Expanded native tool history shows selected profile help, the before image and six later phase images, four explanation saves followed by committed-receipt reads, four continuations, both application actions and saved recording-context verification. The terminal Study is demonstrated with four distinct observations, **one interpretation each**, seven captures and all eleven links observed. Each retained source hash and each interpretation fact matches its observation. Archive SHA-256: `47bcfb2b0c13eef2f449fd83b5097fd81b7b8a6ff038674af065f16dcc613587`; private exact paths/checks are in `artifacts/cycle-0027/cursor-archive-check.json` and `preflight-024.json`.
+
+After debugger/application exit, native Study displayed the saved interpretation, bound source and values. Recording at the exact pause correctly labels its not-yet-created explanation as a later annotation; seeking to the end displays the committed interpretation. Read explanation opened without a modal error. The recorded application pane visibly showed selected purchase confirmation, total $24 and one checkout. Understanding remained 0/4. This is bounded development evidence; it does not certify integrated three-mode UX or the original owner's old installation.
+
+The complete application recording retains 33 frames through 144.972 s. Journal hash: `612f8d2c83bc7943d4a52f9b3267e020fa503ea7bc277ce8f119218982d718ea`. `artifacts/cycle-0027/native/cursor-application-recording.mp4` is a timing-preserving conversion of the saved application frames, starting at the first received frame, not a native editor-screen video. Extracted/inspected movie frames at 142.1, 142.6, 142.9 and 143.3 s show absent confirmation, translucent entry, near-opaque entry, and confirmed status with checkout count 1. The `before` filename at 142.6 s actually shows early entry; `pretransition` is the absent-confirmation frame. Cursor editor motion remains unrecorded; screenshots/AX establish only its static reader state.
+
+CodeRabbit CLI's first incremental attempt ended with a recoverable WebSocket error. One retry completed eight files and found one minor stale Cycle 0019 setup heading in the packaged README. The stale README heading is now corrected after the identical-VSIX paired trial. The frozen archive remains preserved; final README/build-metadata correspondence must be distinguished from execution of those later package bytes.
+
+## Native checkpoint: VS Code Copilot Auto
+
+The same frozen d2caccd1… VSIX ran in VS Code **1.139.1**, Copilot **0.67.0**, a dedicated `cb27-vscode` workspace and isolated extension directory. Public Set Up AI Chat and slash discovery preceded the unchanged question. Ordinary side-panel Copilot Chat used **Auto**, resolved to **GPT-6 Luna**, with the documented workspace-only inline-image setting. No follow-up or hidden driver MCP execution was supplied.
+
+The persisted actual model context references the installed 1.0.18 skill. Its body exactly matches the bundled body after removing only Copilot's `Prompt instructions file:` attachment prefix and frontmatter. Actual tool results contain seven PNG byte payloads, each decoded and matched by SHA-256 to the retained recording PNG. The AI read profile help, performed both actions, saved four explanations, continued four times and read the final recording context. All four distinct observations contain one saved interpretation with exact retained source/fact bindings; seven captures and eleven observed links pass. The terminal archive is demonstrated. See [paired evidence](evidence/0027/paired-saved-explanations-20260926.md) for identities, checksums and private artifact locations.
+
+After app/debugger exit, the native Study Recording view at 104.38 s displayed the saved explanation, captured client source line 54, primitive values and selected purchase confirmation. Read Explanation opened without the screenshot's modal error; Read Application displayed the saved confirmation and one checkout. Understanding remained 0/4. Public Stop Agent Server completed, the dedicated VS Code instance exited and all six owner baseline hashes still match. The original Cursor process remains running; owner default extensions were not upgraded.
+
+The complete application recording contains 32 frames through 104.383 s. Inspected converted-video frames at 101.0/101.5/101.8/102.8 s show absent, translucent, near-opaque and completed confirmation. A separate 316.680 s installed VS Code renderer video includes the ordinary chat, pauses and post-stop replay; inspected frames show actual source, explanation/value reading and recorded application. Its 13 console errors predate capture and concern Copilot service 404s, remote command-embedding cache fetches and a Node deprecation warning. Seven runtime warnings concern Chromium iframe sandbox/local-network feature reporting. No Codebook execution error is present in that captured console; these unrelated diagnostics are retained, not presented as a clean console.
+
+Both chats opened Application/source/debug views during the run; the driver opened Study manually for post-run inspection. The bounded save/replay hypothesis held, but this does not prove Study is the usable default. The next candidate should address that observed G07 entry gap, then integrated layouts/learning and real-repository acceptance. Cursor editor motion remains unrecorded; its application transition video and static native reading observations are separate evidence.
+
+## Final review and package correspondence
+
+CodeRabbit CLI completed the final committed `ec6c2b0…` → `15ea16c…` delta: **five files, zero findings**, exit 0 (`artifacts/cycle-0027/coderabbit-cli-final.jsonl`). Combined with the earlier ten-file source review and eight-file version delta, both actionable minor documentation findings are corrected. Hosted PR review remains owner-skipped; its successful skip check is not approval.
+
+Clean `15ea16cac55dd8870e7c47700e47412fc8ea86bd` produced verified `artifacts/cycle-0027/codebook-final.vsix`, SHA-256 `604ff8973ec202f1e8322743b2dd5b82e3b65d5ddb9aafbdf57a99408abe030a`, selected-source hash `963b6b529e03380fc3bdd5f876f2e11ef60026c957e8ea3c137be7c31d9d90f1`. All 35 entry names match the frozen native archive. Only `extension/readme.md`, `extension/dist/build.json` and `extension/package-manifest.json` differ; runtime code and common skill bytes are identical. `package-correspondence.json`, `build-final-receipt.json` and `verification-final.json` preserve checks. This is package correspondence, not native execution of the later archive. [CI 36212994259](https://github.com/laststance/codebook/actions/runs/36212994259) passed on `15ea16c…`; final record-head checks remain separate.
+
+The owner added OCR delegation alongside CLI during final delivery (D028). [OCR review](evidence/0027/ocr-review-20260926.md) accounts for all 18 previewed entries: eight eligible reviewed, zero skipped, ten default exclusions separately inspected. One stale CHANGELOG result was corrected. This is host-agent review with deterministic OCR selection, not independent provider approval.
+
+Final one-file CodeRabbit CLI review of `30f4852…` completed after two recoverable WebSocket failures and a successful nine-check doctor probe. It reported two overlapping documentation findings (major/minor) asking that the summary say development validation and retain host/artifact, unchecked-understanding and motion/manual-entry limits. The opening wording now says bounded development trials; the immediately following paragraph already records every requested limit. No runtime defect was reported. The final wording and D028/OCR record additions were directly reviewed with OCR coverage refreshed: 19 previewed paths, eight unchanged eligible entries reviewed, zero skipped, eleven excluded document/test entries supplementally reviewed. This is resolved-finding coverage, not a zero-finding provider review of later record bytes. Current-head CI remains the merge gate.
+
+## Result and handoff
+
+- Result: **demonstrated** for the preregistered paired saved-explanation outcome on one frozen archive.
+- Keep / revise / replace: **keep** discoverable help and the common save-before-continue procedure; preserve existing persistence and validation.
+- Immediate next action: verify final current-head CI, then merge PR #43 with Issue #42 closure. CLI findings are resolved, OCR coverage is complete, and the implementation/README cut passed CI and package correspondence. Hosted review stays owner-skipped under D027, not APPROVED.
+- State updated in PROJECT_STATE.md: yes.
+- Durable decision: D027 retains the owner's hosted-CodeRabbit skip; local CLI, CI and final acceptance remain separate.
+- Goal-gap check: G07 automatic contextual Study entry is now an observed bottleneck. Broader real-repository usefulness, integrated connected learning/three-mode behavior, complete G12 restart/conflict checks, owner acceptance and ten final reviewers remain required. Final reviewers **0/10**.

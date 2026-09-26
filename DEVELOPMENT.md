@@ -100,9 +100,11 @@ If the invocation's scope is still unclear, follow the skill's scope gate. Do no
 
 [.coderabbit.yaml](.coderabbit.yaml) defines the repository's CodeRabbit review policy, path exclusions, and review guidelines. Keep its active-cycle guideline mapping synchronized with PROJECT_STATE.md when selecting another cycle. Validate configuration edits with `coderabbit config validate .coderabbit.yaml`.
 
+Under [D027](DECISIONS.md#d027--skip-hosted-coderabbit-pr-review-after-rate-limiting-2026-09-26), retain `@coderabbitai ignore` for this Goal continuation and skip the hosted PR approval gate. Keep local CodeRabbit CLI, CI and findings triage; record the hosted result as owner-skipped, never as APPROVED. This supersedes the earlier re-enable step for current delivery.
+
 Review the bounded cycle against its recorded implementation base. Local CodeRabbit reviews discover the root YAML automatically when no explicit configuration files are supplied. When passing additional context with `--config`, include `.coderabbit.yaml` explicitly alongside the bounded context file. Preserve the CLI's actual completion, covered files, findings, and triage separately from native validation; request-change status is not proof of final acceptance.
 
-The owner also requested open-code-review-delegate as an alternate review method. OCR selects files and resolves rules deterministically; the host agent reviews the diff. Record every eligible file as reviewed or skipped with a reason, report default exclusions, and distinguish eligible coverage from all previewed paths. This method is not an independent external-provider review. Local rule files, tools, and private artifacts unavailable to a hosted reviewer remain declared coverage limits.
+The owner requires open-code-review-delegate in addition to CodeRabbit CLI for the review phase (D028). OCR selects files and resolves rules deterministically; the host agent reviews the diff. Record every eligible file as reviewed or skipped with a reason, report default exclusions, and distinguish eligible coverage from all previewed paths. This method is not an independent external-provider review. Local rule files, tools, and private artifacts unavailable to a hosted reviewer remain declared coverage limits.
 
 ## 4. Implement and verify
 

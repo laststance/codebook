@@ -1,9 +1,9 @@
 # Cycle 0026 — Copilot image handoff recovery
 
 Type: experiment
-Status: development comparison complete; delivery checks in progress
+Status: complete
 Result: inline-image hypothesis supported on the tested client; saved explanations still absent
-Delivery: pending
+Delivery: PR #41 merged as `76168aace81c19d489a7cbb98f3b7fd4a647366f`; Issue #40 closed
 Goal version: 5
 Tracking issue: [#40](https://github.com/laststance/codebook/issues/40)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -62,11 +62,11 @@ Review checkpoint: CodeRabbit CLI found two stale resume entries on `6e57235…`
 - Result: the bounded inline-image workaround passed the current failed control with the same PNG and model. It unblocks this ordinary Copilot checkout, not complete G04/G12 acceptance.
 - Keep / revise / replace: keep the unchanged runtime image contract; document the public client setting; repair public help discovery and explicit per-pause explanation persistence next.
 - Remaining gaps: saved agent explanations, paired complete ordinary checkout, real-repository intended uses, all-mode integrated UX, owner acceptance and final reviewers.
-- Delivery state and proof: pending.
+- Delivery state and proof: PR #41 merged at final head `d74b3b191bd594a622b7eaf10a174b326263ce1f` after zero findings in the full eight-file cfb3422 CLI review and the final two-file delta, green CI 36209653340 (1110/1110 product/shared and 101/101 package), both Socket checks and MERGEABLE/CLEAN. All four hosted findings have resolved verification replies. The owner explicitly skipped the rate-limited final hosted review with `@coderabbitai ignore`; no current-head hosted APPROVED is claimed. Issue #40 closed at merge; Goal #1 remains open.
 
 ## Handoff
 
-- Exact next action: verify CLI/hosted-review/CI coverage and unresolved-thread state against the final PR head, then merge PR #41 and close Issue #40 under D021. Build/package validation and the `6bd8803…` CLI/CI checkpoint already passed; do not repeat native trials without a new hypothesis.
+- Exact next action: advance Cycle 0027's help discovery and per-pause saved explanation repair. This bounded comparison and its delivery are complete.
 - Changed files / branch / active processes: `codex/cycle-0026-copilot-image-handoff`; public README recovery instructions and sanitized cycle/evidence records; native trial and recording processes exited.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D026 now includes the owner's explicit instruction to proceed with isolated native trials and ask only after actual interference blocks the trial.

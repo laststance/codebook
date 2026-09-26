@@ -89,7 +89,8 @@ export class StudyService {
       profiles: [...PROFILE_IDS.map(id => {
         const definition = STUDY_PROFILES[id];
         const catalog = { ...definition, items: definition.items.map(item => ({ ...item, expectedValues: stopExpectations('<runtimeRunId>', item) })), expectations: definition.actions.map(action => ({ actionId: action.id, ...actionExpectations('<runtimeRunId>', action.id) })) };
-        return { ...catalog, catalogHash: sha256(JSON.stringify(catalog)), prerequisites: profilePrerequisites?.[id] ?? commonPrerequisites };
+        // Keep help discovery outside the frozen scenario catalog identity.
+        return { ...catalog, helpUri: 'codebook://help/studies', catalogHash: sha256(JSON.stringify(catalog)), prerequisites: profilePrerequisites?.[id] ?? commonPrerequisites };
       }), { ...CONFIGURED_PROFILE, prerequisites: profilePrerequisites?.[REPOSITORY_BROWSER_PROFILE] ?? commonPrerequisites }],
       capabilities: ['start', 'add-to-cart', 'checkout', REPOSITORY_BROWSER_ACTION, 'pause-evidence', 'continue', 'explain', 'reveal-source', 'stop', 'historical-resources', 'return-current-reader'],
       limits: { activeRuns: 1, retainedRuns: MAX_RUNS, explanationsPerRun: MAX_EXPLANATIONS, activeTimeoutMs: ACTIVE_TIMEOUT_MS, runTimeoutMs: RUN_TIMEOUT_MS, timeoutFieldsApplyTo: 'paired-cart-demo; use each selected profile.limits for other profiles' },
