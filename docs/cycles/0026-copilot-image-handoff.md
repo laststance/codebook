@@ -64,7 +64,7 @@ Local package checks initially failed because the Corepack shim selected global 
 
 ## Handoff
 
-- Exact next action: complete pinned package verification, CodeRabbit CLI, exact-head hosted review and CI; merge PR #41 and close Issue #40 under D021.
+- Exact next action: complete CodeRabbit CLI, exact-head hosted review and CI; merge PR #41 and close Issue #40 under D021. The pinned build and 101/101 package checks already passed.
 - Changed files / branch / active processes: `codex/cycle-0026-copilot-image-handoff`; public README recovery instructions and sanitized cycle/evidence records; native trial and recording processes exited.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D026 now includes the owner's explicit instruction to proceed with isolated native trials and ask only after actual interference blocks the trial.
