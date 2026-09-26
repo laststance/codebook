@@ -91,11 +91,13 @@ Clean `15ea16cac55dd8870e7c47700e47412fc8ea86bd` produced verified `artifacts/cy
 
 The owner added OCR delegation alongside CLI during final delivery (D028). [OCR review](evidence/0027/ocr-review-20260926.md) accounts for all 18 previewed entries: eight eligible reviewed, zero skipped, ten default exclusions separately inspected. One stale CHANGELOG result was corrected. This is host-agent review with deterministic OCR selection, not independent provider approval.
 
+Final one-file CodeRabbit CLI review of `30f4852…` completed after two recoverable WebSocket failures and a successful nine-check doctor probe. It reported two overlapping documentation findings (major/minor) asking that the summary say development validation and retain host/artifact, unchecked-understanding and motion/manual-entry limits. The opening wording now says bounded development trials; the immediately following paragraph already records every requested limit. No runtime defect was reported. The final wording and D028/OCR record additions were directly reviewed with OCR coverage refreshed: 19 previewed paths, eight unchanged eligible entries reviewed, zero skipped, eleven excluded document/test entries supplementally reviewed. This is resolved-finding coverage, not a zero-finding provider review of later record bytes. Current-head CI remains the merge gate.
+
 ## Result and handoff
 
 - Result: **demonstrated** for the preregistered paired saved-explanation outcome on one frozen archive.
 - Keep / revise / replace: **keep** discoverable help and the common save-before-continue procedure; preserve existing persistence and validation.
-- Immediate next action: verify the final two-file record delta with CLI/current-head CI, then merge PR #43 with Issue #42 closure. The implementation/README cut passed CLI, CI and package correspondence. Hosted review stays owner-skipped under D027, not APPROVED.
+- Immediate next action: verify final current-head CI, then merge PR #43 with Issue #42 closure. CLI findings are resolved, OCR coverage is complete, and the implementation/README cut passed CI and package correspondence. Hosted review stays owner-skipped under D027, not APPROVED.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decision: D027 retains the owner's hosted-CodeRabbit skip; local CLI, CI and final acceptance remain separate.
 - Goal-gap check: G07 automatic contextual Study entry is now an observed bottleneck. Broader real-repository usefulness, integrated connected learning/three-mode behavior, complete G12 restart/conflict checks, owner acceptance and ten final reviewers remain required. Final reviewers **0/10**.
