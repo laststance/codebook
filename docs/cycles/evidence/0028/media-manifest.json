@@ -219,6 +219,18 @@
         { "path": "artifacts/cycle-0028/native/vscode-0211b-frames/145.png", "sha256": "51fabb2227f4d0e7cf452902b4744f57940bffad885492b0a85d0b233df327a2", "bytes": 289210 },
         { "path": "artifacts/cycle-0028/native/vscode-0211b-frames/165.png", "sha256": "b56dff7bcdbdd54199b83d3846c7ae2d89f4305c4a40aa181fbeeeb35fbba7e6", "bytes": 276448 }
       ]
+    },
+    {
+      "version": "0.2.11",
+      "source": "a58d68fd690751906cc513d7ddf638b45257e11e",
+      "vsixSha256": "2ca23ab41d26c242769f1a62a129ac4af5184666ab6a3b553c1d4505682c6c95",
+      "result": "QUALIFIED PASS — Cursor checkout reading succeeded after native focus and pane-layout recovery; ordinary entry was not clean",
+      "files": [
+        { "path": "artifacts/cycle-0028/native/cursor-0211b-agent-1.webm", "sha256": "9244890b11578c7b5334b62d2e9062fde04abcef1ed479993e248a8ecadf7e5f", "bytes": 23917048 },
+        { "path": "artifacts/cycle-0028/native/cursor-0211b-frames/420.png", "sha256": "150078708f5a248ba9f77e75fc04feda7652b9432221b2df5273e34794893b60", "bytes": 274875 },
+        { "path": "artifacts/cycle-0028/native/cursor-0211b-frames/580.png", "sha256": "bec970eadf23e48594944ab937e39257a7454fa167bfc2db12357c329672f2e1", "bytes": 268852 },
+        { "path": "artifacts/cycle-0028/native/cursor-0211b-frames/700.png", "sha256": "18f2b30274b2189c52c24c5606b040d987f46d42f729e21895e04857855fa656", "bytes": 267086 }
+      ]
     }
   ]
 }

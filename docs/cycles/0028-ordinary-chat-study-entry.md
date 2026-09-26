@@ -62,10 +62,10 @@ Development probe: 3/3 actual-MCP transport cases pass for a closed default Stud
 
 ## Result and handoff
 
-- Result: pending; the bounded installed VS Code checkout reading trial passes on 0.2.11, while Cursor and delivery remain open.
-- Exact next action: run the same checked 0.2.11 VSIX through ordinary Cursor Agent with the exact checkout question and native video in a dedicated signed-in process/window, preserving the owner's installation, skill and connection state. Keep new acceptance rows NOT RUN until normal packaged practical trials occur.
-- Current state: the invalid 0.2.11 trial remains recorded separately. A fresh-process exact-question Copilot Auto retest passed its bounded native reading outcome and the owned VS Code process is closed.
-- One next candidate: decide from this cycle's observed outcome; full connected learning/three-mode and intended-use acceptance remain required.
+- Result: pending; the bounded installed VS Code checkout reading trial passes on 0.2.11. Cursor's recovered checkout reading path also passes, but native focus and pane-creation failures qualify ordinary entry; delivery remains open.
+- Exact next action: investigate the Cursor focus refusal and pane-creation race from the retained native failure, apply a bounded correction only if supported, and repeat ordinary Cursor entry on the corrected candidate. Keep new acceptance rows NOT RUN until normal packaged practical trials occur.
+- Current state: the invalid VS Code 0.2.11 trial remains separate. The fresh-process exact-question Copilot Auto retest passed. Cursor Agent completed the same fixture after public layout recovery; its isolated process is closed and the owner's global skill restored.
+- One next candidate: a focused Cursor admission/layout repair if the failure is attributable to Codebook; full connected learning/three-mode and intended-use acceptance remain required.
 
 ## D029 acceptance change and cycle impact
 
@@ -118,3 +118,5 @@ Candidate 0.2.11 passed 966/966 extension tests, 101/101 package regressions and
 [The fresh-process 0.2.11 VS Code retest](evidence/0028/vscode-0211b-reader.md) used the exact ordinary question and same checked VSIX. Copilot Auto completed two actions and four pauses, saved four explanations, a demonstrated Study and recording. Inspected native video frames show interpretation and first captured-value rows together beside Application and source. The bounded VS Code checkout reading result passes, with narrow-pane horizontal reading still required. Cursor and the fixed nine-project acceptance matrix remain unverified.
 
 [The Cursor 0.2.11 setup preflight](evidence/0028/cursor-0211-setup-preflight.md) confirmed public setup, bundled skill discovery, and connected MCP in a dedicated work window. The isolated Cursor profile required sign-in; the signed-in shared process switched to active owner work during Agent input preparation. No question was sent and no Cursor product outcome was observed. Shared skill, receipt, extension registry entry and MCP bytes were restored or verified after the preflight.
+
+[The signed-in isolated Cursor 0.2.11 trial](evidence/0028/cursor-0211b-reader.md) completed the exact checkout fixture after an initial native focus refusal and a pane-creation layout failure. The AI recovered through public operations before application input, then saved four grounded explanations, a demonstrated Study and recording. Inspected IDE video shows Application, source, interpretation and values together after the cart action and at historical purchase confirmation. An extra identical user message appeared in the same chat, so this is a qualified recovered path rather than a clean single-prompt entry. The trial skill was removed and the owner's original global skill restored. No nine-project D029 row is credited.
