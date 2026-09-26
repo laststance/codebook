@@ -1,9 +1,9 @@
 # Cycle 0025 — Ordinary two-host cart-to-confirmation walkthrough
 
 Type: experiment
-Status: validating
+Status: closed; experiment complete with a falsified paired hypothesis
 Result: falsified for the paired ordinary-chat question
-Delivery: Draft [PR #39](https://github.com/laststance/codebook/pull/39), pending review and merge
+Delivery: [PR #39](https://github.com/laststance/codebook/pull/39) merged as `b4a6f8cbcec299d38bb4f71517cdbdd69103f7e0`; Issue #38 closed
 Goal version: 5
 Tracking issue: [#38](https://github.com/laststance/codebook/issues/38)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -67,12 +67,12 @@ Final reviewer count remains **0/10**.
 - Keep / revise / replace: keep the frozen question, action/causal-link oracle and host separation; revise the Copilot image handoff hypothesis in the next cycle. Do not repeat the identical image tool attempt without a changed mechanism.
 - Evidence that can update goal state: Cursor ordinary-chat sandbox execution and replay add one qualified G01/G03/G04/G12 development result. They do not establish a two-host standard-chat checkout or synchronized explanation, so G01/G04/G12 remain partial.
 - Remaining gaps: Copilot image transport, per-pause saved explanations, real-repository intended uses, integrated three-mode and constrained native UX, owner acceptance and final reviewers remain open.
-- Delivery state and proof: Draft PR #39; exact-head review/check/merge pending. Under D021, merge closes Issue #38 as a completed experiment with a falsified hypothesis; it does not close the failed capability obligations in Goal #1.
+- Delivery state and proof: PR #39 merged on 2026-09-26 JST as `b4a6f8cbcec299d38bb4f71517cdbdd69103f7e0`; Issue #38 closed one second later. CodeRabbit CLI completed on exact head `f71a87167c52ad4666727f40745456988a6a4302` with zero findings across five files after one recorded connection failure. Hosted CodeRabbit formally approved that same head, zero review threads were present, [package CI](https://github.com/laststance/codebook/actions/runs/36204498953) passed 1110/1110 product/shared and 101/101 package tests, both Socket checks passed and GitHub reported `MERGEABLE / CLEAN` before merge. Closure records the completed experiment and falsified hypothesis; failed capability obligations remain in Goal #1.
 
 ## Handoff
 
-- Exact next action: finish record review and delivery for PR #39, closing Issue #38 at merge as a completed experiment while retaining the falsified result; then select a narrow Copilot image-handoff repair experiment.
+- Exact next action: continue [Cycle 0026](0026-copilot-image-handoff.md) / Issue #40, comparing Copilot's public uploaded-image and inline-image routes in a dedicated VS Code work window.
 - Changed files / branch / active processes: `codex/cycle-0025-ordinary-checkout`; record changes only. Both dedicated editor processes and trial servers exited; owner settings/default extensions and managed Cursor skill are at baseline.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 unchanged.
-- At most one next candidate and why: investigate the Copilot image-return 404 with a controlled text/receipt versus image handoff, because the standard VS Code chat cannot reach Checkout while that request fails.
+- At most one next candidate and why: Cycle 0026 tests Copilot's public inline-image setting after the installed renderer and saved tool bytes identified its upload-URL handoff as the next boundary. It preserves full image content and the original checkout question.
