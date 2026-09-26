@@ -89,6 +89,8 @@ CodeRabbit CLI completed the final committed `ec6c2b0…` → `15ea16c…` delta
 
 Clean `15ea16cac55dd8870e7c47700e47412fc8ea86bd` produced verified `artifacts/cycle-0027/codebook-final.vsix`, SHA-256 `604ff8973ec202f1e8322743b2dd5b82e3b65d5ddb9aafbdf57a99408abe030a`, selected-source hash `963b6b529e03380fc3bdd5f876f2e11ef60026c957e8ea3c137be7c31d9d90f1`. All 35 entry names match the frozen native archive. Only `extension/readme.md`, `extension/dist/build.json` and `extension/package-manifest.json` differ; runtime code and common skill bytes are identical. `package-correspondence.json`, `build-final-receipt.json` and `verification-final.json` preserve checks. This is package correspondence, not native execution of the later archive. [CI 36212994259](https://github.com/laststance/codebook/actions/runs/36212994259) passed on `15ea16c…`; final record-head checks remain separate.
 
+The owner added OCR delegation alongside CLI during final delivery (D028). [OCR review](evidence/0027/ocr-review-20260926.md) accounts for all 18 previewed entries: eight eligible reviewed, zero skipped, ten default exclusions separately inspected. One stale CHANGELOG result was corrected. This is host-agent review with deterministic OCR selection, not independent provider approval.
+
 ## Result and handoff
 
 - Result: **demonstrated** for the preregistered paired saved-explanation outcome on one frozen archive.

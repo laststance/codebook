@@ -221,3 +221,9 @@ Source: Raphtalia's explicit instruction after PR #41 reached the hosted review 
 Decision: keep `@coderabbitai ignore` in PR descriptions for this Goal continuation and proceed without the hosted CodeRabbit approval gate. Preserve local CodeRabbit CLI review and CI as separate checks; record actual findings, resolutions and reviewed commits. An owner-skipped hosted review is not APPROVED, and historical CHANGES_REQUESTED remains identified as such. No additional billing is authorized.
 
 Effect: PR #41 merged with its four findings addressed/resolved, final local CLI/CI evidence and the explicit hosted-review waiver. This supersedes the hosted CodeRabbit re-enable/approval steps in the earlier delivery workflow for this continuation. It does not waive functional validation, unresolved implementation defects, owner acceptance or the ten fresh final end-user trials.
+
+## D028 — Require OCR delegation alongside CodeRabbit CLI, 2026-09-26
+
+Source: Raphtalia updated the active Goal to add `open-code-review-delegate` alongside CodeRabbit CLI in the review phase.
+
+Decision: apply both methods to the active Cycle 0027 PR and future cycles. OCR supplies deterministic file eligibility and rule resolution; the host agent reviews each eligible `(path, status)` entry and records reviewed/skipped coverage and default exclusions. Review excluded skill/docs/tests separately when they contain material product behavior. Do not call this an independent external-provider review or substitute it for CodeRabbit CLI. Preserve D027's hosted PR-review skip, CI, native evidence and every final acceptance condition.
