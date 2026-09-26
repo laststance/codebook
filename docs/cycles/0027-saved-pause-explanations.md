@@ -51,6 +51,14 @@ The actual MCP regression failed before the repair because both demo profiles om
 
 Pinned native pnpm 12.4.2 / Node 24.21.0: extension and configured-experiment builds, extension typecheck, **50/50 focused protocol/service/context tests**, **1111/1111 product/shared tests** and **101/101 package tests** passed. The focused red-before log and complete results are under ignored `artifacts/cycle-0027/`. These checks establish discovery and preserve storage/binding regressions; ordinary host AI behavior is still unverified for this new skill.
 
+## Candidate identity preflight
+
+The first clean candidate (`13805998fb1f2164a4b9bb583cad794442eecce3`, extension 0.2.3, VSIX SHA-256 `091e1d0e57f673adf7fd8333e3ce2d0399b8c0bc773038d01eaca77f30bd7232`) remains preserved at `artifacts/cycle-0027/codebook.vsix`. CodeRabbit CLI reviewed ten files and reported one minor stale next-action sentence; that sentence is corrected. CI 36210757888 passed on this source cut.
+
+Cursor's named Cycle 0027 profile registered the isolated candidate folder, but public setup and the native skill view still exposed the shared **1.0.10** skill instead of bundled **1.0.18**. No question was submitted and no runtime was started. The trial window was closed after stopping its server; the owner's running Cursor and baseline extension/settings/skill/MCP configuration hashes were preserved. This is failed identity preflight, not ordinary-chat acceptance. Internal same-version selection/cache behavior remains a hypothesis.
+
+The changed hypothesis uses a distinct **extension 0.2.4** in the named profile, installed through the ordinary extension root so the two version folders can coexist. Extend scope only to version metadata, its package expectation and current candidate documentation. Verify actual loaded identity and preservation of the default profile before proceeding; do not restart the owner's Cursor. The prior 1111/1111 and 101/101 results belong to the earlier 0.2.3 cut. The new candidate requires its own package checks and both-host evidence.
+
 ## Result and handoff
 
 - Result: bounded implementation and local checks passed; paired installed ordinary-chat evidence pending.
