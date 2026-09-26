@@ -1,8 +1,29 @@
 # Changelog
 
+## [0.2.11.0] - 2026-09-26 (development candidate)
+
+Cycle 0028 opens the saved/default Study presentation from ordinary editor chat before runtime input. The Live reader now reveals a complete followed pause after loading, keeps long explanations keyboard-readable in a narrow pane, and retains the first captured-value rows in view. The checked 0.2.11 VSIX completed the checkout fixture with four saved explanations and a recording in VS Code. Cursor completed the same fixture after an initial focus refusal and pane-layout recovery; clean ordinary entry remains qualified. These fixture trials do not count toward the nine-project final acceptance.
+
+## [0.2.8.0] - 2026-09-26 (development candidate)
+
+- Collapse Study's view and pane controls when a narrow reader first enters Live, placing the observed explanation and values closer to the top while retaining an explicit disclosure to reopen every control. Keep the learner's manually reopened controls visible through subsequent runtime updates.
+- Retain the 0.2.7 Codebook-owned debugger console behavior; the native 0.2.7 trial still placed Live evidence below the visible fold at owner zoom 2. This new candidate requires separate installed VS Code and Cursor reading proof.
+
+## [0.2.7.0] - 2026-09-26 (development candidate)
+
+Cycle 0028's installed 0.2.6 VS Code trial entered Live before execution and retained grounded explanations at all four pauses, but the owned Node/browser debug launches opened the Debug Console and compressed the application/source/Study reading area. Owned launch configurations now keep that panel closed without changing the user's settings. The same bundled skill 1.0.20 remains in use. New installed layout verification is pending; neither demo run counts toward D029 acceptance.
+
+## [0.2.6.0] - 2026-09-26 (development candidate)
+
+Cycle 0028's first 0.2.5 installed VS Code trial opened Study through the ordinary AI chat, but left it on Overview throughout real pauses. Skill 1.0.20 and public discovery now require both Live content and current-run following before input, using the existing protected Return to Current operation. The failed visibility attempt and successful saved replay remain distinct. The later installed 0.2.6 trial confirmed Live entry and saved pauses, then exposed the separate Debug Console reading-space limitation fixed in 0.2.7.
+
+## [0.2.5.0] - 2026-09-26 (development candidate)
+
+Cycle 0028 updates the common skill to 1.0.19 and public presentation guidance to open the current/default learner mode before runtime application input. Default and saved-mode cold entry are covered through the actual MCP transport. The later installed 0.2.5 trial failed because Overview stayed selected during pauses. Goal version 6 replaces random consecutive final reviews with the nine mandatory projects and ordered main-agent/independent-junior acceptance stages under D029; no new acceptance pass is claimed.
+
 ## [0.2.4.0] - 2026-09-26 (development candidate)
 
-Cycle 0027 exposes the existing demo profile help and updates the shared skill to 1.0.18. Public guidance requires committed pause explanations before continuation, actual image reads for screen claims, and verification of saved recording interpretations. The extension patch version distinguishes this candidate from the owner's installed 0.2.3 during dedicated-profile validation. The same frozen 0.2.4 VSIX demonstrated four saved pause explanations and stopped-app replay in ordinary Copilot Chat and Cursor Agent. Delivery remains pending; this is not a Marketplace publication.
+Cycle 0027 exposes the existing demo profile help and updates the shared skill to 1.0.18. Public guidance requires committed pause explanations before continuation, actual image reads for screen claims, and verification of saved recording interpretations. The extension patch version distinguishes this candidate from the owner's installed 0.2.3 during dedicated-profile validation. The same frozen 0.2.4 VSIX demonstrated four saved pause explanations and stopped-app replay in ordinary Copilot Chat and Cursor Agent. Delivered through PR #43; this is not a Marketplace publication.
 
 ## [0.2.3.0] - 2026-09-25 (development candidate)
 

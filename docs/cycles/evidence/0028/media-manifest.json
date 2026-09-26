@@ -1,0 +1,236 @@
+{
+  "candidates": [
+    {
+      "version": "0.2.5",
+      "source": "3072cf7459ebd7acb05e6d3d6628e3db1cad79a5",
+      "vsixSha256": "a9fb8ca8b533eefd8af25de4ee7d52e55b5faf811deca1b6cf6cc7cce2890cee",
+      "result": "FAIL — Overview remained selected",
+      "files": [
+        {
+          "path": "artifacts/cycle-0028/native/vscode-275.png",
+          "sha256": "ab13d883a6602b61658f7dee16f6fdc2e7b43b2adad6fe26f00d129b76e97d6e",
+          "bytes": 110475
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-100.png",
+          "sha256": "be17383c7bcd69bf2947c596d75b529ed4776de1cfc4e895339c06afdef53adc",
+          "bytes": 120877
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-110.png",
+          "sha256": "edb0fa60760fed59ad8f36f706feaf8e680a258ad90a9b3c1d170541e59867ea",
+          "bytes": 225587
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-190.png",
+          "sha256": "1c2510a20750b3a864e7fcb0484c7cea077cad0ae58bd59198c117dc7c7e2bc0",
+          "bytes": 259667
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-145.png",
+          "sha256": "90157dd82e05a5ee52c7c45330911f8203a9704414632d90c3cca2879b692ef9",
+          "bytes": 259354
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-120.png",
+          "sha256": "ad7d22f02dd84963c2c36d5d9e43b81bdb7819919ebc063666f7b8855be01964",
+          "bytes": 244645
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-copilot-auto.webm",
+          "sha256": "cdb49006e5d5badccd1ca985d9687d9d9eeb38eaf871d7210f1a87783af0c14d",
+          "bytes": 9440169
+        }
+      ]
+    },
+    {
+      "version": "0.2.6",
+      "source": "5f63fb2309f00983c20f4dcd05dc18e74e5989ac",
+      "vsixSha256": "9c50e9d692c9dee1629c32ae1e78b22bb8e331324efb1a641e2ac23889456ed3",
+      "result": "PARTIAL — Live values and explanations, but debug panel compressed reading area",
+      "files": [
+        {
+          "path": "artifacts/cycle-0028/native/vscode-026-110.png",
+          "sha256": "4b2097a799a848783201bddb35f236a1f46b13a0e085d2516f27cd61c85c74a3",
+          "bytes": 261900
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-026-145.png",
+          "sha256": "e560bf4d95fb5f566cec656c307045d54e3ab20706fcb704be8138400375f4ee",
+          "bytes": 273793
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-026-175.png",
+          "sha256": "f74421f359ad7ad2db0058c01f3372ea0d5031d803ce1ec0afc7c75aaa955917",
+          "bytes": 258019
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-026-205.png",
+          "sha256": "1bcb5f80e620f5a6bc60d55ab9ba298126623b14c4d5954a1214a1f0276b613e",
+          "bytes": 215826
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-026-55.png",
+          "sha256": "a1f7fc14a8c909d3614e5196930909c29078c66c59aec3df071b87671ed18940",
+          "bytes": 127330
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-026-80.png",
+          "sha256": "4007d49b13b9c41b9a1f26015a2ae4b7658f5d29f674a42fe53a1ee18732d53a",
+          "bytes": 244569
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-026-copilot-auto.webm",
+          "sha256": "c366368eb9baccc02bcf40dd74df5e5abb87233cc52a50a265794f463a1ecb92",
+          "bytes": 8305965
+        }
+      ]
+    },
+    {
+      "version": "0.2.7",
+      "source": "050f284ac3ce2afdc96da09b3b40508da48764e8",
+      "vsixSha256": "06cb0ca5308b13b026bddc1344b18e28b2335d19e0e7298c98843660ecb0a4a3",
+      "result": "PARTIAL — Debug Console stayed closed, but Study values remained below the visible fold",
+      "files": [
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-copilot-auto.webm",
+          "sha256": "f32c2e62e58b46c6f65612ec19bd776c1713969fda07323081565edabdfacd81",
+          "bytes": 8800042
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-100.png",
+          "sha256": "a0fe321e748035e02317b5e73a549efc1a32a0a48965e4defa8e1b527f5d700b",
+          "bytes": 243121
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-135.png",
+          "sha256": "5430ab61271969b8a105c1c88c439737c1542b4b205fa155bea25235f3486396",
+          "bytes": 272057
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-170.png",
+          "sha256": "4ac22cb58e6bd7397c1e37a5d7543cfe078df42728acd63847926412e358005a",
+          "bytes": 291868
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-205.png",
+          "sha256": "cd96d19bbc60e89cbb591a80e61b9cf264a5f99b48af88f79e815a66e17f38db",
+          "bytes": 273909
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-235.png",
+          "sha256": "255b092a3f0616268cfd7c8dd9d4335e6cf246f1196104bee862d11b685cc6b8",
+          "bytes": 294929
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-027-frames/frame-65.png",
+          "sha256": "21f04e85f0b9c2b18da89c5abab59bad930acab8831999be456b818a773d528e",
+          "bytes": 125932
+        }
+      ]
+    },
+    {
+      "version": "0.2.8",
+      "source": "b11b25dad83bf00e05047e83fd6ec516054e4885",
+      "vsixSha256": "dd665a3deacdb8660b8c887eb0897ea2fb956164bc0a5c7f601feeae3910e110",
+      "result": "PARTIAL — disclosure worked, sticky runtime controls still hid Live values",
+      "files": [
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-copilot-auto.webm",
+          "sha256": "0f456d6adda163527dfbd513f46ad7a069e63f830678a48b244339721f632195",
+          "bytes": 6929033
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/45.png",
+          "sha256": "49fe462c47475a72d559bb06a4b0e4310f63a10132af91fb67ea438abff5001d",
+          "bytes": 85274
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/75.png",
+          "sha256": "bc8b137001b35e261c816c17e99d9f0237a6a157f063b6383614f1ec21dd25d3",
+          "bytes": 110715
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/105.png",
+          "sha256": "3b1a4bf621f7462450fb9f74d3cb68fe4658e3fc83236457e5595d984b6a4be8",
+          "bytes": 276279
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/135.png",
+          "sha256": "4c1b1c9227733a9c9a1d607f8ffd39a92e80839481e5325ce95bf2c33158348a",
+          "bytes": 260604
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/165.png",
+          "sha256": "7570be66e4fb36b19a767eab2b65fdcbc935296cdbae1e5bffd477bd6a4022fb",
+          "bytes": 279363
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/190.png",
+          "sha256": "5c773a656f7519098b2895567f19206bb45a2076ab60a82ce1bb6702adf92bb8",
+          "bytes": 290205
+        }
+      ]
+    },
+    {
+      "version": "0.2.9",
+      "source": "c0800cdf117992127f9f62bdc2e4dedd6a56841e",
+      "vsixSha256": "d3fcb270cdd0e4486f1c2d70083a6d530d5e1ce28ce4225fe2078a29ed2c5474",
+      "result": "PARTIAL — followed pauses completed, but native Study interpretation and values did not fit the viewport",
+      "files": [
+        { "path": "artifacts/cycle-0028/native/vscode-029-copilot-auto.webm", "sha256": "e4bd9f2d383d9b251322ed8f3a2e0ee4e7961244e6e14beefed04b418c88d46d", "bytes": 7275792 },
+        { "path": "artifacts/cycle-0028/native/vscode-029-frames/55.png", "sha256": "a5d18f06b080d57d6d95d1dc53f9ba45c9387d861a9289fd39bb8f24ec63cbc8", "bytes": 244734 },
+        { "path": "artifacts/cycle-0028/native/vscode-029-frames/95.png", "sha256": "3d1ff4a7d91cb495c896f3c32c6f6a09a93619a918fa881a7be0dc4d7248174b", "bytes": 309691 },
+        { "path": "artifacts/cycle-0028/native/vscode-029-frames/145.png", "sha256": "6238e52856a3a79e8d111da31974a13a24108bde3ee88f83ec98012609d401d2", "bytes": 287700 }
+      ]
+    },
+    {
+      "version": "0.2.10",
+      "source": "fb9435d421f3e78ba3a29b27a15a8953050d6697",
+      "vsixSha256": "b289569c6a9230efc9b76bf442e2eb8b60e6293707f701f89b700f14392ec0e2",
+      "result": "PARTIAL — new pauses reveal values, but long saved interpretations push them below the native fold",
+      "files": [
+        { "path": "artifacts/cycle-0028/native/vscode-0210-copilot-auto.webm", "sha256": "cfc25c612b3ebf3ae50f5e5863ee36dc970c5f9c66efd5c573eb07dd6f968780", "bytes": 6829879 },
+        { "path": "artifacts/cycle-0028/native/vscode-0210-frames/80.png", "sha256": "1b326a58f145285f5b48f0af7ffc8f348821a9d8cede4985adb1118e70d55b4d", "bytes": 257020 },
+        { "path": "artifacts/cycle-0028/native/vscode-0210-frames/115.png", "sha256": "f281aafc3cf2fc6a1710f6b1365b5a2364c93b2a53ce159b3efcae85b044ea40", "bytes": 278988 },
+        { "path": "artifacts/cycle-0028/native/vscode-0210-frames/160.png", "sha256": "9f09e2e3e59096397a44ff7d172962c228a2346e685c06a8f2cd7261871f3af2", "bytes": 315652 }
+      ]
+    },
+    {
+      "version": "0.2.11",
+      "source": "a58d68fd690751906cc513d7ddf638b45257e11e",
+      "vsixSha256": "2ca23ab41d26c242769f1a62a129ac4af5184666ab6a3b553c1d4505682c6c95",
+      "result": "INVALID for native reading — both Codebook webviews remained visually blank and the question included a probe suffix",
+      "files": [
+        { "path": "artifacts/cycle-0028/native/vscode-0211-copilot-auto.webm", "sha256": "1747d79e1b4f8783ab3e460a281ebf97b3838596ce3dc7fc5721d113afcc7e84", "bytes": 13422694 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211-frames/150.png", "sha256": "a675a8f28c79e66c6fcfe409a8d92fd5722bad59a2b25d0a502d060f4faf2b75", "bytes": 96011 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211-frames/300.png", "sha256": "c6c29e156c516004285d6824c1be448548b640581168d5d13ea7a4f7bedc8f6a", "bytes": 191410 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211-frames/500.png", "sha256": "f8ecfd61ba6a55d5d7f1c64bfd2b175a32109f5810f31653448dcfe3b4fcb4f2", "bytes": 31636 }
+      ]
+    },
+    {
+      "version": "0.2.11",
+      "source": "a58d68fd690751906cc513d7ddf638b45257e11e",
+      "vsixSha256": "2ca23ab41d26c242769f1a62a129ac4af5184666ab6a3b553c1d4505682c6c95",
+      "result": "PASS — fresh-process exact-question VS Code checkout showed saved explanation and captured values in the native reading viewport",
+      "files": [
+        { "path": "artifacts/cycle-0028/native/vscode-0211b-copilot-auto.webm", "sha256": "12eaeb4a09eb0f04dceffd0d55caf951c2d18dba1cb1018103c4f8bc41769076", "bytes": 8570066 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211b-frames/105.png", "sha256": "3e016272a28218575771410bd52c3865c62e1d1878bdd56e9a6d2fadfed3a082", "bytes": 294814 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211b-frames/145.png", "sha256": "51fabb2227f4d0e7cf452902b4744f57940bffad885492b0a85d0b233df327a2", "bytes": 289210 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211b-frames/165.png", "sha256": "b56dff7bcdbdd54199b83d3846c7ae2d89f4305c4a40aa181fbeeeb35fbba7e6", "bytes": 276448 }
+      ]
+    },
+    {
+      "version": "0.2.11",
+      "source": "a58d68fd690751906cc513d7ddf638b45257e11e",
+      "vsixSha256": "2ca23ab41d26c242769f1a62a129ac4af5184666ab6a3b553c1d4505682c6c95",
+      "result": "QUALIFIED PASS — Cursor checkout reading succeeded after native focus and pane-layout recovery; ordinary entry was not clean",
+      "files": [
+        { "path": "artifacts/cycle-0028/native/cursor-0211b-agent-1.webm", "sha256": "9244890b11578c7b5334b62d2e9062fde04abcef1ed479993e248a8ecadf7e5f", "bytes": 23917048 },
+        { "path": "artifacts/cycle-0028/native/cursor-0211b-frames/420.png", "sha256": "150078708f5a248ba9f77e75fc04feda7652b9432221b2df5273e34794893b60", "bytes": 274875 },
+        { "path": "artifacts/cycle-0028/native/cursor-0211b-frames/580.png", "sha256": "bec970eadf23e48594944ab937e39257a7454fa167bfc2db12357c329672f2e1", "bytes": 268852 },
+        { "path": "artifacts/cycle-0028/native/cursor-0211b-frames/700.png", "sha256": "18f2b30274b2189c52c24c5606b040d987f46d42f729e21895e04857855fa656", "bytes": 267086 }
+      ]
+    }
+  ]
+}

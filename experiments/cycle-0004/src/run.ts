@@ -160,7 +160,7 @@ export class PairedRun {
     this.assertAlive();
     this.nodeLaunch = Promise.resolve(vscode.debug.startDebugging(undefined, {
       type: 'pwa-node', request: 'launch', name: `codebook ${this.id} server`, runtimeExecutable: this.config.nodeExecutable,
-      program: join(this.evidence.directory, 'build/server.mjs'), cwd: this.evidence.directory, console: 'internalConsole', stopOnEntry: false,
+      program: join(this.evidence.directory, 'build/server.mjs'), cwd: this.evidence.directory, console: 'internalConsole', internalConsoleOptions: 'neverOpen', stopOnEntry: false,
       autoAttachChildProcesses: false, sourceMaps: true, outFiles: [join(this.evidence.directory, 'build/*.mjs')],
       resolveSourceMapLocations: [join(this.evidence.directory, '**')], env: { CODEBOOK_RUN_ID: this.id },
     }, { suppressSaveBeforeStart: true }));
