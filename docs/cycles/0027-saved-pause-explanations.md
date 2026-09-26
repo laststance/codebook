@@ -3,7 +3,7 @@
 Type: product increment
 Status: validating delivery
 Result: demonstrated (bounded paired ordinary-chat outcome)
-Delivery: PR #43 open; final review and CI pending
+Delivery: PR #43 open; paired evidence and reviewed implementation ready; final record-head checks pending
 Goal version: 5
 Tracking issue: [#42](https://github.com/laststance/codebook/issues/42)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -83,11 +83,17 @@ The complete application recording contains 32 frames through 104.383 s. Inspect
 
 Both chats opened Application/source/debug views during the run; the driver opened Study manually for post-run inspection. The bounded save/replay hypothesis held, but this does not prove Study is the usable default. The next candidate should address that observed G07 entry gap, then integrated layouts/learning and real-repository acceptance. Cursor editor motion remains unrecorded; its application transition video and static native reading observations are separate evidence.
 
+## Final review and package correspondence
+
+CodeRabbit CLI completed the final committed `ec6c2b0…` → `15ea16c…` delta: **five files, zero findings**, exit 0 (`artifacts/cycle-0027/coderabbit-cli-final.jsonl`). Combined with the earlier ten-file source review and eight-file version delta, both actionable minor documentation findings are corrected. Hosted PR review remains owner-skipped; its successful skip check is not approval.
+
+Clean `15ea16cac55dd8870e7c47700e47412fc8ea86bd` produced verified `artifacts/cycle-0027/codebook-final.vsix`, SHA-256 `604ff8973ec202f1e8322743b2dd5b82e3b65d5ddb9aafbdf57a99408abe030a`, selected-source hash `963b6b529e03380fc3bdd5f876f2e11ef60026c957e8ea3c137be7c31d9d90f1`. All 35 entry names match the frozen native archive. Only `extension/readme.md`, `extension/dist/build.json` and `extension/package-manifest.json` differ; runtime code and common skill bytes are identical. `package-correspondence.json`, `build-final-receipt.json` and `verification-final.json` preserve checks. This is package correspondence, not native execution of the later archive. [CI 36212994259](https://github.com/laststance/codebook/actions/runs/36212994259) passed on `15ea16c…`; final record-head checks remain separate.
+
 ## Result and handoff
 
 - Result: **demonstrated** for the preregistered paired saved-explanation outcome on one frozen archive.
 - Keep / revise / replace: **keep** discoverable help and the common save-before-continue procedure; preserve existing persistence and validation.
-- Immediate next action: finish CodeRabbit CLI review of the final documentation/README delta, verify current-head CI and final package correspondence, then merge PR #43 with Issue #42 closure. Hosted review stays owner-skipped under D027, not APPROVED.
+- Immediate next action: verify the final two-file record delta with CLI/current-head CI, then merge PR #43 with Issue #42 closure. The implementation/README cut passed CLI, CI and package correspondence. Hosted review stays owner-skipped under D027, not APPROVED.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decision: D027 retains the owner's hosted-CodeRabbit skip; local CLI, CI and final acceptance remain separate.
 - Goal-gap check: G07 automatic contextual Study entry is now an observed bottleneck. Broader real-repository usefulness, integrated connected learning/three-mode behavior, complete G12 restart/conflict checks, owner acceptance and ten final reviewers remain required. Final reviewers **0/10**.
