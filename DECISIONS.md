@@ -2,6 +2,8 @@
 
 Record the date, source, reason, and affected goal/cycle. Link superseded decisions rather than silently deleting their context. These are decisions, not a task backlog.
 
+> Historical authority: D029 supersedes every earlier ten-reviewer, random-pool, consecutive-pass and reset-to-zero acceptance provision (including earlier goal-continuation, D021/D022/D023/D027 references). Earlier decisions and observations remain historical; their other product and delivery requirements remain in force.
+
 ## D001 — Product baseline, 2026-09-18
 
 Source: explicit user approval in office hours.\
@@ -227,3 +229,19 @@ Effect: PR #41 merged with its four findings addressed/resolved, final local CLI
 Source: Raphtalia updated the active Goal to add `open-code-review-delegate` alongside CodeRabbit CLI in the review phase.
 
 Decision: apply both methods to the active Cycle 0027 PR and future cycles. OCR supplies deterministic file eligibility and rule resolution; the host agent reviews each eligible `(path, status)` entry and records reviewed/skipped coverage and default exclusions. Review excluded skill/docs/tests separately when they contain material product behavior. Do not call this an independent external-provider review or substitute it for CodeRabbit CLI. Preserve D027's hosted PR-review skip, CI, native evidence and every final acceptance condition.
+
+## D029 — Require all nine projects and two-stage practical acceptance, 2026-09-26
+
+Source: Raphtalia explicitly approved replacing the ten fresh consecutive reviewers with main-agent practical validation followed by one independent junior-developer SubAgent per designated project. This changes final acceptance, not a routine implementation choice.
+
+Decision: PRODUCT_GOAL version 6 and FINAL_REVIEW.md require all nine fixed projects in ACCEPTANCE_MATRIX.md. They are mandatory targets, not an eligible random pool. No deletion, easier substitution, fixture replacement, ten-repository recommendation or target reuse policy applies. Protect the existing private work checkout and never publish its source, business data, credentials or recordings. Use sanitized public identifiers and restricted evidence.
+
+Required TS/JS scope includes actual applicable Web UI, Node server, Chrome Extension, library test and Example execution, mapped from code at pinned revisions. Every library needs both real test-code step-by-step explanation and Example execution/explanation in each host. Missing support is a development gap, never grounds to remove a required target.
+
+Stage 1: the main agent personally completes ordinary packaged-install, public skill/MCP setup and natural-question product use on all nine projects in VS Code and Cursor. Verify actual execution, pauses/values/state/call stacks, stepping/continuation, source correspondence, saving/later modes and understandable failures. Hidden manual MCP calls, source modifications, developer-only workarounds and prepared stop/value answers cannot rescue a pass. Record normal debugger setup and user burden.
+
+Stage 2 starts only after all required Stage 1 rows pass and the complete candidate exists. Nine independent junior-role SubAgents, one per project, personally evaluate both hosts and all required use cases. Give neutral tasks and ordinary documents, not developer answers, workarounds or previous verdicts. Require actual evidence, each junior's own-word understanding, correctness grounds, obstacles/help/unknowns and PASS/FAIL/BLOCKED plus justified confidence >=9/10 for every required assessment. Confidence is subjective assurance, not statistical probability. Missing mandatory work, material mismatch, prohibited assistance or material unknowns prevent PASS regardless of score.
+
+No consecutive success requirement remains. Preserve failures and remedied retries. Every extension/skill/setup/connection change requires impact assessment; shared execution/recording/explanation changes require retesting all affected targets. Justify unaffected evidence explicitly. All final passes must be valid for the final fixed distributed VSIX, never pooled across incompatible implementations.
+
+Preserved: G01–G12, both hosts, explicit `/codebook` in ordinary Copilot Chat/Cursor Agent, common bundled thin skill, public onboarding, recording, both later display modes, stage-specific evidence and separate owner acceptance. Existing demos and preflight are historical development evidence, not new Stage 1 or Stage 2 passes. Goal #1 remains open.

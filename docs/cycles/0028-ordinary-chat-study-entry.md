@@ -1,10 +1,10 @@
 # Cycle 0028 — Open Study from ordinary runtime chat
 
 Type: product increment
-Status: planning
+Status: implementing
 Result: pending
 Delivery: not yet implemented
-Goal version: 5
+Goal version: 6
 Tracking issue: [#44](https://github.com/laststance/codebook/issues/44)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
 Goal links: G01, G04, G07, G08, G09, G11, G12
@@ -19,7 +19,7 @@ Cycle 0027's identical-VSIX pair saved four explanations and completed replay. B
 
 ## Goal and design refresh
 
-On 2026-09-26, immediately before selecting this branch, the driver freshly fetched Issue #1, read the linked purpose and current product goal/design prose, and visually inspected all three approved images. Study places application above source with contextual explanations/values, outline and timeline; Living book and Guided walkthrough remain required alternate views over the same session. G01–G12, real-repository intended uses, owner acceptance and ten final reviewers remain intact.
+On 2026-09-26, immediately before selecting this branch, the driver freshly fetched Issue #1, read the linked purpose and current product goal/design prose, and visually inspected all three approved images. Study places application above source with contextual explanations/values, outline and timeline; Living book and Guided walkthrough remain required alternate views over the same session. G01–G12, real-repository intended uses, owner acceptance remain intact; the later D029 decision replaces the final-review policy with nine mandatory projects and two stages.
 
 ## Hypothesis and scope
 
@@ -54,15 +54,21 @@ Ordinary question remains: `/codebook 商品をカートに入れて購入完了
 | Learner and owner safety | Understanding stays 0/4; saved mode/history and owner work/settings/skill remain protected | State/hash baselines and failure controls |
 | Native motion | Record and inspect opening/transition behavior in the actual host | Video and inspected frames; no static substitute |
 
-Pin exact host/client/source/VSIX, workspace, viewport/theme and recording method before each run. VS Code uses Copilot Auto first under D025; record any authorized fallback honestly. Dedicated trials proceed under D026 without asking for timing absent actual interference. Final reviewers remain **0/10**.
+Pin exact host/client/source/VSIX, workspace, viewport/theme and recording method before each run. VS Code uses Copilot Auto first under D025; record any authorized fallback honestly. Dedicated trials proceed under D026 without asking for timing absent actual interference. New acceptance Stage 1 and Stage 2 each have 0/18 minimum project-host assessments completed; no final reviewers have started.
 
 ## Attempts and evidence
 
-No implementation or native result on this cycle yet. Prior source inspection found that server attachment/status do not open Study, runtime viewport creation opens Application, and skill 1.0.18 handles only an already-open historical presentation. Existing `performPresentation` can open a closed reader, but the actual MCP presentation test currently pre-opens it; this is the first question to verify.
+Development probe: 3/3 actual-MCP transport cases pass for a closed default Study reader and saved Living/Guided preference, with zero runtime starts, preserved dirty work and unchanged learner progress. The first run had two harness setup failures because preferences were seeded after reader construction; constructing the reader after seeding fixed the test setup. Logs: ignored `artifacts/cycle-0028/cold-entry-probe.log` and `cold-entry-probe-harness-error.log`. No native result on this cycle yet. Prior source inspection found that server attachment/status do not open Study, runtime viewport creation opens Application, and skill 1.0.18 handles only an already-open historical presentation. Existing `performPresentation` can open a closed reader, but the actual MCP presentation test currently pre-opens it; this is the first question to verify.
 
 ## Result and handoff
 
 - Result: pending.
-- Exact next action: add/run a bounded cold-entry MCP probe with default and saved-mode controls before editing skill guidance.
+- Exact next action: complete D029 documentation/Issue body alignment first, then add the bounded common runtime-entry guidance justified by the 3/3 probe. Inspect/map the required real projects before selecting subsequent runtime-support work; keep their new acceptance rows NOT RUN until normal packaged trials occur.
 - Current state: clean cycle branch at selection; no owned native trial process running.
 - One next candidate: decide from this cycle's observed outcome; full connected learning/three-mode and intended-use acceptance remain required.
+
+## D029 acceptance change and cycle impact
+
+The owner explicitly changed final acceptance on 2026-09-26. Update PRODUCT_GOAL, FINAL_REVIEW, the nine-project matrix, decisions/state and Goal #1 / this issue's bodies before resuming implementation. This cycle's cold-entry repair remains a needed G07 increment. Its checkout regression is development evidence only, and its scope does not remove the nine-project destination.
+
+All nine fixed targets require actual revision/runtime inspection. Required TS/JS coverage includes applicable Web, Node server, Chrome Extension, library tests and Examples; library tests plus Examples are mandatory in each host. Unsupported execution forms become follow-up development gaps. Stage 1 ordinary packaged practical trials must pass for all targets/both hosts/use cases before Stage 2's nine independent junior reviewers can start. Preserve owner/private checkout and sanitized evidence. No consecutive-pass counter or random target selection remains. Freeze final artifact identities and evaluate every later implementation/skill/setup change against affected acceptance evidence; currently none exists to carry forward.

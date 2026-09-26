@@ -2,13 +2,21 @@
 
 Updated: 2026-09-26\
 Product stage: configured execution, offline replay, reconnect and a bounded second-repository theme run demonstrated separately in both editors; ordinary checkout now retains four grounded pause explanations in both editor chats on one frozen candidate, with stopped-app replay\
-Active cycle: [0028 — Open Study from ordinary runtime chat](docs/cycles/0028-ordinary-chat-study-entry.md) — planning\
+Active cycle: [0028 — Open Study from ordinary runtime chat](docs/cycles/0028-ordinary-chat-study-entry.md) — implementing\
 Last cycle: [0027 — Save ordinary-chat pause explanations](docs/cycles/0027-saved-pause-explanations.md) — bounded paired outcome demonstrated; PR #43 merged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#44](https://github.com/laststance/codebook/issues/44) — open\
 Last cycle issue: [#42](https://github.com/laststance/codebook/issues/42) — closed with PR #43 merge\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
-Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 5
+Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 6
+
+## Current acceptance authority and gaps
+
+D029 / goal version 6 is active. [FINAL_REVIEW.md](docs/acceptance/FINAL_REVIEW.md) replaces the old random ten-reviewer streak with the [nine required projects](docs/acceptance/ACCEPTANCE_MATRIX.md), main-agent practical validation first and nine independent project-specific junior evaluators second. All required project/host/use-case trials are unexecuted under the new protocol. Actual repository mapping, ordinary Node/Chrome Extension/library test/Example support evidence, complete integrated capability proof and a final fixed artifact remain outstanding. Missing support must become development work, not target exclusion.
+
+Historical notice: all earlier 0/10 counts, sequential-review language and random selection references below describe superseded checkpoints only. They do not govern current acceptance and none are credited to either new stage. Earlier successes/failures retain their original scope and source cut.
+
+Cycle 0028 cold-entry transport probe now passes 3/3 default/saved Study/Living/Guided cases while preserving work/progress and starting no runtime. This is a development regression, not installed native or new acceptance evidence. The initial two failures were a test setup order error (preferences seeded after reader construction), corrected before the passing run. Public entry guidance and native paired trials remain pending.
 
 Cycle 0028 selected: open the existing default/current preferred presentation from ordinary runtime chat before application input. Both Cycle 0027 chats required manual post-run Study entry. First verify cold entry through the existing MCP presentation API, preserving saved modes and native ownership; then change only proven-missing common guidance or a demonstrated entry defect. Goal #1, purpose/design prose and all three approved images were refreshed at selection. CodeRabbit CLI and OCR are both required under D028; hosted PR review remains owner-skipped under D027.
 
@@ -266,4 +274,6 @@ G10 packaged real-repository usefulness and newly required G12 remain major proo
 
 ## Full-product completion gate
 
-[Ten consecutive independent end-user acceptance trials](docs/acceptance/FINAL_REVIEW.md) start only when the complete candidate and G01–G12 evidence exist. Each fresh reviewer normally installs the same frozen VSIX, completes public skill/MCP setup and uses actual Copilot Chat and Cursor Agent sequentially with the same randomly selected eligible repository and preregistered `/codebook` question. Require bundled/loaded skill identity, explicit invocation, AI-owned results, accurate unavailable guidance, restart with the correct connection, and protection of existing skills/settings/work. Hidden reviewer MCP work and per-stop answers are prohibited; videos/frames, saved replay, linked learning, three modes and restart remain mandatory. **0/10 reviewers; 0/at least 20 editor trials, not started.** Any FAIL, timeout or unverifiable requirement resets to zero, as does changing source/VSIX, skill body or registration/setup implementation. Preserve failed targets/questions as regressions, refreeze after remedy and restart with a new reviewer 1. Product/environment failures remain distinct without granting PASS. Raphtalia's separate intended-use acceptance remains outstanding; test understanding checks do not replace it. Goal #1 stays open.
+Apply [FINAL_REVIEW.md](docs/acceptance/FINAL_REVIEW.md) and the fixed nine-project [matrix](docs/acceptance/ACCEPTANCE_MATRIX.md) under D029. First the main agent must pass normal packaged-product practical trials for every project, both hosts and every applicable use case. Only after all Stage 1 rows and the complete candidate are ready, assign nine independent junior-developer SubAgents, one per project, each personally evaluating both standard editor chats. Require grounded PASS and confidence >=9/10 per required assessment; libraries require tests and Examples in each host. Never replace targets, use hidden assistance or promote development preflight to acceptance. Preserve failures, assess candidate/skill/setup/connection changes and retest affected rows so all evidence remains valid for the final fixed VSIX. There is no consecutive-pass/reset counter. Preserve owner acceptance separately and keep Claude Code CLI reviews owner-skipped.
+
+Stage 1: 0/18 minimum project-host assessments completed; Stage 2: 0/18 completed, nine reviewers not started. All nine revisions and runtime mappings await actual inspection; no final distributed VSIX is frozen. Every applicable library test/Example adds required use-case coverage. Owner acceptance remains outstanding. The matrix records NOT RUN rather than inferring passes from earlier development evidence.
