@@ -1,13 +1,13 @@
 # Cycle NNNN — Outcome
 
-Type: experiment | product-increment | hardening  
-Status: ready  
-Result: pending  
-Delivery: not-applicable  
+Type: experiment | product-increment | hardening\
+Status: ready\
+Result: pending\
+Delivery: not-applicable\
 Goal version: copy the current PRODUCT_GOAL.md version\
-Tracking issue: link after cycle selection  
-Goal issue: https://github.com/laststance/codebook/issues/1  
-Goal links: Gxx  
+Tracking issue: link after cycle selection\
+Goal issue: https://github.com/laststance/codebook/issues/1\
+Goal links: Gxx\
 Source state: link to preceding cycle or initial PROJECT_STATE.md
 
 ## Question and expected value
@@ -28,7 +28,7 @@ Draft only this cycle's executable steps. List the GStack skills needed and why;
 
 ## Validation contract
 
-Freeze expectations before evaluating the implementation. Fill versions, actual targets, exact fixture/source binding, setup, and commands while planning.
+Freeze expectations before evaluating the implementation. Fill versions, actual targets, exact real-project/source binding (identify isolated mechanism-test inputs separately), setup, and commands while planning.
 
 | Check | Expected observable result | Real procedure | Evidence required |
 | --- | --- | --- | --- |
@@ -36,7 +36,7 @@ Freeze expectations before evaluating the implementation. Fill versions, actual 
 
 ## Attempts and evidence
 
-No observations yet. For each attempt: date, source revision/dirty state, versions, action, expected result, actual result, artifact/availability, limits. Label a mock, fixture, real repository, and packaged run accurately.
+No observations yet. For each attempt: date, source revision/dirty state, versions, action, expected result, actual result, artifact/availability, limits. Label mock, mechanism-test, real-repository and packaged evidence accurately; bundled target demos cannot establish practical acceptance.
 
 ## Result and decision
 

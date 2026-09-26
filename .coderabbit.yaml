@@ -118,7 +118,9 @@ reviews:
 
     - path: "experiments/**"
       instructions: |
-        These are maintained feasibility harnesses, not generated throwaway output.
+        D030 retires the cart demo project; Cycle 0029 removal is pending.
+        Preserve historical evidence, and distinguish isolated mechanism tests
+        from real-project practical validation.
         Review observation fidelity, deadlines, cleanup, target isolation, and
         reproducibility. Keep fixture/mechanism success separate from real-repository
         and installed-product support; avoid demanding production feature scope.
@@ -147,7 +149,7 @@ knowledge_base:
       - "DECISIONS.md"
       - "DESIGN.md"
       # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
-      - files: "docs/cycles/0028-ordinary-chat-study-entry.md"
+      - files: "docs/cycles/0029-feature-specification.md"
         applyTo: "**/*"
       - files: "docs/designs/codebook.md"
         applyTo: "extension/src/**"

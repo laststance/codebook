@@ -245,3 +245,33 @@ Stage 2 starts only after all required Stage 1 rows pass and the complete candid
 No consecutive success requirement remains. Preserve failures and remedied retries. Every extension/skill/setup/connection change requires impact assessment; shared execution/recording/explanation changes require retesting all affected targets. Justify unaffected evidence explicitly. All final passes must be valid for the final fixed distributed VSIX, never pooled across incompatible implementations.
 
 Preserved: G01–G12, both hosts, explicit `/codebook` in ordinary Copilot Chat/Cursor Agent, common bundled thin skill, public onboarding, recording, both later display modes, stage-specific evidence and separate owner acceptance. Existing demos and preflight are historical development evidence, not new Stage 1 or Stage 2 passes. Goal #1 remains open.
+
+
+## D030 — Separate live explanation, learning replay and independent Wiki, 2026-09-26
+
+Source: Raphtalia's explicit Cycle 0029 request, followed by the clarification that retiring three UI themes does **not** mean one permanent screen or removal of replay/Wiki screens. The owner requested documentation first and a separate screen-design review afterward.
+
+Decision: advance PRODUCT_GOAL to version 7 with three feature areas:
+
+1. **Live explanation:** the standard Copilot Chat/Cursor Agent AI operates a real project's application/runtime and debugger, pauses actual source, explains the observed code path and continues. The native debugger displays values, watches and call stacks. Retire Codebook's duplicate runtime-value display; retain bounded internal facts needed to ground explanations and recordings.
+2. **Learning replay:** save an explained session as learning material, including its processing summary, sequence diagram of logic flow, source-linked explanation and recorded execution. A library and replay screen remain. Capture must occur in time to preserve the explanation being saved; later saving cannot fabricate missed execution. Learner progress remains explicit and independent of run success.
+3. **Independent LLM Wiki / DeepWiki:** generate a complete navigable browser site from repository source, defaulting to output inside the project with a configurable location. Provide explicit updates through a natural chat request and an **Update LLM Wiki** button, understandable freshness/status, and source deep links to the editor being used. Wiki generation, update and browsing require no live explanation, debugger, application browser or learning replay. In-editor opening is a permitted convenience. Automatic regeneration/indexing architecture is not prescribed.
+
+The three selectable UI variants are retired; G08/G09 remain retired historical IDs. Distinct functional screens remain required. A Codebook icon in the left Activity Bar is the proposed extension entry. Do not interpret “one variation” as showing chat, debugger, browser, source, replay and Wiki together at all times. The initial agent interpretation of a single fixed composition was corrected by the owner and is not product authority.
+
+Remove the active bundled cart demo project and its packaged copies/assets, launch paths and fixture-specific product instructions. Use actual GitHub/Laststance projects opened in the editor for practical validation. Inspect active/generated/package/local trial locations before implementation removal. Preserve historical reports and Git history; isolated unit inputs do not qualify as practical product use. No remote repository deletion or destruction of unrelated projects is authorized.
+
+Supersession: replace the old three-mode visual mandate, duplicate value UI, shared Wiki/lesson lifecycle and compulsory packaged checkout fixture in earlier decisions/designs. G01 now uses a real project scenario; G02 owns independent Wiki; G04/G05 own learning replay/progress; G07 owns usable feature screens. Preserve Architecture B, runtime truth, recording, both hosts, G12 skill/setup ownership, D027/D028 review policy and D029's nine fixed projects/two stages. D021 refreshes the **current** goal/design/visual status at cycle selection; old images are archival, and a missing new image does not block this written phase. Historical evidence retains its original scope.
+
+Sequence: Cycle 0028 was completed and the broad goal paused as requested. The owner then resumed Cycle 0029 **documentation first**. Update written authority, feature specifications and Issues #1/#46; conduct the screen-design review separately afterward, then produce the replacement concept image and proceed with bounded implementation/real-project proof. This phase does not delete demo code, implement the new features, generate an image or establish acceptance.
+
+
+## D031 — Use nextjs-dashboard for development until final acceptance starts, 2026-09-26
+
+Source: Raphtalia explicitly designated `/Users/ryotamurakami/repository/nextjs-dashboard` for editor-based behavior verification until the product reaches the nine-project acceptance stage.
+
+Decision: before final acceptance begins, open that existing project in the actual editor for development validation. Use it in VS Code and Cursor as applicable to the current capability; retain separate host evidence. Do not select another easier development repository, revive the bundled cart demo or move prematurely into the nine acceptance targets. Preserve the project's source/settings/work and use public product setup; failures or missing prerequisites become development gaps.
+
+The path exists. Read-only inspection on 2026-09-26 found clean `main` at `26e5b2c`, with origin `ryota-murakami/nextjs-dashboard`. This is a locator/preflight observation, not an editor launch, runtime test or Codebook success. Recheck revision and existing changes before each trial.
+
+The D029 acceptance matrix remains exactly its nine designated projects. Dashboard development evidence is neither Stage 1 nor Stage 2, adds no tenth target and cannot substitute for a required project. Once the candidate is ready for acceptance, follow the normal frozen Stage 1 protocol. D030's written-specification-first and separate-design-review boundary still applies to the current task.

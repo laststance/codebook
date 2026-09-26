@@ -1,81 +1,44 @@
-# codebook
+# Codebook
 
-Learn an unfamiliar codebase by connecting what an application does on screen with its source, runtime values, and explanations.
+Understand an actual project's code through standard editor AI chat, real execution and the native debugger in **VS Code and Cursor**. Save an explained code path as learning material, or independently generate a repository-wide DeepWiki site.
 
-The destination is a chat-driven, recorded walkthrough from adding a product to the cart through checkout, linked to a wiki, codemap, and personal learning progress. Study workspace is the default; Living book and Guided walkthrough provide alternative presentations of the same learning state.
+## Product features
 
-The complete product must work in **both VS Code and Cursor**. Cycle 0018 delivered extension **0.2.2 / MCP API 1.5**; Cycle 0019 develops extension **0.2.3**. [Cycle 0018 delivery](docs/cycles/evidence/0018/delivery-pr24-20260923.md) records the merged main-CI package against its installed v32 predecessor: all 276 source inputs and 29 of 31 unpacked archive entries match, with 993 product/shared and 96 package tests passing. Native evidence remains attached to each archive actually executed.
+| Feature | Experience |
+| --- | --- |
+| Live explanation | Ask `/codebook` in Copilot Chat or Cursor Agent. The AI operates the real application/runtime, pauses actual source, explains in chat and continues. Inspect values in the native debugger. |
+| Learning replay | Save that explanation with a processing summary, a sequence diagram, source links and recorded execution. Open the learning library/replay screen later, including after runtime exit. |
+| Independent LLM Wiki | Generate a navigable browser site from source, defaulting to the project folder with a configurable output location. Update through chat or **Update LLM Wiki**, and follow source links back to the editor. Debugging and saved learning are not prerequisites. |
 
-[Cycle 0017](docs/cycles/0017-packaged-repository-study.md) independently installs that actual main-CI package and follows one unchanged Laststance.io theme action in each editor. Both hosts demonstrate the configured click, actual source/value pause, continuation, recorded result, three shared presentations and six Wiki returns. Its Cursor cold restart fails: retained playback does not reach a ready image, and a hidden editor group invalidates pane reservation/restoration checks. VS Code restores the exact paused state. [The native results](docs/cycles/evidence/0017/native-validation.md) and [isolated diagnosis](docs/cycles/evidence/0017/cursor-layout-investigation.md) retain those source-specific successes and failures.
+The owner retired the three selectable UI themes, not these distinct feature screens. The proposed Codebook Activity Bar icon opens feature navigation. Exact screen design and the replacement concept image will be reviewed separately after the written specification.
 
-[Cycle 0018's unchanged v29 schedule](docs/cycles/evidence/0018/installed-v29-validation.md), clean `6eb8435` / VSIX `f1f6ab17…`, passes independently in both ordinary editors: exact paused restart, twelve Wiki Returns, repeated three-mode transfers, ordinary-file retention and fourth-main-group refusal. All 74 overview sheets and six detailed motion sheets were inspected; neutral, noninteractive loading replaces v28's misleading placeholder in the inspected samples. Same-source CI passes, with all 276 selected inputs and 31 unpacked archive entries matching the installed archive.
+## Implementation status
 
-The [v31 trial](docs/cycles/evidence/0018/installed-v31-validation.md) exposed a cold Study failure in VS Code after Wiki succeeded. The [registration repair](docs/cycles/evidence/0018/cold-study-registration.md) now has **unchanged [v32 installed proof](docs/cycles/evidence/0018/installed-v32-validation.md) in both hosts**: all 21 VS Code / 22 Cursor steps and the separate eight-step negative control pass. All 73 overview and twelve detailed motion sheets are inspected; visible blank/loading intervals remain a UX limitation. Thirty-three focused, 993 product/shared and 96 package checks and four typechecks pass. [PR #24](https://github.com/laststance/codebook/pull/24) merged with [main-CI package correspondence](docs/cycles/evidence/0018/delivery-pr24-20260923.md), while three reused delegated fixing passes remain non-converged and a later CodeRabbit documentation finding remains for a future archive. Native success does not complete final acceptance. The separately recorded warm Wiki storage-wait focus race remains required work before final existing-work protection acceptance.
+This is a private preview, not a Marketplace or Open VSX release. [Cycle 0028](docs/cycles/0028-ordinary-chat-study-entry.md) delivered extension 0.2.11 through [PR #45](https://github.com/laststance/codebook/pull/45), with bounded ordinary-chat development evidence in both hosts and a qualified Cursor recovery path.
 
-This is a private preview, not a Marketplace or Open VSX release. Earlier fixture results and failed attempts remain in the [Cycle 0016 record](docs/cycles/0016-packaged-installation.md). Native motion/geometry/accessibility, all intended real-repository uses, owner learning feedback and integrated product acceptance remain open. See [current state](PROJECT_STATE.md) for the active cycle's remaining verification/delivery and the owner-requested Claude Code review skip.
+[Cycle 0029](docs/cycles/0029-feature-specification.md) updates the specification to [goal version 7](PRODUCT_GOAL.md). The existing implementation still contains the bundled cart demo, old presentation variants and custom value display. Removing them and delivering the specified learning replay/independent Wiki behavior remain implementation work. Historical fixture or coupled-Wiki success is not proof of the new destination.
 
-[Goal version 5](PRODUCT_GOAL.md#bundled-thin-skill-and-explicit-chat-entry) additionally requires a common thin `codebook` skill bundled in the VSIX, explicit `/codebook` entry in standard Copilot Chat and Cursor Agent, and ordinary setup for both skill availability and the correct MCP connection. Cycle 0019 implements the bundled skill and public setup path; [qualified ordinary-install development evidence](docs/cycles/evidence/0019/clean-c091212-ai-pair-20260925.md) shows one same-archive dashboard question through subscribed VS Code Claude Code and Cursor Agent. Claude Code is a separate chat host from the required standard VS Code Copilot Chat, and that earlier archive does not validate every later source cut. The [development plan](docs/plans/bundled-codebook-skill.md) and [current state](PROJECT_STATE.md) track remaining G12 checks. The [final ten-reviewer protocol](docs/acceptance/FINAL_REVIEW.md) preserves all earlier capabilities and remains unstarted.
+Until final acceptance begins, actual-editor development verification uses the owner-designated [nextjs-dashboard checkout](DEVELOPMENT.md#required-development-target-before-acceptance). Final acceptance requires [all nine designated projects in two stages](docs/acceptance/FINAL_REVIEW.md), both editors and every applicable runtime use case. No version 7 Stage 1 or Stage 2 PASS is claimed.
 
 ## Start here
 
 | Question | Source of truth |
 | --- | --- |
-| What product are we trying to reach? | [PRODUCT_GOAL.md](PRODUCT_GOAL.md) |
-| What must pass before the product is complete? | [Ten independent end-user trials in both editor AI chats](docs/acceptance/FINAL_REVIEW.md) |
-| What is actually proven, and what is next? | [PROJECT_STATE.md](PROJECT_STATE.md) |
-| How do I install and use the current preview? | [Private VSIX installation and MCP tutorial](extension/README.md), [development changes](CHANGELOG.md) |
-| Copilot reports an image download 404 | [Verified workspace image-transfer setting and recovery limits](extension/README.md#copilot-image-transfer) |
-| How do we use GStack and choose the next cycle? | [DEVELOPMENT.md](DEVELOPMENT.md) |
-| What decisions must survive new sessions? | [DECISIONS.md](DECISIONS.md) |
-| What was approved in office hours? | [Product design](docs/designs/codebook.md) and [visual concepts](docs/designs/README.md) |
+| What are the features and how do they relate? | [PRODUCT_GOAL.md](PRODUCT_GOAL.md) |
+| What exactly is saved learning? | [Learning replay specification](docs/specs/learning-replay.md) |
+| How is Wiki independent, generated and updated? | [LLM Wiki specification](docs/specs/llm-wiki.md) |
+| What must pass before completion? | [Final acceptance](docs/acceptance/FINAL_REVIEW.md), [fixed project matrix](docs/acceptance/ACCEPTANCE_MATRIX.md) |
+| What is implemented, verified and next? | [PROJECT_STATE.md](PROJECT_STATE.md) |
+| How does the existing preview work? | [Version-qualified installation and usage](extension/README.md), [change history](CHANGELOG.md) |
+| How do development and review work? | [DEVELOPMENT.md](DEVELOPMENT.md), [durable decisions](DECISIONS.md) |
+| What is the current design authority? | [DESIGN.md](DESIGN.md), [behavioral design](docs/designs/codebook.md), [visual status](docs/designs/README.md) |
 
-Read [AGENTS.md](AGENTS.md) when starting or resuming work. Claude Code also enters through [CLAUDE.md](CLAUDE.md).
+Read [AGENTS.md](AGENTS.md) when starting or resuming work. Claude Code also enters through [CLAUDE.md](CLAUDE.md). Repository documents own outcomes/state; issues mirror them.
 
-## Continue development
+## Tracking and continuation
 
-A useful request, in this workspace, is:
+- [Goal Issue #1](https://github.com/laststance/codebook/issues/1) remains open until all acceptance conditions and owner acceptance hold.
+- [Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46) tracks the specification, subsequent design and implementation changes.
+- Closed cycle records preserve historical results, failed attempts and their exact source/host boundaries.
 
-> Follow AGENTS.md, read PRODUCT_GOAL.md and PROJECT_STATE.md, and advance the active cycle. Use the relevant GStack skills only for that cycle. Record the actual evidence, update the current state, and identify the next smallest useful cycle.
-
-Japanese equivalent:
-
-> AGENTS.mdに従って現在のサイクルを進めて。最終目標と現在地を読み、今回の範囲に必要なGStackスキルを使い、実証結果を記録して次の候補まで整理して。
-
-This requests one cycle by default. A request to continue across cycles permits repeating the loop within the authorized scope. Each cycle still records its result before choosing the next one.
-
-## GitHub tracking
-
-Repository: [laststance/codebook](https://github.com/laststance/codebook), private.
-
-- [Final product goal — issue #1](https://github.com/laststance/codebook/issues/1) stays open through all cycles.
-- [Cycle 0001 — issue #2](https://github.com/laststance/codebook/issues/2) records the first bounded experiment and its evidence.
-
-Issues provide a discoverable queue; the linked repository documents own scope, state, and evidence. Create the next cycle issue after learning from the current result, not by decomposing the entire future product now.
-
-## Current baseline
-
-Product design and three visual directions are approved. [Cycle 0001](docs/cycles/0001-click-pause-resume.md) proved the synchronous VS Code fixture; [Cycle 0002](docs/cycles/0002-cursor-runtime-compatibility.md) added actual Cursor evidence. [Cycle 0003](docs/cycles/0003-scoped-browser-transport.md) then demonstrated a js-debug-owned Chrome pipe and exact source/value/PNG correspondence in both real hosts, with **38 unit tests and 21/21 native runtime cases per host**. Its full native-presentation result is **inconclusive**: independent editor screenshots were blocked by the locked Mac. [Evidence and limits](docs/cycles/evidence/0003/README.md) preserve that distinction and earlier failures.
-
-[Cycle 0004](docs/cycles/0004-async-request-boundary.md) demonstrates the instrumented browser-to-Node boundary with a concurrent unrelated request: **26 paired / 40 shared unit tests and 18/18 native cases per host**. Its [evidence](docs/cycles/evidence/0004/README.md) links actual request/response, both debugger stops, executed source, values and final screen update. Independent native product presentation remains unverified; implementation review has explicit missing coverage.
-
-[Cycle 0005](docs/cycles/0005-live-study-mcp.md) adds an extension-owned MCP service with explicit identities, real pause/source/image resources, grounded agent interpretations and lifecycle recovery. **33 product / 43 shared / 28 paired unit tests, 6/6 MCP native cases per host, and 3/3 shared native regressions per host** pass on the recorded clean source. A separate driving-agent smoke also completed. [Evidence and review limits](docs/cycles/evidence/0005/README.md) and [connection/reproduction instructions](extension/README.md) keep the declared demo scope explicit.
-
-[Cycle 0006](docs/cycles/0006-study-workspace.md) implements the first connected Study workspace: native learning outline, app above captured source, context and values, source-linked overview/flow, observed moments and durable learner checks. Current development validation includes 63 product tests and 27 webview interaction checks; learner normal/history and MCP regressions passed separately in VS Code and Cursor. Native visual usability remains unverified. Cycle 0007 now extends the same session through purchase confirmation. See the [development commands](extension/README.md) and [current state](PROJECT_STATE.md) for evidence and remaining coverage.
-
-[Cycle 0008](docs/cycles/0008-recording-replay.md) adds bounded application-frame recording and offline replay with matching captured code, values and explanations. **238 tests and actual-agent offline replay in both hosts** pass; recorded motion and partial-state recovery have browser evidence. Current VS Code recording/restart passes; the latest Cursor recording retains five missing phase-renderer acknowledgements and remains partial despite successful later replay. [Closure evidence](docs/cycles/evidence/0008/candidate-1740e34/README.md) preserves the failure, prior Cursor pass, non-converged review and native visual limits. The [current state](PROJECT_STATE.md) identifies the next bounded increment.
-
-[Cycle 0009](docs/cycles/0009-repository-learning-book.md) connects real tracked repository sources to immutable cited articles, source-derived relationships, complete-citation learning decisions and exact Wiki/observation/recording returns. Native reading and return flows passed in both editors at normal and 200% zoom, including restart and an unrelated dirty draft. These results establish source reading and retained evidence navigation; fixed-checkout phase captures retain the qualified outcomes in [current state](PROJECT_STATE.md).
-
-[Cycle 0010](docs/cycles/0010-real-repository-runtime.md) demonstrates one unchanged Next repository browser action in both editors: exact source/map/value pause, a 70-second hold, one continuation and the resulting screen. Its 38 tests and seven native cases per host belong to the bounded experiment.
-
-[Cycle 0011](docs/cycles/0011-repository-browser-study.md) connects that mechanism to API 1.4 / development extension 0.2.0 as `repository-browser`: an agent declares one bounded operation for an existing cited article, then uses the shared Study, history and recording readers. Actual-agent core execution, retained recordings and offline reading have separate native evidence in both editors. Its bounded reader fixes pass 476 tests; both editors have measured four-theme/three-geometry native flows, stable keyboard understanding and exact historical image/source correspondence. [Final cycle reconciliation](docs/cycles/evidence/0011/final-reconciliation-20260920.md) records the completed bounded evidence and remaining gaps. GStack's three implementation review passes ended non-converged; the separately requested CodeRabbit/OCR reviews and subsequent scoped fixes retain their own revision and coverage limits. Follow the [configured-study tutorial](extension/README.md#run-one-configured-repository-action) for the supported Next root-route scope and evidence distinctions.
-
-[Cycle 0014](docs/cycles/0014-shared-presentation-controls.md) implements shared Study workspace, Living book and Guided walkthrough controls in API 1.5. Both supported development hosts demonstrate the same live pause and paused recording across all three modes, retained source/reading focus, and 15 theme/zoom checks each. The later [ship verification](docs/cycles/evidence/0014/ship-verification-20260921.md) passes **647/647 tests** (508 extension, 55 shared, 45 paired, 39 experiment) and executes the unchanged presentation SDK example five times per host with separate stale-revision recovery. Cursor's initial cold-reader foreign-focus failure and explicit recovery remain recorded. [Evidence and limitations](docs/cycles/evidence/0014/README.md) distinguish the earlier native source cuts from the ship inventory, strict error-free Study receipts, review non-convergence, unavailable outside review and cropped 200% motion capture.
-
-[Cycle 0015](docs/cycles/0015-wiki-navigation-ordering.md) investigates whether an older native Wiki source-display operation can overwrite a newer selection. Its 35 instrumented diagnostic cases per development host observed no mismatch, but none reached the modeled reverse completion order. The [investigation and reproduction record](docs/cycles/evidence/0015/native-ordering-20260921.md) therefore remains **inconclusive**; in-memory test storage and finite native observations do not establish a general ordering guarantee. No product code changed, and the modeled concern remains open for future native evidence.
-
-[Cycle 0016](docs/cycles/0016-packaged-installation.md) adds self-contained private VSIX packaging and ordinary installation in VS Code 1.138.0 and Cursor 3.21.16 on macOS arm64. [V7](docs/cycles/evidence/0016/installed-validation-v7.md) demonstrates four checkout stops, eleven causal links, seven captures, offline replay, six live/six paused/nine manual-reading mode transfers and fresh restart in each host. Its fresh suites pass **680 product/shared and 57 package tests**. [V8](docs/cycles/evidence/0016/installed-validation-v8.md) passes **680 + 65 tests** and separately verifies its exact installed identity, retained Wiki/replay/understanding and cleanup in both hosts; all 28 runtime/asset and other non-metadata/README entries match v7. [V10](docs/cycles/evidence/0016/installed-validation-v10.md), clean `479dd29` / VSIX `91c264ee…`, passes **680 + 83 tests** after replacement-ref, revision-format and package interruption repairs. Both hosts install/reinstall 29 matching files and retain saved Wiki/replay/1-of-4 progress, exact drafts and zero owned processes/descriptors; its 28 runtime/asset and other non-metadata/README entries match v8/v7. V11 separately passes 680 + 89 tests, retained-state native checks in both hosts and exact-entry comparison with its successful manually dispatched CI artifact. Its three structured-review P3 topics are repaired in `deb5335`; clean v12 passes 680 + 92 tests and package checks but is held before installation. The completed original adversarial review prompted additional package admission/provenance corrections with 96 passing modified-source package tests. [V13](docs/cycles/evidence/0016/installed-validation-v13.md), clean `4d99768` / VSIX `36461d58…`, passes 680 + 96 clean local/manual-CI tests, both-host retained-state installation/video/cleanup, and all 266 source-input / 31 archive-entry comparisons. Its native whole-branch review and CodeRabbit 14-file delta complete without findings. The later v16 candidate and owner-requested outside-review skip are summarized above; [PR #20 delivery](docs/cycles/evidence/0016/delivery-20260921.md) is complete with successful final PR/main CI and exact selected-input/runtime-entry equality. Earlier native failures, console findings, transient layout motion and missing historical review coverage remain explicit; this preview is not a Marketplace or Open VSX release.
-
-Real-repository checkout, general natural-language orchestration, three intended real-repository uses and complete installed-editor UX acceptance remain open. A fixture workflow and a verified package do not establish the full product goal.
-
-Repository files are the portable project record. GStack's local cache, chat history, and optional GitHub issues are supporting views of that record. Commits are also stored in the private GitHub repository. Ignored private recordings still require an explicit durable evidence location.
+Advance only the active phase authorized by the owner. The current request is documentation first; screen design follows separately. Record actual evidence and update the active cycle and PROJECT_STATE.md before handoff.

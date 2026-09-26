@@ -1,24 +1,21 @@
-# codebook design entry point
+# Codebook design entry point
 
-This is the stable entry point for GStack design-document discovery. Follow the links below instead of selecting a design by file modification time.
+Use this stable entry for design discovery rather than file modification time.
 
-## Product and current scope
+- [PRODUCT_GOAL.md](PRODUCT_GOAL.md) owns version 7 outcomes: live explanation, saved learning replay and independent LLM Wiki in VS Code and Cursor.
+- [Current behavioral design](docs/designs/codebook.md) describes their relationships, runtime truth and ownership boundaries.
+- [Learning replay](docs/specs/learning-replay.md) defines saved explanation, processing summary, sequence diagram and replay.
+- [Independent LLM Wiki](docs/specs/llm-wiki.md) defines a browser-readable site, configurable output, chat/button updates and editor source links.
+- [PROJECT_STATE.md](PROJECT_STATE.md) owns current evidence and the active cycle; [DECISIONS.md](DECISIONS.md) records supersession.
 
-- [PRODUCT_GOAL.md](PRODUCT_GOAL.md) defines the final experience and G01–G12 acceptance in VS Code and Cursor.
-- [PROJECT_STATE.md](PROJECT_STATE.md) identifies current evidence and the active cycle.
-- [DECISIONS.md](DECISIONS.md) records later decisions and supersession.
-- [Approved product design](docs/designs/codebook.md) supplies architectural and behavioral context.
+## Current direction
 
-The approved destination is a chat-driven application walkthrough with actual debugger stops, source and runtime-value explanations, recording/replay, a connected wiki/codemap, and learner-owned progress. Architecture B makes the extension the owner of runtime state and evidence while external agents plan and explain through MCP.
+D030 removes the three selectable UI themes/layouts. It retains distinct feature screens: standard-chat live explanation with native debugging, a learning library/replay, and independent Wiki browsing/generation. There is no requirement to display every feature together or to keep one fixed pane arrangement. Values use the native debugger; Codebook retains only the internal evidence needed to ground claims and recordings.
 
-[D023](DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21) adds a common thin bundled skill and explicit `/codebook` entry in standard Copilot Chat and Cursor Agent, with safe skill/MCP onboarding. This later requirement supplements the approved baseline and all three layouts. Its [development contract](docs/plans/bundled-codebook-skill.md) is implemented in bounded increments. [Cycle 0021](docs/cycles/0021-ordinary-copilot-chat.md) demonstrates one ordinary VS Code chat result, and [Cycle 0022](docs/cycles/0022-ordinary-cursor-agent.md) records one bounded standalone Cursor Agent development result. Integrated G12 acceptance remains unverified. Discovery or skill loading alone is not proof of the AI's runtime results.
+The proposed Codebook Activity Bar icon opens extension navigation. Wiki browsing primarily uses a normal browser and may also be offered inside the extension. Screen geometry, styling and the replacement concept image await a **separate design review after the written update**, as requested by the owner. [The three old images](docs/designs/README.md) are historical references, not active specifications.
 
-## Visual direction
+Architecture B and the G12 common bundled `/codebook` skill/public onboarding remain. The [G12 contract](docs/plans/bundled-codebook-skill.md) tracks remaining validation; discovery or loaded skill text alone does not establish AI-owned runtime results.
 
-[Study workspace](docs/designs/assets/01-study-workspace.png) is the default. [Living book](docs/designs/assets/02-living-book.png) and [Guided walkthrough](docs/designs/assets/03-guided-walkthrough.png) are later required selectable layouts over the same data/session. The images are approved concepts, not implemented UI or a precise component/token specification.
+## Review scope
 
-For the repository Wiki within Study workspace, [D016](DECISIONS.md#d016--preserve-the-approved-repository-reader-experience-2026-09-19) and the [Cycle 0009 design review](docs/cycles/0009-repository-learning-book.md#formal-design-review-checkpoint) record the approved B composition: compact `understand`, article review state across every citation, one column with relationships below in narrow readers, and return to the original section/reading position. These refine this reader; they do not replace the three required product layouts. The cycle records the immutable local reference image path/hash and implementation checks.
-
-## Review boundary
-
-Review and plan only the active, explicitly selected cycle. Keep the full product goal as context and acceptance direction. Decision D002 replaces the baseline design's original first-task sizing with adaptive increments; do not turn the full checkout plus all layouts into one implementation plan. Preserve each skill's scope gate and applicable requirements.
+Pass the active cycle and requested phase to each review. D002 keeps implementation adaptive; D030 owns the current feature boundaries. Preserve D016's explicit understanding, citation context and reading-return behavior where relevant, without reinstating the retired common three-mode model. Documentation work is not a request to choose screen layouts or generate images.

@@ -1,6 +1,6 @@
 # Required project acceptance matrix
 
-Authority: PRODUCT_GOAL version 6 and D029 (2026-09-26). This is a fixed required set, not a candidate pool. All results below are unexecuted under the new protocol. Historical fixture, demo and development preflight results do not populate these cells.
+Authority: PRODUCT_GOAL version 7, D029 and D030 (2026-09-26). This is a fixed required set, not a candidate pool. All results below are unexecuted under the new protocol. Historical fixture, demo and development preflight results do not populate these cells.
 
 | ID | Required project | Revision / execution mapping | Stage 1 VS Code / Cursor | Stage 2 VS Code / Cursor |
 | --- | --- | --- | --- | --- |
@@ -14,11 +14,15 @@ Authority: PRODUCT_GOAL version 6 and D029 (2026-09-26). This is a fixed require
 | P08 | https://github.com/laststance/switch-time | Web app + Hono Node API | NOT RUN / NOT RUN | NOT STARTED / NOT STARTED |
 | P09 | https://github.com/laststance/gitbox | Next Web UI + server-side actions/authentication | NOT RUN / NOT RUN | NOT STARTED / NOT STARTED |
 
+Before this acceptance campaign starts, D031 requires development behavior verification on the owner's nextjs-dashboard checkout (see DEVELOPMENT.md for the exact path). Dashboard results are development-only, not a new matrix target or a PASS for any row.
+
 ## Mapping and evidence rules
 
 Before trials, inspect each actual repository at a pinned revision. Expand each project into rows for every applicable required execution form: Web UI interaction, Node.js server processing, Chrome Extension contexts, library tests, and library Examples. Record the source/configuration paths establishing that mapping, entry points, real commands, dependencies, normal setup burden and required use cases. Do not infer forms from repository names or assume browser/Next.js-only scope. The library labels above encode the owner's mandatory test-plus-Example requirement; they are not inspection results. Mark unsupported forms as development gaps. A NOT APPLICABLE entry needs code-based grounds; it cannot remove a required target or its applicable runtime.
 
-For every project/host/use-case row retain: fixed target revision, question and objective, setup prerequisites, candidate VSIX/version/hash and skill/setup identities, host version, stage/operator, observed actions/stops/values/call stack, source correspondence, recording/replay and all-mode evidence, errors/help/unknowns, verdict and report link. Stage 2 also requires the junior's own-word understanding, correctness evidence and confidence with reasons. Confidence is unset until an actual evaluation; it is subjective assurance, not a probability.
+For every project/host/use-case row retain: fixed target revision, question and objective, setup prerequisites, candidate VSIX/version/hash and skill/setup identities, host version, stage/operator, observed actions/stops/values/call stack, source correspondence, learning replay with processing summary/sequence diagram, independent Wiki generation/update/browser-to-editor source-link evidence, and feature-screen usability, errors/help/unknowns, verdict and report link. Stage 2 also requires the junior's own-word understanding, correctness evidence and confidence with reasons. Confidence is unset until an actual evaluation; it is subjective assurance, not a probability.
+
+For each host, verify the three feature areas independently: live standard-chat explanation with native debugging; save/open learning replay containing the explained path, summary and sequence diagram; and repository-wide Wiki generation/browser reading/update/source deep links with no runtime/replay prerequisite. Exercise chat and **Update LLM Wiki** updates and default/configured output. The retired display themes are not required rows. A new feature specification, old fixture run or old coupled Wiki reader does not earn a PASS.
 
 Stage 1: 0/18 minimum project-host assessments completed. Stage 2: 0/18 minimum project-host assessments completed; nine independent project reviewers not started. Expanded use cases will increase row counts. No complete final candidate or final distributed VSIX is frozen. Owner acceptance remains outstanding.
 
