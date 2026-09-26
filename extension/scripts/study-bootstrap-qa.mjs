@@ -64,6 +64,31 @@ async function check(page, options) {
         const action = await page.evaluate(() => window.sent.findLast(message => message.type === 'action'));
         cases.push({ name: `${phase} enables an explicit source action with the loaded revision`, actual: action,
           passed: action?.action === 'current-file' && action.revision === 1 });
+        if (phase === 'initial') {
+          // Arrange: reproduce a narrow Study column when a followed runtime pause arrives.
+          await page.setViewportSize({ width: 260, height: 750 });
+          const observed = { ...options.message, revision: 2, liveState: 'paused', liveTitle: 'Checkout demo',
+            model: { ...options.message.model, matching: true, selection: { ...options.message.model.selection, tab: 'live', follow: true },
+              observation: { id: 'pause-1', capturedAt: '2026-09-26T05:07:15.000Z', values: { price: 24, cartCount: 1 },
+                interpretations: [{ text: 'The selected tote costs $24 and the cart count is one.' }] } } };
+          // Act: the product renderer receives a new actual pause without a learner scroll.
+          await publish(observed); await page.waitForFunction(() => window.sent.some(message => message.type === 'rendered' && message.revision === 2));
+          const revealed = await page.evaluate(() => ({ scrollY: window.scrollY,
+            interpretationTop: document.querySelector('#live-content h2').getBoundingClientRect().top,
+            interpretationBottom: document.querySelector('#interpretations').getBoundingClientRect().bottom,
+            valuesBottom: document.querySelector('#values tr').getBoundingClientRect().bottom,
+            viewportHeight: window.innerHeight }));
+          await page.screenshot({ path: `${options.output}/narrow-followed-pause.png` });
+          // Assert: interpretation and at least one captured value are visible without moving the app or source panes.
+          cases.push({ name: 'narrow followed pause reveals interpretation and captured values without a manual scroll', actual: revealed,
+            passed: revealed.scrollY > 0 && revealed.interpretationTop >= 0 && revealed.interpretationBottom <= revealed.viewportHeight
+              && revealed.valuesBottom <= revealed.viewportHeight });
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await publish({ ...observed, revision: 3 });
+          await page.waitForFunction(() => window.sent.some(message => message.type === 'rendered' && message.revision === 3));
+          cases.push({ name: 'refresh of the same pause preserves the learner reading position',
+            passed: await page.evaluate(() => window.scrollY === 0) });
+        }
       }
     }
     if (kind === 'context') {

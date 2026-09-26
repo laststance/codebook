@@ -221,7 +221,11 @@ function studyClient(options: typeof STUDY_UI_OPTIONS, installFocus?: typeof ins
     if (message?.type !== 'study') return;
     const incoming = message.presentation;
     if (poseTransaction && (incoming?.state !== 'applying' || incoming.presentationId !== poseTransaction.request.presentationId || incoming.presentationControlRevision !== poseTransaction.request.expectedRevision)) poseTransaction = undefined;
+    const previousObservationId = current?.model.observation?.id;
     current = message; const { model, recording } = message, contentTab = message.contentTab ?? model.selection.tab;
+    document.body.dataset.contentTab = contentTab;
+    const shouldRevealFollowedPause = contentTab === 'live' && !recording && model.selection.follow && Boolean(model.observation)
+      && model.observation?.id !== previousObservationId && window.innerWidth <= options.compactReaderMaxWidthPx;
     // On a narrow Live reader, make captured evidence the first visible content without hiding pane controls from the learner.
     if (contentTab !== selectedContentTab) {
       if (contentTab === 'live' && window.innerWidth <= options.compactReaderMaxWidthPx && !readerOptionsOpenedByLearner) readerOptions.removeAttribute('open');
@@ -343,6 +347,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS, installFocus?: typeof ins
     for (const link of Array.from(document.querySelectorAll<HTMLButtonElement>('.link[data-action]'))) link.classList.toggle('visited', visited.has(link.dataset.action ?? ''));
     // A replacement must not expose placeholder facts or actions before its complete host snapshot.
     element('study-content').inert = false; element('study-content').hidden = false; element('bootstrap-status').hidden = true;
+    // A newly followed pause should reveal its interpretation and facts without requiring a learner scroll past run controls.
+    if (shouldRevealFollowedPause && !message.loading) element('live-content').scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
     api.postMessage({ type: 'rendered', revision: message.revision, itemId: model.selection.itemId, snapshotUri: model.observation?.snapshotUri, ...(recording ? { presentationRevision: recording.presentationRevision } : {}), ...(message.presentation ? { presentationControlRevision: message.presentation.presentationControlRevision, presentationMode: message.presentation.mode } : {}) });
   });
   api.postMessage({ type: 'ready' });
