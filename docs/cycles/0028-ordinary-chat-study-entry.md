@@ -1,9 +1,9 @@
 # Cycle 0028 — Open Study from ordinary runtime chat
 
 Type: product increment
-Status: delivery pending
+Status: complete — bounded result delivered
 Result: demonstrated for the bounded checkout fixture; Cursor entry required public recovery
-Delivery: 0.2.11 bounded two-host development result recorded; current-head review, CI and merge pending
+Delivery: [PR #45](https://github.com/laststance/codebook/pull/45) merged as `5e22d4d78901c69c17e954409a4dce941040cfe1`; Issue #44 closed
 Goal version: 6
 Tracking issue: [#44](https://github.com/laststance/codebook/issues/44)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -62,8 +62,8 @@ Development probe: 3/3 actual-MCP transport cases pass for a closed default Stud
 
 ## Result and handoff
 
-- Result: demonstrated for this bounded fixture; the installed VS Code checkout reading trial passes on 0.2.11. Cursor's recovered checkout reading path also passes, but native focus and pane-creation failures qualify ordinary entry; delivery remains open.
-- Exact next action: complete the final current-head review and CI, merge PR #45, and close Issue #44. Keep new acceptance rows NOT RUN until normal packaged practical trials occur. Then pause goal work as the owner requested.
+- Result: demonstrated for this bounded fixture; the installed VS Code checkout reading trial passes on 0.2.11. Cursor's recovered checkout reading path also passes, but native focus and pane-creation failures qualify ordinary entry. PR #45 and Issue #44 are closed.
+- Exact next action: pause goal work as the owner requested. After explicit resumption, select Cycle 0029 Issue #46 and first update the final product specification. Keep new acceptance rows NOT RUN until normal packaged practical trials occur under the revised goal.
 - Current state: the invalid VS Code 0.2.11 trial remains separate. The fresh-process exact-question Copilot Auto retest passed. Cursor Agent completed the same fixture after public layout recovery; its isolated process is closed and the owner's global skill restored.
 - One next candidate: [Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46) records the owner's new product destination and should be selected only after the paused goal is resumed. The Cursor entry failures remain evidence for later diagnosis.
 
@@ -122,3 +122,5 @@ Candidate 0.2.11 passed 966/966 extension tests, 101/101 package regressions and
 [The signed-in isolated Cursor 0.2.11 trial](evidence/0028/cursor-0211b-reader.md) completed the exact checkout fixture after an initial native focus refusal and a pane-creation layout failure. The AI recovered through public operations before application input, then saved four grounded explanations, a demonstrated Study and recording. Inspected IDE video shows Application, source, interpretation and values together after the cart action and at historical purchase confirmation. An extra identical user message appeared in the same chat, so this is a qualified recovered path rather than a clean single-prompt entry. The trial skill was removed and the owner's original global skill restored. No nine-project D029 row is credited.
 
 The owner subsequently directed a different final product shape: remove the bundled cart demo, use actual repositories, retain one editor workspace with native chat/debugger, remove custom runtime-value display, and replace the old three images with one current concept. [Planned Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46) records that change. It does not retroactively change this cycle's historical fixture evidence. After Cycle 0028 delivery the active goal is to be paused at the owner's request; Cycle 0029 is not active yet.
+
+Final delivery: PR #45 merged the exact reviewed `f0eab745867de08657ca9162dba2e81fbb188c55` head on 2026-09-26 as `5e22d4d78901c69c17e954409a4dce941040cfe1`, and Issue #44 closed at merge. PR CI `36225654458` passed package/build verification and both Socket checks; hosted CodeRabbit was owner-skipped with no review threads and no formal approval. CodeRabbit CLI reviewed all 38 changed paths on that head and returned two duplicate severity-low findings about collapsing the narrow Live controls after resizing from wide to compact. The bounded native trials began compact and did not verify this resize transition. The owner-directed Cycle 0029 will replace the dedicated display; retain the edge as a known limitation rather than changing this frozen candidate. OCR reviewed all 12 eligible paths, with 26 default exclusions identified. The 35-entry PR CI VSIX matches the locally installed trial archive on 33 entries; the only differing entries are build metadata. Main-branch CI `36226063871` was still in progress when this closure record was prepared.
