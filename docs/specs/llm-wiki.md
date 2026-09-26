@@ -1,6 +1,6 @@
 # Independent DeepWiki reproduction
 
-Authority: PRODUCT_GOAL version 8, G02 and D030/D033. “LLM Wiki” is the Codebook feature name. **Its final product target is to reproduce DeepWiki itself: the repository documentation, reader/navigation, diagrams, source citations and repository question-answering experience.** The owner's explicit request makes DeepWiki the reference product, not a loose style label. Source citations open the user's matching local VS Code/Cursor checkout. Implementation and final visual approval remain pending.
+Authority: PRODUCT_GOAL version 9, G02 and D030/D033. “LLM Wiki” is the Codebook feature name. **Its final product target is to reproduce DeepWiki itself: the repository documentation, reader/navigation, diagrams, source citations and repository question-answering experience.** The owner's explicit request makes DeepWiki the reference product, not a loose style label. Source citations open the user's matching local VS Code/Cursor checkout. Implementation and final visual approval remain pending.
 
 ## DeepWiki is the acceptance target
 
@@ -61,3 +61,7 @@ Verify browser-to-editor activation and actual source selection in both hosts. P
 ## Verification
 
 In each host, have the normal editor AI use the shared generation skill to create a Wiki on a real opened project with no runtime/replay prerequisite and with debug MCP unavailable. Compare the generated reader with DeepWiki's chapter/article/diagram/citation/Q&A experience; navigate multiple chapters, ask a real repository question and follow citations to the correct editor. Verify generation-skill identity, default/configured output, chat/browser-button update routes, additions/edits/deletions, failure/cancellation preservation, manual-file conflicts and freshness labels. Use isolated owned copies for mutation controls; required real-project trials preserve owner work. Confirm Wiki updates leave saved replay/debug history and learner progress intact.
+
+## Reader controls and visual target
+
+Follow [the approved v9 visual specification](../designs/codebook-product-spec-v9.md) and [the shortcut contract](../specs/keyboard-shortcuts.md): show assigned keys in action tooltips and provide the **?** shortcut list while preserving typing. Verify the independent browser at D034's ordinary expanded desktop/default zoom. The [local execution guide](../../IMPLEMENTATION.md) requires actual image inspection and applicable acceptance evidence.

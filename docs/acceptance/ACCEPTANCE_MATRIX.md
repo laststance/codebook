@@ -1,6 +1,6 @@
 # Required project acceptance matrix
 
-Authority: PRODUCT_GOAL version 8, D029 and D030/D032/D033 (2026-09-26). This is a fixed required set, not a candidate pool. All results below are unexecuted under the new protocol. Historical fixture, demo and development preflight results do not populate these cells.
+Authority: PRODUCT_GOAL version 9, D029 and D030/D032/D033 (2026-09-26). This is a fixed required set, not a candidate pool. All results below are unexecuted under the new protocol. Historical fixture, demo and development preflight results do not populate these cells.
 
 | ID | Required project | Revision / execution mapping | Stage 1 VS Code / Cursor | Stage 2 VS Code / Cursor |
 | --- | --- | --- | --- | --- |
@@ -15,6 +15,8 @@ Authority: PRODUCT_GOAL version 8, D029 and D030/D032/D033 (2026-09-26). This is
 | P09 | https://github.com/laststance/gitbox | Next Web UI + server-side actions/authentication | NOT RUN / NOT RUN | NOT STARTED / NOT STARTED |
 
 Before this acceptance campaign starts, D031 requires development behavior verification on the owner's nextjs-dashboard checkout (see DEVELOPMENT.md for the exact path). Dashboard results are development-only, not a new matrix target or a PASS for any row.
+
+D034 uses ordinary expanded desktop windows at normal/default zoom for editor/browser UI acceptance. OS full-screen, extremely small windows and extreme zoom such as 200% are not required. This layout boundary changes no project or runtime row.
 
 ## Mapping and evidence rules
 

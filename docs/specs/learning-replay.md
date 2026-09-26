@@ -1,6 +1,6 @@
 # Learning replay and time-travel debugging
 
-Authority: PRODUCT_GOAL version 8, G03/G04/G05/G07 and D030/D032. This specifies required behavior; implementation and final visual approval remain pending in Cycle 0029.
+Authority: PRODUCT_GOAL version 9, G03/G04/G05/G07 and D030/D032. This specifies required behavior; implementation and final visual approval remain pending in Cycle 0029.
 
 ## Purpose and screen hierarchy
 
@@ -9,6 +9,12 @@ Learning replay lets a learner repeatedly inspect how an application's behavior 
 The replay screen inherits the live explanation's composition. It shows the recorded application, the historical executed source in a native source editor and historical values/call stacks in the standard debugger together. The live chat area becomes a **learning summary** containing the processing summary, saved explanation and sequence diagram. This is a Codebook-owned replay surface, not a replacement live chat client or a request to modify native chat internals. The Codebook Activity Bar entry opens the learning library and selected replay.
 
 The primary task is synchronized playback and time-travel debugging; the summary supports it. A document-like reader with a small video thumbnail and source links cannot substitute for synchronized source/debugger history. No dedicated Codebook Variables/Watch clone is required: the native debugger is the inspection surface in both live use and replay.
+
+### Desktop layout and summary visibility
+
+D034 sets the reference: an ordinary desktop display with the editor window expanded to the available screen area at normal/default zoom. OS full-screen mode is not required. Show application video, source, native debugger and the learning summary together at this reference size.
+
+Approved choice **5A** allows the learning summary to collapse behind a visible **Learning summary** button when space is limited, preserving priority for application/source/native debugger. Opening/closing it retains the selected moment, historical debug context, reading position and appropriate keyboard focus. Preserve manual user layout choices and unrelated native panes. Extremely small windows and extreme zoom such as 200% are outside required design/acceptance; this fallback does not make them mandatory targets.
 
 ## Shared historical moment
 
@@ -23,6 +29,14 @@ Play, pause, step backward/forward and seek use one selected recorded moment. Re
 | Playback controls | Apply the same playhead/step to all synchronized surfaces. Keep historical state visibly selected while paused; never silently mix earlier values with later video. |
 
 Capture skew, intervals without a source/debug observation and truncated/redacted values remain explicit. Do not interpolate a value, fabricate an executing line or silently carry the last observed state forward as if freshly captured. Unsupported capture fidelity at a required point is an implementation gap, not a passing alternative design. Precise sampling/storage/debug-adapter mechanics belong to engineering planning, with these observable outcomes preserved.
+
+### Partial history — approved design choice 4A
+
+When application video exists but source or debugger history is missing for an interval, continue playing the available video. Mark the missing interval on the shared timeline. Each affected source/debugger surface shows **Not recorded at this moment** (Japanese: **この時点は未記録**) instead of a line highlight, values or call stack from another moment. Retain any genuinely available same-moment evidence with its identity; never imply that an absent observation exists.
+
+The same behavior applies during playback, a direct seek and backward/forward navigation. Entering a gap clears any previously selected execution highlight or debugger state that would otherwise look current. Reaching a recorded point restores that point's captured source/debugger context at the shared playhead. A gap does not automatically pause playback or require a confirmation. The learner can still pause or seek deliberately through the ordinary controls.
+
+This is a playback recovery rule, not permission to omit required capture. Missing history at a required acceptance point remains unverified and cannot earn a PASS.
 
 ## Capture and saved learning artifact
 
@@ -66,7 +80,8 @@ In each host, use a real project and natural question. Save a session that cross
 - Backward/forward steps, non-adjacent seeking and repeated replay return to identical historical state; no new target side effects or unintended live-debug mutations occur.
 - Summary/sequence/selected-step explanation remain grounded and synchronized where they refer to a selected point; learner progress stays explicit.
 - Editor restart restores the saved playhead and corresponding source/debugger context; source drift does not replace recorded state with current values/files.
-- Missing, partial, skewed or unavailable data is labeled honestly and required absent evidence prevents PASS.
+- With video present and source/debugger history absent for a controlled interval, playback continues across a marked timeline gap. The affected surfaces display the missing-history message and no earlier/later execution highlight, values or stack. Direct seeking and repeated traversal behave the same; recorded points restore matching state. Required absent evidence still prevents PASS.
+- Partial, skewed, truncated or otherwise unavailable evidence retains its accurate labels and source/time identity.
 - Wiki generation/update has no effect on the saved replay or progress.
 
 Record native operation as video, extract and inspect frames for temporal correspondence and motion, and bind evidence to source/package/host/theme/viewport identity. A static screenshot, generated image, source-link-only reader or video-plus-summary without native historical inspection does not verify this feature. The exact nine-project matrix remains unchanged; pre-acceptance development uses D031's designated nextjs-dashboard checkout.

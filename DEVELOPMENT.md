@@ -2,7 +2,7 @@
 
 ## Operating model
 
-Keep the destination stable and the route revisable. The driving agent reads the product goal and current evidence, chooses one bounded cycle, uses the relevant GStack skills, implements or experiments, verifies what actually happened, and updates the project record. Plan detail grows only for the current cycle.
+Keep the destination stable and the route revisable. [IMPLEMENTATION.md](IMPLEMENTATION.md) gives the mandatory local execution sequence reached from AGENTS.md: read the assignment, visually inspect the approved image, select acceptance IDs, implement one observable increment, verify and update the handoff. The driving agent uses the relevant GStack skills and grows plan detail only for the current cycle.
 
 ```mermaid
 flowchart LR
@@ -22,12 +22,13 @@ GStack supplies specialized review, debugging, QA, and delivery workflows. It do
 
 | Artifact | Owner and update rule |
 | --- | --- |
+| IMPLEMENTATION.md | Local execution sequence, active-goal acceptance map and evidence template. Keep every required feature reachable from AGENTS.md; derive the map from the authoritative contracts and use it to select/check bounded work. |
 | PRODUCT_GOAL.md | Final product outcomes. Update only for an explicit user-approved change; increment the goal version and record why. |
 | PROJECT_STATE.md | Latest observed capability state, active cycle, uncertainties, and exact resume action. Update after meaningful evidence and at every session/cycle handoff. |
 | docs/cycles/NNNN-topic.md | One cycle's hypothesis, scope, plan, checks, observations, evidence, and decision. Update throughout the cycle; retain closed results. |
 | DECISIONS.md | Durable product/process/architecture decisions, their source, and supersession. Routine check output stays in the cycle. |
 | docs/plans/bundled-codebook-skill.md | Required G12 development/validation contract under D023; pending work, not a second active cycle or implementation evidence. Select bounded work through the active-cycle process. |
-| DESIGN.md and docs/designs/ | Stable GStack discovery entry, approved product baseline, and visual references. D030 defines the current feature model; earlier approval and superseded images remain historical. Detailed replay/Wiki contracts live in docs/specs/. |
+| DESIGN.md and docs/designs/ | Stable design entry, behavioral design and the D036 approved v9 PNG/companion. visual-target.json identifies the image, hash and approval. Open and inspect the actual PNG; preserve superseded images as history. Detailed feature contracts live in docs/specs/. |
 | TODOS.md, if a skill generates it | Candidate findings only. Reconcile them into the active cycle or the short candidate list; it is not another authoritative roadmap. Preserve the original finding link. |
 | GStack files under ~/.gstack | Supplemental review reports, working context, and caches. Reference or preserve useful results in the cycle; never leave the sole project decision/evidence reference only in a chat or temporary file. |
 
@@ -48,7 +49,7 @@ Keep one current plan and a short list of possible follow-ups. Do not create a c
 
 ## 2. Create or refine one cycle
 
-Per D021 as amended by D030, freshly read Issue #1, the current goal/design/feature specifications and visual-reference status at every new cycle. Inspect the current approved visuals when available; the three retired images are historical and a replacement is pending a separate design review. Record the refresh, then create a `codex/` branch for the selected cycle. Starting with Cycle 0014, each cycle is delivered through a PR; place `@coderabbitai ignore` in its initial Draft description. Retain it under D027 while hosted review is owner-skipped; local review and CI remain separate gates. Use a closing reference only when the cycle issue's required outcome is complete; otherwise keep the issue open with a non-closing reference. The goal issue remains open until final acceptance.
+Per D021 as amended by D030/D036, freshly read the local goal, design, applicable feature specifications and current assignment at every new cycle. Open the approved PNG and record its identity and actual visual observations. Reconcile Issue #1/current cycle tracking when available; issue access is not a prerequisite for authorized local progress because the complete instructions are local. Record a pending remote sync when needed. Then create a `codex/` branch for the selected cycle. Starting with Cycle 0014, each cycle is delivered through a PR; place `@coderabbitai ignore` in its initial Draft description. Retain it under D027 while hosted review is owner-skipped; local review and CI remain separate gates. Use a closing reference only when the cycle issue's required outcome is complete; otherwise keep the issue open with a non-closing reference. The goal issue remains open until final acceptance.
 
 Use [the cycle template](docs/cycles/TEMPLATE.md). Record a small scope, linked goal IDs, one primary question, expected observations, non-goals, and a decision after success/failure. A goal ID link means relevance, not completion.
 
@@ -144,7 +145,7 @@ The private repository is [laststance/codebook](https://github.com/laststance/co
 
 - Use the goal label for final-product tracking and the cycle label for a bounded cycle. Keep at most one active cycle; other ideas stay as short candidates in PROJECT_STATE.md until selected.
 - A selected cycle gets one document and one issue linked to each other and the goal issue. Link PRs and evidence to that cycle when they exist. Do not invent future implementation issues to fill a roadmap.
-- Repository records own requirements and observations. Issue bodies link those records and summarize the current task; avoid maintaining another full goal checklist that can drift.
+- Repository records own requirements, observations and the complete agent execution path. Under D036, issue bodies may duplicate local requirements/checklists for discoverability; reconcile their version, image and remaining work with committed local records. Local instructions must remain sufficient when an issue is unread or unavailable.
 - At cycle closure, commit/push the updated cycle and state, complete the cycle PR's review and required checks, then merge it. Close the cycle issue at merge when evidence establishes a demonstrated or falsified outcome and its required records and delivery are complete; otherwise use a non-closing PR reference and retain the open issue with its missing evidence or pending delivery. An inconclusive investigation may end without verifying a capability, while its issue retains the unresolved outcome. Keep `@coderabbitai ignore` under D027; hosted approval remains owner-skipped for this continuation. coderabbit-cli review is still required. Report the actual result and commit/evidence links. Clearly say demonstrated, falsified, or inconclusive; closed never implies the final goal succeeded. If delivery is unavailable, keep the issue open and record the pending step in PROJECT_STATE.md. Cycles closed before D021 retain their historical delivery records.
 - Open the next cycle issue only after selecting the next question from evidence. The goal issue remains open until PRODUCT_GOAL.md's final acceptance is demonstrated and accepted.
 - On resume, compare issue status with the actual cycle record and code. An issue closed without evidence does not verify a capability; a stale issue summary does not override newer committed observations. Resolve a mismatch and record it before making a completion claim.

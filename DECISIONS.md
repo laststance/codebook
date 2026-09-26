@@ -298,6 +298,8 @@ Preserve the independent Wiki, recording/sequence/summary requirements, explicit
 
 Subsequent individual design choice **2A**: show capture status and **Save learning replay** in the editor's bottom status area, outside standard chat. The owner explicitly selected the placement shown in the version 8 candidate. Retain that affordance during live explanation; do not reopen this choice under later review passes.
 
+Subsequent individual design choice **4A**: when video exists but source/debugger history is missing, continue video playback, mark the interval on the timeline and show **Not recorded at this moment** on the affected source/debugger surfaces. The owner's selected copy was “この時点は未記録”. Never substitute values or execution highlights from another moment. Entering a gap clears misleading prior state; reaching a recorded point restores its corresponding history. Apply this consistently to playback and seeking, with no automatic gap pause. Missing required evidence still prevents acceptance PASS. This resolves question 4, including its later re-display; it does not approve other state/layout changes.
+
 ## D033 — Reproduce DeepWiki through the editor agent's generation skill, 2026-09-26
 
 Source: the owner selected design choice **3A**, then required that LLM Wiki reproduce DeepWiki itself and emphasized the generation skill as the primary implementation. Source links should open the user's local editor. These clarify the in-progress version 8 specification.
@@ -307,3 +309,41 @@ Decision: reproduce the DeepWiki repository documentation and reader experience:
 The key implementation is a carefully authored DeepWiki generation skill used by the editor's AI agent. It teaches source exploration, chapter structure, explanation depth, accurate diagrams/citations, updates and quality checks. The shared thin `/codebook` entry delegates to that guidance. Wiki generation uses the agent's normal source/file capabilities and does not require the runtime/debug MCP service. The extension supplies configuration, update/status/open and source-link support; any bridge is supporting transport, not the Wiki-content engine. Route Wiki requests before the runtime `codebook_status` prerequisite. Runtime/replay still use their MCP/native-debugger contracts.
 
 The independent Wiki remains readable without the editor, debugger, original chat or a learning replay. Agent/model setup may be needed for generation, updating and interactive Q&A; it does not become a dependency of reading already generated pages. The [Wiki specification](docs/specs/llm-wiki.md) and [generation-skill plan](docs/plans/deepwiki-generation-skill.md) own detailed outcomes. The observed external service is a reference, not Codebook implementation evidence.
+
+## D034 — Use an ordinary expanded desktop window as the layout baseline, 2026-09-26
+
+Source: the owner selected replay summary choice **5A**, then explicitly narrowed the layout requirement:
+
+> 基本的には一般的なディスプレイでのフルスクリーンではないけど、画面いっぱいに広げた時のレイアウト基準でOKです。
+>
+> 極端に小さいウィンドウサイズだったり、200%とか極端な拡大倍率の時は正直考慮しなくてもいいです。
+
+Decision: advance the product goal to **version 9** for this acceptance-scope change. Design and verify the editor/browser on an ordinary desktop display, with the window expanded to the available screen area at normal/default zoom. OS full-screen mode is not required. Extremely small windows and extreme zoom such as 200% are outside mandatory design and final acceptance. Do not turn generic skill prescriptions for mobile, tablet or high zoom into extra requirements for this product.
+
+Preserve the chosen **5A** behavior: the replay's learning summary can collapse behind a clearly labeled **Learning summary** button when space is limited, prioritizing application video, source and native debugger. This remains a useful secondary behavior, not a requirement to make extreme sizes/zoom pass. In the ordinary expanded-window reference, show the summary alongside the primary context. Preserve the selected moment, source/debugger state, summary reading position and user focus when opening/closing it. Do not rearrange unrelated chats or native work layouts.
+
+Keyboard access, meaningful labels, focus/reading return, supported host themes, contrast and reduced-motion behavior remain required at the supported ordinary desktop layout. Source/runtime truth, both hosts, D029's nine projects/two stages, D031's development target and all active feature capabilities remain unchanged. Older constrained/high-zoom results retain their historical scope; they no longer define a current product-completion gate.
+
+## D035 — Make every shortcut discoverable in tooltips and a question-mark list, 2026-09-26
+
+Source: the owner supplied tooltip/shortcut-list visual references and required:
+
+> キーボードショートカットをつけるならUIのツールチップに明記必須、"?"キーでのshortcutリスト必須
+
+Decision: every Codebook action with an assigned keyboard shortcut must show the operation name and applicable key combination in its UI tooltip. Pressing **?** in a Codebook non-editing context opens an accessible **Keyboard shortcuts** list. Use a readable operation/key layout matching the supplied references. Keep a visible list-entry control so the shortcut list can itself be discovered without already knowing the key.
+
+The list and tooltips must agree with the shortcuts actually available in the active editor/browser, platform and feature context. The example screenshot's Codex commands and key assignments are visual references, not Codebook bindings. Only **?** is fixed by this decision; choose other assignments during implementation without conflicts or invented documentation. Preserve ordinary question-mark input in text fields, chat, source editors, terminals and IME composition. Native host actions retain native behavior.
+
+The [keyboard-shortcut specification](docs/specs/keyboard-shortcuts.md) owns focus, discovery, list, tooltip and acceptance details. Apply it to Codebook-owned editor UI and the generated independent Wiki. This clarifies the in-progress version 9 design; it is not implementation evidence.
+
+## D036 — Adopt the v9 visual target and a local implementation harness, 2026-09-26
+
+Source: after design review, the owner requested an instruction/specification harness that a less capable agent can follow from AGENTS.md and linked local files. Issues may duplicate the local material; reading an issue must not be necessary to know the product or next action. The owner then explicitly adopted the corrected v9 image: **採用する。修正版v9を視覚仕様にする（推奨）**.
+
+Decision: use [the approved v9 PNG](docs/designs/assets/codebook-product-spec-v9.png), SHA-256 `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`, as the product's visual specification together with its [written companion](docs/designs/codebook-product-spec-v9.md). The generated Review candidate header predates adoption; keep the approved bytes and record status in [visual-target.json](docs/designs/visual-target.json). Native editor chrome and illustrative sample values retain the companion's evidence boundary.
+
+AGENTS.md must lead to a local execution guide, complete active-goal acceptance map and current cycle/state. Require the implementing agent to open the actual image through an image-viewing tool, describe the relevant observed composition and compare implemented UI against it. A filename/prompt/metadata read is not visual inspection. Keep the PNG, generation prompts, identity, full feature contracts and evidence procedure in the repository so another checkout needs no private chat or GStack cache to understand the target.
+
+The harness directs one bounded observable increment, its verification and local state update at a time. Preserve existing authorization boundaries, adaptive cycle selection and all final outcomes; it does not start runtime implementation during the current documentation/design/harness phase. Local documents own requirements and evidence; Issues #1/#46 mirror them. Reading/synchronizing issues remains useful tracking but their availability is not a prerequisite for otherwise authorized local progress. Keep the fixed nine projects, both hosts, ordered stages and owner acceptance intact.
+
+Owner follow-up: give AGENTS.md stronger force, ensure every Cycle 0029 product requirement is reflected in PRODUCT_GOAL.md and its related contracts, and reduce document sprawl. Consolidate the execution loop, acceptance map and evidence template into IMPLEMENTATION.md. Make full normative reading, current assignment/cycle and actual PNG inspection an explicit implementation-entry gate; require mapped verification and local updates at review/closure. Preserve a fixed mandatory set and feature-triggered additional contracts, with historical/reference links consulted on demand. Record omissions as incomplete rather than claiming readiness. This is an auditable instruction protocol; Markdown alone cannot mechanically prove comprehension.

@@ -26,6 +26,16 @@ One primary question. Why does resolving it advance the product now?
 
 Draft only this cycle's executable steps. List the GStack skills needed and why; do not require every skill by default. Link their actual reports and record reviewed plan/version. Record authority for any external delivery operations.
 
+## Product target and visual inspection
+
+- Authorized phase and selected [acceptance-map IDs](../../IMPLEMENTATION.md#product-acceptance-map):
+- Approved PNG path / hash / approval status from [visual-target.json](../designs/visual-target.json):
+- Image-viewing action actually performed and observed live/replay/Wiki/shortcut composition:
+- Relevant difference between the current implementation and that visual target:
+- Linked full feature contracts / controlling owner decisions:
+
+Open the actual PNG; metadata or a prompt is not inspection. Use [the evidence template](../../IMPLEMENTATION.md#evidence-template) for the detailed receipt and each host's observations.
+
 ## Validation contract
 
 Freeze expectations before evaluating the implementation. Fill versions, actual targets, exact real-project/source binding (identify isolated mechanism-test inputs separately), setup, and commands while planning.
@@ -44,6 +54,7 @@ No observations yet. For each attempt: date, source revision/dirty state, versio
 - Findings:
 - Keep / revise / replace:
 - Evidence that can update goal state:
+- Acceptance-map IDs advanced / actual UI compared with the approved image:
 - Remaining gaps and regression obligations:
 - Delivery state and proof:
 

@@ -1,5 +1,7 @@
 # Codebook version 8 visual specification — candidate
 
+> Historical review checkpoint. Superseded by the owner-approved [version 9 visual specification](codebook-product-spec-v9.md). Pending questions and status below describe the earlier v8 cut, not current work.
+
 Status: GStack design review in progress; no final visual approval.\
 Cycle: [0029](../cycles/0029-feature-specification.md) / [Issue #46](https://github.com/laststance/codebook/issues/46)\
 Review: [plan and decisions](../plans/cycle-0029-product-design.md)\
@@ -34,7 +36,7 @@ These are design completion checks, separate from installed-product acceptance:
 - [x] Inspect the candidate against actual source-derived example flow; save the prompt and artifact identity.
 - [x] Record the owner's replay hierarchy and revise both specification and image to prioritize synchronized video/source/native-debugger history, with learning summary replacing chat.
 - [ ] Resolve each actual screen/navigation/control-placement decision through the GStack review and record the owner's individual choice.
-- [ ] Specify loading, empty, failure, complete, partial/stale and recovery appearances for each feature, retaining historical truth and the last usable Wiki output.
+- [x] Specify loading, empty, failure, complete, partial/stale and recovery appearances for each feature in the review state table, including approved 4A gap playback and preservation of the last usable Wiki output.
 - [ ] Specify keyboard/focus/reading-return behavior, constrained editor widths, browser widths, theme support and accessibility. Verify those requirements on the eventual implementation; static imagery is insufficient.
 - [ ] Complete all seven GStack passes and reconcile the report, written screen requirements and final image. No unapproved remedy is silently applied.
 - [ ] Obtain approval of the final visual target and link the same committed artifact from the design entry, Cycle 0029 and Issues #1/#46.
@@ -68,7 +70,8 @@ The first image incorrectly drew the database as the owner of the redirect and u
 1. **Replay hierarchy — resolved by D032:** the owner's individual response requires the live composition with summary replacing chat, synchronized application/source/native debugger and repeated time travel. The rejected document-like/sidebar-player alternatives are not pending options. Fine control/state details remain under review.
 2. **Capture/save location — approved 2A:** the owner selected the image's bottom status-area capture state and Save learning replay, outside native chat. Do not reopen this decision or inject controls into the chat composer.
 3. **Wiki actions — approved 3A / D033:** the browser Update LLM Wiki starts the same skill-driven update in the project's editor; normal reading stays independent. The owner also selected faithful DeepWiki reproduction with local-editor source links. Output settings use ordinary editor configuration; generation quality belongs to the agent skill.
-4. **State, theme and accessibility detail — question 4 pending:** continue available recording with explicit missing-history gaps, or pause at each gap until the learner jumps. No answer is assumed. Other state/theme/accessibility review remains. The board covers representative populated/paused and stale-Wiki states only. It does not establish keyboard, screen-reader, narrow-width, contrast, dark/light/high-contrast or motion verification. Small generated text is not a pixel-exact native UI specification.
+4. **Partial history — approved 4A:** continue available video, mark missing intervals on the timeline and show **Not recorded at this moment** on affected source/debugger surfaces. Clear other moments' highlights/values; restore matching state at recorded points. The same rule applies to seeking. The current populated-state image is unchanged; this approved state is defined in the replay contract and review table.
+5. **Constrained replay width — question 5 pending:** when all replay panes cannot remain readable, collapse the learning summary behind an explicit button while prioritizing app/source/native debugger (5A), or retain all panes and let the learner resize them (5B). Neither is approved yet. Remaining responsive/accessibility review and final image reconciliation are pending. The board does not establish keyboard, screen-reader, narrow-width, contrast, theme or motion verification. Small generated text is not a pixel-exact native UI specification.
 
 These are pending decisions or limitations, not deferred product requirements. They must be settled or explicitly recorded before calling the design complete.
 
@@ -83,7 +86,7 @@ These are pending decisions or limitations, not deferred product requirements. T
 | SHA-256 | `4727eca649352a342e2b1767db13230c49eb44a425cae876e91506e53901079e` |
 | Prompt and correction | [Saved prompt](prompts/cycle-0029-product-spec-v8.md) |
 | Specification checkpoint | Version 8 / D032 and D033 introduced with this artifact; preceding version 7 checkpoint was `47b0019105e1415f3a8304023e235c4a49f54313` |
-| Approval | D032 replay hierarchy, 2A bottom capture/save, 3A browser update and D033 DeepWiki reference approved; complete image remains a candidate |
+| Approval | D032 replay hierarchy, 2A bottom capture/save, 3A browser update, 4A partial-history playback and D033 DeepWiki reference approved individually; complete image remains a candidate |
 
 Local GStack review artifacts preserve all six sequential attempts under `/Users/ryotamurakami/.gstack/projects/codebook/designs/cycle-0029-product-spec-20260926/`. Original generated files were copied, not moved or deleted. Only the current corrected version 8 candidate is committed here; these iterations are not product theme variants.
 

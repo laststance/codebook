@@ -10,20 +10,22 @@ Understand an actual project's code through standard editor AI chat, real execut
 | Learning replay / time-travel debugging | Replay the application, the source executing at that time and historical values/stack in the native debugger in sync. Repeatedly step backward/forward and seek after runtime exit. The live chat area becomes a learning summary with a sequence diagram. |
 | Independent LLM Wiki / DeepWiki | Reproduce DeepWiki itself through the editor AI's generation skill: full chapters, diagrams, source citations, reader navigation and repository Q&A. Keep local/configurable output, chat/browser updates and source links into your editor. Runtime/debug MCP and learning are independent. |
 
-The owner retired the three selectable UI themes, not these distinct feature screens. The proposed Codebook Activity Bar icon opens feature navigation. GStack design review and a matching visual candidate are in progress within Cycle 0029. D032 fixes the replay hierarchy; remaining controls/states and final image approval are tracked in the review.
+The owner retired the three selectable UI themes, not these distinct feature screens. Codebook Activity Bar navigation reaches them. The [v9 product image](docs/designs/codebook-product-spec-v9.md) is owner-approved after GStack design review. Implementation follows the local [execution guide and acceptance map](IMPLEMENTATION.md), reached from AGENTS.md, with mandatory visual inspection.
 
 ## Implementation status
 
 This is a private preview, not a Marketplace or Open VSX release. [Cycle 0028](docs/cycles/0028-ordinary-chat-study-entry.md) delivered extension 0.2.11 through [PR #45](https://github.com/laststance/codebook/pull/45), with bounded ordinary-chat development evidence in both hosts and a qualified Cursor recovery path.
 
-[Cycle 0029](docs/cycles/0029-feature-specification.md) updates the specification to [goal version 8](PRODUCT_GOAL.md). The existing implementation still contains the bundled cart demo, old presentation variants and custom value display. Removing them and delivering the specified learning replay/independent Wiki behavior remain implementation work. Historical fixture or coupled-Wiki success is not proof of the new destination.
+[Cycle 0029](docs/cycles/0029-feature-specification.md) updates the specification to [goal version 9](PRODUCT_GOAL.md). The existing implementation still contains the bundled cart demo, old presentation variants and custom value display. Removing them and delivering the specified learning replay/independent Wiki behavior remain implementation work. Historical fixture or coupled-Wiki success is not proof of the new destination.
 
-Until final acceptance begins, actual-editor development verification uses the owner-designated [nextjs-dashboard checkout](DEVELOPMENT.md#required-development-target-before-acceptance). Final acceptance requires [all nine designated projects in two stages](docs/acceptance/FINAL_REVIEW.md), both editors and every applicable runtime use case. No version 8 Stage 1 or Stage 2 PASS is claimed.
+Until final acceptance begins, actual-editor development verification uses the owner-designated [nextjs-dashboard checkout](DEVELOPMENT.md#required-development-target-before-acceptance). Final acceptance requires [all nine designated projects in two stages](docs/acceptance/FINAL_REVIEW.md), both editors and every applicable runtime use case. No version 9 Stage 1 or Stage 2 PASS is claimed.
 
 ## Start here
 
 | Question | Source of truth |
 | --- | --- |
+| How must an agent build and verify the product? | [AGENTS.md](AGENTS.md), [IMPLEMENTATION.md](IMPLEMENTATION.md) |
+| What image must an agent open and inspect? | [Approved v9 PNG and companion](docs/designs/codebook-product-spec-v9.md) |
 | What are the features and how do they relate? | [PRODUCT_GOAL.md](PRODUCT_GOAL.md) |
 | What exactly is saved learning? | [Learning replay specification](docs/specs/learning-replay.md) |
 | How is Wiki independent, generated and updated? | [LLM Wiki specification](docs/specs/llm-wiki.md) |

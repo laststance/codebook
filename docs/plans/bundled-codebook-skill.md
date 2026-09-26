@@ -1,6 +1,6 @@
 # Required development: bundled codebook skill and chat onboarding
 
-Status: continuing G12 development contract; earlier implementation and ordinary-chat trials are recorded in closed cycles, not final acceptance. Authority: [G12](../../PRODUCT_GOAL.md#bundled-thin-skill-and-explicit-chat-entry), D023 and D030 / goal version 8. [PROJECT_STATE.md](../../PROJECT_STATE.md) identifies the active cycle and source-specific evidence. Cycle 0029 updates the written product specification; adapting the actual skill/API is later implementation work. The original [Cycle 0019 integration review](cycle-0019-skill-onboarding.md) remains historical route context.
+Status: continuing G12 development contract; earlier implementation and ordinary-chat trials are recorded in closed cycles, not final acceptance. Authority: [G12](../../PRODUCT_GOAL.md#bundled-thin-skill-and-explicit-chat-entry), D023 and D030 / goal version 9. [PROJECT_STATE.md](../../PROJECT_STATE.md) identifies the active cycle and source-specific evidence. Cycle 0029 updates the written product specification; adapting the actual skill/API is later implementation work. The original [Cycle 0019 integration review](cycle-0019-skill-onboarding.md) remains historical route context.
 
 ## Required increment
 

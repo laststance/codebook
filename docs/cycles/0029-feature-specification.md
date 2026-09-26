@@ -1,10 +1,10 @@
 # Cycle 0029 — Clarify live explanation, learning replay and independent Wiki
 
-Type: product increment, documentation then design\
-Status: planning — written consistency review complete; GStack design review in progress, visual candidate awaiting individual decisions\
+Type: product increment, documentation then design and local instruction harness\
+Status: planning — design review and v9 image approval complete; local harness consistency/delivery checks in progress\
 Result: pending broader cycle outcomes\
 Delivery: [Draft PR #48](https://github.com/laststance/codebook/pull/48); written specification committed, external-review gate pending\
-Goal version: 8\
+Goal version: 9\
 Tracking issue: [#46](https://github.com/laststance/codebook/issues/46)\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)\
 Goal links: G01–G07, G10–G12; retire G08/G09\
@@ -13,7 +13,7 @@ Branch: `codex/cycle-0029-native-editor-spec`
 
 ## Question and expected value
 
-Do the authoritative documents clearly describe the owner's intended features and their independence, so later design and implementation no longer follow the bundled demo or retired three-theme contract?
+Do the authoritative local documents and approved image give an agent an enforceable reading, implementation and verification path toward the owner's complete product, preserving the correct feature relationships and final acceptance?
 
 ## Owner direction and scope
 
@@ -75,15 +75,16 @@ CodeRabbit CLI local committed review failed twice during sandbox preparation wi
 
 ## Remaining Cycle 0029 work
 
-1. Complete the screen-design review using these feature relationships, resolve its individual decisions and finalize the matching image. The initial corrected candidate is saved; keep the old three images historical.
+1. Finish the local harness consistency and delivery checks. Screen-design review and the corrected v9 image are approved. Enforce full normative reads and actual image inspection from AGENTS.md; keep procedures/acceptance/evidence consolidated in IMPLEMENTATION.md.
 2. Inventory and remove the active cart demo sources/generated copies/package assets/commands and adjust affected build/test/help paths. Preserve historical evidence and unrelated projects.
 3. Retire the theme selector and duplicate value UI; implement the defined learning replay and independent Wiki gaps through bounded plans. Preserve existing saved material and explicit ownership.
 4. Open `/Users/ryotamurakami/repository/nextjs-dashboard` in each editor for development behavior validation until final acceptance begins, per D031. Preserve the checkout and keep host evidence separate. Then execute D029's unchanged nine-project stages only under their prerequisites; dashboard development trials earn no acceptance credit.
 
 ## Handoff
 
-After the written consistency review, continue with GStack plan-design-review and create a matching final-product design image within this same Cycle 0029, as subsequently authorized by the owner. Keep the feature lifecycles distinct and trace design acceptance to version 8 / D032. Keep Issue #46 open and implementation pending. No desktop/native process was started for the documentation phase.
+The current assignment is the local instruction/specification harness requested after design review. Follow AGENTS.md and IMPLEMENTATION.md; finish its consistency/review/delivery checkpoint and mirror the committed records to Issues #1/#46 and Draft PR #48. The v9 image is adopted; questions 4/5 and whole-image approval are resolved. Keep Issue #46 open for remaining implementation. No desktop/native process was started in this phase.
 
+Earlier checkpoints below preserve the decisions and statuses at their original cuts. The latest checkpoint controls over their unanswered-question/candidate wording.
 
 ### Provider review and design-phase start
 
@@ -122,3 +123,34 @@ Direct consistency review reconciled D032/D033 across the product goal, current 
 Validation from the cycle base `22e25c5` covers 23 changed paths: 21 Markdown files, the existing review-policy YAML change and one PNG. All 299 local Markdown links resolve, `git diff --check` passes and the CodeRabbit configuration validates. The nine required project rows and nine historical inventory rows are byte-identical to the base. The selected 941 × 1672 PNG matches the SHA-256 recorded above. No implementation or target source files changed in this increment.
 
 The prior provider review and CI belong to their earlier checkpoints; version 8 has direct document/artifact review only so far. Current-source external review, CI, final visual approval and merge remain separate gates. Keep Draft PR #48 and Issues #46/#1 open. Continue the individual GStack decision loop from the already-issued question 4; no answer or approval is inferred from the Wiki clarification.
+
+### Approved 4A and continued design review
+
+The owner explicitly selected **4A** when question 4 was re-displayed: continue available video across missing source/debugger history, mark timeline gaps and show **Not recorded at this moment** on affected surfaces. D032's follow-up, the replay specification, product goal, behavioral design and acceptance protocol now apply this to playback and seeking. Entering a gap removes another moment's execution highlight/values/stack; returning to a recorded point restores its matching history. Required missing capture remains an acceptance failure. This resolves the pending question recorded in the earlier checkpoints above.
+
+Pass 2 is complete at the specification level (6/10 → 10/10): the review now maps loading, empty, error, success and partial/stale states across live explanation, saving, replay, Wiki generation and source/Q&A actions. Pass 3 records the accepted journey and time horizons. Passes 4–5 evaluate the candidate against Operate/Read rules and the existing native-editor/DeepWiki design vocabulary; each has no new finding and a 10/10 specification score. These scores are review judgments, not native visual or accessibility PASS results.
+
+Pass 6 is **7/10**, with individual **question 5** issued: at constrained replay widths/200% zoom, collapse the learning summary behind an explicit button while prioritizing the app/source/native debugger (5A), or keep all panes visible for manual resizing (5B). The proposed behavior remains unapproved. Continue Pass 6 and the unresolved-decision audit after the answer; do not claim all seven passes complete.
+
+The sixth PNG is still the latest candidate and its bytes/hash are unchanged. No extra theme or new generated image was created for this text/state decision. CI for `d735ef8` passed at [run 36235922935](https://github.com/laststance/codebook/actions/runs/36235922935); this precedes the 4A documentation checkpoint. Current-source provider review, final visual approval and merge remain pending.
+
+### Version 9 design approval and local implementation harness
+
+The owner answered **4A** and **5A**, narrowed the mandatory layout to an ordinary expanded desktop/default zoom (D034), and required all assigned shortcuts in UI tooltips plus the **?** shortcut list (D035). The owner then adopted corrected v9 iteration 8 as the final visual specification (D036). All seven GStack passes are evaluated, nine design decisions are explicit and none remains unresolved. The six specification scores have minimum 6/10 before and 10/10 after accepted decisions; these are not native test scores.
+
+The approved PNG is 1024 × 1536, 1,878,402 bytes, SHA-256 `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`. Its live screen uses native chat/debugger and bottom save; replay uses historical app/source/debugger with summary in place of chat; Wiki reproduces DeepWiki independently; the shortcut strip shows tooltip and ? list. The agent inspected the actual generated image and corrected both diagrams so PostgreSQL returns to createInvoice, which owns revalidation/redirect. No app/database/debugger was run for the image.
+
+The owner requested a local harness usable by less capable agents without relying on issue or chat reading, then explicitly requested stronger AGENTS.md enforcement and fewer scattered files. [IMPLEMENTATION.md](../../IMPLEMENTATION.md) therefore consolidates the ordered execution loop, all active-goal acceptance rows and the evidence template. AGENTS.md's mandatory entry gate requires full normative reads, current assignment/cycle, actual PNG viewing and concrete observations before implementation. The closure gate requires mapped expected/actual evidence and local state updates. Historical links are reference material; relevant skill/acceptance contracts are mandatory when that branch is selected. These are reviewable procedural requirements, not an automated claim to detect comprehension.
+
+[PRODUCT_GOAL.md's crosswalk](../../PRODUCT_GOAL.md#cycle-0029-requirement-coverage) maps every accepted Cycle 0029 change into the goal and its full feature contracts, including demo removal, exact development target, distinct screens, native chat/values, synchronized replay, independent skill-driven DeepWiki, updates/source links, desktop/shortcut rules and visual/harness adoption. The local read path retains all nine projects, both hosts, all required runtime/test/Example uses and ordered final stages.
+
+The harness and approved image are documentation/design outputs. Product source, demo removal, runtime trials and final acceptance remain pending. Current checkpoint consistency/review/delivery results follow below when observed.
+
+### Local harness consistency checkpoint
+
+- Opened and visually inspected the actual approved v9 PNG; its observed regions and corrected causal diagrams are recorded above. The manifest's hash, dimensions, goal version and owner-approved status match its bytes.
+- Followed AGENTS.md's local path through the goal, current assignment/cycle, design/image and consolidated implementation guide. PRODUCT_GOAL's 12-row Cycle 0029 crosswalk covers the accepted changes; the guide's 13 acceptance rows cover every active goal. Entry and closure conditions are explicit; historical/reference material is distinguished from current mandatory contracts.
+- Checked **409 local Markdown links across 25 changed Markdown files** from base `22e25c5`, including anchors. `git diff --check` and `coderabbit config validate .coderabbit.yaml` passed. All nine required project rows plus nine historical inventory rows are byte-identical to the cycle base.
+- OCR workspace preview for the delta after `d735ef8` selected **1 eligible JSON file**, reviewed **1/1**, skipped **0**, coverage **100%** under its resolved key-spelling rule. Its **25 excluded paths** (24 Markdown files, 1 PNG) received direct supplemental documentation/visual review. The per-path receipt is retained at `artifacts/cycle-0029/ocr-v9-workspace-review.json`; the preview/rules and review findings are separate from an external provider. No unresolved direct-review finding remains.
+- GStack's terminal report was read back, then logged as design **clean**, score **6 → 10**, **9 decisions**, **0 unresolved**, with dirty working-tree provenance above `d735ef8`. Engineering review remains a later bounded-plan requirement. The full task list and report are local, even if the supplemental GStack cache is unavailable.
+- This checkpoint changes documents, design metadata and the approved image only. No product source, demo deletion, runtime/native trial or final acceptance was performed. Provider review, CI and delivery of these bytes are recorded separately.

@@ -1,7 +1,7 @@
 # DeepWiki generation skill — implementation contract
 
 Status: specification only; no skill implementation or generation PASS.\
-Authority: PRODUCT_GOAL version 8, G02/G12, D033 and [independent DeepWiki specification](../specs/llm-wiki.md)\
+Authority: PRODUCT_GOAL version 9, G02/G12, D033 and [independent DeepWiki specification](../specs/llm-wiki.md)\
 Cycle: [0029](../cycles/0029-feature-specification.md)
 
 ## Outcome and ownership
@@ -33,3 +33,7 @@ The skill must derive content from each repository. It must not embed target-spe
 - Development trials use D031's nextjs-dashboard checkout. Final acceptance retains D029's exact nine projects, both hosts and ordered stages. No mockup or static page alone earns a PASS.
 
 Engineering planning still needs to select the shared skill packaging, reader serving/Q&A connection and supported host launch/update mechanism. Those mechanics must preserve the approved outcomes; a transport-only implementation cannot establish Wiki-generation quality.
+
+## Reader controls and visual target
+
+Follow [the approved v9 visual specification](../designs/codebook-product-spec-v9.md) and [the shortcut contract](../specs/keyboard-shortcuts.md): show assigned keys in action tooltips and provide the **?** shortcut list while preserving typing. Verify the independent browser at D034's ordinary expanded desktop/default zoom. The [local execution guide](../../IMPLEMENTATION.md) requires actual image inspection and applicable acceptance evidence.

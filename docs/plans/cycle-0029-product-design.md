@@ -1,9 +1,9 @@
 # Cycle 0029 — Final product design review
 
-Status: GStack plan-design-review started; full final-product scope established by the owner; no final visual approval.\
-Scope: version 8 final-product screens, acceptance conditions and matching design-image deliverable.\
-Source: [Cycle 0029](../cycles/0029-feature-specification.md), PRODUCT_GOAL version 8, D030/D031/D032/D033.\
-Specification checkpoint: `47b0019` on `codex/cycle-0029-native-editor-spec`; [PR #48](https://github.com/laststance/codebook/pull/48).
+Status: complete — seven passes evaluated; corrected v9 image adopted by the owner on 2026-09-26.\
+Scope: version 9 final-product screens, acceptance conditions and matching design-image deliverable.\
+Source: [Cycle 0029](../cycles/0029-feature-specification.md), PRODUCT_GOAL version 9, D030–D036.\
+Specification checkpoint: `d735ef8` on `codex/cycle-0029-native-editor-spec`; [PR #48](https://github.com/laststance/codebook/pull/48).
 
 This review follows the completed written consistency check and the owner's explicit instruction to continue design in the same cycle. It records existing requirements first. Proposed remedies, mockups and unapproved gaps do not become accepted product decisions merely by appearing here.
 
@@ -21,17 +21,19 @@ This review follows the completed written consistency check and the owner's expl
 | R08 Retired features | No three selectable UI variants or custom values panel; recorded values remain inspectable through the native debugger | D030, retired G08/G09 |
 | R09 Real target | Development behavior trials use the owner's exact nextjs-dashboard checkout until final acceptance; final nine projects unchanged | D031/D029 |
 | R10 Evidence honesty | Generated image is a product specification concept, not a running-product screenshot or acceptance PASS | AGENTS.md / PRODUCT_GOAL |
+| R11 Desktop layout | Ordinary expanded desktop window at default zoom; summary can collapse/reopen under 5A; extreme sizes/zoom outside mandatory coverage | D034 |
+| R12 Shortcut discovery | Every assigned shortcut appears in its action tooltip; ? opens a shortcut list, preserving ordinary typing | D035; keyboard-shortcuts specification |
 
 ## Required final deliverables
 
-- Written screen/interaction specification traced to R01–R10 and the existing acceptance protocol.
-- A matching product-design image in the repository, with its prompt, source/specification identity and inspection notes. One coherent design direction; no alternative-theme trio. The current candidate board shows three distinct moments, with D032's owner-selected replay hierarchy. This is one image, not three selectable themes.
-- State and accessibility requirements sufficient to implement each approved screen: loading, empty, success, error, partial/stale, keyboard/focus, constrained sizes and supported editor themes.
+- Written screen/interaction specification traced to R01–R12 and the existing acceptance protocol.
+- A matching product-design image in the repository, with its prompt, source/specification identity and inspection notes. One coherent design direction; no alternative-theme trio. The approved board shows three distinct moments, with D032's owner-selected replay hierarchy. This is one image, not three selectable themes.
+- State and accessibility requirements sufficient to implement each approved screen: loading, empty, success, error, partial/stale, keyboard/focus and supported editor themes at D034's ordinary desktop baseline.
 - Review report showing each finding, individual decision, score and unresolved gap. An unapproved image remains a candidate, not the approved final visual.
 
 ## What already exists
 
-- DESIGN.md and the behavioral design point to the current version 8 contracts.
+- DESIGN.md and the behavioral design point to the current version 9 contracts.
 - Native editor chat, source, debugger and Activity Bar conventions provide the intended host vocabulary. Do not replace standard chat or debugger inspection with Codebook clones.
 - The existing 0.2.11 preview has source/evidence recording and a coupled learning/Wiki reader with old presentation controls. Its source-specific evidence is useful for ownership/focus/reading-return constraints, not proof of the new design.
 - The three historical concept PNGs were inspected as history. They illustrate reading and flow relationships but omit native chat/debugger and couple old display variants. They do not prescribe the new composition.
@@ -58,9 +60,12 @@ Initial design completeness: **6/10**. Feature purposes, independence and requir
 - **1 / D032 — owner-specified alternative:** inherit the live application/source/native-debugger composition; replace chat with learning summary. Synchronize recorded video, actual executed source and inspectable historical values/stack through repeated replay and backward/forward seeking. This supersedes the proposed document-like reader and sidebar-contained player. Goal version 8 and the feature/acceptance documents carry the decision.
 - **2A — bottom capture/save:** show recording status and Save learning replay in the editor's bottom status area, outside standard chat. Owner selected 2A individually.
 - **3A — browser Wiki update:** browser Update LLM Wiki starts the correct editor-agent update without manual prompt re-entry. Owner selected 3A individually.
+- **4A — continue through missing history:** keep available video playing, mark timeline gaps and show Not recorded at this moment on affected source/debugger surfaces. Clear other moments' highlights/values and restore matching state at recorded points. The owner explicitly selected 4A when question 4 was re-displayed. Missing required capture remains an acceptance gap.
 - **D033 — explicit owner direction:** reproduce DeepWiki itself, with source links to the user's editor. The generation skill and the agent's normal file operations are primary; runtime/debug MCP is not a prerequisite.
+- **5A and D034 — explicit answer and scope clarification:** summary can collapse behind Learning summary, preserving the selected moment and reading/focus state. The ordinary expanded desktop window at default zoom is the required baseline; extreme sizes/200% zoom are excluded from mandatory design/acceptance.
+- **D035 — explicit owner requirement:** assigned shortcuts appear in their action tooltips; ? opens the shortcut list. Preserve question-mark typing and show actual context/platform bindings.
 
-These decisions approve their specific outcomes; they do not approve unrelated visual details. The current [visual candidate](../designs/codebook-product-spec-v8.md) and [saved generation prompts](../designs/prompts/cycle-0029-product-spec-v8.md) are review evidence. Two version 7 attempts preceded D032. Later version 8 iterations correct replay hierarchy/causality, reproduce DeepWiki and clarify agent-skill ownership. These are iterative corrections to one direction, not UI variants.
+These decisions approve their specific outcomes; they do not approve unrelated visual details. The approved [visual specification](../designs/codebook-product-spec-v9.md) and [saved generation prompts](../designs/prompts/cycle-0029-product-spec-v9.md) are review evidence. Two version 7 attempts preceded D032. Later version 8 iterations correct replay hierarchy/causality, reproduce DeepWiki and clarify agent-skill ownership. These are iterative corrections to one direction, not UI variants.
 
 ### Pass 1 — information architecture, complete
 
@@ -77,21 +82,183 @@ Wiki:   independent browser site -> source links to selected editor
 
 **3A — approved individually:** browser Update LLM Wiki hands off to the correct editor/agent and starts updating; the reader stays independently usable. D033 additionally directs faithful DeepWiki reproduction and a skill-first content engine. The shared entry routes Wiki work before runtime-MCP checks. Reading hierarchy follows the inspected DeepWiki reference; native editor conventions govern live/replay. No remaining information-hierarchy issue was found; move to state coverage.
 
-### Pass 2 — interaction states, in progress
+### Pass 2 — interaction states, complete
 
-Initial score: **6/10**. Existing contracts require truthful capture/freshness, last usable Wiki output, explicit progress and preservation. A material playback choice remains: at a point where historical source/debugger capture is missing, keep playing the available recording with explicit gaps (recommended 4A), or pause and require a deliberate jump to the next recorded point (4B). This changes visible playback behavior and is not settled by the general requirement to label missing facts.
+Initial score: **6/10**. Current score: **10/10** after the owner's individual **4A** decision and the state mapping below. The missing-history playback choice is resolved. The other cells restate existing feature contracts and public recovery/ownership requirements; they introduce no new controls or product choices.
 
-Question **4** is pending. Both options must show unavailable source/values honestly, never reuse another time's values, and never count missing required history as an acceptance PASS. Do not apply the proposed continue-through behavior until the owner answers.
+| Feature | Loading / working | Empty / not started | Error | Success | Partial / stale |
+| --- | --- | --- | --- | --- | --- |
+| Live explanation and capture | Normal chat shows the requested work; the bottom capture status identifies current recording state | Standard chat remains the entry; no active run or capture is falsely shown | Chat reports the actual prerequisite or failed operation and public recovery; capture status retains the failure/partial boundary | Actual app, stopped source and native debugger support the explanation; bottom Save learning replay remains discoverable | Observed, source-derived and unavailable facts stay distinct; incomplete capture is labeled |
+| Save learning replay | Bottom status reports finalization; a durable save is not claimed before it exists | If no session history exists, explain that an actual explanation/capture is needed before a replay can be saved | Show that saving failed and the applicable recovery; do not display a completed library item for a failed save | A named saved replay can be reopened with its source/session identity, summary and sequence | The saved item's partial state and missing evidence remain visible |
+| Learning library and replay | Show the selected recording's loading identity; no other moment's debugger state appears to belong to it | Explain that there are no saved learning sessions yet and point to the existing standard-chat → Save learning replay flow | Identify the unavailable recording/source and retain recoverable saved material and learner context | Shared playhead aligns video, executed source, native historical debugger and selected explanation; native history is clearly labeled | **4A:** mark gaps, continue available video and show Not recorded at this moment on affected surfaces; recorded points restore their own state |
+| Wiki generation and update | Show the resolved output, source identity and generation/update progress; existing pages remain readable | Codebook's Wiki entry or normal chat can generate the first Wiki; explain that none has been generated yet | Show failure/cancellation and recovery, retain the last usable site and preserve manual/unrelated files | Open the generated DeepWiki; show its source/index context and usable navigation/citations | Show source changes and last update context; approved browser Update LLM Wiki starts the same skill update |
+| Wiki source navigation and Q&A | Identify opening the cited local source or waiting for the configured agent's answer | A repository question can be entered; model/agent prerequisites are visible | Missing/moved source or unavailable editor/agent gives ordinary recovery; reading the generated pages continues | Source opens at the correct local location; Q&A cites the source it used | Disclose cited-version drift and unsupported answer boundaries; never relabel stale source as current |
 
-### Passes 3–7
+The 4A state contract also covers direct seeking and repeated backward/forward traversal. Clear an earlier execution highlight, variables and stack when they are unavailable at the new playhead. The same-moment evidence that exists stays identifiable. No automatic gap pause or confirmation is added. Required positive-workflow gaps still fail acceptance; an intentional negative control verifies truthful handling only.
 
-Not yet completed. Continue after the pending state decision. Required later work: faithful journey storyboard; Operate/Read visual audit; native-editor and DeepWiki reference alignment; constrained-size/accessibility review; final unresolved-decision register and image reconciliation. Do not claim a seven-pass result from this checkpoint.
+No other unresolved state-behavior issue was found in the current contracts. Geometry, keyboard details and constrained widths belong to the remaining review below. This score describes specification coverage, not tested native behavior.
 
-### Pending work
+### Pass 3 — user journey and emotional arc, complete
 
-- Resolve question 4 without reopening decisions 1, 2A, 3A or D033.
-- Review remaining interaction state, Wiki output-control placement and constrained-size/accessibility gaps individually as they arise.
-- Complete all seven passes, reconcile accepted requirements/visuals, produce the terminal GStack report and obtain final image approval.
-- Do not implement runtime behavior, delete demo source, start native trials or mark the broad goal complete during this design tranche.
+Initial/current score: **10/10**. No new issue found. The following storyboard faithfully records the accepted flow; it does not approve a new remedy.
 
-No completed GStack design review or final approved visual is claimed. No design implementation tasks from unapproved remedies are exported. Written evidence and the owner's accepted changes are saved at this checkpoint.
+| Step | User does | Intended feeling / uncertainty | Accepted support |
+| --- | --- | --- | --- |
+| 1 | Opens the real project and asks its ordinary editor chat to explain a path | Familiar starting point; unsure how app behavior maps to code | Existing chat and public shared-skill setup; actual repository identity |
+| 2 | Watches the AI operate the app and pause actual source | Can connect the visible behavior to a precise execution point | Application, source and native debugger together; grounded chat explanation |
+| 3 | Inspects values, asks follow-ups and continues | Can challenge the explanation and control understanding | Current pause identity; standard debugging; observed/inferred/unknown distinctions |
+| 4 | Chooses bottom Save learning replay | Confidence that the explanation can be revisited | Visible capture/finalization and complete/partial save result, without auto-marking understanding |
+| 5 | Reopens a learning item after the original runtime/chat has closed | Familiar context rather than having to reconstruct the session | Same composition, summary replacing chat, saved playhead/source/debugger history |
+| 6 | Plays, steps backward/forward or seeks repeatedly | Can compare cause and effect at their own pace | One historical moment across video/source/debugger, no repeated side effects; 4A identifies gaps honestly |
+| 7 | Reads the summary/sequence and explicitly records understanding | Learning remains their own judgment | Evidence-linked explanation, preserved reading context and learner-owned progress |
+| W1 | Independently asks the agent to generate the repository's DeepWiki | Wants broad orientation beyond one explained path | Shared generation skill, source-grounded chapters/diagrams/citations and visible output |
+| W2 | Reads chapters, asks a repository question or follows a source citation | Can investigate and verify claims | DeepWiki reader/Q&A, cited source context and correct-local-editor navigation |
+| W3 | Sees changed-source status and requests an update | Wants current documentation without losing working material | Browser update or chat starts the same agent skill; last usable output and manual edits are preserved |
+
+**Time horizons:** in five seconds, the selected feature and actual source/recording context are clear; in five minutes, the learner can move through explanation or independent Wiki use and understand the available controls; on later revisits, durable source/history and explicit freshness preserve the meaning of saved material. The last horizon describes the intended long-term value, not a claim that five years of storage has been tested.
+
+### Pass 4 — specificity and AI-slop risk, complete
+
+Initial/current score: **10/10** for the plan's visual direction. No new issue found. Classification: live and replay are **Operate**; learning summary and independent Wiki are **Read**. The outside title/captions frame a specification board and are not a product marketing page. The app form is real-target context, not a new Codebook component.
+
+| Hard-rejection check | Finding |
+| --- | --- |
+| Generic SaaS card grid as first impression | None: editor panes and an article/chapter reader express the actual tasks |
+| Beautiful image with weak product identity | None: Codebook entry/replay identity and the explicitly selected DeepWiki reference establish context |
+| Strong headline without a clear action | None: standard chat, bottom Save learning replay, shared playback controls and browser update/source links are concrete actions |
+| Busy imagery behind text | None: source, explanations and articles use separate reading surfaces |
+| Repeated mood statements | None in product surfaces: copy describes state, content and action |
+| Carousel without narrative purpose | None: the board shows separate feature moments; prior generated images are review history, not a product carousel |
+| App UI built from stacked cards | None: native pane structure and chapter/article navigation own the layout |
+
+| Litmus | Answer and evidence |
+| --- | --- |
+| Product unmistakable on first screen? | YES — Codebook flow/context, native editor surfaces and the labeled DeepWiki feature |
+| Strong visual anchor? | YES — the app/executed-source relationship in live/replay; the article in Wiki |
+| Understandable by scanning headings? | YES — live explanation, learning replay/time travel and DeepWiki reproduction |
+| One job per section? | YES — explain current execution, revisit recorded execution, or explore repository documentation |
+| Decorative cards needed? | NO — pane and article structure already groups the content |
+| Does motion serve a purpose? | YES as a requirement — recorded playback and synchronized state changes communicate execution; actual motion remains unverified |
+| Clear without decorative shadows? | YES — hierarchy comes from pane boundaries, headings, navigation and selection |
+
+Native editor theme/font/size conventions and the owner's explicit DeepWiki reference govern the respective surfaces. Generic marketing-font, hero and decorative-animation prescriptions do not override those accepted choices. The generated raster cannot prove production contrast, visited/focus/input states, text sizes or motion; those remain implementation acceptance checks, not assumed pixel results. No new marketing components or visual variants are proposed.
+
+### Pass 5 — design-system alignment, complete
+
+Initial/current score: **10/10** at the specification level. No new issue found. DESIGN.md has no token frontmatter; the accepted host/reference roles below supply the design vocabulary. This mapping records existing direction, not new geometry approval.
+
+| Surface / component | Existing design authority to reuse |
+| --- | --- |
+| Activity Bar, source editor, standard chat and native debugger | Host-owned icon/view, font, theme, selection, focus and keyboard conventions; no cloned chat or Variables/Watch UI |
+| Codebook capture/save and replay controls | Native extension surfaces and the approved bottom position/shared playhead; current state and focus remain distinguishable |
+| Learning summary and sequence | Codebook-owned context in the former chat position, preserving D016 reading/citation return and explicit understanding |
+| Wiki chapters, article, relevant-source disclosure, outline and question area | The inspected DeepWiki reader and D033 reproduction requirement; substantial source-grounded content, not a branded card dashboard |
+| Wiki typography and palette reference | Observed Geist 16px/24px article text, 22px/30px headings, `#333333` text and `#F8F7F6` background; exact implementation/contrast still requires rendered checks |
+| Wiki output configuration | The owner's existing requirement to change output in settings, exposed through ordinary editor configuration; the image's Change location affordance must lead to that setting, not silently introduce a separate output policy |
+| Theme and state | Native supported editor themes and DeepWiki's reader treatment; no selectable Codebook theme trio |
+
+Specific supported APIs, token identifiers, CSS and component mechanics remain engineering work. They must implement the accepted native/reference outcomes and preserve unrelated work. The source-derived example diagram in the visual companion expands simplified generated labels.
+
+### Pass 6 — desktop layout and accessibility, complete
+
+Initial score: **7/10**. Current score: **10/10** after the individual 5A answer and the owner's D034/D035 instructions. The owner explicitly scoped out extremely small windows and extreme zoom; generic mobile/tablet/200% prescriptions do not add product gates. No new issue remains within the supported desktop scope.
+
+| Concern | Accepted implementation and verification contract |
+| --- | --- |
+| Reference layout | Ordinary desktop display; editor/browser window expanded to available space; normal/default zoom, with OS full-screen optional. Record actual display, window and zoom per host rather than inventing a new minimum pixel size. |
+| Replay summary | Show beside video/source/native debugger in the main reference. 5A collapse/reopen through Learning summary preserves playhead, matching debugger/source, scroll/selection and meaningful focus. Prioritize app/code/value correspondence when space is limited. |
+| Keyboard and discovery | All Codebook actions have keyboard access and visible focus. D035 tooltips show every assigned binding; ? opens a discoverable searchable action/key list. Text entry and host-owned bindings retain their normal behavior. See the complete shortcut contract. |
+| Focus and reading return | Follow native editor order/ownership; source citation return restores the originating summary/article context. Opening/closing summary or shortcut help retains the same learning moment and returns focus to its invoking control. Async updates do not steal focus. |
+| Accessible structure/state | Name controls by their actions, use native semantics/appropriate landmarks, associate labels with inputs, and expose working/error/success/recording state to assistive technology. Meaningful state is not carried by color alone. |
+| Themes and contrast | Native surfaces follow the active host theme; Codebook-owned surfaces preserve readable contrast, selection and focus in supported light/dark/high-contrast environments. Independent Wiki retains its reference reader treatment. |
+| Motion | Respect reduced-motion settings for decorative transitions. Real playback and synchronized changes must be checked by recorded interaction and inspected frames; a concept PNG proves neither. |
+
+The keyboard-help component adds search/no-match, open/closed and focus-return states. An empty search result remains within the dialog, clearly identifies no matching shortcuts and retains search/close access. Its inventory comes from actual available bindings, not keys invented in the image. [D035's specification](../specs/keyboard-shortcuts.md) also covers the independent Wiki without runtime MCP.
+
+### Pass 7 — unresolved decision register, evaluated
+
+Audited actual Activity Bar navigation, capture/save, replay controls/playhead, summary, Wiki update/output/source/Q&A and shortcut help. Their accepted outcomes are specified above and in the feature contracts. Specific public APIs, storage/adapter mechanics and additional safe key assignments remain bounded engineering choices; they do not reopen accepted outcomes. Optional in-editor Wiki opening is permitted, not a new mandatory screen. No extra out-of-scope TODO or hypothetical control is proposed.
+
+**No open design decision.** The owner adopted the complete corrected v9 image as the product visual specification: “採用する。修正版v9を視覚仕様にする（推奨）”. D036 records that adoption and the requested local implementation harness. Questions 4 and 5 are resolved; do not ask them again.
+
+### Reconciled visual artifact
+
+The [current v9 image and companion](../designs/codebook-product-spec-v9.md) include the ordinary desktop reference, accepted replay hierarchy, bottom save, independent DeepWiki, truthful gap caption and shortcut discovery strip. Iteration 8 corrects the two example diagrams: PostgreSQL returns to createInvoice; createInvoice revalidates/redirects. All eight images are sequential revisions of one direction. No native screenshot, runtime, motion or accessibility PASS is implied.
+
+## Implementation Tasks
+
+Synthesized only from individually accepted findings. These are final-product obligations for bounded engineering planning, not authorization to implement all of them in the current documentation/harness phase. File paths are existing discovery starting points; confirm ownership with symbols before editing. Effort is a planning estimate.
+
+- [ ] **T1 (P1, human: ~2-4 days / CC: ~4-8 hours) — Learning replay: Implement synchronized historical replay through native debugging.**
+  - Surfaced by: D032 / Pass 1: replay must preserve video, executed source and native historical values/stack after runtime exit.
+  - Files: `extension/src/studyWorkspace.ts`, `extension/src/playbackSchemas.ts`, `extension/src/recordingSchemas.ts`
+  - Verify: Record a real dashboard explanation; close runtime/chat; repeat backward/forward seeking in both hosts without side effects.
+- [ ] **T2 (P1, human: ~1 day / CC: ~2-4 hours) — Capture and saving: Expose bottom capture status and Save learning replay.**
+  - Surfaced by: 2A / Pass 1: capture/save remains discoverable outside standard chat.
+  - Files: `extension/src/studyWorkspace.ts`, `extension/src/learningLibrary.ts`
+  - Verify: Verify working, failed, partial and durable save states; reopen through the library; preserve explicit understanding.
+- [ ] **T3 (P1, human: ~2-4 days / CC: ~4-8 hours) — Independent DeepWiki: Author the shared DeepWiki generation guidance and full reader output.**
+  - Surfaced by: D033 / Pass 1: DeepWiki quality is generated by the editor agent skill without runtime/debug MCP.
+  - Files: `extension/skills/codebook/SKILL.md`, `extension/src/repositoryBook.ts`, `extension/src/repositoryReader.ts`
+  - Verify: Generate chapters, diagrams, citations and grounded Q&A with runtime MCP unavailable in both hosts; retain browser reading after editor exit.
+- [ ] **T4 (P1, human: ~1-2 days / CC: ~3-5 hours) — Wiki maintenance: Connect browser update, output settings and correct-local-editor citations.**
+  - Surfaced by: 3A / Pass 1: browser update starts the same editor-agent procedure; source links target the local project.
+  - Files: `extension/src/repositoryView.ts`, `extension/src/repositoryReader.ts`, `extension/src/repositorySource.ts`
+  - Verify: Exercise chat and browser update, output changes, source drift and failed/interrupted update; preserve the last usable site.
+- [ ] **T5 (P1, human: ~1-2 days / CC: ~2-4 hours) — Partial history: Continue video across marked gaps and clear unavailable history.**
+  - Surfaced by: 4A / Pass 2: source/debugger gaps cannot display another moment's values or stop available video.
+  - Files: `extension/src/playbackSchemas.ts`, `extension/src/studyWorkspace.ts`
+  - Verify: Play and seek repeatedly into/out of missing history; show unavailable state only where capture is missing and restore matching recorded state.
+- [ ] **T6 (P1, human: ~1 day / CC: ~2-4 hours) — Summary and desktop access: Implement summary collapse and retained context at the ordinary desktop baseline.**
+  - Surfaced by: 5A / D034 / Pass 6: preserve the app-source-debugger relationship and summary focus/reading state.
+  - Files: `extension/src/studyWorkspace.ts`, `extension/src/repositoryView.ts`
+  - Verify: Compare both native hosts at normal zoom; collapse/reopen summary; check keyboard, focus, themes and recorded motion.
+- [ ] **T7 (P1, human: ~1 day / CC: ~2-4 hours) — Shortcut discovery: Show assigned shortcuts in tooltips and provide the question-mark list.**
+  - Surfaced by: D035 / Pass 6: assigned keys must be discoverable while question-mark typing remains normal.
+  - Files: `extension/src/studyWorkspace.ts`, `extension/src/repositoryView.ts`, `extension/src/repositoryReader.ts`
+  - Verify: Verify actual bindings, tooltip/list agreement, eligible ? open, search/Escape/focus return and text/IME preservation in both hosts and independent Wiki.
+
+_No new tasks from Passes 3, 4, 5 or 7; their checks added no independent finding. No deferred TODO proposal remains._
+
+Machine-readable GStack task artifact: `/Users/ryotamurakami/.gstack/projects/codebook/tasks-design-review-20260926-111357.jsonl`. The full actionable list is also above so another checkout does not depend on that cache.
+
+## Completion Summary
+
+| Review dimension | Before → after accepted decisions |
+| --- | --- |
+| System audit | Root DESIGN.md, native editor operation and DeepWiki reading; no marketing UI |
+| Step 0 initial impression | 6/10 |
+| Pass 1 — Information architecture | 6/10 → 10/10 |
+| Pass 2 — Interaction states | 6/10 → 10/10 |
+| Pass 3 — Journey | 10/10 → 10/10 |
+| Pass 4 — Specificity | 10/10 → 10/10 |
+| Pass 5 — Design system | 10/10 → 10/10 |
+| Pass 6 — Desktop/accessibility | 7/10 → 10/10 |
+| Overall, minimum of Passes 1–6 | **6/10 → 10/10** |
+| Pass 7 — Decision register, unscored | 9 explicit decisions recorded; 0 unresolved |
+
+The nine design decisions are D032, 2A, 3A, 4A, 5A, D033, D034, D035 and whole-image adoption in D036. Scores rate specification completeness, not implemented UI. The owner requested the local implementation harness next; engineering review remains required when a bounded implementation plan is selected.
+
+## Approved Mockups
+
+| Screen/section | Mockup path | Direction | Constraints |
+| --- | --- | --- | --- |
+| Live explanation, learning replay, independent DeepWiki and shortcut discovery | `/Users/ryotamurakami/laststance/vscode-extension/codebook/docs/designs/assets/codebook-product-spec-v9.png` | One product design family with separate screens | D032–D036; ordinary expanded desktop/default zoom; native host chrome and sample values are illustrative |
+
+Portable local reference: [approved PNG](../designs/assets/codebook-product-spec-v9.png), with [identity and approval](../designs/visual-target.json) and [companion](../designs/codebook-product-spec-v9.md). The owner approved corrected iteration 8, SHA-256 `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`. Its generated Review candidate header predates that approval; bytes remain unchanged.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+| --- | --- | --- | --- | --- | --- |
+| CEO Review | /plan-ceo-review | Scope and strategy | 0 | Not run for this bounded design review | Owner explicitly defined the final-product scope |
+| Outside Review | Claude Code CLI / design outside voices | Independent second opinion | 0 | Owner-skipped | No completed external design review; host review only |
+| Eng Review | /plan-eng-review | Architecture and tests | 0 | Required for a selected implementation plan | Storage/native replay adapter and agent integrations remain engineering work |
+| Design Review | /plan-design-review | UI/UX requirements | 1 | clean | 6/10 → 10/10; 9 decisions; 0 unresolved |
+| DX Review | /plan-devex-review | Integration experience | 0 | Not run in this review | Apply to later bounded public interface/setup work |
+
+**OUTSIDE COVERAGE:** host Codex; provider Claude Code CLI; phase design; owner-skipped. No cross-model coverage is claimed. GStack design binary/brain cache were unavailable; the built-in image tool and local owner-approved contracts supplied the artifacts.
+
+**VERDICT:** Design plan CLEAR. Whole-image approval is recorded; local harness construction is the owner's next authorized task. Product implementation, native verification and final acceptance remain pending; eng review required for the bounded implementation plan.
+
+NO UNRESOLVED DECISIONS
