@@ -71,8 +71,11 @@ async function check(page, options) {
             model: { ...options.message.model, matching: true, selection: { ...options.message.model.selection, tab: 'live', follow: true },
               observation: { id: 'pause-1', capturedAt: '2026-09-26T05:07:15.000Z', values: { price: 24, cartCount: 1 },
                 interpretations: [{ text: 'The selected tote costs $24 and the cart count is one.' }] } } };
-          // Act: the product renderer receives a new actual pause without a learner scroll.
-          await publish(observed); await page.waitForFunction(() => window.sent.some(message => message.type === 'rendered' && message.revision === 2));
+          // Act: a host loading update precedes the complete pause, as it does during a native run.
+          await publish({ ...observed, loading: true });
+          await page.waitForFunction(() => window.sent.some(message => message.type === 'rendered' && message.revision === 2));
+          await publish({ ...observed, revision: 3 });
+          await page.waitForFunction(() => window.sent.some(message => message.type === 'rendered' && message.revision === 3));
           const revealed = await page.evaluate(() => ({ scrollY: window.scrollY,
             interpretationTop: document.querySelector('#live-content h2').getBoundingClientRect().top,
             interpretationBottom: document.querySelector('#interpretations').getBoundingClientRect().bottom,
@@ -84,8 +87,8 @@ async function check(page, options) {
             passed: revealed.scrollY > 0 && revealed.interpretationTop >= 0 && revealed.interpretationBottom <= revealed.viewportHeight
               && revealed.valuesBottom <= revealed.viewportHeight });
           await page.evaluate(() => window.scrollTo(0, 0));
-          await publish({ ...observed, revision: 3 });
-          await page.waitForFunction(() => window.sent.some(message => message.type === 'rendered' && message.revision === 3));
+          await publish({ ...observed, revision: 4 });
+          await page.waitForFunction(() => window.sent.some(message => message.type === 'rendered' && message.revision === 4));
           cases.push({ name: 'refresh of the same pause preserves the learner reading position',
             passed: await page.evaluate(() => window.scrollY === 0) });
         }

@@ -171,6 +171,18 @@
           "bytes": 290205
         }
       ]
+    },
+    {
+      "version": "0.2.9",
+      "source": "c0800cdf117992127f9f62bdc2e4dedd6a56841e",
+      "vsixSha256": "d3fcb270cdd0e4486f1c2d70083a6d530d5e1ce28ce4225fe2078a29ed2c5474",
+      "result": "PARTIAL — followed pauses completed, but native Study interpretation and values did not fit the viewport",
+      "files": [
+        { "path": "artifacts/cycle-0028/native/vscode-029-copilot-auto.webm", "sha256": "e4bd9f2d383d9b251322ed8f3a2e0ee4e7961244e6e14beefed04b418c88d46d", "bytes": 7275792 },
+        { "path": "artifacts/cycle-0028/native/vscode-029-frames/55.png", "sha256": "a5d18f06b080d57d6d95d1dc53f9ba45c9387d861a9289fd39bb8f24ec63cbc8", "bytes": 244734 },
+        { "path": "artifacts/cycle-0028/native/vscode-029-frames/95.png", "sha256": "3d1ff4a7d91cb495c896f3c32c6f6a09a93619a918fa881a7be0dc4d7248174b", "bytes": 309691 },
+        { "path": "artifacts/cycle-0028/native/vscode-029-frames/145.png", "sha256": "6238e52856a3a79e8d111da31974a13a24108bde3ee88f83ec98012609d401d2", "bytes": 287700 }
+      ]
     }
   ]
 }
