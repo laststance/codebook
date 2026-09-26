@@ -1,12 +1,16 @@
 # Changelog
 
+## [0.2.7.0] - 2026-09-26 (development candidate)
+
+Cycle 0028's installed 0.2.6 VS Code trial entered Live before execution and retained grounded explanations at all four pauses, but the owned Node/browser debug launches opened the Debug Console and compressed the application/source/Study reading area. Owned launch configurations now keep that panel closed without changing the user's settings. The same bundled skill 1.0.20 remains in use. New installed layout verification is pending; neither demo run counts toward D029 acceptance.
+
 ## [0.2.6.0] - 2026-09-26 (development candidate)
 
-Cycle 0028's first 0.2.5 installed VS Code trial opened Study through the ordinary AI chat, but left it on Overview throughout real pauses. Skill 1.0.20 and public discovery now require both Live content and current-run following before input, using the existing protected Return to Current operation. The failed visibility attempt and successful saved replay remain distinct; the new candidate's installed validation is pending.
+Cycle 0028's first 0.2.5 installed VS Code trial opened Study through the ordinary AI chat, but left it on Overview throughout real pauses. Skill 1.0.20 and public discovery now require both Live content and current-run following before input, using the existing protected Return to Current operation. The failed visibility attempt and successful saved replay remain distinct. The later installed 0.2.6 trial confirmed Live entry and saved pauses, then exposed the separate Debug Console reading-space limitation fixed in 0.2.7.
 
 ## [0.2.5.0] - 2026-09-26 (development candidate)
 
-Cycle 0028 updates the common skill to 1.0.19 and public presentation guidance to open the current/default learner mode before runtime application input. Default and saved-mode cold entry are covered through the actual MCP transport. Installed ordinary-chat validation remains pending. Goal version 6 replaces random consecutive final reviews with the nine mandatory projects and ordered main-agent/independent-junior acceptance stages under D029; no new acceptance pass is claimed.
+Cycle 0028 updates the common skill to 1.0.19 and public presentation guidance to open the current/default learner mode before runtime application input. Default and saved-mode cold entry are covered through the actual MCP transport. The later installed 0.2.5 trial failed because Overview stayed selected during pauses. Goal version 6 replaces random consecutive final reviews with the nine mandatory projects and ordered main-agent/independent-junior acceptance stages under D029; no new acceptance pass is claimed.
 
 ## [0.2.4.0] - 2026-09-26 (development candidate)
 

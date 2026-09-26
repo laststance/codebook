@@ -3,7 +3,7 @@
 Type: product increment
 Status: implementing
 Result: pending
-Delivery: 0.2.5 native failure retained; 0.2.6 repair validation and installed retest pending
+Delivery: 0.2.5 and 0.2.6 native limits retained; 0.2.7 console-space repair pending validation
 Goal version: 6
 Tracking issue: [#44](https://github.com/laststance/codebook/issues/44)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -88,3 +88,9 @@ Validation checkpoint: corrected sequential product/shared checks pass 1114/1114
 [VS Code 0.2.5 evidence](evidence/0028/vscode-025-entry.md): automatic Study opening occurs before input, including public restoration after a grid timeout, but Overview stays selected during all four pauses. The bounded connected-context outcome FAILS. Native reading space is also constrained at owner zoom 2 with debug UI visible; no three-pane usability pass is claimed. Saved explanation/replay results remain development evidence. Cursor on 0.2.5 is unexecuted.
 
 The revised 0.2.6 / skill 1.0.20 guidance requires both current-run following and Live content through existing Return Current. The three cold-entry actual-MCP cases now assert the observed Overview state after opening and the Live state after public return, with unchanged learner work and zero executions. Together with stale/history controls, 5/5 focused checks pass. Corrected-candidate product/shared validation passes 1114/1114, package checks 101/101 and typecheck passes. Both-host installed evidence and current-cut provider review remain pending. All nine-project acceptance rows remain NOT RUN.
+
+## Second installed trial and reading-space hypothesis
+
+[VS Code 0.2.6 retest](evidence/0028/vscode-026-live-entry.md) confirms the AI called Return Current after a public layout Restore, selected Live before start, observed four pauses and saved four explanations. The fixed VSIX reached purchase confirmation and recording. The inspected video demonstrates a separate failure: Codebook-owned debugger launches opened the Debug Console; at owner zoom 2 this consumed the height needed to read application/source/Study together. A correct reader state is therefore not sufficient for the cycle's visible reading outcome. Cursor on 0.2.6 was not run. No D029 target was exercised.
+
+VS Code documents `internalConsoleOptions: neverOpen` per launch configuration. Candidate 0.2.7 applies it to Codebook-owned Node and browser launches, not global user settings. This should preserve native reading height while keeping debugger sessions and console output available on demand. A new fixed VSIX and native video must falsify or confirm the hypothesis. At this checkpoint, that source cut has not passed broad/package tests or installed validation; final review and delivery remain pending.

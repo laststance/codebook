@@ -44,7 +44,8 @@ export class HostBrowser {
 
   /** Starts a real debugger using the selected host route, invoked once during run preparation. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
   async launch(configuration: vscode.DebugConfiguration, signal: AbortSignal): Promise<void> {
-    let debugConfiguration = configuration;
+    // Owned browser debugging must not open the Debug Console over the application and Study panes.
+    let debugConfiguration: vscode.DebugConfiguration = { ...configuration, internalConsoleOptions: 'neverOpen' };
     if (this.host.browserBackend === 'managed') {
       if (!this.host.chrome) throw new Error('Managed Chrome installation is missing');
       const runtimeExecutable = this.scenario === 'missing-browser' ? '/codebook-missing-chrome' : this.host.chrome.binary;
@@ -57,7 +58,7 @@ export class HostBrowser {
       const { BrowserViewport } = await import('./browserViewport.js');
       signal.throwIfAborted();
       this.viewport = this.createViewport ? this.createViewport(this.runId, this.record, this.fail, this.scenario) : new BrowserViewport(this.runId, this.record, this.fail, this.scenario);
-      debugConfiguration = { ...configuration, type: 'pwa-chrome', request: 'launch', runtimeExecutable,
+      debugConfiguration = { ...debugConfiguration, type: 'pwa-chrome', request: 'launch', runtimeExecutable,
         runtimeArgs: ['--headless=new', '--remote-debugging-pipe'], userDataDir: this.managedProfile, cleanUp: 'wholeBrowser', browserLaunchLocation: 'workspace' };
     } else if (this.host.id === 'cursor') {
       const commands = await awaitResponse(vscode.commands.getCommands(true), 'Cursor browser capabilities', signal);
@@ -102,7 +103,7 @@ export class HostBrowser {
       if (!version.webSocketDebuggerUrl || new URL(version.webSocketDebuggerUrl).host !== `127.0.0.1:${endpoint.port}`) throw new Error('Cursor upstream debugging endpoint changed');
       this.bridge = new CursorCdpBridge(version.webSocketDebuggerUrl, target.id, this.record);
       const bridgePort = await this.bridge.listen();
-      debugConfiguration = { ...configuration, type: 'pwa-chrome', request: 'attach', address: '127.0.0.1', port: bridgePort, urlFilter: this.url, targetSelection: 'automatic' };
+      debugConfiguration = { ...debugConfiguration, type: 'pwa-chrome', request: 'attach', address: '127.0.0.1', port: bridgePort, urlFilter: this.url, targetSelection: 'automatic' };
     }
     signal.throwIfAborted();
     // Owned fixed builds never require saving unrelated learner documents before launch.
