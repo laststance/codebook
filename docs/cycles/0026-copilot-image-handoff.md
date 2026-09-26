@@ -66,7 +66,7 @@ Review checkpoint: CodeRabbit CLI found two stale resume entries on `6e57235…`
 
 ## Handoff
 
-- Exact next action: resolve the three hosted clarification threads, verify CLI/hosted-review/CI coverage against the final PR head, then merge PR #41 and close Issue #40 under D021. Build/package validation and the `6bd8803…` CLI/CI checkpoint already passed; do not repeat native trials without a new hypothesis.
+- Exact next action: verify CLI/hosted-review/CI coverage and unresolved-thread state against the final PR head, then merge PR #41 and close Issue #40 under D021. Build/package validation and the `6bd8803…` CLI/CI checkpoint already passed; do not repeat native trials without a new hypothesis.
 - Changed files / branch / active processes: `codex/cycle-0026-copilot-image-handoff`; public README recovery instructions and sanitized cycle/evidence records; native trial and recording processes exited.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D026 now includes the owner's explicit instruction to proceed with isolated native trials and ask only after actual interference blocks the trial.
