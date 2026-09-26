@@ -1,46 +1,72 @@
-# Learning replay
+# Learning replay and time-travel debugging
 
-Authority: PRODUCT_GOAL version 7, G04/G05 and D030. This specifies required behavior; implementation and visual design are pending Cycle 0029 follow-up.
+Authority: PRODUCT_GOAL version 8, G03/G04/G05/G07 and D030/D032. This specifies required behavior; implementation and final visual approval remain pending in Cycle 0029.
 
-## Purpose and entry
+## Purpose and screen hierarchy
 
-Learning is the ability to save an explained code path and revisit it as a replay. The source is a live explanation performed in standard Copilot Chat or Cursor Agent while the AI operates the actual project and debugger. The Codebook Activity Bar entry exposes the saved-learning library and opens a dedicated replay screen. Exact navigation and pane arrangement belong to the later design review.
+Learning replay lets a learner repeatedly inspect how an application's behavior corresponds to the code that executed and the runtime state at that moment. It is saved from a real code-path explanation performed in standard Copilot Chat or Cursor Agent while the AI operates the actual project and debugger.
 
-A learner can finish a code-path explanation, choose to save it as learning, and later select that saved session. Acquisition of screen/pause evidence must begin early enough to preserve the explanation being saved; saving afterward cannot recreate uncaptured execution. A partial capture remains explicitly partial. Whether the implementation buffers privately or offers a recording control is an engineering choice that must preserve this outcome and disclose capture state.
+The replay screen inherits the live explanation's composition. It shows the recorded application, the historical executed source in a native source editor and historical values/call stacks in the standard debugger together. The live chat area becomes a **learning summary** containing the processing summary, saved explanation and sequence diagram. This is a Codebook-owned replay surface, not a replacement live chat client or a request to modify native chat internals. The Codebook Activity Bar entry opens the learning library and selected replay.
 
-## Saved learning artifact
+The primary task is synchronized playback and time-travel debugging; the summary supports it. A document-like reader with a small video thumbnail and source links cannot substitute for synchronized source/debugger history. No dedicated Codebook Variables/Watch clone is required: the native debugger is the inspection surface in both live use and replay.
+
+## Shared historical moment
+
+Play, pause, step backward/forward and seek use one selected recorded moment. Repeatedly revisiting that moment must recover the same captured application frame, executed source version/location, native debugger values/stack and corresponding explanation. The learner can compare earlier and later states without rerunning the application.
+
+| Surface | Required correspondence |
+| --- | --- |
+| Recorded application | Display the captured application/video frame for the selected time and identify it as recorded. Applicable server/test/extension evidence must not invent a Web UI. |
+| Native source editor | Show the source version that actually executed and its corresponding location. A current checkout file or a merely related source link is insufficient. |
+| Native debugger | Expose recorded values, scopes and stack for the same recorded context. Label the replay debug context so it cannot be mistaken for a currently running target. Required historical values must remain inspectable after the original debugger exits. |
+| Learning summary | Show the overall summary and selected-step explanation/sequence correspondence. Distinguish the complete path from what had happened at the selected instant. |
+| Playback controls | Apply the same playhead/step to all synchronized surfaces. Keep historical state visibly selected while paused; never silently mix earlier values with later video. |
+
+Capture skew, intervals without a source/debug observation and truncated/redacted values remain explicit. Do not interpolate a value, fabricate an executing line or silently carry the last observed state forward as if freshly captured. Unsupported capture fidelity at a required point is an implementation gap, not a passing alternative design. Precise sampling/storage/debug-adapter mechanics belong to engineering planning, with these observable outcomes preserved.
+
+## Capture and saved learning artifact
+
+The learner can finish an explanation and save it as learning. Acquisition of video/source/runtime state must start early enough to preserve the session; saving afterward cannot recreate uncaptured execution. Finalization identifies complete or partial capture. Whether recording is privately buffered or explicitly started is an engineering choice that must disclose capture state and preserve the required history.
+
+The owner selected bottom status-area capture state and **Save learning replay** during live explanation (design decision 2A). These controls are extension-owned and outside the standard chat UI. They remain available while the learner reads the chat or inspects source/debugger state.
 
 | Content | Required behavior |
 | --- | --- |
-| Question and source identity | Retain the natural question, project/revision and actual source hashes, session identity and capture time. Dirty source is identified, not silently represented as the commit. |
-| Processing summary | Explain the overall purpose, main steps, inputs/results and important branches using the actual explained path. Clearly identify outcomes that were not observed. |
-| Sequence diagram | Show participating UI/components/services/functions and their ordered interactions. Link meaningful steps to source, explanation and recorded moments. Distinguish observed interactions from source-derived relationships and unknown boundaries. A call stack alone cannot prove all arrows or async causality. |
-| Saved explanation | Preserve the explanation of each meaningful stop, its source anchors and supporting evidence references so it remains readable when the original chat is closed. This is saved learning content, not a replacement live chat client. |
-| Execution recording | Retain application frames where applicable, ordered actions/pauses and corresponding source/explanation. For server, test or extension execution, preserve the applicable execution evidence without inventing a Web UI. |
+| Question and source identity | Retain natural question, project/revision, actual source hashes, session identity and capture time. Dirty source is identified; it is not silently represented as the commit. |
+| Processing summary | Explain purpose, main steps, inputs/results and important branches from the actual explained path. Identify outcomes that were not observed. |
+| Sequence diagram | Show participating UI/components/services/functions and ordered interactions. Link meaningful steps to the matching source, explanation and recorded moment. Distinguish observed interactions, source-derived relationships and unknown boundaries; a stack alone cannot prove every async arrow. |
+| Saved explanation | Preserve meaningful-stop explanations, source anchors and supporting evidence so they remain readable after the original chat closes. |
+| Execution recording | Retain application frames where applicable, ordered actions/pauses, historical source and durable runtime values/scopes/stack sufficient for native debugger replay. Do not persist live debugger handles as durable values. |
 | Learner state | Retain selected moment/playhead, reading context and explicitly marked understanding/progress. Execution success or saving never marks understanding automatically. |
-| Limitations | Identify partial/interrupted recordings, unavailable/redacted facts, capture skew and source drift. Keep failures inspectable. |
+| Limitations | Identify partial/interrupted capture, unavailable/redacted facts, skew and source drift. Keep failures inspectable. |
 
-A source-linked sequence diagram is the learning flow representation. Other useful source navigation may remain, but it cannot substitute for the requested sequence explanation. Diagram generation is not permission to invent calls, requests or completed results.
+Internal evidence still grounds explanations. D032 additionally requires exposing recorded runtime state through the native debugger during replay; it is not restricted to private facts or quotations in text.
 
-## Save, reopen and replay
+## Save, reopen and time travel
 
-1. Explain a real code path through the standard editor chat and actual execution.
-2. Save the explanation and available recording as one identified learning replay, including summary and sequence diagram. Finalization reports complete or partial status.
-3. Open it from Codebook's learning library after the app/debugger, original chat or editor process has closed.
-4. Read the summary/diagram, select a meaningful step and replay or seek through its corresponding recorded application/source/explanation evidence.
-5. Navigate to source while retaining the replay's recorded version. Opening current files discloses differences; it must not rewrite the historical record.
-6. Mark understanding only through explicit learner action; reopen and verify the saved progress and reading/playback position.
+1. Explain a real code path through standard editor chat and actual execution.
+2. Save the explanation and acquired video/source/debugger history as one learning replay, with summary and sequence diagram. Report complete or partial status.
+3. Stop the original application/debugger and close the original chat. Reopen the saved learning from the library, including after restarting the editor.
+4. Play the recording and verify that the historical executed source and native debugger move with it. Pause to inspect values and the call stack at that recorded point.
+5. Step backward and forward, seek to an earlier moment and replay the same interval repeatedly. Recover the same recorded frame/source/values/stack without changing target state or creating a new application run.
+6. Navigate from the summary/sequence to a recorded step. Keep the selected time, source and debugger aligned and retain reading context. Opening current source separately discloses drift without rewriting the recorded version.
+7. Mark understanding only through explicit learner action. Reopen and verify progress, playback position and its corresponding historical debug state.
 
-Playback is read-only with respect to the target runtime. It never reexecutes the application, sends a purchase request or presents a stopped live debugger when none exists. A deliberate new execution creates a separate run.
-
-## Native debugger and evidence boundary
-
-Live values, watches and call stacks use VS Code/Cursor's native debugger. Codebook does not duplicate the Variables or Watch interface in a custom live or replay panel. Bounded runtime snapshots may still be retained internally to ground explanations, summaries and diagram links. A saved explanation may quote a relevant observed value with its evidence and time; this does not require a general value-inspection UI. Recorded images are historical captures and must be labeled accordingly.
+Time travel navigates captured history. Replay never sends another purchase request or reruns other application side effects. A deliberate new execution is a separate live run. Replay controls must not resume an unrelated live debugger or borrow its state. The native debugger may have a dedicated historical session; its concrete implementation is not frozen by this specification.
 
 ## Relationship to independent Wiki
 
-A replay needs no Wiki or Wiki generation job. It can optionally link to repository documentation, but replay identity, recording storage, progress and source snapshots are independent. Regenerating, relocating or deleting generated Wiki output must not erase a replay or change its historical explanation/diagram. Wiki pages do not automatically become lessons or acquire learner progress.
+A replay needs no Wiki or Wiki-generation job. It may link to repository documentation, but recording storage, playback/debug context, learner progress and source snapshots are independent. Regenerating, relocating or deleting generated Wiki output must not erase a replay or change its explanation, sequence or captured history. Wiki pages do not automatically become lessons or acquire learner progress.
 
-## Verification
+## Acceptance
 
-Use the same real-project natural question in each host. Verify save/reopen after runtime exit, summary/diagram correctness and source links, ordered playback, an inspected video of motion where applicable, stale/partial states, progress ownership and independence from Wiki. Exact viewport, theme, source/package identity and limitations belong in evidence. A mockup or static screenshot is not replay proof.
+In each host, use a real project and natural question. Save a session that crosses multiple meaningful source/runtime states. After original runtime/debugger/chat exit, prove:
+
+- Playback shows the recorded application and the source executing at the same moment, with corresponding recorded values/stack inspectable through the native debugger.
+- Backward/forward steps, non-adjacent seeking and repeated replay return to identical historical state; no new target side effects or unintended live-debug mutations occur.
+- Summary/sequence/selected-step explanation remain grounded and synchronized where they refer to a selected point; learner progress stays explicit.
+- Editor restart restores the saved playhead and corresponding source/debugger context; source drift does not replace recorded state with current values/files.
+- Missing, partial, skewed or unavailable data is labeled honestly and required absent evidence prevents PASS.
+- Wiki generation/update has no effect on the saved replay or progress.
+
+Record native operation as video, extract and inspect frames for temporal correspondence and motion, and bind evidence to source/package/host/theme/viewport identity. A static screenshot, generated image, source-link-only reader or video-plus-summary without native historical inspection does not verify this feature. The exact nine-project matrix remains unchanged; pre-acceptance development uses D031's designated nextjs-dashboard checkout.

@@ -1,10 +1,10 @@
 # Cycle 0029 — Clarify live explanation, learning replay and independent Wiki
 
-Type: product increment, documentation first\
-Status: planning — written consistency review complete; GStack design review authorized next\
+Type: product increment, documentation then design\
+Status: planning — written consistency review complete; GStack design review in progress, visual candidate awaiting individual decisions\
 Result: pending broader cycle outcomes\
 Delivery: [Draft PR #48](https://github.com/laststance/codebook/pull/48); written specification committed, external-review gate pending\
-Goal version: 7\
+Goal version: 8\
 Tracking issue: [#46](https://github.com/laststance/codebook/issues/46)\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)\
 Goal links: G01–G07, G10–G12; retire G08/G09\
@@ -19,7 +19,7 @@ Do the authoritative documents clearly describe the owner's intended features an
 
 The owner first required completing Cycle 0028, creating Issue #46 and pausing. Cycle 0028 and its closure record are merged, Issue #44 is closed, and their main CI runs passed. The owner then requested **documentation first** and corrected the agent's interpretation: one UI variation does not mean one permanent screen containing every feature.
 
-Current phase:
+Initial written phase, completed before design started:
 
 - Record standard-chat live explanation with actual application/runtime/debugger operations and native source/value inspection.
 - Define learning as saving that explanation for replay, with processing summary, sequence diagram, source and recorded execution, plus separate library/replay screens.
@@ -27,7 +27,7 @@ Current phase:
 - Retire the three selectable presentation themes and duplicate value display. Record complete removal of the active cart/demo project and real-project validation as pending implementation.
 - Update goal/design/acceptance/development/agent rules, current state and Issues #1/#46 consistently. Retain recording/progress, both hosts, G12 ownership and D029's exact nine projects/two stages.
 
-Outside this phase: final pane geometry, visual review, image generation, source/demo deletion, bundled-skill/API changes and actual project trials. D031 subsequently fixes pre-acceptance editor behavior verification to `/Users/ryotamurakami/repository/nextjs-dashboard`; this does not change the nine acceptance targets. The owner explicitly placed screen design in a separate review after the written update. Historical evidence is preserved; no new native or final acceptance claim is made.
+The initial written phase excluded final pane geometry, visual review and image generation. After consistency review, the owner explicitly authorized that design work in this same cycle; its active checkpoint appears below. Source/demo deletion, bundled-skill/API changes and actual project trials remain outside the currently authorized documentation/design tranche. D031 fixes pre-acceptance editor behavior verification to `/Users/ryotamurakami/repository/nextjs-dashboard`; this does not change the nine acceptance targets. Historical evidence is preserved; no new native or final acceptance claim is made.
 
 ## Plan and selected skills
 
@@ -36,7 +36,7 @@ Outside this phase: final pane geometry, visual review, image generation, source
 3. Check links, active goal IDs, feature independence, legacy/current boundaries and configuration; review the bounded documentation diff.
 4. Deliver the documentation through the cycle PR and synchronize both issues with committed links, using **Refs #46** because broader work remains.
 
-Use `writing-for-agents` for concise authority/entry rules, `open-code-review-delegate` plus CodeRabbit CLI under D028 for review coverage, and `pr` for the delivery body. No new design brainstorm/review is invoked in this phase because the owner requested it separately afterward. Repository tracking/delivery follows DEVELOPMENT.md; hosted review remains owner-skipped under D027.
+Use `writing-for-agents` for concise authority/entry rules, `open-code-review-delegate` plus CodeRabbit CLI under D028 for review coverage, and `pr` for the delivery body. After written consistency review, use `plan-design-review` for the final-product screen/acceptance specification and `imagegen` for the requested matching raster artifact. Repository tracking/delivery follows DEVELOPMENT.md; hosted review remains owner-skipped under D027.
 
 ## Validation contract
 
@@ -71,15 +71,54 @@ CodeRabbit CLI local committed review failed twice during sandbox preparation wi
 - Documentation consistency phase: completed by direct review and checks; provider review/delivery remains pending. The owner authorized continuing into design in this same cycle; broader cycle result pending.
 - Keep: Architecture B, actual source/runtime evidence, recording, explicit learner progress, both editors, common skill and fixed nine-project acceptance.
 - Replace: bundled target demo, three UI variants, custom value display and the mandatory common Wiki/lesson session model.
-- No implementation removal, screen approval, generated image or acceptance PASS follows from this specification.
+- No implementation removal, screen approval or acceptance PASS follows from the written specification. The subsequently generated image remains a design candidate, as recorded below.
 
 ## Remaining Cycle 0029 work
 
-1. Separate screen-design review using these feature relationships, then create the replacement concept image agreed in that review. Keep the old three images historical.
+1. Complete the screen-design review using these feature relationships, resolve its individual decisions and finalize the matching image. The initial corrected candidate is saved; keep the old three images historical.
 2. Inventory and remove the active cart demo sources/generated copies/package assets/commands and adjust affected build/test/help paths. Preserve historical evidence and unrelated projects.
 3. Retire the theme selector and duplicate value UI; implement the defined learning replay and independent Wiki gaps through bounded plans. Preserve existing saved material and explicit ownership.
 4. Open `/Users/ryotamurakami/repository/nextjs-dashboard` in each editor for development behavior validation until final acceptance begins, per D031. Preserve the checkout and keep host evidence separate. Then execute D029's unchanged nine-project stages only under their prerequisites; dashboard development trials earn no acceptance credit.
 
 ## Handoff
 
-After the written consistency review, continue with GStack plan-design-review and create a matching final-product design image within this same Cycle 0029, as subsequently authorized by the owner. Keep the three feature screens distinct and trace design acceptance to version 7. Keep Issue #46 open and implementation pending. No desktop/native process was started for the documentation phase.
+After the written consistency review, continue with GStack plan-design-review and create a matching final-product design image within this same Cycle 0029, as subsequently authorized by the owner. Keep the feature lifecycles distinct and trace design acceptance to version 8 / D032. Keep Issue #46 open and implementation pending. No desktop/native process was started for the documentation phase.
+
+
+### Provider review and design-phase start
+
+The changed-hypothesis remote-source CodeRabbit CLI attempt completed after both local sandbox failures. It returned two duplicate major findings on the same DEVELOPMENT.md closure rule: an experiment with a falsified result was excluded by wording that allowed only demonstrated outcomes. The rule now allows demonstrated or falsified outcomes after complete records/delivery; unresolved evidence/delivery remains open. This is the single substantive finding, resolved by direct review. The provider output does not report an exact commit SHA, so it is recorded as a source-branch review initiated at `9fd9fd4`; `47b0019` was pushed while it ran. The final changed closure sentence has direct review, not a claimed subsequent zero-finding provider pass.
+
+GStack `plan-design-review` started for [the version 7 final-product design](../plans/cycle-0029-product-design.md), as explicitly requested after document consistency review. The full three-feature final specification and acceptance are the user-specified scope; no accepted function is being selected or cut. Old concept images were inspected as history. The GStack design binary/brain cache are unavailable; the built-in image-generation tool produced the raster candidate. Detailed visuals remain proposals until reviewed; source implementation is outside this phase.
+
+### Visual candidate and review checkpoint
+
+The [visual specification candidate](../designs/codebook-product-spec-v8.md) records required final deliverables, design acceptance criteria and feature/goal mapping. One board shows three functional moments: native-chat live explanation, saved-learning replay and an independent browser Wiki. Its [prompt and factual correction](../designs/prompts/cycle-0029-product-spec-v8.md) are saved. The current PNG is 941 × 1672, SHA-256 `9559d0d780b1f38f84064aeaeb52e78ec6564439a33e53730ed648ed50467981`.
+
+Read-only inspection of the designated dashboard's invoice form/action grounded the sample logic. The first generated diagram incorrectly attributed redirect to the database; the second image corrects both sequence diagrams, matches the illustrative amounts, fixes the before-insert saved explanation and removes an invented output folder. Generated host text/line numbers and example values are illustrative, not native proof. No editor, app or database was started.
+
+GStack Pass 1 identifies a real placement decision: list in the Codebook sidebar and selected replay in a wide editor tab (recommended), or sidebar-contained playback. This was the initial question; the owner subsequently rejected the document-like emphasis and supplied the D032 hierarchy below. Later passes are not claimed complete. Capture/save placement, Wiki action placement, state coverage and native/theme/accessibility detail remain explicit pending review work. No final visual is approved. CI on documentation commit `47b0019` passed; it does not cover subsequent artifact bytes.
+
+
+### Owner correction — synchronized replay and time-travel debugging
+
+The first GStack answer specifies that replay keeps the live explanation composition, replaces chat with a learning summary, and prioritizes synchronized video, the source executing at that moment and native-debugger runtime values. Repeated replay/time travel is essential. D032 records the individual decision; PRODUCT_GOAL advances to version 8 and the replay/acceptance/agent/design contracts now require historical native debugger values/stack, backward/forward stepping and repeated seeking after original runtime exit. Removing a custom value panel never removes this native inspection.
+
+The version 7 candidate's document-like player is superseded. The current version 8 candidate uses the approved replay hierarchy; a further image edit repairs its compact sequence's redirect ownership. Prompt history and final image identity are in the visual specification. The next individual question concerns capture/save placement (bottom status area versus Codebook sidebar). No answer or final-image approval is inferred. Remaining GStack passes and implementation stay pending; the nine-project rows remain unchanged.
+
+
+### DeepWiki reference, generation skill and accepted controls
+
+The owner selected 2A (bottom capture/save) and 3A (browser Update LLM Wiki), then explicitly required reproducing DeepWiki itself and identified the editor agent's generation skill as the primary implementation. D033, G02/G06/G12, the Wiki/generation-skill contracts and acceptance rules now reflect chapter/reader/diagram/citation/Q&A fidelity and generation without runtime/debug MCP. The shared entry routes Wiki work before runtime status checks. Source links target the user's local editor.
+
+The real DeepWiki repository reader and official documentation were inspected read-only. The visual candidate now emphasizes DeepWiki reproduction and agent-skill generation. Six iterative images develop one direction; the current PNG SHA-256 is `4727eca649352a342e2b1767db13230c49eb44a425cae876e91506e53901079e`. Earlier image hashes above preserve their checkpoints and are superseded as current candidates. No external AI question, repository indexing or native editor/runtime trial was run.
+
+GStack Pass 1 is complete (6/10 to 10/10 through explicit decisions). Pass 2 has an unanswered individual question 4 about partial-history playback: continue available media with truthful gaps, or pause at gaps for a deliberate jump. Later passes and final image approval remain pending. No seven-pass completion is claimed.
+
+### Version 8 documentation and visual checkpoint
+
+Direct consistency review reconciled D032/D033 across the product goal, current design, replay/Wiki specifications, shared-entry/generation-skill plans, development rules and acceptance protocol. Runtime connection requirements now explicitly apply to live/replay; the independent Wiki route cannot be blocked by `codebook_status`. The visual companion distinguishes individually approved controls from remaining geometry/state decisions.
+
+Validation from the cycle base `22e25c5` covers 23 changed paths: 21 Markdown files, the existing review-policy YAML change and one PNG. All 299 local Markdown links resolve, `git diff --check` passes and the CodeRabbit configuration validates. The nine required project rows and nine historical inventory rows are byte-identical to the base. The selected 941 × 1672 PNG matches the SHA-256 recorded above. No implementation or target source files changed in this increment.
+
+The prior provider review and CI belong to their earlier checkpoints; version 8 has direct document/artifact review only so far. Current-source external review, CI, final visual approval and merge remain separate gates. Keep Draft PR #48 and Issues #46/#1 open. Continue the individual GStack decision loop from the already-issued question 4; no answer or approval is inferred from the Wiki clarification.

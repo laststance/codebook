@@ -275,3 +275,35 @@ Decision: before final acceptance begins, open that existing project in the actu
 The path exists. Read-only inspection on 2026-09-26 found clean `main` at `26e5b2c`, with origin `ryota-murakami/nextjs-dashboard`. This is a locator/preflight observation, not an editor launch, runtime test or Codebook success. Recheck revision and existing changes before each trial.
 
 The D029 acceptance matrix remains exactly its nine designated projects. Dashboard development evidence is neither Stage 1 nor Stage 2, adds no tenth target and cannot substitute for a required project. Once the candidate is ready for acceptance, follow the normal frozen Stage 1 protocol. D030's written-specification-first and separate-design-review boundary still applies to the current task.
+
+## D032 — Synchronize learning replay with recorded source and native debugger state, 2026-09-26
+
+Source: Raphtalia's individual answer during Cycle 0029 GStack design review. The owner rejected the summary/video-reader emphasis and clarified the essential replay experience:
+
+> ラーニングリプレイはライブ説明のチャット欄がサマリーに置き換わったUIで大丈夫です。
+>
+> 最も重要なのは、映像と同時に、再生と同時に、その時実行されていたソースが表示され、デバッガでランタイムの値を見れる点です。
+>
+> アプリケーションとコードがどう対応しているのか、何回もリプレイ、タイムトラベルデバッキングができる点です。
+
+Decision: advance PRODUCT_GOAL to version 8. Learning replay inherits the live explanation's application/source/native-debugger composition, replacing the chat area with the learning summary. Repeated playback, backward/forward stepping and seeking synchronize the recorded application, the source executing at that time and inspectable historical values/call stacks in the editor's native debugger. The processing summary, explanation and sequence diagram accompany that synchronized experience; they do not replace it.
+
+This selects the replay composition instead of the agent's proposed standalone document-like reader or sidebar-contained player. Codebook's Activity Bar remains the library/feature entry. The standard live chat remains native; the summary is a Codebook-owned replay surface in its place, not a mutation of native chat internals. Preserve unrelated chats/layout and use supported editor capabilities.
+
+D030's removal of a custom Variables/Watch panel does not remove replay-time inspection in the native debugger. Persist the historical state needed for that inspection, identify the replay context clearly and synchronize its source/frame/value identity with the playhead. Never present present-day variables, stale live handles or values from another recorded point as the selected historical state. A video with source links or a summary-only reader cannot meet G04. Missing/partial capture is explicit and does not pass required replay points.
+
+Replay remains usable after the original runtime/debugger/chat exit. Time travel navigates captured history without repeating purchases or other target side effects; any deliberate new execution is a separate run. Exact recording/debug-adapter mechanics remain engineering work and need proof in both editors. No screenshot or specification establishes that capability.
+
+Preserve the independent Wiki, recording/sequence/summary requirements, explicit learner progress, G12, D031 development target and D029's unchanged nine-project acceptance. Continue the remaining GStack passes and update the visual candidate in Cycle 0029. This individual decision settles the replay hierarchy; it does not approve unrelated control placement, missing states or the entire generated image.
+
+Subsequent individual design choice **2A**: show capture status and **Save learning replay** in the editor's bottom status area, outside standard chat. The owner explicitly selected the placement shown in the version 8 candidate. Retain that affordance during live explanation; do not reopen this choice under later review passes.
+
+## D033 — Reproduce DeepWiki through the editor agent's generation skill, 2026-09-26
+
+Source: the owner selected design choice **3A**, then required that LLM Wiki reproduce DeepWiki itself and emphasized the generation skill as the primary implementation. Source links should open the user's local editor. These clarify the in-progress version 8 specification.
+
+Decision: reproduce the DeepWiki repository documentation and reader experience: full chapter hierarchy, architecture/process explanations and diagrams, relevant-source/inline citations, page navigation and code-grounded repository Q&A. Treat the real inspected DeepWiki as the product reference. Emphasize this requirement in both written specification and the design image. Source citations target the matching local VS Code/Cursor checkout. Retain independent local/configurable output and the owner-approved browser **Update LLM Wiki** button, which starts updating in the correct editor without manual prompt re-entry.
+
+The key implementation is a carefully authored DeepWiki generation skill used by the editor's AI agent. It teaches source exploration, chapter structure, explanation depth, accurate diagrams/citations, updates and quality checks. The shared thin `/codebook` entry delegates to that guidance. Wiki generation uses the agent's normal source/file capabilities and does not require the runtime/debug MCP service. The extension supplies configuration, update/status/open and source-link support; any bridge is supporting transport, not the Wiki-content engine. Route Wiki requests before the runtime `codebook_status` prerequisite. Runtime/replay still use their MCP/native-debugger contracts.
+
+The independent Wiki remains readable without the editor, debugger, original chat or a learning replay. Agent/model setup may be needed for generation, updating and interactive Q&A; it does not become a dependency of reading already generated pages. The [Wiki specification](docs/specs/llm-wiki.md) and [generation-skill plan](docs/plans/deepwiki-generation-skill.md) own detailed outcomes. The observed external service is a reference, not Codebook implementation evidence.

@@ -2,7 +2,7 @@
 
 ## Current specification and existing preview
 
-[Goal version 7](https://github.com/laststance/codebook/blob/main/PRODUCT_GOAL.md) defines standard-chat live explanation with the native debugger, saved learning replay with summary/sequence diagram, and an independent browser-readable LLM Wiki. Wiki output defaults to the project with a configurable location; chat/button updates and source deep links are required. Three selectable UI themes and Codebook's custom runtime-value display are retired requirements. Replay and Wiki retain their own screens.
+[Goal version 8](https://github.com/laststance/codebook/blob/main/PRODUCT_GOAL.md) defines standard-chat live explanation with the native debugger, synchronized application/source/native-debugger learning replay and time travel with summary/sequence diagram, and skill-driven reproduction of DeepWiki itself, including reader/diagrams/citations/Q&A and local-editor source links, independent of runtime/debug MCP. Wiki output defaults to the project with a configurable location; chat/button updates and source deep links are required. Three selectable UI themes and Codebook's custom runtime-value display are retired requirements. Replay and Wiki retain their own screens.
 
 **Implementation transition:** Cycle 0028 delivered extension **0.2.11 / MCP API 1.5**. Cycle 0029 currently updates documentation; the shipped implementation still includes the cart fixtures, old presentations and custom value UI described below. The new learning/Wiki contracts and their future controls are not advertised here as working commands. See [current state](https://github.com/laststance/codebook/blob/main/PROJECT_STATE.md) for source-specific limits.
 
@@ -90,7 +90,7 @@ CI runs the product/runtime tests and real packaging/failure tests before upload
 
 ## Shared presentations (API 1.5)
 
-This existing three-variant interface is scheduled for retirement. It is not the current design target and must not be confused with the separate learning replay and Wiki screens retained by version 7.
+This existing three-variant interface is scheduled for retirement. It is not the current design target and must not be confused with the separate learning replay and Wiki screens retained by version 8.
 
 Choose **Codebook: Select Presentation** or use the **Presentation** selector in the explanation pane. Study workspace places application above source beside the explanation; Living book gives reading the larger left pane; Guided walkthrough places application and source side by side above the explanation. Overview, Live and Recording remain independent content tabs. The same learner selection, understanding and runtime remain in place.
 
