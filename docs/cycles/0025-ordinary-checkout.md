@@ -67,11 +67,11 @@ Final reviewer count remains **0/10**.
 - Keep / revise / replace: keep the frozen question, action/causal-link oracle and host separation; revise the Copilot image handoff hypothesis in the next cycle. Do not repeat the identical image tool attempt without a changed mechanism.
 - Evidence that can update goal state: Cursor ordinary-chat sandbox execution and replay add one qualified G01/G03/G04/G12 development result. They do not establish a two-host standard-chat checkout or synchronized explanation, so G01/G04/G12 remain partial.
 - Remaining gaps: Copilot image transport, per-pause saved explanations, real-repository intended uses, integrated three-mode and constrained native UX, owner acceptance and final reviewers remain open.
-- Delivery state and proof: Draft PR #39; exact-head review/check/merge pending.
+- Delivery state and proof: Draft PR #39; exact-head review/check/merge pending. Under D021, merge closes Issue #38 as a completed experiment with a falsified hypothesis; it does not close the failed capability obligations in Goal #1.
 
 ## Handoff
 
-- Exact next action: finish record review and delivery for PR #39 without claiming the paired result passed; then select a narrow Copilot image-handoff repair experiment.
+- Exact next action: finish record review and delivery for PR #39, closing Issue #38 at merge as a completed experiment while retaining the falsified result; then select a narrow Copilot image-handoff repair experiment.
 - Changed files / branch / active processes: `codex/cycle-0025-ordinary-checkout`; record changes only. Both dedicated editor processes and trial servers exited; owner settings/default extensions and managed Cursor skill are at baseline.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D021–D026 unchanged.
