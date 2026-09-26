@@ -1,8 +1,8 @@
 # Cycle 0026 — Copilot image handoff recovery
 
 Type: experiment
-Status: planning
-Result: pending
+Status: development comparison complete; delivery checks in progress
+Result: inline-image hypothesis supported on the tested client; saved explanations still absent
 Delivery: pending
 Goal version: 5
 Tracking issue: [#40](https://github.com/laststance/codebook/issues/40)
@@ -45,19 +45,27 @@ On 2026-09-26, the driver freshly read open Goal #1, PRODUCT_GOAL.md version 5, 
 
 ## Attempts and evidence
 
-Pending. `/investigate` is active. Serena symbol tools returned no active language server, so source tracing uses targeted local reads. Context7's quota was unavailable; Microsoft's official repository and the exact installed Copilot bundle supplied the client contract. No product module is yet implicated, so no product-code edit scope is frozen before the comparison.
+The [host-specific comparison](evidence/0026/copilot-image-handoff-20260926.md) records both ordinary Copilot Chat Auto trials against the unchanged frozen package. Both routed to GPT-6 Luna. With the default upload route, the before image led to the same provider 400 / upstream 404 before any application action. With the public workspace setting disabled, the AI read that identical 32,297-byte PNG and all six later images, sent both actions once, continued four bound pauses and completed the selected purchase. All 11 causal links are observed. The finalized recording contains 32 frames over 57.003 seconds; stopped-app native replay showed the selected confirmation and matching source/values. Actual confirmation-transition frames were inspected.
+
+Both persisted Copilot tool results contain the same before-image SHA-256 `6c5b6a018294b39aed6c3b77b4f28f3a376268aaab8c287593e6b6fa25221b44`. Together with the exact installed client's upload-token branch, this supports the uploaded-image URL handoff as the compatibility boundary. The provider's opaque URL lifecycle and reverse-order control remain untested. No product runtime or skill bytes changed. The extension installation guide now documents the verified workspace setting and limits on recovery after an accepted action.
+
+The successful chat still called `codebook_explain` zero times; all four saved interpretation arrays are empty. Both chats explicitly lacked a checkout help URI in status. The existing `codebook://help/studies` resource contains the per-pause save procedure, while tool-only status discovery lists only the repository help resources. This is the next bounded product guidance/discovery gap.
+
+Both public stops retired their runtimes/descriptors. Renderer recording stopped, trial VS Code exited, owner settings/default extension hashes stayed unchanged, and Cursor was not operated. The inline setting remains only in the disposable trial workspace. Serena symbol tools had no active language server; Context7's quota was unavailable. Targeted source reads, Microsoft's official repository and the exact installed Copilot bundle supplied the client contract.
+
+Local package checks initially failed because the Corepack shim selected global pnpm 12.6.0 for nested commands instead of the required 12.4.2. A direct cached launcher then exposed its documented macOS `ENOEXEC` limitation. Pinning the existing 12.4.2 native binary and Node 24.21.0 through a task-local PATH passed the extension build and **101/101 package tests**, including the previously failing process-retirement regressions, in 20.52 seconds. No owner tool installation or project pin changed. Logs remain in ignored `artifacts/cycle-0026/build-pinned-native.log` and `package-tests-native-pnpm12.4.2.log`. Review and exact-head CI receipts follow before merge.
 
 ## Result and decision
 
-- Result: pending.
-- Keep / revise / replace: pending controlled image-transport comparison.
+- Result: the bounded inline-image workaround passed the current failed control with the same PNG and model. It unblocks this ordinary Copilot checkout, not complete G04/G12 acceptance.
+- Keep / revise / replace: keep the unchanged runtime image contract; document the public client setting; repair public help discovery and explicit per-pause explanation persistence next.
 - Remaining gaps: saved agent explanations, paired complete ordinary checkout, real-repository intended uses, all-mode integrated UX, owner acceptance and final reviewers.
 - Delivery state and proof: pending.
 
 ## Handoff
 
-- Exact next action: inventory the dedicated VS Code trial and execute the current default-image-route control.
-- Changed files / branch / active processes: `codex/cycle-0026-copilot-image-handoff`; planning/closure records only; no Cycle 0026 trial started.
+- Exact next action: complete pinned package verification, CodeRabbit CLI, exact-head hosted review and CI; merge PR #41 and close Issue #40 under D021.
+- Changed files / branch / active processes: `codex/cycle-0026-copilot-image-handoff`; public README recovery instructions and sanitized cycle/evidence records; native trial and recording processes exited.
 - State updated in PROJECT_STATE.md: yes.
-- Durable decisions updated: D021–D026 unchanged.
-- At most one next candidate and why: select after the image comparison; saved explanation persistence remains a required known gap.
+- Durable decisions updated: D026 now includes the owner's explicit instruction to proceed with isolated native trials and ask only after actual interference blocks the trial.
+- At most one next candidate and why: expose the checkout help URI and require the thin skill to save each observed pause through the existing explanation API, then verify saved explanations in ordinary chats in both hosts.
