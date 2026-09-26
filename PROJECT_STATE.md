@@ -6,6 +6,7 @@ Active cycle: [0028 — Open Study from ordinary runtime chat](docs/cycles/0028-
 Last cycle: [0027 — Save ordinary-chat pause explanations](docs/cycles/0027-saved-pause-explanations.md) — bounded paired outcome demonstrated; PR #43 merged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#44](https://github.com/laststance/codebook/issues/44) — open\
+Next planned cycle issue: [#46](https://github.com/laststance/codebook/issues/46) — owner-directed product change; do not start before Cycle 0028 delivery and explicit goal resumption\
 Last cycle issue: [#42](https://github.com/laststance/codebook/issues/42) — closed with PR #43 merge\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 6
@@ -244,7 +245,7 @@ The record-only `b69c391…` head passed [PR merge-ref CI](https://github.com/la
 
 ## Exact resume action
 
-- Immediate next action: run the same checked 0.2.11 VSIX through ordinary Cursor Agent with the exact question and native video in a dedicated signed-in process/window. [Fresh-process VS Code retest](docs/cycles/evidence/0028/vscode-0211b-reader.md) passed the bounded checkout reading outcome: Copilot Auto saved four explanations, demonstrated Study and recording; native frames show explanation and first captured-value rows together. Its earlier black-webview attempt remains invalid. [Cursor setup preflight](docs/cycles/evidence/0028/cursor-0211-setup-preflight.md) is not a product result. Complete current-head CodeRabbit CLI/OCR review, CI and Cycle 0028 delivery after the Cursor result. All nine-project acceptance rows remain NOT RUN.
+- Immediate next action: complete current-head CodeRabbit CLI review, current PR CI and Cycle 0028 delivery. [Fresh-process VS Code](docs/cycles/evidence/0028/vscode-0211b-reader.md) passes the bounded checkout reading outcome; the [isolated Cursor trial](docs/cycles/evidence/0028/cursor-0211b-reader.md) completes the same fixture after public recovery from initial focus and pane-layout failures. The earlier blank VS Code attempt and Cursor setup preflight remain separate. All nine-project acceptance rows remain NOT RUN. After Cycle 0028 closes, pause the goal and stop work as the owner requested. [Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46) records the requested demo removal, real-project validation, single native-chat/debugger composition and one replacement image for later resumption; it is not the active cycle.
 
 D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answers remain authoritative: approved B, compact understand, all-citation Review needed with retained history, a narrow single article column, exact reading return, complete-citation progress identity and short publication writer ownership. Do not re-ask these choices. The app goal remains active.
 

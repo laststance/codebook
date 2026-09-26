@@ -2,7 +2,7 @@
 
 Date: 2026-09-26. Development preflight only; **no ordinary-chat outcome and no D029 Stage 1/2 credit**.
 
-The checked 0.2.11 VSIX (SHA-256 `2ca23ab41d26c242769f1a62a129ac4af5184666ab6a3b553c1d4505682c6c95`) installed in a dedicated Cursor extension directory. A new isolated user-data profile opened, but Cursor Agent required sign-in. The exact question was not sent there.
+The checked 0.2.11 VSIX (clean source `a58d68fd690751906cc513d7ddf638b45257e11e`; SHA-256 `2ca23ab41d26c242769f1a62a129ac4af5184666ab6a3b553c1d4505682c6c95`; 918361 bytes) is retained locally at ignored `artifacts/packages/codebook-0.2.11.vsix` and installed in a dedicated Cursor extension directory. Cursor 3.22.9 opened a new isolated user-data profile, but Agent required sign-in. The exact question was not sent there.
 
 Cursor forwarded a subsequent work window using the owner's signed-in profile to the owner's existing process, which also hosted active unrelated work. The extension was temporarily installed in that shared profile. In a dedicated `cb211-cursor` window, the public `Codebook: Set Up AI Chat` command succeeded. Cursor Customize showed one `codebook` skill and the Codebook MCP connector connected with 15 tools and four resources; the deployed skill matched bundled 1.0.20. This establishes discovery and connection only. While preparing the Agent input, the active window switched to the owner's unrelated work. No Codebook question was sent; no AI-owned result, Study entry, recording, or native motion was observed.
 

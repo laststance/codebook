@@ -1,8 +1,8 @@
 # Cycle 0028 — Open Study from ordinary runtime chat
 
 Type: product increment
-Status: implementing
-Result: pending
+Status: delivery pending
+Result: demonstrated for the bounded checkout fixture; Cursor entry required public recovery
 Delivery: 0.2.11 bounded two-host development result recorded; current-head review, CI and merge pending
 Goal version: 6
 Tracking issue: [#44](https://github.com/laststance/codebook/issues/44)
@@ -62,7 +62,7 @@ Development probe: 3/3 actual-MCP transport cases pass for a closed default Stud
 
 ## Result and handoff
 
-- Result: pending; the bounded installed VS Code checkout reading trial passes on 0.2.11. Cursor's recovered checkout reading path also passes, but native focus and pane-creation failures qualify ordinary entry; delivery remains open.
+- Result: demonstrated for this bounded fixture; the installed VS Code checkout reading trial passes on 0.2.11. Cursor's recovered checkout reading path also passes, but native focus and pane-creation failures qualify ordinary entry; delivery remains open.
 - Exact next action: investigate the Cursor focus refusal and pane-creation race from the retained native failure, apply a bounded correction only if supported, and repeat ordinary Cursor entry on the corrected candidate. Keep new acceptance rows NOT RUN until normal packaged practical trials occur.
 - Current state: the invalid VS Code 0.2.11 trial remains separate. The fresh-process exact-question Copilot Auto retest passed. Cursor Agent completed the same fixture after public layout recovery; its isolated process is closed and the owner's global skill restored.
 - One next candidate: a focused Cursor admission/layout repair if the failure is attributable to Codebook; full connected learning/three-mode and intended-use acceptance remain required.
@@ -120,3 +120,5 @@ Candidate 0.2.11 passed 966/966 extension tests, 101/101 package regressions and
 [The Cursor 0.2.11 setup preflight](evidence/0028/cursor-0211-setup-preflight.md) confirmed public setup, bundled skill discovery, and connected MCP in a dedicated work window. The isolated Cursor profile required sign-in; the signed-in shared process switched to active owner work during Agent input preparation. No question was sent and no Cursor product outcome was observed. Shared skill, receipt, extension registry entry and MCP bytes were restored or verified after the preflight.
 
 [The signed-in isolated Cursor 0.2.11 trial](evidence/0028/cursor-0211b-reader.md) completed the exact checkout fixture after an initial native focus refusal and a pane-creation layout failure. The AI recovered through public operations before application input, then saved four grounded explanations, a demonstrated Study and recording. Inspected IDE video shows Application, source, interpretation and values together after the cart action and at historical purchase confirmation. An extra identical user message appeared in the same chat, so this is a qualified recovered path rather than a clean single-prompt entry. The trial skill was removed and the owner's original global skill restored. No nine-project D029 row is credited.
+
+The owner subsequently directed a different final product shape: remove the bundled cart demo, use actual repositories, retain one editor workspace with native chat/debugger, remove custom runtime-value display, and replace the old three images with one current concept. [Planned Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46) records that change. It does not retroactively change this cycle's historical fixture evidence. After Cycle 0028 delivery the active goal is to be paused at the owner's request; Cycle 0029 is not active yet.
