@@ -128,6 +128,49 @@
           "bytes": 125932
         }
       ]
+    },
+    {
+      "version": "0.2.8",
+      "source": "b11b25dad83bf00e05047e83fd6ec516054e4885",
+      "vsixSha256": "dd665a3deacdb8660b8c887eb0897ea2fb956164bc0a5c7f601feeae3910e110",
+      "result": "PARTIAL — disclosure worked, sticky runtime controls still hid Live values",
+      "files": [
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-copilot-auto.webm",
+          "sha256": "0f456d6adda163527dfbd513f46ad7a069e63f830678a48b244339721f632195",
+          "bytes": 6929033
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/45.png",
+          "sha256": "49fe462c47475a72d559bb06a4b0e4310f63a10132af91fb67ea438abff5001d",
+          "bytes": 85274
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/75.png",
+          "sha256": "bc8b137001b35e261c816c17e99d9f0237a6a157f063b6383614f1ec21dd25d3",
+          "bytes": 110715
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/105.png",
+          "sha256": "3b1a4bf621f7462450fb9f74d3cb68fe4658e3fc83236457e5595d984b6a4be8",
+          "bytes": 276279
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/135.png",
+          "sha256": "4c1b1c9227733a9c9a1d607f8ffd39a92e80839481e5325ce95bf2c33158348a",
+          "bytes": 260604
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/165.png",
+          "sha256": "7570be66e4fb36b19a767eab2b65fdcbc935296cdbae1e5bffd477bd6a4022fb",
+          "bytes": 279363
+        },
+        {
+          "path": "artifacts/cycle-0028/native/vscode-028-frames/190.png",
+          "sha256": "5c773a656f7519098b2895567f19206bb45a2076ab60a82ce1bb6702adf92bb8",
+          "bytes": 290205
+        }
+      ]
     }
   ]
 }
