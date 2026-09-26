@@ -6443,6 +6443,36 @@ test('Close cancels pending focus recovery after a native layout failure without
   } finally { context.mock.restoreAll(); await harness.close(); }
 });
 
+for (const mode of ['study-workspace', 'living-book', 'guided-walkthrough']) test(`ordinary chat opens a closed ${mode} through MCP without starting execution or changing learner work`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  const draft = harness.focusMutableDraft();
+  if (mode !== 'study-workspace') harness.presentationPreferences.set('codebook.presentation.v1', { version: 1, mode });
+  const reader = harness.createReader();
+  await reader.attach(harness.service);
+  const progress = await (await reader.learningStorage()).readProgress();
+  const endpoint = await startServer(harness.service);
+  const transport = new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } } });
+  const client = new Client({ name: 'cold-presentation-test', version: '1.0' }); await client.connect(transport);
+  try {
+    // Act: ordinary discovery must not open panes; the explicit presentation request owns that effect.
+    const discovery = await client.callTool({ name: 'codebook_status', arguments: {} });
+    const selected = z.object({ data: z.object({ instanceId: z.string(), presentation: z.object({ presentationId: z.string(), presentationControlRevision: z.number(), mode: z.string(), state: z.string() }) }) }).parse(discovery.structuredContent).data;
+    assert.equal(selected.presentation.mode, mode); assert.equal(selected.presentation.state, 'closed');
+    assert.equal(harness.counts().panels, 0);
+    const opened = await client.callTool({ name: 'codebook_presentation', arguments: { instanceId: selected.instanceId, presentationId: selected.presentation.presentationId, expectedRevision: selected.presentation.presentationControlRevision, mode: selected.presentation.mode, action: 'select' } });
+    // Assert
+    assert.equal(opened.isError, undefined, JSON.stringify(opened.structuredContent));
+    const state = reader.presentationState();
+    assert.equal(state.state, 'open'); assert.equal(state.mode, mode); assert.equal(state.layoutConfirmed, true);
+    assert.equal(harness.counts().panels, 2); assert.equal(harness.runtimes.length, 0); assert.equal(harness.service.records.size, 0);
+    assert.equal(harness.groups.some(group => group.tabs.includes(draft.tab)), true);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n'); assert.equal(draft.tab.isDirty, true);
+    assert.deepEqual(await (await reader.learningStorage()).readProgress(), progress);
+  } finally { await client.close(); await endpoint.close(); await reader.dispose(); await harness.close(); }
+});
+
 test('real MCP presentation discovery and control preserve identities across response loss and reject stale clients', async () => {
   // Arrange
   const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] }); await harness.reader.open();

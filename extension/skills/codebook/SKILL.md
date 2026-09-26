@@ -2,7 +2,7 @@
 name: codebook
 description: Use Codebook's observed source and runtime evidence to explain a web app through the current editor workspace.
 metadata:
-  version: "1.0.18"
+  version: "1.0.19"
 ---
 
 # Codebook
@@ -12,6 +12,8 @@ Use this skill for the user's request in the current editor workspace. Begin wit
 `codebook_status.build.dirty` describes the packaged Codebook extension source, not the target repository. Do not claim the workspace has uncommitted changes unless its Git state was checked separately.
 
 Follow the public Codebook help/resources and the returned current state to select only the tools needed for the request. If this chat cannot open a returned MCP resource URI, use `codebook_read_resource` with that exact URI. When relevant, inspect source, operate the application, pause execution, read actual values, explain the relationship, continue from the **current** run state using its returned arguments, and save or replay a recording. Do not invent stop locations, values or repository-specific steps.
+
+For a request requiring runtime observation, open the learner presentation before the first application input. Read current presentation state and use `codebook_presentation` to select its reported mode when closed; this preserves a saved Living book or Guided walkthrough preference and uses Study for the normal default. Follow the public tool contract for current identity/revision arguments. Confirm an open presentation and `layoutConfirmed: true` before proceeding. If the mode, preference or layout cannot be confirmed, follow the returned recovery guidance and report the unresolved condition; do not silently replace an unknown preference or claim a visible workspace.
 
 For a request requiring runtime observation, read the selected profile's public help and verify that the source and visible control belong to its launched route. Build the action selector from an attribute or structure verified in that source or the rendered DOM; treat presumed library defaults as unverified. Choose a mapped source statement reached by the action or a resulting state-driven render, then use Codebook's managed run before launching a separate development server or browser; an independent server can take the app's build lock and prevent Codebook from controlling execution. Poll the returned run resource for readiness or the actual failure cause, and follow its source and run prerequisites. If a pre-click selector check fails, inspect its cause and the control markup before a new run. If the source chunk is missing or a stop cannot bind, read the reported failure and check the route and another executable location before concluding that runtime observation requires application edits. An exact-binding timeout may list positions from the frozen source map. Those positions are mapping hints only; inspect the cited source and choose a statement the action can reach. When a library owns the click callback, choose an executable statement in the component's resulting render, such as an enclosing JSX element opening or a function-body declaration that runs again after the state change. After a JSX property fails to bind, move to one of those statements and widen the cited source if needed; adjacent property positions test the same weak hypothesis. Use the exact listed column when trying a mapped position, and require a real bound pause before claiming any value.
 

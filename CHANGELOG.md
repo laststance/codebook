@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.5.0] - 2026-09-26 (development candidate)
+
+Cycle 0028 updates the common skill to 1.0.19 and public presentation guidance to open the current/default learner mode before runtime application input. Default and saved-mode cold entry are covered through the actual MCP transport. Installed ordinary-chat validation remains pending. Goal version 6 replaces random consecutive final reviews with the nine mandatory projects and ordered main-agent/independent-junior acceptance stages under D029; no new acceptance pass is claimed.
+
 ## [0.2.4.0] - 2026-09-26 (development candidate)
 
 Cycle 0027 exposes the existing demo profile help and updates the shared skill to 1.0.18. Public guidance requires committed pause explanations before continuation, actual image reads for screen claims, and verification of saved recording interpretations. The extension patch version distinguishes this candidate from the owner's installed 0.2.3 during dedicated-profile validation. The same frozen 0.2.4 VSIX demonstrated four saved pause explanations and stopped-app replay in ordinary Copilot Chat and Cursor Agent. Delivered through PR #43; this is not a Marketplace publication.
