@@ -41,4 +41,4 @@ Read [AGENTS.md](AGENTS.md) when starting or resuming work. Claude Code also ent
 - [Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46) tracks the specification, subsequent design and implementation changes.
 - Closed cycle records preserve historical results, failed attempts and their exact source/host boundaries.
 
-Advance only the active phase authorized by the owner. The current request is documentation first; screen design follows separately. Record actual evidence and update the active cycle and PROJECT_STATE.md before handoff.
+Advance only the active phase authorized by the owner. The owner authorized documentation consistency review followed by GStack design review and a matching final-product design image within Cycle 0029. Record actual evidence and update the active cycle and PROJECT_STATE.md before handoff.

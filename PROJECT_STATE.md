@@ -1,8 +1,8 @@
 # Current project state
 
 Updated: 2026-09-26\
-Product stage: 0.2.11 preview delivered; version 7 feature specification being updated; new behavior remains unverified\
-Active cycle: [0029 — Clarify live explanation, learning replay and independent Wiki](docs/cycles/0029-feature-specification.md), documentation phase only\
+Product stage: 0.2.11 preview delivered; version 7 feature specification written; consistency review complete; design review next\
+Active cycle: [0029 — Clarify live explanation, learning replay and independent Wiki](docs/cycles/0029-feature-specification.md), documentation and design phases\
 Last completed cycle: [0028](docs/cycles/0028-ordinary-chat-study-entry.md), PR #45 merged; Issue #44 closed\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
 Active cycle issue: [#46](https://github.com/laststance/codebook/issues/46) — open\
@@ -11,7 +11,7 @@ Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), version 7; D029 acceptance stages
 
 ## Current acceptance authority and gaps
 
-The owner resumed documentation work after Cycle 0028 delivery and the requested goal pause. The current bounded task is to record the corrected feature relationships; broader autonomous implementation remains paused. Screen design will be reviewed separately after the written update.
+The owner resumed documentation work after Cycle 0028 delivery and the requested goal pause. The corrected feature relationships are written and directly reviewed. The owner subsequently authorized continuing in this same Cycle 0029 into GStack design review after document consistency review, followed by a matching final-product design image. Runtime implementation remains outside this bounded instruction.
 
 D030 retires three selectable UI themes, **not** distinct feature screens. Live explanation uses standard editor chat, the actual app/runtime, native source and native debugger. Learning saves that explanation as a replay with processing summary, sequence diagram and recording. LLM Wiki is independent repository-wide site generation, with project-local/configurable output, chat/button updates and browser-to-editor source links. No single fixed composition or simultaneous all-feature screen is required.
 
@@ -260,9 +260,9 @@ The record-only `b69c391…` head passed [PR merge-ref CI](https://github.com/la
 
 ## Exact resume action
 
-Complete the current Cycle 0029 documentation delivery and reconcile Issues #1/#46 with the committed specification. Keep Issue #46 open because design, demo/value/theme removal and implementation/real-project trials remain. The next product step is a **separate screen-design review**, as requested; do not generate a concept image or begin implementation during this documentation-only task. The broad app goal remains paused after Cycle 0028; the owner's current instruction authorizes this bounded documentation work.
+Continue Cycle 0029 with GStack plan-design-review of the final-product screens, acceptance conditions and deliverables, then create the matching design image. The owner explicitly authorized this next phase after document consistency review. [Draft PR #48](https://github.com/laststance/codebook/pull/48) delivers the written update; local CodeRabbit service connection failed twice and a remote-source CLI attempt is pending, so no external-review pass or merge is claimed. Keep Issues #46/#1 open; implementation and real-project trials remain later work.
 
-D030 is the active interpretation: live explanation → saved learning replay, plus independent Wiki. Retain compatible source/citation/progress/focus ownership from earlier decisions without reinstating the old coupled screens or three themes. No current native trial or desktop occupancy is needed for the written phase. When later behavior work starts, use the designated nextjs-dashboard checkout until the final acceptance stage, per D031.
+D030 is the active interpretation: live explanation → saved learning replay, plus independent Wiki. Retain compatible source/citation/progress/focus ownership from earlier decisions without reinstating the old coupled screens or three themes. Document/design preparation needs no native runtime trial; notify the owner before exclusive desktop use. When later behavior work starts, use the designated nextjs-dashboard checkout until the final acceptance stage, per D031.
 
 ### Historical handoff checkpoints
 

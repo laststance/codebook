@@ -1,9 +1,9 @@
 # Cycle 0029 — Clarify live explanation, learning replay and independent Wiki
 
 Type: product increment, documentation first\
-Status: planning — written specification phase in progress\
+Status: planning — written consistency review complete; GStack design review authorized next\
 Result: pending broader cycle outcomes\
-Delivery: local documentation changes; review and issue synchronization pending\
+Delivery: [Draft PR #48](https://github.com/laststance/codebook/pull/48); written specification committed, external-review gate pending\
 Goal version: 7\
 Tracking issue: [#46](https://github.com/laststance/codebook/issues/46)\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)\
@@ -58,9 +58,17 @@ Use `writing-for-agents` for concise authority/entry rules, `open-code-review-de
 - D031 target preflight: the designated nextjs-dashboard path is an existing clean Git checkout on `main` at `26e5b2c`, origin `ryota-murakami/nextjs-dashboard`. This read-only inventory launched no editor/app and establishes no functional result.
 - Wrote the corrected three-feature model and detailed replay/Wiki contracts. Review/delivery results will be recorded before handoff.
 
+## Documentation consistency review
+
+Reviewed specification commit `9fd9fd492040dfc7f8dd895f2b72caa25211d745` against `22e25c5`. OCR selected one modified YAML entry; its resolved rule checks YAML key spelling. All keys are unchanged and the official configuration validator passes. The 17 Markdown entries are default `unsupported_ext` exclusions and were reviewed directly by the driving agent, including both new feature contracts and this cycle. Coverage: 1/1 eligible plus 17/17 excluded documentation entries; this is not independent-provider review.
+
+The review checks the owner's exact corrections, independent lifecycles, summary/sequence replay contents, Wiki output/update/source links, preserved two-host/G12/nine-project gates and the new designated development target. No additional unresolved written-contract finding remains. All nine project rows are byte-identical to the base; runtime/source/skill code is unchanged. Local link checking resolved 261 links across the 17 Markdown files; `git diff --check` and `coderabbit config validate .coderabbit.yaml` passed. No runtime tests were added for the document edit.
+
+CodeRabbit CLI local committed review failed twice during sandbox preparation with `TRPCWebSocketClosedError`; neither attempt returned findings or a completed review. A remote-source CLI attempt tests whether the GitHub-source route avoids that local sandbox failure. Logs are ignored under `artifacts/cycle-0029/`; no paid `--use-credits` option is enabled. Provider review remains a delivery gate, separate from the completed direct consistency review. Hosted review is owner-skipped under D027. PR CI is running separately.
+
 ## Result and decision
 
-- Documentation phase: in progress; broader cycle result pending.
+- Documentation consistency phase: completed by direct review and checks; provider review/delivery remains pending. The owner authorized continuing into design in this same cycle; broader cycle result pending.
 - Keep: Architecture B, actual source/runtime evidence, recording, explicit learner progress, both editors, common skill and fixed nine-project acceptance.
 - Replace: bundled target demo, three UI variants, custom value display and the mandatory common Wiki/lesson session model.
 - No implementation removal, screen approval, generated image or acceptance PASS follows from this specification.
@@ -74,4 +82,4 @@ Use `writing-for-agents` for concise authority/entry rules, `open-code-review-de
 
 ## Handoff
 
-Finish this written phase and stop before the separately requested screen-design work. Keep this as the only active cycle and Issue #46 open. Broad autonomous goal continuation remains paused; no desktop/native process was started for this phase.
+After the written consistency review, continue with GStack plan-design-review and create a matching final-product design image within this same Cycle 0029, as subsequently authorized by the owner. Keep the three feature screens distinct and trace design acceptance to version 7. Keep Issue #46 open and implementation pending. No desktop/native process was started for the documentation phase.
