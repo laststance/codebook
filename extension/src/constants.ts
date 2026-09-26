@@ -1,5 +1,5 @@
 export const API_VERSION = '1.5';
-export const EXTENSION_VERSION = '0.2.10';
+export const EXTENSION_VERSION = '0.2.11';
 export const DEMO_ASSET_PATHS = ['fixture/server.mts', 'fixture/client.mts', 'fixture/constants.mts', 'fixture/index.html',
   'build/server.mjs', 'build/server.mjs.map', 'build/client.mjs', 'build/client.mjs.map', 'build/constants.mjs', 'build/constants.mjs.map'] as const;
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0';

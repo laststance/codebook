@@ -91,6 +91,19 @@ async function check(page, options) {
           await page.waitForFunction(() => window.sent.some(message => message.type === 'rendered' && message.revision === 4));
           cases.push({ name: 'refresh of the same pause preserves the learner reading position',
             passed: await page.evaluate(() => window.scrollY === 0) });
+          const longExplanation = { ...observed, revision: 5, model: { ...observed.model,
+            observation: { ...observed.model.observation, id: 'pause-2', interpretations: [{ text: 'The order response is saved before the browser confirms it. '.repeat(12) }] } } };
+          // A new long explanation must remain keyboard-readable without pushing every captured value away.
+          await publish(longExplanation);
+          await page.waitForFunction(() => window.sent.some(message => message.type === 'rendered' && message.revision === 5));
+          const longReading = await page.evaluate(() => ({ interpretationTop: document.querySelector('#live-content h2').getBoundingClientRect().top,
+            interpretationHeight: document.querySelector('#interpretations').clientHeight,
+            interpretationScrollHeight: document.querySelector('#interpretations').scrollHeight,
+            firstValueBottom: document.querySelector('#values tr').getBoundingClientRect().bottom, viewportHeight: window.innerHeight }));
+          await page.screenshot({ path: `${options.output}/narrow-long-explanation.png` });
+          cases.push({ name: 'narrow Live keeps a long keyboard-readable explanation and the first captured value visible', actual: longReading,
+            passed: longReading.interpretationTop >= 0 && longReading.interpretationScrollHeight > longReading.interpretationHeight
+              && longReading.firstValueBottom <= longReading.viewportHeight && await page.locator('#interpretations').getAttribute('tabindex') === '0' });
         }
       }
     }

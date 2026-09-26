@@ -183,6 +183,18 @@
         { "path": "artifacts/cycle-0028/native/vscode-029-frames/95.png", "sha256": "3d1ff4a7d91cb495c896f3c32c6f6a09a93619a918fa881a7be0dc4d7248174b", "bytes": 309691 },
         { "path": "artifacts/cycle-0028/native/vscode-029-frames/145.png", "sha256": "6238e52856a3a79e8d111da31974a13a24108bde3ee88f83ec98012609d401d2", "bytes": 287700 }
       ]
+    },
+    {
+      "version": "0.2.10",
+      "source": "fb9435d421f3e78ba3a29b27a15a8953050d6697",
+      "vsixSha256": "b289569c6a9230efc9b76bf442e2eb8b60e6293707f701f89b700f14392ec0e2",
+      "result": "PARTIAL — new pauses reveal values, but long saved interpretations push them below the native fold",
+      "files": [
+        { "path": "artifacts/cycle-0028/native/vscode-0210-copilot-auto.webm", "sha256": "cfc25c612b3ebf3ae50f5e5863ee36dc970c5f9c66efd5c573eb07dd6f968780", "bytes": 6829879 },
+        { "path": "artifacts/cycle-0028/native/vscode-0210-frames/80.png", "sha256": "1b326a58f145285f5b48f0af7ffc8f348821a9d8cede4985adb1118e70d55b4d", "bytes": 257020 },
+        { "path": "artifacts/cycle-0028/native/vscode-0210-frames/115.png", "sha256": "f281aafc3cf2fc6a1710f6b1365b5a2364c93b2a53ce159b3efcae85b044ea40", "bytes": 278988 },
+        { "path": "artifacts/cycle-0028/native/vscode-0210-frames/160.png", "sha256": "9f09e2e3e59096397a44ff7d172962c228a2346e685c06a8f2cd7261871f3af2", "bytes": 315652 }
+      ]
     }
   ]
 }
