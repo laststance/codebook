@@ -3,7 +3,7 @@
 Type: product increment
 Status: implementing
 Result: pending
-Delivery: not yet implemented
+Delivery: candidate implementation committed; installed validation and review pending
 Goal version: 6
 Tracking issue: [#44](https://github.com/laststance/codebook/issues/44)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -63,7 +63,7 @@ Development probe: 3/3 actual-MCP transport cases pass for a closed default Stud
 ## Result and handoff
 
 - Result: pending.
-- Exact next action: complete D029 documentation/Issue body alignment first, then add the bounded common runtime-entry guidance justified by the 3/3 probe. Inspect/map the required real projects before selecting subsequent runtime-support work; keep their new acceptance rows NOT RUN until normal packaged trials occur.
+- Exact next action: finish sequential validation and review, freeze the 0.2.5 / skill 1.0.19 archive, then verify ordinary AI-owned presentation entry in both installed hosts. Continue detailed required-project mapping before selecting the next runtime-support increment; keep new acceptance rows NOT RUN until normal packaged practical trials occur.
 - Current state: clean cycle branch at selection; no owned native trial process running.
 - One next candidate: decide from this cycle's observed outcome; full connected learning/three-mode and intended-use acceptance remain required.
 
@@ -77,6 +77,8 @@ All nine fixed targets require actual revision/runtime inspection. Required TS/J
 
 The common skill is now 1.0.19, with conditional current-mode presentation opening before runtime input and an open/layout-confirmed completion check. Public discovery guidance mirrors that entry requirement. Candidate extension 0.2.5 distinguishes installation from the prior 0.2.4. Focused cold-entry/stale/return-history checks pass 5/5; package tests pass 101/101. Installed chat validation is pending.
 
-The first broad product run was invalidated by concurrent package validation rebuilding/removing dist while runtime-loaded harness tests still needed it (ENOENT for dist/studyWorkspace.js). Preserve `artifacts/cycle-0028/full-tests-build-interference.log`; rerun product validation sequentially after packaging completes. This is driver test interference, not a demonstrated product regression. No concurrent builds/packages are permitted during the corrected product run.
+The first broad product run was invalidated by concurrent package validation rebuilding/removing dist while runtime-loaded harness tests still needed it (ENOENT for dist/studyWorkspace.js). Preserve `artifacts/cycle-0028/full-tests-build-interference.log`; the sequential rerun after packaging completes passes 966/966 product checks. This is driver test interference, not a demonstrated product regression. No concurrent builds/packages are permitted during the corrected product run.
 
 Initial read-only inspection now pins eight supplied repository revisions in ACCEPTANCE_MATRIX.md and identifies Web/Node/Chrome Extension/library test/Example requirements. The private work application's manifest/path inventory and unchanged pre-existing dirty state are retained only in private metadata; deeper mapping remains pending. All new acceptance rows remain NOT RUN.
+
+Validation checkpoint: corrected sequential product/shared checks pass 1114/1114 (966 extension + 45 paired-runtime + 103 other shared tests), package regressions 101/101, typecheck passes. CodeRabbit CLI has reported five minor documentation findings; all verified and corrected. OCR reviewed all 6 eligible and 14 excluded entries. Native trials, provider completion, final current-head review/CI and delivery remain pending.

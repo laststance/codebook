@@ -78,4 +78,4 @@ Final closure requires all valid Stage 1 and Stage 2 rows, complete G01–G12/in
 
 ## Current state
 
-NOT STARTED under version 6. All nine targets require actual revision/runtime inspection and both-host practical trials; no Stage 1 or Stage 2 PASS exists. Historical demos, Cycle 0019 preflight and later ordinary-chat development checks remain useful development evidence only. The final candidate and final distribution hash are not frozen. See the matrix and PROJECT_STATE.md for gaps and the active cycle.
+NOT STARTED under version 6. Final trial revisions and detailed applicable runtime/use-case mapping remain to be frozen; all nine targets still require both-host practical trials; no Stage 1 or Stage 2 PASS exists. Historical demos, Cycle 0019 preflight and later ordinary-chat development checks remain useful development evidence only. The final candidate and final distribution hash are not frozen. See the matrix and PROJECT_STATE.md for gaps and the active cycle.
