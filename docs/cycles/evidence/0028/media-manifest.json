@@ -207,6 +207,18 @@
         { "path": "artifacts/cycle-0028/native/vscode-0211-frames/300.png", "sha256": "c6c29e156c516004285d6824c1be448548b640581168d5d13ea7a4f7bedc8f6a", "bytes": 191410 },
         { "path": "artifacts/cycle-0028/native/vscode-0211-frames/500.png", "sha256": "f8ecfd61ba6a55d5d7f1c64bfd2b175a32109f5810f31653448dcfe3b4fcb4f2", "bytes": 31636 }
       ]
+    },
+    {
+      "version": "0.2.11",
+      "source": "a58d68fd690751906cc513d7ddf638b45257e11e",
+      "vsixSha256": "2ca23ab41d26c242769f1a62a129ac4af5184666ab6a3b553c1d4505682c6c95",
+      "result": "PASS — fresh-process exact-question VS Code checkout showed saved explanation and captured values in the native reading viewport",
+      "files": [
+        { "path": "artifacts/cycle-0028/native/vscode-0211b-copilot-auto.webm", "sha256": "12eaeb4a09eb0f04dceffd0d55caf951c2d18dba1cb1018103c4f8bc41769076", "bytes": 8570066 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211b-frames/105.png", "sha256": "3e016272a28218575771410bd52c3865c62e1d1878bdd56e9a6d2fadfed3a082", "bytes": 294814 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211b-frames/145.png", "sha256": "51fabb2227f4d0e7cf452902b4744f57940bffad885492b0a85d0b233df327a2", "bytes": 289210 },
+        { "path": "artifacts/cycle-0028/native/vscode-0211b-frames/165.png", "sha256": "b56dff7bcdbdd54199b83d3846c7ae2d89f4305c4a40aa181fbeeeb35fbba7e6", "bytes": 276448 }
+      ]
     }
   ]
 }

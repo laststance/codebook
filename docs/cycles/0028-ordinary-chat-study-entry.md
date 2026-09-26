@@ -62,9 +62,9 @@ Development probe: 3/3 actual-MCP transport cases pass for a closed default Stud
 
 ## Result and handoff
 
-- Result: pending; installed VS Code reading remains unverified on 0.2.11.
-- Exact next action: rerun the exact ordinary question with the clean 0.2.11 VSIX in a fresh dedicated VS Code workspace and inspect recorded pause frames before Cursor. Check native webview pixels before application input. Keep new acceptance rows NOT RUN until normal packaged practical trials occur.
-- Current state: the invalid 0.2.11 trial and failed reload recovery are recorded. A new process painted the old partial Study as a display preflight, without establishing a new checkout result.
+- Result: pending; the bounded installed VS Code checkout reading trial passes on 0.2.11, while Cursor and delivery remain open.
+- Exact next action: run the same checked 0.2.11 VSIX through ordinary Cursor Agent with the exact checkout question and native video in a dedicated signed-in process/window, preserving the owner's installation, skill and connection state. Keep new acceptance rows NOT RUN until normal packaged practical trials occur.
+- Current state: the invalid 0.2.11 trial remains recorded separately. A fresh-process exact-question Copilot Auto retest passed its bounded native reading outcome and the owned VS Code process is closed.
 - One next candidate: decide from this cycle's observed outcome; full connected learning/three-mode and intended-use acceptance remain required.
 
 ## D029 acceptance change and cycle impact
@@ -114,3 +114,7 @@ The next hypothesis is that a loading snapshot consumes the observation-ID chang
 [The installed 0.2.10 VS Code trial](evidence/0028/vscode-0210-reader.md) confirms the scroll repair in a real pause: the first Cart mutation shows the interpretation heading and captured values alongside application and source. The same ordinary chat completes all four pauses and recording. Later long saved AI interpretations occupy the Study viewport and hide the values; the reading outcome remains PARTIAL. Cursor is not yet run. Candidate 0.2.11 bounds the long explanation in a keyboard-readable narrow Live region, retaining values in the main reader. A 16/16 compiled Chromium check, including a long interpretation and visible first value at 260×750, passes; native evidence and broad/package validation remain pending.
 
 Candidate 0.2.11 passed 966/966 extension tests, 101/101 package regressions and the 16/16 compiled Chromium checks. Its clean checked VSIX was installed for [a VS Code trial](evidence/0028/vscode-0211-webview-failure.md), but both Codebook webviews remained blank and every phase-image acknowledgement failed. The question also acquired an appended input probe. Although the AI saved four pause explanations, this trial is invalid for native reading acceptance and its durable outcome is partial. Webview and window reloads did not restore pixels; a new dedicated process painted the saved partial Study. This preflight does not validate a new checkout or value visibility at a paused native viewport. Retest the fixed VSIX with an exact question before Cursor.
+
+[The fresh-process 0.2.11 VS Code retest](evidence/0028/vscode-0211b-reader.md) used the exact ordinary question and same checked VSIX. Copilot Auto completed two actions and four pauses, saved four explanations, a demonstrated Study and recording. Inspected native video frames show interpretation and first captured-value rows together beside Application and source. The bounded VS Code checkout reading result passes, with narrow-pane horizontal reading still required. Cursor and the fixed nine-project acceptance matrix remain unverified.
+
+[The Cursor 0.2.11 setup preflight](evidence/0028/cursor-0211-setup-preflight.md) confirmed public setup, bundled skill discovery, and connected MCP in a dedicated work window. The isolated Cursor profile required sign-in; the signed-in shared process switched to active owner work during Agent input preparation. No question was sent and no Cursor product outcome was observed. Shared skill, receipt, extension registry entry and MCP bytes were restored or verified after the preflight.
