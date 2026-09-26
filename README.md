@@ -24,6 +24,7 @@ This is a private preview, not a Marketplace or Open VSX release. Earlier fixtur
 | What must pass before the product is complete? | [Ten independent end-user trials in both editor AI chats](docs/acceptance/FINAL_REVIEW.md) |
 | What is actually proven, and what is next? | [PROJECT_STATE.md](PROJECT_STATE.md) |
 | How do I install and use the current preview? | [Private VSIX installation and MCP tutorial](extension/README.md), [development changes](CHANGELOG.md) |
+| Copilot reports an image download 404 | [Verified workspace image-transfer setting and recovery limits](extension/README.md#copilot-image-transfer) |
 | How do we use GStack and choose the next cycle? | [DEVELOPMENT.md](DEVELOPMENT.md) |
 | What decisions must survive new sessions? | [DECISIONS.md](DECISIONS.md) |
 | What was approved in office hours? | [Product design](docs/designs/codebook.md) and [visual concepts](docs/designs/README.md) |
