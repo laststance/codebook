@@ -2,18 +2,19 @@
 
 Updated: 2026-09-26\
 Product stage: configured execution, offline replay, reconnect and a bounded second-repository theme run demonstrated separately in both editors; ordinary checkout now retains four grounded pause explanations in both editor chats on one frozen candidate, with stopped-app replay\
-Active cycle: [0028 — Open Study from ordinary runtime chat](docs/cycles/0028-ordinary-chat-study-entry.md) — implementing\
-Last cycle: [0027 — Save ordinary-chat pause explanations](docs/cycles/0027-saved-pause-explanations.md) — bounded paired outcome demonstrated; PR #43 merged\
+Active cycle: none — goal work pauses after Cycle 0028 delivery at the owner's request\
+Last cycle: [0028 — Open Study from ordinary runtime chat](docs/cycles/0028-ordinary-chat-study-entry.md) — bounded two-host development result, PR #45 merged\
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1) — open\
-Active cycle issue: [#44](https://github.com/laststance/codebook/issues/44) — open\
-Next planned cycle issue: [#46](https://github.com/laststance/codebook/issues/46) — owner-directed product change; do not start before Cycle 0028 delivery and explicit goal resumption\
-Last cycle issue: [#42](https://github.com/laststance/codebook/issues/42) — closed with PR #43 merge\
+Last cycle issue: [#44](https://github.com/laststance/codebook/issues/44) — closed with PR #45 merge\
+Next planned cycle issue: [#46](https://github.com/laststance/codebook/issues/46) — owner-directed product change; do not start until explicit goal resumption\
 Repository: [laststance/codebook](https://github.com/laststance/codebook) — private; default branch main\
 Authority: [PRODUCT_GOAL.md](PRODUCT_GOAL.md), goal version 6
 
 ## Current acceptance authority and gaps
 
-D029 / goal version 6 is active. [FINAL_REVIEW.md](docs/acceptance/FINAL_REVIEW.md) replaces the old random ten-reviewer streak with the [nine required projects](docs/acceptance/ACCEPTANCE_MATRIX.md), main-agent practical validation first and nine independent project-specific junior evaluators second. All required project/host/use-case trials are unexecuted under the new protocol. Actual repository mapping, ordinary Node/Chrome Extension/library test/Example support evidence, complete integrated capability proof and a final fixed artifact remain outstanding. Missing support must become development work, not target exclusion.
+D029 / goal version 6 is the last committed acceptance protocol, pending the owner's Cycle 0029 rewrite. [FINAL_REVIEW.md](docs/acceptance/FINAL_REVIEW.md) replaced the old random ten-reviewer streak with the [nine required projects](docs/acceptance/ACCEPTANCE_MATRIX.md), main-agent practical validation first and nine independent project-specific junior evaluators second. All required project/host/use-case trials are unexecuted under that protocol. Actual repository mapping, ordinary Node/Chrome Extension/library test/Example support evidence, complete integrated capability proof and a final fixed artifact remain outstanding. Missing support must become development work, not target exclusion.
+
+The owner has explicitly changed the final destination after this cycle's fixture validation. [Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46) holds the pending specification rewrite, demo removal, real-project trials and one native chat/debugger design image. Goal version 6 and the three old images are the last committed specification, **not** the owner's latest accepted destination; do not run new final acceptance against them before the planned rewrite. Cycle 0029 has not started.
 
 Historical notice: all earlier 0/10 counts, sequential-review language and random selection references below describe superseded checkpoints only. They do not govern current acceptance and none are credited to either new stage. Earlier successes/failures retain their original scope and source cut.
 
@@ -245,9 +246,9 @@ The record-only `b69c391…` head passed [PR merge-ref CI](https://github.com/la
 
 ## Exact resume action
 
-- Immediate next action: complete current-head CodeRabbit CLI review, current PR CI and Cycle 0028 delivery. [Fresh-process VS Code](docs/cycles/evidence/0028/vscode-0211b-reader.md) passes the bounded checkout reading outcome; the [isolated Cursor trial](docs/cycles/evidence/0028/cursor-0211b-reader.md) completes the same fixture after public recovery from initial focus and pane-layout failures. The earlier blank VS Code attempt and Cursor setup preflight remain separate. All nine-project acceptance rows remain NOT RUN. After Cycle 0028 closes, pause the goal and stop work as the owner requested. [Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46) records the requested demo removal, real-project validation, single native-chat/debugger composition and one replacement image for later resumption; it is not the active cycle.
+- Resume only when the owner explicitly asks. Select [Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46), update PRODUCT_GOAL/design/final-acceptance documents to the new single native-chat/debugger destination, generate the one replacement image, then remove the active bundled cart demo and validate actual repositories. [Cycle 0028 PR #45](https://github.com/laststance/codebook/pull/45) is merged as `5e22d4d78901c69c17e954409a4dce941040cfe1` and Issue #44 is closed. The main-branch package CI run `36226063871` was still in progress at this closure-record checkpoint. The fixture evidence remains development-only; no new acceptance row is credited.
 
-D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answers remain authoritative: approved B, compact understand, all-citation Review needed with retained history, a narrow single article column, exact reading return, complete-citation progress identity and short publication writer ownership. Do not re-ask these choices. The app goal remains active.
+D016/D017 and the owner's Cycle 0009 design D3–D6 / engineering D1–D3 answers remain historical implementation context; Cycle 0029 must reconcile them with the owner's newer single-workspace direction. The app goal is paused after Cycle 0028 delivery.
 
 The checkpoint was restored in this same checkout and branch `codex/cycle-0009-repository-learning-book` at `6f22f12`. All seven draft hashes matched; their original bytes remain in ignored `artifacts/cycle-0009/handoff-20260919-190104/`. No reset, stash, clean or new worktree was used. Fresh reviewer creation succeeded, and both independent plan amendments now have regressions: committed-key recovery before mutable preparation and a bounded 1 MiB + 64 KiB HTTP envelope. The same reviewer subsequently completed bounded implementation/design rereviews; thread capacity later prevented another fresh reviewer. This does not count toward outside-model or final-product reviews.
 
