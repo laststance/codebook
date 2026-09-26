@@ -55,6 +55,8 @@ Both public stops retired their runtimes/descriptors. Renderer recording stopped
 
 Local package checks initially failed because the Corepack shim selected global pnpm 12.6.0 for nested commands instead of the required 12.4.2. A direct cached launcher then exposed its documented macOS `ENOEXEC` limitation. Pinning the existing 12.4.2 native binary and Node 24.21.0 through a task-local PATH passed the extension build and **101/101 package tests**, including the previously failing process-retirement regressions, in 20.52 seconds. No owner tool installation or project pin changed. Logs remain in ignored `artifacts/cycle-0026/build-pinned-native.log` and `package-tests-native-pnpm12.4.2.log`. Review and exact-head CI receipts follow before merge.
 
+Review checkpoint: CodeRabbit CLI found two stale resume entries on `6e57235…`; both were corrected. Its completed eight-file pass on `6bd8803…` reported zero findings, and [CI 36207797832](https://github.com/laststance/codebook/actions/runs/36207797832) passed 1110/1110 product/shared and 101/101 package checks. Hosted review requested three clarifications: archive provenance, the different A/B visual containers, and resume-state freshness. The evidence now maps PR head to CI merge ref and cites the exact installed VS Code commit: both chat containers instantiate the same `ChatWidget` location, and both actual sessions persist `panel`. The shared installed Copilot image renderer has no visual-container branch. An additional ordinary Chat Editor attempt selected GPT-5.6 Luna and completed via JSON resources without reading any image; it is retained but excluded from the image comparison, not counted as a successful reverse control. Its empty explanation arrays reinforce the next guidance repair. Final-head review/CI are required again after these documentation changes.
+
 ## Result and decision
 
 - Result: the bounded inline-image workaround passed the current failed control with the same PNG and model. It unblocks this ordinary Copilot checkout, not complete G04/G12 acceptance.
@@ -64,7 +66,7 @@ Local package checks initially failed because the Corepack shim selected global 
 
 ## Handoff
 
-- Exact next action: complete CodeRabbit CLI, exact-head hosted review and CI; merge PR #41 and close Issue #40 under D021. The pinned build and 101/101 package checks already passed.
+- Exact next action: resolve the three hosted clarification threads, verify CLI/hosted-review/CI coverage against the final PR head, then merge PR #41 and close Issue #40 under D021. Build/package validation and the `6bd8803…` CLI/CI checkpoint already passed; do not repeat native trials without a new hypothesis.
 - Changed files / branch / active processes: `codex/cycle-0026-copilot-image-handoff`; public README recovery instructions and sanitized cycle/evidence records; native trial and recording processes exited.
 - State updated in PROJECT_STATE.md: yes.
 - Durable decisions updated: D026 now includes the owner's explicit instruction to proceed with isolated native trials and ask only after actual interference blocks the trial.
