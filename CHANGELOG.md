@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.11.0] - 2026-09-26 (development candidate)
+
+Cycle 0028 opens the saved/default Study presentation from ordinary editor chat before runtime input. The Live reader now reveals a complete followed pause after loading, keeps long explanations keyboard-readable in a narrow pane, and retains the first captured-value rows in view. The checked 0.2.11 VSIX completed the checkout fixture with four saved explanations and a recording in VS Code. Cursor completed the same fixture after an initial focus refusal and pane-layout recovery; clean ordinary entry remains qualified. These fixture trials do not count toward the nine-project final acceptance.
+
 ## [0.2.8.0] - 2026-09-26 (development candidate)
 
 - Collapse Study's view and pane controls when a narrow reader first enters Live, placing the observed explanation and values closer to the top while retaining an explicit disclosure to reopen every control. Keep the learner's manually reopened controls visible through subsequent runtime updates.

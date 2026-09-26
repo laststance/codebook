@@ -3,7 +3,7 @@
 Type: product increment
 Status: implementing
 Result: pending
-Delivery: 0.2.5 and 0.2.6 native limits retained; 0.2.7 console-space repair pending validation
+Delivery: 0.2.11 bounded two-host development result recorded; current-head review, CI and merge pending
 Goal version: 6
 Tracking issue: [#44](https://github.com/laststance/codebook/issues/44)
 Goal issue: [#1](https://github.com/laststance/codebook/issues/1)
@@ -115,7 +115,7 @@ The next hypothesis is that a loading snapshot consumes the observation-ID chang
 
 Candidate 0.2.11 passed 966/966 extension tests, 101/101 package regressions and the 16/16 compiled Chromium checks. Its clean checked VSIX was installed for [a VS Code trial](evidence/0028/vscode-0211-webview-failure.md), but both Codebook webviews remained blank and every phase-image acknowledgement failed. The question also acquired an appended input probe. Although the AI saved four pause explanations, this trial is invalid for native reading acceptance and its durable outcome is partial. Webview and window reloads did not restore pixels; a new dedicated process painted the saved partial Study. This preflight does not validate a new checkout or value visibility at a paused native viewport. Retest the fixed VSIX with an exact question before Cursor.
 
-[The fresh-process 0.2.11 VS Code retest](evidence/0028/vscode-0211b-reader.md) used the exact ordinary question and same checked VSIX. Copilot Auto completed two actions and four pauses, saved four explanations, a demonstrated Study and recording. Inspected native video frames show interpretation and first captured-value rows together beside Application and source. The bounded VS Code checkout reading result passes, with narrow-pane horizontal reading still required. Cursor and the fixed nine-project acceptance matrix remain unverified.
+[The fresh-process 0.2.11 VS Code retest](evidence/0028/vscode-0211b-reader.md) used the exact ordinary question and same checked VSIX. Copilot Auto completed two actions and four pauses, saved four explanations, a demonstrated Study and recording. Inspected native video frames show interpretation and first captured-value rows together beside Application and source. The bounded VS Code checkout reading result passes, with narrow-pane horizontal reading still required. The fixed nine-project acceptance matrix remains unverified.
 
 [The Cursor 0.2.11 setup preflight](evidence/0028/cursor-0211-setup-preflight.md) confirmed public setup, bundled skill discovery, and connected MCP in a dedicated work window. The isolated Cursor profile required sign-in; the signed-in shared process switched to active owner work during Agent input preparation. No question was sent and no Cursor product outcome was observed. Shared skill, receipt, extension registry entry and MCP bytes were restored or verified after the preflight.
 
