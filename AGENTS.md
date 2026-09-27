@@ -2,6 +2,8 @@
 
 ## Read before acting
 
+Repeat these reads after context compaction. The optional [project hook](.codex/README.md) restores this reminder; it does not prove that the reads occurred.
+
 1. Read [PRODUCT_GOAL.md](PRODUCT_GOAL.md), [PROJECT_STATE.md](PROJECT_STATE.md), and [DEVELOPMENT.md](DEVELOPMENT.md).
 2. Read the active cycle linked by PROJECT_STATE.md, then relevant entries in [DECISIONS.md](DECISIONS.md).
 3. Verify the actual branch, working tree, available tools, and relevant runtime/PR state before relying on saved status. Use [DESIGN.md](DESIGN.md) as the stable GStack design entry point; read the approved design only as needed for the current work.

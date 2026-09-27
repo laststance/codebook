@@ -15,3 +15,11 @@ extension/dist/
 # Share this project's agent entry points despite user-global ignore rules
 !/AGENTS.md
 !/CLAUDE.md
+
+# Share project hook files without exposing local Codex state.
+!/.codex/
+/.codex/*
+!/.codex/hooks.json
+!/.codex/restore-product-context.mjs
+!/.codex/restore-product-context.test.mjs
+!/.codex/README.md
