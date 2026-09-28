@@ -35,6 +35,8 @@ jobs:
             experiments/cycle-0001/pnpm-lock.yaml
             experiments/cycle-0004/pnpm-lock.yaml
             experiments/cycle-0010/pnpm-lock.yaml
+      - name: Test project compaction hook
+        run: node --test .codex/restore-product-context.test.mjs
       - name: Install pinned dependencies
         run: |
           pnpm --dir experiments/cycle-0001 install --frozen-lockfile

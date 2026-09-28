@@ -4,6 +4,8 @@
 
 **Mandatory implementation-entry gate. Complete every item before product source edits or runtime trials. Record the receipt in the active cycle. A missing read or image inspection leaves this gate incomplete; do independent preparation and state the missing item rather than claiming readiness.** Re-run at a new implementation session or after a controlling specification changes.
 
+Repeat these reads after context compaction. The optional [project hook](.codex/README.md) restores this reminder; it does not prove that the reads occurred.
+
 1. Read **in full** [PRODUCT_GOAL.md](PRODUCT_GOAL.md), its three feature contracts — [replay](docs/specs/learning-replay.md), [DeepWiki](docs/specs/llm-wiki.md), [shortcuts](docs/specs/keyboard-shortcuts.md) — and [IMPLEMENTATION.md](IMPLEMENTATION.md). The latter holds the execution loop, complete acceptance map and evidence template in one file.
 2. Read [PROJECT_STATE.md](PROJECT_STATE.md)'s Current assignment, Current acceptance authority and gaps, Capability evidence and Exact resume action; read its active cycle **in full**. Read [DEVELOPMENT.md](DEVELOPMENT.md), [DESIGN.md](DESIGN.md), [the behavioral design](docs/designs/codebook.md) and [the image companion](docs/designs/codebook-product-spec-v9.md) **in full**. Verify branch, dirty files, tools and relevant runtime/PR state.
 3. **Open and visually inspect [the approved PNG](docs/designs/assets/codebook-product-spec-v9.png) with an image-viewing tool. This is the product to build.** Check [its identity/approval](docs/designs/visual-target.json). Filename, alt text, prompt and metadata reads do not satisfy visual inspection. Record concrete observations of live/replay/DeepWiki/shortcut regions, not a bare checked box.
