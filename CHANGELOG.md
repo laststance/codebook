@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.14.0] - 2026-09-30 (development candidate)
+
+### Fixed
+
+- A failed cited assertion cannot become successful saved history when a repository plugin resets the process exit code to zero. Ordinary failed process results keep their actual exit code and partial history.
+- Vitest report paths may use a valid internal symlink to the exact cited file. Missing or foreign targets and duplicate executions remain refused.
+
+This follow-up addresses two late review findings after PR #51. Source-bound development proof remains separate from final installed, Cursor, replay and nine-project acceptance. No registry publication.
+
 ## [0.2.13.0] - 2026-09-30 (development candidate)
 
 Cited Node tests run exactly once, save their history in order and preserve the learner's native debugger pauses. Bounded installed VS Code development checks passed on the 0.2.12 implementation checkpoint; 0.2.13 adds listing-process cleanup and release metadata. Cursor, synchronized replay and final acceptance remain open. Delivery is through PR #51, with no Marketplace publication.
