@@ -3,7 +3,7 @@ import { REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES, REPOSITORY_MAPPED_POSIT
 type MappedPosition = { line: number; column: number };
 
 /** Finds one mapped column per cited original line when a configured breakpoint cannot bind; {@link createBundleVerifier} calls it only for a sealed map. @example sourceMapMappedPositions('AAAA;AACA', 0, 1, 2).positions // [{ line: 1, column: 1 }, { line: 2, column: 1 }] */
-export function sourceMapMappedPositions(mappings: string, selectedSourceIndex: number, startLine: number, endLine: number): { positions: MappedPosition[]; complete: boolean } {
+export function sourceMapMappedPositions(mappings: string, selectedSourceIndex: number, startLine: number, endLine: number, requiredColumn?: number): { positions: MappedPosition[]; complete: boolean } {
   const columns = new Map<number, number>();
   let sourceIndex = 0, originalLine = 0, originalColumn = 0, segmentsRead = 0, generatedLinesRead = 1;
   for (let cursor = 0, segmentStart = 0, generatedColumn = 0; cursor <= mappings.length; cursor++) {
@@ -26,7 +26,7 @@ export function sourceMapMappedPositions(mappings: string, selectedSourceIndex: 
         if (![sourceIndex, originalLine, originalColumn].every(Number.isSafeInteger) || sourceIndex < 0 || originalLine < 0 || originalColumn < 0) throw new Error('Invalid original map position');
         const line = originalLine + 1, column = originalColumn + 1;
         // Mappings are hints, not proof that the debugger can bind or that the user's action reaches this line.
-        if (sourceIndex === selectedSourceIndex && line >= startLine && line <= endLine && (columns.get(line) ?? Infinity) > column) columns.set(line, column);
+        if (sourceIndex === selectedSourceIndex && line >= startLine && line <= endLine && (requiredColumn === undefined || column === requiredColumn) && (columns.get(line) ?? Infinity) > column) columns.set(line, column);
       }
     }
     if (delimiter === ';') {

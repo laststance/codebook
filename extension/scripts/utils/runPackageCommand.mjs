@@ -1,6 +1,48 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PACKAGE_COMMAND_OUTPUT_BYTES, PACKAGE_COMMAND_TIMEOUT_MS, PACKAGE_COMMAND_EXIT_TIMEOUT_MS, PACKAGE_COMMAND_EXIT_POLL_MS } from './packageConstants.mjs';
+
+const execFileAsync = promisify(execFile);
+
+/** Finds process groups reached from a package leader before an exited parent can orphan its children. @example await inspectOwnedGroups(1234, new Set([1234])) */
+async function inspectOwnedGroups(leaderPid, ownedPids) {
+  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,pgid=,stat='], { maxBuffer: 4 * 1024 * 1024 });
+  const entries = stdout.trim().split('\n').map(line => {
+    const [pid, parentPid, groupPid, state] = line.trim().split(/\s+/);
+    return { pid: Number(pid), parentPid: Number(parentPid), groupPid: Number(groupPid), state };
+  });
+  ownedPids.add(leaderPid);
+  // Revisit the table until children of newly discovered descendants are included.
+  let changed;
+  do {
+    changed = false;
+    for (const entry of entries) {
+      if (!ownedPids.has(entry.parentPid) || ownedPids.has(entry.pid)) continue;
+      ownedPids.add(entry.pid);
+      changed = true;
+    }
+  } while (changed);
+  return entries;
+}
+
+/** Tracks a detached package tree while pnpm can move its lifecycle scripts into a new process group. @example const tracker = trackPackageGroups(child.pid) */
+function trackPackageGroups(leaderPid) {
+  const ownedPids = new Set([leaderPid]);
+  const groups = new Set([leaderPid]);
+  let pending = Promise.resolve();
+  let stopped = false;
+  let inspectionFailure;
+  const sample = async () => {
+    if (stopped) return;
+    const entries = await inspectOwnedGroups(leaderPid, ownedPids);
+    for (const entry of entries) if (ownedPids.has(entry.pid) && entry.groupPid > 0) groups.add(entry.groupPid);
+  };
+  const recordFailure = error => { inspectionFailure ??= error; };
+  const timer = setInterval(() => { pending = pending.then(sample).catch(recordFailure); }, 10);
+  pending = pending.then(sample).catch(recordFailure);
+  return { async stop() { stopped = true; clearInterval(timer); await pending; return { groups, inspectionFailure }; } };
+}
 
 /** Runs literal package tools and retires their owned POSIX process group before the pipeline resumes. @example await runPackageCommand('pnpm', ['build'], extensionRoot) */
 export async function runPackageCommand(executable, arguments_, cwd) {
@@ -18,6 +60,7 @@ export async function runPackageCommand(executable, arguments_, cwd) {
   try {
     // execFile does not forward detached; spawn establishes the group whose lifetime this helper owns.
     const child = spawn(executable, arguments_, { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const tracker = child.pid ? trackPackageGroups(child.pid) : null;
     const chunks = { stdout: [], stderr: [] };
     // Drain both pipes concurrently, retaining at most the existing limit for each diagnostic channel.
     const readers = ['stdout', 'stderr'].map(async channel => {
@@ -47,8 +90,13 @@ export async function runPackageCommand(executable, arguments_, cwd) {
     catch (error) { failure = error; }
     finally { clearTimeout(timer); }
     try {
+      const { groups, inspectionFailure } = await tracker?.stop() ?? { groups: new Set(), inspectionFailure: undefined };
       if (child.pid) {
         // A failed pnpm leader can leave compilers writing; stop its separate group before returning either outcome.
+        for (const group of groups) {
+          if (group === child.pid) continue;
+          try { process.kill(-group, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+        }
         try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
         const cleanupDeadline = Date.now() + PACKAGE_COMMAND_EXIT_TIMEOUT_MS;
         for (;;) {
@@ -56,6 +104,17 @@ export async function runPackageCommand(executable, arguments_, cwd) {
           if (Date.now() >= cleanupDeadline) throw new Error('Package process group did not exit before cleanup deadline.');
           await delay(PACKAGE_COMMAND_EXIT_POLL_MS);
         }
+        for (const group of groups) {
+          if (group === child.pid) continue;
+          const groupDeadline = Date.now() + PACKAGE_COMMAND_EXIT_TIMEOUT_MS;
+          for (;;) {
+            const entries = await inspectOwnedGroups(child.pid, new Set());
+            if (!entries.some(entry => entry.groupPid === group && !entry.state.startsWith('Z'))) break;
+            if (Date.now() >= groupDeadline) throw new Error('Package descendant process group did not exit before cleanup deadline.');
+            await delay(PACKAGE_COMMAND_EXIT_POLL_MS);
+          }
+        }
+        if (inspectionFailure) throw new Error('Package descendants could not be inspected reliably.', { cause: inspectionFailure });
       }
     } catch (cleanupError) {
       cleanupFailure = cleanupError;

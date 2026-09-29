@@ -1,10 +1,9 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import { LearningLibrary } from '../learningLibrary';
 import { RecordingStore, recordingDiskIo, type RecordingIo, type RecordingLimits } from '../recordingStore';
 import { recordingContextSchema, recordingHeaderSchema, type RecordingBinding } from '../recordingSchemas';
@@ -16,10 +15,11 @@ import { createConfiguredStudy } from './utils/createConfiguredStudy';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=', 'base64');
 
 /** Creates synthetic frame/receipt correspondence for storage and offline projection, never native visual evidence. @example const { store, binding } = await configuredRecordingHarness(context) */
-async function configuredRecordingHarness(context: TestContext, limits: Partial<RecordingLimits> = {}, io: RecordingIo = recordingDiskIo) {
+async function configuredRecordingHarness(context: TestContext, limits: Partial<RecordingLimits> = {}, io: RecordingIo = recordingDiskIo, configureStudy?: (study: ReturnType<typeof createConfiguredStudy>) => void) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-configured-recording-')); context.after(() => rm(directory, { recursive: true, force: true }));
   const study = createConfiguredStudy(), library = new LearningLibrary(directory, study.workspaceKey), store = new RecordingStore(directory, study.workspaceKey, limits, io);
   study.captures = (['before', 'paused-browser', 'after'] as const).map(phase => ({ phase, status: 'captured', base64: png.toString('base64'), hash: sha256(png) }));
+  configureStudy?.(study);
   await library.saveStudy(study);
   const binding: RecordingBinding = { workspaceKey: study.workspaceKey, studyId: study.id, instanceId: study.instanceId, runId: study.runId, runtimeId: '99999999-9999-4999-8999-999999999999', profile: 'repository-browser', sourceBuild: { revision: 'unit-fixture', dirty: false, sourceHash: sha256('build') } };
   const events = [
@@ -61,39 +61,6 @@ test('configured recording replays the bound source and actual values after rest
   assert.equal(recordingHeaderSchema.safeParse(index.header).success, false); assert.equal(recordingContextSchema.safeParse(restored.context).success, false);
 });
 
-test('old and configured recording directories share a catalog and total capacity without rewriting old frames', async context => {
-  // Arrange
-  const { store, study, binding, directory } = await configuredRecordingHarness(context, { slots: 2 });
-  const oldRun = randomUUID(), oldBinding: RecordingBinding = { ...binding, profile: 'checkout-demo', runId: oldRun, studyId: `${binding.instanceId}_${oldRun}` };
-  const old = await store.start(oldBinding, 0); old.frame({ bytes: png, elapsedMs: 100, kind: 'stream' }); await old.finish(200);
-  const oldHeader = await readFile(join(store.path(oldBinding.studyId), 'header.json')), oldJournal = await readFile(join(store.path(oldBinding.studyId), 'frames.jsonl'));
-  // Act
-  const configured = await store.start(binding, 0); configured.frame({ bytes: png, elapsedMs: 100, kind: 'stream' }); await configured.finish(200);
-  const restarted = new RecordingStore(directory, study.workspaceKey), catalog = await restarted.list(), overflowRun = randomUUID();
-  // Assert
-  assert.equal(catalog.length, 2); assert.deepEqual(catalog.map(entry => entry.profile).sort(), ['checkout-demo', 'repository-browser']);
-  assert.equal((await restarted.header(oldBinding.studyId)).version, 1); assert.equal((await restarted.header(study.id)).version, 2);
-  await assert.rejects(store.start({ ...binding, runId: overflowRun, studyId: `${binding.instanceId}_${overflowRun}` }, 0), /Recording library is full/);
-  assert.deepEqual(await readFile(join(store.path(oldBinding.studyId), 'header.json')), oldHeader);
-  assert.deepEqual(await readFile(join(store.path(oldBinding.studyId), 'frames.jsonl')), oldJournal);
-});
-
-test('an interrupted or corrupt preferred recording reservation cannot fall back to a valid old recording', async context => {
-  // Arrange
-  const { store, binding } = await configuredRecordingHarness(context);
-  const old = await store.start({ ...binding, profile: 'checkout-demo' }, 0); old.frame({ bytes: png, elapsedMs: 100, kind: 'stream' }); await old.finish(200);
-  const oldHeader = await readFile(join(store.path(binding.studyId), 'header.json'));
-  const preferred = store.path(binding.studyId, 2); await mkdir(preferred, { recursive: true });
-  // Act / Assert
-  await assert.rejects(store.read(binding.studyId));
-  const catalog = await store.list(); assert.equal(catalog.length, 1); assert.equal(catalog[0]?.status, 'partial'); assert.equal(catalog[0]?.profile, undefined);
-  await writeFile(join(preferred, 'header.json'), oldHeader);
-  await assert.rejects(store.header(binding.studyId), /another workspace, study or format/);
-  await writeFile(join(preferred, 'header.json'), '{corrupt'); await assert.rejects(store.read(binding.studyId));
-  await assert.rejects(store.start(binding, 0), /already exists/);
-  assert.deepEqual(await readFile(join(store.path(binding.studyId), 'header.json')), oldHeader);
-});
-
 test('configured header seal and context versions must agree before recording data reaches replay', async context => {
   // Arrange
   const { store, binding, recordingContext } = await configuredRecordingHarness(context), writer = await store.start(binding, 0);
@@ -105,7 +72,7 @@ test('configured header seal and context versions must agree before recording da
   await writeFile(join(path, 'context.json'), JSON.stringify({ ...recordingContext, version: 1 })); await assert.rejects(store.readContext(binding.studyId));
   await assert.rejects(store.file(binding.studyId, 'header.json', 65536, 1), /format changed during reading/);
   const index = await store.read(binding.studyId);
-  assert.throws(() => projectRecording({ ...index, header: { ...index.header, version: 1, profile: 'checkout-demo' } }, recordingContext, 100), /another recording/);
+  assert.throws(() => projectRecording({ ...index, header: { ...index.header, version: 1, profile: 'repository-browser' } }, recordingContext, 100), /another recording/);
 });
 
 test('configured partial recordings retain observed source while explicitly missing pixels cannot certify a pause', async context => {
@@ -172,7 +139,27 @@ test('a configured film cannot admit or replay a server phase even if a rewritte
   // Act / Assert
   await writeFile(journalPath, altered); await writeFile(sealPath, JSON.stringify(seal));
   await assert.rejects(store.read(binding.studyId), /foreign image phase/);
-  const runId = randomUUID(), another = await store.start({ ...binding, runId, studyId: `${binding.instanceId}_${runId}` }, 0);
-  assert.equal(another.frame({ bytes: png, elapsedMs: 100, kind: 'phase', phase: 'paused-server' }), false);
-  assert.equal((await another.finish(200)).status, 'partial');
+
+});
+
+test('reopened historical replay clears source and native state at the sealed resume boundary while video continues', async context => {
+  // Arrange
+  const { study, store, binding, events } = await configuredRecordingHarness(context, {}, recordingDiskIo, study => {
+    const observation = study.observations[0]!;
+    observation.debugger = { version: 1, frames: [{ name: 'changeTheme', line: 1, column: 1,
+      source: { text: observation.source.text, hash: observation.source.hash, line: 1, name: study.configuration.source.path }, scopes: [{ name: 'Local', variables: [0] }] }],
+      variables: [{ name: 'nextTheme', value: 'dark', children: [] }], limitations: [] };
+  });
+  const observation = study.observations[0]!;
+  const savedContext = buildRecordingContext(study, [...events, { sequence: 11, type: 'continue.accepted', elapsedMs: 3000, wallTime: '2026-09-20T00:00:10.000Z', detail: observation.pause }], 1);
+  const writer = await store.start(binding, 0);
+  writer.frame({ bytes: png, elapsedMs: 100, kind: 'stream' }); writer.frame({ bytes: png, elapsedMs: 2010, kind: 'phase', phase: 'paused-browser' });
+  await writer.finish(5000); await store.saveContext(savedContext);
+  // Act
+  const index = await store.read(study.id), reopened = (await store.readContext(study.id)).context;
+  const during = projectRecording(index, reopened, 2500), resumed = projectRecording(index, reopened, 3000), revisited = projectRecording(index, reopened, 2500);
+  // Assert
+  assert.equal(during.debugger?.variables[0]?.value, 'dark'); assert.equal(during.observation?.source.text, 'const nextTheme = "dark";\n');
+  assert.equal(resumed.debugger, undefined); assert.equal(resumed.observation, undefined); assert.equal(resumed.frame?.elapsedMs, 2010);
+  assert.deepEqual(revisited.debugger, during.debugger); assert.deepEqual(revisited.observation, during.observation);
 });

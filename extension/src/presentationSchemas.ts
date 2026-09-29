@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { learningStepIdSchema } from './learningSummarySchemas';
 import { PRESENTATION_MODE_IDS, PRESENTATION_PREFERENCE_VERSION, PRESENTATION_READING_LIMIT_PX, PRESENTATION_FOCUS_INDEX_LIMIT, PRESENTATION_READING_ANCHORS, PRESENTATION_READING_DETAILS, PRESENTATION_READING_VISITED, PRESENTATION_FOCUS_IDS, PRESENTATION_FOCUS_ACTIONS, REFERENCE_LENGTH_LIMIT } from './constants';
 import { learningItemSchema } from './identitySchemas';
 import { studyIdSchema } from './legacyStudySchemas';
@@ -9,7 +10,7 @@ export const presentationPreferenceSchema = z.strictObject({ version: z.literal(
 export const presentationCommandSchema = z.strictObject({
   instanceId: z.uuid(), presentationId: z.uuid(), expectedRevision: z.number().int().nonnegative(),
   mode: presentationModeSchema,
-  action: z.enum(['select', 'restore', 'save-preference']).default('select'),
+  action: z.enum(['select', 'restore', 'save-preference', 'focus']).default('select'),
 });
 export type PresentationCommand = z.infer<typeof presentationCommandSchema>;
 export type PresentationIntent = Omit<PresentationCommand, 'instanceId'>;
@@ -30,6 +31,7 @@ export const presentationReadingPoseSchema = z.strictObject({
     z.strictObject({ kind: z.literal('action'), action: z.enum(PRESENTATION_FOCUS_ACTIONS), index: z.number().int().nonnegative().max(PRESENTATION_FOCUS_INDEX_LIMIT) }),
     z.strictObject({ kind: z.literal('presentation'), action: z.enum(['restore', 'save-preference']) }),
     z.strictObject({ kind: z.literal('playback-start') }),
+    z.strictObject({ kind: z.literal('summary-step'), id: learningStepIdSchema }),
     z.strictObject({ kind: z.literal('values') }),
     z.strictObject({ kind: z.literal('item'), region: z.enum(['flow', 'moments']), itemId: learningItemSchema, observationId: z.string().min(1).max(REFERENCE_LENGTH_LIMIT).optional() }),
   ]).optional(),

@@ -2,6 +2,7 @@ import { PLAYBACK_TICK_INTERVAL_MS } from './constants';
 import type { PlaybackCommand } from './playbackSchemas';
 import type { RecordingContext, RecordingIndex } from './recordingSchemas';
 import { projectRecording } from './utils/projectRecording';
+import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline';
 
 export interface PlaybackData { index: RecordingIndex; context?: RecordingContext; contextHash?: string; contextReason?: string; preferredPositionMs?: number }
 export interface PlaybackBundle { studyId: string; contextHash?: string; context?: RecordingContext; projection: ReturnType<typeof projectRecording>; image?: Buffer }
@@ -81,7 +82,7 @@ export class PlaybackController {
   /** Exposes requested and confirmed position separately; read calls cannot advance timers or mutate learner history. @example controller.state().presentedMs */
   state() {
     return { revision: this.controlRevision, presentationRevision: this.presentationRevision, studyId: this.studyId, mode: this.mode, readiness: this.readiness,
-      requestedMs: this.requestedMs, presentedMs: this.presented?.projection.positionMs, range: this.range(), recordingStatus: this.data?.index.status, recordingReason: this.data?.index.reason, cleared: this.cleared,
+      requestedMs: this.requestedMs, presentedMs: this.presented?.projection.positionMs, range: this.range(), historyTimeline: projectHistoricalTimeline(this.data?.context, this.range()), recordingStatus: this.data?.index.status, recordingReason: this.data?.index.reason, cleared: this.cleared,
       contextHash: this.data?.contextHash, contextReason: this.data?.contextReason, reason: this.reason,
       frame: this.presented?.projection.frame && { sequence: this.presented.projection.frame.sequence, hash: this.presented.projection.frame.hash, receivedMs: this.presented.projection.frame.elapsedMs },
       observationId: this.presented?.projection.observation?.id, missing: this.presented?.projection.missing };
@@ -148,7 +149,7 @@ export class PlaybackController {
           let data = this.data;
           if (!data) {
             data = await this.dependencies.load(request.studyId, abort.signal); if (!current()) continue; this.data = data;
-            this.boundaries = [...data.context?.study.observations.map(value => value.elapsedMs) ?? [], ...data.context?.interpretationAvailability.flatMap(value => value.elapsedMs === null ? [] : [value.elapsedMs]) ?? []].sort((left, right) => left - right);
+            this.boundaries = [...data.context?.study.observations.map(value => value.elapsedMs) ?? [], ...data.context?.pausedIntervals?.map(value => value.endMs) ?? [], ...data.context?.interpretationAvailability.flatMap(value => value.elapsedMs === null ? [] : [value.elapsedMs]) ?? []].sort((left, right) => left - right);
           }
           const range = this.range()!;
           const positionMs = request.positionMs ?? Math.min(range.endMs, Math.max(range.startMs, data.preferredPositionMs ?? range.startMs));
@@ -183,7 +184,7 @@ export class PlaybackController {
   /** Compares visible evidence, avoiding redundant image decode/source opens when only the playhead changes. @example this.presentationKey(bundle) */
   private presentationKey(bundle: PlaybackBundle): string {
     const { frame, observation, missing, pauseConfirmed, rendererConfirmed } = bundle.projection;
-    return JSON.stringify([bundle.studyId, bundle.contextHash, frame?.hash, observation?.id, observation?.interpretations.map(value => value.id), missing, pauseConfirmed, rendererConfirmed]);
+    return JSON.stringify([bundle.studyId, bundle.contextHash, frame?.hash, observation?.id, Boolean(bundle.projection.debugger), observation?.interpretations.map(value => value.id), missing, pauseConfirmed, rendererConfirmed]);
   }
 
   /** Identifies learning boundaries independently from moving pixels so source/value loads pause the playback clock. @example this.contextKey(bundle) */

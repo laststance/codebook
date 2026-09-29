@@ -12,7 +12,7 @@ test('repository native QA reports an editor exit that arrives during launch met
   const filename = resolve(__dirname, '../../scripts/native-repository-session.mjs');
   const source = (await readFile(filename, 'utf8')).replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', 'moduleUrl');
   const child = Object.assign(new EventEmitter(), { pid: 42 });
-  const processBoundary = { env: {}, argv: ['/node', filename], execPath: '/node', exitCode: undefined };
+  const processBoundary = { env: { CODEBOOK_WORKSPACE: '/external/repository' }, argv: ['/node', filename], execPath: '/node', exitCode: undefined };
   const messages: string[] = [];
   let completed = false;
   const execution: Promise<void> = runInNewContext(`(async () => { ${source} })()`, {
@@ -37,7 +37,6 @@ test('repository native QA reports an editor exit that arrives during launch met
 for (const target of [
   { title: 'repository', relativePath: '../../scripts/native-repository-session.mjs', failure: 'build-read' },
   { title: 'repository', relativePath: '../../scripts/native-repository-session.mjs', failure: 'manifest-write' },
-  { title: 'runtime experiment', relativePath: '../../../experiments/cycle-0010/scripts/native-session.mjs', failure: 'manifest-write' },
 ]) {
   test(`${target.title} native QA drains its owned editor when ${target.failure} fails`, async () => {
     // Arrange: run the actual launcher and keep its child alive until termination is observed.
@@ -53,7 +52,7 @@ for (const target of [
     const messages: string[] = [];
     const execution: Promise<void> = runInNewContext(`(async () => { ${source} })()`, {
       moduleUrl: pathToFileURL(filename).href, dirname, join, resolve, fileURLToPath, setTimeout, clearTimeout,
-      process: { env: {}, argv: ['/node', filename], execPath: '/node' },
+      process: { env: { CODEBOOK_WORKSPACE: '/external/repository' }, argv: ['/node', filename], execPath: '/node' },
       console: { log(message: string) { messages.push(message); } }, randomUUID: () => 'one-run',
       selectHost: () => 'vscode', readHostInstallation: async () => ({ host: { id: 'vscode' }, binaryPath: '/editor', cliVersion: 'test' }),
       createNativeProfile: async () => '/private-profile', mkdtemp: async () => '/private-profile', mkdir: async () => {},

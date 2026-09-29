@@ -1,19 +1,26 @@
 import * as vscode from 'vscode';
 import { chmod, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { URLSearchParams } from 'node:url';
 import { createEnvironment, requireWorkspace } from './environment';
 import { StudyService } from './service';
 import { startServer } from './server';
 import { EXTENSION_VERSION, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './constants';
 import { deployCursorSkill, removeManagedCursorSkill, verifyManagedCursorSkill } from './cursorSkillDeployment';
 import { StudyWorkspace } from './studyWorkspace';
-import { profileSchema } from './studySchemas';
 import { learningItemSchema } from './identitySchemas';
 import { RepositoryReader } from './repositoryReader';
 import { repositorySelectionSchema } from './learnerSchemas';
 import { repositoryActionSchema } from './repositoryView';
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable';
 import { captureOwnedCursorMcpCatalogGeneration, refreshCursorMcpCatalog, removeOwnedCursorMcpCatalog } from './utils/refreshCursorMcpCatalog';
+import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory';
+import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource';
+import { readDeepWikiManifest, startDeepWikiReader, type DeepWikiReader } from './deepWikiReader';
+import { answerDeepWikiQuestion, answerDeepWikiQuestionWithPrompt } from './utils/answerDeepWikiQuestion';
+import { requestCursorWikiText } from './utils/requestCursorWikiText';
+import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate';
+import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness';
 
 let stopExtension: (() => Promise<void>) | undefined;
 
@@ -32,6 +39,8 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
   };
   let reader: StudyWorkspace | undefined;
   let repositoryReader: RepositoryReader | undefined;
+  let deepWikiReader: DeepWikiReader | undefined;
+  let wikiUpdate: Promise<void> | undefined;
   const workspace = (): StudyWorkspace => reader ??= new StudyWorkspace(context, { start: async () => { await start(); if (!running) throw new Error('Study server did not start.'); return running.service; }, connect, returnToRepository: selection => repository().open(selection, undefined, true), openArticle: selection => repository().open(selection) });
   const repository = (): RepositoryReader => repositoryReader ??= new RepositoryReader({ storage: () => workspace().learningStorage(), connect, arrange: (signal, returnSelection, focus) => workspace().arrangeRepository(signal, returnSelection, focus), evidence: (binding, recording, signal, origin) => workspace().openRepositoryEvidence(binding, recording, signal, origin) });
   const start = async () => {
@@ -225,7 +234,78 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
       },
     }));
   }
-  stopExtension = async () => { await stop(); await repositoryReader?.dispose(); await reader?.dispose(); };
+  stopExtension = async () => { await deepWikiReader?.close(); await stop(); await repositoryReader?.dispose(); await reader?.dispose(); };
+  /** Checks the generated Wiki's owner before browser or update entry uses it. @example await currentDeepWiki() // => { projectRoot, outputDirectory, entry } */
+  const currentDeepWiki = async () => {
+    const projectRoot = await realpath(requireWorkspace());
+    const setting = vscode.workspace.getConfiguration('codebook').get<string>('wikiOutputDirectory', '.codebook/wiki');
+    const outputDirectory = resolveDeepWikiDirectory(projectRoot, setting);
+    const manifest: unknown = JSON.parse(await readFile(join(outputDirectory, 'codebook-wiki.json'), 'utf8'));
+    // A generated page from another checkout must not masquerade as this project's Wiki.
+    if (typeof manifest !== 'object' || manifest === null || !('schemaVersion' in manifest) || manifest.schemaVersion !== 1 ||
+      !('repositoryRoot' in manifest) || manifest.repositoryRoot !== projectRoot)
+      throw new Error('The DeepWiki manifest does not identify this opened project.');
+    const entry = join(outputDirectory, 'index.html');
+    await readFile(entry);
+    return { projectRoot, outputDirectory, entry };
+  };
+  /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @example await updateDeepWiki() */
+  const updateDeepWiki = async () => {
+    if (wikiUpdate) return wikiUpdate;
+    const attempt = (async () => {
+      const { projectRoot, outputDirectory } = await currentDeepWiki();
+      const query = `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(join(outputDirectory, 'codebook-wiki.json'))} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure, then report changed pages and citations. Do not start a debugger or application.`;
+      if (!isCursorHost) { await vscode.commands.executeCommand('workbench.action.chat.open', { query, isPartialQuery: false }); return; }
+      const update = async (token?: vscode.CancellationToken) => {
+        await runCursorWikiUpdate(projectRoot, query, token);
+        // A successful CLI exit alone does not prove that the correct project's site is readable.
+        if (await realpath(requireWorkspace()) !== projectRoot) throw new Error('The opened repository changed during the Wiki update. Reopen its Wiki to inspect the result.');
+        const current = await currentDeepWiki();
+        const published = await readDeepWikiManifest(current.outputDirectory, projectRoot);
+        const freshness = await inspectDeepWikiFreshness(projectRoot, published.sources, published.revision, published.excludedPaths);
+        if (freshness.status !== 'current') throw new Error('Cursor Agent finished, but the published Wiki is not verified current. Inspect its freshness and retry the update.');
+        void vscode.window.showInformationMessage('Codebook updated this project’s LLM Wiki. Reopen the browser reader to inspect the published pages.');
+      };
+      if (vscode.window.withProgress) await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Updating LLM Wiki with Cursor Agent', cancellable: true }, async (_, token) => update(token));
+      else await update();
+    })();
+    wikiUpdate = attempt;
+    try { await attempt; } finally { if (wikiUpdate === attempt) wikiUpdate = undefined; }
+  };
+  if (vscode.window?.registerUriHandler) context.subscriptions.push(vscode.window.registerUriHandler({
+    handleUri: async incomingUri => {
+      if (incomingUri.path !== '/source' && incomingUri.path !== '/update' && incomingUri.path !== '/settings') return;
+      try {
+        const parameters = new URLSearchParams(incomingUri.query);
+        const projectRoot = await realpath(requireWorkspace());
+        const citedRoot = parameters.get('root') ?? '';
+        if (incomingUri.path === '/settings') {
+          // Settings must open in the editor window that owns this Wiki's project.
+          if (citedRoot !== projectRoot) throw new Error('The Wiki settings link belongs to another checkout.');
+          await vscode.commands.executeCommand('workbench.action.openSettings', '@id:codebook.wikiOutputDirectory');
+          return;
+        }
+        if (incomingUri.path === '/update') {
+          if (citedRoot !== projectRoot) throw new Error('The Wiki update link belongs to another checkout.');
+          await updateDeepWiki();
+          return;
+        }
+        const citedPath = parameters.get('path') ?? '';
+        const citedHash = parameters.get('sha256') ?? undefined;
+        const lineText = parameters.get('line') ?? '1';
+        if (!/^[1-9]\d*$/.test(lineText)) throw new Error('The Wiki citation has an invalid line number.');
+        const { filePath, changed } = await resolveDeepWikiSource(projectRoot, citedRoot, citedPath, citedHash);
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+        const line = Math.min(Number(lineText) - 1, Math.max(0, document.lineCount - 1));
+        const position = new vscode.Position(line, 0);
+        await vscode.window.showTextDocument(document, { preview: false, selection: new vscode.Range(position, position) });
+        if (changed) void vscode.window.showWarningMessage('This Wiki citation has no matching source hash or its source has changed. The editor opened the current file; verify the cited revision before relying on it.');
+      } catch (error) {
+        const action = incomingUri.path === '/settings' ? 'open Wiki output settings' : incomingUri.path === '/update' ? 'start the Wiki update' : 'open the Wiki citation';
+        void vscode.window.showErrorMessage(`Codebook could not ${action}: ${String(error)}`);
+      }
+    },
+  }));
   context.subscriptions.push(vscode.commands.registerCommand('codebook.startAgentServer', start),
     vscode.commands.registerCommand('codebook.stopAgentServer', stop),
     vscode.commands.registerCommand('codebook.copyAgentConnection', connect),
@@ -275,17 +355,64 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
         void vscode.window.showErrorMessage(`Codebook could not open Repository Wiki: ${String(error)}`); throw error;
       }
     }),
+    vscode.commands.registerCommand('codebook.openDeepWiki', async () => {
+      try {
+        const { projectRoot, outputDirectory } = await currentDeepWiki();
+        await deepWikiReader?.close();
+        deepWikiReader = undefined;
+        const openedReader = await startDeepWikiReader(outputDirectory, projectRoot, async (question, sources, signal) => {
+          if (await realpath(requireWorkspace()) !== projectRoot) throw new Error('The opened repository changed. Reopen its Wiki.');
+          const models = vscode.lm?.selectChatModels ? await vscode.lm.selectChatModels() : [];
+          if (!models.length) {
+            if (isCursorHost) {
+              const cancellation = new vscode.CancellationTokenSource();
+              signal.addEventListener('abort', () => cancellation.cancel(), { once: true });
+              try { return await answerDeepWikiQuestionWithPrompt(prompt => requestCursorWikiText(prompt, cancellation.token), projectRoot, sources, question, 'cursor'); }
+              finally { cancellation.dispose(); }
+            }
+            const { outputDirectory } = await currentDeepWiki();
+            const query = `/codebook Answer this repository question using the opened project's source and the Wiki at ${JSON.stringify(join(outputDirectory, 'codebook-wiki.json'))}. Cite the supporting file and line for each claim. Do not edit files, start the application or use a debugger. Question: ${JSON.stringify(question)}`;
+            await vscode.commands.executeCommand('workbench.action.chat.open', { query, isPartialQuery: true });
+            return { handoff: 'This editor exposes no model to the Wiki reader. Your question is ready in the editor chat. Send it there for a source-cited answer.' };
+          }
+          const automatic = models.find(model => /auto/i.test(`${model.id} ${model.name}`));
+          const chosen = automatic ? undefined : await vscode.window.showQuickPick(models.map(model => ({ label: model.name, description: model.vendor, model })), { placeHolder: 'Choose the editor model for this Wiki question' });
+          const model = automatic ?? chosen?.model;
+          if (!model) throw new Error('No editor model was selected for this Wiki question.');
+          const cancellation = new vscode.CancellationTokenSource();
+          signal.addEventListener('abort', () => cancellation.cancel(), { once: true });
+          try { return await answerDeepWikiQuestion(model, projectRoot, sources, question, isCursorHost ? 'cursor' : 'vscode', cancellation.token); }
+          finally { cancellation.dispose(); }
+        }, isCursorHost ? 'cursor' : 'vscode');
+        deepWikiReader = openedReader;
+        if (!await vscode.env.openExternal(vscode.Uri.parse(openedReader.url))) throw new Error('The browser did not open the generated DeepWiki.');
+      } catch (error) {
+        await deepWikiReader?.close();
+        deepWikiReader = undefined;
+        void vscode.window.showErrorMessage(`Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`);
+        throw error;
+      }
+    }),
+    vscode.commands.registerCommand('codebook.updateDeepWiki', async () => {
+      try { await updateDeepWiki(); }
+      catch (error) { void vscode.window.showErrorMessage(`Codebook could not start the Wiki update: ${String(error)}`); throw error; }
+    }),
+    vscode.commands.registerCommand('codebook.saveLearningReplay', async (studyId?: string) => {
+      try { await workspace().saveLearningReplay(studyId); }
+      catch (error) { void vscode.window.showErrorMessage(`Codebook could not save learning: ${String(error)}`); throw error; }
+    }),
+    vscode.commands.registerCommand('codebook.showLearningSummary', () => workspace().showLearningSummary()),
+    vscode.commands.registerCommand('codebook.openLearningReplay', (studyId: string) => workspace().openRecording(studyId)),
     vscode.commands.registerCommand('codebook.closeRepositoryWiki', () => repositoryReader?.close()),
     vscode.commands.registerCommand('codebook.repository.action', (action: unknown) => repository().action(repositoryActionSchema.parse(action))),
     vscode.commands.registerCommand('codebook.repository.understand', (understood: unknown) => { if (typeof understood !== 'boolean') throw new Error('Understanding requires a boolean learner choice.'); return repository().understand(understood); }),
     vscode.commands.registerCommand('codebook.selectLearningItem', itemId => workspace().select(learningItemSchema.parse(itemId))),
-    vscode.commands.registerCommand('codebook.selectStudyProfile', profile => workspace().selectProfile(profileSchema.parse(profile))),
     vscode.commands.registerCommand('codebook.markUnderstanding', understood => { if (understood !== undefined && typeof understood !== 'boolean') throw new Error('Understanding requires a boolean learner choice.'); return workspace().understand(understood); }),
     ...(['run', 'click', 'continue', 'stop', 'return-current', 'return-wiki', 'source', 'current-file', 'focus-app', 'focus-context', 'read-app', 'read-source', 'read-context', 'outline', 'arrange', 'retry'] as const).map(action => vscode.commands.registerCommand(`codebook.study.${action}`, () => workspace().action(action))),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       void (async () => {
         try { await context.workspaceState.update('codebook.aiChatSetup', undefined); }
-        finally { await stop(); await repositoryReader?.dispose(); repositoryReader = undefined; await reader?.dispose(); reader = undefined; repository(); }
+        finally { await deepWikiReader?.close(); deepWikiReader = undefined; await stop(); await repositoryReader?.dispose(); repositoryReader = undefined; await reader?.dispose(); reader = undefined; repository(); }
       })().catch(error => vscode.window.showErrorMessage(`Codebook cleanup incomplete: ${String(error)}`));
     }));
   // Register lazy readers before restored captured documents or contributed views request their providers.

@@ -117,14 +117,14 @@ test('expired preparation rejects before book reads and input configuration chan
   assert.equal(definition.configuration.action.title, 'Change theme'); assert.equal(definition.configuration.source.column, 1);
 });
 
-test('a retained demo alias cannot become a configured repository learning identity', async context => {
+test('a foreign learning alias cannot become a configured repository learning identity', async context => {
   // Arrange
   const { books, sources, configuration, control } = await preparationHarness(context), read = books.readDefinition.bind(books);
   books.readDefinition = async (...arguments_) => {
-    const value = await read(...arguments_); value.revision.document.nodes[0]!.learningItemId = 'paired-cart-demo/server'; return value;
+    const value = await read(...arguments_); value.revision.document.nodes[0]!.learningItemId = 'repository/interface/theme'; return value;
   };
   let acquisitions = 0; sources.prepare = async () => { acquisitions++; throw new Error('Alias must reject before acquisition.'); };
   // Act / Assert
-  await assert.rejects(prepareRepositoryStudy(configuration, books, control), { code: 'INVALID_CONFIGURATION', message: 'configuration.book.nodeId must retain its default repository identity; a demo alias cannot become a configured study.' });
+  await assert.rejects(prepareRepositoryStudy(configuration, books, control), { code: 'INVALID_CONFIGURATION', message: 'configuration.book.nodeId must retain its default repository identity; a foreign learning identity cannot become a configured study.' });
   assert.equal(acquisitions, 0);
 });

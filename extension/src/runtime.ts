@@ -1,43 +1,56 @@
-import type { PairedRun } from 'codebook-cycle-0004/dist/run';
-import type { ParticipantSnapshot } from 'codebook-cycle-0004/dist/inspectParticipant';
-import type { SealedSource } from 'codebook-cycle-0001/dist/inspect';
-import type { Evidence } from 'codebook-cycle-0001/dist/evidence';
-import type { HostConfiguration } from 'codebook-cycle-0001/dist/hostBrowser';
-import type { ProfileId, ActionId } from 'codebook-cycle-0004/dist/constants';
+import type { Evidence, RecordedEvent } from './runtimeSupport/evidence';
+import type { HostConfiguration } from './runtimeSupport/hostBrowser';
+import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate';
 import type { ConfiguredDefinition, ConfiguredObservation, ConfiguredStudy } from './configuredStudySchemas';
-import { REPOSITORY_BROWSER_ACTION, REPOSITORY_BROWSER_PROFILE } from './constants';
+import { NODE_TEST_PROFILE, REPOSITORY_BROWSER_ACTION, REPOSITORY_BROWSER_PROFILE } from './constants';
+import type { NodeTestConfiguration } from './nodeTestConfigSchemas';
+import type { NodeTestSourceStop } from './ownedNodeTestRun';
 
-export type DemoRuntimeView = ReturnType<PairedRun['view']>;
+export interface NodeTestRuntime {
+  readonly id: string;
+  prepare(): Promise<NodeTestSourceStop>;
+  hasNextStop(): boolean;
+  advance(): Promise<NodeTestSourceStop>;
+  complete(): Promise<{ exitCode: number | null; signal: NodeJS.Signals | null; output: string; elapsedMs: number }>;
+  stop(): Promise<void>;
+}
+
 export type ConfiguredRuntimeSnapshot = Omit<ConfiguredObservation, 'snapshotUri' | 'interpretations'>;
-export type RuntimeSnapshot = ParticipantSnapshot | ConfiguredRuntimeSnapshot;
-export type RuntimeAction = ActionId | typeof REPOSITORY_BROWSER_ACTION;
-export type RuntimeDefinition = ProfileId | ConfiguredDefinition;
+export type RuntimeSnapshot = ConfiguredRuntimeSnapshot;
+export type RuntimeAction = typeof REPOSITORY_BROWSER_ACTION;
+export type RuntimeDefinition = ConfiguredDefinition;
 export type RuntimeControl = Readonly<{ signal: AbortSignal; deadlineAt: number; preparationDeadlineAt: number }>;
-export type RuntimeSource = Pick<SealedSource, 'source' | 'javascript' | 'sourceMap'>;
-export type ConfiguredRuntimeView = Pick<DemoRuntimeView, 'runId' | 'status' | 'cleaned' | 'resourcesReleased' | 'runtimeOutcome' | 'captureOutcome' | 'finalOutcome' | 'captures' | 'failures' | 'events' | 'artifactDirectory' | 'activeSessionIds'> & {
+export type RuntimeSource = { source: string; javascript: string; sourceMap: string };
+export type Participant = 'server' | 'browser';
+export type RuntimeParticipant = { sessionId?: string; pause: PauseIdentity | undefined; phase: PauseGate['phase']; snapshot: ConfiguredRuntimeSnapshot | undefined; continued?: PauseIdentity; conflict: boolean };
+export type ConfiguredRuntimeView = {
+  runId: string; status: string; cleaned: boolean; resourcesReleased: boolean;
+  runtimeOutcome: 'demonstrated' | 'not-demonstrated'; captureOutcome: 'complete' | 'incomplete'; finalOutcome: ConfiguredStudy['finalOutcome'];
+  captures: Record<string, { status: 'pending' | 'captured' | 'failed'; file?: string; error?: string; renderer?: { epoch: string; id: number; hash: string } }>;
+  snapshotCaptures?: Record<string, ConfiguredRuntimeView['captures'][string]>;
+  failures: string[]; events: RecordedEvent[]; artifactDirectory: string; activeSessionIds: string[];
   profile: typeof REPOSITORY_BROWSER_PROFILE;
   definition: ConfiguredDefinition;
   manifest?: { hash: string; configurationHash: string; configuration: ConfiguredDefinition['configuration']; descriptor: Pick<ConfiguredDefinition['descriptor'], 'itemId' | 'bookTitle' | 'nodeTitle' | 'anchors' | 'citationContext'>; itemId: ConfiguredObservation['itemId']; sourceHash: string; javascriptHash: string; mapHash: string };
-  participants: { browser: Omit<DemoRuntimeView['participants']['browser'], 'snapshot'> & { snapshot: ConfiguredRuntimeSnapshot | undefined } };
+  participants: { browser: RuntimeParticipant; server?: RuntimeParticipant };
   snapshots: ConfiguredRuntimeSnapshot[];
   operation: ConfiguredStudy['operation'];
   nextAction: typeof REPOSITORY_BROWSER_ACTION | undefined;
   observed: { afterVerified: true } | undefined;
   links: never[];
 };
-export type RuntimeView = DemoRuntimeView | ConfiguredRuntimeView;
-export type Participant = ParticipantSnapshot['participant'];
-/** Shares lifecycle/control while preserving schema-derived demo/configured evidence variants for the service. @example const runtime = await environment.createRuntime(directory, definition) */
+export type RuntimeView = ConfiguredRuntimeView;
+/** Shares owned repository runtime control with the service and recording pipeline. @example const runtime = await environment.createRuntime(directory, definition) */
 export interface StudyRuntime {
-  readonly id: PairedRun['id'];
+  readonly id: string;
   readonly evidence: Pick<Evidence, 'save' | 'flush' | 'record' | 'failure' | 'directory' | 'elapsedMs'>;
-  prepare: PairedRun['prepare'];
+  prepare(): Promise<void>;
   view(): RuntimeView;
   action(key: string, action: RuntimeAction): { id: string };
-  continue: PairedRun['continue'];
-  stop: PairedRun['cleanup'];
-  fail: PairedRun['fail'];
-  source(item: string): RuntimeSource | undefined;
+  continue(participant: Participant, pause: PauseIdentity): Promise<void>;
+  stop(): Promise<void>;
+  fail(reason: string): void;
+  source(item: string, snapshotId?: string): RuntimeSource | undefined;
   reveal(snapshot: RuntimeSnapshot): Promise<void>;
 }
 export interface StudyEnvironment {
@@ -45,6 +58,7 @@ export interface StudyEnvironment {
   readonly host: HostConfiguration;
   readonly build: { revision: string; dirty: boolean; sourceHash: string };
   assertWorkspace?(): void;
-  prerequisites(): Promise<{ ready: boolean; missing: string[]; profiles?: Partial<Record<ProfileId | typeof REPOSITORY_BROWSER_PROFILE, { ready: boolean; missing: string[] }>> }>;
-  createRuntime(directory: string, definition?: RuntimeDefinition, control?: RuntimeControl): Promise<StudyRuntime>;
+  prerequisites(): Promise<{ ready: boolean; missing: string[]; profiles?: Partial<Record<typeof REPOSITORY_BROWSER_PROFILE | typeof NODE_TEST_PROFILE, { ready: boolean; missing: string[] }>> }>;
+  createRuntime(directory: string, definition: RuntimeDefinition, control?: RuntimeControl): Promise<StudyRuntime>;
+  createNodeTestRun?(configuration: NodeTestConfiguration, record: (type: string, detail?: unknown) => unknown): Promise<NodeTestRuntime>;
 }

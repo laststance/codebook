@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
-import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 import { webviewFocusReceiptSchema } from '../webviewFocusSchemas';
 
 /** Hands owned-pane focus to its current inner document once; presentation callers supply lifetime/native ownership guards. @example await focusWebview(panel, options) */

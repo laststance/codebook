@@ -49,16 +49,18 @@ function replaceFile(entries, path, content) {
   entries.set('extension/package-manifest.json', Buffer.from(JSON.stringify(manifest)));
 }
 
-test('a real VSIX loads outside the checkout and preserves exact fixture maps, patch identity and dependency notices', async () => {
+test('a real VSIX loads outside the checkout and excludes bundled applications and preserves patch identity and dependency notices', async () => {
   // Arrange / Act
   const checked = await verifyPackageContent(original);
   // Assert
   assert.equal(receipt.isolatedModuleLoad, true); assert.equal(checked.extension.version, '0.2.11'); assert.equal(checked.extension.apiVersion, '1.5');
-  assert.equal(checked.entries, 35); assert.equal(receipt.dependencies.length, 14);
+  assert.equal(checked.entries, 29); assert.equal(receipt.dependencies.length, 14);
   assert.deepEqual(original.get('extension/skills/codebook/SKILL.md'), await readFile(join(repository, 'extension/skills/codebook/SKILL.md')));
-  for (const path of ['fixture/server.mts', 'fixture/client.mts', 'fixture/constants.mts', 'fixture/index.html', 'build/server.mjs', 'build/server.mjs.map', 'build/client.mjs', 'build/client.mjs.map', 'build/constants.mjs', 'build/constants.mjs.map']) {
-    assert.deepEqual(original.get(`extension/dist/demo/${path}`), await readFile(join(repository, 'experiments/cycle-0004', path)));
-  }
+  assert.deepEqual(original.get('extension/skills/codebook/publish-wiki.mjs'), await readFile(join(repository, 'extension/skills/codebook/publish-wiki.mjs')));
+  assert.deepEqual(original.get('extension/skills/codebook/render-wiki.mjs'), await readFile(join(repository, 'extension/skills/codebook/render-wiki.mjs')));
+  assert.deepEqual(original.get('extension/skills/codebook/render-wiki-diagrams.mjs'), await readFile(join(repository, 'extension/skills/codebook/render-wiki-diagrams.mjs')));
+  assert.deepEqual(original.get('extension/skills/codebook/reader-shell.html'), await readFile(join(repository, 'extension/skills/codebook/reader-shell.html')));
+  assert.ok([...original.keys()].every(path => !/(?:^|\/)(?:demo|fixture|experiments)(?:\/|$)/.test(path)));
   for (const path of COMPILED_DIRECTORIES) {
     await assert.rejects(lstat(join(repository, path, 'obsolete-package-probe.js')), { code: 'ENOENT' });
     await assert.rejects(lstat(join(repository, path, 'obsolete-package-probe.d.ts')), { code: 'ENOENT' });
@@ -154,7 +156,7 @@ for (const method of ['openPromise', 'fromBufferPromise']) {
   assert.equal(result.stderr, '');
 });
 
-for (const file of ['dist/demo/fixture/index.html', 'dist/demo/build/server.mjs.map', 'dist/extension.js', 'src/assets/book.svg', 'skills/codebook/SKILL.md']) {
+for (const file of ['dist/extension.js', 'src/assets/book.svg', 'skills/codebook/SKILL.md']) {
   test(`a VSIX missing ${file} is rejected before installation`, async () => {
     // Arrange
     const entries = new Map(original); entries.delete(`extension/${file}`); const path = await writeArchive(entries, `missing-${file.replaceAll('/', '-')}`);
@@ -201,7 +203,7 @@ test('removing the icon from both archive and self-declared inventory still viol
   await assert.rejects(verifyPackageContent(await readVsixEntries(path)), /allowed files/);
 });
 
-for (const file of ['dist/demo/fixture/server.mts', 'dist/extension.js']) {
+for (const file of ['dist/extension.js']) {
   test(`modified ${file} fails the recorded byte contract`, async () => {
     // Arrange
     const entries = new Map(original); entries.set(`extension/${file}`, Buffer.from('modified bytes')); const path = await writeArchive(entries, `changed-${file.replaceAll('/', '-')}`);

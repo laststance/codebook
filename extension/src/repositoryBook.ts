@@ -1,6 +1,6 @@
 import { lstat, mkdir, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from './runtimeSupport/utils/sha256';
 import { BOOK_FILE_LIMIT_BYTES, BOOK_INPUT_LIMIT_BYTES, BOOK_MAX_FILES, BOOK_MAX_REVISIONS, BOOK_PREPARE_TIMEOUT_MS, BOOK_REVISION_LIMIT_BYTES, BOOK_SCHEMA_VERSION_V2, BOOK_STORAGE_FORMATS, PRIVATE_DIRECTORY_MODE } from './constants';
 import { StudyError } from './errors';
 import { LearningLibrary } from './learningLibrary';
@@ -93,7 +93,7 @@ export class RepositoryBookStore {
       const acquiredAt = this.now(), current = await this.readStored(intent.bookId), receipt = this.recover(current, intent.key, digest);
       if (receipt) return receipt;
       this.assertActive(deadlineAt, signal); this.assertRevision(current, intent.expectedRevision);
-      if (!current && (await this.entries()).length >= BOOK_MAX_FILES) throw new StudyError('LIMIT_EXCEEDED', 'Repository library already retains 16 books; no book was removed.');
+      if (!current && (await this.entries()).length >= BOOK_MAX_FILES) throw new StudyError('LIMIT_EXCEEDED', `Repository library already retains ${BOOK_MAX_FILES} books; no book was removed.`);
       if ((current?.revisions.length ?? 0) >= BOOK_MAX_REVISIONS) throw new StudyError('LIMIT_EXCEEDED', 'Book already retains 20 revisions; no revision was removed.');
       const sourceChecks = await prepared.revalidate();
       // Final checkpoint checks share the same writer ownership as archive/learner/recorder saves.

@@ -1,4 +1,4 @@
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import { BOOK_INPUT_LIMIT_BYTES, BOOK_REVISION_LIMIT_BYTES, BOOK_SCHEMA_VERSION_V2, REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants';
 import { repositoryBookSchema, repositoryBookV2Schema, type RepositoryBook } from '../repositorySchemas';
 import { bookIntentDigest } from './bookIntentDigest';

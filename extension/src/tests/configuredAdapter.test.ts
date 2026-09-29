@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import type { Protocol } from 'devtools-protocol';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import { readDevelopmentBundle } from '../utils/readDevelopmentBundle';
 import { readRepositoryBuildText } from '../utils/readRepositoryBuildText';
 import { createBundleVerifier } from '../utils/createBundleVerifier';
@@ -64,7 +64,7 @@ test('a source from another route reports the root-page mismatch before browser 
   await writeFile(join(build, 'root.js'), `eval(${JSON.stringify(script)});`);
   await writeFile(manifestPath, `globalThis.__RSC_MANIFEST["/page"]=${JSON.stringify({ clientModules: { [rootPath]: { chunks: ['root.js'] } } })};`);
   // Act / Assert
-  await assert.rejects(readDevelopmentBundle(directory, { path: selectedPath, hash: sha256(selectedSource), line: 1, column: 1 }), /Selected source is absent from the root application route chunks; verify that it belongs to the launched page/);
+  await assert.rejects(readDevelopmentBundle(directory, { path: selectedPath, hash: sha256(selectedSource), line: 1, column: 1 }), /Selected source is absent from the selected application route chunks; verify that it belongs to the launched page/);
 });
 
 test('a large root chunk yields its bounded selected module without executing unrelated bytes', async context => {
@@ -127,7 +127,7 @@ test('configured inspection reads actual finite zero false null string and type 
   assert.equal(requests.length, 5); assert.equal(requests.every(request => request.callFrameId === 'exact-frame' && request.throwOnSideEffect === true && request.returnByValue === true && request.timeout === 1000), true);
 });
 
-test('unavailable optional inspections stay labeled and required objects getters nonfinite undefined or oversized values cannot certify a pause', async () => {
+test('unavailable optional inspections stay labeled and required objects getters nonfinite missing responses or oversized values cannot certify a pause', async () => {
   // Arrange
   const results: Protocol.Debugger.EvaluateOnCallFrameResponse[] = [
     { result: { type: 'undefined' } }, { result: { type: 'object', value: { data: 1 } } }, { result: { type: 'object', objectId: 'remote-object' } },
@@ -197,4 +197,32 @@ test('configured browser checks identify absent condition and click elements sep
   // Assert
   assert.deepEqual(conditionResult, { ready: false, failure: { conditionIndex: 0, reason: 'selector-missing' } });
   assert.deepEqual(clickResult, { ready: false, failure: { reason: 'click-target-missing' } });
+});
+
+test('invalid browser-native CSS fails a declared condition or click target before application input', () => {
+  // Arrange
+  const environment = { document: { querySelectorAll: () => { throw new SyntaxError('unsupported pseudo selector'); }, elementFromPoint: () => null } };
+  const condition = configuredDomExpression([{ kind: 'visible', selector: 'button:has-text("Log in")' }], 'button');
+  const click = configuredDomExpression([], 'button:has-text("Log in")');
+  // Act
+  const conditionResult = JSON.parse(JSON.stringify(runInNewContext(condition, environment)));
+  const clickResult = JSON.parse(JSON.stringify(runInNewContext(click, environment)));
+  // Assert
+  assert.deepEqual(conditionResult, { ready: false, failure: { conditionIndex: 0, reason: 'invalid-selector' } });
+  assert.deepEqual(clickResult, { ready: false, failure: { reason: 'invalid-selector' } });
+});
+
+
+test('required undefined remains an observed value distinct from null strings and rejected application objects', async () => {
+  // Arrange
+  const environment = { missing: undefined, text: 'undefined', empty: null, fake: { type: 'undefined' }, huge: 'x'.repeat(1025), invalid: NaN, handler() {} };
+  const paths = ['missing', 'text', 'empty', 'fake', 'huge', 'invalid', 'handler'];
+  // Act: execute the actual expression and cross the JSON transport boundary.
+  const result = await inspectConfiguredValues(async parameters => {
+    const value = runInNewContext(parameters.expression, environment);
+    return JSON.parse(JSON.stringify({ result: { type: typeof value, value } }));
+  }, 'exact-frame', paths.map(path => ({ path, mode: 'value', required: true })), () => {});
+  // Assert
+  assert.deepEqual(result.values, { 'value:missing': { type: 'undefined' }, 'value:text': 'undefined', 'value:empty': null });
+  assert.deepEqual(result.unavailableValues.map(value => value.path), ['value:fake', 'value:huge', 'value:invalid', 'value:handler']);
 });

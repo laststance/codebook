@@ -9,6 +9,21 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const utilitySource = new URL('../utils/', import.meta.url);
 
+/** Accepts an exited process or a reaping zombie while still rejecting a running package descendant. @example await assertRetiredProcess(writerPid) */
+async function assertRetiredProcess(pid) {
+  let lastState = 'unknown';
+  for (let attempt = 0; attempt < 50; attempt++) {
+    try { process.kill(pid, 0); }
+    catch (error) { if (error.code === 'ESRCH') return; throw error; }
+    try { lastState = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); }
+    catch (error) { if (error.status === 1) return; throw error; }
+    if (lastState.startsWith('Z')) return;
+    await delay(50);
+  }
+  const details = execFileSync('ps', ['-o', 'pid=,ppid=,pgid=,sess=,stat=,command=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+  assert.fail(`Package descendant ${pid} remains active with process state ${lastState}: ${details}`);
+}
+
 /** Isolates real lifecycle descendants with a shorter test-only deadline while preserving the runner and output limit. @example const fixture = await commandFixture(context, 'overflow') */
 async function commandFixture(context, scenario, cleanupTimeoutMs = 5000) {
   const signals = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'];
@@ -68,7 +83,7 @@ for (const [scenario, expectedCode] of [['overflow', 'ERR_CHILD_PROCESS_STDIO_MA
     if (scenario === 'overflow') assert.equal(Buffer.byteLength(failure.stdout), 8 * 1024 * 1024);
     for (const name of ['lifecycle.json', 'writer.json']) {
       const { pid } = JSON.parse(await readFile(join(fixture.directory, name), 'utf8'));
-      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+      await assertRetiredProcess(pid);
     }
     assert.doesNotThrow(() => process.kill(unrelated.pid, 0));
     await assert.rejects(readFile(join(fixture.directory, 'completed.txt')), { code: 'ENOENT' });
@@ -84,7 +99,7 @@ test('a successful package build drains its child output and keeps the child res
   assert.match(result.stdout, /fixture finished\n/);
   assert.equal(await readFile(join(fixture.directory, 'completed.txt'), 'utf8'), 'child completed');
   const { pid } = JSON.parse(await readFile(join(fixture.directory, 'writer.json'), 'utf8'));
-  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  await assertRetiredProcess(pid);
 });
 
 test('package subprocess arguments remain literal and both diagnostic streams are retained', async context => {
@@ -166,7 +181,7 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT']) {
     assert.deepEqual((await readdir(fixture.directory)).filter(name => name.startsWith('.codebook-package-')), []);
     for (const name of ['lifecycle.json', 'writer.json']) {
       const { pid } = JSON.parse(await readFile(join(fixture.directory, name), 'utf8'));
-      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+      await assertRetiredProcess(pid);
     }
   });
 }
@@ -209,7 +224,7 @@ test('a caller-owned interrupt handler runs once and survives package descendant
   assert.deepEqual(JSON.parse(await readFile(join(fixture.directory, 'interrupt-result.json'), 'utf8')), { code: 'ABORT_ERR', signal: 'SIGINT', signalsHandled: 1, remainingListeners: { SIGINT: 1, SIGTERM: 0, SIGHUP: 0, SIGQUIT: 0 } });
   for (const name of ['lifecycle.json', 'writer.json']) {
     const { pid } = JSON.parse(await readFile(join(fixture.directory, name), 'utf8'));
-    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+    await assertRetiredProcess(pid);
   }
 });
 

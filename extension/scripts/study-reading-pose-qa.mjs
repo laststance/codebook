@@ -25,11 +25,10 @@ if (mode === 'red') {
   html = originalHtml.studyHtml('context');
 }
 const study = createConfiguredStudy(), baseline = { text: '', hash: '0'.repeat(64), line: 1, path: '/fixture/unused.mts' };
-study.observations[0].values['value:document.activeElement.className'] = 'group min-h-11 min-w-11 rounded-full bg-white/90 px-3 py-2 shadow-lg shadow-zinc-800/5 ring-1 ring-zinc-900/5 backdrop-blur-sm transition dark:bg-zinc-800/90 dark:ring-white/10 dark:hover:ring-white/20';
 const model = projectStudy({ study, selection: { ...selectStudy(study), tab: 'live' },
   progress: decodeLearnerProgress({ version: 4, workspaceKey: study.workspaceKey, decisions: [] }, study.workspaceKey), baselines: { server: baseline, browser: baseline },
   citationSources: study.descriptor.sources.map(source => ({ path: source.path, hash: source.hash, currentHash: source.hash, status: 'current' })) });
-model.observation.interpretations = [{ text: 'This is source and captured-value context for a reader transfer. '.repeat(35) }];
+model.observation.interpretations = [{ text: 'This is source and explanation context for a reader transfer. '.repeat(35) }];
 const message = { type: 'study', revision: 1, model, busy: false, saving: false, loading: false, errors: [], canClick: false, canRun: false, profiles: [], moments: [], studies: [],
   presentation: { presentationId: '11111111-1111-4111-8111-111111111111', presentationControlRevision: 1, mode: 'study-workspace', state: 'open', layoutConfirmed: true, preference: { status: 'default' }, panes: {} } };
 
@@ -64,24 +63,25 @@ async function check(page, options) {
     understandingWrites: window.sent.filter(message => message.type === 'understanding').length,
     actionWrites: window.sent.filter(message => message.type === 'action').length,
     summaryFocused: document.activeElement === document.querySelector('#presentation-options > summary'),
-    tableFocused: document.activeElement === document.querySelector('.table-scroll'),
-    horizontal: document.querySelector('.table-scroll')?.scrollLeft,
+    interpretationFocused: document.activeElement === document.getElementById('interpretations'),
+    duplicateValues: Boolean(document.querySelector('.table-scroll, #values')),
   }));
   const applying = { ...options.message, presentation: { ...options.message.presentation, state: 'applying' } };
   const request = { type: 'capture-presentation-pose', captureId: '22222222-2222-4222-8222-222222222222',
     presentationId: applying.presentation.presentationId, expectedRevision: 1, revision: 1, itemId: applying.model.selection.itemId, sourceHash: applying.model.source.hash,
     studyId: applying.model.selection.studyId, observationId: applying.model.observation?.id, contentTab: applying.model.selection.tab };
   await page.setViewportSize({ width: 390, height: 640 }); await render(options.message);
+  await page.locator('#reader-options > summary').click();
   await page.locator('#presentation-options > summary').click();
   await page.locator('[data-action="source"]').nth(1).click();
   await page.locator('#understood').focus();
   const before = await inspect(); await publish(applying); await publish(request);
   const captured = await page.evaluate(() => window.sent.findLast(message => message.type === 'presentation-pose'));
-  const living = { ...applying, presentation: { ...applying.presentation, mode: 'living-book' } };
+  const replacement = { ...applying };
   await page.screenshot({ path: `${options.output}/before-replacement.png` });
   await page.waitForTimeout(500); // Video reading pause after capture; it does not satisfy a product readiness predicate.
   // A real document replacement deliberately has no old local state or HTMLElement references.
-  await render(living);
+  await render(replacement);
   if (captured?.pose) { await publish({ ...captured, type: 'restore-presentation-pose' }); await page.waitForFunction(() => window.sent.some(message => message.type === 'presentation-pose-restored')); }
   const after = await inspect(); await page.screenshot({ path: `${options.output}/after-replacement.png` });
   await page.waitForTimeout(500);
@@ -105,49 +105,79 @@ async function check(page, options) {
   const scrolled = await inspect(); await publish(restore); const scrollRetained = await inspect();
   await page.waitForTimeout(500);
   cases.push({ name: 'later wheel input preserves its new reading position', scrolled, scrollRetained, passed: scrollRetained.scrollY === scrolled.scrollY && scrollRetained.restored === 0 && scrollRetained.invalidated >= 1 });
-  await render(living); await page.keyboard.press('Tab'); const freshInput = await inspect(); await publish(restore);
+  await render(replacement); await page.keyboard.press('Tab'); const freshInput = await inspect(); await publish(restore);
   await page.waitForFunction(() => window.sent.some(message => message.type === 'presentation-pose-invalidated'));
   const freshRetained = await inspect();
   await page.waitForTimeout(500);
   cases.push({ name: 'new renderer input wins over imported state', freshInput, freshRetained, passed: freshRetained.focus === freshInput.focus && freshRetained.scrollY === freshInput.scrollY && freshRetained.restored === 0 });
-  await render(living);
+  await render(replacement);
   await page.evaluate(() => { window.queuedFrames = []; window.requestAnimationFrame = callback => { window.queuedFrames.push(callback); return window.queuedFrames.length; }; });
   await publish(restore); await page.keyboard.press('Tab'); const between = await inspect();
   await page.evaluate(() => { for (const callback of window.queuedFrames.splice(0)) callback(performance.now()); });
   const afterFrame = await inspect();
   await page.waitForTimeout(500);
   cases.push({ name: 'keyboard input before the queued restore frame keeps its new focus and scroll', between, afterFrame, passed: afterFrame.focus === between.focus && afterFrame.scrollY === between.scrollY && afterFrame.restored === 0 && afterFrame.invalidated >= 1 });
-  await render({ ...living, revision: 2 }); await publish(restore);
+  await render({ ...replacement, revision: 2 }); await publish(restore);
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
   const stale = await inspect();
   await page.waitForTimeout(500);
   cases.push({ name: 'a different displayed model cannot acknowledge an old pose', stale, passed: stale.restored === 0 && stale.scrollY === 0 });
-  await render({ ...living, model: { ...living.model, observation: { ...living.model.observation, id: 'browser-session:999' } } }); await publish(restore);
+  await render({ ...replacement, model: { ...replacement.model, observation: { ...replacement.model.observation, id: 'browser-session:999' } } }); await publish(restore);
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
   const differentObservation = await inspect(); await page.waitForTimeout(500);
   cases.push({ name: 'another observation of the same source cannot inherit the old reading receipt', differentObservation, passed: differentObservation.restored === 0 && differentObservation.scrollY === 0 });
   await page.setViewportSize({ width: 330, height: 640 });
-  for (const focus of ['summary', 'table']) {
-    // Arrange: read a genuinely overflowing captured value with a disclosure or its table focused.
-    await render(options.message); await page.locator('#presentation-options > summary').click();
-    await page.locator('.table-scroll').evaluate(element => { if (element.scrollWidth - element.clientWidth <= 12) throw new Error(`The long value does not overflow: ${element.scrollWidth}/${element.clientWidth}.`); element.scrollLeft = 12; });
-    await page.locator(focus === 'summary' ? '#presentation-options > summary' : '.table-scroll').focus();
-    const beforeLongValue = await inspect(); await publish(applying); await publish(request);
-    const longValuePose = await page.evaluate(() => window.sent.findLast(message => message.type === 'presentation-pose'));
+  for (const focus of ['summary', 'interpretation']) {
+    // Arrange: retain the disclosure or explanation focus without a duplicate value surface.
+    await render(options.message); await page.locator('#reader-options > summary').click();
+  await page.locator('#presentation-options > summary').click();
+    await page.locator(focus === 'summary' ? '#presentation-options > summary' : '#interpretations').focus();
+    const beforeReading = await inspect(); await publish(applying); await publish(request);
+    const readingPose = await page.evaluate(() => window.sent.findLast(message => message.type === 'presentation-pose'));
     await page.screenshot({ path: `${options.output}/${focus}-before-replacement.png` }); await page.waitForTimeout(400);
     // Act: replace the real document, then restore only its serialized host receipt.
-    await render(living); await publish({ ...longValuePose, type: 'restore-presentation-pose' });
+    await render(replacement); await publish({ ...readingPose, type: 'restore-presentation-pose' });
     await page.waitForFunction(() => window.sent.some(message => message.type === 'presentation-pose-restored'));
-    const afterLongValue = await inspect();
-    const value = page.getByRole('cell', { name: options.longValue, exact: true });
+    const afterReading = await inspect();
     await page.screenshot({ path: `${options.output}/${focus}-after-replacement.png` }); await page.waitForTimeout(400);
-    // Assert: horizontal reading and keyboard ownership survive without runtime or learning writes.
-    cases.push({ name: `replacement retains long-value reading with ${focus} focus`, before: beforeLongValue, after: afterLongValue,
-      passed: beforeLongValue.horizontal === 12 && afterLongValue.horizontal === 12 && await value.isVisible()
-        && beforeLongValue[`${focus}Focused`] && afterLongValue[`${focus}Focused`] && afterLongValue.expanded.includes('presentation-options')
-        && afterLongValue.understood === beforeLongValue.understood && !afterLongValue.understood
-        && afterLongValue.understandingWrites === 0 && afterLongValue.actionWrites === 0 && afterLongValue.restored === 1 });
+    // Assert: explanation reading and keyboard ownership survive without runtime or learning writes.
+    cases.push({ name: `replacement retains explanation reading with ${focus} focus`, before: beforeReading, after: afterReading,
+      passed: !beforeReading.duplicateValues && !afterReading.duplicateValues
+        && beforeReading[`${focus}Focused`] && afterReading[`${focus}Focused`] && afterReading.expanded.includes('presentation-options')
+        && afterReading.understood === beforeReading.understood && !afterReading.understood
+        && afterReading.understandingWrites === 0 && afterReading.actionWrites === 0 && afterReading.restored === 1 });
   }
+  for (const focus of [{ kind: 'values' }, { kind: 'id', id: 'presentation-mode' }]) {
+    // Arrange: an archived receipt may still name a retired control.
+    await render(replacement);
+    const legacy = { ...restore, pose: { ...restore.pose, focus, valuesScrollLeft: 120 } };
+    // Act: importing the receipt must recover a useful existing reading surface.
+    await publish(legacy);
+    await page.waitForFunction(() => window.sent.some(message => message.type === 'presentation-pose-restored'));
+    const restored = await inspect();
+    // Assert: focus migration cannot recreate values UI or trigger learning/runtime actions.
+    cases.push({ name: `retired ${focus.id ?? focus.kind} focus restores the explanation`, restored,
+      passed: restored.interpretationFocused && !restored.duplicateValues && restored.restored === 1
+        && restored.understandingWrites === 0 && restored.actionWrites === 0 });
+  }
+  // A saved sequence link must survive a fresh webview, not just an in-place update.
+  const replay = { ...applying, contentTab: 'recording', recording: { revision: 1, mode: 'paused', readiness: 'ready', presentedMs: 2000,
+    range: { startMs: 0, endMs: 8000, endKnown: true }, recordingStatus: 'finalized', learningSummary: {
+      explanationId: '44444444-4444-4444-8444-444444444444', createdAt: '2026-09-27T00:00:00.000Z',
+      content: { question: 'What did this source execute?', title: 'Recorded selection', summary: 'A retained source stop.',
+        participants: [{ id: 'source', label: 'Source' }], steps: [{ id: 'selected', from: 'source', to: 'source', label: 'Recorded selection', explanation: 'Read the captured source.', evidence: 'observed', reference: { snapshotUri: 'codebook://recorded-stop', sourceHash: options.message.model.source.hash } }] },
+      positions: [{ stepId: 'selected', elapsedMs: 2000 }] } } };
+  await render(replay); await page.locator('[data-summary-step="selected"]').focus();
+  await publish({ ...request, contentTab: 'recording' });
+  const sequencePose = await page.evaluate(() => window.sent.findLast(message => message.type === 'presentation-pose'));
+  await render(replay); await publish({ ...sequencePose, type: 'restore-presentation-pose' });
+  await page.waitForFunction(() => window.sent.some(message => message.type === 'presentation-pose-restored'));
+  const sequenceFocus = await page.evaluate(() => ({ stepId: document.activeElement?.dataset.summaryStep,
+    top: document.activeElement.getBoundingClientRect().top, bottom: document.activeElement.getBoundingClientRect().bottom, footerTop: document.getElementById('recording-transport').getBoundingClientRect().top,
+    writes: window.sent.filter(message => ['playback', 'action', 'understanding'].includes(message.type)).length }));
+  cases.push({ name: 'replacement restores the saved sequence inspection control without seeking or marking understanding', actual: sequenceFocus,
+    passed: sequencePose?.pose.focus.kind === 'summary-step' && sequenceFocus.stepId === 'selected' && sequenceFocus.writes === 0 && sequenceFocus.top >= 0 && sequenceFocus.bottom <= sequenceFocus.footerTop });
+  await page.screenshot({ path: `${options.output}/sequence-focus-restored.png` });
   return { captured, cases };
 }
 
@@ -161,7 +191,7 @@ let recording = false;
 try {
   await command(['open', 'about:blank'], 'open');
   await command(['run-code', `async page => { await page.setViewportSize({ width: 390, height: 640 }); await page.screencast.start({ path: ${JSON.stringify(`${output}/flow.webm`)}, size: { width: 390, height: 640 } }); }`], 'video-start'); recording = true;
-  const result = await command(['run-code', `async page => (${check.toString()})(page, ${JSON.stringify({ html, message, output, mode, url, longValue: study.observations[0].values['value:document.activeElement.className'] })})`], 'flow');
+  const result = await command(['run-code', `async page => (${check.toString()})(page, ${JSON.stringify({ html, message, output, mode, url })})`], 'flow');
   Object.assign(report, JSON.parse(result.split('### Result\n')[1].split('\n###')[0]));
   await command(['run-code', 'async page => await page.screencast.stop()'], 'video-stop'); recording = false;
   if (mode === 'red') { assert.equal(report.captured?.pose, undefined); assert.equal(report.cases[0].passed, false); assert.notEqual(report.cases[0].after.focus, 'understood'); }

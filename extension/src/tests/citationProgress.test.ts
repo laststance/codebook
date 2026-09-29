@@ -1,15 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { LearningLibrary } from '../learningLibrary';
 import { citationContext } from '../utils/citationContext';
 import { citationLearningState } from '../utils/citationLearningState';
 import { learningState } from '../studyModel';
-import { loadModule } from './utils/loadModule';
-import { atomicPrivateWrite } from '../utils/atomicPrivateWrite';
 
 const workspaceKey = '1'.repeat(64), sourceHash = '2'.repeat(64);
 const primary = { path: 'src/main.ts', hash: sourceHash, startLine: 1, endLine: 8 };
@@ -37,7 +35,7 @@ test('article understanding survives prose and citation ordering but changed pat
 test('runtime primary-hash understanding never acknowledges additional article citations and article decisions do not check runtime', async context => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-context-')); context.after(() => rm(directory, { recursive: true, force: true }));
-  const library = new LearningLibrary(directory, workspaceKey), item = 'checkout-demo/cart-mutation';
+  const library = new LearningLibrary(directory, workspaceKey), item = 'repository/interface/theme';
   await library.decide({ id: randomUUID(), item, sourceHash, understood: true, at });
   // Act / Assert
   const runtime = await library.readProgress();
@@ -66,30 +64,10 @@ test('unchecking and identical intent retries affect only the original complete 
   await assert.rejects(library.decide({ ...uncheck, context: citationContext([primary]) }), /different decision/);
 });
 
-test('progress migration preserves v2 bytes and exact legacy intent fields without merging later writes from older builds', async context => {
-  // Arrange
-  const directory = await mkdtemp(join(tmpdir(), 'codebook-context-')); context.after(() => rm(directory, { recursive: true, force: true }));
-  const oldDecision = { id: '11111111-1111-4111-8111-111111111111', item: 'checkout-demo/cart-mutation', sourceHash, understood: true, at };
-  const legacy = JSON.stringify({ version: 2, workspaceKey, decisions: [oldDecision], selection: { profile: 'checkout-demo', itemId: 'checkout-demo/cart-mutation', follow: false, tab: 'live' } });
-  await writeFile(join(directory, 'progress.v2.json'), legacy);
-  const library = new LearningLibrary(directory, workspaceKey);
-  // Act
-  const read = await library.readProgress();
-  assert.deepEqual((await readdir(directory)), ['progress.v2.json']);
-  await library.selectRepository({ bookId: 'book', revision: 1, nodeId: 'node', anchorIndex: 0, location: { sectionIndex: 0, fraction: 0.5, focusId: 'observation-0' } });
-  assert.equal(await readFile(join(directory, 'progress.v2.json'), 'utf8'), legacy);
-  await writeFile(join(directory, 'progress.v2.json'), '{older build now corrupt}');
-  const restarted = await new LearningLibrary(directory, workspaceKey).readProgress();
-  // Assert
-  assert.equal(read.version, 4); assert.deepEqual(read.decisions, [{ ...oldDecision, context: { kind: 'source' } }]);
-  assert.deepEqual(restarted.decisions, read.decisions); assert.deepEqual(restarted.selection, read.selection);
-  assert.equal(restarted.repositorySelection?.location?.fraction, 0.5);
-});
-
 test('corrupt, unknown or untyped v3 progress never falls back to readable v2 choices', async context => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-context-')); context.after(() => rm(directory, { recursive: true, force: true }));
-  const legacy = { version: 2, workspaceKey, decisions: [{ id: randomUUID(), item: 'checkout-demo/cart-mutation', sourceHash, understood: true, at }] };
+  const legacy = { version: 2, workspaceKey, decisions: [{ id: randomUUID(), item: 'repository/interface/theme', sourceHash, understood: true, at }] };
   await writeFile(join(directory, 'progress.v2.json'), JSON.stringify(legacy));
   const library = new LearningLibrary(directory, workspaceKey);
   // Act / Assert
@@ -100,20 +78,4 @@ test('corrupt, unknown or untyped v3 progress never falls back to readable v2 ch
     assert.equal(await readFile(join(directory, 'progress.v3.json'), 'utf8'), invalid);
   }
   assert.equal(await readFile(join(directory, 'progress.v2.json'), 'utf8'), JSON.stringify(legacy));
-});
-
-test('failed first v4 publication leaves legacy choices intact and explicit retry appends the same intent once', async context => {
-  // Arrange
-  const directory = await mkdtemp(join(tmpdir(), 'codebook-context-')); context.after(() => rm(directory, { recursive: true, force: true }));
-  const legacy = JSON.stringify({ version: 2, workspaceKey, decisions: [] }); await writeFile(join(directory, 'progress.v2.json'), legacy);
-  let fail = true;
-  const module = await loadModule<typeof import('../learningLibrary')>(resolve(__dirname, '../learningLibrary.js'), {
-    './utils/atomicPrivateWrite': { atomicPrivateWrite: async (...arguments_: Parameters<typeof atomicPrivateWrite>) => { if (fail) throw new Error('Injected v4 write failure'); return atomicPrivateWrite(...arguments_); } },
-  });
-  const library = new module.LearningLibrary(directory, workspaceKey), intent = { id: randomUUID(), item: 'repository/book/node', sourceHash, at, understood: true, context: citationContext([primary]) };
-  // Act / Assert
-  await assert.rejects(library.decide(intent), /v4 write failure/);
-  assert.deepEqual(await readdir(directory), ['progress.v2.json']); assert.equal(await readFile(join(directory, 'progress.v2.json'), 'utf8'), legacy);
-  fail = false; await library.decide(intent); const retried = await library.decide(intent);
-  assert.equal(retried.decisions.length, 1); assert.equal(retried.decisions[0]?.id, intent.id);
 });

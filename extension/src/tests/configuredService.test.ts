@@ -1,3 +1,4 @@
+import { actionSchema } from '../schemas';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
@@ -168,17 +169,16 @@ test('repository preparation reports its remaining time without changing evidenc
   assert.equal(service.state(record).preparationRemainingMs, undefined);
 });
 
-test('profile variants reject missing configuration demo extras and foreign action or participant without input', async context => {
+test('repository entry rejects missing configuration and unknown profiles without input', async context => {
   // Arrange
   const { service, configuration, runtimes } = await configuredServiceHarness(context);
   const input = { instanceId: service.instanceId, profile: 'repository-browser', key: 'valid', configuration };
   // Act / Assert
   assert.throws(() => service.start({ ...input, configuration: undefined }), { code: 'INVALID_CONFIGURATION' });
-  assert.throws(() => service.start({ ...input, profile: 'paired-cart-demo' }), { code: 'INVALID_CONFIGURATION' });
   assert.throws(() => service.start({ ...input, profile: 'unknown' }), { code: 'UNSUPPORTED_PROFILE' });
   assert.equal(service.records.size, 0);
   const receipt = service.start(input), record = service.record(receipt); await record.preparation;
-  assert.throws(() => service.action({ ...receipt, key: 'wrong', action: 'add-to-cart' }), { code: 'BUSY' });
+  assert.equal(actionSchema.safeParse({ ...receipt, key: 'wrong', action: 'unavailable-action' }).success, false);
   await assert.rejects(service.continue({ ...receipt, participant: 'server', sessionId: 'browser-session', threadId: 1, generation: 1 }), { code: 'STALE_PAUSE' });
   assert.equal(runtimes[0]?.dispatches, 0); assert.deepEqual(Object.keys(service.state(record).participants), ['browser']);
 });
@@ -224,7 +224,7 @@ test('a repository run exposes the Study link identity separately from its debug
   assert.equal(state.observations.length, 1);
 });
 
-test('real SDK accepts the bounded configured object and reconnects to the original input receipt without a second dispatch', async context => {
+for (const version of [1, 2]) test(`real SDK accepts configuration version ${version} and reconnects without a second dispatch`, async context => {
   // Arrange: HTTP/SDK/storage are real, editor effects remain the explicitly synthetic harness.
   const { service, configuration, runtimes } = await configuredServiceHarness(context), endpoint = await startServer(service);
   const connect = async () => {
@@ -234,7 +234,7 @@ test('real SDK accepts the bounded configured object and reconnects to the origi
   const first = await connect(); let second: Client | undefined;
   try {
     // Act
-    const tools = await first.listTools(), start = { instanceId: service.instanceId, profile: 'repository-browser', key: 'sdk', configuration };
+    const tools = await first.listTools(), start = { instanceId: service.instanceId, profile: 'repository-browser', key: 'sdk', configuration: version === 2 ? { ...configuration, version: 2, participant: 'browser' } : configuration };
     const result = await first.callTool({ name: 'codebook_start', arguments: start }), receipt = z.object({ data: receiptSchema }).parse(result.structuredContent).data;
     await service.record(receipt).preparation;
     const input = { instanceId: receipt.instanceId, runId: receipt.runId, action: 'repository-click', key: 'one-click' };
@@ -261,8 +261,13 @@ test('API 1.5 discovery exposes the bounded configured profile and its executabl
   assert.deepEqual(JSON.parse(JSON.stringify(profile.limits)).sourceBytes, { typescript: 262144, javascript: 8388608, map: 16777216 });
   assert.deepEqual(profile.items, []); assert.deepEqual(profile.requiredLinks, []); assert.equal(profile.actions[0]?.id, 'repository-click');
   assert.ok('text' in help);
-  const contract = z.object({ configurationSchema: z.object({ type: z.literal('object'), additionalProperties: z.literal(false), required: z.array(z.string()), properties: z.record(z.string(), z.unknown()) }), sequence: z.array(z.string()), recovery: z.string() }).parse(JSON.parse(help.text));
-  assert.deepEqual(contract.configurationSchema.required, ['version', 'adapter', 'book', 'source', 'action', 'inspections']);
+  assert.match(help.text, /checks action\.before on the fresh managed page before applying optional initialInputs/);
+  assert.match(help.text, /Do not require an initialInputs value in action\.before/);
+  const contract = z.object({ configurationSchema: z.object({ anyOf: z.array(z.object({ type: z.literal('object'), additionalProperties: z.literal(false), required: z.array(z.string()), properties: z.record(z.string(), z.unknown()) })) }), sequence: z.array(z.string()), recovery: z.string() }).parse(JSON.parse(help.text));
+  assert.deepEqual(profile.configurationVersions, [1, 2]);
+  assert.deepEqual(contract.configurationSchema.anyOf.map(variant => variant.required), [
+    ['version', 'adapter', 'book', 'source', 'action', 'inspections'], ['version', 'adapter', 'book', 'source', 'action', 'inspections', 'participant'],
+  ]);
   assert.match(contract.sequence.join('\n'), /afterVerified/); assert.match(contract.sequence.join('\n'), /saved studyId/);
   assert.equal(service.records.size, 0); assert.equal(runtimes.length, 0);
 });

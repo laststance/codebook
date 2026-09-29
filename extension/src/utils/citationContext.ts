@@ -1,4 +1,4 @@
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import { bookAnchorSchema, type BookAnchor } from '../sourceSchemas';
 
 /** Canonicalizes complete citation sets for learner decisions, ignoring order/exact duplicates without merging ranges. @example citationContext([anchor, anchor]).anchors.length // 1 */

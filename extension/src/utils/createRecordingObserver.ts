@@ -1,4 +1,4 @@
-import type { ViewportRecordingObserver } from 'codebook-cycle-0001/dist/browserViewport';
+import type { ViewportRecordingObserver } from '../runtimeSupport/browserViewport';
 import { IMAGE_BASE64_LIMIT_CHARS } from '../constants';
 import { capturePhaseSchema } from '../studySchemas';
 import type { StudyRecord } from '../service';

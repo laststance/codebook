@@ -9,12 +9,12 @@ export async function inspectConfiguredValues(evaluate: (parameters: Protocol.De
   for (const inspection of inspections) {
     assertCurrent();
     const path = `${inspection.mode}:${inspection.path}`;
-    // Reject objects and oversized strings inside the paused frame, before CDP serializes any application payload.
+    // Tag actual undefined before serialization; application objects, including lookalike tags, remain rejected.
     const expression = inspection.mode === 'type' ? `typeof ${inspection.path}`
-      : `((value) => value === null || typeof value === 'boolean' || typeof value === 'number' && value - value === 0 || typeof value === 'string' && value.length <= ${REPOSITORY_LITERAL_LIMIT_CHARS} ? value : void 0)(${inspection.path})`;
+      : `((value) => typeof value === 'undefined' ? { type: 'undefined' } : value === null || typeof value === 'boolean' || typeof value === 'number' && value - value === 0 || typeof value === 'string' && value.length <= ${REPOSITORY_LITERAL_LIMIT_CHARS} ? value : void 0)(${inspection.path})`;
     const response = await evaluate({ callFrameId, expression, returnByValue: true, throwOnSideEffect: true, timeout: REPOSITORY_INSPECTION_TIMEOUT_MS }); assertCurrent();
     const value = configuredFactValueSchema.safeParse(response.result.value);
-    // Objects, undefined, oversized strings, nonfinite values and thrown/getter/proxy evaluations remain unavailable.
+    // Bare missing responses, oversized strings, nonfinite values and thrown/getter/proxy evaluations remain unavailable.
     const available = !response.exceptionDetails && !response.result.objectId && !response.result.unserializableValue && value.success
       && (inspection.mode !== 'type' || REPOSITORY_CAPTURED_TYPES.some(type => type === value.data));
     if (available && value.success) { values[path] = value.data; continue; }

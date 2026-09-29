@@ -1,4 +1,4 @@
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import type { RetainedStudy } from '../retainedStudySchemas';
 
 /** Pins captured facts while permitting later append-only interpretation, for publication and public link revalidation. @example bookObservationHash(study.observations[0]) */

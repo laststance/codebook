@@ -1,9 +1,9 @@
 import { chmod, lstat, mkdir, readdir } from 'node:fs/promises';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from './runtimeSupport/utils/sha256';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { LEARNING_SCHEMA_VERSION_V2, LEARNING_SCHEMA_VERSION_V3, LEARNING_SCHEMA_VERSION_V4, MAX_LEARNER_DECISIONS, MAX_LIBRARY_FILES, MAX_STUDY_ARCHIVE_BYTES, PRIVATE_DIRECTORY_MODE, PROGRESS_LIMIT_BYTES, PROGRESS_V2_FILE, PROGRESS_V3_FILE, PROGRESS_V4_FILE, STUDY_STORAGE_FORMATS, STUDY_METADATA_LIMIT_BYTES } from './constants';
-import { studyMetadataSchema, type StudyCatalogEntry } from './studySchemas';
+import { LEARNING_SCHEMA_VERSION_V2, LEARNING_SCHEMA_VERSION_V3, LEARNING_SCHEMA_VERSION_V4, MAX_LEARNER_DECISIONS, MAX_SAVED_STUDIES, MAX_STUDY_ARCHIVE_BYTES, PRIVATE_DIRECTORY_MODE, PROGRESS_LIMIT_BYTES, PROGRESS_V2_FILE, PROGRESS_V3_FILE, PROGRESS_V4_FILE, PROGRESS_REPOSITORY_FILE, STUDY_STORAGE_FORMATS, STUDY_METADATA_LIMIT_BYTES } from './constants';
+import { type StudyCatalogEntry } from './studySchemas';
 import { configuredStudyMetadataSchema } from './configuredStudySchemas';
 import { retainedStudyMetadataSchema, retainedStudySelectionSchema, type RetainedStudy, type RetainedStudySelection } from './retainedStudySchemas';
 import { learnerIntentSchema, repositorySelectionSchema, repositoryReturnSchema, type LearnerDecision, type LearnerProgress, type RepositorySelection } from './learnerSchemas';
@@ -13,19 +13,24 @@ import { studyIdSchema } from './legacyStudySchemas';
 import { decodeRetainedStudy } from './utils/decodeRetainedStudy';
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint';
 import { decodeLearnerProgress } from './utils/decodeLearnerProgress';
+import { projectHistoricalProgress } from './utils/projectHistoricalProgress';
+import { savedStudyLimit } from './utils/savedStudyLimit';
 import { withStorageLock } from './utils/withStorageLock';
 
 /** Retains learner choices and bounded sealed studies across editor restarts without restoring runtime authority. @example const library = new LearningLibrary(directory, workspaceKey) */
 export class LearningLibrary {
   private writes: Promise<unknown> = Promise.resolve();
-  constructor(readonly directory: string, readonly workspaceKey: string) {}
+  constructor(readonly directory: string, readonly workspaceKey: string, private readonly capacity: () => unknown = () => undefined) {}
+
+  /** Resolves the current admission limit when another workspace-bound learner artifact is reserved. @example library.storageLimit() */
+  storageLimit(): number { return savedStudyLimit(this.capacity()); }
 
   /** Lists bounded sidecars without reading image blobs; incomplete catalog writes remain visible. @example await library.list() */
   async list(): Promise<StudyCatalogEntry[]> {
     const entries = await this.entries();
     const catalog = await Promise.all(entries.map(async entry => {
       const stat = await this.archiveStat(entry.path);
-      if (entry.format === 'legacy-v1') return { id: entry.id, profile: 'paired-cart-demo' as const, savedAt: stat.mtime.toISOString(), format: entry.format, metadata: 'legacy-unverified' as const, outcome: 'unverified' };
+      if (entry.format !== 'v3' && entry.format !== 'v4') return { id: entry.id, savedAt: stat.mtime.toISOString(), format: entry.format, metadata: 'unavailable' as const, outcome: 'Unsupported historical format; original file preserved' };
       try {
         const metadata = await this.readMetadata(entry.id, entry.storage.version);
         if (metadata.archive.byteLength !== stat.size || metadata.archive.modifiedMs !== stat.mtimeMs) throw new Error('Archive changed after its catalog checkpoint.');
@@ -65,7 +70,7 @@ export class LearningLibrary {
     try {
       const metadata = await this.readMetadata(study.id, storage.version), stat = await this.archiveStat(path);
       const { archive, ...identity } = metadata;
-      const schema = study.version === LEARNING_SCHEMA_VERSION_V2 ? studyMetadataSchema : configuredStudyMetadataSchema;
+      const schema = configuredStudyMetadataSchema;
       const expectedIdentity = schema.omit({ archive: true }).strip().parse(study);
       if (JSON.stringify(identity) !== JSON.stringify(expectedIdentity) || archive.hash !== sha256(JSON.stringify(study)) || archive.byteLength !== stat.size || archive.modifiedMs !== stat.mtimeMs) throw new Error('Selected archive differs from its catalog checkpoint.');
       return { study, status: 'saved' };
@@ -74,22 +79,22 @@ export class LearningLibrary {
     }
   }
 
-  /** Prefers v4 by existence, normalizing validated v1-v3 without altering their files or hiding corruption. @example await library.readProgress() */
+  /** Prefers the repository ledger and projects read-only historical choices without changing their files or hiding corruption. @example await library.readProgress() */
   async readProgress(): Promise<LearnerProgress> {
     await this.initialize();
     // Presence selects the format. An unreadable/newer preferred file cannot resurrect older choices.
-    for (const [filename, version] of [[PROGRESS_V4_FILE, LEARNING_SCHEMA_VERSION_V4], [PROGRESS_V3_FILE, LEARNING_SCHEMA_VERSION_V3], [PROGRESS_V2_FILE, LEARNING_SCHEMA_VERSION_V2], ['progress.json', 1]] as const) {
+    for (const [filename, version] of [[PROGRESS_REPOSITORY_FILE, LEARNING_SCHEMA_VERSION_V4], [PROGRESS_V4_FILE, LEARNING_SCHEMA_VERSION_V4], [PROGRESS_V3_FILE, LEARNING_SCHEMA_VERSION_V3], [PROGRESS_V2_FILE, LEARNING_SCHEMA_VERSION_V2], ['progress.json', 1]] as const) {
       const path = join(this.directory, filename), stat = await this.optionalStat(path);
       if (!stat) continue;
       if (!stat.isFile()) throw new Error('Progress is not a regular file.');
       const value: unknown = JSON.parse((await readBoundedFile(path, PROGRESS_LIMIT_BYTES)).toString());
       if (!value || typeof value !== 'object' || !('version' in value) || value.version !== version) throw new Error(`Version ${version} progress has an incompatible schema.`);
-      return decodeLearnerProgress(value, this.workspaceKey);
+      return filename === PROGRESS_REPOSITORY_FILE ? decodeLearnerProgress(value, this.workspaceKey) : projectHistoricalProgress(value, this.workspaceKey);
     }
     return { version: LEARNING_SCHEMA_VERSION_V4, workspaceKey: this.workspaceKey, decisions: [] };
   }
 
-  /** Appends an explicit learner intent after re-reading under the cross-window lock. @example await library.decide({id,item:'paired-cart-demo/server',sourceHash,understood:true,at}) */
+  /** Appends an explicit learner intent after re-reading under the cross-window lock. @example await library.decide({id,item:'repository/interface/theme',sourceHash,understood:true,at}) */
   decide(input: LearnerDecision): Promise<LearnerProgress> {
     const decision = learnerIntentSchema.parse(input);
     return this.locked(async () => {
@@ -100,7 +105,7 @@ export class LearningLibrary {
       }
       if (progress.decisions.length >= MAX_LEARNER_DECISIONS) throw new Error('Understanding history is full; no previous decision was removed.');
       const next = { ...progress, decisions: [...progress.decisions, decision] };
-      await atomicPrivateWrite(join(this.directory, PROGRESS_V4_FILE), next, PROGRESS_LIMIT_BYTES); return next;
+      await atomicPrivateWrite(join(this.directory, PROGRESS_REPOSITORY_FILE), next, PROGRESS_LIMIT_BYTES); return next;
     });
   }
 
@@ -110,11 +115,11 @@ export class LearningLibrary {
     return this.locked(async () => {
       const progress = await this.readProgress();
       // A configured selection names its captured item; no unrelated article gains that evidence or control.
-      if (selection.profile === 'repository-browser') {
+      if (selection.profile === 'repository-browser' && selection.studyId) {
         const study = await this.readStudy(selection.studyId);
         if (study.profile !== selection.profile || selection.itemId !== `repository/${study.configuration.book.bookId}/${study.configuration.book.nodeId}`) throw new Error('Configured selection belongs to another retained learning item.');
       }
-      await atomicPrivateWrite(join(this.directory, PROGRESS_V4_FILE), { ...progress, selection }, PROGRESS_LIMIT_BYTES);
+      await atomicPrivateWrite(join(this.directory, PROGRESS_REPOSITORY_FILE), { ...progress, selection }, PROGRESS_LIMIT_BYTES);
     });
   }
 
@@ -123,7 +128,7 @@ export class LearningLibrary {
     const repositorySelection = repositorySelectionSchema.parse(input);
     return this.locked(async () => {
       const progress = await this.readProgress();
-      await atomicPrivateWrite(join(this.directory, PROGRESS_V4_FILE), { ...progress, repositorySelection }, PROGRESS_LIMIT_BYTES);
+      await atomicPrivateWrite(join(this.directory, PROGRESS_REPOSITORY_FILE), { ...progress, repositorySelection }, PROGRESS_LIMIT_BYTES);
     });
   }
 
@@ -135,7 +140,7 @@ export class LearningLibrary {
       const progress = await this.readProgress();
       // A failed navigation may restore only the receipt it wrote; another window's later return wins.
       if (expectedReturn && !isDeepStrictEqual(progress.repositoryReturn, expectedReturn)) return;
-      await atomicPrivateWrite(join(this.directory, PROGRESS_V4_FILE), { ...progress, repositoryReturn }, PROGRESS_LIMIT_BYTES);
+      await atomicPrivateWrite(join(this.directory, PROGRESS_REPOSITORY_FILE), { ...progress, repositoryReturn }, PROGRESS_LIMIT_BYTES);
     });
   }
 
@@ -144,7 +149,7 @@ export class LearningLibrary {
     const study = decodeRetainedStudy(input, this.workspaceKey);
     return this.locked(async () => {
       const existing = await this.entries();
-      if (!existing.some(value => value.id === study.id) && existing.length >= MAX_LIBRARY_FILES) throw new Error('Study library is full; no history was evicted.');
+      if (!existing.some(value => value.id === study.id) && existing.length >= savedStudyLimit(this.capacity())) throw new Error('Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, then retry storage. Existing learning was kept.');
       if (existing.some(value => value.id === study.id)) assertStudyCheckpoint(await this.readStudy(study.id), study);
       const storage = STUDY_STORAGE_FORMATS.find(format => format.version === study.version)!;
       await atomicPrivateWrite(join(this.directory, `${study.id}${storage.archiveSuffix}`), study, MAX_STUDY_ARCHIVE_BYTES);
@@ -152,11 +157,11 @@ export class LearningLibrary {
     });
   }
 
-  /** Explicit Retry validates incomplete v2/v3 archives before repairing sidecars; legacy bytes stay untouched. @example await library.reconcile() */
+  /** Explicit Retry repairs current archive sidecars while unsupported historical bytes stay untouched. @example await library.reconcile() */
   reconcile(): Promise<void> {
     return this.locked(async () => {
       for (const entry of await this.entries()) {
-        if (entry.format === 'legacy-v1') continue;
+        if (entry.format !== 'v3' && entry.format !== 'v4') continue;
         // Explicit Retry verifies content too; a matching stat cannot repair or certify a wrong checkpoint hash.
         const checkpoint = await this.readCheckpoint(entry.id);
         if (checkpoint.status === 'failed') await this.writeMetadata(checkpoint.study);
@@ -190,7 +195,7 @@ export class LearningLibrary {
       const id = studyIdSchema.parse(name.slice(0, -storage.archiveSuffix.length)), prior = entries.get(id);
       if (!prior || storage.version > prior.storage.version) entries.set(id, { id, path: join(this.directory, name), format: storage.format, storage });
     }
-    if (entries.size > MAX_LIBRARY_FILES) throw new Error('Study library exceeds its retained-study limit. No history was deleted.');
+    if (entries.size > MAX_SAVED_STUDIES) throw new Error('Study library exceeds its retained-study limit. No history was deleted.');
     return [...entries.values()];
   }
 

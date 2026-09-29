@@ -88,3 +88,58 @@ test('a later stop retries an application signal failure instead of replaying it
   // Assert
   assert.equal(termCount, 2);
 });
+
+test('server inspection is opt-in and waits for complete stderr identity without accepting stdout lookalikes', async () => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'), nativeRequire = createRequire(filename);
+  const exports: Partial<typeof ServerModule> = {}, launches: string[][] = [];
+  const child = Object.assign(new EventEmitter(), { pid: 42000, exitCode: null, signalCode: null, stdout: new EventEmitter(), stderr: new EventEmitter() });
+  runInNewContext(await readFile(filename, 'utf8'), {
+    exports, AbortSignal, Buffer, Error, process: { env: {} },
+    require(name: string) {
+      if (name === 'node:child_process') return { spawn: (_node: string, arguments_: string[]) => { launches.push(arguments_); return child; } };
+      if (name.endsWith('/utils/waitUntil')) return { waitUntil: async (read: () => unknown) => {
+        child.stdout.emit('data', Buffer.from('Debugger listening on ws://127.0.0.1:49999/99999999-9999-4999-8999-999999999999\n'));
+        assert.equal(read(), undefined);
+        child.stderr.emit('data', Buffer.from('Debugger listening on ws://127.0.0.1:43210/11111111-1111-4111-8111-111111111111'));
+        assert.equal(read(), undefined);
+        child.stderr.emit('data', Buffer.from('\n'));
+        return read();
+      } };
+      return nativeRequire(name);
+    },
+  }, { filename });
+  assert.ok(exports.launchDevelopmentServer);
+  const ordinary = exports.launchDevelopmentServer('/isolated-target', '/node', () => {});
+  // Act / Assert
+  await assert.rejects(ordinary.inspectorEndpoint(new AbortController().signal), /inspection was not requested/);
+  assert.equal(launches[0]?.includes('--inspect'), false);
+  const inspected = exports.launchDevelopmentServer('/isolated-target', '/node', () => {}, true);
+  assert.equal(await inspected.inspectorEndpoint(new AbortController().signal), 'ws://127.0.0.1:43210/11111111-1111-4111-8111-111111111111');
+  assert.equal(launches[1]?.slice(-2).join(' '), '--inspect 127.0.0.1:0');
+});
+
+test('competing inspector announcements and an exited application cannot reuse an earlier endpoint', async () => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'), nativeRequire = createRequire(filename);
+  const exports: Partial<typeof ServerModule> = {};
+  let exitCode: number | null = null;
+  const child = Object.assign(new EventEmitter(), { pid: 42000, signalCode: null, stdout: new EventEmitter(), stderr: new EventEmitter() });
+  Object.defineProperty(child, 'exitCode', { get: () => exitCode });
+  runInNewContext(await readFile(filename, 'utf8'), {
+    exports, AbortSignal, Buffer, Error, process: { env: {} },
+    require(name: string) {
+      if (name === 'node:child_process') return { spawn: () => child };
+      return nativeRequire(name);
+    },
+  }, { filename });
+  assert.ok(exports.launchDevelopmentServer);
+  const inspected = exports.launchDevelopmentServer('/isolated-target', '/node', () => {}, true);
+  child.stderr.emit('data', Buffer.from('Debugger listening on ws://127.0.0.1:43210/11111111-1111-4111-8111-111111111111\n'));
+  assert.equal(await inspected.inspectorEndpoint(new AbortController().signal), 'ws://127.0.0.1:43210/11111111-1111-4111-8111-111111111111');
+  // Act / Assert
+  child.stderr.emit('data', Buffer.from('Debugger listening on ws://127.0.0.1:43211/22222222-2222-4222-8222-222222222222\n'));
+  await assert.rejects(inspected.inspectorEndpoint(new AbortController().signal), /Ambiguous server inspector endpoints/);
+  exitCode = 0;
+  await assert.rejects(inspected.inspectorEndpoint(new AbortController().signal), /Application stopped/);
+});

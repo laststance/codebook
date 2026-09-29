@@ -57,8 +57,8 @@ test('configuration rejects supplied roots, shell commands, predicates and expec
 
 test('inspection paths allow four literal identifier segments and reject expressions or prototype access', () => {
   // Arrange
-  const allowed = ['nextTheme', '$store._state.name', 'state.cart.product.price', 'item.default'];
-  const forbidden = ['state.cart.product.price.value', 'read()', 'state["name"]', 'state?.name', 'x = 1', 'x + 1', 'x;run()', 'x\n', 'x/*comment*/', 'value.constructor', 'value.prototype.name', '__proto__.x', 'this.name', 'true', 'null', 'undefined', 'NaN', 'Infinity', 'await.value', '1value', '\\u0061'];
+  const allowed = ['nextTheme', '$store._state.name', 'state.module.product.price', 'item.default'];
+  const forbidden = ['state.module.product.price.value', 'read()', 'state["name"]', 'state?.name', 'x = 1', 'x + 1', 'x;run()', 'x\n', 'x/*comment*/', 'value.constructor', 'value.prototype.name', '__proto__.x', 'this.name', 'true', 'null', 'undefined', 'NaN', 'Infinity', 'await.value', '1value', '\\u0061'];
   // Act / Assert
   for (const path of allowed) assert.equal(inspectionPathSchema.safeParse(path).success, true, path);
   for (const path of forbidden) assert.equal(inspectionPathSchema.safeParse(path).success, false, path);

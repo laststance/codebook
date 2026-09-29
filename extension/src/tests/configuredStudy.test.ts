@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { studyArchiveSchema } from '../studySchemas';
+import { sha256 } from '../runtimeSupport/utils/sha256';
+import { configuredStudySchema as studyArchiveSchema } from '../configuredStudySchemas';
 import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy';
 import { createConfiguredStudy } from './utils/createConfiguredStudy';
 
@@ -114,4 +114,78 @@ test('partial captures remain readable while altered image bytes or duplicate ph
   assert.equal(decodeConfiguredStudy(partial, workspaceKey).finalOutcome, 'partial');
   assert.throws(() => decodeConfiguredStudy({ ...archive, captures: [archive.captures[0], archive.captures[0]] }, workspaceKey), /duplicate image/);
   assert.throws(() => decodeConfiguredStudy({ ...archive, captures: [{ phase: 'before', status: 'captured', base64: Buffer.from('wrong pixels').toString('base64'), hash: sha256('light') }] }, workspaceKey), /image changed/);
+});
+
+
+test('saved undefined facts survive JSON replay decoding and cannot be replaced with string or null interpretations', () => {
+  // Arrange
+  const archive = createConfiguredStudy();
+  const observation = archive.observations[0]!;
+  const serialized = JSON.stringify(archive);
+  const withUndefined = JSON.parse(serialized);
+  withUndefined.observations[0].values['value:nextTheme'] = { type: 'undefined' };
+  withUndefined.observations[0].interpretations[0].facts[0].value = { type: 'undefined' };
+  // Act
+  const decoded = decodeConfiguredStudy(JSON.parse(JSON.stringify(withUndefined)), workspaceKey);
+  // Assert
+  assert.deepEqual(decoded.observations[0]?.values['value:nextTheme'], { type: 'undefined' });
+  assert.deepEqual(decoded.observations[0]?.interpretations[0]?.facts, [{ path: 'value:nextTheme', value: { type: 'undefined' } }]);
+  for (const changed of ['undefined', null, { type: 'undefined', extra: true }]) {
+    withUndefined.observations[0].interpretations[0].facts[0].value = changed;
+    assert.throws(() => decodeConfiguredStudy(withUndefined, workspaceKey));
+  }
+  assert.equal(observation.values['value:nextTheme'], 'dark');
+});
+
+test('saved ordered stops keep their own coordinates and reject missing or reordered completed history', () => {
+  // Arrange
+  const archive = createConfiguredStudy();
+  archive.configuration.additionalStops = [{ line: 1, column: 7, inspections: archive.configuration.inspections }];
+  archive.configurationHash = sha256(JSON.stringify(archive.configuration));
+  const second = structuredClone(archive.observations[0]!);
+  second.pause.generation = 2; second.id = 'browser-session:2';
+  second.snapshotUri = `codebook://${archive.instanceId}/runs/${archive.runId}/snapshots/browser-session%3A2`;
+  second.elapsedMs = 4000; second.source.column = 7; second.interpretations = [];
+  archive.observations.push(second); archive.operation!.continuedPause = second.pause;
+  const pausedImage = archive.captures.find(image => image.phase === 'paused-browser')!;
+  pausedImage.snapshotId = archive.observations[0]!.id; archive.captures.push({ ...pausedImage, snapshotId: second.id });
+  // Act
+  const decoded = decodeConfiguredStudy(JSON.parse(JSON.stringify(archive)), workspaceKey);
+  // Assert
+  assert.deepEqual(decoded.observations.map(value => value.source.column), [1, 7]);
+  assert.throws(() => decodeConfiguredStudy({ ...archive, captures: archive.captures.slice(0, -1) }, workspaceKey), /missing required evidence/);
+  assert.throws(() => decodeConfiguredStudy({ ...archive, captures: [...archive.captures.slice(0, -1), { ...pausedImage, snapshotId: 'foreign:3' }] }, workspaceKey), /another observation/);
+  assert.throws(() => decodeConfiguredStudy({ ...archive, observations: archive.observations.toReversed() }, workspaceKey), /source differs|ordered pause/);
+  assert.throws(() => decodeConfiguredStudy({ ...archive, observations: [archive.observations[0]] }, workspaceKey), /continuation differs|after verification/);
+  assert.throws(() => decodeConfiguredStudy({ ...archive, operation: { ...archive.operation, continuedPause: archive.observations[0]!.pause } }, workspaceKey), /after verification/);
+});
+
+test('a later stop with unavailable required facts preserves earlier continued history without qualifying completion', () => {
+  // Arrange
+  const archive = createConfiguredStudy();
+  archive.configuration.additionalStops = [{ line: 1, column: 7, inspections: [{ path: 'missing', mode: 'value', required: true }] }];
+  archive.configurationHash = sha256(JSON.stringify(archive.configuration));
+  const second = structuredClone(archive.observations[0]!);
+  second.pause.generation = 2; second.id = 'browser-session:2';
+  second.snapshotUri = `codebook://${archive.instanceId}/runs/${archive.runId}/snapshots/browser-session%3A2`;
+  second.elapsedMs = 4000; second.source.column = 7; second.interpretations = [];
+  second.values = {}; second.unavailableValues = [{ path: 'value:missing', reason: 'Unavailable at second pause' }];
+  archive.observations.push(second); archive.operation!.afterVerified = false; archive.finalOutcome = 'not-demonstrated';
+  // Act
+  const decoded = decodeConfiguredStudy(archive, workspaceKey);
+  // Assert
+  assert.equal(decoded.observations.length, 2); assert.equal(decoded.operation?.continuedPause?.generation, 1);
+  assert.equal(decoded.observations[1]?.unavailableValues[0]?.path, 'value:missing');
+  assert.throws(() => decodeConfiguredStudy({ ...archive, operation: { ...archive.operation, continuedPause: second.pause } }, workspaceKey), /required fact/);
+});
+
+test('additional stop declarations reject out-of-citation coordinates, missing required values and excessive counts', () => {
+  // Arrange
+  const archive = createConfiguredStudy();
+  const valid = { line: 1, column: 7, inspections: [{ path: 'enabled', mode: 'value', required: true }] };
+  // Act / Assert
+  for (const additionalStops of [[{ ...valid, line: 2 }], [{ ...valid, column: 100 }], [{ ...valid, inspections: [{ path: 'setTheme', mode: 'type', required: true }] }], Array.from({ length: 8 }, () => valid)]) {
+    const configuration = { ...archive.configuration, additionalStops };
+    assert.throws(() => decodeConfiguredStudy({ ...archive, configuration, configurationHash: sha256(JSON.stringify(configuration)) }, workspaceKey));
+  }
 });

@@ -5,11 +5,12 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, readFile, readdir, realpath, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { PROFILE_ID } from '../constants';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
+import { sha256 } from '../runtimeSupport/utils/sha256';
+import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants';
 import { LearningLibrary } from '../learningLibrary';
 import { RecordingStore } from '../recordingStore';
+import { NodeTestHistoryStore } from '../nodeTestHistoryStore';
 import type { StudyViewMessage } from '../ui/studyHtml';
 import type { PresentationPoseCapture, PresentationPoseRestore } from '../presentationSchemas';
 import { ControlledRuntime, createHarness } from './helpers';
@@ -19,19 +20,22 @@ import type { BookObservationBinding } from '../repositorySchemas';
 import type { RepositorySelection } from '../learnerSchemas';
 import { RepositoryBookStore } from '../repositoryBook';
 import { RepositorySourceService } from '../repositorySource';
+import type { ReplayDebugSnapshot } from '../replayDebugSchemas';
 import { createConfiguredStudy } from './utils/createConfiguredStudy';
 import { ControlledConfiguredRuntime } from './utils/configuredServiceHarness';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { z } from 'zod';
 import { startServer } from '../server';
+import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture';
+import type { NodeTestSourceStop } from '../ownedNodeTestRun';
 
 /** Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions. @example const reader = await workspaceHarness() */
 async function workspaceHarness(attach = true, deterministicClock = false) {
   let clock = 0;
-  const harness = await createHarness({ create: async (directory, profile) => { const runtime = new ControlledRuntime(directory, profile); if (deterministicClock) runtime.evidence.elapsedMs = () => clock; return runtime; } }), fixture = join(harness.directory, 'extension/dist/demo/fixture');
-  await mkdir(fixture, { recursive: true });
-  await writeFile(join(fixture, 'server.mts'), 'const price = 24;'); await writeFile(join(fixture, 'client.mts'), 'const count = 1;');
+  let savedStudyCapacity: unknown;
+  const harness = await createHarness({ create: async (directory, profile) => { const runtime = new ControlledRuntime(directory, profile); if (deterministicClock) runtime.evidence.elapsedMs = () => clock; return runtime; } });
+  const saveStatus = { name: '', text: '', tooltip: '', command: undefined as unknown, visible: false, show() { this.visible = true; }, hide() { this.visible = false; }, dispose() { this.visible = false; } };
   let changed = () => {};
   const disposable = () => ({ dispose() {} });
   let outlineUpdates = 0;
@@ -61,7 +65,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     contains(value: Position | Range): boolean { return value instanceof Range ? this.contains(value.start) && this.contains(value.end) : value.line >= this.start.line && value.line <= this.end.line; }
     with(start = this.start, end = this.end) { return new Range(start, end); }
   }
-  type Tab = { input: TabInputText | TabInputWebview | TabInputUnknown; label?: string; isPreview?: boolean; isDirty?: boolean };
+  type Tab = { input: TabInputText | TabInputWebview | TabInputUnknown; label?: string; isPreview?: boolean; isDirty?: boolean; isPinned?: boolean };
   const groups: { viewColumn: number; tabs: Tab[]; activeTab?: Tab }[] = [{ viewColumn: 2, tabs: [] }];
   let activeTabGroup = groups[0]!;
   let separateEditorPart: { group: typeof groups[number]; layout: unknown; focused: boolean } | undefined;
@@ -99,6 +103,16 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   const groupChangeListeners = new Set<(event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => void>();
   const changedGroups = (event: { opened: typeof groups; closed: typeof groups; changed: typeof groups }) => { for (const listener of groupChangeListeners) listener(event); };
   let sourceProvider = async (_uri: Uri) => '';
+  const historicalDebugPresentations: Array<{ snapshot: ReplayDebugSnapshot | undefined; label: string; sourceDocument?: { uri: string; hash: string } }> = [];
+  let historicalDebugInvalidations = 0;
+  class TestReplayDebugger {
+    constructor(_editor: unknown) {}
+    async present(snapshot: ReplayDebugSnapshot | undefined, label: string, signal: AbortSignal, sourceDocument?: { uri: string; hash: string }) {
+      signal.throwIfAborted(); historicalDebugPresentations.push({ snapshot, label, sourceDocument });
+    }
+    invalidate() { historicalDebugInvalidations++; }
+    async dispose() {}
+  }
   let sourceOpenFailure = false;
   let delayedPanelKind: string | undefined;
   let deferredPanelRegistration = false;
@@ -337,7 +351,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     private closed = false;
     private rendererAttached = true;
     private listener?: { dispose(): void };
-    constructor(_runId: string, _record: unknown, private readonly fail: (reason: string) => void, _scenario: unknown,
+    constructor(_runId: string, readonly record: (type: string, detail?: unknown) => unknown, private readonly fail: (reason: string) => void, _scenario: unknown,
       private readonly lease: { panel: ReturnType<typeof panel>; released(): void }, _observer?: unknown, readonly mode = 'live') {
       this.panel = lease.panel; viewportInstances.push(this); this.bind();
     }
@@ -354,7 +368,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     /** Marks selected live presentation without starting another runtime. @example await viewport.showLive() */
     async showLive() { this.historical = false; this.rendererAttached = true; }
     /** Retains the hidden live lease while the workspace reads recorded evidence. @example viewport.showHistory() */
-    showHistory() { this.historical = true; }
+    showHistory(html: string) { this.historical = true; this.panel.webview.html = html; }
     /** Ends this simulated lease during workspace cleanup, using its original release callback. @example viewport.close() */
     close() { this.listener?.dispose(); this.closed = true; this.lease.released(); }
     /** Reserves the simulated renderer so workspace tests enforce drain before adoption. @example const release = await viewport.holdPlacement() */
@@ -377,9 +391,54 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     const text = uri.scheme === 'file' ? await readFile(uri.fsPath, 'utf8') : await sourceProvider(uri), normalized = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
     return { uri, getText: () => normalized, validatePosition: (position: Position) => { const lines = normalized.split('\n'), line = Math.min(position.line, lines.length - 1); return new Position(line, Math.min(position.character, lines[line]!.length)); } };
   };
+  const summaryListeners = new Set<(message: unknown) => void>();
+  const summaryVisibilityListeners = new Set<() => void>();
+  const summary = {
+    visible: false,
+    webview: {
+      options: {}, html: '',
+      onDidReceiveMessage(callback: (message: unknown) => void) { summaryListeners.add(callback); return { dispose() { summaryListeners.delete(callback); } }; },
+      async postMessage(message: StudyViewMessage) {
+        postedMessages.push(message);
+        if (summary.visible && automaticContextReceipt && message.type === 'study' && !message.loading) {
+          for (const listener of summaryListeners) listener({ type: 'rendered', revision: message.revision, itemId: message.model.selection.itemId, snapshotUri: message.model.observation?.snapshotUri, presentationRevision: message.recording?.presentationRevision });
+        }
+        return true;
+      },
+    },
+    onDidDispose: disposable,
+    onDidChangeVisibility(callback: () => void) { summaryVisibilityListeners.add(callback); return { dispose() { summaryVisibilityListeners.delete(callback); } }; },
+  };
+  const playbackPanelMessages: StudyViewMessage[] = [];
+  const playbackPanelListeners = new Set<(message: unknown) => void>();
+  const playbackPanelVisibilityListeners = new Set<() => void>();
+  const playbackPanelDisposeListeners = new Set<() => void>();
+  const playbackPanel = {
+    visible: false,
+    webview: { options: {}, html: '',
+      onDidReceiveMessage(callback: (message: unknown) => void) { playbackPanelListeners.add(callback); return disposable(); },
+      async postMessage(message: StudyViewMessage) { playbackPanelMessages.push(message); return true; },
+    },
+    onDidDispose(callback: () => void) { playbackPanelDisposeListeners.add(callback); return disposable(); },
+    onDidChangeVisibility(callback: () => void) { playbackPanelVisibilityListeners.add(callback); return disposable(); },
+  };
+  let playbackPanelProvider: { resolveWebviewView(view: typeof playbackPanel): void | Promise<void> } | undefined;
+  let playbackPanelResolved = false;
+  let summaryProvider: { resolveWebviewView(view: typeof summary): void | Promise<void> } | undefined;
+  let summaryResolved = false;
   const editorDependencies = {
     vscode: { EventEmitter, Uri, TabInputText, TabInputWebview, TreeItem: class {}, TreeItemCollapsibleState: { None: 0 }, TreeItemCheckboxState: { Unchecked: 0, Checked: 1 }, Position, Range, ViewColumn: { One: 1, Two: 2, Three: 3 }, TextEditorRevealType: { Default: 0, AtTop: 3 }, ThemeColor: class {}, RelativePattern,
       commands: { async executeCommand(name: string, layout?: unknown): Promise<unknown> {
+        if (name === 'codebook.observedMoments.focus') {
+          assert.ok(playbackPanelProvider); playbackPanel.visible = true;
+          if (!playbackPanelResolved) { playbackPanelResolved = true; await playbackPanelProvider.resolveWebviewView(playbackPanel); }
+          for (const listener of playbackPanelVisibilityListeners) listener();
+        }
+        if (name === 'codebook.learningSummary.focus') {
+          assert.ok(summaryProvider); summary.visible = true;
+          if (!summaryResolved) { summaryResolved = true; await summaryProvider.resolveWebviewView(summary); }
+          for (const listener of summaryVisibilityListeners) listener();
+        }
         commands.push(name); const held = nextCommand; if (held?.name === name) { nextCommand = undefined; held.entered(); await held.wait; }
         if (name === failingCommand) { failingCommand = undefined; throw new Error('Native layout command failed'); }
         if (name === 'runCommands') {
@@ -464,7 +523,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
         if (name === 'vscode.setEditorLayout') { const response = nextLayoutResponse; nextLayoutResponse = undefined; if (response) { response.entered(); await response.wait; } }
         if (name === 'workbench.action.evenEditorWidths') editorLayout = structuredClone(settledLayout);
       } },
-      window: { state: windowState, onDidChangeWindowState: (callback: (state: typeof windowState) => void) => { windowListeners.add(callback); return { dispose() { windowListeners.delete(callback); } }; }, get activeTextEditor() { return focusedSourceEditor(); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: disposable, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeEditorListeners.add(callback); return { dispose() { activeEditorListeners.delete(callback); } }; }, onDidChangeTextEditorSelection: (callback: () => void) => { selectionListeners.add(callback); return { dispose() { selectionListeners.delete(callback); } }; }, createWebviewPanel: panel,
+      StatusBarAlignment: { Right: 2 }, window: { createStatusBarItem: () => saveStatus, state: windowState, onDidChangeWindowState: (callback: (state: typeof windowState) => void) => { windowListeners.add(callback); return { dispose() { windowListeners.delete(callback); } }; }, get activeTextEditor() { return focusedSourceEditor(); }, showQuickPick: async () => undefined, createTextEditorDecorationType: disposable, createTreeView: (_id: string, options: { treeDataProvider: { getTreeItem: typeof outlineItem } }) => { outlineItem = options.treeDataProvider.getTreeItem; return outline; }, registerWebviewViewProvider: (id: string, provider: typeof summaryProvider) => { if (id === 'codebook.observedMoments') playbackPanelProvider = provider; if (id === 'codebook.learningSummary') { summaryProvider = provider; summaryResolved = false; summaryListeners.clear(); summaryVisibilityListeners.clear(); } return disposable(); }, onDidChangeActiveTextEditor: (callback: typeof activeTextEditorChanged) => { activeEditorListeners.add(callback); return { dispose() { activeEditorListeners.delete(callback); } }; }, onDidChangeTextEditorSelection: (callback: () => void) => { selectionListeners.add(callback); return { dispose() { selectionListeners.delete(callback); } }; }, createWebviewPanel: panel,
         get visibleTextEditors() { return visibleSourceEditors.filter(editor => editor.group.activeTab?.input instanceof TabInputText && editor.group.activeTab.input.uri.toString() === editor.document.uri.toString()); },
         showTextDocument: async (document: Uri | { uri: Uri; getText(): string }, options?: { viewColumn: number; preserveFocus?: boolean; preview?: boolean; selection?: Range }) => {
           const sourceDocument = document instanceof Uri ? await openSourceDocument(document) : document;
@@ -490,10 +549,11 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
           return lastSourceEditor = editor;
         },
         tabGroups: { all: groups, get activeTabGroup() { return activeTabGroup; }, onDidChangeTabs: (callback: (event: TabChanges) => void) => { const notify = (event: TabChanges = { opened: [], closed: [], changed: [] }) => callback(event); tabChangeListeners.add(notify); return { dispose() { tabChangeListeners.delete(notify); } }; }, onDidChangeTabGroups: (callback: typeof changedGroups) => { groupChangeListeners.add(callback); return { dispose() { groupChangeListeners.delete(callback); } }; }, close: async (tabs: Tab[]) => { for (const group of groups) group.tabs = group.tabs.filter(tab => !tabs.includes(tab)); return true; } } },
-      workspace: { textDocuments, registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
+      workspace: { getConfiguration: (section: string) => ({ get: (key: string) => section === 'codebook' && key === 'savedStudyLimit' ? savedStudyCapacity : undefined }), textDocuments, registerTextDocumentContentProvider: (_scheme: string, provider: { provideTextDocumentContent(uri: Uri): Promise<string> }) => { sourceProvider = provider.provideTextDocumentContent; return disposable(); },
         openTextDocument: openSourceDocument,
         onDidChangeTextDocument: disposable, createFileSystemWatcher: (pattern: RelativePattern) => { watchedPatterns.push(pattern); return watcher; } } },
-    './environment': { requireWorkspace: () => harness.directory }, 'codebook-cycle-0001/dist/browserViewport': { BrowserViewport: WorkspaceViewport },
+    './environment': { requireWorkspace: () => harness.directory }, './runtimeSupport/browserViewport': { BrowserViewport: WorkspaceViewport },
+    './replayDebugger': { ReplayDebugger: TestReplayDebugger },
   };
   const boundary = await loadModule<typeof import('../studyWorkspace')>(resolve(__dirname, '../studyWorkspace.js'), editorDependencies);
   const repositoryBoundary = await loadModule<typeof import('../repositoryReader')>(resolve(__dirname, '../repositoryReader.js'), editorDependencies);
@@ -506,8 +566,8 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     update: async (key: string, value: unknown) => { const held = nextPreference; nextPreference = undefined; held?.entered(); await held?.wait; if (preferenceFailure) throw new Error('Injected preference failure'); presentationPreferences.set(key, structuredClone(value)); } };
   const createReader = (extensionPath = join(harness.directory, 'extension')) => new boundary.StudyWorkspace({ extensionPath, globalStorageUri: { fsPath: join(harness.directory, 'storage') }, subscriptions: [], workspaceState }, controls);
   const reader = createReader();
-  if (attach) { await reader.attach(harness.service); await reader.selectProfile('paired-cart-demo'); await reader.action('return-current'); }
-  return { ...harness, reader, createReader, fixture, groups, controls, outline, commands, articleOpens, articleReturns, receive: (message: unknown) => receivers.get('codebook.studyContext')!(message), counts: () => ({ panels: panels.size, outlineUpdates }), peakPanels: () => peakPanels, onNextPanel(kind: string, run: (value: ReturnType<typeof panel>) => void) { nextPanelCreated = { kind, run }; }, failNextPanelCreation(kind: string) { failedPanelKind = kind; }, changed: () => changed(),
+  if (attach) { await reader.attach(harness.service); await reader.action('return-current'); }
+  return { ...harness, playbackPanel, playbackPanelMessages, hidePlaybackPanel() { playbackPanel.visible = false; for (const listener of playbackPanelVisibilityListeners) listener(); }, disposePlaybackPanel() { for (const listener of playbackPanelDisposeListeners) listener(); }, receivePlaybackPanel(message: unknown) { for (const listener of playbackPanelListeners) listener(message); }, async resolveRestoredObservedMoments() { assert.ok(playbackPanelProvider); await playbackPanelProvider.resolveWebviewView(playbackPanel); }, summary, hideSummary() { summary.visible = false; for (const listener of summaryVisibilityListeners) listener(); }, setSavedStudyCapacity(value: unknown) { savedStudyCapacity = value; }, saveStatus, reader, createReader, groups, controls, outline, commands, articleOpens, articleReturns, receiveContext: (message: unknown) => receivers.get('codebook.studyContext')!(message), receive: (message: unknown) => { if (reader.inspect().view?.contentTab === 'recording') { for (const listener of summaryListeners) listener(message); } else receivers.get('codebook.studyContext')!(message); }, counts: () => ({ panels: panels.size, outlineUpdates }), peakPanels: () => peakPanels, onNextPanel(kind: string, run: (value: ReturnType<typeof panel>) => void) { nextPanelCreated = { kind, run }; }, failNextPanelCreation(kind: string) { failedPanelKind = kind; }, changed: () => changed(),
     retainReadingRange(first: number, last: number) { retainedReadingRange = new Range(new Position(first, 0), new Position(last, 0)); },
     /** Models a learner selecting source during native placement, letting preservation tests inspect the retained cursor. @example harness.changeFocusedSourceSelection(46).selections[0].active.line // 46 */
     changeFocusedSourceSelection(line: number) {
@@ -518,9 +578,11 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
       return editor;
     },
     isReadingLineVisible(line: number) { return retainedReadingRange?.contains(new Position(line, 0)); },
-    addOpenSource(file: string, text: string) { textDocuments.push({ uri: Uri.file(join(fixture, file)), getText: () => text }); },
     outlineItem: (itemId: string) => outlineItem(itemId), changeOutlineCheckbox: (itemId: string, checked: boolean) => outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
     postedMessages: () => postedMessages, presentationPreferences, watchedPatterns, viewportEvents, viewportInstances, nativePanels: () => [...panels], maximizedEditorGroup: () => maximizedEditorGroup,
+    historicalDebugPresentations, historicalDebugInvalidations: () => historicalDebugInvalidations, readCapturedSource: (uri: string) => {
+      const parsed = new URL(uri); return sourceProvider(new Uri(parsed.protocol.slice(0, -1), parsed.host, parsed.pathname, parsed.search, parsed.hash));
+    },
     holdPresentationMessage(mode?: 'living-book') { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); heldPresentationMessage = { mode, wait, entered }; return { started, release }; },
     failPresentationPreference(value: boolean) { preferenceFailure = value; },
     holdPresentationPreference() { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); nextPreference = { wait, entered }; return { started, release }; },
@@ -667,6 +729,13 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     addForeignDraft(column = groups[0]!.viewColumn) { const tab = { input: new TabInputText(Uri.file(join(harness.directory, 'notes.txt'))), isDirty: true }; groups.find(group => group.viewColumn === column)!.tabs.push(tab); return tab; },
     addOpaqueTab(label: string, column: number) { const tab = { input: new TabInputUnknown(), label, isPreview: false, isDirty: false }; groups.find(group => group.viewColumn === column)!.tabs.unshift(tab); return tab; },
     addTextPreview(path: string, column: number, dirty = false) { const tab = { input: new TabInputText(Uri.file(path)), isPreview: true, isDirty: dirty }; groups.find(group => group.viewColumn === column)!.tabs.push(tab); return tab; },
+    addNodeHistoryPreview(studyId: string, column: number, options: { dirty?: boolean; pinned?: boolean } = {}) {
+      const uri = Uri.from({ scheme: 'codebook-source', authority: harness.service.nodeHistoryStore!.workspaceKey,
+        path: `/node-history/${studyId}/1/hash/Captured-data.ts` });
+      const tab = { input: new TabInputText(uri), isPreview: true, isDirty: Boolean(options.dirty), isPinned: Boolean(options.pinned) };
+      groups.find(group => group.viewColumn === column)!.tabs.push(tab);
+      return tab;
+    },
     resyncEditorGroups(change?: 'move' | 'replace' | 'append' | 'unannounced' | 'remove' | 'reorder' | 'empty', preserveEmpty = false) {
       // Give each fake group a distinct stable input, like the actual singleton panels/native source tabs.
       for (const group of groups) if (!group.tabs.length && change !== 'empty' && !preserveEmpty) group.tabs.push({ input: new TabInputText(Uri.file(`/group-${group.viewColumn}`)) });
@@ -729,18 +798,384 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     async close() { await reader.retire(harness.service); await reader.dispose(); await harness.close(); } };
 }
 
+/** Opens synthetic retained repository evidence for layout tests that need readable source without launching a runtime. @example await openRetainedStudy(harness) */
+async function openRetainedStudy(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
+  const library = await harness.reader.learningStorage();
+  const study = { ...createConfiguredStudy(), workspaceKey: library.workspaceKey };
+  await library.saveStudy(study); await harness.reader.open();
+  harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId: study.id });
+  await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === study.id && !harness.reader.inspect().view!.loading, 'retained repository source', 1_000);
+}
+
+test('restored Observed moments leaves its loading state after workspace initialization', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    // Act: VS Code can restore the view before any Codebook command initializes this workspace.
+    await harness.resolveRestoredObservedMoments();
+
+    // Assert
+    const message = harness.playbackPanelMessages.at(-1);
+    assert.ok(message);
+    assert.equal(message.type, 'study');
+    assert.equal(message.loading, false);
+    assert.equal(message.model.currentSourceAvailable, false);
+  } finally {
+    await harness.reader.dispose();
+  }
+});
+
+test('saved Node history is selectable in the reader without entering browser playback', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    const store = harness.service.nodeHistoryStore!;
+    const initialHeader = nodeTestHistoryHeader(store.workspaceKey), firstSourceText = 'const nextTheme = "dark";\n', secondSourceText = 'return applyTheme("dark");\n';
+    const secondSource = { path: 'src/theme-next.ts', hash: sha256(secondSourceText), line: 1, column: 8 };
+    const secondConfiguration = { ...initialHeader.configuration, additionalStops: [{ ...secondSource, anchorIndex: 0, inspections: initialHeader.configuration.inspections }] };
+    const header = { ...initialHeader, configuration: secondConfiguration, configurationHash: sha256(JSON.stringify(secondConfiguration)) };
+    const writer = await store.start(header);
+    for (let sequence = 1; sequence <= 22; sequence++) {
+      // Exercise the reader's bounded page boundary with ordinary captured output.
+      await writer.appendOutput({ sequence, elapsedMs: sequence, channel: 'stdout', text: sequence === 1 ? 'RUN src/theme.test.ts' : `output ${sequence}` });
+    }
+    await writer.appendStop({ index: 0, runId: 'test-run', sessionId: 'test-session', threadId: 1, elapsedMs: 23, worker: { pid: 1, processGroup: 1, workspace: '/private/test' },
+      source: header.configuration.source, frame: { id: 1, name: 'notifyManager', line: 1, column: 1 }, variables: [{ name: 'nextTheme', value: 'dark', variablesReference: 0 }],
+      facts: [{ path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' }],
+      debuggerSnapshot: { version: 1, frames: [{ name: 'notifyManager', line: 1, column: 1, source: { name: header.configuration.source.path, text: firstSourceText, hash: sha256(firstSourceText), line: 1 }, scopes: [{ name: 'Local', variables: [0] }] }],
+        variables: [{ name: 'nextTheme', value: 'dark', type: 'string', children: [] }], limitations: [] } } satisfies NodeTestSourceStop);
+    await writer.appendOutput({ sequence: 23, elapsedMs: 24, channel: 'stdout', text: 'between stops\n' });
+    await writer.appendStop({ index: 1, runId: 'test-run', sessionId: 'test-session', threadId: 1, elapsedMs: 25, worker: { pid: 1, processGroup: 1, workspace: '/private/test' },
+      source: secondSource, frame: { id: 2, name: 'applyTheme', line: 1, column: 8 }, variables: [{ name: 'themeName', value: 'dark', variablesReference: 0 }],
+      facts: [{ path: 'themeName', mode: 'value', display: 'dark', type: 'string' }],
+      debuggerSnapshot: { version: 1, frames: [{ name: 'applyTheme', line: 1, column: 8, source: { name: secondSource.path, text: secondSourceText, hash: secondSource.hash, line: 1 }, scopes: [{ name: 'Local', variables: [0] }] }],
+        variables: [{ name: 'themeName', value: 'dark', type: 'string', children: [] }], limitations: [] } } satisfies NodeTestSourceStop);
+    await writer.appendResult({ exitCode: 0, signal: null, output: 'Tests 1 passed' }, 26);
+    await writer.finish('complete');
+    await harness.reader.open();
+    await waitUntil(() => Boolean(harness.postedMessages().slice(-1)[0]?.studies.some(entry => entry.id === header.studyId && entry.format === 'node-test-history')), 'Node history appears in Saved studies', 1_000);
+
+    // Assert: the library exposes the journal as a distinct artifact and discloses missing replay media.
+    const libraryMessage = harness.postedMessages().slice(-1)[0]!;
+    const libraryEntry = libraryMessage.studies.find(entry => entry.id === header.studyId)!;
+    assert.equal(libraryEntry.profile, 'node-test');
+    assert.equal(libraryEntry.outcome, 'Node test complete; application video and synchronized replay unavailable');
+    assert.equal(libraryEntry.metadata, 'validated');
+
+    // Act: selecting the catalog entry routes to the Node journal while preserving browser-study selection.
+    const revision = libraryMessage.revision;
+    harness.receive({ type: 'node-history', revision, studyId: header.studyId });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistory?.header.studyId === header.studyId && !harness.postedMessages().slice(-1)[0]?.loading, 'selected Node history is verified and displayed', 1_000);
+    const message = harness.postedMessages().slice(-1)[0]!;
+
+    // Assert
+    assert.equal(message.nodeHistory?.status, 'complete');
+    assert.equal(message.nodeHistory?.entries.length, 20, 'reader messages include one bounded history page');
+    assert.equal(message.nodeHistoryPageCount, 2);
+    assert.equal(message.nodeHistory?.entries[0]?.type, 'output');
+    assert.equal(message.recording, undefined, 'Node evidence does not masquerade as synchronized browser replay');
+    assert.equal(message.model.selection.profile, 'repository-browser', 'Node history does not overwrite the browser-study selection');
+    assert.equal(message.nodeHistoryLearningDecision, undefined, 'a passing test never marks understanding for the learner');
+    const applicationHtml = harness.nativePanels().find(panel => panel.kind === 'codebook.scopedBrowser')?.webview.html ?? '';
+    assert.match(applicationHtml, /Node test history · application video unavailable/);
+    assert.doesNotMatch(applicationHtml, /<img alt="Application pixels captured/);
+
+    // Act: only an explicit reader action writes a choice for this Node history.
+    harness.receive({ type: 'node-history-understanding', revision: message.revision, studyId: header.studyId, understood: true });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryLearningDecision?.understood === true, 'learner understanding is saved', 1_000);
+    const decisionMessage = harness.postedMessages().slice(-1)[0]!;
+    const reopenMessageIndex = harness.postedMessages().length;
+    harness.receiveContext({ type: 'node-history', revision: decisionMessage.revision, studyId: header.studyId });
+    await waitUntil(() => harness.postedMessages().slice(reopenMessageIndex).some(view => view.loading),
+      'reopening the Node history enters its loading state', 1_000);
+    await waitUntil(() => {
+      const view = harness.postedMessages().slice(-1)[0]!;
+      return view.nodeHistory?.header.studyId === header.studyId && view.nodeHistoryPosition?.sequence === 1
+        && view.nodeHistoryLearningDecision?.understood === true && !view.loading;
+    }, 'learner choice and saved event are restored when the history reopens', 1_000);
+    const restoredDecisionMessage = harness.postedMessages().slice(-1)[0]!;
+
+    // Assert
+    assert.equal(restoredDecisionMessage.nodeHistoryLearningDecision?.understood, true);
+    assert.equal((await (await harness.reader.learningStorage()).readProgress()).decisions.length, 0,
+      'Node understanding does not add a configured-study learner decision');
+
+    // Act: step across the reader's page boundary using the global journal cursor.
+    const beforePageStep = harness.postedMessages().slice(-1)[0]!;
+    harness.receiveContext({ type: 'node-history-event', revision: beforePageStep.revision, studyId: header.studyId, sequence: 20 });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 20, 'last event on the first page is selected', 1_000);
+    harness.receive({ type: 'node-history-step', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: header.studyId, direction: 'next' });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 21, 'next event crosses into the second page', 1_000);
+    const pageBoundaryMessage = harness.postedMessages().slice(-1)[0]!;
+
+    // Assert
+    assert.equal(pageBoundaryMessage.nodeHistoryPage, 1);
+    assert.equal(pageBoundaryMessage.nodeHistoryPosition?.eventIndex, 20);
+    assert.equal(pageBoundaryMessage.nodeHistory?.entries[0]?.sequence, 21);
+
+    // Act: select each recorded stop through the public reader message after reopening the history store.
+    const reopenedLearningLibrary = await harness.reader.learningStorage();
+    harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(reopenedLearningLibrary.directory, header.workspaceKey);
+    harness.receiveContext({ type: 'node-history-stop', revision: message.revision, studyId: header.studyId, sequence: 23 });
+    await waitUntil(() => harness.historicalDebugPresentations.length === 1, 'first historical Node stop reaches the native debugger', 1_000);
+    const firstPresentation = harness.historicalDebugPresentations[0]!;
+    assert.equal(firstPresentation.snapshot?.variables[0]?.name, 'nextTheme');
+    assert.equal(firstPresentation.sourceDocument?.hash, header.configuration.source.hash);
+    assert.equal(await harness.readCapturedSource(firstPresentation.sourceDocument!.uri), firstSourceText, 'source URI survives a fresh history store');
+    const firstStopMessage = harness.postedMessages().slice(-1)[0]!;
+    assert.equal(firstStopMessage.nodeHistoryPosition?.sequence, 23);
+    assert.equal(firstStopMessage.nodeHistoryPosition?.index, 0);
+    assert.equal(firstStopMessage.nodeHistoryPosition?.elapsedMs, 23);
+    assert.match(firstStopMessage.nodeHistoryOutput!, /output 22/);
+    assert.doesNotMatch(firstStopMessage.nodeHistoryOutput!, /between stops|Tests 1 passed/);
+    await assert.rejects(harness.readCapturedSource(firstPresentation.sourceDocument!.uri.replace(header.configuration.source.hash, secondSource.hash)), /no longer matches its sealed history/i);
+
+    // Act: an MCP-authored summary refreshes the selected Node history without moving its cursor or learner choice.
+    const nodeLearningMaterial = { question: 'How does this test apply the theme?', title: 'Theme application', summary: 'The first stop records the selected theme before the test continues.',
+      participants: [{ id: 'test', label: 'Theme test' }, { id: 'function', label: 'applyTheme' }],
+      steps: [{ id: 'read-theme', from: 'test', to: 'function', label: 'Read selected theme', explanation: 'The captured debugger values show nextTheme is dark at this stop.',
+        evidence: 'observed' as const, reference: { type: 'stop' as const, sequence: 23, sourceHash: header.configuration.source.hash } }] };
+    await harness.service.explainNodeHistory({ studyId: header.studyId, expectedRevision: 0, content: nodeLearningMaterial });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryLearningMaterial?.revision === 1, 'saved Node learning material refreshes the open reader', 1_000);
+    const materialMessage = harness.postedMessages().slice(-1)[0]!;
+
+    // Assert
+    assert.deepEqual(materialMessage.nodeHistoryLearningMaterial?.content, nodeLearningMaterial);
+    assert.equal(materialMessage.nodeHistoryPosition?.sequence, 23, 'saving an explanation preserves the selected stop');
+    assert.equal(materialMessage.nodeHistoryLearningDecision?.understood, true, 'saving an explanation does not change the learner choice');
+
+    harness.receive({ type: 'node-history-stop', revision: message.revision, studyId: header.studyId, sequence: 25 });
+    await waitUntil(() => harness.historicalDebugPresentations.length === 2, 'second historical Node stop replaces the selected native state', 1_000);
+    const secondPresentation = harness.historicalDebugPresentations[1]!;
+    assert.equal(secondPresentation.snapshot?.variables[0]?.name, 'themeName');
+    assert.equal(secondPresentation.sourceDocument?.hash, secondSource.hash);
+    assert.equal(await harness.readCapturedSource(secondPresentation.sourceDocument!.uri), secondSourceText);
+    const secondStopMessage = harness.postedMessages().slice(-1)[0]!;
+    assert.equal(secondStopMessage.nodeHistoryPosition?.sequence, 25);
+    assert.equal(secondStopMessage.nodeHistoryPosition?.index, 1);
+    assert.equal(secondStopMessage.nodeHistoryPosition?.elapsedMs, 25);
+    assert.match(secondStopMessage.nodeHistoryOutput!, /between stops/);
+    assert.doesNotMatch(secondStopMessage.nodeHistoryOutput!, /Tests 1 passed/);
+
+    // Act: moving through output-only intervals clears the previously selected native debug context.
+    harness.receive({ type: 'node-history-event', revision: message.revision, studyId: header.studyId, sequence: 24 });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 24, 'inter-stop output event is selected', 1_000);
+    const interStopMessage = harness.postedMessages().slice(-1)[0]!;
+
+    // Assert
+    assert.equal(interStopMessage.nodeHistoryPosition?.type, 'output');
+    assert.match(interStopMessage.nodeHistoryOutput!, /between stops/);
+    assert.doesNotMatch(interStopMessage.nodeHistoryOutput!, /Tests 1 passed/);
+    assert.equal(harness.historicalDebugInvalidations(), 1, 'the previous stop is cleared during an output-only interval');
+    assert.equal(harness.historicalDebugPresentations.length, 2, 'an output-only interval does not claim a debugger snapshot');
+
+    // Act: step forward and back across a stop and a gap, then select the terminal result.
+    harness.receive({ type: 'node-history-step', revision: message.revision, studyId: header.studyId, direction: 'next' });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 25, 'next recorded stop is restored', 1_000);
+    harness.receive({ type: 'node-history-step', revision: message.revision, studyId: header.studyId, direction: 'previous' });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 24, 'backward navigation restores the output gap', 1_000);
+    harness.receive({ type: 'node-history-event', revision: message.revision, studyId: header.studyId, sequence: 26 });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 26, 'terminal result event is selected', 1_000);
+
+    // Assert
+    const terminalMessage = harness.postedMessages().slice(-1)[0]!;
+    assert.equal(terminalMessage.nodeHistoryPosition?.type, 'result');
+    assert.match(terminalMessage.nodeHistoryOutput!, /between stops/);
+    assert.doesNotMatch(terminalMessage.nodeHistoryOutput!, /Tests 1 passed/);
+    assert.equal(harness.historicalDebugInvalidations(), 3, 'terminal events do not retain historical debugger values');
+    assert.equal(harness.historicalDebugPresentations[2]?.snapshot?.variables[0]?.name, 'themeName', 'revisiting a stop restores its captured values');
+
+    // Act: reopen the same history through a new store and restore the previously selected stop.
+    harness.receive({ type: 'node-history-stop', revision: message.revision, studyId: header.studyId, sequence: 25 });
+    await waitUntil(() => harness.historicalDebugPresentations.length === 4, 'second stop is selected before reopening its history', 1_000);
+    const library = await harness.reader.learningStorage();
+    harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(library.directory, header.workspaceKey);
+    const latestRevision = harness.postedMessages().slice(-1)[0]!.revision;
+    harness.receive({ type: 'node-history', revision: latestRevision, studyId: header.studyId });
+    await waitUntil(() => harness.historicalDebugPresentations.length === 5 && harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 25 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'a new history store restores the saved stop and its native snapshot', 1_000);
+
+    // Assert
+    const reopenedHistoryMessage = harness.postedMessages().slice(-1)[0]!;
+    assert.equal(reopenedHistoryMessage.nodeHistoryPosition?.type, 'stop');
+    assert.equal(reopenedHistoryMessage.nodeHistoryPosition?.debuggerAvailable, true);
+    assert.equal(harness.historicalDebugPresentations[4]?.snapshot?.variables[0]?.name, 'themeName');
+    assert.equal(reopenedHistoryMessage.nodeHistoryLearningMaterial?.revision, 1, 'a fresh history store restores the saved explanation');
+    assert.equal(reopenedHistoryMessage.nodeHistoryLearningDecision?.understood, true, 'the separate learner choice survives material reload');
+    assert.equal(await harness.readCapturedSource(harness.historicalDebugPresentations[4]!.sourceDocument!.uri), secondSourceText);
+
+    // Act: persist an output-only interval, then reopen through another store instance.
+    harness.receive({ type: 'node-history-event', revision: reopenedHistoryMessage.revision, studyId: header.studyId, sequence: 24 });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 24, 'output-only position replaces the saved stop', 1_000);
+    const outputPositionMessage = harness.postedMessages().slice(-1)[0]!;
+    assert.equal(outputPositionMessage.nodeHistoryPosition?.type, 'output');
+    assert.equal(outputPositionMessage.nodeHistoryPosition?.debuggerAvailable, undefined);
+    assert.match(outputPositionMessage.nodeHistoryOutput!, /between stops/);
+    assert.doesNotMatch(outputPositionMessage.nodeHistoryOutput!, /Tests 1 passed/);
+    const presentationsBeforeOutputRestore = harness.historicalDebugPresentations.length;
+    harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(library.directory, header.workspaceKey);
+    harness.receive({ type: 'node-history', revision: outputPositionMessage.revision, studyId: header.studyId });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 24 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'a fresh history store restores the output-only cursor', 1_000);
+
+    // Assert
+    const reopenedOutputMessage = harness.postedMessages().slice(-1)[0]!;
+    assert.equal(reopenedOutputMessage.nodeHistoryPosition?.type, 'output');
+    assert.equal(reopenedOutputMessage.nodeHistoryPosition?.debuggerAvailable, undefined);
+    assert.match(reopenedOutputMessage.nodeHistoryOutput!, /between stops/);
+    assert.doesNotMatch(reopenedOutputMessage.nodeHistoryOutput!, /Tests 1 passed/);
+    assert.equal(harness.historicalDebugPresentations.length, presentationsBeforeOutputRestore, 'reopening an output event does not present a stale debugger stop');
+
+    // Assert: replay ownership blocks mixing a Node stop into a browser recording session.
+    harness.reader['recordingActive'] = true;
+    harness.receiveContext({ type: 'node-history-stop', revision: reopenedOutputMessage.revision, studyId: header.studyId, sequence: 23 });
+    await waitUntil(() => Boolean(harness.reader.inspect().view?.errors.length), 'browser playback refusal is reported to the reader', 1_000);
+    assert.match(harness.reader.inspect().view!.errors.at(-1)!, /Close browser replay/);
+    assert.equal(harness.historicalDebugPresentations.length, 5);
+    harness.reader['recordingActive'] = false;
+
+    // Act: advance the independent event page without opening browser playback.
+    harness.receive({ type: 'node-history-page', revision: message.revision, studyId: header.studyId, page: 1 });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPage === 1, 'next Node history page', 1_000);
+    const lastPage = harness.postedMessages().slice(-1)[0]!;
+
+    // Assert
+    assert.equal(lastPage.nodeHistory?.entries.length, 6);
+    assert.equal(lastPage.nodeHistory?.entries[lastPage.nodeHistory.entries.length - 1]?.type, 'result');
+
+    // Arrange: a native debugger preview from this Node history can outlive its selected journal.
+    const obsoletePreview = harness.addNodeHistoryPreview(header.studyId, 2);
+    const pinnedPreview = harness.addNodeHistoryPreview(header.studyId, 2, { pinned: true });
+    const editedPreview = harness.addNodeHistoryPreview(header.studyId, 2, { dirty: true });
+    const otherHistoryPreview = harness.addNodeHistoryPreview(randomUUID(), 2);
+    const learnerPreview = harness.addTextPreview('/private/notes.ts', 2);
+    const learningLibrary = await harness.reader.learningStorage();
+    const browserStudy = { ...createConfiguredStudy(), workspaceKey: learningLibrary.workspaceKey };
+    await learningLibrary.saveStudy(browserStudy);
+
+    // Act: choosing browser history retires only the previous journal's disposable source preview.
+    harness.receive({ type: 'history', revision: lastPage.revision, studyId: browserStudy.id });
+    await waitUntil(() => harness.reader.inspect().view?.model.selection.studyId === browserStudy.id && !harness.reader.inspect().view?.loading,
+      'browser study replaces the selected Node history', 1_000);
+
+    // Assert: learner-pinned, edited and unrelated tabs remain available.
+    const retainedTabs = harness.groups.flatMap(group => group.tabs);
+    assert.equal(retainedTabs.includes(obsoletePreview), false);
+    assert.equal(retainedTabs.includes(pinnedPreview), true);
+    assert.equal(retainedTabs.includes(editedPreview), true);
+    assert.equal(retainedTabs.includes(otherHistoryPreview), true);
+    assert.equal(retainedTabs.includes(learnerPreview), true);
+    assert.equal(harness.reader.inspect().view?.nodeHistory, undefined);
+  } finally { await harness.close(); }
+});
+
+test('Node journal time seeking restores exact stops and clears debugger across output and result events', async () => {
+  // Arrange: keep this playback contract isolated from unrelated reader reopen and pagination workflows.
+  const harness = await workspaceHarness();
+  try {
+    const store = harness.service.nodeHistoryStore!;
+    const header = nodeTestHistoryHeader(store.workspaceKey);
+    const firstText = 'const nextTheme = "dark";\n';
+    const secondText = 'return applyTheme("dark");\n';
+    const secondSource = { path: 'src/theme-next.ts', hash: sha256(secondText), line: 1, column: 8 };
+    const configuration = { ...header.configuration, additionalStops: [{ ...secondSource, anchorIndex: 0, inspections: header.configuration.inspections }] };
+    const history = { ...header, configuration, configurationHash: sha256(JSON.stringify(configuration)) };
+    const writer = await store.start(history);
+    await writer.appendOutput({ sequence: 1, elapsedMs: 100, channel: 'stdout', text: 'RUN src/theme.test.ts\n' });
+    await writer.appendStop({ index: 0, runId: 'test-run', sessionId: 'test-session', threadId: 1, elapsedMs: 200,
+      worker: { pid: 1, processGroup: 1, workspace: '/private/test' }, source: history.configuration.source,
+      frame: { id: 1, name: 'notifyManager', line: 1, column: 1 }, variables: [{ name: 'nextTheme', value: 'dark', variablesReference: 0 }],
+      facts: [{ path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' }],
+      debuggerSnapshot: { version: 1, frames: [{ name: 'notifyManager', line: 1, column: 1,
+        source: { name: history.configuration.source.path, text: firstText, hash: sha256(firstText), line: 1 }, scopes: [{ name: 'Local', variables: [0] }] }],
+      variables: [{ name: 'nextTheme', value: 'dark', type: 'string', children: [] }], limitations: [] } } satisfies NodeTestSourceStop);
+    await writer.appendOutput({ sequence: 3, elapsedMs: 300, channel: 'stdout', text: 'between stops\n' });
+    await writer.appendStop({ index: 1, runId: 'test-run', sessionId: 'test-session', threadId: 1, elapsedMs: 400,
+      worker: { pid: 1, processGroup: 1, workspace: '/private/test' }, source: secondSource,
+      frame: { id: 2, name: 'applyTheme', line: 1, column: 8 }, variables: [{ name: 'themeName', value: 'dark', variablesReference: 0 }],
+      facts: [{ path: 'themeName', mode: 'value', display: 'dark', type: 'string' }],
+      debuggerSnapshot: { version: 1, frames: [{ name: 'applyTheme', line: 1, column: 8,
+        source: { name: secondSource.path, text: secondText, hash: secondSource.hash, line: 1 }, scopes: [{ name: 'Local', variables: [0] }] }],
+      variables: [{ name: 'themeName', value: 'dark', type: 'string', children: [] }], limitations: [] } } satisfies NodeTestSourceStop);
+    await writer.appendResult({ exitCode: 0, signal: null, output: 'Tests 1 passed' }, 500);
+    await writer.finish('complete');
+    await harness.reader.open();
+    const initial = harness.postedMessages().slice(-1)[0]!;
+    harness.receiveContext({ type: 'node-history', revision: initial.revision, studyId: history.studyId });
+    await waitUntil(() => {
+      const view = harness.postedMessages().slice(-1)[0]!;
+      return view.nodeHistory?.header.studyId === history.studyId && view.nodeHistoryPosition?.sequence === 1 && !view.loading;
+    }, 'the sealed Node history and its initial event are loaded', 1_000);
+
+    // Act: seek to the second stop through the same message sent by the time slider.
+    harness.receiveContext({ type: 'node-history-playback', revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId, action: 'seek', positionMs: 400 });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPlayback?.positionMs === 400,
+      'time seek presents the second verified stop', 1_000);
+
+    // Assert: the historical debugger, output prefix and durable cursor all identify the same event.
+    const secondStop = harness.postedMessages().slice(-1)[0]!;
+    assert.equal(secondStop.nodeHistoryPosition?.sequence, 4);
+    assert.equal(secondStop.nodeHistoryPosition?.type, 'stop');
+    assert.equal(secondStop.nodeHistoryPosition?.debuggerAvailable, true);
+    assert.equal(harness.historicalDebugPresentations.at(-1)?.snapshot?.variables[0]?.name, 'themeName');
+    assert.match(secondStop.nodeHistoryOutput!, /between stops/);
+    assert.doesNotMatch(secondStop.nodeHistoryOutput!, /Tests 1 passed/);
+    assert.equal(await store.readReaderPosition(history.studyId), 4);
+
+    // Act: seek into the output interval and then to the final result.
+    harness.receiveContext({ type: 'node-history-playback', revision: secondStop.revision,
+      studyId: history.studyId, action: 'seek', positionMs: 300 });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 3,
+      'output seek clears the second debugger stop', 1_000);
+    const outputEvent = harness.postedMessages().slice(-1)[0]!;
+    harness.receiveContext({ type: 'node-history-playback', revision: outputEvent.revision,
+      studyId: history.studyId, action: 'seek', positionMs: 500 });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 5,
+      'result seek selects the final journal event', 1_000);
+
+    // Assert: output and result do not imply application video or retain a stale debugger.
+    const resultEvent = harness.postedMessages().slice(-1)[0]!;
+    assert.equal(resultEvent.nodeHistoryPosition?.type, 'result');
+    assert.equal(resultEvent.nodeHistoryPlayback?.mode, 'paused');
+    assert.equal(resultEvent.recording, undefined);
+    assert.equal(resultEvent.nodeHistoryPosition?.debuggerAvailable, undefined);
+    assert.ok(harness.historicalDebugInvalidations() >= 2);
+  } finally { await harness.close(); }
+});
+
+test('sealed repository source remains restorable before the first debugger observation', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    const library = await harness.reader.learningStorage(), fixture = createConfiguredStudy();
+    const study = { ...fixture, workspaceKey: library.workspaceKey, state: 'ready', terminal: false, finalOutcome: 'pending-teardown' as const, operation: undefined, observations: [], captures: [] };
+    await library.saveStudy(study); await harness.reader.open();
+    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId: study.id });
+    await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === study.id && !harness.reader.inspect().view!.loading, 'sealed repository source', 1_000);
+    const uri = harness.reader['sourceUri']; assert.ok(uri);
+    // Act: an editor restart must resolve this URI from persisted bytes, without its transient cache.
+    harness.reader['documents'].clear();
+    const restored = await harness.reader['provideSource'](uri);
+    // Assert
+    assert.ok(uri.path.startsWith(`/${study.id}/`));
+    assert.equal(restored, 'const nextTheme = "dark";\n');
+    assert.equal(harness.reader.inspect().view!.model.observation, undefined);
+  } finally { await harness.close(); }
+});
+
 /** Saves a real recording/context with deterministic synthetic runtime values; native paints remain an explicitly mocked boundary. @example const harness = await recordedReaderHarness() */
 async function recordedReaderHarness(capturedApplication = false) {
   const harness = await workspaceHarness(true, true), service = harness.service;
   service.environment.build.sourceHash = sha256('recorded-build'); harness.acknowledgeContext();
-  await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+  harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const record = [...service.records.values()][0]!; await record.preparation;
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=', 'base64');
   assert.ok(record.recording); record.recording.frame({ bytes: png, elapsedMs: 20, kind: 'stream' });
   // Observation visibility tests retain a real PNG checkpoint while the native renderer remains mocked.
   if (capturedApplication) {
     const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime);
-    await writeFile(join(runtime.evidence.directory, 'paused-server.png'), png);
-    runtime.view = () => ({ ...view(), captures: { 'paused-server': { status: 'captured', file: 'paused-server.png', renderer: { epoch: 'test', id: 1, hash: sha256(png) } } } });
+    await writeFile(join(runtime.evidence.directory, 'paused-browser.png'), png);
+    runtime.view = () => ({ ...view(), captures: { 'paused-browser': { status: 'captured', file: 'paused-browser.png', renderer: { epoch: 'test', id: 1, hash: sha256(png) } } } });
   }
   harness.clock(100); await harness.reader.action('click');
   harness.clock(200); await harness.reader.action('stop');
@@ -754,8 +1189,8 @@ test('book evidence opens the exact historical observation and retains a restart
   const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
   try {
     const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
-    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
-    await library.selectRepository({ bookId: 'architecture', revision: 1, nodeId: 'cart', anchorIndex: 0, location: { sectionIndex: 1, fraction: 0.5, focusId: 'section-1' } });
+    const binding: BookObservationBinding = { nodeId: 'module', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    await library.selectRepository({ bookId: 'architecture', revision: 1, nodeId: 'module', anchorIndex: 0, location: { sectionIndex: 1, fraction: 0.5, focusId: 'section-1' } });
     // Act
     await harness.reader.openRepositoryEvidence(binding, false);
     const view = harness.reader.inspect().view!;
@@ -771,7 +1206,7 @@ test('book recording links seek the exact captured observation time while playba
   const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
   try {
     const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
-    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    const binding: BookObservationBinding = { nodeId: 'module', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
     // Act
     await harness.reader.openRepositoryEvidence(binding, true);
     const view = harness.reader.inspect().view!;
@@ -786,7 +1221,7 @@ for (const recording of [false, true]) test(`Wiki ${recording ? 'recording' : 'o
   const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
   try {
     const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
-    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    const binding: BookObservationBinding = { nodeId: 'module', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
     harness.commands.length = 0;
     // Act
     await harness.reader.openRepositoryEvidence(binding, recording);
@@ -806,7 +1241,7 @@ for (const recording of [false, true]) test(`explicit Open Study preserves hidde
   // Arrange
   const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
   const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
-  const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+  const binding: BookObservationBinding = { nodeId: 'module', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
   harness.commands.length = 0; const source = harness.holdNextSource();
   const navigation = harness.reader.openRepositoryEvidence(binding, recording);
   try {
@@ -823,7 +1258,7 @@ test('book evidence rejects a changed captured observation before selecting hist
   const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
   try {
     const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
-    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: '0'.repeat(64), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    const binding: BookObservationBinding = { nodeId: 'module', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: '0'.repeat(64), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
     // Act / Assert
     await assert.rejects(harness.reader.openRepositoryEvidence(binding, false), /exact saved checkpoint/);
     await assert.rejects(harness.reader.openRepositoryEvidence(binding, true), /exact saved checkpoint/);
@@ -838,7 +1273,7 @@ test('closing the article during a pending checkpoint prevents the later evidenc
   const entered = new Promise<void>(resolve => { enter = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
   try {
     const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
-    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    const binding: BookObservationBinding = { nodeId: 'module', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
     await harness.reader.close(); library.readCheckpoint = async (...arguments_: Parameters<typeof originalRead>) => { const checkpoint = await originalRead(...arguments_); enter(); await held; return checkpoint; };
     const cancellation = new AbortController();
     // Act
@@ -853,7 +1288,7 @@ for (const recording of [false, true]) test(`cancelling ${recording ? 'recording
   // Arrange
   const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
   const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
-  const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+  const binding: BookObservationBinding = { nodeId: 'module', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
   await harness.reader.close(); const source = harness.holdNextSource(), cancellation = new AbortController();
   try {
     // Act
@@ -909,6 +1344,22 @@ test('Wiki reading layout cannot report the selected Study presentation as confi
     await harness.reader.open();
     assert.equal(harness.reader.presentationState().layoutConfirmed, true);
     assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+  } finally { await harness.close(); }
+});
+
+test('Study reports why a captured source prevents layout confirmation after failed execution', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false);
+  try {
+    await harness.reader.open();
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    // Act: a failed run invalidates the source receipt while the native panes remain visible.
+    harness.reader['sourceRevision'] = undefined;
+    const state = harness.reader.presentationState();
+    // Assert
+    assert.equal(state.layoutConfirmed, false);
+    assert.match(state.reason ?? '', /captured source is not ready in its native pane/);
+    assert.deepEqual({ ...state.panes }, { appColumn: 1, sourceColumn: 2, contextColumn: 3 });
   } finally { await harness.close(); }
 });
 
@@ -1104,59 +1555,7 @@ for (const kind of ['known', 'unknown', 'duplicate', 'ambiguous', 'empty'] as co
   } finally { await harness.close(); }
 });
 
-for (const newerSelection of [false, true]) test(`cancelling linked evidence during a shared refresh ${newerSelection ? 'preserves a newer learner profile' : 'keeps the existing study and prevents a later background source reveal'}`, async () => {
-  // Arrange
-  const harness = await recordedReaderHarness(), library = await harness.reader.learningStorage();
-  clearInterval(harness.reader['timer']); harness.reader['timer'] = undefined;
-  await harness.reader.open(); await harness.reader.select('paired-cart-demo/browser');
-  const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
-  const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
-  const checkpoint = harness.reader['checkpoint'].bind(harness.reader), open = harness.reader.open.bind(harness.reader);
-  let release = () => {}, enter = () => {}, openEntered = () => {};
-  const held = new Promise<void>(resolve => { release = resolve; }), entered = new Promise<void>(resolve => { enter = resolve; }), reachedOpen = new Promise<void>(resolve => { openEntered = resolve; });
-  harness.reader['checkpoint'] = async (...arguments_: Parameters<typeof checkpoint>) => { await checkpoint(...arguments_); enter(); await held; };
-  harness.reader.open = async signal => { openEntered(); await open(signal); };
-  const cancellation = new AbortController();
-  try {
-    // Act
-    const background = harness.reader['refresh'](); await entered;
-    const pending = harness.reader.openRepositoryEvidence(binding, false, cancellation.signal), rejected = assert.rejects(pending, /abort/i);
-    await reachedOpen; await new Promise<void>(resolve => setImmediate(resolve));
-    if (newerSelection) await harness.reader.selectProfile('checkout-demo');
-    const tabs = [...harness.groups[0]!.tabs], commands = [...harness.commands];
-    cancellation.abort(); release(); await background; await rejected; await harness.reader['refresh']();
-    // Assert
-    assert.deepEqual(harness.groups[0]!.tabs, tabs); assert.deepEqual(harness.commands, commands);
-    assert.equal(harness.reader.inspect().opened, true);
-    assert.equal(harness.reader['sourceReady'](), true);
-    assert.equal(harness.reader.inspect().view?.model.selection.itemId, newerSelection ? 'checkout-demo/cart-mutation' : 'paired-cart-demo/browser');
-    assert.equal(harness.runtimes[0]!.dispatches, 1);
-    await harness.reader.openRepositoryEvidence(binding, false); await harness.reader['refresh']();
-    assert.equal(harness.reader.inspect().view?.model.observation?.id, observation.id);
-  } finally { release(); harness.reader['checkpoint'] = checkpoint; harness.reader.open = open; await harness.close(); }
-});
-
-test('Recording opens paused with no future source and seeking binds captured values without executing or marking understanding', async () => {
-  // Arrange
-  const harness = await recordedReaderHarness();
-  try {
-    // Act
-    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
-    const before = harness.reader.inspect().view!;
-    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
-    const observed = harness.reader.inspect().view!;
-    // Assert
-    assert.equal(before.contentTab, 'recording'); assert.equal(before.recording?.mode, 'paused'); assert.equal(before.model.observation, undefined);
-    assert.equal(before.model.source.text, '// No source was observed by this recorded position.\n'); assert.equal(before.model.selectedUnderstanding.known, false);
-    assert.equal(observed.recording?.readiness, 'ready', observed.recording?.reason); assert.equal(observed.model.observation?.values.cartCount, 0);
-    assert.equal(observed.model.source.text, 'const price = 24;'); assert.equal(observed.model.continueArguments, undefined);
-    assert.equal(harness.displayedImage(), harness.png.toString('base64')); assert.equal(harness.runtimes[0]!.dispatches, 1); assert.equal(harness.runtimes[0]!.releases, 1);
-    const library = new LearningLibrary(harness.store.learningDirectory, harness.store.workspaceKey);
-    assert.equal((await library.readProgress()).decisions.length, 0); assert.equal((await harness.store.readPreference())?.positionMs, 100);
-  } finally { await harness.close(); }
-});
-
-test('a mode request before the first replay position stops warning once recorded evidence becomes ready', async () => {
+test('a retired renderer cannot select another layout while replay opens its summary sidebar', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true);
   try {
@@ -1166,11 +1565,13 @@ test('a mode request before the first replay position stops warning once recorde
 
     // Act
     harness.receive({ type: 'presentation', revision: harness.reader.inspect().view!.revision, presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
-    await waitUntil(() => harness.reader.inspect().view!.errors.some(error => error.includes('first confirmed replay position')), 'early replay presentation warning', 1_000);
     await harness.controller.settle();
 
     // Assert
     assert.equal(harness.controller.state().readiness, 'ready');
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.summary.visible, true);
     assert.equal(harness.reader.inspect().view!.errors.some(error => error.includes('first confirmed replay position')), false);
     assert.equal(harness.reader.presentationState().reason?.includes('first confirmed replay position') ?? false, false);
     assert.equal(harness.runtimes[0]!.dispatches, 1);
@@ -1193,112 +1594,9 @@ test('an MCP mode request before replay readiness clears its warning when the fi
 
     // Assert
     assert.equal(harness.controller.state().readiness, 'ready');
-    assert.equal(harness.reader.presentationState().reason, undefined);
+    assert.equal(harness.reader.presentationState().reason?.includes('first confirmed replay position') ?? false, false);
     assert.equal(harness.reader.presentationState().requestedMode, undefined);
     assert.equal(harness.runtimes[0]!.dispatches, 1);
-  } finally { await harness.close(); }
-});
-
-test('Return to Current leaves saved history selected when a presentation starts during initialization', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  let releaseInitialization = () => {}, releaseLayout = () => {};
-  let presentation: Promise<unknown> | undefined;
-  try {
-    await harness.reader.open();
-    await harness.reader.select('paired-cart-demo/server');
-    const state = harness.reader.presentationState(), contentRevision = state.reader.contentRevision;
-    const initialize = harness.reader['initialize'].bind(harness.reader);
-    let holdFirstInitialization = true;
-    const initializationStarted = new Promise<void>(resolve => {
-      harness.reader['initialize'] = async () => {
-        if (holdFirstInitialization) {
-          holdFirstInitialization = false; resolve(); await new Promise<void>(release => { releaseInitialization = release; });
-        }
-        await initialize();
-      };
-    });
-    const returning = harness.reader.returnToCurrent({ presentationId: state.presentationId, expectedRevision: contentRevision });
-    await initializationStarted;
-    const heldLayout = harness.holdNextCommand('vscode.getEditorLayout'); releaseLayout = heldLayout.release;
-
-    // Act
-    presentation = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
-    await heldLayout.started;
-    releaseInitialization();
-    await assert.rejects(returning, { code: 'PRESENTATION_UNAVAILABLE' });
-
-    // Assert
-    assert.equal(harness.reader.presentationState().reader.followingCurrentRun, false);
-    assert.equal(harness.reader.inspect().view!.model.selection.itemId, 'paired-cart-demo/server');
-  } finally { releaseInitialization(); releaseLayout(); await presentation?.catch(() => undefined); await harness.close(); }
-});
-
-test('Return to Current keeps presentation admission closed until its saved-history refresh finishes', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  let releaseRefresh = () => {};
-  let presentation: Promise<unknown> | undefined, returning: Promise<unknown> | undefined;
-  try {
-    await harness.reader.open();
-    await harness.reader.select('paired-cart-demo/server');
-    const state = harness.reader.presentationState(), refresh = harness.reader['refresh'].bind(harness.reader);
-    let refreshStarted!: () => void;
-    const reachedRefresh = new Promise<void>(resolve => { refreshStarted = resolve; });
-    const heldRefresh = new Promise<void>(resolve => { releaseRefresh = resolve; });
-    harness.reader['refresh'] = async () => { refreshStarted(); await heldRefresh; await refresh(); };
-    returning = harness.reader.returnToCurrent({ presentationId: state.presentationId, expectedRevision: state.reader.contentRevision });
-    await reachedRefresh;
-
-    // Act / Assert
-    assert.throws(() => { presentation = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }); },
-      { code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'A presentation change or reader close is pending. Read its state before another control.' });
-    assert.equal(harness.reader.presentationState().reader.followingCurrentRun, true);
-  } finally { releaseRefresh(); await returning?.catch(() => undefined); await presentation?.catch(() => undefined); await harness.close(); }
-});
-
-test('Return to Current reports a failed native source and retries after the source becomes readable', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  try {
-    await harness.reader.open();
-    await harness.reader.select('paired-cart-demo/server');
-    const state = harness.reader.presentationState();
-    harness.failCurrentSourceOpen();
-
-    // Act
-    const returning = harness.reader.returnToCurrent({ presentationId: state.presentationId, expectedRevision: state.reader.contentRevision });
-
-    // Assert
-    await assert.rejects(returning, { code: 'EVIDENCE_UNAVAILABLE' });
-    assert.equal(harness.reader.presentationState().reader.followingCurrentRun, true);
-    assert.equal(harness.reader['sourceReady'](), false);
-    assert.ok(harness.reader.inspect().view!.errors.some(error => error.includes('Injected current source open failure')));
-    harness.restoreCurrentSourceOpen();
-    const retry = harness.reader.presentationState();
-    const recovered = await harness.reader.returnToCurrent({ presentationId: retry.presentationId, expectedRevision: retry.reader.contentRevision });
-    assert.equal(recovered.reader.followingCurrentRun, true);
-    assert.equal(harness.reader['sourceReady'](), true);
-  } finally { await harness.close(); }
-});
-
-test('Return to Current rejects a revision from before the learner changed content tabs', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  try {
-    await harness.reader.open();
-    await harness.reader.select('paired-cart-demo/server');
-    const before = harness.reader.presentationState(), viewRevision = harness.reader.inspect().view!.revision;
-
-    // Act
-    harness.receive({ type: 'tab', tab: 'overview', revision: viewRevision });
-    await waitUntil(() => harness.reader.presentationState().reader.contentTab === 'overview', 'overview tab selected', 1_000);
-
-    // Assert
-    assert.ok(harness.reader.presentationState().reader.contentRevision > before.reader.contentRevision);
-    await assert.rejects(harness.reader.returnToCurrent({ presentationId: before.presentationId, expectedRevision: before.reader.contentRevision }),
-      { code: 'STALE_PRESENTATION' });
-    assert.equal(harness.reader.presentationState().reader.followingCurrentRun, false);
   } finally { await harness.close(); }
 });
 
@@ -1307,8 +1605,8 @@ test('returning from recording to Wiki keeps background study refresh from cover
   const harness = await recordedReaderHarness();
   try {
     const library = await harness.reader.learningStorage(), study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
-    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
-    await harness.reader.openRepositoryEvidence(binding, true, undefined, { bookId: 'architecture', revision: 1, nodeId: 'cart', anchorIndex: 0, location: { sectionIndex: 1, fraction: 0.5, focusId: 'section-1' } });
+    const binding: BookObservationBinding = { nodeId: 'module', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    await harness.reader.openRepositoryEvidence(binding, true, undefined, { bookId: 'architecture', revision: 1, nodeId: 'module', anchorIndex: 0, location: { sectionIndex: 1, fraction: 0.5, focusId: 'section-1' } });
     harness.controls.returnToRepository = async () => { harness.controller.hide(); harness.groups[0]!.activeTab = undefined; };
     const tabs = [...harness.groups[0]!.tabs], commands = [...harness.commands];
     // Act
@@ -2591,56 +2889,6 @@ test('MCP-first Study preserves a newer chat tab choice during application regis
   } finally { registerPanel(); viewport.close(); await reader.dispose(); await harness.close(); }
 });
 
-test('MCP-first Study waits for its Application to register before opening captured source', async () => {
-  // Arrange: debugger source is prepared while the native Application tab is still registering.
-  const harness = await workspaceHarness(false);
-  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] });
-  harness.openWiki(1);
-  const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
-  const reader = harness.createReader(), viewport = reader.presentation.createViewport!('mcp-source-run', () => {}, () => {}, 'normal');
-  const sourcePath = join(harness.fixture, 'server.mts');
-  const sourceOpening = harness.holdNextSource();
-  let sourceStarted = false;
-  void sourceOpening.started.then(() => { sourceStarted = true; });
-  try {
-    // Act: the source request cannot change tab ownership until Application registration is confirmed.
-    const preparing = reader.presentation.prepareSource(sourcePath);
-    await new Promise<void>(resolve => setImmediate(resolve));
-    assert.equal(sourceStarted, false);
-    registerPanel();
-    await sourceOpening.started;
-    sourceOpening.release();
-    await preparing;
-    await reader.open();
-    // Assert
-    assert.equal(reader.presentationState().state, 'open');
-    assert.equal(harness.groups[1]!.tabs.some(tab => 'uri' in tab.input && tab.input.uri.path === sourcePath), true);
-    assert.equal(harness.displayedSourceText(sourcePath), 'const price = 24;');
-  } finally { sourceOpening.release(); registerPanel(); viewport.close(); await reader.dispose(); await harness.close(); }
-});
-
-test('MCP-first source preparation preserves a newer chat selection when Application registration fails', async () => {
-  // Arrange
-  const harness = await workspaceHarness(false);
-  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] });
-  const other = harness.openWiki(1), chat = harness.openWiki(1);
-  const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser');
-  const reader = harness.createReader(), viewport = reader.presentation.createViewport!('mcp-source-run', () => {}, () => {}, 'normal');
-  const sourcePath = join(harness.fixture, 'server.mts');
-  try {
-    // Act: returning to the initial tab cannot authorize a delayed debugger-source tab.
-    const preparing = reader.presentation.prepareSource(sourcePath);
-    harness.focusExistingWebviewTab(other.nativeTab);
-    harness.focusExistingWebviewTab(chat.nativeTab);
-    registerPanel();
-    // Assert
-    await assert.rejects(preparing, /Native panes or learner focus changed/);
-    assert.equal(harness.groups[1]!.tabs.some(tab => 'uri' in tab.input && tab.input.uri.path === sourcePath), false);
-    assert.equal(harness.groups[0]!.tabs.includes(chat.nativeTab), true);
-    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false);
-  } finally { registerPanel(); viewport.close(); await reader.dispose(); await harness.close(); }
-});
-
 test('Living book preserves a learner move of its MCP-first application before the initial Open', async () => {
   // Arrange
   const harness = await workspaceHarness(false);
@@ -2779,7 +3027,7 @@ test('an older presentation read cannot suppress original focus recovery after a
   } finally { releaseRead(); releaseKeep(); await harness.close(); }
 });
 
-test('first configured Study pause keeps captured source visible beside Context without manual Arrange', async () => {
+test('first configured Study pause keeps captured source visible beside the application without manual Arrange', async () => {
   // Arrange
   const harness = await configuredWorkspaceHarness();
   harness.useNativeLayout({ orientation: 0, groups: [{}] });
@@ -2789,7 +3037,7 @@ test('first configured Study pause keeps captured source visible beside Context 
 
     // Assert
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
-    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
     assert.equal(harness.sourceColumn(), 2);
     const source = harness.groups.find(group => group.viewColumn === 2)!.activeTab?.input;
     assert.ok(source && 'uri' in source);
@@ -2945,10 +3193,10 @@ test('Read Application does not maximize after the work window leaves during its
   } finally { await harness.close(); }
 });
 
-test('compact Study reads each pane and Restore returns promptly to an honest focused state', async () => {
+test('replay reads app, source and sidebar summary then restores their shared layout without changing history', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true);
-  harness.useNativeLayout({ orientation: 0, groups: [{}] }); harness.constrainStudyGrid(); harness.hideGridWhileMaximized();
+  harness.useNativeLayout({ orientation: 0, groups: [{}] }); harness.hideGridWhileMaximized();
   try {
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
     harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
@@ -2962,15 +3210,16 @@ test('compact Study reads each pane and Restore returns promptly to an honest fo
     await harness.reader.action('read-source');
     assert.equal(harness.sourceColumn(), 2); assert.equal(harness.maximizedEditorGroup(), true);
     await harness.reader.action('read-context');
-    assert.equal(harness.focusedPanel(), 'codebook.studyContext'); assert.equal(harness.maximizedEditorGroup(), true);
+    assert.equal(harness.summary.visible, true); assert.equal(harness.maximizedEditorGroup(), true);
     await harness.reader.action('arrange');
 
     // Assert
-    assert.equal(harness.focusedPanel(), 'codebook.studyContext'); assert.equal(harness.maximizedEditorGroup(), true);
+    assert.equal(harness.summary.visible, true); assert.equal(harness.maximizedEditorGroup(), false);
     assert.equal(harness.reader.presentationState().state, 'open');
-    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
-    assert.match(harness.reader.presentationState().reason ?? '', /focused explanation/i);
-    assert.equal(harness.nativePanels()[0], panels[0]); assert.equal(harness.nativePanels()[1], panels[1]);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.reader.presentationState().reason, undefined);
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] });
+    assert.deepEqual(harness.nativePanels(), panels); assert.equal(panels.length, 1);
     assert.deepEqual(harness.reader.inspect().view!.model.selection, selection);
     assert.equal(harness.reader.inspect().sourceUri, source);
     assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.controller.state().presentedMs, 100);
@@ -3310,6 +3559,147 @@ test('opening a recording restores its captured source after context focus cover
   } finally { await harness.close(); }
 });
 
+test('saved replay survives one recorded viewport paint loss without rerunning the target', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true);
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const viewport = harness.viewportInstances.find(candidate => candidate.mode === 'recording');
+    assert.ok(viewport);
+    const originalPresent = viewport.present.bind(viewport);
+    const revealsBefore = harness.viewportEvents.filter(event => event === 'reveal:recording').length;
+    const targetActionsBefore = harness.runtimes[0]!.dispatches;
+    let presentations = 0;
+    viewport.present = async image => {
+      presentations++;
+      if (presentations === 1) throw new Error('Viewport frame acknowledgement timed out');
+      await originalPresent(image);
+    };
+
+    // Act
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 });
+    await harness.controller.settle();
+
+    // Assert
+    assert.equal(harness.controller.state().readiness, 'ready');
+    assert.equal(harness.controller.state().presentedMs, 100);
+    assert.equal(presentations, 2);
+    assert.equal(harness.viewportEvents.filter(event => event === 'reveal:recording').length, revealsBefore + 1);
+    assert.equal(harness.runtimes[0]!.dispatches, targetActionsBefore);
+    assert.equal(harness.displayedImage(), harness.png.toString('base64'));
+  } finally { await harness.close(); }
+});
+
+test('saved replay reports a second viewport paint loss without advancing the saved position', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true);
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const viewport = harness.viewportInstances.find(candidate => candidate.mode === 'recording');
+    assert.ok(viewport);
+    let presentations = 0;
+    viewport.present = async () => { presentations++; throw new Error('Viewport frame acknowledgement timed out'); };
+
+    // Act
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 });
+    await harness.controller.settle();
+
+    // Assert
+    assert.equal(harness.controller.state().readiness, 'failed');
+    assert.equal(presentations, 2);
+    assert.equal((await harness.store.readPreference())?.positionMs, 0);
+  } finally { await harness.close(); }
+});
+
+test('saved replay does not retry a non-paint viewport failure', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true);
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const viewport = harness.viewportInstances.find(candidate => candidate.mode === 'recording');
+    assert.ok(viewport);
+    const revealsBefore = harness.viewportEvents.filter(event => event === 'reveal:recording').length;
+    let presentations = 0;
+    viewport.present = async () => { presentations++; throw new Error('Recorded viewport is closed'); };
+
+    // Act
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 });
+    await harness.controller.settle();
+
+    // Assert
+    assert.equal(harness.controller.state().readiness, 'failed');
+    assert.equal(presentations, 1);
+    assert.equal(harness.viewportEvents.filter(event => event === 'reveal:recording').length, revealsBefore);
+  } finally { await harness.close(); }
+});
+
+test('a repeated recorded paint loss names each attempt’s renderer progress in Recording error details', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true);
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const viewport = harness.viewportInstances.find(candidate => candidate.mode === 'recording');
+    assert.ok(viewport);
+    const originalReveal = viewport.reveal.bind(viewport);
+    viewport.reveal = async () => { await originalReveal(); viewport.record('viewport.ready', { epoch: '22222222-2222-2222-2222-222222222222' }); };
+    let presentations = 0;
+    viewport.present = async () => {
+      presentations++;
+      viewport.record('viewport.sent', { epoch: '11111111-1111-1111-1111-111111111111', id: presentations, hash: 'recorded-image-hash', phase: 'Recorded · 0.10 s' });
+      if (presentations === 1) {
+        viewport.record('viewport.frame-stage', { id: 1, stage: 'received', visibility: 'visible', hasArea: true });
+        viewport.record('viewport.frame-stage', { id: 1, stage: 'decoded', visibility: 'visible', hasArea: true });
+        viewport.record('viewport.frame-stage', { id: 1, stage: 'paint-queued', visibility: 'visible', hasArea: true });
+      } else viewport.record('viewport.frame-stage', { id: 2, stage: 'received', visibility: 'hidden', hasArea: false });
+      viewport.record('viewport.delivery-rejected', { id: presentations, phase: 'Recorded · 0.10 s', reason: 'Viewport frame acknowledgement timed out' });
+      throw new Error('Viewport frame acknowledgement timed out');
+    };
+
+    // Act
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 });
+    await harness.controller.settle();
+
+    // Assert
+    assert.equal(harness.controller.state().readiness, 'failed');
+    assert.equal(harness.controller.state().reason, 'Error: Viewport frame acknowledgement timed out again after one same-frame retry. '
+      + 'First attempt: sent #1; received (visible, area); decoded; paint-queued; rejected #1: Viewport frame acknowledgement timed out; panel visible. '
+      + 'Retry: ready 22222222; sent #2; received (hidden, no area); rejected #2: Viewport frame acknowledgement timed out; panel visible.');
+    assert.equal(presentations, 2);
+    assert.equal((await harness.store.readPreference())?.positionMs, 0);
+  } finally { await harness.close(); }
+});
+
+test('a failed renderer re-handshake after a recorded paint loss keeps the first attempt in Recording error details', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true);
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const viewport = harness.viewportInstances.find(candidate => candidate.mode === 'recording');
+    assert.ok(viewport);
+    viewport.reveal = async () => { throw new Error('Timed out waiting for owned viewport ready'); };
+    let presentations = 0;
+    viewport.present = async () => {
+      presentations++;
+      viewport.record('viewport.sent', { epoch: '11111111-1111-1111-1111-111111111111', id: 1, hash: 'recorded-image-hash', phase: 'Recorded · 0.10 s' });
+      viewport.record('viewport.frame-stage', { id: 1, stage: 'received', visibility: 'visible', hasArea: false });
+      viewport.record('viewport.delivery-rejected', { id: 1, phase: 'Recorded · 0.10 s', reason: 'Viewport frame acknowledgement timed out' });
+      throw new Error('Viewport frame acknowledgement timed out');
+    };
+
+    // Act
+    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 });
+    await harness.controller.settle();
+
+    // Assert
+    assert.equal(harness.controller.state().readiness, 'failed');
+    assert.equal(harness.controller.state().reason, 'Error: Viewport frame acknowledgement timed out; the same-frame retry could not re-handshake the renderer: Error: Timed out waiting for owned viewport ready. '
+      + 'First attempt: sent #1; received (visible, no area); rejected #1: Viewport frame acknowledgement timed out; panel visible. '
+      + 'Re-handshake: no renderer receipts; panel visible.');
+    assert.equal(presentations, 1);
+    assert.equal((await harness.store.readPreference())?.positionMs, 0);
+  } finally { await harness.close(); }
+});
+
 test('Pause during a late recorded image restores the previous source and preserves only the confirmed position', async () => {
   // Arrange
   const harness = await recordedReaderHarness();
@@ -3330,23 +3720,24 @@ test('Pause during a late recorded image restores the previous source and preser
 test('a fresh reader restores the saved recording position paused and a live-runtime retirement does not exit playback', async () => {
   // Arrange
   const harness = await recordedReaderHarness();
-  const reloaded = harness.createReader();
+  let reloaded: ReturnType<typeof harness.createReader> | undefined;
   try {
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
     harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
-    await harness.reader.close();
+    await harness.reader.dispose();
     // Act
+    reloaded = harness.createReader();
     await reloaded.attach(harness.service); await reloaded.openRecording(harness.studyId); await harness.service.playbackController!.settle();
     const restored = reloaded.inspect().view!;
     await reloaded.retire(harness.service);
     // Assert
     assert.equal(restored.recording?.readiness, 'ready', restored.recording?.reason); assert.equal(restored.recording?.presentedMs, 100); assert.equal(restored.recording?.mode, 'paused');
-    assert.equal(reloaded.inspect().view?.contentTab, 'recording'); assert.equal(reloaded.inspect().view?.model.observation?.values.price, 24);
+    assert.equal(reloaded.inspect().view?.contentTab, 'recording'); assert.equal(reloaded.inspect().view?.model.observation?.values['value:nextTheme'], 'dark');
     assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
-  } finally { await reloaded.dispose(); await harness.close(); }
+  } finally { await reloaded?.dispose(); await harness.close(); }
 });
 
-test('updating the installed demo source and location preserves recorded bytes and learner history while requesting source review', async () => {
+test('updating repository source and extension location preserves recorded bytes and learner history while requesting source review', async () => {
   // Arrange: persist actual archive/recording files; only editor and runtime effects are simulated.
   const harness = await recordedReaderHarness(); let reloaded: ReturnType<typeof harness.createReader> | undefined;
   try {
@@ -3354,22 +3745,22 @@ test('updating the installed demo source and location preserves recorded bytes a
     const library = await harness.reader.learningStorage(), decisions = (await library.readProgress()).decisions;
     // Retire the original writer before freezing immutable bytes for the installation update.
     await harness.service.shutdown(); await harness.reader.retire(harness.service); await harness.reader.dispose();
-    const archivePath = join(library.directory, `${harness.studyId}.study.v2.json`), archiveBefore = await readFile(archivePath);
+    const archivePath = join(library.directory, `${harness.studyId}.study.v3.json`), archiveBefore = await readFile(archivePath);
     const recordingDirectory = harness.store.path(harness.studyId), recordingFiles = (await readdir(recordingDirectory)).sort();
     const recordingBefore = await Promise.all(recordingFiles.map(file => readFile(join(recordingDirectory, file))));
-    const nextExtension = join(harness.directory, 'codebook-next-install'), nextFixture = join(nextExtension, 'dist/demo/fixture');
-    await mkdir(nextFixture, { recursive: true });
-    await writeFile(join(nextFixture, 'server.mts'), 'const price = 25;'); await writeFile(join(nextFixture, 'client.mts'), 'const count = 1;');
+    const nextExtension = join(harness.directory, 'codebook-next-install'), nextSource = join(harness.directory, 'src', 'theme.ts');
+    await mkdir(nextExtension, { recursive: true });
+    await writeFile(nextSource, 'const nextTheme = \"light\";\n');
 
     // Act: a new reader uses the changed installation but the same real persisted workspace store.
     reloaded = harness.createReader(nextExtension); await reloaded.open();
     const restored = reloaded.inspect().view!;
-    const currentSource = await readFile(join(nextFixture, 'server.mts'), 'utf8');
+    const currentSource = await readFile(nextSource, 'utf8');
 
     // Assert: old evidence and decisions remain exact, while current-source progress needs review.
-    assert.equal(restored.model.source.text, 'const price = 24;'); assert.equal(restored.model.observation?.values.price, 24);
-    assert.equal(currentSource, 'const price = 25;'); assert.equal(restored.model.sourceChanged, true);
-    assert.equal(harness.watchedPatterns.at(-1)?.base, nextFixture); assert.equal(harness.watchedPatterns.at(-1)?.pattern, '{server,client}.mts');
+    assert.equal(restored.model.source.text, 'const nextTheme = "dark";\n'); assert.equal(restored.model.observation?.values['value:nextTheme'], 'dark');
+    assert.equal(currentSource, 'const nextTheme = \"light\";\n'); assert.equal(restored.model.sourceChanged, true);
+    assert.equal(harness.watchedPatterns.some(pattern => pattern.base.endsWith(harness.directory.replace(/^\/var\//, '/private/var/') + '/src') && pattern.pattern === '*'), true);
     assert.equal(restored.model.understoodCount, 0); assert.equal(restored.model.reviewCount, 1);
     assert.equal(restored.model.selectedUnderstanding.understood, true);
     assert.equal(decisions.length, 1); assert.deepEqual((await library.readProgress()).decisions, decisions);
@@ -3423,11 +3814,11 @@ test('retiring before the next polling tick preserves the last accepted interpre
   context.mock.timers.enable({ apis: ['setInterval'] });
   const harness = await workspaceHarness(), service = harness.service;
   try {
-    const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'last-tick' });
+    const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'last-tick' });
     const record = service.record(receipt); await record.preparation;
-    service.action({ instanceId: service.instanceId, runId: receipt.runId, action: 'add-to-cart', key: 'one' });
-    const snapshotUri = service.state(record).participants.server!.snapshotUri!;
-    await service.explain({ instanceId: service.instanceId, runId: receipt.runId, key: 'last-explanation', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The captured price is 24 before this final shutdown.' });
+    service.action({ instanceId: service.instanceId, runId: receipt.runId, action: 'repository-click', key: 'one' });
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!;
+    await service.explain({ instanceId: service.instanceId, runId: receipt.runId, key: 'last-explanation', snapshotUri, sourceHash: sha256('const nextTheme = "dark";\n'), valuePaths: ['value:nextTheme'], interpretation: 'The captured price is 24 before this final shutdown.' });
     // Act
     await service.shutdown(); await harness.reader.retire(service);
     const directory = harness.reader.inspect().libraryDirectory!, library = new LearningLibrary(directory, directory.split('/').at(-1)!);
@@ -3439,49 +3830,6 @@ test('retiring before the next polling tick preserves the last accepted interpre
   } finally { await harness.close(); context.mock.timers.reset(); }
 });
 
-test('a fresh workspace offers four checkout learning items while an explicit paired choice keeps its two-item progress', async () => {
-  // Arrange
-  const harness = await workspaceHarness(false);
-  try {
-    // Act
-    await harness.reader.open();
-    const initial = harness.reader.inspect().view!;
-    await harness.reader.selectProfile('paired-cart-demo');
-    const paired = harness.reader.inspect().view!;
-    // Assert
-    assert.equal(initial.model.selection.profile, 'checkout-demo'); assert.equal(initial.model.selection.itemId, 'checkout-demo/cart-mutation');
-    assert.deepEqual(initial.model.progressByItem.map(item => item.title), ['Cart mutation', 'Cart update', 'Order creation', 'Purchase confirmation']);
-    assert.equal(initial.model.understoodCount, 0); assert.equal(paired.model.progressByItem.length, 2);
-    assert.equal(paired.model.selection.itemId, 'paired-cart-demo/server');
-  } finally { await harness.close(); }
-});
-
-test('a reader keeps the cart moment while the same server reaches order creation and only Return selects the live item', async () => {
-  // Arrange
-  const harness = await workspaceHarness(), service = harness.service;
-  try {
-    await harness.reader.selectProfile('checkout-demo'); await harness.reader.action('run');
-    const record = [...service.records.values()][0]!; await record.preparation;
-    await harness.reader.action('click'); await harness.reader.open();
-    await harness.reader.select('checkout-demo/cart-mutation');
-    const original = harness.reader.inspect().sourceUri;
-    await service.continue(service.state(record).participants.server!.continueArguments!);
-    harness.runtimes[0]!.status = 'ready';
-    // Act
-    await harness.reader.action('click'); await harness.reader.open();
-    const history = harness.reader.inspect().view!;
-    await assert.rejects(harness.reader.selectProfile('paired-cart-demo'), /Stop the active study/);
-    // Assert
-    assert.equal(history.model.selection.itemId, 'checkout-demo/cart-mutation'); assert.equal(history.model.currentItemTitle, 'Order creation');
-    assert.equal(history.model.observation?.values.cartCount, 0); assert.equal(history.model.continueArguments, undefined);
-    assert.equal(harness.reader.inspect().sourceUri, original);
-    await harness.reader.action('return-current');
-    assert.equal(harness.reader.inspect().view!.model.selection.itemId, 'checkout-demo/order-creation');
-    assert.equal(harness.reader.inspect().view!.model.observation?.values.cartCount, 1);
-    assert.equal(harness.runtimes[0]!.dispatches, 2);
-  } finally { await harness.close(); }
-});
-
 test('a successful runtime with a rejected final history write stays partial in both service and reader until Retry', async context => {
   // Arrange
   const harness = await workspaceHarness(), service = harness.service, saveStudy = LearningLibrary.prototype.saveStudy;
@@ -3491,9 +3839,10 @@ test('a successful runtime with a rejected final history write stays partial in 
     return saveStudy.call(this, study);
   });
   try {
-    await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const record = [...service.records.values()][0]!; await record.preparation;
     const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime);
-    runtime.view = () => ({ ...view(), finalOutcome: 'demonstrated' });
+    if (!runtime.snapshot) await harness.reader.action('click');
+    runtime.view = () => ({ ...view(), finalOutcome: 'demonstrated', resourcesReleased: true, cleaned: true, operation: { ...view().operation!, afterVerified: true, continuedPause: runtime.snapshot!.pause } });
     await harness.reader.open();
     // Act
     await assert.rejects(harness.reader.action('stop'), /archive size limit/);
@@ -3515,9 +3864,10 @@ for (const savedEarlier of [false, true]) test(`retiring a failed final checkpoi
     return saveStudy.call(this, study);
   });
   try {
-    await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const record = [...service.records.values()][0]!; await record.preparation;
     const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
-    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated' });
+    if (!runtime.snapshot) await harness.reader.action('click');
+    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated', resourcesReleased: true, cleaned: true, operation: { ...originalView().operation!, afterVerified: true, continuedPause: runtime.snapshot!.pause } });
     await harness.reader.open();
     if (savedEarlier) await harness.reader.action('retry');
     rejecting = true;
@@ -3533,43 +3883,21 @@ for (const savedEarlier of [false, true]) test(`retiring a failed final checkpoi
   } finally { rejecting = false; context.mock.restoreAll(); await harness.close(); }
 });
 
-test('opening paired history during checkout startup cannot change the accepted run profile', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  let release = () => {}, entered = () => {};
-  const waiting = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
-  try {
-    const directory = harness.reader.inspect().libraryDirectory!, workspaceKey = directory.split('/').at(-1)!;
-    const library = new LearningLibrary(directory, workspaceKey), instanceId = randomUUID(), runId = randomUUID(), studyId = `${instanceId}_${runId}`;
-    await library.saveStudy({ version: 2, workspaceKey, id: studyId, instanceId, runId, profile: 'paired-cart-demo', createdAt: '2026-09-18T10:00:00.000Z', savedAt: '2026-09-18T10:00:01.000Z', state: 'stopped', terminal: true, finalOutcome: 'partial', materialSignature: sha256('startup-history'), observations: [], captures: [], links: [] });
-    await harness.reader.selectProfile('checkout-demo'); await harness.reader.open();
-    harness.controls.start = async () => { entered(); await waiting; return harness.service; };
-    // Act
-    const starting = harness.reader.action('run'); await started;
-    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId });
-    await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === studyId && !harness.reader.inspect().view!.loading, 'paired history during pending startup', 1_000);
-    release(); await starting;
-    // Assert
-    const record = [...harness.service.records.values()][0]!;
-    assert.equal(record.profile, 'checkout-demo'); assert.equal(harness.reader.inspect().view!.model.selection.profile, 'checkout-demo');
-    await record.preparation;
-  } finally { release(); await harness.close(); }
-});
-
 test('an interpretation added to an earlier stopped run persists while the later run keeps execution ownership', async () => {
   // Arrange
   const harness = await workspaceHarness(), service = harness.service;
   try {
-    await harness.reader.action('run'); const first = [...service.records.values()][0]!; await first.preparation;
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const first = [...service.records.values()][0]!; await first.preparation;
     await harness.reader.action('click'); await harness.reader.open();
-    const snapshotUri = service.state(first).participants.server!.snapshotUri!;
+    const snapshotUri = service.state(first).participants.browser.snapshotUri!;
     await harness.reader.action('stop');
-    await harness.reader.action('run'); const second = [...service.records.values()][1]!; await second.preparation;
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const second = [...service.records.values()][1]!; await second.preparation;
     // Act
-    await service.explain({ instanceId: service.instanceId, runId: first.id, key: 'earlier-run-note', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The earlier run captured price 24.' });
+    await service.explain({ instanceId: service.instanceId, runId: first.id, key: 'earlier-run-note', snapshotUri, sourceHash: sha256('const nextTheme = "dark";\n'), valuePaths: ['value:nextTheme'], interpretation: 'The earlier run captured price 24.' });
     await harness.reader.open(); await harness.reader.action('retry');
     const studyId = `${service.instanceId}_${first.id}`;
-    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId });
+    await harness.reader['receive']({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId }, 'moments');
     await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === studyId && !harness.reader.inspect().view!.loading, 'updated earlier history', 1_000);
     // Assert
     const history = harness.reader.inspect().view!;
@@ -3587,22 +3915,24 @@ test('history selected during a retained run save shows the new explanation befo
   let release = () => {}, entered = () => {};
   const held = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
   try {
-    await harness.reader.action('run'); const first = [...service.records.values()][0]!; await first.preparation;
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const first = [...service.records.values()][0]!; await first.preparation;
     await harness.reader.action('click');
     const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
-    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated' });
+    if (!runtime.snapshot) await harness.reader.action('click');
+    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated', resourcesReleased: true, cleaned: true, operation: { ...originalView().operation!, afterVerified: true, continuedPause: runtime.snapshot!.pause } });
     await harness.reader.open(); await harness.reader.action('stop');
-    const snapshotUri = service.state(first).participants.server!.snapshotUri!, studyId = `${service.instanceId}_${first.id}`;
-    await harness.reader.action('run'); const second = [...service.records.values()][1]!; await second.preparation;
+    const snapshotUri = service.state(first).participants.browser.snapshotUri!, studyId = `${service.instanceId}_${first.id}`;
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const second = [...service.records.values()][1]!; await second.preparation;
     await harness.reader.action('retry');
     context.mock.method(LearningLibrary.prototype, 'saveStudy', async function (this: LearningLibrary, study: Parameters<LearningLibrary['saveStudy']>[0]) {
       if (study.id === studyId && study.observations[0]?.interpretations.length === 1) { entered(); await held; }
       return saveStudy.call(this, study);
     });
     // Act
-    await service.explain({ instanceId: service.instanceId, runId: first.id, key: 'selected-during-save', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The retained cart pause captured price 24 before mutation.' });
+    await service.explain({ instanceId: service.instanceId, runId: first.id, key: 'selected-during-save', snapshotUri, sourceHash: sha256('const nextTheme = "dark";\n'), valuePaths: ['value:nextTheme'], interpretation: 'The retained pause captured the dark theme before mutation.' });
     await harness.reader.open(); await started;
-    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId });
+    await harness.reader['receive']({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId }, 'moments');
     await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === studyId && !harness.reader.inspect().view!.loading, 'older history selected during save', 1_000);
     const pending = harness.reader.inspect().view!;
     assert.equal(pending.model.observation?.interpretations.length, 0);
@@ -3614,8 +3944,8 @@ test('history selected during a retained run save shows the new explanation befo
     const selected = harness.reader.inspect().view!, directory = harness.reader.inspect().libraryDirectory!;
     const archive = await new LearningLibrary(directory, directory.split('/').at(-1)!).readStudy(studyId);
     assert.equal(selected.model.observation?.interpretations.length, 1);
-    assert.equal(selected.model.observation?.interpretations[0]?.text, 'The retained cart pause captured price 24 before mutation.');
-    assert.equal(archive.observations[0]?.interpretations[0]?.text, 'The retained cart pause captured price 24 before mutation.');
+    assert.equal(selected.model.observation?.interpretations[0]?.text, 'The retained pause captured the dark theme before mutation.');
+    assert.equal(archive.observations[0]?.interpretations[0]?.text, 'The retained pause captured the dark theme before mutation.');
     assert.equal(selected.study?.historyOutcome, 'saved'); assert.equal(selected.study?.studyOutcome, 'demonstrated');
     assert.equal(selected.liveState, 'ready'); assert.equal(second.stopped, false); assert.equal(selected.model.continueArguments, undefined);
   } finally { release(); context.mock.restoreAll(); await harness.close(); context.mock.timers.reset(); }
@@ -3625,24 +3955,24 @@ test('a failed latest image checkpoint stays failed and partial while the older 
   // Arrange: the runtime is synthetic; canonical image reads and durable archive writes remain real.
   context.mock.timers.enable({ apis: ['setInterval'] });
   const harness = await workspaceHarness(), service = harness.service;
-  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+  const png = Buffer.from('synthetic-unit-test-pixels');
   let imagePath: string | undefined;
   try {
-    await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const record = [...service.records.values()][0]!; await record.preparation;
     await harness.reader.action('click');
     const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
-    imagePath = join(runtime.evidence.directory, 'paused-server.png'); await writeFile(imagePath, png);
-    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated', captures: { 'paused-server': { status: 'captured', file: 'paused-server.png', renderer: { epoch: 'test', id: 1, hash: sha256(png) } } } });
-    const snapshotUri = service.state(record).participants.server!.snapshotUri!;
-    await service.explain({ instanceId: service.instanceId, runId: record.id, key: 'saved-before-image-failure', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The original saved observation has price 24.' });
+    imagePath = join(runtime.evidence.directory, 'paused-browser.png'); await writeFile(imagePath, png);
+    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated', resourcesReleased: true, cleaned: true, operation: { ...originalView().operation!, afterVerified: true, continuedPause: runtime.snapshot!.pause }, captures: { ...originalView().captures, 'paused-browser': { status: 'captured', file: 'paused-browser.png', renderer: { epoch: 'test', id: 1, hash: sha256(png) } } } });
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!;
+    await service.explain({ instanceId: service.instanceId, runId: record.id, key: 'saved-before-image-failure', snapshotUri, sourceHash: sha256('const nextTheme = "dark";\n'), valuePaths: ['value:nextTheme'], interpretation: 'The original saved observation has price 24.' });
     await harness.reader.open(); await harness.reader.action('stop');
     const studyId = `${service.instanceId}_${record.id}`, directory = harness.reader.inspect().libraryDirectory!;
     const library = new LearningLibrary(directory, directory.split('/').at(-1)!), original = await library.readStudy(studyId);
-    const originalImage = original.captures.find(capture => capture.phase === 'paused-server');
+    const originalImage = original.captures.find(capture => capture.phase === 'paused-browser');
     assert.equal(original.terminal, true); assert.ok(originalImage?.status === 'captured'); assert.equal(originalImage.base64, png.toString('base64'));
     assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'demonstrated');
     // Act: a permitted post-stop explanation needs a new projection, but its canonical PNG is now corrupt.
-    await service.explain({ instanceId: service.instanceId, runId: record.id, key: 'late-after-image-failure', snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The later explanation also refers to the captured price 24.' });
+    await service.explain({ instanceId: service.instanceId, runId: record.id, key: 'late-after-image-failure', snapshotUri, sourceHash: sha256('const nextTheme = "dark";\n'), valuePaths: ['value:nextTheme'], interpretation: 'The later explanation also refers to the captured price 24.' });
     await writeFile(imagePath, 'corrupted canonical PNG');
     await assert.rejects(harness.reader.open(), /Captured image no longer matches its sealed hash/);
     await harness.reader.open();
@@ -3650,7 +3980,7 @@ test('a failed latest image checkpoint stays failed and partial while the older 
     const failed = harness.reader.inspect().view!, retained = await library.readStudy(studyId);
     assert.equal(service.state(record).historyOutcome.status, 'failed'); assert.equal(service.state(record).studyOutcome, 'partial');
     assert.equal(failed.study?.historyOutcome, 'failed'); assert.equal(failed.study?.studyOutcome, 'partial');
-    assert.equal(failed.model.observation?.snapshotUri, snapshotUri); assert.equal(failed.model.observation?.values.price, 24);
+    assert.equal(failed.model.observation?.snapshotUri, snapshotUri); assert.equal(failed.model.observation?.values['value:nextTheme'], 'dark');
     assert.equal(failed.model.observation?.interpretations.length, 1);
     assert.equal(failed.model.observation?.interpretations[0]?.text, 'The original saved observation has price 24.');
     assert.equal(failed.model.image?.status, 'captured'); assert.equal(failed.model.image?.base64, png.toString('base64'));
@@ -3665,59 +3995,8 @@ test('a failed latest image checkpoint stays failed and partial while the older 
     assert.equal(recovered.model.observation?.interpretations.length, 2);
     assert.equal(recovered.model.observation?.interpretations[1]?.text, 'The later explanation also refers to the captured price 24.');
     assert.equal(saved.observations[0]?.interpretations[1]?.text, 'The later explanation also refers to the captured price 24.');
-    assert.equal(recovered.model.observation?.values.price, 24); assert.equal(harness.runtimes.length, 1); assert.equal(runtime.dispatches, 1);
+    assert.equal(recovered.model.observation?.values['value:nextTheme'], 'dark'); assert.equal(harness.runtimes.length, 1); assert.equal(runtime.dispatches, 1);
   } finally { if (imagePath) await writeFile(imagePath, png); await harness.close(); context.mock.timers.reset(); }
-});
-
-test('a closed source file change marks prior understanding for review without changing the saved learner decision', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  try {
-    await harness.reader.understand(true);
-    const directory = harness.reader.inspect().libraryDirectory!, before = await readFile(join(directory, 'progress.v4.json'), 'utf8');
-    const updatesBefore = harness.counts().outlineUpdates;
-    assert.equal(harness.reader.inspect().view!.model.understoodCount, 1);
-    // Act: the editor has no open source document; the filesystem watcher owns this update.
-    await writeFile(join(harness.fixture, 'server.mts'), 'const price = 25;'); harness.changed();
-    await waitUntil(() => harness.reader.inspect().view!.model.reviewCount === 1, 'closed source review signal', 1_000);
-    // Assert
-    assert.equal(harness.reader.inspect().view!.model.understoodCount, 0);
-    assert.equal(await readFile(join(directory, 'progress.v4.json'), 'utf8'), before);
-    assert.equal(harness.reader.inspect().view!.model.source.hash, sha256('const price = 25;'));
-    assert.ok(harness.counts().outlineUpdates > updatesBefore, 'The closed reader still updates its installed outline');
-  } finally { await harness.close(); }
-});
-
-test('unsaved demo source edits take priority over installed disk bytes without rewriting learner history', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  try {
-    await harness.reader.understand(true); const library = await harness.reader.learningStorage(), decisions = (await library.readProgress()).decisions;
-    harness.addOpenSource('server.mts', 'const price = 26;');
-    // Act
-    harness.changed(); await waitUntil(() => harness.reader.inspect().view!.model.reviewCount === 1, 'unsaved installed source review', 1_000);
-    // Assert
-    const model = harness.reader.inspect().view!.model;
-    assert.equal(harness.watchedPatterns[0]?.base, harness.fixture);
-    assert.equal(model.source.text, 'const price = 26;'); assert.equal(await readFile(join(harness.fixture, 'server.mts'), 'utf8'), 'const price = 24;');
-    assert.equal(model.understoodCount, 0); assert.deepEqual((await library.readProgress()).decisions, decisions);
-  } finally { await harness.close(); }
-});
-
-test('returning to the original item while another source opens cannot display the obsolete source', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  try {
-    await harness.reader.open(); await harness.reader.select('paired-cart-demo/server'); const held = harness.holdNextSource();
-    const browserSelection = harness.reader.select('paired-cart-demo/browser'); await held.started;
-    // Act
-    const serverSelection = harness.reader.select('paired-cart-demo/server'); held.release();
-    await Promise.all([browserSelection, serverSelection]);
-    // Assert
-    assert.equal(harness.reader.inspect().view!.model.selection.itemId, 'paired-cart-demo/server');
-    assert.match(harness.reader.inspect().sourceUri!, /Captured-server\.mts$/);
-    assert.equal(harness.reader.inspect().view!.loading, false);
-  } finally { await harness.close(); }
 });
 
 test('reopening the reader restores a captured source tab after Close removed it', async () => {
@@ -3730,40 +4009,7 @@ test('reopening the reader restores a captured source tab after Close removed it
     await harness.reader.open();
     // Assert
     assert.equal(harness.groups[0]!.tabs.length, 1);
-    const input = harness.groups[0]!.activeTab!.input; assert.ok('uri' in input); assert.match(input.uri.toString(), /Captured-server\.mts$/);
-  } finally { await harness.close(); }
-});
-
-test('an obsolete source failure cannot clear the loading guard of its replacement', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  try {
-    await harness.reader.open(); const first = harness.holdNextSource();
-    const selecting = harness.reader.select('paired-cart-demo/browser'); await first.started;
-    const second = harness.holdNextSource(); const revealing = harness.reader.action('source');
-    await waitUntil(() => harness.reader.inspect().view!.revision >= 3, 'replacement selection', 1_000);
-    // Act
-    first.reject(new Error('Obsolete open failed')); await second.started;
-    // Assert: the replacement document is still unresolved.
-    const loading = harness.reader.inspect().view!.loading, errors = harness.reader.inspect().view!.errors;
-    second.release(); await Promise.all([selecting, revealing]);
-    assert.equal(loading, true); assert.equal(errors.some(error => error.includes('Obsolete open failed')), false);
-  } finally { await harness.close(); }
-});
-
-test('the first understanding command after reload applies to the restored item rather than the startup default', async () => {
-  // Arrange
-  const harness = await workspaceHarness(false);
-  try {
-    const key = sha256(await realpath(harness.directory));
-    const library = new LearningLibrary(join(harness.directory, 'storage/learning', key), key);
-    await library.select({ profile: 'paired-cart-demo', itemId: 'paired-cart-demo/browser', follow: false, tab: 'overview' });
-    // Act
-    await harness.reader.understand(true);
-    // Assert
-    const progress = await library.readProgress();
-    assert.equal(progress.decisions[0]!.item, 'paired-cart-demo/browser');
-    assert.equal(progress.decisions[0]!.sourceHash, sha256('const count = 1;'));
+    const input = harness.groups[0]!.activeTab!.input; assert.ok('uri' in input); assert.match(input.uri.toString(), /Captured-overview\.mts$/);
   } finally { await harness.close(); }
 });
 
@@ -3783,38 +4029,14 @@ test('Close during initialization prevents the pending Open from recreating read
   } finally { release(); context.mock.restoreAll(); await harness.close(); }
 });
 
-test('Close during service startup prevents the pending Run from launching execution afterward', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  let entered = () => {}, release = () => {};
-  const started = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
-  harness.controls.start = async () => { entered(); await held; return harness.service; };
-  try {
-    const running = harness.reader.action('run'); await started;
-    // Act
-    await harness.reader.close(); release();
-    await assert.rejects(running, /closed/);
-    // Assert
-    assert.equal(harness.service.records.size, 0); assert.equal(harness.reader.inspect().opened, false);
-  } finally { release(); await harness.close(); }
-});
-
-test('an unavailable current source cannot retain a current-understanding claim and restoring it recovers the saved decision', async () => {
+test('Study Run requires an editor-agent repository declaration and cannot launch an embedded target', async () => {
   // Arrange
   const harness = await workspaceHarness();
   try {
-    await harness.reader.understand(true);
-    const path = join(harness.fixture, 'server.mts');
-    // Act
-    await unlink(path); harness.changed();
-    await waitUntil(() => harness.reader.inspect().view!.errors.some(error => error.includes('unavailable')), 'unavailable source error', 1_000);
-    const unavailableCount = harness.reader.inspect().view!.model.understoodCount;
-    await writeFile(path, 'const price = 24;'); harness.changed();
-    await waitUntil(() => harness.reader.inspect().view!.errors.length === 0, 'restored source baseline', 1_000);
-    // Assert
-    assert.equal(unavailableCount, 0); assert.equal(harness.reader.inspect().view!.model.understoodCount, 1);
-    const directory = harness.reader.inspect().libraryDirectory!, progress = await new LearningLibrary(directory, directory.split('/').at(-1)!).readProgress();
-    assert.equal(progress.decisions.length, 1);
+    // Act / Assert
+    await assert.rejects(harness.reader.action('run'), /Ask your editor agent to prepare a study in the open repository/);
+    assert.equal(harness.service.records.size, 0);
+    assert.equal(harness.runtimes.length, 0);
   } finally { await harness.close(); }
 });
 
@@ -3825,45 +4047,19 @@ test('a slow archive writer does not delay inspection of the committed live paus
   const started = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
   context.mock.method(LearningLibrary.prototype, 'saveStudy', async function (this: LearningLibrary, study: Parameters<LearningLibrary['saveStudy']>[0]) { entered(); await held; return saveStudy.call(this, study); });
   try {
-    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, key: 'slow-library' });
+    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'slow-library' });
     await harness.service.record(receipt).preparation;
-    harness.service.action({ instanceId: harness.service.instanceId, runId: receipt.runId, action: 'add-to-cart', key: 'one' });
+    harness.service.action({ instanceId: harness.service.instanceId, runId: receipt.runId, action: 'repository-click', key: 'one' });
     // Act
     const opening = harness.reader.open(); await started;
     const inspectedWhileSaving = await waitUntil(() => {
       const view = harness.reader.inspect().view!;
-      return !view.loading && view.model.observation?.values.price === 24 && view.model.matching;
+      return !view.loading && view.model.observation?.values['value:nextTheme'] === 'dark' && view.model.matching;
     }, 'inspection independent of archive write', 1_000).catch(() => false);
     release(); await opening;
     // Assert
     assert.equal(inspectedWhileSaving, true);
   } finally { release(); context.mock.restoreAll(); await harness.close(); }
-});
-
-test('the latest saved-study choice wins when the earlier archive read completes first', async context => {
-  // Arrange
-  const harness = await workspaceHarness(), readCheckpoint = LearningLibrary.prototype.readCheckpoint;
-  let releaseFirst = () => {}, releaseLatest = () => {}, firstFinished = false, reads = 0;
-  const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; }), latestHeld = new Promise<void>(resolve => { releaseLatest = resolve; });
-  try {
-    const directory = harness.reader.inspect().libraryDirectory!, workspaceKey = directory.split('/').at(-1)!;
-    const library = new LearningLibrary(directory, workspaceKey), instanceId = randomUUID(), firstRun = randomUUID(), latestRun = randomUUID();
-    const firstId = `${instanceId}_${firstRun}`, latestId = `${instanceId}_${latestRun}`;
-    for (const runId of [firstRun, latestRun]) await library.saveStudy({ version: 2, workspaceKey, id: `${instanceId}_${runId}`, instanceId, runId, profile: 'paired-cart-demo', createdAt: '2026-09-18T10:00:00.000Z', savedAt: '2026-09-18T10:00:01.000Z', state: 'stopped', terminal: true, finalOutcome: 'partial', materialSignature: sha256('test-checkpoint'), observations: [], captures: [], links: [] });
-    await harness.reader.action('retry'); await harness.reader.open();
-    const revision = harness.reader.inspect().view!.revision;
-    context.mock.method(LearningLibrary.prototype, 'readCheckpoint', async function (this: LearningLibrary, id: string) {
-      reads++; await (id === firstId ? firstHeld : latestHeld);
-      const checkpoint = await readCheckpoint.call(this, id); if (id === firstId) firstFinished = true; return checkpoint;
-    });
-    // Act
-    harness.receive({ type: 'history', revision, studyId: firstId }); harness.receive({ type: 'history', revision, studyId: latestId });
-    await waitUntil(() => reads === 2, 'both accepted history reads', 1_000);
-    releaseFirst(); await waitUntil(() => firstFinished, 'earlier archive read', 1_000);
-    releaseLatest(); await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === latestId && !harness.reader.inspect().view!.loading, 'latest selected history', 1_000);
-    // Assert
-    assert.equal(harness.reader.inspect().view!.study!.id, latestId);
-  } finally { releaseFirst(); releaseLatest(); context.mock.restoreAll(); await harness.close(); }
 });
 
 test('a cold reader keeps the newer selected study and its observation when an older Retry read completes', async context => {
@@ -3876,13 +4072,13 @@ test('a cold reader keeps the newer selected study and its observation when an o
   try {
     const studyIds: string[] = [];
     for (const label of ['A', 'B']) {
-      await harness.reader.action('run'); const record = [...service.records.values()].at(-1)!; await record.preparation;
+      harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const record = [...service.records.values()].at(-1)!; await record.preparation;
       await harness.reader.action('click');
-      await service.explain({ instanceId: service.instanceId, runId: record.id, key: label, snapshotUri: service.state(record).participants.server!.snapshotUri!, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: `Study ${label} captured price 24.` });
+      await service.explain({ instanceId: service.instanceId, runId: record.id, key: label, snapshotUri: service.state(record).participants.browser.snapshotUri!, sourceHash: sha256('const nextTheme = "dark";\n'), valuePaths: ['value:nextTheme'], interpretation: `Study ${label} captured price 24.` });
       await harness.reader.action('stop'); studyIds.push(`${service.instanceId}_${record.id}`);
     }
     const firstStudyId = studyIds[0]!, secondStudyId = studyIds[1]!;
-    const secondSnapshotUri = service.state([...service.records.values()][1]!).participants.server!.snapshotUri!;
+    const secondSnapshotUri = service.state([...service.records.values()][1]!).participants.browser.snapshotUri!;
     await service.shutdown(); await harness.reader.retire(service); await harness.reader.dispose();
     cold = harness.createReader(); await cold.open();
     await cold['receive']({ type: 'history', revision: cold.inspect().view!.revision, studyId: firstStudyId }, 'context');
@@ -3905,12 +4101,12 @@ test('a cold reader keeps the newer selected study and its observation when an o
     assert.equal(selected.view!.model.selection.studyId, secondStudyId); assert.equal(selected.view!.study?.id, secondStudyId);
     assert.equal(selected.view!.model.observation?.snapshotUri, secondSnapshotUri);
     assert.equal(selected.view!.model.observation?.interpretations[0]?.text, 'Study B captured price 24.');
-    assert.equal(selected.view!.model.observation?.values.price, 24); assert.equal(selected.sourceUri, selectedSourceUri);
+    assert.equal(selected.view!.model.observation?.values['value:nextTheme'], 'dark'); assert.equal(selected.sourceUri, selectedSourceUri);
     assert.equal(selected.view!.loading, false); assert.equal(selected.view!.errors.length, 0); assert.equal(harness.runtimes.length, 2);
   } finally { release(); await retry?.catch(() => undefined); context.mock.restoreAll(); await cold?.dispose(); await harness.close(); context.mock.timers.reset(); }
 });
 
-test('a queued checkbox from a previous configured profile cannot change demo understanding or raise an error', async () => {
+test('a queued checkbox from a previous configured profile cannot change another article understanding or raise an error', async () => {
   // Arrange
   const harness = await workspaceHarness();
   try {
@@ -3927,69 +4123,6 @@ test('a queued checkbox from a previous configured profile cannot change demo un
   } finally { await harness.close(); }
 });
 
-for (const obsolete of [true, false]) test(`a delayed ${obsolete ? 'obsolete' : 'current'} outline failure ${obsolete ? 'cannot poison the selected study' : 'remains visible until a successful selection'}`, async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  let rejectReveal = (_error: Error) => {};
-  try {
-    await harness.reader.open();
-    await harness.reader['outlineRendering'];
-    const original = harness.outline.reveal;
-    harness.outline.reveal = async (itemId, options) => {
-      if (itemId === 'paired-cart-demo/browser') await new Promise<void>((_resolve, reject) => { rejectReveal = reject; });
-      else await original(itemId, options);
-    };
-    await harness.reader.select('paired-cart-demo/browser');
-    // Act: a native reveal settles after a newer profile may already have replaced its tree.
-    if (obsolete) await harness.reader.selectProfile('checkout-demo');
-    rejectReveal(new Error('Cannot resolve obsolete native tree item'));
-    await harness.reader['outlineRendering'];
-    // Assert
-    assert.equal(harness.reader.inspect().view?.errors.length, obsolete ? 0 : 1);
-    if (!obsolete) {
-      assert.match(harness.reader.inspect().view!.errors[0]!, /Cannot resolve obsolete native tree item/);
-      await harness.reader.select('paired-cart-demo/server');
-      await harness.reader['outlineRendering'];
-      assert.equal(harness.reader.inspect().view?.errors.length, 0);
-    }
-  } finally { rejectReveal(new Error('Test cleanup')); await harness.close(); }
-});
-
-test('selecting a browser moment updates the native outline without requesting keyboard focus', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  try {
-    await harness.reader.open(); assert.deepEqual(harness.outline.selection, ['paired-cart-demo/server']);
-    // Act
-    harness.receive({ type: 'select', revision: harness.reader.inspect().view!.revision, itemId: 'paired-cart-demo/browser' });
-    await waitUntil(() => harness.outline.selection[0] === 'paired-cart-demo/browser', 'native outline selection', 1_000);
-    // Assert
-    assert.equal(harness.reader.inspect().view!.model.selection.itemId, 'paired-cart-demo/browser');
-  } finally { await harness.close(); }
-});
-
-test('opening history revalidates its checkpoint after another writer leaves the cached catalog incomplete', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  try {
-    const directory = harness.reader.inspect().libraryDirectory!, workspaceKey = directory.split('/').at(-1)!;
-    const library = new LearningLibrary(directory, workspaceKey), instanceId = randomUUID(), runId = randomUUID(), studyId = `${instanceId}_${runId}`;
-    await library.saveStudy({ version: 2, workspaceKey, id: studyId, instanceId, runId, profile: 'paired-cart-demo', createdAt: '2026-09-18T10:00:00.000Z', savedAt: '2026-09-18T10:00:01.000Z', state: 'stopped', terminal: true, finalOutcome: 'demonstrated', materialSignature: sha256('persisted-projection'), observations: [], captures: [], links: [] });
-    await harness.reader.action('retry'); await harness.reader.open();
-    assert.equal(harness.reader.inspect().view!.studies[0]?.metadata, 'validated');
-    // Act: archive bytes remain readable, but the separately required metadata write is absent.
-    await unlink(join(directory, `${studyId}.study.meta.v2.json`));
-    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId });
-    await waitUntil(() => harness.reader.inspect().view!.model.selection.studyId === studyId && !harness.reader.inspect().view!.loading, 'incomplete selected checkpoint', 1_000);
-    // Assert
-    const selected = harness.reader.inspect().view!;
-    assert.equal(selected.study?.historyOutcome, 'failed'); assert.equal(selected.study?.studyOutcome, 'partial');
-    assert.equal(selected.studies[0]?.metadata, 'unavailable'); assert.ok(selected.errors.some(error => error.includes('checkpoint incomplete')));
-    await harness.reader.action('retry');
-    assert.equal(harness.reader.inspect().view!.study?.historyOutcome, 'saved'); assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'demonstrated');
-  } finally { await harness.close(); }
-});
-
 test('an obsolete failed history read cannot downgrade a newer verified reader or API checkpoint', async context => {
   // Arrange: the first read observes a real missing sidecar before a later read repairs and verifies it.
   context.mock.timers.enable({ apis: ['setInterval'] });
@@ -3998,13 +4131,15 @@ test('an obsolete failed history read cannot downgrade a newer verified reader o
   let olderSelection: Promise<void> | undefined;
   const held = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
   try {
-    await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const record = [...service.records.values()][0]!; await record.preparation;
     const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
-    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated' });
+    if (!runtime.snapshot) await harness.reader.action('click');
+    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated', resourcesReleased: true, cleaned: true, operation: { ...originalView().operation!, afterVerified: true, continuedPause: runtime.snapshot!.pause } });
     await harness.reader.open(); await harness.reader.action('stop');
     const studyId = `${service.instanceId}_${record.id}`, directory = harness.reader.inspect().libraryDirectory!;
     const library = new LearningLibrary(directory, directory.split('/').at(-1)!);
-    await unlink(join(directory, `${studyId}.study.meta.v2.json`));
+    await unlink(join(directory, `${studyId}.study.meta.v3.json`));
     context.mock.method(LearningLibrary.prototype, 'readCheckpoint', async function (this: LearningLibrary, id: string) {
       const checkpoint = await readCheckpoint.call(this, id);
       if (firstRead) { firstRead = false; assert.equal(checkpoint.status, 'failed'); entered(); await held; }
@@ -4012,9 +4147,9 @@ test('an obsolete failed history read cannot downgrade a newer verified reader o
     });
     const revision = harness.reader.inspect().view!.revision;
     // Act: await the message boundary directly so the obsolete read finishes before the assertions.
-    olderSelection = harness.reader['receive']({ type: 'history', revision, studyId }, 'context');
+    olderSelection = harness.reader['receive']({ type: 'history', revision, studyId }, 'moments');
     await started; await library.reconcile();
-    await harness.reader['receive']({ type: 'history', revision, studyId }, 'context');
+    await harness.reader['receive']({ type: 'history', revision, studyId }, 'moments');
     assert.equal(harness.reader.inspect().view!.study?.historyOutcome, 'saved');
     release(); await olderSelection.catch(() => undefined);
     // Assert
@@ -4031,39 +4166,24 @@ for (const retired of [false, true]) test(`failed disk verification downgrades a
   // Arrange
   const harness = await workspaceHarness(), service = harness.service;
   try {
-    await harness.reader.action('run'); const record = [...service.records.values()][0]!; await record.preparation;
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() }); const record = [...service.records.values()][0]!; await record.preparation;
     const runtime = harness.runtimes[0]!, originalView = runtime.view.bind(runtime);
-    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated' });
+    if (!runtime.snapshot) await harness.reader.action('click');
+    runtime.view = () => ({ ...originalView(), finalOutcome: 'demonstrated', resourcesReleased: true, cleaned: true, operation: { ...originalView().operation!, afterVerified: true, continuedPause: runtime.snapshot!.pause } });
     await harness.reader.open(); await harness.reader.action('stop');
     if (retired) { await service.shutdown(); await harness.reader.retire(service); }
     const studyId = `${service.instanceId}_${record.id}`;
     assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'demonstrated');
     // Act
-    await unlink(join(harness.reader.inspect().libraryDirectory!, `${studyId}.study.meta.v2.json`));
-    harness.receive({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId });
+    await unlink(join(harness.reader.inspect().libraryDirectory!, `${studyId}.study.meta.v3.json`));
+    await harness.reader['receive']({ type: 'history', revision: harness.reader.inspect().view!.revision, studyId }, 'moments');
     await waitUntil(() => harness.reader.inspect().view!.study?.historyOutcome === 'failed' && !harness.reader.inspect().view!.loading, 'failed current checkpoint verification', 1_000);
     // Assert
     assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'partial');
     if (!retired) assert.equal(service.state(record).studyOutcome, 'partial');
     await harness.reader.action('retry');
     assert.equal(harness.reader.inspect().view!.study?.historyOutcome, 'saved'); assert.equal(harness.reader.inspect().view!.study?.studyOutcome, 'demonstrated');
-  } finally { await harness.close(); }
-});
-
-test('repeated source edits replace the transient reader tab instead of accumulating revision tabs', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  try {
-    await harness.reader.open();
-    // Act
-    for (let revision = 0; revision < 40; revision++) {
-      const text = `const price = ${revision};`;
-      await writeFile(join(harness.fixture, 'server.mts'), text); harness.changed();
-      await waitUntil(() => harness.reader.inspect().sourceUri?.includes(sha256(text)) && !harness.reader.inspect().view!.loading, 'updated source reader', 1_000);
-    }
-    // Assert
-    assert.equal(harness.groups[0]!.tabs.length, 1);
-    const input = harness.groups[0]!.activeTab!.input; assert.ok('uri' in input); assert.match(input.uri.toString(), /Captured-server\.mts$/);
   } finally { await harness.close(); }
 });
 
@@ -4079,7 +4199,7 @@ test('an older successful save cannot erase the failed final archive from explic
     return saveStudy.call(this, study);
   });
   try {
-    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, key: 'retry-final' });
+    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'retry-final' });
     await harness.service.record(receipt).preparation;
     const opening = harness.reader.open(); await waitUntil(() => writes === 1, 'initial archive write', 1_000);
     // Act
@@ -4094,33 +4214,6 @@ test('an older successful save cannot erase the failed final archive from explic
     assert.equal((await library.readStudy(`${receipt.instanceId}_${receipt.runId}`)).terminal, true);
     assert.ok(writes >= 3, 'Retry attempted the pending final projection');
   } finally { releaseFirst(); releaseFinal(); context.mock.restoreAll(); await harness.close(); }
-});
-
-
-test('a coalesced newer checkpoint reports failure when its predecessor fails instead of remaining pending forever', async context => {
-  // Arrange
-  const harness = await workspaceHarness(), saveStudy = LearningLibrary.prototype.saveStudy;
-  let rejectFirst = () => {}, writes = 0;
-  const held = new Promise<void>((_resolve, reject) => { rejectFirst = () => reject(new Error('First checkpoint denied')); });
-  context.mock.method(LearningLibrary.prototype, 'saveStudy', async function (this: LearningLibrary, study: Parameters<LearningLibrary['saveStudy']>[0]) {
-    if (++writes === 1) await held;
-    return saveStudy.call(this, study);
-  });
-  try {
-    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, key: 'coalesced-failure' });
-    const record = harness.service.record(receipt); await record.preparation;
-    await harness.reader.open(); await waitUntil(() => writes === 1, 'initial held checkpoint', 1_000);
-    // Act
-    await harness.reader.action('click');
-    rejectFirst();
-    await waitUntil(() => harness.service.state(record).historyOutcome.status === 'failed', 'latest rejected checkpoint receipt', 1_000);
-    // Assert
-    assert.equal(writes, 1); assert.match(harness.service.state(record).historyOutcome.reason!, /latest checkpoint was not saved/);
-    assert.equal(harness.reader.inspect().view!.study?.historyOutcome, 'failed');
-    await harness.reader.action('retry');
-    assert.equal(harness.service.state(record).historyOutcome.status, 'saved');
-    assert.equal(harness.reader.inspect().view!.model.observation?.values.cartCount, 0);
-  } finally { rejectFirst(); context.mock.restoreAll(); await harness.close(); }
 });
 
 test('Close drains an accepted workbench arrangement batch without dispatching another layout change afterward', async () => {
@@ -4173,79 +4266,16 @@ for (const command of ['vscode.setEditorLayout']) test(`a host-suppressed ${comm
   } finally { await harness.close(); }
 });
 
-
-test('Retry saves the failed learner choice for its original item exactly once after selection changes', async context => {
-  // Arrange
-  const harness = await workspaceHarness(), decide = LearningLibrary.prototype.decide;
-  const attempts: Parameters<LearningLibrary['decide']>[0][] = [];
-  context.mock.method(LearningLibrary.prototype, 'decide', async function (this: LearningLibrary, intent: Parameters<LearningLibrary['decide']>[0]) {
-    attempts.push(intent);
-    if (attempts.length === 1) throw new Error('Understanding write denied');
-    return decide.call(this, intent);
-  });
-  try {
-    await harness.reader.open();
-    // Act
-    await assert.rejects(harness.reader.understand(true), /Understanding write denied/);
-    assert.equal(harness.reader.inspect().view!.model.selectedUnderstanding.understood, false);
-    await harness.reader.select('paired-cart-demo/browser');
-    await harness.reader.action('retry'); await harness.reader.action('retry');
-    // Assert
-    const directory = harness.reader.inspect().libraryDirectory!, library = new LearningLibrary(directory, directory.split('/').at(-1)!);
-    const progress = await library.readProgress();
-    assert.equal(progress.decisions.length, 1);
-    assert.equal(progress.decisions[0]!.item, 'paired-cart-demo/server');
-    assert.equal(progress.decisions[0]!.sourceHash, sha256('const price = 24;'));
-    assert.equal(progress.decisions[0]!.understood, true);
-    assert.equal(attempts[1]!.id, attempts[0]!.id);
-    assert.equal(harness.reader.inspect().view!.model.selectedUnderstanding.understood, false);
-    assert.equal(harness.reader.inspect().view!.model.understoodCount, 1);
-  } finally { context.mock.restoreAll(); await harness.close(); }
-});
-
-
-test('saved history and explicit understanding recovery remain available without current fixture files', async () => {
-  // Arrange
-  const harness = await workspaceHarness();
-  let cold: ReturnType<typeof harness.createReader> | undefined;
-  try {
-    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, key: 'offline-source' });
-    await harness.service.record(receipt).preparation;
-    harness.service.action({ instanceId: harness.service.instanceId, runId: receipt.runId, action: 'add-to-cart', key: 'one' });
-    await harness.service.shutdown(); await harness.reader.retire(harness.service); await harness.reader.dispose();
-    await unlink(join(harness.fixture, 'server.mts')); await unlink(join(harness.fixture, 'client.mts'));
-    // Act
-    cold = harness.createReader(); await cold.open();
-    // Assert
-    const view = cold.inspect().view!;
-    assert.equal(view.model.observation!.source.text, 'const price = 24;');
-    assert.equal(view.model.currentSourceAvailable, false);
-    assert.equal(view.model.understoodCount, 0);
-    assert.equal(view.model.continueArguments, undefined);
-    assert.match(cold.inspect().sourceUri!, /Captured-server\.mts$/);
-    assert.ok(view.errors.some(error => error.includes('unavailable')));
-    const directory = cold.inspect().libraryDirectory!;
-    await writeFile(join(directory, 'writer.lock'), 'Injected interrupted writer');
-    await assert.rejects(cold.understand(true), /locked/);
-    await unlink(join(directory, 'writer.lock')); await cold.action('retry');
-    const progress = await new LearningLibrary(directory, directory.split('/').at(-1)!).readProgress();
-    assert.equal(progress.decisions.length, 1);
-    assert.equal(progress.decisions[0]!.sourceHash, sha256('const price = 24;'));
-    assert.equal(cold.inspect().view!.model.currentSourceAvailable, false);
-    assert.equal(cold.inspect().view!.model.selectedUnderstanding.understood, true);
-  } finally { await cold?.dispose(); await harness.close(); }
-});
-
 test('an MCP source reveal rejects a host rendering failure instead of recording a successful reveal', async () => {
   // Arrange
   const harness = await workspaceHarness();
   let release = () => {};
   try {
-    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, key: 'reveal-failure' });
+    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'reveal-failure' });
     const record = harness.service.record(receipt); await record.preparation;
-    harness.service.action({ instanceId: harness.service.instanceId, runId: receipt.runId, action: 'add-to-cart', key: 'one' });
+    harness.service.action({ instanceId: harness.service.instanceId, runId: receipt.runId, action: 'repository-click', key: 'one' });
     await harness.reader.open();
-    const snapshot = harness.service.snapshot(record, harness.service.state(record).participants.server!.snapshotUri!);
+    const snapshot = harness.service.snapshot(record, harness.service.state(record).participants.browser.snapshotUri!);
     const held = harness.holdNextSource(); release = held.release;
     // Act
     const revealing = harness.reader.presentation.revealSource(snapshot, 'server.mts'); await held.started;
@@ -4260,7 +4290,7 @@ test('an MCP source reveal rejects a host rendering failure instead of recording
 async function configuredWorkspaceHarness(sourceText?: string) {
   const harness = await workspaceHarness(false), directory = await realpath(harness.directory), library = await harness.reader.learningStorage(), study = createConfiguredStudy(sourceText);
   const git = promisify(execFile);
-  await git('git', ['init', '--quiet', directory]); await mkdir(join(directory, 'src'));
+  await git('git', ['init', '--quiet', directory]); await mkdir(join(directory, 'src'), { recursive: true });
   for (const source of study.descriptor!.sources) await writeFile(join(directory, source.path), source.text);
   await git('git', ['add', '--', 'src'], { cwd: directory });
   const books = new RepositoryBookStore(new RepositorySourceService(directory), library);
@@ -4282,13 +4312,14 @@ async function configuredWorkspaceHarness(sourceText?: string) {
     async close() { await books.dispose(); await harness.close(); } };
 }
 
-test('configured Study sends captured facts without copying retained source bodies into its webviews', async () => {
+test('saved Study sends captured facts without copying retained source bodies into its webviews', async () => {
   // Arrange
   const harness = await configuredWorkspaceHarness();
   try {
     await harness.start();
     // Act
-    await harness.reader.action('click');
+    await harness.reader.action('click'); await harness.reader.action('stop');
+    await harness.reader.select('repository/interface/theme');
     const posted = harness.postedMessages().findLast(message => message.model.observation?.actionId === 'repository-click');
     // Assert: native/archive source stays intact while webview metadata remains sufficient.
     assert.ok(posted?.model.observation?.actionId === 'repository-click');
@@ -4297,46 +4328,6 @@ test('configured Study sends captured facts without copying retained source bodi
     assert.equal(harness.reader.inspect().view!.model.source.text, 'const nextTheme = "dark";\n');
     assert.equal(harness.reader.inspect().view!.model.observation!.source.text, 'const nextTheme = "dark";\n');
   } finally { await harness.close(); }
-});
-
-test('a delayed outline render from the previous profile stays inert after selecting a configured study', async () => {
-  // Arrange
-  const harness = await configuredWorkspaceHarness();
-  try {
-    await harness.start();
-    const current = harness.reader.inspect();
-    // Act: native TreeView may still request an item from the previous children list.
-    const stale = harness.outlineItem('checkout-demo/cart-mutation');
-    // Assert
-    assert.equal(stale.description, 'No longer in the selected study');
-    assert.equal(stale.command, undefined);
-    assert.equal(stale.checkboxState, undefined);
-    assert.deepEqual(harness.reader.inspect().view?.model.selection, current.view?.model.selection);
-    assert.equal(harness.reader.inspect().view?.errors.length, 0);
-    assert.equal(harness.outlineItem('repository/interface/theme').description, 'Not marked');
-  } finally { await harness.close(); }
-});
-
-test('closing during configured citation verification never reopens a captured source tab', async context => {
-  // Arrange
-  context.mock.timers.enable({ apis: ['setInterval'] });
-  const harness = await configuredWorkspaceHarness(), inspect = RepositorySourceService.prototype.inspect;
-  let release = () => {}, entered = () => {};
-  const held = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
-  let selection: Promise<void> | undefined;
-  try {
-    await harness.start(); await harness.reader.action('click'); await harness.reader.action('stop'); await harness.reader.selectProfile(PROFILE_ID);
-    context.mock.method(RepositorySourceService.prototype, 'inspect', async function (this: RepositorySourceService, ...arguments_: Parameters<typeof inspect>) {
-      const states = await inspect.apply(this, arguments_); entered(); await held; return states;
-    });
-    // Act
-    selection = harness.reader.selectProfile('repository-browser'); void selection.catch(() => undefined); await started;
-    await harness.reader.close(); release();
-    // Assert
-    await assert.rejects(selection, /workspace was closed/);
-    assert.equal(harness.reader.inspect().opened, false); assert.equal(harness.reader.inspect().sourceUri, undefined);
-    assert.equal(harness.groups.flatMap(group => group.tabs).length, 0);
-  } finally { release(); await selection?.catch(() => undefined); context.mock.restoreAll(); await harness.close(); context.mock.timers.reset(); }
 });
 
 test('configured captured and current native readers accept unchanged BOM and mixed line endings without changing retained bytes', async () => {
@@ -4426,7 +4417,7 @@ test('configured history rejects learner Run and only a fresh agent request crea
     const first = await harness.start(); await harness.reader.action('click'); await harness.reader.action('stop');
     // Act
     assert.equal(harness.reader.inspect().view!.canRun, false);
-    await assert.rejects(harness.reader.action('run'), /agent.*new configured study/i);
+    await assert.rejects(harness.reader.action('run'), /agent.*prepare a study in the open repository/i);
     assert.equal(harness.service.records.size, 1); assert.equal(harness.configuredRuntimes.length, 1);
     const second = await harness.start();
     // Assert
@@ -4560,8 +4551,8 @@ async function articleRecordingLayoutHarness(capturedApplication = false) {
     await harness.reader.close();
     harness.useNativeLayout({ orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
     const study = await library.readStudy(harness.studyId), observation = study.observations[0]!;
-    const binding: BookObservationBinding = { nodeId: 'cart', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
-    const origin: RepositorySelection = { bookId: 'architecture', revision: 1, nodeId: 'cart', anchorIndex: 0, location: { sectionIndex: 1, fraction: 0.65, focusId: 'evidence-0-recording' } };
+    const binding: BookObservationBinding = { nodeId: 'module', linkIndex: 0, studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash, itemId: observation.itemId, observationHash: bookObservationHash(observation), elapsedMs: observation.elapsedMs, outcome: study.finalOutcome };
+    const origin: RepositorySelection = { bookId: 'architecture', revision: 1, nodeId: 'module', anchorIndex: 0, location: { sectionIndex: 1, fraction: 0.65, focusId: 'evidence-0-recording' } };
     await library.selectRepository(origin);
     harness.controls.returnToRepository = async selection => { await harness.reader.arrangeRepository(new AbortController().signal, selection); };
     return { ...harness, library, binding, origin };
@@ -4581,8 +4572,9 @@ for (const recording of [false, true]) test(`Wiki ${recording ? 'recording' : 'o
     harness.resyncEditorGroups('empty');
     await harness.reader.openRepositoryEvidence(harness.binding, recording, undefined, harness.origin); await harness.controller.settle();
     // Assert
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
-    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.deepEqual(harness.editorLayout(), recording ? { orientation: 0, groups: [{ size: 1 }, { size: 1 }, { size: 1 }] } : { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+    // The existing third main group belongs to the learner; the sidebar does not authorize removing it.
+    assert.equal(harness.reader.presentationState().layoutConfirmed, !recording);
     if (recording) { assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.controller.state().mode, 'paused'); }
     assert.deepEqual(harness.groups.at(-1)!.tabs, []); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
     assert.equal(draft.document.getText(), 'Original learner draft.\n');
@@ -4628,10 +4620,13 @@ for (const recording of [false, true]) for (const mainGroups of [2, 3]) test(`ex
     // Act
     await harness.reader.open();
     // Assert
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
-    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
-    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
-    assert.equal(harness.groups.find(group => group.viewColumn === 4)!.tabs.includes(chat.tab), true);
+    assert.deepEqual(harness.editorLayout(), recording
+      ? mainGroups === 2 ? { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] } : { orientation: 0, groups: [{}, {}, {}] }
+      : { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+    assert.equal(harness.reader.presentationState().layoutConfirmed, !recording || mainGroups === 2);
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), recording ? undefined : 3);
+    if (recording) assert.equal(harness.summary.visible, true);
+    assert.equal(harness.groups.find(group => group.viewColumn === (recording ? mainGroups + 1 : 4))!.tabs.includes(chat.tab), true);
     assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] }); assert.equal(draft.document.getText(), 'Original learner draft.\n');
   } finally { await harness.close(); }
 });
@@ -4669,8 +4664,9 @@ for (const cursor of [false, true]) for (const shuffled of [false, true]) test(`
     assert.equal(harness.groups.find(group => group.viewColumn === 1)!.tabs.includes(draft.tab), true); assert.equal(draft.document.getText(), 'Original learner draft.\n');
     await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
     assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
-    assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
-    assert.equal(harness.groups.length, 4); assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true);
+    assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.summary.visible, true);
+    assert.equal(harness.groups.length, 3); assert.equal(harness.groups.find(group => group.viewColumn === 3)!.tabs.includes(chat.tab), true);
     assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
     assert.equal(harness.reader.inspect().view!.errors.length, 0);
   } finally { await harness.close(); }
@@ -4689,21 +4685,21 @@ for (const next of ['Return', 'retry', 'Close'] as const) test(`${next} after in
     await layout.started;
     const receipt = harness.holdNextCommand('vscode.getEditorLayout'); releaseReceipt = receipt.release;
     layout.release(); await receipt.started;
-    // Act: the grid is accepted, but no Context relocation has been issued yet.
+    // Act: the main grid is accepted, but its restoration receipt is still pending.
     if (next !== 'Close') cancellation.abort();
     const closing = next === 'Close' ? harness.reader.close() : undefined;
     receipt.release(); await rejected; await closing;
     // Assert
     if (next === 'Close') { assert.equal(harness.counts().panels, 0); assert.equal(harness.reader.inspect().opened, false); }
     else {
-      assert.equal(harness.panelColumn('codebook.studyContext'), 2);
+      assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
       if (next === 'Return') {
         await harness.reader.action('return-wiki');
         assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
         assert.equal(harness.groups.length, 3);
       }
       await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
-      assert.equal(harness.panelColumn('codebook.studyContext'), 3); assert.equal(harness.sourceColumn(), 2);
+      assert.equal(harness.panelColumn('codebook.studyContext'), undefined); assert.equal(harness.summary.visible, true); assert.equal(harness.sourceColumn(), 2);
       assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.reader.inspect().view!.errors.length, 0);
     }
     assert.equal(harness.groups.at(-1)!.tabs.includes(chat.tab), true); assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] });
@@ -4725,13 +4721,13 @@ for (const corrupt of [false, true]) test(`returning from ${corrupt ? 'a failed'
     await harness.reader.action('return-wiki');
     // Assert
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
-    assert.equal(harness.groups.length, 2); assert.equal(harness.panelColumn('codebook.studyContext'), 2);
+    assert.equal(harness.groups.length, 2); assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
     assert.equal(harness.groups[0]!.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
     assert.deepEqual((await library.readProgress()).decisions, decisions);
     assert.equal(harness.commands.filter(command => command === 'workbench.action.evenEditorWidths').length, equalizations);
     await writeFile(headerPath, header);
     await harness.reader.openRepositoryEvidence(binding, true, undefined, origin); await harness.controller.settle();
-    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.panelColumn('codebook.studyContext'), undefined); assert.equal(harness.summary.visible, true);
     assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
   } finally { await writeFile(headerPath, header); await harness.close(); }
 });
@@ -4780,17 +4776,18 @@ test('a proportional learner resize after Wiki Return remains authoritative on t
   } finally { await harness.close(); }
 });
 
-for (const change of ['resize', 'source move', 'context move', 'application move', 'foreign tab', 'foreign group', 'replaced group']) test(`actual article Return preserves a learner's ${change} after opening recording evidence`, async () => {
+for (const change of ['resize', 'source move', 'application move', 'foreign tab', 'foreign group', 'replaced group']) test(`actual article Return preserves a learner's ${change} after opening recording evidence`, async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness();
   try {
     await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
-    if (change === 'resize') harness.changeEditorLayout({ orientation: 1, groups: [{ size: 0.7 }, { size: 0.2 }, { size: 0.1 }] });
+    if (change === 'resize') harness.changeEditorLayout({ orientation: 1, groups: [{ size: 0.7 }, { size: 0.3 }] });
     if (change === 'source move') harness.moveSource(1);
-    if (change === 'context move') harness.movePanel('codebook.studyContext', 2);
     if (change === 'application move') harness.movePanel('codebook.scopedBrowser', 2);
+    // A new learner group is never a Codebook-owned destination.
+    if (change === 'foreign tab') { harness.groups.push({ viewColumn: 3, tabs: [] }); harness.changeEditorLayout({ orientation: 1, groups: [{ size: 0.4 }, { size: 0.4 }, { size: 0.2 }] }); }
     const draft = harness.addForeignDraft(change === 'foreign tab' ? 3 : 1);
-    if (change === 'foreign group') harness.groups.push({ viewColumn: 4, tabs: [] });
+    if (change === 'foreign group') harness.groups.push({ viewColumn: 3, tabs: [] });
     if (change === 'replaced group') harness.groups[0] = { ...harness.groups[0]! };
     const layout = harness.editorLayout(), groups = [...harness.groups], mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
     // Act
@@ -4802,20 +4799,20 @@ for (const change of ['resize', 'source move', 'context move', 'application move
   } finally { await harness.close(); }
 });
 
-for (const move of ['source', 'context']) test(`the next evidence visit preserves a manual ${move} move made after actual article Return`, async () => {
+for (const move of ['source', 'application']) test(`the next evidence visit preserves a manual ${move} move made after actual article Return`, async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness();
   try {
     await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
     await harness.reader.action('return-wiki');
-    if (move === 'source') harness.moveSource(1); else harness.movePanel('codebook.studyContext', 1);
+    if (move === 'source') harness.moveSource(1); else harness.movePanel('codebook.scopedBrowser', 2);
     const mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
     // Act
     await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
     // Assert
     assert.equal(harness.controller.state().readiness, 'ready');
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
-    assert.equal(move === 'source' ? harness.sourceColumn() : harness.panelColumn('codebook.studyContext'), 1);
+    assert.equal(move === 'source' ? harness.sourceColumn() : harness.panelColumn('codebook.scopedBrowser'), move === 'source' ? 1 : 2);
     assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, mutations);
   } finally { await harness.close(); }
 });
@@ -4828,7 +4825,7 @@ test('actual Return cannot consume another article origin when its native layout
     // Act
     await harness.reader.arrangeRepository(new AbortController().signal, { ...harness.origin, nodeId: 'another-article' });
     // Assert
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] });
     await harness.reader.action('return-wiki');
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
   } finally { await harness.close(); }
@@ -4871,13 +4868,13 @@ test('cancelling actual Return during its ownership read preserves Study and per
     const returning = harness.reader.arrangeRepository(cancellation.signal, harness.origin), rejected = assert.rejects(returning, /abort/i);
     await held.started; cancellation.abort(); held.release(); await rejected;
     // Assert
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] });
     await harness.reader.action('return-wiki');
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
   } finally { release(); await harness.close(); }
 });
 
-test('a new evidence visit drains a cancelled Return layout before restoring its three visible Study panes', async () => {
+test('a new evidence visit drains a cancelled Return layout before restoring its two main replay panes', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(), cancellation = new AbortController();
   let release = () => {};
@@ -4891,8 +4888,8 @@ test('a new evidence visit drains a cancelled Return layout before restoring its
     held.release(); await rejected; await opening; await harness.controller.settle();
     // Assert
     assert.equal(harness.controller.state().readiness, 'ready');
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
-    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] });
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1); assert.equal(harness.sourceColumn(), 2); assert.equal(harness.panelColumn('codebook.studyContext'), undefined); assert.equal(harness.summary.visible, true);
   } finally { release(); await harness.close(); }
 });
 
@@ -4913,7 +4910,7 @@ test('Close drains an accepted article Return without retaining a layout origin 
   } finally { release(); await harness.close(); }
 });
 
-test('a manual context move during the restored-layout receipt remains authoritative on the next evidence visit', async () => {
+test('a manual application move during the restored-layout receipt remains authoritative on the next evidence visit', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness();
   let releaseLayout = () => {}, releaseReceipt = () => {};
@@ -4923,10 +4920,10 @@ test('a manual context move during the restored-layout receipt remains authorita
     // Act
     const returning = harness.reader.action('return-wiki'); await layout.started;
     const receipt = harness.holdNextCommand('vscode.getEditorLayout'); releaseReceipt = receipt.release;
-    layout.release(); await receipt.started; harness.movePanel('codebook.studyContext', 1); receipt.release(); await returning;
+    layout.release(); await receipt.started; harness.movePanel('codebook.scopedBrowser', 2); receipt.release(); await returning;
     await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
     // Assert
-    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.panelColumn('codebook.studyContext'), 1);
+    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2);
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
   } finally { releaseLayout(); releaseReceipt(); await harness.close(); }
 });
@@ -4944,7 +4941,7 @@ test('cancelling a later article evidence visit keeps the previous actual Return
     await harness.reader.action('return-wiki');
     // Assert
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
-    assert.deepEqual((await harness.library.readProgress()).repositoryReturn?.selection, { bookId: 'architecture', revision: 1, nodeId: 'cart', anchorIndex: 0, location: { sectionIndex: 1, fraction: 0.65, focusId: 'evidence-0-recording' } });
+    assert.deepEqual((await harness.library.readProgress()).repositoryReturn?.selection, { bookId: 'architecture', revision: 1, nodeId: 'module', anchorIndex: 0, location: { sectionIndex: 1, fraction: 0.65, focusId: 'evidence-0-recording' } });
   } finally { release(); await harness.close(); }
 });
 
@@ -5024,14 +5021,14 @@ test('retrying a cancelled observation reentry retains the article layout from b
   } finally { release(); await harness.close(); }
 });
 
-for (const cursor of [false, true]) test(`${cursor ? 'Cursor: ' : ''}reentry can restore the source column accepted by Study before the article Return contracted its group`, async () => {
+for (const cursor of [false, true]) test(`${cursor ? 'Cursor: ' : ''}observation reentry can restore the source column accepted by Study before the article Return contracted its group`, async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness();
   if (cursor) harness.useCursorGroupWrappers();
   let release = () => {};
   try {
     const layout = harness.holdNextCommand('runCommands'); release = layout.release;
-    const opening = harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin);
+    const opening = harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
     await layout.started; harness.moveSource(3); layout.release(); await opening; await harness.controller.settle();
     assert.equal(harness.sourceColumn(), 3);
     await harness.reader.action('return-wiki'); assert.equal(harness.groups.length, 2);
@@ -5092,21 +5089,21 @@ test('cancelling during the accepted reentry layout read still lets actual Retur
     // Act
     const opening = harness.reader.openRepositoryEvidence(harness.binding, false, cancellation.signal, harness.origin), rejected = assert.rejects(opening, /abort/i);
     await before.started; const prepared = harness.holdNextCommand('vscode.getEditorLayout'); releasePrepared = prepared.release; before.release();
-    await prepared.started; assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    await prepared.started; assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
     cancellation.abort(); prepared.release(); await rejected; await harness.reader.action('return-wiki');
     // Assert
     assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 161 }, { size: 162 }] });
-    assert.equal(harness.groups.length, 2); assert.equal(harness.panelColumn('codebook.studyContext'), 2);
+    assert.equal(harness.groups.length, 2); assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
   } finally { releaseBefore(); releasePrepared(); await harness.close(); }
 });
 
-test('a source move during reentry loading overrides the previously planned source restoration', async () => {
+test('observation a source move during reentry loading overrides the previously planned source restoration', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness();
   let releaseLayout = () => {}, releaseSource = () => {};
   try {
     const layout = harness.holdNextCommand('runCommands'); releaseLayout = layout.release;
-    const initial = harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin);
+    const initial = harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
     await layout.started; harness.moveSource(3); layout.release(); await initial; await harness.controller.settle();
     await harness.reader.action('return-wiki'); assert.equal(harness.sourceColumn(), 2);
     const source = harness.holdNextSource(); releaseSource = source.release;
@@ -5151,11 +5148,11 @@ test('a manual pane move during a cancelled reentry layout read never becomes a 
     // Act
     const opening = harness.reader.openRepositoryEvidence(harness.binding, false, cancellation.signal, harness.origin), rejected = assert.rejects(opening, /abort/i);
     await before.started; const prepared = harness.holdNextCommand('vscode.getEditorLayout'); releasePrepared = prepared.release; before.release();
-    await prepared.started; harness.movePanel('codebook.studyContext', 1); cancellation.abort(); prepared.release(); await rejected;
+    await prepared.started; harness.movePanel('codebook.scopedBrowser', 2); cancellation.abort(); prepared.release(); await rejected;
     const mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
     await harness.reader.action('return-wiki');
     // Assert
-    assert.equal(harness.panelColumn('codebook.studyContext'), 1); assert.equal(harness.groups.length, 3);
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2); assert.equal(harness.groups.length, 2);
     assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, mutations);
   } finally { releaseBefore(); releasePrepared(); await harness.close(); }
 });
@@ -5191,23 +5188,24 @@ test('a manual grid change during reentry certification is never adopted as a Co
     const before = harness.holdNextCommand('vscode.getEditorLayout'); releaseBefore = before.release;
     // Act
     const opening = harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
+    const rejected = assert.rejects(opening, /learner layout changed/);
     await before.started; const prepared = harness.holdNextCommand('vscode.getEditorLayout'); releasePrepared = prepared.release; before.release();
-    await prepared.started; harness.changeEditorLayout({ orientation: 1, groups: [{ size: 111 }, { size: 222 }, { size: 333 }] });
+    await prepared.started; harness.changeEditorLayout({ orientation: 1, groups: [{ size: 111 }, { size: 222 }] });
     const mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
-    prepared.release(); await opening;
+    prepared.release(); await rejected;
     // Assert
-    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 111 }, { size: 222 }, { size: 333 }] });
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 111 }, { size: 222 }] });
     assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, mutations);
   } finally { releaseBefore(); releasePrepared(); await harness.close(); }
 });
 
-test('source placement accepted before cancellation survives Return and the next evidence visit', async () => {
+test('observation source placement accepted before cancellation survives Return and the next evidence visit', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(), cancellation = new AbortController();
   let release = () => {};
   try {
     const layout = harness.holdNextCommand('runCommands'); release = layout.release;
-    const initial = harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin);
+    const initial = harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
     await layout.started; harness.moveSource(3); layout.release(); await initial; await harness.controller.settle();
     await harness.reader.action('return-wiki'); assert.equal(harness.sourceColumn(), 2);
     harness.abortAfterNextSourceDisplay(cancellation);
@@ -5233,7 +5231,7 @@ for (const cursor of [false, true]) test(`${cursor ? 'Cursor: ' : ''}cancelling 
     const layout = harness.holdNextCommand('vscode.setEditorLayout'); release = layout.release;
     // Act
     const opening = harness.reader.openRepositoryEvidence(harness.binding, false, cancellation.signal, harness.origin), rejected = assert.rejects(opening, /abort/i);
-    await layout.started; assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    await layout.started; assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
     cancellation.abort(); layout.release(); await rejected;
     await harness.reader.action('return-wiki'); assert.equal(harness.groups.length, 2);
     await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
@@ -5264,7 +5262,8 @@ test('Cursor group creation preserves the article origin so actual Return restor
   const harness = await articleRecordingLayoutHarness(); harness.useCursorGroupWrappers();
   try {
     const originalGroups = [...harness.groups];
-    await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
+    // Observation entry creates the third main pane whose contraction this test exercises.
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
     assert.equal(harness.groups.length, 3); assert.equal(harness.groups[0] === originalGroups[0], false);
     // Act
     await harness.reader.action('return-wiki');
@@ -5279,7 +5278,8 @@ test('Cursor group contraction preserves pre-merge identities so the next eviden
   // Arrange
   const harness = await articleRecordingLayoutHarness();
   try {
-    await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
+    // Observation entry creates the third main pane whose contraction this test exercises.
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
     const previous = harness.groups[1]!, previousTabs = [...previous.tabs]; harness.useCursorGroupWrappers();
     // Act
     await harness.reader.action('return-wiki');
@@ -5293,11 +5293,12 @@ test('Cursor group contraction preserves pre-merge identities so the next eviden
   } finally { await harness.close(); }
 });
 
-for (const recording of [false, true]) test(`Cursor two-event contraction preserves error-free Return and separate application, source and context on ${recording ? 'recording' : 'observation'} reentry`, async () => {
+for (const recording of [false, true]) test(`Cursor two-event contraction preserves error-free Return and correct main panes and summary on ${recording ? 'recording' : 'observation'} reentry`, async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(); harness.useCursorGroupWrappers(true);
   try {
-    await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
+    // Observation entry creates the third main pane whose contraction this test exercises.
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
     const previousGroups = [...harness.groups], previousTabs = previousGroups.map(group => [...group.tabs]);
     // Act
     await harness.reader.action('return-wiki');
@@ -5307,13 +5308,14 @@ for (const recording of [false, true]) test(`Cursor two-event contraction preser
     await harness.reader.openRepositoryEvidence(harness.binding, recording, undefined, harness.origin); await harness.controller.settle();
     // Assert
     assert.deepEqual({ returnErrorCount, appColumn: harness.panelColumn('codebook.scopedBrowser'), sourceColumn: harness.sourceColumn(), contextColumn: harness.panelColumn('codebook.studyContext') },
-      { returnErrorCount: 0, appColumn: 1, sourceColumn: 2, contextColumn: 3 });
-    assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
+      { returnErrorCount: 0, appColumn: 1, sourceColumn: 2, contextColumn: recording ? undefined : 3 });
+    assert.deepEqual(harness.editorLayout(), recording ? { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] } : { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] });
     assert.equal(harness.reader.inspect().view!.errors.length, 0);
-    const application = harness.groups.find(group => group.viewColumn === 1)!.activeTab?.input, source = harness.groups.find(group => group.viewColumn === 2)!.activeTab?.input, context = harness.groups.find(group => group.viewColumn === 3)!.activeTab?.input;
+    const application = harness.groups.find(group => group.viewColumn === 1)!.activeTab?.input, source = harness.groups.find(group => group.viewColumn === 2)!.activeTab?.input, context = harness.groups.find(group => group.viewColumn === 3)?.activeTab?.input;
     assert.ok(application && 'viewType' in application); assert.equal(application.viewType, 'codebook.scopedBrowser');
     assert.ok(source && 'uri' in source); assert.equal(source.uri.toString(), harness.reader.inspect().sourceUri);
-    assert.ok(context && 'viewType' in context); assert.equal(context.viewType, 'codebook.studyContext');
+    if (recording) { assert.equal(context, undefined); assert.equal(harness.summary.visible, true); }
+    else { assert.ok(context && 'viewType' in context); assert.equal(context.viewType, 'codebook.studyContext'); }
   } finally { await harness.close(); }
 });
 
@@ -5336,7 +5338,8 @@ test('Cursor group creation cannot make a fourth learner group eligible for arti
   // Arrange
   const harness = await articleRecordingLayoutHarness(); harness.useCursorGroupWrappers();
   try {
-    await harness.reader.openRepositoryEvidence(harness.binding, true, undefined, harness.origin); await harness.controller.settle();
+    // Observation entry creates the third main pane whose contraction this test exercises.
+    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
     harness.groups.push({ viewColumn: 4, tabs: [] }); const draft = harness.addForeignDraft(4); harness.resyncEditorGroups();
     const layout = harness.editorLayout(), mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
     // Act
@@ -5433,37 +5436,12 @@ for (const retirement of ['cancel', 'Close'] as const) test(`${retirement} durin
   } finally { release(); await harness.close(); }
 });
 
-for (const newer of ['selection', 'Open'] as const) test(`a newer ${newer} prevents a superseded observation entry from revealing its application`, async () => {
-  // Arrange
-  const harness = await articleRecordingLayoutHarness(true);
-  let release = () => {};
-  try {
-    await harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin); await harness.reader.action('return-wiki');
-    const readingGroup = harness.groups.find(group => group.viewColumn === 1)!;
-    readingGroup.activeTab = readingGroup.tabs.find(tab => 'uri' in tab.input && tab.input.uri.path.endsWith('/article-source.ts'));
-    const source = harness.holdNextSource(); release = source.release;
-    const reveals = harness.panelReveals().filter(reveal => reveal.kind === 'codebook.scopedBrowser').length;
-    const opening = harness.reader.openRepositoryEvidence(harness.binding, false, undefined, harness.origin);
-    const finished = newer === 'selection' ? assert.rejects(opening, /superseded/) : opening;
-    await source.started;
-    // Act
-    const latest = newer === 'selection' ? harness.reader.select('paired-cart-demo/browser') : harness.reader.open();
-    if (newer === 'selection') await waitUntil(() => harness.reader.inspect().view?.model.selection.itemId === 'paired-cart-demo/browser', 'newer learner selection', 1_000);
-    else await latest;
-    source.release(); await finished; await latest;
-    // Assert
-    assert.equal(harness.panelReveals().filter(reveal => reveal.kind === 'codebook.scopedBrowser').length, reveals);
-    const visible = harness.groups.find(group => group.viewColumn === 1)!.activeTab?.input;
-    assert.ok(visible && 'uri' in visible); assert.equal(visible.uri.path.endsWith('/article-source.ts'), true);
-  } finally { release(); await harness.close(); }
-});
-
 for (const separatePart of [false, true]) for (const primaryContent of ['application only', 'unrelated draft'] as const) test(`mode transfers retain native destination groups with ${primaryContent} and ${separatePart ? 'a separate chat part' : 'one editor part'}`, async () => {
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   const chat = separatePart ? harness.addSeparateEditorPart() : undefined;
   try {
-    await harness.reader.open(); await harness.reader.understand(true);
+    await openRetainedStudy(harness); await harness.reader.understand(true);
     const primary = harness.groups.find(group => group.viewColumn === 1)!;
     primary.tabs = primary.tabs.filter(tab => 'viewType' in tab.input);
     const draft = primaryContent === 'unrelated draft' ? harness.addForeignDraft(1) : undefined;
@@ -5487,14 +5465,15 @@ for (const separatePart of [false, true]) for (const primaryContent of ['applica
   } finally { await harness.close(); }
 });
 
-for (const mode of ['study-workspace', 'living-book', 'guided-walkthrough'] as const) test(`explicit ${mode} reentry confirms the retained layout after its pending replay source becomes ready`, async () => {
+for (const mode of ['study-workspace', 'living-book', 'guided-walkthrough'] as const) test(`replay reentry after ${mode} request confirms only the current layout when its source becomes ready`, async () => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   let releaseSource = () => {};
   try {
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
     const state = harness.reader.presentationState();
-    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' });
+    if (mode === 'study-workspace') await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' });
+    else assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' }), { code: 'PRESENTATION_UNAVAILABLE' });
     const source = harness.reader.inspect().sourceUri, bundle = harness.controller.bundle(), progress = await (await harness.reader.learningStorage()).readProgress();
     const pendingSource = harness.holdNextSource(); releaseSource = pendingSource.release;
     // Act: native app visibility rehydrates the same replay while its source remains pending.
@@ -5504,8 +5483,8 @@ for (const mode of ['study-workspace', 'living-book', 'guided-walkthrough'] as c
     assert.equal(harness.reader.presentationState().layoutConfirmed, false);
     pendingSource.release(); await harness.controller.settle();
     assert.equal((await harness.reader.readPresentationState()).layoutConfirmed, true);
-    assert.equal(harness.reader.presentationState().mode, mode);
-    assert.deepEqual({ ...harness.reader.presentationState().panes }, mode === 'living-book' ? { appColumn: 2, sourceColumn: 3, contextColumn: 1 } : { appColumn: 1, sourceColumn: 2, contextColumn: 3 });
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    assert.deepEqual({ ...harness.reader.presentationState().panes }, { appColumn: 1, sourceColumn: 2, contextColumn: undefined });
     assert.equal(harness.reader.inspect().sourceUri, source); assert.equal(harness.controller.bundle(), bundle);
     assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.controller.state().mode, 'paused');
     assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
@@ -5520,13 +5499,13 @@ for (const change of ['layout', 'groups'] as const) test(`replay readiness after
   try {
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
     const state = harness.reader.presentationState();
-    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
     const draft = harness.addForeignDraft(1);
     const pendingSource = harness.holdNextSource(); releaseSource = pendingSource.release;
     harness.controller.hide(); harness.controller.reveal(); await pendingSource.started;
     await harness.reader.open();
     // Act: later learner ownership must outrank the retained placement when replay finishes.
-    if (change === 'layout') harness.changeEditorLayout({ orientation: 0, groups: [{ size: 8 }, { size: 2, groups: [{ size: 1 }, { size: 1 }] }] });
+    if (change === 'layout') harness.changeEditorLayout({ orientation: 1, groups: [{ size: 8 }, { size: 2 }] });
     else harness.resyncEditorGroups('replace');
     const manualLayout = harness.editorLayout();
     pendingSource.release(); await harness.controller.settle();
@@ -5543,7 +5522,7 @@ test('all three presentation modes preserve source, learning item and learner de
   const harness = await workspaceHarness(false);
   harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
-    await harness.reader.open(); await harness.reader.understand(true);
+    await openRetainedStudy(harness); await harness.reader.understand(true);
     const initial = harness.reader.inspect(), library = await harness.reader.learningStorage(), progress = await library.readProgress();
     const app = harness.reader['app'], context = harness.reader['contextPanel'];
     const draft = harness.addForeignDraft(1);
@@ -5592,23 +5571,20 @@ test('enlarging a recorded application targets its owned pane and retains the pa
   } finally { release(); await harness.close(); }
 });
 
-test('enlarging the explanation waits for its owned pane before changing the native group', async () => {
+test('replay refuses retired explanation enlargement without changing native layout or evidence', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
-  let release = () => {};
   try {
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
-    await harness.reader.action('focus-app');
-    harness.deferPanelFocus('codebook.studyContext', 1);
-    const maximize = harness.holdNextCommand('workbench.action.toggleMaximizeEditorGroup'); release = maximize.release;
-    // Act
-    const enlarging = harness.reader.action('enlarge-context'); await maximize.started;
-    // Assert
-    assert.equal(harness.focusedPanel(), 'codebook.studyContext'); assert.equal(harness.innerFocusedPanel(), 'codebook.studyContext');
-    maximize.release(); await enlarging;
-    assert.equal(harness.commands.filter(command => command === 'workbench.action.toggleMaximizeEditorGroup').length, 1);
+    const commands = harness.commands.length, playback = harness.controller.state(), panels = harness.nativePanels();
+    // Act / Assert
+    await assert.rejects(harness.reader.action('enlarge-context'), /Open a study explanation/);
+    assert.equal(harness.commands.length, commands);
+    assert.deepEqual(harness.controller.state(), playback);
+    assert.deepEqual(harness.nativePanels(), panels);
+    assert.equal(harness.summary.visible, true);
     assert.equal(harness.runtimes[0]!.dispatches, 1);
-  } finally { release(); await harness.close(); }
+  } finally { await harness.close(); }
 });
 
 test('Restore layout after enlarging the app waits for Study focus without losing recorded evidence', async () => {
@@ -5722,7 +5698,7 @@ test('the Study header Restore exits a maximized pane while keeping the settled 
   } finally { await harness.close(); }
 });
 
-test('switching Enlarge between Study panes keeps the target maximized and Restore preserves the recording', async () => {
+test('reading the sidebar beside an enlarged application preserves replay and restores the same source', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
@@ -5731,8 +5707,8 @@ test('switching Enlarge between Study panes keeps the target maximized and Resto
     const panels = harness.nativePanels(), bundle = harness.controller.bundle();
     await harness.reader.action('enlarge-app');
     assert.equal(harness.maximizedEditorGroup(), true);
-    await harness.reader.action('enlarge-context');
-    assert.equal(harness.focusedPanel(), 'codebook.studyContext'); assert.equal(harness.maximizedEditorGroup(), true);
+    await harness.reader.action('read-context');
+    assert.equal(harness.summary.visible, true); assert.equal(harness.maximizedEditorGroup(), true);
     await harness.reader.action('enlarge-app');
     assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser'); assert.equal(harness.maximizedEditorGroup(), true);
     // Restore must not need to reopen source after Enlarge changes only geometry.
@@ -5755,7 +5731,7 @@ test('Restore layout repairs changed native proportions instead of certifying th
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
     await harness.reader.action('enlarge-app');
     const mutations = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
-    harness.changeEditorLayout({ orientation: 0, groups: [{ size: 0.6, groups: [{ size: 0.7 }, { size: 0.3 }] }, { size: 0.4 }] });
+    harness.changeEditorLayout({ orientation: 0, groups: [{ size: 0.7 }, { size: 0.3 }] });
     // Act
     await harness.reader.action('arrange');
     // Assert
@@ -5765,21 +5741,23 @@ test('Restore layout repairs changed native proportions instead of certifying th
   } finally { await harness.close(); }
 });
 
-test('restoring a settled recording keeps its playhead until the replacement pane is ready', async () => {
+test('restoring a settled recording retains its application pane and confirmed playhead', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
-    const before = harness.controller.bundle(), playback = harness.controller.state();
-    let revisionAtNewPane: number | undefined;
-    harness.onNextPanel('codebook.scopedBrowser', () => { revisionAtNewPane = harness.controller.state().revision; });
+    const before = harness.controller.bundle(), playback = harness.controller.state(), panels = harness.nativePanels();
+    let replacementCreated = false;
+    harness.onNextPanel('codebook.scopedBrowser', () => { replacementCreated = true; });
     const state = harness.reader.presentationState();
 
     // Act
     await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: state.mode, action: 'restore' });
 
     // Assert
-    assert.equal(revisionAtNewPane, playback.revision);
+    assert.equal(replacementCreated, false);
+    assert.deepEqual(harness.nativePanels(), panels);
+    assert.equal(harness.controller.state().revision, playback.revision);
     assert.equal(harness.reader.presentationState().layoutConfirmed, true);
     assert.equal(harness.controller.bundle(), before);
     assert.equal(harness.controller.state().presentedMs, playback.presentedMs);
@@ -5805,7 +5783,7 @@ for (const focus of ['application', 'source'] as const) for (const reading of ['
   } finally { await harness.close(); }
 });
 
-for (const focus of ['application', 'source', 'explanation'] as const) test(`paused replay preserves manually scrolled source context through all ${focus}-focused mode transfers`, async () => {
+for (const focus of ['application', 'source', 'summary'] as const) test(`paused replay preserves manually scrolled source context through repeated ${focus}-focused layout restoration`, async () => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
@@ -5815,11 +5793,11 @@ for (const focus of ['application', 'source', 'explanation'] as const) test(`pau
     harness.retainReadingRange(40, 52);
     const bundle = harness.controller.bundle(), source = harness.reader.inspect().sourceUri;
     // Act
-    for (const mode of ['living-book', 'guided-walkthrough', 'study-workspace'] as const) {
+    for (const attempt of [1, 2, 3]) {
       const state = harness.reader.presentationState();
-      await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' });
-      // Assert: every transfer keeps the off-selection context, not merely the last transfer in the sequence.
-      assert.equal(harness.isReadingLineVisible(46), true);
+      await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
+      // Assert: every restoration keeps the learner-selected reading context.
+      assert.equal(harness.isReadingLineVisible(46), true, `Restoration ${attempt} preserves the reading position.`);
       assert.equal(harness.reader.presentationState().layoutConfirmed, true);
       assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 100);
       assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.reader.inspect().sourceUri, source);
@@ -5832,7 +5810,7 @@ test('Living book to Guided walkthrough retains evidence and focus when native m
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
-    await harness.reader.open(); await harness.reader.understand(true);
+    await openRetainedStudy(harness); await harness.reader.understand(true);
     const initial = harness.reader.presentationState();
     await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
     await harness.reader.action('focus-context');
@@ -5854,7 +5832,7 @@ for (const [pane, kind] of [['app', 'codebook.scopedBrowser'], ['contextPanel', 
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   let release = () => {}, transfer: Promise<unknown> | undefined;
   try {
-    await harness.reader.open(); await harness.reader.understand(true);
+    await openRetainedStudy(harness); await harness.reader.understand(true);
     const initial = harness.reader.presentationState();
     await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
     await harness.reader.action(kind === 'codebook.scopedBrowser' ? 'focus-app' : 'focus-context');
@@ -5910,7 +5888,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`mo
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   let release = () => {};
   try {
-    await harness.reader.open(); await harness.reader.understand(true);
+    await openRetainedStudy(harness); await harness.reader.understand(true);
     await harness.reader.action(kind === 'codebook.scopedBrowser' ? 'focus-app' : 'focus-context');
     const before = harness.reader.inspect(), decisions = await (await harness.reader.learningStorage()).readProgress();
     const held = harness.holdTextFocusClear(kind); release = held.release;
@@ -5965,7 +5943,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext']) test(`St
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   let release = () => {}, transfer: Promise<unknown> | undefined;
   try {
-    await harness.reader.open(); await harness.reader.understand(true);
+    await openRetainedStudy(harness); await harness.reader.understand(true);
     const initial = harness.reader.presentationState();
     await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
     await harness.reader.action(kind === 'codebook.scopedBrowser' ? 'focus-app' : 'focus-context');
@@ -6068,7 +6046,7 @@ for (const replacement of ['wrapper', 'opened', 'unannounced'] as const) test(`s
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
-    await harness.reader.open(); await harness.reader.understand(true);
+    await openRetainedStudy(harness); await harness.reader.understand(true);
     const initial = harness.reader.presentationState();
     await harness.reader.changePresentation({ presentationId: initial.presentationId, expectedRevision: initial.presentationControlRevision, mode: 'living-book', action: 'select' });
     await harness.reader.action('focus-context');
@@ -6093,7 +6071,7 @@ test('mode transfer waits for replacement-pane registration before treating the 
   // Arrange
   const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
-    await harness.reader.open(); await harness.reader.action('focus-app'); await harness.reader.understand(true);
+    await openRetainedStudy(harness); await harness.reader.action('focus-app'); await harness.reader.understand(true);
     const before = harness.reader.inspect(), decisions = await (await harness.reader.learningStorage()).readProgress(), draft = harness.addForeignDraft();
     harness.delayPanelRegistration('codebook.studyContext', true);
     const state = harness.reader.presentationState();
@@ -6164,7 +6142,7 @@ test('switching presentation waits for restored application focus before confirm
   } finally { await harness.close(); }
 });
 
-test('a missing final application-focus receipt rejects once without retrying focus or losing retained evidence', async context => {
+test('a missing explicit replay-focus receipt rejects once without retrying focus or losing retained evidence', async context => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
@@ -6174,23 +6152,23 @@ test('a missing final application-focus receipt rejects once without retrying fo
     const source = harness.reader.inspect().sourceUri, bundle = harness.controller.bundle(), library = await harness.reader.learningStorage();
     const decisions = (await library.readProgress()).decisions, draft = harness.addForeignDraft();
     let focusRequests = 0, placedLayout: unknown;
-    harness.onNextPanel('codebook.scopedBrowser', app => {
+    const app = harness.reader['app']; assert.ok(app);
+    {
       const post = app.webview.postMessage.bind(app.webview);
       context.mock.method(app.webview, 'postMessage', (message: Parameters<typeof post>[0]) => {
         if (message.type === 'codebook-focus' && message.phase === 'commit') { focusRequests++; placedLayout ??= harness.editorLayout(); return Promise.resolve(true); }
         return post(message);
       });
-    });
+    }
     const state = harness.reader.presentationState();
     // Act
-    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), {
+    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'focus' }), {
       code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Timed out waiting for owned presentation inner focus',
     });
-    // Assert: an applied grid remains unconfirmed; failure cannot claim the new mode or rewrite learner evidence.
+    // Assert: failed focus cannot change layout, select another mode or rewrite learner evidence.
     assert.equal(focusRequests, 1, 'One failed final restore must not trigger a second full focus wait');
     assert.equal(harness.reader.presentationState().mode, 'study-workspace');
-    assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().state, 'open');
-    assert.equal(harness.reader.presentationState().reason, 'Error: Timed out waiting for owned presentation inner focus');
+    assert.equal(harness.reader.presentationState().layoutConfirmed, state.layoutConfirmed); assert.equal(harness.reader.presentationState().state, 'open');
     assert.equal(harness.presentationPreferences.size, 0); assert.deepEqual(harness.editorLayout(), placedLayout);
     assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 100);
     assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.reader.inspect().sourceUri, source);
@@ -6237,40 +6215,33 @@ test('an unchanged learner draft restores its reading pose and remains dirty', a
   } finally { await harness.close(); }
 });
 
-test('a retained source hidden after replay refresh rejects presentation without replacing the foreign draft', async () => {
+test('restoring replay preserves a learner draft opened over historical source during layout measurement', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
-  let releaseLayout = () => {}, releaseImage = () => {};
+  let release = () => {};
   try {
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
     harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
-    await harness.reader.understand(true); await harness.reader.action('focus-context'); harness.retainReadingRange(40, 52);
+    await harness.reader.understand(true); await harness.reader.action('read-source');
     const source = harness.reader.inspect().sourceUri, bundle = harness.controller.bundle(), library = await harness.reader.learningStorage();
-    const decisions = (await library.readProgress()).decisions, layout = harness.holdNextCommand('vscode.setEditorLayout'); releaseLayout = layout.release;
+    const progress = await library.readProgress(), layout = harness.holdNextCommand('vscode.getEditorLayout'); release = layout.release;
     const state = harness.reader.presentationState();
-    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
-    const rejected = assert.rejects(transfer, {
-      code: 'PRESENTATION_UNAVAILABLE', causeDetail: 'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
-    });
-    await layout.started;
-    // Hold the second replay paint, after its source reveal, while the owned source anchor remains focused.
-    const image = harness.holdNextImage(); releaseImage = image.release; layout.release(); await image.started;
-    const sourceGroup = harness.groups.find(group => group.viewColumn === harness.sourceColumn()); assert.ok(sourceGroup);
-    const draft = harness.addForeignDraft(sourceGroup.viewColumn), placedLayout = harness.editorLayout();
-    // Act: a learner-owned tab hides the retained source while the replay paint is pending.
-    sourceGroup.activeTab = draft; image.release(); await rejected;
+    const restoring = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
+    const rejected = assert.rejects(restoring, /focus|pane|tab/i); await layout.started;
+    // Act: the newer draft owns the historical source's group before measurement returns.
+    const draft = harness.focusMutableDraft('replay-reading-notes.txt', 2), placedLayout = harness.editorLayout();
+    const commands = [...harness.commands], reveals = harness.panelReveals();
+    layout.release(); await rejected;
     // Assert
-    assert.equal(sourceGroup.activeTab, draft); assert.equal(sourceGroup.tabs.includes(draft), true); assert.equal(draft.isDirty, true);
-    assert.deepEqual(harness.editorLayout(), placedLayout); assert.equal(harness.focusedPanel(), undefined);
-    assert.equal(harness.reader.presentationState().mode, 'study-workspace');
-    assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.reader.presentationState().state, 'open');
-    assert.equal(harness.reader.presentationState().reason, 'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.');
-    assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(draft.editor.group.activeTab, draft.tab); assert.equal(draft.tab.isDirty, true);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    assert.deepEqual(harness.editorLayout(), placedLayout); assert.deepEqual(harness.commands, commands); assert.deepEqual(harness.panelReveals(), reveals);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false); assert.equal(harness.presentationPreferences.size, 0);
     assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 100);
     assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.reader.inspect().sourceUri, source);
-    assert.equal(harness.displayedImage(), harness.png.toString('base64')); assert.deepEqual((await library.readProgress()).decisions, decisions);
+    assert.equal(harness.displayedImage(), harness.png.toString('base64')); assert.deepEqual(await library.readProgress(), progress);
     assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
-  } finally { releaseLayout(); releaseImage(); await harness.close(); }
+  } finally { release(); await harness.close(); }
 });
 
 test('moving a presentation retains both measured axes when native pane creation flattens the grid', async () => {
@@ -6286,27 +6257,6 @@ test('moving a presentation retains both measured axes when native pane creation
     // Assert
     assert.deepEqual(harness.editorLayout(), { orientation: 0, groups: [{ size: 384 }, { size: 256, groups: [{ size: 154 }, { size: 154 }] }] });
     assert.equal(harness.reader.presentationState().layoutConfirmed, true);
-  } finally { await harness.close(); }
-});
-
-test('restoring a presentation clears its previous failure while retaining an unrelated control error', async () => {
-  // Arrange
-  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
-  try {
-    await harness.reader.open();
-    harness.receive({ type: 'select', revision: harness.reader.inspect().view!.revision + 1, itemId: 'checkout-demo/cart-mutation' });
-    await waitUntil(() => harness.reader.inspect().view!.errors.some(error => error.includes('displayed study changed')), 'unrelated control diagnostic', 1_000);
-    harness.failNextCommand('vscode.setEditorLayout');
-    let state = harness.reader.presentationState();
-    harness.receive({ type: 'presentation', revision: harness.reader.inspect().view!.revision, presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
-    await waitUntil(() => harness.reader.inspect().view!.errors.some(error => error.includes('presentation was not confirmed')), 'presentation failure diagnostic', 1_000);
-    state = harness.reader.presentationState();
-    // Act
-    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'restore' });
-    // Assert
-    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
-    assert.equal(harness.reader.presentationState().reason, undefined);
-    assert.deepEqual([...harness.reader.inspect().view!.errors], ['Error: The displayed study changed. Inspect the current view before acting.']);
   } finally { await harness.close(); }
 });
 
@@ -6360,25 +6310,6 @@ test('a failed mode preference keeps the applied layout and save-only recovery d
     assert.equal(harness.reader.presentationState().preference.status, 'saved'); assert.deepEqual(harness.commands, commands); assert.deepEqual(harness.panelReveals(), reveals);
     assert.equal(harness.reader.presentationState().presentationControlRevision, 2);
   } finally { await harness.close(); }
-});
-
-test('pending presentation placement rejects stale and competing controls before dispatching any runtime input', async () => {
-  // Arrange
-  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
-  let release = () => {};
-  try {
-    await harness.reader.open(); const state = harness.reader.presentationState();
-    const held = harness.holdNextCommand('vscode.setEditorLayout'); release = held.release;
-    const pending = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
-    await held.started;
-    // Act / Assert
-    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' }), /revision changed/);
-    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision + 1, mode: 'guided-walkthrough', action: 'select' }), /pending/);
-    assert.throws(() => harness.service.start({ instanceId: harness.service.instanceId, profile: 'paired-cart-demo', key: 'during-move' }), /pending/);
-    assert.equal(harness.runtimes.length, 0); assert.equal(harness.service.records.size, 0);
-    held.release(); await pending;
-    assert.equal(harness.reader.presentationState().mode, 'living-book');
-  } finally { release(); await harness.close(); }
 });
 
 test('Close retires the reader identity immediately and waits for an already accepted presentation preference write', async () => {
@@ -6520,7 +6451,7 @@ test('editor AI can return a saved recording to its current run without repeatin
   let client: Client | undefined;
   try {
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
-    next = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'after-saved-recording' });
+    next = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'after-saved-recording' });
     await service.record(next).preparation;
     endpoint = await startServer(service);
     const transport = new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } } });
@@ -6588,46 +6519,33 @@ test('a foreign preview is preserved without Keep Editor or relocation when sele
   } finally { await harness.close(); }
 });
 
-test('a live pause with an uncommitted image or reserved resume rejects mode switching without native effects', async () => {
-  // Arrange
-  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
-  try {
-    await harness.reader.open(); const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: 'paired-cart-demo', key: 'capture-gate' }); await harness.service.record(receipt).preparation;
-    harness.service.action({ instanceId: harness.service.instanceId, runId: receipt.runId, key: 'click', action: 'add-to-cart' });
-    const state = harness.reader.presentationState(), commands = [...harness.commands];
-    // Act / Assert
-    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), /committed inspected pause/);
-    const runtime = harness.runtimes[0]!; assert.ok(runtime.gate.current); runtime.gate.reserve(runtime.gate.current);
-    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), /continue request/);
-    assert.deepEqual(harness.commands, commands); assert.equal(harness.reader.presentationState().presentationControlRevision, 0); assert.equal(runtime.dispatches, 1);
-  } finally { await harness.close(); }
-});
-
-for (const boundary of ['reading pose', 'rendered context'] as const) test(`manual resume during presentation ${boundary} cannot certify or save a different live state`, async () => {
+for (const boundary of ['layout read', 'layout application'] as const) test(`manual resume during presentation ${boundary} cannot certify or save a different live state`, async () => {
   // Arrange
   const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   let release = () => {};
   try {
-    await harness.reader.open(); await harness.reader.action('run');
+    await harness.reader.open(); harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() });
     await [...harness.service.records.values()][0]!.preparation;
     const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime);
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=', 'base64');
-    await writeFile(join(runtime.evidence.directory, 'paused-server.png'), png);
-    runtime.view = () => ({ ...view(), captures: { 'paused-server': { status: 'captured', file: 'paused-server.png', renderer: { epoch: 'test', id: 1, hash: sha256(png) } } } });
+    await writeFile(join(runtime.evidence.directory, 'paused-browser.png'), png);
+    runtime.view = () => ({ ...view(), captures: { 'paused-browser': { status: 'captured', file: 'paused-browser.png', renderer: { epoch: 'test', id: 1, hash: sha256(png) } } } });
     await harness.reader.action('click');
-    const state = harness.reader.presentationState(), reveals = harness.panelReveals();
-    const held = harness.holdPresentationMessage(boundary === 'rendered context' ? 'living-book' : undefined); release = held.release;
-    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await harness.reader.action('focus-app');
+    harness.changeEditorLayout({ orientation: 1, groups: [{ size: 0.7 }, { size: 0.3 }] });
+    const state = harness.reader.presentationState();
+    const held = harness.holdNextCommand(boundary === 'layout read' ? 'vscode.getEditorLayout' : 'vscode.setEditorLayout'); release = held.release;
+    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
     const rejected = assert.rejects(transfer, /live pause changed/);
     await held.started;
-    // Act: a native debugger action changes the pause while the webview acknowledgement is pending.
+    // Act: a native debugger action changes the pause while native layout acknowledgement is pending.
     runtime.gate.invalidate(); runtime.status = 'ready'; held.release();
     await rejected;
     // Assert
     assert.equal(harness.reader.presentationState().mode, 'study-workspace');
     assert.equal(harness.presentationPreferences.size, 0);
     assert.equal(runtime.dispatches, 1);
-    if (boundary === 'reading pose') assert.deepEqual(harness.panelReveals(), reveals);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
   } finally { release(); await harness.close(); }
 });
 
@@ -6682,7 +6600,7 @@ test('a foreign preview opened during the layout read survives without relocatio
   } finally { release(); await harness.close(); }
 });
 
-test('mode transfer during a late replay image preserves the last confirmed time, source and explicit understanding', async () => {
+test('restoring layout during a late replay image retains the current frame and lets the requested seek finish', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   let release = () => {};
@@ -6693,19 +6611,23 @@ test('mode transfer during a late replay image preserves the last confirmed time
     const source = harness.reader.inspect().sourceUri, library = await harness.reader.learningStorage(), decisions = (await library.readProgress()).decisions;
     const retained = harness.controller.bundle(), pendingImage = harness.holdNextImage(); release = pendingImage.release;
     harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 150 }); await pendingImage.started;
+    await harness.reader.action('focus-app');
     const state = harness.reader.presentationState();
     // Act
-    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
-    await new Promise<void>(resolve => setImmediate(resolve)); release(); await transfer;
+    const transfer = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
+    await transfer;
+    assert.equal(harness.controller.bundle(), retained); assert.equal(harness.controller.state().presentedMs, 100);
+    assert.equal(harness.controller.state().readiness, 'loading');
+    release(); await harness.controller.settle();
     // Assert
-    assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.controller.state().requestedMs, 100);
-    assert.equal(harness.controller.bundle(), retained); assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.reader.inspect().sourceUri, source);
+    assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.controller.state().presentedMs, 150); assert.equal(harness.controller.state().requestedMs, 150);
+    assert.equal(harness.controller.bundle()?.projection.positionMs, 150); assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.reader.inspect().sourceUri, source);
     assert.equal(harness.reader.inspect().view?.contentTab, 'recording'); assert.equal(harness.displayedImage(), harness.png.toString('base64'));
     assert.deepEqual((await library.readProgress()).decisions, decisions); assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
-    assert.equal((await harness.store.readPreference())?.positionMs, 100); assert.equal(harness.reader.presentationState().mode, 'living-book');
+    assert.equal((await harness.store.readPreference())?.positionMs, 150); assert.equal(harness.reader.presentationState().mode, 'study-workspace');
     const next = harness.reader.presentationState();
-    await harness.reader.changePresentation({ presentationId: next.presentationId, expectedRevision: next.presentationControlRevision, mode: 'guided-walkthrough', action: 'select' });
-    assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.reader.inspect().sourceUri, source);
+    await harness.reader.changePresentation({ presentationId: next.presentationId, expectedRevision: next.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
+    assert.equal(harness.controller.state().presentedMs, 150); assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.reader.inspect().sourceUri, source);
   } finally { release(); await harness.close(); }
 });
 
@@ -6903,64 +6825,6 @@ test('a background work window refuses a mode change before native effects', asy
     assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), /Focus this Codebook work window/);
     assert.deepEqual(harness.panelReveals(), reveals); assert.equal(harness.presentationPreferences.size, 0);
   } finally { await harness.close(); }
-});
-
-for (const dirty of [false, true]) test(`a ${dirty ? 'learner-edited' : 'clean'} prepared debugger preview ${dirty ? 'rejects switching without keeping tabs' : 'survives all three presentations'}`, async () => {
-  // Arrange: native debugger stops open an owned fixture preview behind the application.
-  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
-  try {
-    await harness.reader.open(); const path = join(harness.fixture, 'server.mts');
-    await harness.reader.presentation.prepareSource(path);
-    const preview = harness.addTextPreview(path, 1, dirty), commands = [...harness.commands], panels = harness.counts().panels;
-    const library = await harness.reader.learningStorage(), decisions = (await library.readProgress()).decisions;
-    // Act: the same public workspace coordinator handles the debugger preview and all entry points.
-    const select = (mode: 'living-book' | 'guided-walkthrough' | 'study-workspace') => {
-      const state = harness.reader.presentationState();
-      return harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode, action: 'select' });
-    };
-    if (dirty) await assert.rejects(select('living-book'), /not confirmed/);
-    else for (const mode of ['living-book', 'guided-walkthrough', 'study-workspace'] as const) await select(mode);
-    // Assert: no source tab is discarded, dirty previews stay untouched, and learner progress is not inferred.
-    assert.equal(harness.groups.some(group => group.tabs.includes(preview)), true);
-    assert.equal(preview.isPreview, dirty); assert.equal(harness.counts().panels, panels);
-    assert.deepEqual((await library.readProgress()).decisions, decisions);
-    if (dirty) assert.deepEqual(harness.commands, commands);
-    else { assert.equal(harness.reader.presentationState().mode, 'study-workspace'); assert.equal(harness.reader.presentationState().layoutConfirmed, true); }
-  } finally { await harness.close(); }
-});
-
-for (const corruption of ['capture identity', 'learning item', 'source hash', 'observation', 'content tab', 'oversized scroll'] as const) test(`presentation waits for a valid reading capture after rejecting a wrong ${corruption}`, async () => {
-  // Arrange
-  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] });
-  let releaseCapture: (() => void) | undefined;
-  try {
-    await harness.reader.open();
-    const panel = harness.reader['contextPanel']; assert.ok(panel);
-    const originalPost = panel.webview.postMessage.bind(panel.webview), state = harness.reader.presentationState();
-    let capture!: PresentationPoseCapture, observed!: () => void;
-    const requested = new Promise<void>(resolve => { observed = resolve; });
-    panel.webview.postMessage = message => {
-      if (message.type !== 'capture-presentation-pose') return originalPost(message);
-      capture = message; releaseCapture = () => { void originalPost(capture); }; observed(); return Promise.resolve(true);
-    };
-    const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
-    await requested;
-    const nativeRequests = harness.panelReveals();
-    // Act
-    harness.receive({ ...capture, type: 'presentation-pose',
-      ...(corruption === 'capture identity' ? { captureId: '33333333-3333-4333-8333-333333333333' } : {}),
-      ...(corruption === 'learning item' ? { itemId: 'checkout-demo/order-confirmation' } : {}),
-      ...(corruption === 'source hash' ? { sourceHash: 'f'.repeat(64) } : {}),
-      ...(corruption === 'observation' ? { observationId: 'browser-session:999' } : {}),
-      ...(corruption === 'content tab' ? { contentTab: 'recording' } : {}),
-      pose: { anchorId: 'title', fraction: 0, leadingOffsetPx: 16, scrollY: corruption === 'oversized scroll' ? 10_000_001 : 0, valuesScrollLeft: 0, expanded: [], visited: [] } });
-    await new Promise<void>(resolve => setImmediate(resolve));
-    // Assert
-    assert.deepEqual(harness.panelReveals(), nativeRequests); assert.equal(harness.presentationPreferences.size, 0);
-    assert.ok(releaseCapture); releaseCapture(); await changing;
-    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
-    assert.deepEqual(harness.presentationPreferences.get('codebook.presentation.v1'), { version: 1, mode: 'living-book' });
-  } finally { releaseCapture?.(); await harness.close(); }
 });
 
 test('presentation cannot save its mode from a stale reading restoration receipt', async () => {
@@ -7186,7 +7050,7 @@ for (const change of ['opened', 'unannounced', 'move'] as const) test(`an empty 
   } finally { await harness.close(); }
 });
 
-for (const positionMs of [0, 100]) test(`pane replacement transfers both live history and replay leases without changing the confirmed ${positionMs === 0 ? 'missing-frame' : 'captured-frame'} position`, async () => {
+for (const positionMs of [0, 100]) test(`restoring replay preserves both live history and replay leases at the confirmed ${positionMs === 0 ? 'missing-frame' : 'captured-frame'} position`, async () => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   const failures: string[] = [];
@@ -7199,17 +7063,19 @@ for (const positionMs of [0, 100]) test(`pane replacement transfers both live hi
     const bundle = harness.controller.bundle(), image = harness.displayedImage(), source = harness.reader.inspect().sourceUri;
     const progress = await (await harness.reader.learningStorage()).readProgress();
     harness.viewportEvents.length = 0;
+    await harness.reader.action('focus-app');
     const state = harness.reader.presentationState();
     // Act
-    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
     // Assert
-    assert.notEqual(harness.reader['app'], app); assert.notEqual(harness.reader['contextPanel'], context);
+    assert.equal(harness.reader['app'], app); assert.equal(harness.reader['contextPanel'], context);
+    assert.equal(context, undefined); assert.equal(harness.summary.visible, true);
     assert.equal(harness.reader['viewport'], live); assert.equal(harness.reader['replayViewport'], replay);
     assert.equal(harness.viewportInstances.length, 2);
     assert.equal(harness.viewportInstances[0]!.historical, true);
     for (const viewport of harness.viewportInstances) assert.equal(viewport.panel, harness.reader['app']);
-    assert.deepEqual(harness.viewportEvents.filter(event => /^(hold|rebind|release|restore|unexpected-close):/.test(event)), ['hold:live', 'hold:recording', 'rebind:live', 'rebind:recording', 'release:live', 'release:recording']);
-    assert.deepEqual(failures, []); assert.equal(harness.counts().panels, 2); assert.equal(harness.peakPanels(), 4);
+    assert.deepEqual(harness.viewportEvents.filter(event => /^(hold|rebind|release|restore|unexpected-close):/.test(event)), []);
+    assert.deepEqual(failures, []); assert.equal(harness.counts().panels, 1); assert.equal(harness.peakPanels(), 1);
     assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.controller.state().presentedMs, positionMs);
     assert.equal(harness.controller.state().mode, 'paused'); assert.equal(harness.displayedImage(), image);
     assert.equal(harness.reader.inspect().sourceUri, source); assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
@@ -7219,40 +7085,46 @@ for (const positionMs of [0, 100]) test(`pane replacement transfers both live hi
   } finally { live?.close(); await harness.close(); }
 });
 
-for (const failure of ['native layout failure', 'newer learner tab'] as const) test(`replay withdraws retired-renderer confirmation after ${failure} and recovers on the next explicit seek`, async () => {
-  // Arrange: both leases adopt the replacement before native placement loses authority.
+for (const failure of ['native layout failure', 'newer learner tab'] as const) test(`replay retains its renderer after ${failure} and restores layout only on explicit retry`, async () => {
+  // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   let live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
   let draft: ReturnType<typeof harness.focusMutableDraft> | undefined;
+  let release = () => {};
   try {
-    live = harness.reader.presentation.createViewport!('failed-replay-handoff', () => {}, () => {}, 'normal');
+    live = harness.reader.presentation.createViewport!('retained-replay-failure', () => {}, () => {}, 'normal');
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
     harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
-    const app = harness.reader['app']; assert.ok(app);
-    const bundle = harness.controller.bundle(), image = harness.displayedImage(), progress = await (await harness.reader.learningStorage()).readProgress();
-    app.onDidDispose(() => {
-      if (failure === 'native layout failure') harness.failNextCommand('vscode.getEditorLayout');
-      else draft = harness.focusMutableDraft('newer-reading-notes.txt', 2);
-    });
+    await harness.reader.action('focus-app');
+    const app = harness.reader['app'], bundle = harness.controller.bundle(), image = harness.displayedImage();
+    const progress = await (await harness.reader.learningStorage()).readProgress();
+    const held = harness.holdNextCommand('workbench.action.minimizeOtherEditors'); release = held.release;
     const state = harness.reader.presentationState();
-    // Act
-    await assert.rejects(harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' }), { code: 'PRESENTATION_UNAVAILABLE' });
-    // Assert: the retained film is not a current paint receipt and recovery cannot front a learner tab by itself.
-    assert.notEqual(harness.reader['app'], app); assert.equal(harness.controller.bundle(), bundle);
-    assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.controller.state().cleared, true);
-    assert.equal(harness.displayedImage(), undefined); assert.equal(harness.reader.inspect().view!.loading, true);
-    assert.equal(harness.presentationPreferences.size, 0); assert.equal(harness.reader.presentationState().mode, 'study-workspace');
+    const restoring = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
+    const rejected = assert.rejects(restoring, /Native|focus|pane/i); await held.started;
+    // Act: failure arrives while the existing renderer remains attached.
+    if (failure === 'native layout failure') harness.failNextCommand('vscode.getEditorLayout');
+    else draft = harness.focusMutableDraft('newer-reading-notes.txt', 2);
+    held.release(); await rejected;
+    // Assert
+    assert.equal(harness.reader['app'], app); assert.equal(harness.controller.bundle(), bundle);
+    assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.controller.state().cleared, false);
+    assert.equal(harness.displayedImage(), image); assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.equal(harness.presentationPreferences.size, 0);
     const reveals = harness.panelReveals(); await harness.reader['refresh']();
     assert.deepEqual(harness.panelReveals(), reveals);
     if (draft) { assert.equal(draft.editor.group.activeTab, draft.tab); assert.equal(draft.document.getText(), 'Original learner draft.\n'); }
-    // Act: a fresh explicit request must recreate the renderer before painting the same recorded moment.
-    harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
+    // Act: only a new learner request may expose the source and recover its layout.
+    await harness.reader.action('read-source'); await harness.reader.action('focus-app');
+    const retry = harness.reader.presentationState();
+    await harness.reader.changePresentation({ presentationId: retry.presentationId, expectedRevision: retry.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
     // Assert
-    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.controller.state().cleared, false);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.controller.state().readiness, 'ready'); assert.equal(harness.controller.bundle(), bundle);
     assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.displayedImage(), image);
     assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
     assert.equal(harness.viewportInstances.length, 2); assert.equal(harness.runtimes.length, 1); assert.equal(harness.runtimes[0]!.dispatches, 1);
-  } finally { live?.close(); await harness.close(); }
+  } finally { release(); live?.close(); await harness.close(); }
 });
 
 test('same-column mode changes recover native inner-focus delivery while preserving the current viewport lease', async () => {
@@ -7399,28 +7271,29 @@ for (const failure of ['creation throws', 'unretained tab'] as const) test(`a se
   } finally { live?.close(); await harness.close(); }
 });
 
-test('retired application notifications and explanation controls cannot change the current replay or learner understanding', async () => {
+test('retired application notifications after reopening cannot change the current replay or learner understanding', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
   try {
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
     harness.controller.command({ action: 'seek', studyId: harness.studyId, expectedRevision: harness.controller.state().revision, positionMs: 100 }); await harness.controller.settle();
     const previousApp = harness.nativePanels().find(panel => panel.kind === 'codebook.scopedBrowser')!;
-    const previousContext = harness.nativePanels().find(panel => panel.kind === 'codebook.studyContext')!;
-    const state = harness.reader.presentationState();
-    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
+    await harness.reader.close();
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    assert.notEqual(harness.reader['app'], previousApp);
+    const presentation = harness.reader.presentationState();
     const bundle = harness.controller.bundle(), progress = await (await harness.reader.learningStorage()).readProgress(), messages = harness.postedMessages().length;
     // Act: already queued callbacks retain their old object even after disposal.
-    previousApp.notifyViewState(); previousContext.notifyViewState();
-    previousContext.emit({ type: 'ready' });
-    previousContext.emit({ type: 'understanding', revision: harness.reader.inspect().view!.revision, understood: true });
-    previousContext.emit({ type: 'presentation-pose-invalidated', captureId: '33333333-3333-4333-8333-333333333333' });
+    previousApp.notifyViewState();
+    previousApp.emit({ type: 'ready' });
+    previousApp.emit({ type: 'understanding', revision: harness.reader.inspect().view!.revision, understood: true });
+    previousApp.emit({ type: 'presentation-pose-invalidated', captureId: '33333333-3333-4333-8333-333333333333' });
     await new Promise<void>(resolve => setImmediate(resolve));
     // Assert
     assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.controller.state().readiness, 'ready');
     assert.equal(harness.controller.state().presentedMs, 100); assert.equal(harness.postedMessages().length, messages);
     assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
-    assert.equal(harness.reader.presentationState().layoutConfirmed, true); assert.equal(harness.counts().panels, 2);
+    assert.deepEqual(harness.reader.presentationState(), presentation); assert.equal(harness.counts().panels, 1);
   } finally { await harness.close(); }
 });
 
@@ -7445,27 +7318,26 @@ test('closing the adopted application during native layout rejects the transitio
   } finally { release(); live?.close(); await harness.close(); }
 });
 
-test('a pending live renderer hold prevents pane creation even when replay is the visible presentation', async context => {
+test('restoring replay keeps the live renderer attached without requesting a pane handoff', async context => {
   // Arrange
   const harness = await recordedReaderHarness(true); harness.useNativeLayout({ orientation: 0, groups: [{}] });
-  let release = () => {}, live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
+  let live: ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>> | undefined;
   try {
-    live = harness.reader.presentation.createViewport!('drain-hidden-live', () => {}, () => {}, 'normal');
+    live = harness.reader.presentation.createViewport!('retained-live', () => {}, () => {}, 'normal');
     await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
-    const app = harness.reader['app'], explanation = harness.reader['contextPanel'];
-    const hold = live.holdPlacement.bind(live); let entered!: () => void;
-    const started = new Promise<void>(resolve => { entered = resolve; }), pending = new Promise<void>(resolve => { release = resolve; });
-    context.mock.method(live, 'holdPlacement', async (...args: Parameters<typeof hold>) => { const releaseHold = await hold(...args); entered(); await pending; return releaseHold; });
+    await harness.reader.action('focus-app');
+    const app = harness.reader['app'], bundle = harness.controller.bundle();
+    let handoffs = 0;
+    context.mock.method(live, 'holdPlacement', async () => { handoffs++; throw new Error('Replay restoration must retain its renderer.'); });
     const state = harness.reader.presentationState();
     // Act
-    const changing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'living-book', action: 'select' });
-    await started;
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
     // Assert
-    assert.equal(harness.reader['app'], app); assert.equal(harness.reader['contextPanel'], explanation);
-    assert.equal(harness.peakPanels(), 2); assert.equal(harness.presentationPreferences.size, 0);
-    release(); await changing;
-    assert.notEqual(harness.reader['app'], app); assert.equal(harness.reader.presentationState().layoutConfirmed, true);
-  } finally { release(); context.mock.restoreAll(); live?.close(); await harness.close(); }
+    assert.equal(handoffs, 0); assert.equal(harness.reader['app'], app);
+    assert.equal(harness.peakPanels(), 1); assert.equal(harness.presentationPreferences.size, 0);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.equal(harness.controller.bundle(), bundle); assert.equal(harness.reader['viewport'], live);
+  } finally { context.mock.restoreAll(); live?.close(); await harness.close(); }
 });
 
 for (const change of ['move', 'close'] as const) test(`a learner ${change} of the first replacement before the second registers prevents lease adoption`, async () => {
@@ -7492,4 +7364,579 @@ for (const change of ['move', 'close'] as const) test(`a learner ${change} of th
     assert.equal(harness.counts().panels, 2); assert.equal(harness.presentationPreferences.size, 0);
     assert.equal(harness.reader.presentationState().layoutConfirmed, false);
   } finally { live?.close(); await harness.close(); }
+});
+
+test('explicit presentation focus returns from Wiki without changing layout, learning or execution', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await openRetainedStudy(harness);
+    const wiki = harness.openWiki(2), draft = harness.addForeignDraft(1);
+    const state = harness.reader.presentationState(), layout = harness.editorLayout();
+    const before = harness.reader.inspect(), commands = harness.commands.length;
+    // Opening retained evidence can finish its durable selection after the view becomes ready.
+    await waitUntil(async () => (await (await harness.reader.learningStorage()).readProgress()).selection?.studyId === before.view?.model.selection.studyId, 'retained selection persistence', 1_000);
+    const progress = await (await harness.reader.learningStorage()).readProgress();
+    // Act
+    const result = await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: state.mode, action: 'focus' });
+    // Assert
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.innerFocusedPanel(), 'codebook.studyContext');
+    assert.equal(result.state, 'open');
+    assert.equal(result.presentationControlRevision, state.presentationControlRevision + 1);
+    assert.equal(result.mode, state.mode);
+    assert.deepEqual(harness.editorLayout(), layout);
+    assert.equal(harness.reader.inspect().sourceUri, before.sourceUri);
+    assert.deepEqual(await (await harness.reader.learningStorage()).readProgress(), progress);
+    assert.equal(harness.groups.some(group => group.tabs.includes(wiki.nativeTab)), true);
+    assert.equal(harness.groups.some(group => group.tabs.includes(draft)), true);
+    assert.equal(draft.isDirty, true);
+    assert.equal(harness.commands.slice(commands).includes('workbench.action.maximizeEditorHideSidebar'), false);
+    assert.equal(harness.runtimes.length, 0);
+    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: state.mode, action: 'focus' }), { code: 'STALE_PRESENTATION' });
+  } finally { await harness.close(); }
+});
+
+for (const invalid of ['closed', 'different mode', 'unfocused window'] as const) test(`presentation focus rejects ${invalid} without revealing a pane`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    if (invalid !== 'closed') await openRetainedStudy(harness);
+    if (invalid === 'unfocused window') harness.changeWindowFocus(false);
+    const state = harness.reader.presentationState(), reveals = harness.panelReveals().length;
+    // Act / Assert
+    assert.throws(() => harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: invalid === 'different mode' ? 'living-book' : state.mode, action: 'focus' }), { code: 'PRESENTATION_UNAVAILABLE' });
+    assert.equal(harness.panelReveals().length, reveals);
+    assert.equal(harness.reader.presentationState().presentationControlRevision, state.presentationControlRevision);
+    assert.equal(harness.runtimes.length, 0);
+  } finally { harness.changeWindowFocus(true); await harness.close(); }
+});
+
+for (const departure of ['window roundtrip', 'learner draft'] as const) test(`presentation focus preserves newer intent after ${departure} during native handoff`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  let release = () => {};
+  try {
+    await openRetainedStudy(harness);
+    const draft = harness.focusMutableDraft(); harness.openWiki(2);
+    const state = harness.reader.presentationState(), listeners = harness.windowFocusListeners();
+    const held = harness.holdPanelActivity('codebook.studyContext'); release = held.release;
+    const focusing = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: state.mode, action: 'focus' });
+    const rejected = assert.rejects(focusing, { code: 'PRESENTATION_UNAVAILABLE' });
+    await held.started;
+    const reveals = harness.panelReveals().length;
+    // Act
+    if (departure === 'window roundtrip') { harness.changeWindowFocus(false); harness.changeWindowFocus(true); }
+    else draft.focus();
+    held.release(); await rejected;
+    // Assert
+    assert.equal(harness.panelReveals().length, reveals);
+    assert.equal(harness.reader.presentationState().state, 'open');
+    assert.equal(harness.windowFocusListeners(), listeners);
+    assert.equal(draft.document.getText(), 'Original learner draft.\n');
+    if (departure === 'learner draft') assert.equal(harness.focusedSource()?.document.uri.toString(), draft.document.uri.toString());
+    assert.equal(harness.runtimes.length, 0);
+  } finally { release(); harness.changeWindowFocus(true); await harness.close(); }
+});
+
+test('ordinary chat can recover Study focus from Wiki through the public MCP presentation tool', async () => {
+  // Arrange
+  const harness = await workspaceHarness(); harness.useNativeLayout({ orientation: 0, groups: [{}] }); await harness.reader.open();
+  const wiki = harness.openWiki(2);
+  const endpoint = await startServer(harness.service);
+  const transport = new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } } });
+  const client = new Client({ name: 'study-focus-recovery-test', version: '1.0' }); await client.connect(transport);
+  try {
+    const discovery = await client.callTool({ name: 'codebook_status', arguments: {} });
+    const selected = z.object({ data: z.object({ instanceId: z.string(), presentation: z.object({ presentationId: z.string(), presentationControlRevision: z.number(), mode: z.string() }) }) }).parse(discovery.structuredContent).data;
+    const input = { instanceId: selected.instanceId, presentationId: selected.presentation.presentationId, expectedRevision: selected.presentation.presentationControlRevision, mode: selected.presentation.mode, action: 'focus' };
+    // Act
+    const focused = await client.callTool({ name: 'codebook_presentation', arguments: input });
+    const stale = await client.callTool({ name: 'codebook_presentation', arguments: input });
+    // Assert
+    assert.equal(focused.isError, undefined, JSON.stringify(focused.structuredContent));
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext');
+    assert.equal(harness.innerFocusedPanel(), 'codebook.studyContext');
+    assert.match(JSON.stringify(stale.structuredContent), /STALE_PRESENTATION/);
+    assert.equal(harness.groups.some(group => group.tabs.includes(wiki.nativeTab)), true);
+    assert.equal(harness.runtimes.length, 0);
+    assert.equal(harness.service.records.size, 0);
+  } finally { await client.close(); await endpoint.close(); await harness.close(); }
+});
+
+for (const dirty of [false, true]) test(`same-layout selection repairs proportions while preserving an ${dirty ? 'unsaved' : 'unchanged'} source preview`, async () => {
+  // Arrange
+  const harness = await workspaceHarness(false); harness.useNativeLayout({ orientation: 0, groups: [{}] });
+  try {
+    await harness.reader.open();
+    await harness.reader.action('focus-context');
+    const panels = [...harness.nativePanels()];
+    const preview = harness.addTextPreview(join(harness.directory, 'learner-source.ts'), 2, dirty);
+    harness.changeEditorLayout({ orientation: 0, groups: [{ size: 0.5, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.5 }] });
+    const state = harness.reader.presentationState();
+    // Act
+    await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'select' });
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true);
+    assert.deepEqual(harness.nativePanels(), panels);
+    assert.ok(harness.groups.find(group => group.viewColumn === 2)?.tabs.includes(preview));
+    assert.equal(preview.isPreview, true);
+    assert.equal(preview.isDirty, dirty);
+    assert.equal(harness.commands.includes('workbench.action.keepEditor'), false);
+  } finally { await harness.close(); }
+});
+
+
+test('saving without a captured session leaves the learning status hidden', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    // Act / Assert
+    await assert.rejects(harness.reader.saveLearningReplay(), /No recorded Codebook session/);
+    assert.equal(harness.saveStatus.visible, false);
+  } finally { await harness.close(); }
+});
+
+test('explicit learning save verifies durable context and labels missing summary and debugger history as partial', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    const library = await harness.reader.learningStorage(), progress = await library.readProgress();
+    // Act
+    await harness.reader.saveLearningReplay(harness.studyId);
+    // Assert
+    await harness.store.readContext(harness.studyId);
+    assert.equal(harness.saveStatus.text, '$(warning) Learning partially saved · Open replay');
+    assert.match(harness.saveStatus.tooltip, /learning summary and sequence/);
+    assert.match(harness.saveStatus.tooltip, /recorded debugger history/);
+    assert.deepEqual(structuredClone(harness.saveStatus.command), { title: 'Open learning replay', command: 'codebook.openLearningReplay', arguments: [harness.studyId] });
+    assert.deepEqual(await library.readProgress(), progress);
+  } finally { await harness.close(); }
+});
+
+test('a stale save button cannot finalize a different recorded session', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    const receipt = harness.record.historyReceipt;
+    // Act / Assert
+    await assert.rejects(harness.reader.saveLearningReplay('another-session'), /recorded session changed/);
+    assert.equal(harness.record.historyReceipt, receipt);
+  } finally { await harness.close(); }
+});
+
+test('failed explicit learning context save stays retryable without replacing durable history with success', async context => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    const failure = context.mock.method(RecordingStore.prototype, 'saveContext', async () => { throw new Error('Disk unavailable'); });
+    // Act
+    await assert.rejects(harness.reader.saveLearningReplay(harness.studyId), /Disk unavailable/);
+    // Assert
+    assert.equal(harness.saveStatus.text, '$(error) Learning save failed · Retry');
+    assert.deepEqual(structuredClone(harness.saveStatus.command), { title: 'Save learning replay', command: 'codebook.saveLearningReplay', arguments: [harness.studyId] });
+    failure.mock.restore();
+    await harness.reader.saveLearningReplay(harness.studyId);
+    await harness.store.readContext(harness.studyId);
+    assert.equal(harness.saveStatus.text, '$(warning) Learning partially saved · Open replay');
+  } finally { await harness.close(); }
+});
+
+
+test('repeated save clicks share finalization and keep the pending status non-actionable', async context => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  let release!: () => void, entered!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const original = harness.service.stop.bind(harness.service);
+  let stops = 0;
+  context.mock.method(harness.service, 'stop', async (input: Parameters<typeof harness.service.stop>[0]) => { stops++; entered(); await hold; return original(input); });
+  try {
+    // Act
+    const first = harness.reader.saveLearningReplay(harness.studyId);
+    await started;
+    const second = harness.reader.saveLearningReplay(harness.studyId);
+    // Assert
+    assert.equal(harness.saveStatus.text, '$(sync~spin) Saving learning…');
+    assert.equal(harness.saveStatus.command, undefined);
+    assert.equal(stops, 1);
+    release(); await Promise.all([first, second]);
+    assert.equal(stops, 1);
+    assert.equal(harness.saveStatus.text, '$(warning) Learning partially saved · Open replay');
+  } finally { release(); await harness.close(); }
+});
+
+
+test('saving an active explanation stops only its owned capture and retains the recorded learning', async () => {
+  // Arrange
+  const harness = await workspaceHarness(true, true);
+  try {
+    harness.acknowledgeContext();
+    harness.service.environment.build.sourceHash = sha256('active-save-build');
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: 'save-active' });
+    const record = [...harness.service.records.values()][0]!; await record.preparation;
+    harness.clock(100); await harness.reader.action('click');
+    assert.equal(record.stopped, false);
+    assert.match(harness.saveStatus.text, /Recording explanation/);
+    // Act
+    await harness.reader.saveLearningReplay(`${harness.service.instanceId}_${record.id}`);
+    // Assert
+    assert.equal(record.stopped, true);
+    assert.equal(record.historyReceipt?.status, 'saved');
+    assert.equal(record.recordingReceipt?.status, 'saved');
+    assert.equal(harness.saveStatus.text, '$(warning) Learning partially saved · Open replay');
+  } finally { await harness.close(); }
+});
+
+test('a later explanation invalidates the earlier save label until its new content is explicitly saved', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    await harness.reader.saveLearningReplay(harness.studyId);
+    const snapshotUri = harness.service.state(harness.record).participants.browser.snapshotUri!;
+    const archive = await (await harness.reader.learningStorage()).readCheckpoint(harness.studyId);
+    // Act
+    await harness.service.explain({ instanceId: harness.service.instanceId, runId: harness.record.id, key: 'later-explanation', snapshotUri,
+      sourceHash: archive.study.observations[0]!.source.hash, valuePaths: ['value:nextTheme'], interpretation: 'The recorded selected theme is dark; no additional execution is claimed.' });
+    harness.reader['publish']();
+    // Assert
+    assert.equal(harness.saveStatus.text, '$(save) Recording finished · Save learning replay');
+  } finally { await harness.close(); }
+});
+
+
+test('editor Settings changes recover full study and recording storage without recreating the workspace', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    harness.setSavedStudyCapacity(1);
+    const library = await harness.reader.learningStorage(), recordings = harness.service.recordings!;
+    const study = createConfiguredStudy(); study.workspaceKey = library.workspaceKey;
+    const binding = { workspaceKey: library.workspaceKey, studyId: study.id, instanceId: study.instanceId, runId: study.runId, runtimeId: randomUUID(), profile: study.profile, sourceBuild: { revision: 'settings-test', dirty: false, sourceHash: '1'.repeat(64) } };
+    await library.saveStudy(study); await (await recordings.start(binding, 0)).finish(1);
+    const next = structuredClone(study), runId = randomUUID();
+    for (const observation of next.observations) observation.snapshotUri = observation.snapshotUri.replace(next.runId, runId);
+    next.runId = runId; next.id = `${next.instanceId}_${runId}`;
+    const nextBinding = { ...binding, runId, studyId: next.id, runtimeId: randomUUID() };
+    await assert.rejects(library.saveStudy(next), /full/);
+    await assert.rejects(recordings.start(nextBinding, 0), /full/);
+    // Act
+    harness.setSavedStudyCapacity(2);
+    await library.saveStudy(next); await (await recordings.start(nextBinding, 0)).finish(1);
+    // Assert
+    assert.equal((await library.list()).length, 2);
+    assert.equal((await recordings.list()).length, 2);
+    assert.equal((await harness.service.status()).recording?.capacity.limit, 2);
+    harness.setSavedStudyCapacity('invalid');
+    assert.match((await harness.service.status()).recording?.capacity.error ?? '', /codebook.savedStudyLimit/);
+    assert.equal((await recordings.list()).length, 2);
+  } finally { await harness.close(); }
+});
+
+for (const separateChat of [false, true]) test(`live explanation reserves app and source without a custom explanation pane${separateChat ? ' while preserving a separate chat' : ''}`, async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    const chat = separateChat ? harness.addSeparateEditorPart() : undefined;
+    const chatLayout = chat?.layout();
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() });
+    const record = [...harness.service.records.values()][0]!;
+    await record.preparation;
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1);
+    assert.equal(harness.reader.inspect().presentation.panes.sourceColumn, 2);
+    assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true);
+    assert.equal(harness.nativePanels().length, 1);
+    assert.equal(harness.groups.length, separateChat ? 3 : 2);
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] });
+    assert.deepEqual(chat?.layout(), chatLayout);
+    assert.equal(harness.runtimes[0]!.dispatches, 0);
+  } finally { await harness.close(); }
+});
+
+test('live Restore refuses a late native receipt loss instead of claiming recovery', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    const chat = harness.addSeparateEditorPart();
+    const chatLayout = chat.layout();
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() });
+    await [...harness.service.records.values()][0]!.preparation;
+    await harness.reader.open();
+    harness.reader['layoutReceipt'] = undefined;
+    harness.reader['presentationConfirmed'] = false;
+    const arrange = harness.reader['arrange'].bind(harness.reader);
+    harness.reader['arrange'] = async (...args) => {
+      await arrange(...args);
+      harness.reader['layoutReceipt'] = undefined;
+    };
+    chat.focus();
+    const current = harness.reader.presentationState();
+    // Act
+    await assert.rejects(harness.reader.changePresentation({ presentationId: current.presentationId, expectedRevision: current.presentationControlRevision, mode: 'study-workspace', action: 'restore' }),
+      { code: 'PRESENTATION_UNAVAILABLE', causeDetail: /native editor layout receipt/ });
+    // Assert
+    assert.deepEqual(chat.layout(), chatLayout);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.runtimes[0]!.dispatches, 0);
+  } finally { await harness.close(); }
+});
+
+test('starting live explanation retires only its previous empty explanation group', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    const chat = harness.addSeparateEditorPart();
+    await harness.reader.open();
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() });
+    await [...harness.service.records.values()][0]!.preparation;
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.groups.length, 3);
+    assert.equal(harness.groups.at(-1)!.tabs[0], chat.tab);
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] });
+    assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true);
+  } finally { await harness.close(); }
+});
+
+test('a normal chat run retires the explanation pane without reopening the reader', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    const chat = harness.addSeparateEditorPart();
+    await harness.reader.open();
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3);
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() });
+    await [...harness.service.records.values()][0]!.preparation;
+    // Act: the ordinary chat starts execution without requesting another Open.
+    await harness.reader.action('click');
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.groups.length, 3);
+    assert.equal(harness.groups.at(-1)!.tabs[0], chat.tab);
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] });
+    assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true);
+  } finally { await harness.close(); }
+});
+
+test('saved replay restores its summary after a native-chat-only live explanation', async () => {
+  // Arrange
+  const harness = await workspaceHarness(true, true);
+  try {
+    harness.service.environment.build.sourceHash = sha256('live-composition-build');
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    harness.acknowledgeContext();
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() });
+    const record = [...harness.service.records.values()][0]!;
+    await record.preparation;
+    await harness.reader.open();
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=', 'base64');
+    record.recording!.frame({ bytes: png, elapsedMs: 20, kind: 'stream' });
+    harness.clock(100); await harness.reader.action('click');
+    harness.clock(200); await harness.reader.action('stop');
+    // Act
+    await harness.reader.openRecording(record.recording!.header.studyId);
+    await harness.service.playbackController!.settle();
+    // Assert
+    assert.equal(harness.service.playbackController!.state().readiness, 'ready');
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.reader.inspect().view!.contentTab, 'recording');
+    assert.equal(harness.nativePanels().length, 1);
+    assert.equal(harness.summary.visible, true);
+    assert.deepEqual(harness.editorLayout(), { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] });
+    const playback = harness.service.playbackController!;
+    harness.hideSummary();
+    playback.command({ action: 'seek', studyId: record.recording!.header.studyId, expectedRevision: playback.state().revision, positionMs: 100 });
+    await playback.settle();
+    assert.equal(playback.state().readiness, 'ready');
+    const revision = playback.state().revision, position = playback.state().presentedMs;
+    await harness.reader.showLearningSummary();
+    assert.equal(harness.summary.visible, true);
+    assert.equal(playback.state().revision, revision);
+    assert.equal(playback.state().presentedMs, position);
+    assert.equal(harness.runtimes[0]!.dispatches, 1);
+  } finally { await harness.close(); }
+});
+
+test('live entry preserves a learner document sharing the former explanation group', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    await harness.reader.open();
+    const draft = harness.focusMutableDraft('my-notes.txt', 3);
+    draft.replaceContent('Keep my unsaved notes.');
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() });
+    await [...harness.service.records.values()][0]!.preparation;
+    // Act
+    await harness.reader.open();
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.equal(harness.groups.length, 3);
+    assert.equal(harness.groups[2]!.tabs.includes(draft.tab), true);
+    assert.equal(draft.document.getText(), 'Keep my unsaved notes.');
+    assert.equal(draft.tab.isDirty, true);
+    assert.equal(harness.reader.inspect().presentation.layoutConfirmed, false);
+    assert.ok(harness.reader.inspect().view!.errors.some(error => error.includes('Existing editor groups were preserved')));
+  } finally { await harness.close(); }
+});
+
+for (const departure of ['draft', 'window round trip'] as const) test(`replay Restore preserves newer ${departure} intent during native unmaximize`, async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  let release = () => {};
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    await harness.reader.action('read-source');
+    const state = harness.reader.presentationState(), playback = harness.controller.state();
+    const layouts = harness.commands.filter(command => command === 'vscode.setEditorLayout').length;
+    const held = harness.holdNextCommand('workbench.action.minimizeOtherEditors'); release = held.release;
+    const restoring = harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
+    const rejected = assert.rejects(restoring, /learner changed native tab focus/);
+    await held.started;
+    // Act
+    const draft = departure === 'draft' ? harness.focusMutableDraft() : undefined;
+    if (departure === 'window round trip') { harness.changeWindowFocus(false); harness.changeWindowFocus(true); }
+    held.release(); await rejected;
+    // Assert
+    assert.equal(harness.commands.filter(command => command === 'vscode.setEditorLayout').length, layouts);
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false);
+    assert.deepEqual(harness.controller.state(), playback);
+    if (draft) { assert.equal(harness.focusedSource()?.document.uri.toString(), draft.document.uri.toString()); assert.equal(draft.document.getText(), 'Original learner draft.\n'); }
+  } finally { release(); harness.changeWindowFocus(true); await harness.close(); }
+});
+
+test('reading the replay summary leaves an unfocused work window and historical position untouched', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    harness.hideSummary(); harness.changeWindowFocus(false);
+    const commands = harness.commands.length, playback = harness.controller.state();
+    // Act / Assert
+    await assert.rejects(harness.reader.action('read-context'), /Focus the Codebook work window/);
+    assert.equal(harness.commands.length, commands);
+    assert.equal(harness.summary.visible, false);
+    assert.deepEqual(harness.controller.state(), playback);
+  } finally { harness.changeWindowFocus(true); await harness.close(); }
+});
+
+test('a window round trip during summary opening cannot confirm an obsolete focus request', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  let release = () => {};
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const playback = harness.controller.state(), subscriptions = harness.windowFocusListeners();
+    const held = harness.holdNextCommand('codebook.learningSummary.focus'); release = held.release;
+    const opening = harness.reader.showLearningSummary(), rejected = assert.rejects(opening, /work window lost focus/);
+    await held.started;
+    // Act
+    harness.changeWindowFocus(false); harness.changeWindowFocus(true); held.release();
+    await rejected;
+    // Assert
+    assert.deepEqual(harness.controller.state(), playback);
+    assert.equal(harness.windowFocusListeners(), subscriptions);
+  } finally { release(); harness.changeWindowFocus(true); await harness.close(); }
+});
+
+test('closing replay rejects late summary controls and leaves saved learning unchanged', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    assert.equal(harness.controller.state().readiness, 'ready');
+    await harness.reader.close();
+    const before = harness.reader.inspect(), playback = harness.controller.state(), preference = await harness.store.readPreference();
+    const library = await harness.reader.learningStorage(), progress = await library.readProgress();
+
+    // Act: a queued renderer message cannot renew a closed reader, even with its latest revision.
+    harness.receive({ type: 'tab', tab: 'overview', revision: before.view!.revision });
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, false);
+    assert.equal(harness.controller.state().mode, 'paused');
+    assert.equal(harness.controller.state().cleared, true);
+    assert.deepEqual(harness.controller.state(), playback);
+    assert.deepEqual(harness.reader.inspect().view, before.view);
+    assert.deepEqual(await harness.store.readPreference(), preference);
+    assert.deepEqual(await library.readProgress(), progress);
+    assert.match(harness.summary.webview.html, /Open saved learning/);
+    assert.equal(harness.runtimes[0]!.dispatches, 1);
+  } finally { await harness.close(); }
+});
+
+test('restoring the live layout cannot recreate a custom explanation pane or select a retired variant', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] });
+    harness.service.start({ instanceId: harness.service.instanceId, profile: 'repository-browser', configuration: harness.configuration, key: randomUUID() });
+    await [...harness.service.records.values()][0]!.preparation;
+    await harness.reader.open();
+    const state = harness.reader.presentationState();
+    // Act
+    const restored = await harness.reader.changePresentation({ presentationId: state.presentationId, expectedRevision: state.presentationControlRevision, mode: 'study-workspace', action: 'restore' });
+    // Assert
+    assert.equal(restored.state, 'open');
+    assert.equal(restored.layoutConfirmed, true);
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined);
+    assert.throws(() => harness.reader.changePresentation({ presentationId: restored.presentationId, expectedRevision: restored.presentationControlRevision, mode: 'living-book', action: 'select' }), /one app\/source layout/);
+    assert.equal(harness.groups.length, 2);
+  } finally { await harness.close(); }
+});
+
+
+test('bottom playback remains available with the summary collapsed and restores fallback when hidden', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const original = harness.controller.state();
+    // Act
+    harness.hideSummary();
+    // Assert
+    assert.equal(harness.playbackPanel.visible, true);
+    assert.equal(harness.playbackPanelMessages.at(-1)?.playbackPanelVisible, true);
+    assert.deepEqual(harness.controller.state(), original);
+    // Act: the still-visible panel remains the only playback controller while summary is hidden.
+    const view = harness.playbackPanelMessages.at(-1)!;
+    harness.receivePlaybackPanel({ type: 'playback', action: 'seek', positionMs: 150, revision: view.revision, expectedRevision: original.revision });
+    await new Promise(resolve => setImmediate(resolve)); await harness.controller.settle();
+    assert.equal(harness.controller.state().presentedMs, 150);
+    const moved = harness.controller.state();
+    // Act
+    harness.hidePlaybackPanel();
+    // Assert
+    assert.equal(harness.playbackPanelMessages.at(-1)?.playbackPanelVisible, false);
+    assert.deepEqual(harness.controller.state(), moved);
+  } finally { await harness.close(); }
+});
+
+test('disposed bottom playback documents cannot move the selected recorded moment', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness();
+  try {
+    await harness.reader.openRecording(harness.studyId); await harness.controller.settle();
+    const playback = harness.controller.state(), view = harness.playbackPanelMessages.at(-1)!;
+    harness.disposePlaybackPanel();
+    // Act
+    harness.receivePlaybackPanel({ type: 'playback', action: 'seek', positionMs: 150, revision: view.revision, expectedRevision: playback.revision });
+    await harness.controller.settle();
+    // Assert
+    assert.deepEqual(harness.controller.state(), playback);
+  } finally { await harness.close(); }
 });

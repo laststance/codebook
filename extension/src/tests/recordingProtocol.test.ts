@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { z } from 'zod';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import { StudyClient } from '../client';
 import { startServer } from '../server';
 import { StudyService } from '../service';
@@ -28,7 +28,7 @@ test('new server credentials discover and replay a stored recording with no live
   // Arrange: fixed PNG input is a storage fixture, not claimed real native recording.
   const harness = await createHarness(), workspaceKey = sha256(harness.directory), directory = join(harness.directory, 'learning');
   const store = new RecordingStore(directory, workspaceKey), instanceId = harness.service.instanceId, runId = randomUUID(), studyId = `${instanceId}_${runId}`;
-  const writer = await store.start({ workspaceKey, studyId, instanceId, runId, runtimeId: randomUUID(), profile: 'checkout-demo', sourceBuild: { revision: 'test', dirty: false, sourceHash: sha256('build') } }, 0);
+  const writer = await store.start({ workspaceKey, studyId, instanceId, runId, runtimeId: randomUUID(), profile: 'repository-browser', sourceBuild: { revision: 'test', dirty: false, sourceHash: sha256('build') } }, 0);
   writer.frame({ bytes: png, elapsedMs: 0, kind: 'stream' }); await writer.finish(100);
   const firstController = installPlayback(harness.service, store), first = await startServer(harness.service);
   await first.close(); await firstController.dispose();
@@ -76,7 +76,7 @@ test('recording pages are bounded and foreign frames, paths and concurrent stale
   // Arrange
   const harness = await createHarness(), workspaceKey = sha256(harness.directory), store = new RecordingStore(join(harness.directory, 'learning'), workspaceKey);
   const runId = randomUUID(), studyId = `${harness.service.instanceId}_${runId}`;
-  const writer = await store.start({ workspaceKey, studyId, instanceId: harness.service.instanceId, runId, runtimeId: randomUUID(), profile: 'paired-cart-demo', sourceBuild: { revision: 'test', dirty: false, sourceHash: sha256('build') } }, 0);
+  const writer = await store.start({ workspaceKey, studyId, instanceId: harness.service.instanceId, runId, runtimeId: randomUUID(), profile: 'repository-browser', sourceBuild: { revision: 'test', dirty: false, sourceHash: sha256('build') } }, 0);
   for (let index = 0; index < 101; index++) writer.frame({ bytes: png, elapsedMs: index * 50, kind: 'stream' });
   await writer.finish(5_100);
   const controller = installPlayback(harness.service, store), endpoint = await startServer(harness.service), client = await StudyClient.connect(endpoint.descriptor), base = `codebook://${harness.service.instanceId}/studies/${studyId}/recording`;
@@ -122,7 +122,7 @@ test('concurrent recorded PNG reads share sealed verification and still reject c
   const harness = await createHarness(), workspaceKey = sha256(harness.directory), store = new RecordingStore(join(harness.directory, 'learning'), workspaceKey);
   harness.service.recordings = store;
   const runId = randomUUID(), studyId = `${harness.service.instanceId}_${runId}`;
-  const writer = await store.start({ workspaceKey, studyId, instanceId: harness.service.instanceId, runId, runtimeId: randomUUID(), profile: 'paired-cart-demo', sourceBuild: { revision: 'test', dirty: false, sourceHash: sha256('build') } }, 0);
+  const writer = await store.start({ workspaceKey, studyId, instanceId: harness.service.instanceId, runId, runtimeId: randomUUID(), profile: 'repository-browser', sourceBuild: { revision: 'test', dirty: false, sourceHash: sha256('build') } }, 0);
   for (const elapsedMs of [0, 50, 100]) writer.frame({ bytes: png, elapsedMs, kind: 'stream' });
   await writer.finish(150);
   let reads = 0; const read = store.readFrame.bind(store);

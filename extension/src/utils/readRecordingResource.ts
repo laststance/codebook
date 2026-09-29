@@ -1,3 +1,4 @@
+import { readJsonPage } from './readJsonPage';
 import { RECORDING_FRAME_PAGE_SIZE } from '../constants';
 import { LearningLibrary } from '../learningLibrary';
 import { StudyError } from '../errors';
@@ -19,18 +20,30 @@ export async function readRecordingResource(service: StudyService, uri: string):
       entries: [...entries.values(), ...recordings.filter(recording => !entries.has(recording.studyId)).map(recording => ({ studyId: recording.studyId, recording, recordingUri: recordingUri(recording.studyId) }))], playbackUri: `codebook://${service.instanceId}/playback` });
   }
   if (url.pathname === '/playback') return json({ instanceId: service.instanceId, ...service.playbackController?.state(), available: Boolean(service.playbackController), uri, libraryUri: `codebook://${service.instanceId}/library` });
-  const match = /^\/studies\/([a-f0-9-]{36}_[a-f0-9-]{36})\/recording(?:\/(frames\/(?:0|[1-9]\d*)|frame\/[a-f0-9]{64}|context\/[a-f0-9]{64}))?$/.exec(url.pathname);
+  const match = /^\/studies\/([a-f0-9-]{36}_[a-f0-9-]{36})\/recording(?:\/(frames\/(?:0|[1-9]\d*)|frame\/[a-f0-9]{64}|context\/[a-f0-9]{64}(?:\/learning(?:\/pages\/[a-f0-9]{64}\/(?:0|[1-9]\d*))?)?))?$/.exec(url.pathname);
   if (!match?.[1]) throw new StudyError('INVALID_REFERENCE', 'Unknown recording resource; copy a returned canonical URI.');
   const studyId = match[1], suffix = match[2], base = recordingUri(studyId);
   try {
-    if (suffix?.startsWith('context/')) return json((await store.readContext(studyId, suffix.slice('context/'.length))).context);
+    if (suffix?.startsWith('context/')) {
+      const [, contextHash, selection, ...page] = suffix.split('/');
+      const { context } = await store.readContext(studyId, contextHash);
+      if (!selection) return json(context);
+      return readJsonPage(`${base}/context/${contextHash}/learning`, { studyId, contextHash, historyRevision: context.historyRevision,
+        studyHash: context.studyHash, materialSignature: context.materialSignature, historical: true,
+        learningSummary: 'learningSummary' in context.study ? context.study.learningSummary : undefined,
+        observations: context.study.observations.map(observation => ({ id: observation.id, elapsedMs: observation.elapsedMs,
+          source: { hash: observation.source.hash, line: observation.source.line }, values: observation.values,
+          unavailableValues: 'unavailableValues' in observation ? observation.unavailableValues : undefined, interpretations: observation.interpretations })),
+        interpretationAvailability: context.interpretationAvailability, pausedIntervals: context.pausedIntervals,
+      }, page.length ? page.join('/') : undefined);
+    }
     const index = await (suffix ? store.readResourceIndex(studyId) : store.read(studyId));
     if (!suffix) {
       let contextHash: string | undefined, contextReason: string | undefined;
       try { contextHash = (await store.readContext(studyId)).hash; } catch (error) { contextReason = String(error); }
       return json({ header: index.header, status: index.status, reason: index.reason, endMs: index.endMs, lastVerifiedMs: index.lastVerifiedMs,
         frameCount: index.entries.filter(entry => entry.type === 'frame').length, lastSequence: index.entries.at(-1)?.sequence ?? 0, framesUri: `${base}/frames/0`,
-        contextUri: contextHash ? `${base}/context/${contextHash}` : undefined, contextReason, playbackUri: `codebook://${service.instanceId}/playback`, historical: true });
+        contextUri: contextHash ? `${base}/context/${contextHash}` : undefined, learningUri: contextHash ? `${base}/context/${contextHash}/learning` : undefined, contextReason, playbackUri: `codebook://${service.instanceId}/playback`, historical: true });
     }
     if (suffix.startsWith('frames/')) {
       const cursor = Number(suffix.slice('frames/'.length));

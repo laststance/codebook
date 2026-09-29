@@ -12,7 +12,7 @@ import { createConfiguredStudy } from './utils/createConfiguredStudy';
 test('untrusted, remote and virtual workspaces reject execution before creating any runtime', async () => {
   // Arrange
   const workspace = { isTrusted: false, workspaceFolders: [{ uri: { scheme: 'file', fsPath: '/workspace' } }] }, env = { remoteName: '' };
-  const boundary = await loadModule<typeof import('../environment')>(resolve(__dirname, '../environment.js'), { './configuredBrowserRun': {}, vscode: { workspace, env }, 'codebook-cycle-0004/dist/run': {} });
+  const boundary = await loadModule<typeof import('../environment')>(resolve(__dirname, '../environment.js'), { './configuredBrowserRun': {}, vscode: { workspace, env } });
   // Act / Assert
   assert.throws(() => boundary.requireWorkspace(), /Trust this workspace/);
   workspace.isTrusted = true; env.remoteName = 'ssh-remote'; assert.throws(() => boundary.requireWorkspace(), /local file workspace/);
@@ -33,16 +33,14 @@ test('the configured environment routes only owned DAP responses and reveals imm
     owner(session: DebugSession) { return session.id === 'selected'; }
     addSession(session: DebugSession) { this.activeSessions.add(session.id); }
     onRequest() { messages.push('request'); } onResponse() { messages.push('response'); } onEvent() { messages.push('event'); }
-    view() { return { status: runStatus, cleaned: false }; } terminated() {} fail() { messages.push('failed'); }
+    view() { return { status: runStatus, cleaned: false, snapshots: createConfiguredStudy().observations }; } terminated() {} fail() { messages.push('failed'); }
     ownsDevelopmentLock() { return ownedLock; }
     isCleaning() { return cleaning; }
   }
   const disposable = { dispose() {} };
   const boundary = await loadModule<typeof import('../environment')>(resolve(__dirname, '../environment.js'), {
     './configuredBrowserRun': { ConfiguredBrowserRun: SelectedRun },
-    './utils/checkDemoFiles': { checkDemoFiles: async () => ['Bundled demo files are missing or unreadable. Reinstall Codebook.'] },
     './utils/resolveExternalNodeExecutable': { resolveExternalNodeExecutable: async () => '/external/node' },
-    'codebook-cycle-0004/dist/run': { PairedRun: class { constructor() { throw new Error('Demo must not launch'); } } },
     'node:fs/promises': { ...filesystem, access: async (path: string) => {
       accesses.push(path);
       if (path.includes('/dist/demo/')) throw new Error('No installed demo fixtures');
@@ -52,7 +50,7 @@ test('the configured environment routes only owned DAP responses and reveals imm
       env: { appRoot: directory, appName: 'Cursor' }, version: '1.128.0', extensions: { getExtension: () => ({}) },
       debug: { registerDebugAdapterTrackerFactory: (_kind: string, value: DebugAdapterTrackerFactory) => { factory = value; return disposable; }, onDidTerminateDebugSession: () => disposable, onDidChangeActiveDebugSession: () => disposable } },
   });
-  const environment = await boundary.createEnvironment({ extensionPath: resolve(__dirname, '../..') }, { createViewport: () => { throw new Error('No renderer acquisition in a factory test'); }, prepareSource: async () => { throw new Error('Raw source must not open'); }, revealSource: async () => revealed });
+  const environment = await boundary.createEnvironment({ extensionPath: resolve(__dirname, '../..') }, { createViewport: () => { throw new Error('No renderer acquisition in a factory test'); }, revealSource: async () => revealed });
   context.after(() => environment.dispose());
   await mkdir(join(directory, 'node_modules/next/dist/bin'), { recursive: true });
   const nextExecutable = join(directory, 'node_modules/next/dist/bin/next');
@@ -102,7 +100,7 @@ test('the configured environment routes only owned DAP responses and reveals imm
   assert.equal(accesses.some(path => path.includes('/dist/demo/')), false);
   await assert.rejects(selected.options.revealSource(createConfiguredStudy().observations[0]!), { code: 'EVIDENCE_UNAVAILABLE' });
   revealed = true; await selected.options.revealSource(createConfiguredStudy().observations[0]!);
-  await assert.rejects(environment.createRuntime(join(directory, 'demo'), 'checkout-demo'), /Reinstall Codebook/);
+  await assert.rejects(selected.options.revealSource({ ...createConfiguredStudy().observations[0]!, id: 'foreign-snapshot' }), { code: 'EVIDENCE_UNAVAILABLE' });
   cancellation.abort(); await assert.rejects(environment.createRuntime(join(directory, 'cancelled'), definition, control), /abort/i);
   assert.equal(instances.length, 1);
 });
@@ -117,7 +115,6 @@ test('missing Node Chrome and debugger prerequisites identify configuration keys
     vscode: { workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }], getConfiguration: () => ({ get: () => join(directory, 'absent-executable') }) },
       env: { appRoot: directory, appName: 'Visual Studio Code' }, version: '1.138.0', extensions: { getExtension: () => undefined },
       debug: { registerDebugAdapterTrackerFactory: () => disposable, onDidTerminateDebugSession: () => disposable, onDidChangeActiveDebugSession: () => disposable } },
-    'codebook-cycle-0004/dist/run': { PairedRun: class { constructor() { throw new Error('Unexpected runtime launch'); } } },
   });
   const context = { extensionPath: resolve(__dirname, '../..') };
   try {
@@ -128,6 +125,6 @@ test('missing Node Chrome and debugger prerequisites identify configuration keys
     assert.equal(prerequisites.ready, false); assert.equal(prerequisites.missing.length, 3);
     assert.equal(prerequisites.profiles?.['repository-browser']?.ready, false); assert.match(prerequisites.profiles?.['repository-browser']?.missing.join(' ') ?? '', /Next/);
     assert.match(prerequisites.missing.join('\n'), /ms-vscode.js-debug/); assert.match(prerequisites.missing.join('\n'), /codebook.nodeExecutable/); assert.match(prerequisites.missing.join('\n'), /codebook.chromeExecutable/);
-    await assert.rejects(environment.createRuntime(join(directory, 'runtime')), /nodeExecutable/); environment.dispose();
+    await assert.rejects(environment.createRuntime(join(directory, 'runtime'), { configuration: createConfiguredStudy().configuration, configurationHash: createConfiguredStudy().configurationHash, descriptor: createConfiguredStudy().descriptor! }), /nodeExecutable/); environment.dispose();
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

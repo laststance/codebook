@@ -14,11 +14,11 @@ const executeFile = promisify(execFile);
 test('repository discovery exposes tracked source names and exclusion counts without leaking excluded filenames', async context => {
   // Arrange
   const { sources, track } = await sourceHarness(context);
-  for (const path of ['src/cart.ts', 'README.md', '.env', 'config/secrets/index.ts', 'dist/cart.js', 'pnpm-lock.yaml', 'package-lock.json', 'photo.png']) await track(path);
+  for (const path of ['src/module.ts', 'README.md', '.env', 'config/secrets/index.ts', 'dist/module.js', 'pnpm-lock.yaml', 'package-lock.json', 'photo.png']) await track(path);
   // Act
   const page = await sources.list();
   // Assert
-  assert.deepEqual(page.files, ['README.md', 'src/cart.ts']);
+  assert.deepEqual(page.files, ['README.md', 'src/module.ts']);
   assert.equal(page.eligibleCount, 2); assert.equal(page.trackedCount, 8);
   assert.deepEqual(page.excluded, { 'hidden-path': 1, 'sensitive-name': 1, 'generated-or-dependency': 1, lockfile: 2, 'unsupported-extension': 1 });
   assert.equal(JSON.stringify(page).includes('config/secrets'), false);
@@ -27,11 +27,11 @@ test('repository discovery exposes tracked source names and exclusion counts wit
 
 test('repository reading binds exact TypeScript bytes and line count to the advertised content hash', async context => {
   // Arrange
-  const { sources, track } = await sourceHarness(context); await track('src/cart.ts');
+  const { sources, track } = await sourceHarness(context); await track('src/module.ts');
   // Act
-  const source = await sources.read('src/cart.ts');
+  const source = await sources.read('src/module.ts');
   // Assert
-  assert.deepEqual(source, { path: 'src/cart.ts', text: 'export const price = 24;\n', hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b', lineCount: 2 });
+  assert.deepEqual(source, { path: 'src/module.ts', text: 'export const price = 24;\n', hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b', lineCount: 2 });
 });
 
 test('repository reading preserves BOM, Japanese text and CRLF without changing the cited byte hash', async context => {
@@ -47,14 +47,14 @@ test('repository reading preserves BOM, Japanese text and CRLF without changing 
 
 test('changed source rejects an old citation hash and offers a fresh source read', async context => {
   // Arrange
-  const { directory, sources, track } = await sourceHarness(context); await track('src/cart.ts');
-  await writeFile(join(directory, 'src/cart.ts'), 'export const price = 30;\n');
+  const { directory, sources, track } = await sourceHarness(context); await track('src/module.ts');
+  await writeFile(join(directory, 'src/module.ts'), 'export const price = 30;\n');
   // Act / Assert
-  await assert.rejects(sources.read('src/cart.ts', '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b'), error => {
+  await assert.rejects(sources.read('src/module.ts', '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b'), error => {
     assert.ok(error instanceof Error && 'code' in error); assert.equal(error.code, 'SOURCE_CHANGED');
     assert.match(error.message, /expected 5e7076.*current/); return true;
   });
-  assert.equal((await sources.read('src/cart.ts')).text, 'export const price = 30;\n');
+  assert.equal((await sources.read('src/module.ts')).text, 'export const price = 30;\n');
 });
 
 test('CR-only source lines remain addressable by the same one-based line numbers shown in a native editor', async context => {
@@ -68,11 +68,11 @@ test('CR-only source lines remain addressable by the same one-based line numbers
 
 test('source reading rejects untracked, untracked-again, absolute and traversal paths', async context => {
   // Arrange
-  const { directory, sources, track } = await sourceHarness(context); await track('src/cart.ts');
+  const { directory, sources, track } = await sourceHarness(context); await track('src/module.ts');
   await writeFile(join(directory, 'untracked.ts'), 'not tracked');
-  await executeFile('git', ['rm', '--cached', '--quiet', '--', 'src/cart.ts'], { cwd: directory });
+  await executeFile('git', ['rm', '--cached', '--quiet', '--', 'src/module.ts'], { cwd: directory });
   // Act / Assert
-  for (const path of ['src/cart.ts', 'untracked.ts', '../outside.ts', '/tmp/outside.ts', 'src/../cart.ts', 'src\\cart.ts']) {
+  for (const path of ['src/module.ts', 'untracked.ts', '../outside.ts', '/tmp/outside.ts', 'src/../module.ts', 'src\\module.ts']) {
     await assert.rejects(sources.read(path), error => error instanceof Error && 'code' in error && error.code === 'SOURCE_UNAVAILABLE');
   }
 });
@@ -80,12 +80,12 @@ test('source reading rejects untracked, untracked-again, absolute and traversal 
 test('source reading rejects terminal and ancestor symlinks even after names were tracked as regular files', async context => {
   // Arrange
   const { directory, sources, track } = await sourceHarness(context);
-  await track('src/cart.ts'); await track('linked.ts');
+  await track('src/module.ts'); await track('linked.ts');
   await writeFile(join(directory, 'private.txt'), 'private bytes must not appear');
   await rm(join(directory, 'linked.ts')); await symlink(join(directory, 'private.txt'), join(directory, 'linked.ts'));
   await rename(join(directory, 'src'), join(directory, 'actual-source')); await symlink(join(directory, 'actual-source'), join(directory, 'src'));
   // Act / Assert
-  for (const path of ['linked.ts', 'src/cart.ts']) await assert.rejects(sources.read(path), error => {
+  for (const path of ['linked.ts', 'src/module.ts']) await assert.rejects(sources.read(path), error => {
     assert.ok(error instanceof Error); assert.match(error.message, /Symbolic source paths are excluded/); assert.equal(error.message.includes('private bytes'), false); return true;
   });
 });
@@ -103,20 +103,20 @@ test('source reading rejects missing, replaced-directory, invalid UTF-8, binary 
 
 test('mutation after descriptor read is rejected before changed bytes can become a citation', async context => {
   // Arrange: real disk/descriptor I/O; inject the mutation at its exact asynchronous boundary.
-  const { directory, sources, track } = await sourceHarness(context); await track('src/cart.ts');
+  const { directory, sources, track } = await sourceHarness(context); await track('src/module.ts');
   const originalOpen = filesystem.open;
   context.mock.method(filesystem, 'open', async (...arguments_: Parameters<typeof originalOpen>) => {
     const handle = await originalOpen(...arguments_);
     const originalRead = handle.read.bind(handle);
     context.mock.method(handle, 'read', async (...readArguments: Parameters<typeof originalRead>) => {
       const result = await originalRead(...readArguments);
-      await writeFile(join(directory, 'src/cart.ts'), 'export const price = 30;\n');
+      await writeFile(join(directory, 'src/module.ts'), 'export const price = 30;\n');
       return result;
     });
     return handle;
   });
   // Act / Assert
-  await assert.rejects(sources.read('src/cart.ts'), error => error instanceof Error && 'code' in error && error.code === 'SOURCE_CHANGED');
+  await assert.rejects(sources.read('src/module.ts'), error => error instanceof Error && 'code' in error && error.code === 'SOURCE_CHANGED');
 });
 
 test('source pages continue the same path snapshot and reject a cursor after tracked names change', async context => {
@@ -136,17 +136,17 @@ test('source pages continue the same path snapshot and reject a cursor after tra
 
 test('repository authoring rejects a nested workspace instead of reading outside its declared root', async context => {
   // Arrange
-  const { directory, track } = await sourceHarness(context); await track('src/cart.ts');
+  const { directory, track } = await sourceHarness(context); await track('src/module.ts');
   // Act / Assert
   await assert.rejects(new RepositorySourceService(join(directory, 'src')).list(), error => error instanceof Error && 'code' in error && error.code === 'PREREQUISITE_MISSING');
 });
 
 test('book document rejects duplicate nodes and relationship endpoints outside its authored nodes', () => {
   // Arrange
-  const node = { id: 'cart', title: 'Cart', sections: [{ title: 'State', text: 'The cart changes.' }], anchors: [{ path: 'src/cart.ts', hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b', startLine: 1, endLine: 1 }], observations: [] };
+  const node = { id: 'module', title: 'Module', sections: [{ title: 'State', text: 'The module changes.' }], anchors: [{ path: 'src/module.ts', hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b', startLine: 1, endLine: 1 }], observations: [] };
   // Act
   const duplicate = bookDocumentSchema.safeParse({ title: 'Book', summary: 'Overview', nodes: [node, node], edges: [] });
-  const dangling = bookDocumentSchema.safeParse({ title: 'Book', summary: 'Overview', nodes: [node], edges: [{ from: 'cart', to: 'missing', relationship: 'calls', explanation: 'Agent interpretation' }] });
+  const dangling = bookDocumentSchema.safeParse({ title: 'Book', summary: 'Overview', nodes: [node], edges: [{ from: 'module', to: 'missing', relationship: 'calls', explanation: 'Agent interpretation' }] });
   // Assert
   assert.equal(duplicate.success, false); assert.equal(dangling.success, false);
 });
@@ -165,7 +165,7 @@ test('empty and exactly bounded sources remain readable without accepting a byte
 
 test('legal short descriptor reads preserve the complete cited text and hash', async context => {
   // Arrange: preserve real file I/O, shortening each OS request at the descriptor boundary.
-  const { sources, track } = await sourceHarness(context); await track('src/cart.ts');
+  const { sources, track } = await sourceHarness(context); await track('src/module.ts');
   const originalOpen = filesystem.open;
   context.mock.method(filesystem, 'open', async (...arguments_: Parameters<typeof originalOpen>) => {
     const handle = await originalOpen(...arguments_), read = handle.read.bind(handle);
@@ -173,7 +173,7 @@ test('legal short descriptor reads preserve the complete cited text and hash', a
     return handle;
   });
   // Act
-  const source = await sources.read('src/cart.ts');
+  const source = await sources.read('src/module.ts');
   // Assert
   assert.equal(source.text, 'export const price = 24;\n');
   assert.equal(source.hash, '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b');
@@ -203,27 +203,27 @@ test('publication source preparation deduplicates citations and keeps at most fo
 
 test('changing tracking during an acquired source read rejects bytes from the obsolete catalog', async context => {
   // Arrange
-  const { directory, sources, track } = await sourceHarness(context); await track('src/cart.ts');
+  const { directory, sources, track } = await sourceHarness(context); await track('src/module.ts');
   const originalOpen = filesystem.open;
   context.mock.method(filesystem, 'open', async (...arguments_: Parameters<typeof originalOpen>) => {
     const handle = await originalOpen(...arguments_);
-    await executeFile('git', ['rm', '--cached', '--quiet', '--', 'src/cart.ts'], { cwd: directory });
+    await executeFile('git', ['rm', '--cached', '--quiet', '--', 'src/module.ts'], { cwd: directory });
     return handle;
   });
   // Act / Assert
-  await assert.rejects(sources.read('src/cart.ts'), /tracked set changed/);
+  await assert.rejects(sources.read('src/module.ts'), /tracked set changed/);
 });
 
 test('prepared citations reject changed bytes, identical-byte replacements and tracked-set changes before publication', async context => {
   // Arrange
-  const { directory, sources, track } = await sourceHarness(context); await track('src/cart.ts');
-  const anchors = [{ path: 'src/cart.ts', hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b' }];
+  const { directory, sources, track } = await sourceHarness(context); await track('src/module.ts');
+  const anchors = [{ path: 'src/module.ts', hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b' }];
   const first = await sources.prepare(anchors);
   // Act / Assert
-  await writeFile(join(directory, 'src/cart.ts'), 'changed');
+  await writeFile(join(directory, 'src/module.ts'), 'changed');
   await assert.rejects(first.revalidate(), /Source hash changed/);
-  await track('src/cart.ts'); const second = await sources.prepare(anchors);
-  await rename(join(directory, 'src/cart.ts'), join(directory, 'src/old.ts')); await writeFile(join(directory, 'src/cart.ts'), 'export const price = 24;\n');
+  await track('src/module.ts'); const second = await sources.prepare(anchors);
+  await rename(join(directory, 'src/module.ts'), join(directory, 'src/old.ts')); await writeFile(join(directory, 'src/module.ts'), 'export const price = 24;\n');
   await assert.rejects(second.revalidate(), /identity changed/);
   const third = await sources.prepare(anchors); await track('src/added.ts');
   await assert.rejects(third.revalidate(), /tracked set changed/);
@@ -231,10 +231,10 @@ test('prepared citations reject changed bytes, identical-byte replacements and t
 
 test('expired and cancelled source preparation cannot later validate a publication', async context => {
   // Arrange
-  const { directory, track } = await sourceHarness(context); await track('src/cart.ts');
+  const { directory, track } = await sourceHarness(context); await track('src/module.ts');
   let now = 1_000;
   const sources = new RepositorySourceService(directory, () => now), controller = new AbortController();
-  const anchors = [{ path: 'src/cart.ts', hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b' }];
+  const anchors = [{ path: 'src/module.ts', hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b' }];
   const prepared = await sources.prepare(anchors, { signal: controller.signal });
   // Act / Assert
   controller.abort(); await assert.rejects(prepared.revalidate(), /expired or was cancelled/);
@@ -246,7 +246,7 @@ test('expired and cancelled source preparation cannot later validate a publicati
 test('conflicting and excessive distinct citations fail preparation before any source is acquired', async context => {
   // Arrange
   const { sources } = await sourceHarness(context);
-  const first = { path: 'src/cart.ts', hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b' };
+  const first = { path: 'src/module.ts', hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b' };
   // Act / Assert
   await assert.rejects(sources.prepare([first, { ...first, hash: '0'.repeat(64) }]), /Conflicting citation hashes/);
   await assert.rejects(sources.prepare(Array.from({ length: 33 }, (_, index) => ({ ...first, path: `src/file-${index}.ts` }))), /at most 32 distinct sources/);

@@ -4,16 +4,17 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { readHostInstallation } from '../../experiments/cycle-0001/dist/utils/readHostInstallation.js';
-import { selectHost } from '../../experiments/cycle-0001/dist/utils/selectHost.js';
+import { readHostInstallation } from '../dist/runtimeSupport/utils/readHostInstallation.js';
+import { selectHost } from '../dist/runtimeSupport/utils/selectHost.js';
 import { createNativeProfile } from '../dist/utils/createNativeProfile.js';
 
 // Launches only an isolated native test profile; the driving agent supplies every authored article through public MCP.
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..'), workspace = resolve(packageRoot, '..');
+if (!process.env.CODEBOOK_WORKSPACE?.trim()) throw new Error('Set CODEBOOK_WORKSPACE to the external repository to validate.');
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..'), workspace = resolve(process.env.CODEBOOK_WORKSPACE);
 const hostId = selectHost(process.env.CODEBOOK_HOST), installation = await readHostInstallation(hostId);
 const previousPath = process.argv[2], previous = previousPath ? JSON.parse(await readFile(previousPath, 'utf8')) : undefined;
 if (previous && (previous.host.id !== hostId || previous.workspace !== workspace)) throw new Error('Reload identity differs from the original native session.');
-const directory = join(workspace, 'artifacts/cycle-0009/native', hostId, `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}`);
+const directory = join(packageRoot, '../artifacts/native-repository', hostId, `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}`);
 const profile = previous?.profile ?? await createNativeProfile(), prefix = previous ? 'reload' : 'live';
 await mkdir(directory, { recursive: true, mode: 0o700 }); await mkdir(join(profile, 'User'), { recursive: true, mode: 0o700 });
 if (!previous) await writeFile(join(profile, 'User/settings.json'), JSON.stringify({ 'security.workspace.trust.enabled': false, 'workbench.startupEditor': 'none', 'debug.openDebug': 'neverOpen', 'workbench.enableExperiments': false, 'workbench.editor.restoreViewState': true, 'codebook.nodeExecutable': process.execPath }, null, 2), { mode: 0o600 });

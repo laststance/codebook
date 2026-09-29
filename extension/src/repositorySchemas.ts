@@ -28,7 +28,7 @@ export const bookDocumentSchema = z.strictObject({ title: z.string().min(1).max(
 export const publishBookSchema = z.strictObject({ instanceId: z.uuid(), bookId: bookIdSchema, key: z.string().min(1).max(KEY_LENGTH_LIMIT), expectedRevision: z.number().int().nonnegative(), document: bookDocumentSchema });
 export const bookPublishIntentSchema = publishBookSchema.omit({ instanceId: true });
 export const openBookSchema = z.strictObject({ instanceId: z.uuid(), bookId: bookIdSchema, revision: z.number().int().positive(), nodeId: bookIdSchema, anchorIndex: z.number().int().nonnegative().max(BOOK_MAX_ANCHORS - 1).optional() });
-export const bookObservationBindingSchema = bookObservationLinkSchema.extend({ nodeId: bookIdSchema, linkIndex: z.number().int().nonnegative().max(BOOK_MAX_LINKS - 1), itemId: itemSchema,
+export const bookObservationBindingSchema = bookObservationLinkSchema.extend({ nodeId: bookIdSchema, linkIndex: z.number().int().nonnegative().max(BOOK_MAX_LINKS - 1), itemId: z.never(),
   observationHash: repositoryHashSchema, elapsedMs: z.number().nonnegative(), outcome: z.string().min(1).max(KEY_LENGTH_LIMIT) });
 export const bookRevisionSchema = z.strictObject({ revision: z.number().int().positive(), key: z.string().min(1).max(KEY_LENGTH_LIMIT), inputDigest: repositoryHashSchema,
   expectedRevision: z.number().int().nonnegative(), publishedAt: z.iso.datetime(), document: bookDocumentSchema,

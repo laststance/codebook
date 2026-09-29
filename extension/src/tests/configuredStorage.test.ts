@@ -1,17 +1,29 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import { LearningLibrary } from '../learningLibrary';
-import { studyArchiveSchema as legacyArchiveSchema } from '../legacyStudySchemas';
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite';
-import { readBoundedFile } from '../utils/readBoundedFile';
-import { decodeStudyArchive } from '../utils/decodeStudyArchive';
 import { createConfiguredStudy } from './utils/createConfiguredStudy';
 import { loadModule } from './utils/loadModule';
+
+test('retired archives cannot prevent retry from repairing a current repository checkpoint', async context => {
+  // Arrange
+  const { directory, library, study, metadataPath, archivePath } = await storageHarness(context);
+  await library.saveStudy(study); await rm(metadataPath);
+  const retiredPath = join(directory, '00000000-0000-4000-8000-000000000000_11111111-1111-4111-8111-111111111111.study.v2.json');
+  const original = '{"version":2,"unsupported":"preserve original bytes"}';
+  await writeFile(retiredPath, original); const current = await readFile(archivePath);
+  // Act
+  await library.reconcile();
+  // Assert
+  assert.equal((await library.readCheckpoint(study.id)).status, 'saved');
+  assert.equal((await library.list()).find(entry => entry.format === 'v2')?.metadata, 'unavailable');
+  assert.equal(await readFile(retiredPath, 'utf8'), original);
+  assert.deepEqual(await readFile(archivePath), current);
+});
 
 /** Gives storage tests private files and deterministic captured data without native runtime claims. @example const { library, study } = await storageHarness(context) */
 async function storageHarness(context: TestContext) {
@@ -20,50 +32,6 @@ async function storageHarness(context: TestContext) {
   const study = createConfiguredStudy(), library = new LearningLibrary(directory, study.workspaceKey);
   return { directory, study, library, archivePath: join(directory, `${study.id}.study.v3.json`), metadataPath: join(directory, `${study.id}.study.meta.v3.json`) };
 }
-
-test('configured history survives restart beside untouched legacy and demo records without loading images for the catalog', async context => {
-  // Arrange
-  const { directory, study, library, archivePath } = await storageHarness(context);
-  const legacy = legacyArchiveSchema.parse(JSON.parse(await readFile(resolve(__dirname, '../../src/tests/fixtures/cycle-0006-legacy/study.v1.json'), 'utf8')));
-  legacy.workspaceKey = study.workspaceKey;
-  const legacyBytes = JSON.stringify(legacy), legacyPath = join(directory, `${legacy.id}.study.json`);
-  await writeFile(legacyPath, legacyBytes);
-  await library.saveStudy(decodeStudyArchive(legacy, study.workspaceKey));
-  await library.saveStudy(study); const configuredBytes = await readFile(archivePath);
-  const module = await loadModule<typeof import('../learningLibrary')>(resolve(__dirname, '../learningLibrary.js'), {
-    './utils/readBoundedFile': { readBoundedFile: async (...arguments_: Parameters<typeof readBoundedFile>) => {
-      if (/\.study(?:\.v[23])?\.json$/.test(arguments_[0])) throw new Error('Catalog must not load image blobs.');
-      return readBoundedFile(...arguments_);
-    } },
-  });
-  // Act
-  const catalog = await new module.LearningLibrary(directory, study.workspaceKey).list();
-  const restored = await new LearningLibrary(directory, study.workspaceKey).readCheckpoint(study.id);
-  // Assert
-  assert.equal(catalog.length, 2);
-  assert.equal(JSON.stringify(catalog.map(entry => [entry.format, entry.profile, entry.metadata]).sort()), '[["v2","paired-cart-demo","validated"],["v3","repository-browser","validated"]]');
-  assert.equal(restored.status, 'saved'); assert.equal(restored.study.version, 3);
-  assert.equal(restored.study.observations[0]?.values['value:enabled'], false);
-  assert.deepEqual(await readFile(archivePath), configuredBytes); assert.equal(await readFile(legacyPath, 'utf8'), legacyBytes);
-  assert.equal((await library.readProgress()).decisions.length, 0);
-});
-
-test('corrupt or future configured files remain authoritative over valid older files and cannot be repaired from them', async context => {
-  // Arrange
-  const { directory, study, library, archivePath } = await storageHarness(context);
-  const legacy = legacyArchiveSchema.parse(JSON.parse(await readFile(resolve(__dirname, '../../src/tests/fixtures/cycle-0006-legacy/study.v1.json'), 'utf8')));
-  const demo = { ...decodeStudyArchive(legacy, legacy.workspaceKey), workspaceKey: study.workspaceKey, id: study.id, instanceId: study.instanceId, runId: study.runId, observations: [], captures: [], links: [] };
-  await library.saveStudy(demo); const olderPath = join(directory, `${study.id}.study.v2.json`), older = await readFile(olderPath);
-  // Act / Assert
-  await writeFile(archivePath, '{corrupt');
-  await assert.rejects(library.readStudy(study.id)); await assert.rejects(library.reconcile());
-  assert.equal((await library.list())[0]?.format, 'v3'); assert.equal((await library.list())[0]?.metadata, 'unavailable');
-  await writeFile(archivePath, JSON.stringify({ ...study, version: 4 }));
-  await assert.rejects(library.readStudy(study.id), /Version 3 archive has an incompatible schema/);
-  await writeFile(archivePath, JSON.stringify({ ...study, version: 2 }));
-  await assert.rejects(library.readStudy(study.id), /Version 3 archive has an incompatible schema/);
-  assert.deepEqual(await readFile(olderPath), older);
-});
 
 test('interrupted configured metadata saving retains readable evidence and explicit retry repairs only its checkpoint', async context => {
   // Arrange
@@ -153,25 +121,6 @@ test('competing configured checkpoint writers preserve the winning interpretatio
   assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
   assert.equal(results.filter(result => result.status === 'rejected').length, 1);
   assert.equal(checkpoint.study.observations[0]?.interpretations.length, 2); assert.equal(checkpoint.status, 'saved');
-});
-
-test('one shared retained-study limit counts configured and demo history while coalescing old filenames', async context => {
-  // Arrange
-  const { directory, study, library } = await storageHarness(context);
-  const legacy = legacyArchiveSchema.parse(JSON.parse(await readFile(resolve(__dirname, '../../src/tests/fixtures/cycle-0006-legacy/study.v1.json'), 'utf8')));
-  legacy.workspaceKey = study.workspaceKey;
-  await writeFile(join(directory, `${legacy.id}.study.json`), JSON.stringify(legacy));
-  await library.saveStudy(decodeStudyArchive(legacy, study.workspaceKey));
-  for (let index = 0; index < 15; index++) {
-    const configured = createConfiguredStudy(); configured.runId = randomUUID(); configured.id = `${configured.instanceId}_${configured.runId}`;
-    configured.observations[0]!.snapshotUri = `codebook://${configured.instanceId}/runs/${configured.runId}/snapshots/browser-session%3A1`;
-    await library.saveStudy(configured);
-  }
-  const files = (await readdir(directory)).sort();
-  // Act / Assert
-  await assert.rejects(library.saveStudy(study), /library is full/);
-  assert.equal((await library.list()).length, 16); assert.deepEqual((await readdir(directory)).sort(), files);
-  assert.equal((await library.readStudy(legacy.id)).profile, 'paired-cart-demo');
 });
 
 test('a mismatched configured checkpoint hash is repaired explicitly without replacing captured bytes', async context => {
