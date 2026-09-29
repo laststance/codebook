@@ -142,6 +142,8 @@ knowledge_base:
       - "DECISIONS.md"
       - "DESIGN.md"
       # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
+      - files: "docs/cycles/0029-active-increment.md"
+        applyTo: "**/*"
       - files: "docs/cycles/0029-feature-specification.md"
         applyTo: "**/*"
       - files: "docs/designs/codebook.md"
