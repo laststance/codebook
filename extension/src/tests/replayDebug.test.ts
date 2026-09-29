@@ -290,6 +290,51 @@ test('a Node stop retains block-scoped data beside local values without copying 
   assert.deepEqual(requests, ['scopes:77', 'variables:11', 'variables:12', 'scopes:78']);
 });
 
+test('a replay stop keeps its local values when the editor shows localized scope names', async () => {
+  // Arrange: js-debug translates scope names but keeps the language-neutral "locals" hint.
+  const requests: string[] = [];
+  const references = new Map([
+    [12, [{ name: 'amount', value: '120', variablesReference: 0 }]],
+    [13, [{ name: 'DATABASE_URL', value: 'postgres://private', variablesReference: 0 }]],
+    [14, [{ name: 'client', value: 'Pool', variablesReference: 0 }]],
+  ]);
+  // Act
+  const actual = await captureReplayDebugSnapshot({ stack, verifiedSource: source, assertCurrent() {},
+    request(command, arguments_) {
+      requests.push(`${command}:${arguments_.frameId ?? arguments_.variablesReference}`);
+      if (command === 'scopes') return Promise.resolve({ scopes: [
+        { name: 'ローカル: createInvoice', presentationHint: 'locals', variablesReference: 12 },
+        { name: 'クロージャ', presentationHint: 'arguments', variablesReference: 14 },
+        { name: 'グローバル', variablesReference: 13 },
+      ] });
+      return Promise.resolve({ variables: references.get(arguments_.variablesReference ?? 0) ?? [] });
+    } });
+  // Assert
+  assert.deepEqual(actual.variables.map(variable => `${variable.name}=${variable.value}`), ['amount=120']);
+  assert.deepEqual(requests.filter(request => request.startsWith('variables:')), ['variables:12']);
+});
+
+test('a caller scope filter cannot widen replay capture to globals or caller frames', async () => {
+  // Arrange
+  const requests: string[] = [];
+  const callerStack: DebugProtocol.StackTraceResponse['body'] = { stackFrames: [stack.stackFrames[0]!, { id: 78, name: 'runner', line: 2, column: 1 }], totalFrames: 2 };
+  const references = new Map([
+    [12, [{ name: 'amount', value: '120', variablesReference: 0 }]],
+    [13, [{ name: 'DATABASE_URL', value: 'postgres://private', variablesReference: 0 }]],
+  ]);
+  // Act
+  const actual = await captureReplayDebugSnapshot({ stack: callerStack, verifiedSource: source, assertCurrent() {},
+    limits: { timeoutMs: 1_500, maxFrames: 2, maxVariables: 4, maxDepth: 1, includeScope: () => true },
+    request(command, arguments_) {
+      requests.push(`${command}:${arguments_.frameId ?? arguments_.variablesReference}`);
+      if (command === 'scopes') return Promise.resolve({ scopes: [{ name: 'Local', variablesReference: 12 }, { name: 'Global', variablesReference: 13 }] });
+      return Promise.resolve({ variables: references.get(arguments_.variablesReference ?? 0) ?? [] });
+    } });
+  // Assert
+  assert.deepEqual(actual.variables.map(variable => `${variable.name}=${variable.value}`), ['amount=120']);
+  assert.deepEqual(requests, ['scopes:77', 'variables:12', 'scopes:78']);
+});
+
 
 test('historical frames reuse the matching owned source document without suppressing native selection', () => {
   // Arrange

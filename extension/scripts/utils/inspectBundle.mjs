@@ -50,7 +50,7 @@ export async function inspectBundle(metafile, repository, capturedInputs) {
     } else {
       if (!COMPILED_DIRECTORIES.some(directory => local.startsWith(`${directory}/`))) throw new Error(`Unexpected bundle source: ${input}`);
       // A transitive development import must not enter the single shipped runtime bundle.
-      if (local.split('/').some(part => ['tests', 'fixtures', 'fixture', 'demo', 'experiments'].includes(part)) || ['extension/dist/client.js', 'extension/dist/nativeRepositoryBootstrap.js', 'extension/dist/nativeRepositoryRunner.js'].includes(local)) throw new Error(`Development-only bundle source: ${input}`);
+      if (local.split('/').some(part => ['tests', 'fixtures', 'fixture', 'demo', 'experiments'].includes(part)) || ['extension/dist/client.js', 'extension/dist/nativeRepositoryBootstrap.js', 'extension/dist/nativeNodeTestBootstrap.js'].includes(local)) throw new Error(`Development-only bundle source: ${input}`);
     }
     inputs.push({ path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
   }

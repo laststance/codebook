@@ -373,7 +373,7 @@ export class StudyService {
 
   /** Resolves committed snapshot identity without treating an old capture as a current pause. @example service.snapshot(record, snapshotUri).values */
   snapshot(record: StudyRecord, uri: string): RuntimeSnapshot {
-    if (record.profile === NODE_TEST_PROFILE) throw new StudyError('EVIDENCE_UNAVAILABLE', 'Node test stops do not support saved explanations until durable cross-runtime history is implemented.');
+    if (record.profile === NODE_TEST_PROFILE) throw new StudyError('EVIDENCE_UNAVAILABLE', 'Node test stops are saved in their durable history instead: read nodeTest.historyUri and its events, then save learning through codebook_explain_node_history.');
     const runtime = record.runtime?.view();
     for (const snapshot of runtime?.snapshots ?? []) {
       if (snapshot && uri === this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}`)) return snapshot;

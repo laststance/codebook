@@ -383,7 +383,7 @@ test('SHA-256 repositories preserve clean input identity for literal tabs and Un
 });
 
 // Each accidental development entry must be rejected before the dependency inventory can accept it.
-for (const path of ['extension/dist/tests/leaked.test.js', 'extension/dist/client.js', 'extension/dist/nativeRepositoryRunner.js']) {
+for (const path of ['extension/dist/tests/leaked.test.js', 'extension/dist/client.js', 'extension/dist/nativeRepositoryBootstrap.js', 'extension/dist/nativeNodeTestBootstrap.js']) {
   test(`an accidental import of ${path} cannot enter the installed runtime bundle`, async context => {
     // Arrange
     const fixture = await sourceFixture(context), input = join(fixture.repository, path), content = Buffer.from('module.exports = 1;');

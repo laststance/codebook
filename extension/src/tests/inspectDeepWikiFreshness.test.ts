@@ -97,3 +97,27 @@ test('a file added under an excluded directory keeps the Wiki current', async ()
     assert.equal(withSlash.status, 'current');
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('a file added under a directory glob exclusion keeps the Wiki current', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-freshness-directory-glob-'));
+  const root = await realpath(directory);
+  const original = 'export const answer = 1;\n';
+  await writeFile(join(root, 'source.ts'), original);
+  await runGit('git', ['init', '-q'], { cwd: root });
+  await runGit('git', ['add', 'source.ts'], { cwd: root });
+  await runGit('git', ['-c', 'user.name=Codebook', '-c', 'user.email=codebook@example.invalid', 'commit', '-qm', 'baseline'], { cwd: root });
+  const { stdout: revisionOutput } = await runGit('git', ['rev-parse', 'HEAD'], { cwd: root });
+  const included = [{ path: 'source.ts', sha256: createHash('sha256').update(original).digest('hex') }];
+  await mkdir(join(root, 'src', 'fixtures'), { recursive: true });
+  await writeFile(join(root, 'src', 'fixtures', 'invoice.ts'), 'export const invoice = {};\n');
+  await mkdir(join(root, 'packages', 'web', 'dist'), { recursive: true });
+  await writeFile(join(root, 'packages', 'web', 'dist', 'bundle.js'), 'export {};\n');
+  await writeFile(join(root, 'src', 'fixtures-note.ts'), 'export const note = true;\n');
+  try {
+    // Act
+    const result = await inspectDeepWikiFreshness(root, included, revisionOutput.trim(), ['**/fixtures', 'packages/*/dist/']);
+    // Assert
+    assert.deepEqual(result.addedPaths, ['src/fixtures-note.ts'], 'a directory glob excludes the files inside matching folders but not a similarly named file');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
