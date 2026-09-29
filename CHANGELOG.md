@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.13.0] - 2026-09-30 (development candidate)
+
+Cited Node tests run exactly once, save their history in order and preserve the learner's native debugger pauses. Bounded installed VS Code development checks passed on the 0.2.12 implementation checkpoint; 0.2.13 adds listing-process cleanup and release metadata. Cursor, synchronized replay and final acceptance remain open. Delivery is through PR #51, with no Marketplace publication.
+
+### Changed
+
+- New Node runs cite a test with `testTitles`, including its enclosing suite titles, and require Vitest 4 or later. The retired `testName` remains readable in saved histories but is refused for new runs.
+- Vitest selects only the cited file with a literal, anchored title pattern; its result report must confirm exactly that test executed.
+
+### Fixed
+
+- Output and source stops enter the saved Node journal in their recorded order. A refused append leaves a readable, sealed partial prefix; unconfirmed torn bytes remain an interrupted history.
+- Learner breakpoints hold the run without automatic continuation or consuming the running stop budget. Retiring Codebook's breakpoint preserves a learner breakpoint on the same line.
+- Native server/browser stack refresh retains the original captured source and generation. Unconfirmed refresh, manual resume or a changed source still refuses stale control.
+- Cancelling a Vitest file listing waits for its owned launcher and helpers to exit, escalating termination when needed before deleting private scratch.
+
 ## [0.2.12.0] - 2026-09-30 (development candidate)
 
 Cycle 0029 applies goal version 9: synchronized learning replay with a native historical debugger, saved Node test histories and an independent DeepWiki reader built by the shared generation skill. The bundled cart demonstration is removed; development trials use the owner-designated external `nextjs-dashboard` checkout. Bounded development evidence comes from normally installed VS Code, plus Cursor for the Wiki reader and skill. No version 9 Stage 1 or Stage 2 acceptance is claimed. Delivered through PR #48; this is not a Marketplace publication.
