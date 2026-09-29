@@ -1,0 +1,50 @@
+{
+  "phase": "cycle-0029-development-only",
+  "scope": "Bundled skill publisher and isolated publication against a copy of the generated nextjs-dashboard Wiki",
+  "source": {
+    "projectRoot": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "projectRevision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+    "generatedWikiPages": 10,
+    "projectGitStatusAfterTrial": "?? .codebook/"
+  },
+  "package": {
+    "sourceHash": "fe3e8103075fea63a5b05adbbdd8a21d10cc732904a60099b870a0ad4b998859",
+    "vsix": "artifacts/cycle-0029/deepwiki-skill/publisher.vsix",
+    "vsixSha256": "8468ab6cd543fb293bd9dfc4fbc2e30278e3598c1ee8d794a7c1be64773d1a4d",
+    "entries": 26,
+    "bundledPublisher": "extension/skills/codebook/publish-wiki.mjs",
+    "entryInventory": "No path matching cart, demo or hook"
+  },
+  "verification": {
+    "extensionSuite": "1147/1147 pass for the current TypeScript source",
+    "publisherBehavior": "4/4 pass on the final publisher source",
+    "packageContract": "32/32 pass before the final publisher hash-map hardening; final VSIX package and standalone check pass",
+    "isolatedRealWikiTrial": {
+      "source": "Exact CLI bytes extracted from the final VSIX; copied generated Wiki in a temporary directory",
+      "publishedFiles": 12,
+      "manualFilesPreserved": 1,
+      "priorVersionRetained": true,
+      "ownedFileHashes": 12,
+      "targetProjectChanged": false
+    },
+    "completePackageSuite": "Initial run failed eight assertions because live pnpm lifecycle descendants escaped the leader's process group; corrected runner passes 98/98 package tests"
+  },
+  "packageProcessCorrection": {
+    "cause": "pnpm lifecycle descendants entered another process group and stayed active after the leader group exited",
+    "focusedTests": "17/17 pass",
+    "completePackageSuite": "98/98 pass",
+    "sourceHash": "a163586fd09236934786572c84064b2d76837f32c019875bfcc6ee2c284267ef",
+    "vsix": "artifacts/cycle-0029/deepwiki-skill/publisher-process-cleanup.vsix",
+    "vsixSha256": "7d5ab8357ece9ca8cbd18d61afa3dfac5f373a07c4c9aadc80486b26ba0259ef",
+    "entries": 26,
+    "standalonePackageCheck": "pass"
+  },
+  "remaining": [
+    "Installed editor agent must generate a staged update and invoke the bundled publisher in VS Code and Cursor",
+    "Cursor's copied user skill must resolve the installed extension's companion script",
+    "Browser update click-through, Q&A, visual reader and source links need permitted native proof",
+    "Recovery and manual-conflict behavior need installed-host trials",
+    "Final nine-project acceptance remains open"
+  ],
+  "acceptanceCredit": "none"
+}

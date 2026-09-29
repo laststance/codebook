@@ -55,6 +55,7 @@ Initial design completeness: **6/10**. Feature purposes, independence and requir
 ## Review checkpoint and individual decisions
 
 - Scope emphasis (Step 0D) is established by the owner's explicit request for the final-product specification and matching acceptance/deliverable: review all seven passes across the three features. This is scope authorization, not approval of any proposed remedy.
+
 ### Decisions already made
 
 - **1 / D032 — owner-specified alternative:** inherit the live application/source/native-debugger composition; replace chat with learning summary. Synchronize recorded video, actual executed source and inspectable historical values/stack through repeated replay and backward/forward seeking. This supersedes the proposed document-like reader and sidebar-contained player. Goal version 8 and the feature/acceptance documents carry the decision.
@@ -65,7 +66,7 @@ Initial design completeness: **6/10**. Feature purposes, independence and requir
 - **5A and D034 — explicit answer and scope clarification:** summary can collapse behind Learning summary, preserving the selected moment and reading/focus state. The ordinary expanded desktop window at default zoom is the required baseline; extreme sizes/200% zoom are excluded from mandatory design/acceptance.
 - **D035 — explicit owner requirement:** assigned shortcuts appear in their action tooltips; ? opens the shortcut list. Preserve question-mark typing and show actual context/platform bindings.
 
-These decisions approve their specific outcomes; they do not approve unrelated visual details. The approved [visual specification](../designs/codebook-product-spec-v9.md) and [saved generation prompts](../designs/prompts/cycle-0029-product-spec-v9.md) are review evidence. Two version 7 attempts preceded D032. Later version 8 iterations correct replay hierarchy/causality, reproduce DeepWiki and clarify agent-skill ownership. These are iterative corrections to one direction, not UI variants.
+These decisions approve their specific outcomes; they do not approve unrelated visual details. The approved [visual specification](../../DESIGN.md) and [saved generation prompts](../designs/prompts/cycle-0029-product-spec-v9.md) are review evidence. Two version 7 attempts preceded D032. Later version 8 iterations correct replay hierarchy/causality, reproduce DeepWiki and clarify agent-skill ownership. These are iterative corrections to one direction, not UI variants.
 
 ### Pass 1 — information architecture, complete
 
@@ -183,7 +184,7 @@ Audited actual Activity Bar navigation, capture/save, replay controls/playhead, 
 
 ### Reconciled visual artifact
 
-The [current v9 image and companion](../designs/codebook-product-spec-v9.md) include the ordinary desktop reference, accepted replay hierarchy, bottom save, independent DeepWiki, truthful gap caption and shortcut discovery strip. Iteration 8 corrects the two example diagrams: PostgreSQL returns to createInvoice; createInvoice revalidates/redirects. All eight images are sequential revisions of one direction. No native screenshot, runtime, motion or accessibility PASS is implied.
+The [current v9 image and companion](../../DESIGN.md) include the ordinary desktop reference, accepted replay hierarchy, bottom save, independent DeepWiki, truthful gap caption and shortcut discovery strip. Iteration 8 corrects the two example diagrams: PostgreSQL returns to createInvoice; createInvoice revalidates/redirects. All eight images are sequential revisions of one direction. No native screenshot, runtime, motion or accessibility PASS is implied.
 
 ## Implementation Tasks
 
@@ -245,7 +246,7 @@ The nine design decisions are D032, 2A, 3A, 4A, 5A, D033, D034, D035 and whole-i
 | --- | --- | --- | --- |
 | Live explanation, learning replay, independent DeepWiki and shortcut discovery | `/Users/ryotamurakami/laststance/vscode-extension/codebook/docs/designs/assets/codebook-product-spec-v9.png` | One product design family with separate screens | D032–D036; ordinary expanded desktop/default zoom; native host chrome and sample values are illustrative |
 
-Portable local reference: [approved PNG](../designs/assets/codebook-product-spec-v9.png), with [identity and approval](../designs/visual-target.json) and [companion](../designs/codebook-product-spec-v9.md). The owner approved corrected iteration 8, SHA-256 `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`. Its generated Review candidate header predates that approval; bytes remain unchanged.
+Portable local reference: [approved PNG](../designs/assets/codebook-product-spec-v9.png), with [identity, approval and interpretation](../../DESIGN.md). The owner approved corrected iteration 8, SHA-256 `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`. Its generated Review candidate header predates that approval; bytes remain unchanged.
 
 ## GSTACK REVIEW REPORT
 

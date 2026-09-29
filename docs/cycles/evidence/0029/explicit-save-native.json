@@ -1,0 +1,68 @@
+{
+  "date": "2026-09-27",
+  "sourceHash": "93a58009e3d172384a22e7d782cfe4f70b10eaa36e937587c86d4346299c0f7c",
+  "host": "VS Code",
+  "chat": "Copilot Auto",
+  "selectedModel": "GPT-6 Luna",
+  "credits": 3.9,
+  "result": "PARTIAL",
+  "scenario": "Real nextjs-dashboard login explanation, explicit bottom-bar save and reopened replay",
+  "studyId": "c848f6de-85bc-4254-983c-aa6168a9da50_a6c39278-5624-44af-b157-4abde7b92703",
+  "observations": [
+    "An initial exact button-text precondition failed before input. The agent independently corrected the visible-button condition in a new run.",
+    "The second run captured LoginButton at app/ui/login-form.tsx:90:5 with pending=true.",
+    "Copilot stopped with Request Failed 400: image download upstream 404 before saving an explanation, summary or sequence. This was not quota exhaustion.",
+    "The driver clicked the public Save learning replay status item. Owned execution stopped; the UI reported Learning partially saved, with missing summary/sequence and complete execution evidence.",
+    "Open replay showed a gap at time zero. Next recorded stop restored the recorded application, historical line 90 and native pending=true at 21.29 seconds. Understanding remained unchecked."
+  ],
+  "manualActions": [
+    "Restored the native chat sidebar after preparation hid it; cause unverified.",
+    "Expanded native Local scope; clicked save, open replay and next recorded stop. No hidden MCP driver supplied execution answers."
+  ],
+  "archive": {
+    "state": "stopped",
+    "terminal": true,
+    "finalOutcome": "not-demonstrated",
+    "observations": 1
+  },
+  "video": {
+    "path": "artifacts/cycle-0029/explicit-save-v2/native-save.mp4",
+    "durationSeconds": 576.700001,
+    "inspectedFrames": [
+      275,
+      300,
+      390,
+      570
+    ],
+    "findings": "275: live capture and Save item; 300: saved partial replay at gap; 390: historical pause/source/value; 570: desktop returned to Codex. These separated frames do not prove smooth playback motion."
+  },
+  "limits": [
+    "No complete-save positive flow, saved explanation/summary/sequence or observed final application result in this attempt.",
+    "One browser pause; no multi-stop/server result, Cursor result, full current-source test run or final acceptance.",
+    "Replay layout still includes Study and the live chat; approved summary-replaces-chat composition remains incomplete."
+  ],
+  "cleanup": {
+    "editor": "Owned VS Code exited; process absent after quit.",
+    "recording": "Owned ffmpeg exited; MP4 finalized.",
+    "target": "Git worktree clean."
+  },
+  "nextHypothesis": "The documented public inline-image setting was absent in both workspace and user settings. Apply it temporarily for a fresh Auto chat and restore exact original workspace settings after the trial.",
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/native-save.mp4",
+      "sha256": "f3ee37e261843b542c8c2bc0dcabd6777ab1140e356baae19b4b9ab849d8ac2e"
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/frame-275.png",
+      "sha256": "ef361a14e5cdba7c4ee1d935057c99351f7113cffd1fa270f9b1a6dcf1b46bd9"
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/frame-300.png",
+      "sha256": "5d19c8f9d3956369bd23c3bdbb9fcc0e2bf7a21476e35f40d489a2fbca282afb"
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/frame-390.png",
+      "sha256": "1a60772d2e62ed4bf46ba0d200d5bf701228c0bc69450e5da511bd4245d1a1a3"
+    }
+  ]
+}

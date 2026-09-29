@@ -1,0 +1,68 @@
+{
+  "host": "Cursor",
+  "project": "/Users/ryotamurakami/repository/nextjs-dashboard",
+  "projectRevision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+  "installedExtensionVersion": "0.2.11",
+  "installedSourceHash": "bf55f28966e952ad0f3d2cdebd740cdebf3e0b777cd545f1084c27445ee5fbd5",
+  "installedSkillVersion": "1.0.27",
+  "deployedSkillSha256": "d1b2bed02dc6ba9530250715d395aa686c2c4a3ec822300824632f3c44a0222f",
+  "setup": {
+    "nativeCommand": "Codebook: Set Up AI Chat",
+    "result": "Cursor displayed the setup-saved notification in the opened project window.",
+    "publisherPathEmbedded": "/Users/ryotamurakami/.cursor/extensions/laststance.codebook-0.2.11/skills/codebook/publish-wiki.mjs",
+    "publisherFileRegular": true,
+    "unresolvedPathMarker": false
+  },
+  "agentTrial": {
+    "request": "/codebook Update the LLM Wiki for this project",
+    "result": "The Cursor agent read the installed skill and stopped without publishing after finding VS Code-only source and update links in the static Wiki.",
+    "observedGap": "The installed reader did not bind static source/update links to the active Cursor URI scheme.",
+    "published": false,
+    "applicationSourceChanged": false,
+    "wikiFileCount": 13,
+    "wikiFilesChangedAgainstBeforeTrial": [],
+    "targetGitStatus": "?? .codebook/"
+  },
+  "correctedCandidate": {
+    "sourceHash": "cc654870556b944a4a4aa6203db0f191e42bae76bf7bd7e62d7ade2ac3bf01d1",
+    "vsixSha256": "17095642c38187de9a86bd807f4298f8c820f1e10d1c92726ac88833c82c1747",
+    "skillVersion": "1.0.28",
+    "extensionTests": "1150/1150 passed",
+    "packageTests": "98/98 passed",
+    "nativeSetup": "Cursor displayed setup-saved after the new package was installed and the project window reopened.",
+    "deployedSkillSha256": "e793c24c14e2d9ea35d6d10f91c39bca8787da45f3724afb8396f3bf33263440",
+    "agentRetry": "The same Cursor agent reread the updated skill, checked all 49 included-source hashes, 186 source links, 10 update links and navigation, and concluded no source-driven publication was necessary.",
+    "published": false,
+    "wikiFilesChangedAgainstBeforeTrial": [],
+    "browserSourceLinkActivation": "PASS: Codebook: Open DeepWiki in Browser opened the Wiki in Chrome. The served README.md:1-93 citation used cursor://laststance.codebook/source. After the Chrome Open Cursor.app and Cursor URI prompts were allowed once without persistent permission, Cursor opened /Users/ryotamurakami/repository/nextjs-dashboard/README.md at line 1 in the nextjs-dashboard window.",
+    "browserUpdateLinkActivation": "PASS for draft routing only: Chrome served cursor://laststance.codebook/update for the nextjs-dashboard root. After the one-time Chrome and Cursor URI prompts, the nextjs-dashboard Cursor window opened a new agent composer prefilled with /codebook Update LLM Wiki and the current Wiki manifest path. The draft was not submitted; no update publication is claimed.",
+    "browserQuestionAnswering": "BLOCKED in installed Cursor trial: The browser reader accepted a question about invoice input validation and showed Asking the editor model. Cursor opened Codebook's model picker, but it showed 0 Results because vscode.lm.selectChatModels() returned no available model in this host. No answer or citation was produced; this is not a Q&A pass."
+  },
+  "noModelHandoffCandidate": {
+    "sourceHash": "f65506a643066bf61778fdfa0ac85c896f9417602b3d87e8719441e6fe9b8ab3",
+    "behavior": "When the host exposes zero vscode.lm models, the reader returns a visible editor-chat handoff and opens a source-cited question draft instead of an empty model picker. The learner must review and send the draft; this does not produce a browser answer.",
+    "focusedTests": "12/12 passed",
+    "extensionTests": "1151/1151 passed",
+    "vsix": "artifacts/cycle-0029/deepwiki-skill/no-model-handoff.vsix",
+    "vsixSha256": "63db771ca0d3dfedc04ca6f22b3e5515432463737e62c654bf3bb79b5ff3d667",
+    "vsixEntries": 26,
+    "packageCheck": "passed",
+    "nativeInstalled": true,
+    "installedSourceHashInCursorAndVsCode": "f65506a643066bf61778fdfa0ac85c896f9417602b3d87e8719441e6fe9b8ab3",
+    "nativeCursorQuestion": "The designated dashboard Wiki displayed the no-model handoff instead of an empty picker. The matching Cursor window received the invoice-validation question and Wiki manifest path as a standard chat draft. After explicit send, the Cursor agent read the installed Codebook skill and repository source, then answered with file/line citations including app/lib/actions.ts:65-77 and app/ui/invoices/create-form.tsx:16-21. The target Git status remained only ?? .codebook/.",
+    "browserAnswerWithCitations": "not achieved: the answer appeared in standard Cursor chat, not in the browser Wiki"
+  },
+  "reviewableDraftCandidate": {
+    "sourceHash": "f16e842fb0fa177c7233afd2f6c6ff4107001915c787e0b8d5d3b8811f7d4d9d",
+    "changeFromNativeTrial": "No-model Wiki questions now open as an unsent, read-only editor-chat draft. The previous VS Code browser update route auto-submitted a different prompt, which motivated this narrower correction.",
+    "focusedTests": "12/12 passed",
+    "extensionTests": "1151/1151 passed on this exact source cut; artifacts/cycle-0029/deepwiki-skill/no-model-draft-full.log",
+    "vsix": "artifacts/cycle-0029/deepwiki-skill/no-model-draft.vsix",
+    "vsixSha256": "81ad97c323c31cac07e7676749719b110d1abb01261cce8b0fafc513c4252e17",
+    "vsixEntries": 26,
+    "packageCheck": "passed",
+    "installedSourceHashInCursorAndVsCode": "f16e842fb0fa177c7233afd2f6c6ff4107001915c787e0b8d5d3b8811f7d4d9d",
+    "nativeQuestionTrial": "not yet repeated after installing this source cut"
+  },
+  "nextAction": "Verify VS Code browser source/update routes, perform a source-change update trial, and provide a browser-returning answer path for Cursor when vscode.lm exposes no model. The installed Cursor chat handoff is usable but does not satisfy in-browser DeepWiki Q&A."
+}

@@ -1,0 +1,59 @@
+{
+  "sourceHash": "578b86bfd293db6154a1a1947efe2c3a4c88e7de3765b4ba0cb9a2b34fb33c39",
+  "skillVersion": "1.0.24",
+  "mechanism": {
+    "focused": 187,
+    "settingsWiring": 1,
+    "fullBeforeTestExpectationCorrection": {
+      "passed": 1061,
+      "failed": 1,
+      "reason": "Old test assumed default capacity 16; explicitly configuring 16 restores its original rejection invariant."
+    },
+    "capacityAndLearningAfterCorrection": {
+      "passed": 13,
+      "failed": 0
+    }
+  },
+  "package": {
+    "path": "artifacts/cycle-0029/storage-capacity/codebook.vsix",
+    "sha256": "21200f4bca2b07f06b71355283820ae07a5c82dd54d09d706f5ac244d2b420ce",
+    "entries": 25,
+    "result": "PASS"
+  },
+  "native": {
+    "host": "VS Code 1.139.1",
+    "chat": "Claude Code extension Opus 5.5 High; Copilot credits exhausted",
+    "sessionId": "4bca0ade-4924-445c-a826-4a3982456a61",
+    "targetRevision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+    "runId": "3ba8de52-2812-467b-8649-34339227c428",
+    "result": "Capacity recovery PASS; synchronized recorded learning FAIL",
+    "inputCount": 1,
+    "observedStops": 2,
+    "explanations": 2,
+    "summarySequenceSteps": 7,
+    "afterVerified": true,
+    "historyCheckpoint": 18,
+    "recordedFrames": 1291,
+    "recordedStudyOutcome": "partial",
+    "error": "Recorded phase availability changed.",
+    "playback": "Both frame positions reopened; source/debugger context unavailable. No synchronized replay claim.",
+    "video": "artifacts/cycle-0029/storage-capacity/native.mp4",
+    "durationSeconds": 528.000001,
+    "inspectedFramesSeconds": [
+      180,
+      300
+    ],
+    "preservation": {
+      "priorFilesChecked": 1519,
+      "changed": 0,
+      "targetGitClean": true
+    },
+    "cleanup": "Owned VS Code and recorder exited; exact owned local Claude MCP registration removed."
+  },
+  "next": "Verify phase-plus-snapshot append-only comparison through intermediate checkpoints, then repeat installed two-stop replay.",
+  "limits": [
+    "Development evidence only; no final matrix credit.",
+    "No current Cursor result.",
+    "No merge/publication claim."
+  ]
+}

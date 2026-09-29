@@ -1,7 +1,7 @@
 # Design: Codebook feature relationships and behavior
 
 Authority: PRODUCT_GOAL version 9 and D030–D036, owner direction and clarification of 2026-09-26.\
-Status: functional specification and GStack screen review complete; [v9 visual specification](codebook-product-spec-v9.md) approved under D036. Implementation remains unverified.
+Status: functional specification and GStack screen review complete; [v9 visual specification](../../DESIGN.md) approved under D036. Implementation remains unverified.
 
 The [2026-09-18 design](https://github.com/laststance/codebook/blob/22e25c5ace8773214649bf085fb8cf6fdea3facc/docs/designs/codebook.md) and its three images preserve their historical approval. Their required display variants, combined Wiki/learning model, custom runtime-value pane and first cart-fixture assignment are superseded by the current contracts below. Their recorded review score is not a review of this revision.
 
@@ -30,7 +30,7 @@ The purchase-button-to-POST explanation is an example for a project that actuall
 
 ## Learning and Wiki screens
 
-The Codebook icon in the editor's left Activity Bar is the proposed common entry for feature navigation. It exposes saved learning and replay, plus Wiki generation/open/update actions. Standard chat, source and debugger remain native editor surfaces. A replay screen and a browser Wiki page can be opened separately; simultaneous visibility with live chat/debug/browser/source is not generally required.
+The Codebook icon in the editor's left Activity Bar is the required common entry for feature navigation. It exposes saved learning and replay, plus Wiki generation/open/update actions. Standard chat, source and debugger remain native editor surfaces. A replay screen and a browser Wiki page can be opened separately; simultaneous visibility with live chat/debug/browser/source is not generally required.
 
 D032 fixes the replay hierarchy: reuse the live explanation's application/source/native-debugger composition and replace the chat area with a learning summary. Application video, the source executing at that time and historical native debugger values/stack remain synchronized while playing, stepping backward/forward and seeking repeatedly. Summary and sequence explain the processing alongside this primary experience. A video thumbnail plus a document-like reader is insufficient. Replay is clearly identified as captured history and does not repeat target side effects.
 
@@ -42,7 +42,7 @@ The three named display variants (Study workspace, Living book, Guided walkthrou
 
 ## Visual implementation contract
 
-The owner adopted [the corrected v9 visual specification](codebook-product-spec-v9.md) after GStack review in Cycle 0029. Open the actual PNG before implementation and compare real UI with its relevant region through [IMPLEMENTATION.md](../../IMPLEMENTATION.md). Its one design family includes distinct feature screens. Native host chrome and illustrative example values retain the companion's boundaries; the old three images are historical. [The review](../plans/cycle-0029-product-design.md) specifies states, keyboard/focus, themes and the ordinary desktop layout.
+The owner adopted [the corrected v9 visual specification](../../DESIGN.md) after GStack review in Cycle 0029. Open the actual PNG before implementation and compare real UI with its relevant region through [IMPLEMENTATION.md](../../IMPLEMENTATION.md). Its one design family includes distinct feature screens. Native host chrome and illustrative example values retain DESIGN.md's boundaries; the old three images are historical. [The review](../plans/cycle-0029-product-design.md) specifies states, keyboard/focus, themes and the ordinary desktop layout.
 
 Every assigned Codebook shortcut must appear in its action tooltip, and **?** opens the shortcut list under [D035's complete contract](../specs/keyboard-shortcuts.md). Preserve ordinary question-mark typing and native host behavior.
 
@@ -112,4 +112,4 @@ Use supported editor APIs and commands; unrestricted workbench DOM mutation is n
 
 The [final protocol](../acceptance/FINAL_REVIEW.md) applies to all active capabilities and nine required real projects in both hosts. Mechanism/unit checks remain useful but neither fixtures nor old mode checks prove version 9 behavior. Runtime, replay and independent Wiki/source-link evidence must identify their own source/package/host versions.
 
-Cycle 0029 starts with these written contracts. The next stage is the separately requested design review, followed by its current concept image and bounded implementation work: remove the bundled demo, retire duplicate value/theme UI, implement learning/Wiki gaps and validate the designated nextjs-dashboard development target before the fixed nine-project acceptance. A documentation change or generated concept does not complete the cycle or authorize a public release.
+Current phase and next action: [PROJECT_STATE.md](../../PROJECT_STATE.md). Follow [IMPLEMENTATION.md](../../IMPLEMENTATION.md) to audit source gaps, select bounded work and preserve distinct implementation/native/acceptance evidence.

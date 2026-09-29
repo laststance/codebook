@@ -1,0 +1,82 @@
+{
+  "date": "2026-09-27",
+  "sourceHash": "5087b0668acfa3c3d132030c57689be5ba565a80f9c3d10494ea64a4b1e219c8",
+  "host": "VS Code default profile",
+  "model": "Copilot Auto routed to GPT-6 Luna",
+  "chat": {
+    "elapsed": "5m14s",
+    "steps": 75,
+    "displayedCredits": 17.6,
+    "quotaExhausted": false
+  },
+  "target": "/Users/ryotamurakami/repository/nextjs-dashboard",
+  "instanceId": "fa14f2d8-566d-499a-90c9-a4da76375d61",
+  "runId": "7bffec4d-43a6-45ab-8d7d-7e8dbd16334b",
+  "earlierFailedRun": "e51d4ea1-1ca1-4196-92bf-228bee69350d",
+  "result": "PASS bounded required-undefined capture/explanation/continue/save/replay; full product acceptance remains NOT RUN",
+  "observed": {
+    "source": "app/ui/login-form.tsx:68:9",
+    "elapsedMs": 23944.163666,
+    "requiredState": {
+      "type": "undefined"
+    },
+    "route": "/login",
+    "unavailableValues": [],
+    "interpretations": 2,
+    "archiveContextMatch": true,
+    "inputAcknowledged": true,
+    "afterVerified": true,
+    "runtimeOutcome": "demonstrated",
+    "captureOutcome": "complete",
+    "nativeReplay": "23.94s application pixels, captured source 68:9, native Local LoginForm state=undefined after original runtime exit; understanding unchecked"
+  },
+  "failuresAndLimits": [
+    "Initial 74:12 exact binding failed before input; agent independently selected 68:9 and succeeded",
+    "Agent could not inspect the 300KB recording-context payload through the Copilot temporary-file reader; independent driver disk comparison confirms persistence, not agent-read success",
+    "Chat Mermaid parse error remains",
+    "Live chat and Study coexist; approved summary replacement/layout not complete",
+    "Observed after-result sequence link still points to prior stop; needs correspondence review",
+    "Single browser stop; Cursor, full current-candidate editor restart and final nine-project acceptance not tested"
+  ],
+  "driverActions": [
+    "Installed source-matched VSIX",
+    "Temporarily enabled documented inline-image transport",
+    "Sent ordinary prompt in existing Auto chat",
+    "Clicked bottom Save, Open replay, Next recorded stop; inspected screenshot",
+    "No runtime tool calls, source-coordinate hints, hidden answers or agent-continuation assistance"
+  ],
+  "cleanup": {
+    "runtimeResourcesReleased": true,
+    "editorQuit": true,
+    "recorderExited": true,
+    "temporarySettingsRestored": true,
+    "targetGitClean": true
+  },
+  "artifacts": {
+    "video": {
+      "path": "/Users/ryotamurakami/laststance/vscode-extension/codebook/artifacts/cycle-0029/undefined-facts/native.mp4",
+      "sha256": "f29dbb4b69d14e4845ec60e874562d92b10508efe061560e1765fe5a9c2d9b86"
+    },
+    "inspectedFrame": {
+      "path": "/Users/ryotamurakami/laststance/vscode-extension/codebook/artifacts/cycle-0029/undefined-facts/native-replay.png",
+      "sha256": "4419f114d472ea5b2f26387f5329d4609c29854ddbf6ca73c4ded0451f0af0e5"
+    },
+    "archive": {
+      "path": "/Users/ryotamurakami/Library/Application Support/Code/User/globalStorage/laststance.codebook/learning/dd749a97af190a225967c061011c37c3c12c649bbaa8ea367bc9c69761263f8e/fa14f2d8-566d-499a-90c9-a4da76375d61_7bffec4d-43a6-45ab-8d7d-7e8dbd16334b.study.v3.json",
+      "sha256": "c4fe616d181ff38530bb559e9f0fb6fd058c11c0fe78824f6c6e88918802de8c"
+    },
+    "context": {
+      "path": "/Users/ryotamurakami/Library/Application Support/Code/User/globalStorage/laststance.codebook/learning/dd749a97af190a225967c061011c37c3c12c649bbaa8ea367bc9c69761263f8e/recordings.v2/fa14f2d8-566d-499a-90c9-a4da76375d61_7bffec4d-43a6-45ab-8d7d-7e8dbd16334b/context.json",
+      "sha256": "b3025ef9ea2a6e67feaf6cfc8a5d7d6bb3b6946dbfa65eaf52b8491521ab7262"
+    },
+    "snapshot": {
+      "path": "/Users/ryotamurakami/Library/Application Support/Code/User/globalStorage/laststance.codebook/agent/fa14f2d8-566d-499a-90c9-a4da76375d61/7bffec4d-43a6-45ab-8d7d-7e8dbd16334b/9e61128b-c6f9-4b83-b14c-e86993d9c19d/snapshot.json",
+      "sha256": "d695007a8bd166934cf4b95a63b958a3bfeb4523b74740381e1622aab32fdccd"
+    }
+  },
+  "video": {
+    "durationSeconds": 392.500001,
+    "inspectedFrameSeconds": 390.500001
+  },
+  "next": "Provide bounded discoverable snapshot/context reads so ordinary agents can inspect facts and saved learning without a missing temporary file; retain full historical content and hash binding."
+}

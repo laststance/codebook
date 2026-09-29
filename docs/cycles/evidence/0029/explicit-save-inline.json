@@ -1,0 +1,69 @@
+{
+  "date": "2026-09-27",
+  "scope": "Bounded VS Code explicit save development trial; not final acceptance",
+  "sourceHash": "93a58009e3d172384a22e7d782cfe4f70b10eaa36e937587c86d4346299c0f7c",
+  "host": "VS Code",
+  "model": "Copilot Auto, routed to GPT-6 Luna",
+  "credits": "No exhaustion observed; final continuation showed 0.6 credits, total trial cost unknown",
+  "target": "/Users/ryotamurakami/repository/nextjs-dashboard",
+  "runId": "93be00d2-655c-4fb7-9a3e-f7a9b05267f0",
+  "outcome": "Native complete-positive Save learning replay and Open replay verified after actual login interaction; preceding attempts failed",
+  "attempts": {
+    "exactBreakpointFailures": 4,
+    "requiredUndefinedInspectionFailure": 1,
+    "successfulRun": 1
+  },
+  "observations": [
+    "Login submit acknowledged; LoginForm 23:5 paused; Invalid credentials verified after continuation",
+    "Learner clicked bottom Save learning replay; Learning saved label appeared",
+    "Open replay then Next recorded stop restored application, source and native recorded values at 15.97 seconds",
+    "Native history retained callbackUrl=/dashboard and state=undefined after owned runtime exit",
+    "Saved summary and structured SVG sequence visible; learner understanding remained unchecked"
+  ],
+  "limits": [
+    "Single browser pause only; Cursor and restart on this candidate not tested",
+    "Driver restored native chat sidebar after layout hid it",
+    "Chat Mermaid failed to parse; saved structured SVG is separate",
+    "Summary does not replace live chat; diagram requires horizontal access and labels truncate",
+    "Sequence after-result link points to earlier stop and needs semantic review",
+    "Required undefined inspection aborts despite native history capturing undefined"
+  ],
+  "manualActions": [
+    "Temporary documented inline-image workspace setting",
+    "Ordinary prompt through Auto, no hidden runtime assistance",
+    "Restore chat sidebar; Save/Open/Next; inspect summary"
+  ],
+  "cleanup": {
+    "temporarySettingRestored": true,
+    "targetGitClean": true,
+    "editorQuit": true,
+    "recorderExited": true,
+    "runtimeResourcesReleased": true
+  },
+  "artifacts": {
+    "video": {
+      "location": "/Users/ryotamurakami/laststance/vscode-extension/codebook/artifacts/cycle-0029/explicit-save-inline/native.mp4",
+      "sha256": "3571d0b3658303fd9f6cbc770e67ecb72e96f085244c48edabc89acad8592ffb"
+    },
+    "inspectedFrame": {
+      "location": "/Users/ryotamurakami/laststance/vscode-extension/codebook/artifacts/cycle-0029/explicit-save-inline/replay-frame.png",
+      "sha256": "f26c92fdd61e4de9869002cfe883031176abe4111a8e5a88911b12548714f863"
+    },
+    "archive": {
+      "location": "/Users/ryotamurakami/Library/Application Support/Code/User/globalStorage/laststance.codebook/learning/dd749a97af190a225967c061011c37c3c12c649bbaa8ea367bc9c69761263f8e/de5db57b-a131-4f8f-b436-bec53fcbcdd9_93be00d2-655c-4fb7-9a3e-f7a9b05267f0.study.v3.json",
+      "sha256": "b5d01fddc753bc98dcaf960c0479a1bf1ad61bbffaf4fc2a38704677628922ad"
+    },
+    "context": {
+      "location": "/Users/ryotamurakami/Library/Application Support/Code/User/globalStorage/laststance.codebook/learning/dd749a97af190a225967c061011c37c3c12c649bbaa8ea367bc9c69761263f8e/recordings.v2/de5db57b-a131-4f8f-b436-bec53fcbcdd9_93be00d2-655c-4fb7-9a3e-f7a9b05267f0/context.json",
+      "sha256": "527093ae8146e816547f8ef000cb436e02c0fb074c0aa4081df7821e12d64d90"
+    }
+  },
+  "video": {
+    "durationSeconds": 1115.300001,
+    "inspectedFrameSeconds": [
+      1112
+    ],
+    "proof": "Frame verifies final replay composition; not a standalone motion proof"
+  },
+  "next": "Distinguish observed JavaScript undefined from rejected/unavailable inspection without accepting unsafe values."
+}

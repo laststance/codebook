@@ -1,0 +1,67 @@
+{
+  "date": "2026-09-27",
+  "scope": [
+    "AC-SAVE",
+    "AC-LIVE",
+    "AC-REPLAY",
+    "AC-LEARNING",
+    "AC-ENTRY"
+  ],
+  "sourceHash": "ff6c644bbf589d813c26474d9207b71c0d50ffeab58f9ad042b2fd75f5a66922",
+  "implementation": [
+    "Native status-bar capture/save and saved-replay opening commands.",
+    "Run-bound finalization, durable archive and exact recording-context verification before completion.",
+    "Partial history/summary and failed saves remain explicit; retry preserves previous evidence.",
+    "Same-run double-click coalescing, stale-run refusal and save-label invalidation after later annotations."
+  ],
+  "checks": {
+    "build": "PASS",
+    "currentFocused": {
+      "passed": 7,
+      "failed": 0
+    },
+    "broaderRegression": {
+      "passed": 464,
+      "failed": 0,
+      "sourceHash": "c4681f00a65011d72ae25c9d36d8feed87143927fe0c32657fe05a827af80b58",
+      "limits": "Precedes the stricter per-observation history/frame check and final two added cases; current focused checks reran afterward."
+    },
+    "package": "PASS",
+    "packageReceipt": "artifacts/cycle-0029/explicit-save/package-check.json",
+    "nativeVSCode": "NOT RUN",
+    "nativeCursor": "NOT RUN"
+  },
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0029/explicit-save/build.log",
+      "sha256": "c1e4221689806446d653f795a4d163d18ddd1b1017e9e4b5b64313333ce66eda",
+      "bytes": 58
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save/tests.log",
+      "sha256": "27e2371c09185ca278506c82f6bf51753bd078f6a8884a90ab23c0d5f01000ba",
+      "bytes": 854
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save/regression.log",
+      "sha256": "6e4fe01d70e39efaaf44144496bfad0420adf9a4de35c8ecf0890c5ce74e0628",
+      "bytes": 52852
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save/codebook.vsix",
+      "sha256": "ba08e3bf49619d93fbd22a91ffcf00fe2d4b02e69bfb03e1fe9cc859d990cd37",
+      "bytes": 877633
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save/package-check.json",
+      "sha256": "522a579baddcbfda68717bf15fb2c78a0e4a844a2cd742bd102959eea3f48bf7",
+      "bytes": 27628
+    }
+  ],
+  "limits": [
+    "No final acceptance credit. Successful-complete native save, status-bar layout and keyboard/focus behavior require installed-host checks.",
+    "No new keyboard shortcut was assigned.",
+    "GStack engineering review for this increment is not complete.",
+    "A synthetic test initially used an empty fact selection; the service accepted it but checkpoint validation rejected an empty interpretation facts array. Reproduce and reconcile this pre-existing boundary separately."
+  ]
+}

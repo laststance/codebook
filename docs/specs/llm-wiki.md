@@ -1,6 +1,6 @@
 # Independent DeepWiki reproduction
 
-Authority: PRODUCT_GOAL version 9, G02 and D030/D033. “LLM Wiki” is the Codebook feature name. **Its final product target is to reproduce DeepWiki itself: the repository documentation, reader/navigation, diagrams, source citations and repository question-answering experience.** The owner's explicit request makes DeepWiki the reference product, not a loose style label. Source citations open the user's matching local VS Code/Cursor checkout. Implementation and final visual approval remain pending.
+Authority: PRODUCT_GOAL version 9, G02 and D030/D033. “LLM Wiki” is the Codebook feature name. **Its final product target is to reproduce DeepWiki itself: the repository documentation, reader/navigation, diagrams, source citations and repository question-answering experience.** The owner's explicit request makes DeepWiki the reference product, not a loose style label. Source citations open the user's matching local VS Code/Cursor checkout. [DESIGN.md](../../DESIGN.md) owns visual approval; [PROJECT_STATE.md](../../PROJECT_STATE.md) owns implementation/proof status.
 
 ## DeepWiki is the acceptance target
 
@@ -34,7 +34,7 @@ Generation, updating and browsing work without a live explanation, debugger sess
 
 - Generate durable site files within the project folder by default. A setting selects a different output location; show the resolved destination before generation/update. The exact setting key and folder name are engineering decisions, not frozen UI design.
 - Produce a locally browser-readable site with navigation across overview, architecture and module/detail pages. Its continued readability must not depend on a running debugger, application or the original chat. Any local serving prerequisite must be part of ordinary documented use.
-- Open the site in a regular web browser as the primary route. Opening it inside the editor extension is also permitted as a convenience; the final design review decides that entry and embedding. External-browser use remains required.
+- Open the site in a regular web browser as the primary route. Opening it inside the editor extension is an optional convenience; external-browser use remains required.
 - Wiki generation owns only its identified generated output. Preserve project source, unrelated files and manual edits; disclose conflicts before replacement. Changing the output setting must not silently delete prior output or learning records.
 
 ## Generation and update flow
@@ -56,6 +56,8 @@ Generated output and excluded/sensitive paths must not recursively feed ingestio
 
 Source citations in the browser site open the corresponding file and location in the editor being used: VS Code for a VS Code project and Cursor for a Cursor project. Bind the correct project root; similarly named files or another checkout must not receive the link accidentally. Handle moved projects, unavailable files and source drift with understandable guidance. Keep referenced source versions visible and distinguish current navigation from historical cited text.
 
+One generated site may be opened from either editor. Its durable static pages keep a VS Code protocol fallback; the Codebook reader serves source and update links with the active host's registered scheme without changing the published files. A Cursor update must preserve the VS Code fallback and both-host reader behavior. Direct offline file browsing remains readable, but its source/update links can open only the editor named by that static fallback.
+
 Verify browser-to-editor activation and actual source selection in both hosts. Plain source text or a clickable-looking label is not evidence that a deep link works. Browser/OS protocol permission and editor installation requirements belong in ordinary onboarding, without embedding credentials or private connection tokens in generated pages.
 
 ## Verification
@@ -64,4 +66,4 @@ In each host, have the normal editor AI use the shared generation skill to creat
 
 ## Reader controls and visual target
 
-Follow [the approved v9 visual specification](../designs/codebook-product-spec-v9.md) and [the shortcut contract](../specs/keyboard-shortcuts.md): show assigned keys in action tooltips and provide the **?** shortcut list while preserving typing. Verify the independent browser at D034's ordinary expanded desktop/default zoom. The [local execution guide](../../IMPLEMENTATION.md) requires actual image inspection and applicable acceptance evidence.
+Follow [the approved v9 visual specification](../../DESIGN.md) and [the shortcut contract](../specs/keyboard-shortcuts.md): show assigned keys in action tooltips and provide the **?** shortcut list while preserving typing. Verify the independent browser at D034's ordinary expanded desktop/default zoom. The [local execution guide](../../IMPLEMENTATION.md) requires actual image inspection and applicable acceptance evidence.

@@ -31,7 +31,7 @@ flowchart LR
 
 Sharing source identities and optional links does not merge these lifecycles. A replay can be saved and viewed without generating a Wiki. A Wiki can be generated, updated and read without debugging, using the application browser or saving learning material. The learner does not need to show all these screens together.
 
-**One UI design family, multiple feature screens.** The requirement for three selectable UI themes/layouts is retired. This does not remove learning replay or Wiki screens, and does not require one fixed arrangement containing every feature. The extension entry is a Codebook icon in the editor's left Activity Bar; selecting it exposes Codebook navigation and actions. The owner adopted [the v9 visual specification](docs/designs/codebook-product-spec-v9.md) after design review under D036.
+**One UI design family, multiple feature screens.** The requirement for three selectable UI themes/layouts is retired. This does not remove learning replay or Wiki screens, and does not require one fixed arrangement containing every feature. The extension entry is a Codebook icon in the editor's left Activity Bar; selecting it exposes Codebook navigation and actions. The owner adopted [the v9 visual specification](DESIGN.md) after design review under D036.
 
 ## Defining live-to-learning experience
 
@@ -109,7 +109,7 @@ The [implementation and validation plan](docs/plans/bundled-codebook-skill.md) t
 - Preserve source/version context and disclose missing, truncated, redacted, partial or stale evidence. Learning and saved replay remain available independently of the original chat's continued availability.
 - Use an ordinary expanded desktop window at normal/default zoom as the layout baseline under D034. OS full-screen is not required; extremely small windows and extreme zoom such as 200% are outside mandatory design/acceptance. Preserve keyboard/theme/focus/contrast/reduced-motion behavior at the supported layout.
 - Under D035, every assigned Codebook keyboard shortcut is shown in its UI tooltip, and **?** opens the [keyboard-shortcut list](docs/specs/keyboard-shortcuts.md) in eligible non-editing contexts. Preserve question-mark typing in chat/source/input/IME contexts; list entries and tooltips must match actual bindings in each host and the independent browser Wiki.
-- D036 adopts the corrected [v9 visual specification](docs/designs/codebook-product-spec-v9.md). Implement its hierarchy and accepted interactions using each host's native surfaces. Agents must open the actual PNG, read the full required contracts and record the entry/verification receipts under [AGENTS.md](AGENTS.md) and [IMPLEMENTATION.md](IMPLEMENTATION.md). The three old images are historical references only.
+- D036 adopts the corrected [v9 visual specification](DESIGN.md). Implement its hierarchy and accepted interactions using each host's native surfaces. Agents must open the actual PNG, read the full required contracts and record the entry/verification receipts under [AGENTS.md](AGENTS.md) and [IMPLEMENTATION.md](IMPLEMENTATION.md). The three old images are historical references only.
 
 ## Final acceptance
 
@@ -128,7 +128,7 @@ The [implementation and validation plan](docs/plans/bundled-codebook-skill.md) t
 
 ## Design authority
 
-Read [DESIGN.md](DESIGN.md), the [current behavioral design](docs/designs/codebook.md) and [the approved v9 companion](docs/designs/codebook-product-spec-v9.md). Open and visually inspect [the actual PNG](docs/designs/assets/codebook-product-spec-v9.png). GStack design review and whole-image adoption are complete; implementation and native proof remain separate. The [local execution guide](IMPLEMENTATION.md) consolidates the implementation loop, complete acceptance map and evidence template.
+Read [DESIGN.md](DESIGN.md); read the [current behavioral design](docs/designs/codebook.md) when the corresponding implementation branch in AGENTS.md applies. Open and visually inspect [the actual PNG](docs/designs/assets/codebook-product-spec-v9.png). GStack design review and whole-image adoption are complete; implementation and native proof remain separate. The [local execution guide](IMPLEMENTATION.md) consolidates the implementation loop, complete acceptance map and evidence template.
 
 ## Cycle 0029 requirement coverage
 

@@ -1,0 +1,74 @@
+{
+  "date": "2026-09-27",
+  "sourceHash": "3033dbadd76abdd8203fe3d51016aa74184fad58f3663fe8daa302cfb66d5bd9",
+  "scope": [
+    "AC-REPLAY",
+    "AC-GAPS"
+  ],
+  "change": "Remove thread-exited notification that cancels the editor queued continued cleanup; discover new immutable thread identity through threads response.",
+  "evidence": {
+    "build": "PASS",
+    "protocolAndLifecycleTests": 31,
+    "failed": 0,
+    "regressionWithOldNotification": "FAIL as expected: stale missing-history stop remains",
+    "native": "VS Code PASS for saved replay gap/recorded heading and values; Cursor NOT RUN"
+  },
+  "limits": [
+    "This proves the bounded VS Code replay correction, not Cursor or final acceptance.",
+    "Foreign-preview layout restoration and clipped summary diagram remain separate open defects."
+  ],
+  "native": {
+    "archive": "d7dcb556-70c4-49fe-aaf2-2e11b92e423d_ba582c46-edb4-4d1e-9121-57181c795cb9",
+    "host": "VS Code default profile",
+    "installedSourceHash": "3033dbadd76abdd8203fe3d51016aa74184fad58f3663fe8daa302cfb66d5bd9",
+    "procedure": [
+      "Open Study Workspace and Recording after editor restart.",
+      "Inspect recorded pause at 15935.06ms: heading Recorded pause \u00b7 15.93 s, LoginButton 90:5, pending=true.",
+      "Home to 0.056083ms: missing-history heading, no stack/values and explicit source placeholder.",
+      "Next recorded stop: heading/source/pending=true restored.",
+      "End to 93235.05ms: retained recorded application image, missing source/debugger history and empty stack/values.",
+      "Previous recorded stop: heading/source/pending=true restored again."
+    ],
+    "applicationRerun": false,
+    "targetDirty": false,
+    "ownedEditorExited": true,
+    "videoDurationSeconds": 63.300001,
+    "inspectedVideoFramesSeconds": [
+      25,
+      40,
+      55
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0029/replay-heading/codebook.vsix",
+      "bytes": 875929,
+      "sha256": "db8da31eed2ecc4e42cd20817c39b4ecad9670c6bf1a7c982384597268fd88cd"
+    },
+    {
+      "path": "artifacts/cycle-0029/replay-heading/package-check.json",
+      "bytes": 27628,
+      "sha256": "94316c1afcdf6f75398838e9aeff7f33b0f2963c0a392d114c466243956d482a"
+    },
+    {
+      "path": "artifacts/cycle-0029/replay-heading/native-seek.mp4",
+      "bytes": 2600834,
+      "sha256": "128a45c3dad3c12f91e298b9dc9e236230b4830801045b3a92d2eed63fe9a6ef"
+    },
+    {
+      "path": "artifacts/cycle-0029/replay-heading/start-gap.png",
+      "bytes": 555634,
+      "sha256": "4b7cb73b37cdfe21e79b36145286d3e9269ef50f63036aed091973d412891b16"
+    },
+    {
+      "path": "artifacts/cycle-0029/replay-heading/gap.png",
+      "bytes": 561825,
+      "sha256": "2d3e77eca53b7d08fc56832273671c971c9d9a5b309d1d48c05091d44dc73114"
+    },
+    {
+      "path": "artifacts/cycle-0029/replay-heading/recorded.png",
+      "bytes": 739201,
+      "sha256": "88744d0e32a0c95b1af5a5ae57d2582bba2eb8ec13b7a1bc4dc4518cda1010f6"
+    }
+  ]
+}

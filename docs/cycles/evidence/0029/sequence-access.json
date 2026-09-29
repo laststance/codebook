@@ -1,0 +1,62 @@
+{
+  "date": "2026-09-27",
+  "scope": [
+    "AC-LEARNING",
+    "AC-DESKTOP"
+  ],
+  "level": "browser-renderer mechanism check",
+  "compiledSha256": "743b9c558393f499c0ecd448ab01f6b69d68765773847b3d58ccd091ed88760f",
+  "scriptSha256": "4721b81fd65fc50d995dcb1f01641c17876fa8be09ff99771cce914714fa4e9f",
+  "checks": {
+    "passed": 29,
+    "failed": 0,
+    "errors": [],
+    "wideSequence": {
+      "name": "wide saved sequence remains reachable by keyboard inside its own scroll area",
+      "actual": {
+        "focused": true,
+        "left": 730,
+        "width": 566,
+        "contentWidth": 1296,
+        "pageOverflow": false
+      },
+      "passed": true
+    }
+  },
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0029/sequence-access-retry/result.json",
+      "sha256": "dad99380b2a866f9ee100eaec381ffc2da94de50dcdf37c46b1afc220e08ebaf"
+    },
+    {
+      "path": "artifacts/cycle-0029/sequence-access-retry/wide-sequence-scrolled.png",
+      "sha256": "479076dd23e6559e354cc488620a6f0ca9c6afcabab503071288add5e628f0e7"
+    },
+    {
+      "path": "artifacts/cycle-0029/sequence-access-retry/flow.webm",
+      "sha256": "fc3b94c460f8d88be4d97787a76f4a1bcb6e7db22808b34e7362d397d00e1bb5"
+    },
+    {
+      "path": "artifacts/cycle-0029/sequence-access-retry/motion-3.png",
+      "sha256": "dee4468b3994c3db43036d158dbbeba2c0f7efed55e567b26c52453f7d7065a3"
+    },
+    {
+      "path": "artifacts/cycle-0029/sequence-access-retry/motion-4.png",
+      "sha256": "6407098fd64c41536df9cde9e58c7a355225b00cf4a400bcbae32ae08be86c8d"
+    },
+    {
+      "path": "artifacts/cycle-0029/sequence-access-retry/motion-5.png",
+      "sha256": "af860b4df1df2109b762e3b05d6a4af47bfe1935cbc0e940fe018d2b851ae9c7"
+    },
+    {
+      "path": "artifacts/cycle-0029/sequence-access-retry/motion-6.png",
+      "sha256": "7f7af743c6717dc11e8366a23430d2da98ef774c98970fa3be856609ca407c5f"
+    }
+  ],
+  "limits": [
+    "No application or debugger was run. Synthetic renderer inputs are not a bundled application.",
+    "Screenshots and DOM measurements establish right-edge access; inspected 3/4/5/6-second video frames did not capture the scrolling interval, so motion verification remains unproven.",
+    "No native VS Code/Cursor or final acceptance credit.",
+    "First attempt failed because structuredClone was unavailable in the test runner; JSON cloning corrected the runner."
+  ]
+}

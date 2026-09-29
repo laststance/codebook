@@ -1,0 +1,56 @@
+{
+  "cycle": "0029",
+  "date": "2026-09-27",
+  "level": "installed Cursor development trial; not final acceptance",
+  "host": "Cursor 3.22.9, isolated ordinary user data and extension directories",
+  "target": {
+    "root": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "revision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+    "gitBeforeAndAfter": "?? .codebook/ only"
+  },
+  "candidate": {
+    "version": "0.2.11",
+    "sourceHash": "148c33d6e0cb767e453fe094030c76fe2cca4ac8ea34ecb527a1854022bf8120",
+    "vsixSha256": "c2b955503aefcb9482e1ee00fea33ec7a9bb953fd9727c09d9929a23197ed8b9",
+    "vsixBytes": 914744,
+    "archiveEntries": 26,
+    "installedBuildIdentityMatched": true,
+    "packageInspection": "PASS"
+  },
+  "subsequentTypeOnlyCut": {
+    "change": "Narrowed the cancellation-token parameter type and added a pre-cancel/oversized-prompt regression; no runtime logic changed",
+    "sourceHash": "6536aba1068757367e5f7798b792e621447dbf151897a41da0014d94ebc54ff3",
+    "vsixSha256": "538d282c66e5c83c73ce262382c1482480a858259464f52182d664fd194bad5a",
+    "vsixBytes": 914746,
+    "focusedCurrentSource": "16/16 PASS",
+    "packageInspection": "PASS, 26 entries",
+    "extensionBundleSha256BothCuts": "22ccefde67672cf1340b26b801204ec3ae4f900067f3f8e84a3752d46357fdff",
+    "installedStatus": "not reinstalled; the installed trial belongs to the preceding candidate, whose executable extension bundle bytes match this cut",
+    "inFlightCancellation": "The actual Cursor CLI request was cancelled after 250 ms; it rejected after 279 ms and left zero Codebook question temporary workspaces before/after. The provider waits for the owned process to close before returning."
+  },
+  "mechanism": {
+    "fullSuiteBeforeFinalErrorCopyAndAddedExtensionTest": "1154/1154 PASS; zero failed, skipped or cancelled",
+    "focusedCurrentSource": "15/15 PASS",
+    "directRealReadmeQuestion": "PASS: answer and two hash-bound README citations",
+    "note": "The complete suite preceded one error-copy adjustment and the added Cursor command regression; the focused current-source run covers both.",
+    "subsequentProcessNegativeControls": "8/8 PASS after build: failed JSON envelope, excessive stdout, pending-child cancellation, missing executable, short test timeout and temporary-workspace cleanup. These use a fake executable only in an isolated test home; they are mechanism tests, not installed UI behavior."
+  },
+  "nativeProcedure": {
+    "entry": "Codebook: Open DeepWiki in Browser from the installed isolated Cursor profile",
+    "question": "Which database ORM does this dashboard use?",
+    "observedAnswer": "Drizzle ORM (drizzle-orm), connected through drizzle-orm/postgres-js.",
+    "observedCitations": ["app/lib/actions.ts:3", "app/lib/data.ts:2", "db/seed.ts:6"],
+    "citationActivation": "Chrome and Cursor prompted once without always-allow; the first answer citation opened app/lib/actions.ts at line 3 in the matching Cursor checkout",
+    "browserVisual": "Actual dark Wiki answer and three citation links inspected; screenshot remained in the tool session and was not retained as a file",
+    "result": "PASS for this bounded Cursor browser Q&A and first citation route"
+  },
+  "cleanup": "Owned Wiki browser tab and isolated Cursor project window closed; loopback reader listener closed; external target files unchanged",
+  "limits": [
+    "Isolated Cursor profile was signed out of native Agent; the authenticated local Cursor CLI served Q&A independently.",
+    "This is one development question, not full DeepWiki quality or nine-project acceptance.",
+    "Pre-cancel, oversized prompt, malformed answer and changed source have focused checks. In-flight cancellation has a direct process-level check. Missing executable, failed envelope, timeout and excess output now have fake-executable process-level checks. Actual authentication failure and installed UI recovery remain unverified.",
+    "No tool-permission request occurred in ask mode; explicit rejection of such a request remains unverified and may require the documented ACP route.",
+    "VS Code's model route was not repeated on this source cut.",
+    "No retained native video or screenshot file; motion, all themes and full v9 visual comparison remain open."
+  ]
+}

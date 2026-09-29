@@ -1,0 +1,38 @@
+{
+  "phase": "cycle-0029-development-only",
+  "target": {
+    "root": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "revision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+    "generatedOutput": ".codebook/wiki",
+    "publishedPages": 10,
+    "pagesWithFreshnessMarker": 10,
+    "observedFreshness": {
+      "status": "current",
+      "changedPaths": [],
+      "addedPaths": []
+    },
+    "gitStatus": "?? .codebook/"
+  },
+  "extension": {
+    "sourceHash": "3139071e3d62a2a2eede6f7228a888ca7e03c795b1cdeb8ccce7f4ba184f6eda",
+    "vsix": "artifacts/cycle-0029/deepwiki-skill/freshness-reader.vsix",
+    "vsixSha256": "691a9faffc4469d832fa49d789cbea6301041f719be851e8d506b0f5670bb3ed",
+    "typecheckAndBuild": "pass",
+    "focusedTests": "15/15 pass",
+    "packageVerification": "pass; 25 entries",
+    "vsixEntryInventory": "No path matching cart, demo or hook"
+  },
+  "mechanism": [
+    "Checks all indexed source hashes, including manifest-listed non-code files, without sending their content to the model",
+    "Detects new eligible Git files against the clean generation revision and excludes generated output",
+    "Reports changed for indexed edits/deletions or new eligible source; reports unknown if generation provenance cannot prove additions",
+    "Serves an explicit freshness endpoint and refreshes the visible status when the Wiki page regains focus"
+  ],
+  "notVerified": [
+    "Native browser rendering of the freshness label",
+    "Browser Update LLM Wiki click-through and successful agent regeneration",
+    "Freshness after a real source update in VS Code or Cursor",
+    "Final nine-project acceptance"
+  ],
+  "acceptanceCredit": "none"
+}

@@ -1,0 +1,48 @@
+{
+  "date": "2026-09-27",
+  "sourceHash": "b0eb772248d1209735b29367686bedea5b0f981b0570bf89cf6bf88a8f2d0eda",
+  "host": "VS Code default profile",
+  "chat": "Copilot Auto",
+  "routedModel": "Claude Sonnet 5",
+  "target": "/Users/ryotamurakami/repository/nextjs-dashboard",
+  "targetChanges": false,
+  "runId": "ba582c46-edb4-4d1e-9121-57181c795cb9",
+  "observed": [
+    "Natural standard-chat request produced an actual login submission and LoginButton pause at 90:5 with pending=true.",
+    "Agent corrected two unsuccessful line-87 preparations and one rejected summary submission.",
+    "Saved archive contains agent-authored learningSummary, original question and evidence-classified sequence.",
+    "Follow-up opened saved replay and sought to 15935.06ms without restarting application; recorded source and native debugger pending=true were shown.",
+    "Chat remained visible during this expanded-window trial."
+  ],
+  "limits": [
+    "Foreign preview blocks layout restoration.",
+    "Historical call-stack heading still says Not recorded at this moment while populated.",
+    "Sequence diagram clips horizontally in observed composition.",
+    "Specific public focus action arguments were not independently inspected.",
+    "Replay video capture failed to initialize; no replay motion recording is claimed.",
+    "No Cursor trial for this candidate; no final acceptance credit."
+  ],
+  "cleanup": {
+    "runtimeCompleted": true,
+    "resourcesReleased": true,
+    "activeSessions": 0,
+    "ownedVSCodeExited": true
+  },
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0029/focus-recovery/native-vscode/ordinary-chat-save.mp4",
+      "bytes": 6602344,
+      "sha256": "7a007e1fe2671ac107de06a2baea8a24d22228165803dca3e8e0fdbc1cdc3304"
+    },
+    {
+      "path": "artifacts/cycle-0029/focus-recovery/native-vscode/saved-learning.png",
+      "bytes": 653543,
+      "sha256": "846938aef6d13a896db491d4a2e0512f02309246c20cdff4bee409a2f48e6ffe"
+    },
+    {
+      "path": "artifacts/cycle-0029/focus-recovery/native-vscode/ordinary-chat.mp4",
+      "bytes": 11560448,
+      "sha256": "ec4b737845807d23447b588a0c64b2f468793422fde35392e1bc783d8da75dab"
+    }
+  ]
+}

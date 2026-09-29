@@ -1,0 +1,51 @@
+{
+  "candidate": {
+    "host": "VS Code",
+    "profile": "Codebook QA 0029 Clean",
+    "packageSha256": "344d2ddbe574ee749db8529897b25567680b779773511373a48ddfdc97276d90",
+    "sourceHash": "0918df7be59d055ef59a87ca8dad0c5569cba5ba24e17ca9d6bab11974332755",
+    "skillVersion": "1.0.30",
+    "chat": "Copilot Chat Agent / Auto / Efficiency; GPT-6 Luna",
+    "targetRevision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e"
+  },
+  "run": {
+    "id": "6e398575-9269-445b-bb18-c1c224931fc3",
+    "privateRuntimeSha256": "a9a071fadb58a613cbf48585106ce13b67fc2b59edcb100a4117cc9f49cdb31f",
+    "sourceStop": "auth.ts:42:11",
+    "committedSnapshots": 1,
+    "operations": 1,
+    "inputDispatched": true,
+    "inputAcknowledged": true,
+    "afterVerified": true,
+    "afterCondition": "visible form error with exact text Invalid credentials",
+    "runtimeOutcome": "demonstrated",
+    "captureOutcome": "complete",
+    "resourcesReleased": true
+  },
+  "chatBoundary": {
+    "initialResponse": "Failed after a committed server pause: Copilot image download returned HTTP 404. No continuation had been sent.",
+    "recovery": "A second message in the same chat prohibited image resources and repeated input. It saved the pause explanation, continued with current server authority, verified the exact after condition and read saved history.",
+    "creditsDisplayed": [4.3, 2.1],
+    "ordinarySingleRequestPass": false,
+    "fallbackUsed": false
+  },
+  "savedReplay": {
+    "privateStudySha256": "b0f50d04d5ba35ae759e9ba187c17c8afa74f87b10a372f6f181c356460f624d",
+    "privateContextSha256": "85e15a3afd9cf2251233810279a95514810f3a57b801e5da450aa91a479bb0a5",
+    "explicitSaveUi": "Learning saved",
+    "pauseSeconds": 44.71,
+    "endSeconds": 190.25,
+    "nativePause": "Captured auth.ts:42:11, historical Variables and Call Stack restored at 44.71 seconds after seeking back from the end.",
+    "endFrame": "Invalid credentials visible in the recorded application; source and debugger show Not recorded at this moment in the terminal history gap.",
+    "learnerUnderstandingMarked": false,
+    "summaryGap": "The saved sequence still labels the final form response unknown even though the later run verifies it. The selected pause places its explanation under Later annotations because it was authored at 183.01 seconds.",
+    "motionVideo": "not captured",
+    "hostScope": "VS Code development only; not Stage 1 or Stage 2 acceptance"
+  },
+  "preservation": {
+    "targetGitStatus": "only pre-existing untracked .codebook/",
+    "ownedRuntimeProcessesRemaining": false,
+    "privateWorkspaceSettingsRestoredSha256": "c0461bb9e59dbbea0534e86c2746f168b2cc2ec441624f27aa8853abb6441576",
+    "otherHostVerifiedOnThisCut": false
+  }
+}
