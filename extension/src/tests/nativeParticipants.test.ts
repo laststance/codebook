@@ -131,6 +131,145 @@ test('an idle browser continuation while a server stop is current preserves the 
   await waitUntil(() => harness.run.view().status === 'completed', 'completed after idle browser continuation');
 });
 
+// Both native participants must preserve the same historical generation across a presentation-only stack refresh.
+for (const participant of ['server', 'browser'] as const) test(`${participant} stack refresh preserves its captured pause and allows the declared path to complete`, async context => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context); await harness.run.prepare();
+  harness.run.action('once', 'repository-click');
+  const server = await pauseReady(harness, 'server');
+  if (participant === 'browser') await harness.run.continue('server', server.pause);
+  const captured = participant === 'server' ? server : await pauseReady(harness, 'browser');
+  const snapshotCount = harness.run.view().snapshots.length;
+
+  // Act: js-debug refreshes its presentation without a client request or CDP runtime resume.
+  harness.run.onEvent(harness.sessions[participant], { type: 'event', seq: 910, event: 'continued', body: { threadId: 1 } });
+  harness.run.onEvent(harness.sessions[participant], { type: 'event', seq: 911, event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } });
+  await waitUntil(() => {
+    const view = harness.run.view();
+    if (view.failures.length) throw new Error(view.failures.join('; '));
+    return view.events.some(event => event.type === 'dap.pause-refreshed');
+  }, 'same native pause refreshed');
+
+  // Assert
+  assert.equal(harness.run.view().status, `paused-${participant}`);
+  assert.equal(harness.run.view().participants[participant]?.snapshot?.id, captured.id);
+  assert.equal(harness.run.view().participants[participant]?.pause?.generation, 1);
+  assert.equal(harness.run.view().snapshots.length, snapshotCount);
+  await harness.run.continue(participant, captured.pause);
+  // Finish the already declared path; refreshing must not skip or duplicate its remaining stops.
+  if (participant === 'server') {
+    const browser = await pauseReady(harness, 'browser'); await harness.run.continue('browser', browser.pause);
+  }
+  const finalServer = await pauseReady(harness, 'server'); await harness.run.continue('server', finalServer.pause);
+  await waitUntil(() => harness.run.view().status === 'completed', 'completed after native refresh');
+  assert.equal(harness.run.view().failures.length, 0);
+  assert.equal(harness.run.view().snapshots.length, 3);
+  assert.equal(harness.commands.filter(command => command.method === 'Input.dispatchMouseEvent').length, 2);
+});
+
+test('Codebook refuses continuation during an unconfirmed native stack refresh without revoking the actual pause', async context => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context); await harness.run.prepare();
+  harness.run.action('once', 'repository-click'); const server = await pauseReady(harness, 'server');
+
+  // Act
+  harness.run.onEvent(harness.sessions.server, { type: 'event', seq: 912, event: 'continued', body: { threadId: 1 } });
+  await assert.rejects(harness.run.continue('server', server.pause), /conflict/);
+
+  // Assert
+  assert.equal(harness.run.view().status, 'paused-server');
+  assert.equal(harness.run.view().participants.server?.pause?.generation, 1);
+  assert.equal(harness.commands.some(command => command.method === 'continue'), false);
+});
+
+test('a changed native source location after stack refresh cannot reuse the captured pause', async context => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context); await harness.run.prepare();
+  harness.run.action('once', 'repository-click'); await pauseReady(harness, 'server');
+  harness.movePausedFrame(2);
+
+  // Act
+  harness.run.onEvent(harness.sessions.server, { type: 'event', seq: 913, event: 'continued', body: { threadId: 1 } });
+  harness.run.onEvent(harness.sessions.server, { type: 'event', seq: 914, event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } });
+  await waitUntil(() => harness.run.view().status === 'failed', 'changed refreshed source rejected');
+
+  // Assert
+  assert.match(harness.run.view().failures.join(' '), /refresh.*source|source.*refresh/i);
+  assert.equal(harness.run.view().participants.server?.pause, undefined);
+  assert.equal(harness.run.view().snapshots.length, 1);
+});
+
+// Independent runtime and client receipts continue to distinguish a true resume from stack presentation.
+for (const resume of ['native client', 'CDP runtime'] as const) test(`${resume} resume during stack refresh invalidates the original captured pause`, async context => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context); await harness.run.prepare();
+  harness.run.action('once', 'repository-click'); const server = await pauseReady(harness, 'server');
+  harness.run.onEvent(harness.sessions.server, { type: 'event', seq: 915, event: 'continued', body: { threadId: 1 } });
+
+  // Act
+  if (resume === 'native client') harness.run.onRequest(harness.sessions.server, { type: 'request', seq: 916, command: 'continue', arguments: { threadId: 1 } });
+  else harness.emitResume('server');
+
+  // Assert
+  assert.equal(harness.run.view().status, 'failed');
+  assert.equal(harness.run.view().participants.server?.pause, undefined);
+  await assert.rejects(harness.run.continue('server', server.pause), /conflict/);
+});
+
+test('a different native thread cannot re-adopt the captured generation during stack refresh', async context => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context); await harness.run.prepare();
+  harness.run.action('once', 'repository-click'); await pauseReady(harness, 'server');
+
+  // Act
+  harness.run.onEvent(harness.sessions.server, { type: 'event', seq: 917, event: 'continued', body: { threadId: 1 } });
+  harness.run.onEvent(harness.sessions.server, { type: 'event', seq: 918, event: 'stopped', body: { reason: 'breakpoint', threadId: 2 } });
+
+  // Assert
+  assert.equal(harness.run.view().status, 'failed');
+  assert.equal(harness.run.view().participants.server?.pause, undefined);
+  assert.equal(harness.run.view().snapshots.length, 1);
+});
+
+test('closing during delayed stack refresh verification cannot revive the captured pause', async context => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context); await harness.run.prepare();
+  harness.run.action('once', 'repository-click'); await pauseReady(harness, 'server');
+  const originalRequest = harness.sessions.server.customRequest;
+  let releaseStack = () => {}, stackRequested = false;
+  const delayedStack = new Promise<void>(resolve => { releaseStack = resolve; });
+  harness.sessions.server.customRequest = async (command, arguments_) => {
+    if (command === 'stackTrace') { stackRequested = true; await delayedStack; }
+    return originalRequest(command, arguments_);
+  };
+  harness.run.onEvent(harness.sessions.server, { type: 'event', seq: 920, event: 'continued', body: { threadId: 1 } });
+  harness.run.onEvent(harness.sessions.server, { type: 'event', seq: 921, event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } });
+  await waitUntil(() => stackRequested, 'delayed refresh source check');
+
+  // Act: closing revokes ownership before the delayed native response arrives.
+  const closing = harness.run.stop(); releaseStack(); await closing;
+
+  // Assert
+  assert.equal(harness.run.view().status, 'cancelled');
+  assert.equal(harness.run.view().participants.server?.pause, undefined);
+  assert.equal(harness.run.view().resourcesReleased, true);
+  assert.equal(harness.run.view().events.some(event => event.type === 'dap.pause-refreshed'), false);
+  assert.equal(harness.run.view().snapshots.length, 1);
+});
+
+test('an extra native stop without a refresh cannot claim an already captured pause', async context => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context); await harness.run.prepare();
+  harness.run.action('once', 'repository-click'); await pauseReady(harness, 'server');
+
+  // Act
+  harness.run.onEvent(harness.sessions.server, { type: 'event', seq: 919, event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } });
+
+  // Assert
+  assert.equal(harness.run.view().status, 'failed');
+  assert.equal(harness.run.view().snapshots.length, 1);
+});
+
 test('a competing browser resume request while the server is paused invalidates the run', async context => {
   // Arrange
   const harness = await nativeParticipantsHarness(context); await harness.run.prepare();

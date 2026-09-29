@@ -29,6 +29,7 @@ export async function nativeParticipantsHarness(context: TestContext, stopPartic
   const commands: { participant: Participant; method: string }[] = [], released: string[] = [];
   const identities: Participant[] = [], launches: DebugSession['configuration'][] = [];
   let run: ConfiguredBrowserRun, sequence = 0, breakpointNumber = 0, currentIndex = 0;
+  let pausedLine = 1;
   let inputResolve = () => {}, heldResponse: (() => void) | undefined, holdResponse = false;
   let revokeDuringDom = false, afterReadyBeforeInput = false;
   const afterExpression = configuredDomExpression(definition.configuration.action.after);
@@ -48,7 +49,7 @@ export async function nativeParticipantsHarness(context: TestContext, stopPartic
     customRequest: async (command, args) => {
       commands.push({ participant: name, method: command });
       if (command === 'requestCDPProxy') return { host: '127.0.0.1', port: name === 'server' ? 1235 : 1234, path: `/${name}` };
-      if (command === 'stackTrace') return { stackFrames: [{ id: 1, name: `${name}Step`, source: { path: bundle(name).sourcePath }, line: 1, column: 1 }] };
+      if (command === 'stackTrace') return { stackFrames: [{ id: 1, name: `${name}Step`, source: { path: bundle(name).sourcePath }, line: pausedLine, column: 1 }] };
       if (command === 'scopes') return { scopes: [{ name: 'Local', variablesReference: 10 }] };
       if (command === 'variables') return { variables: [{ name: name === 'server' ? 'mode' : 'nextTheme', value: name === 'server' ? 'display' : 'dark', variablesReference: 0 }] };
       if (command === 'continue') {
@@ -160,6 +161,8 @@ export async function nativeParticipantsHarness(context: TestContext, stopPartic
     revokeServerRegistration() { failedRegistration = true; acknowledge(bundle('server').sourcePath); },
     holdContinueResponse() { holdResponse = true; }, releaseContinueResponse() { holdResponse = false; heldResponse?.(); },
     emitResume(name: Participant) { listeners[name].get('Debugger.resumed')?.({}); },
+    // A changed native frame must not inherit a previously captured source pause.
+    movePausedFrame(line: number) { pausedLine = line; },
     emitBrowserAdapterPause() { listeners.browser.get('Debugger.paused')?.({ reason: 'other', hitBreakpoints: ['adapter-internal'], callFrames: [{ callFrameId: 'adapter', location: { scriptId: 'adapter-internal', lineNumber: 0, columnNumber: 0 } }] }); },
   };
 }

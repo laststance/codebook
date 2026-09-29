@@ -1,7 +1,7 @@
 # Cycle 0030 — Trustworthy Node test runs
 
 Type: product-increment (hardening)\
-Status: implementation (increments 1–3 mechanism complete; increment 4 next)\
+Status: validating (increments 1–4 mechanism complete; native regression next)\
 Result: pending\
 Delivery: local-only\
 Goal version: 9\
@@ -324,6 +324,25 @@ Retained implementation and diff review complete. No auto-resume branch was adde
 
 AC-LIVE/AC-SAVE implementation and mechanism evidence advance; AC-REPLAY/AC-SKILL dependency checks retain their native gaps. Other rows carry forward per the entry audit. No final acceptance credit.
 
+### Increment 4 plan: preserve a real pause through native stack refresh, frozen 2026-09-30
+
+- **Gap / AC IDs:** AC-LIVE currently fails `Unowned continuation invalidated live pause` at `ConfiguredBrowserRun.onEvent` when js-debug refreshes a paused stack. AC-SAVE/AC-REPLAY depend on retaining that original source/value generation. Other ten rows carry forward; no UI layout changes.
+- **Root cause:** the installed js-debug 1.117.0's [`Thread.refreshStackTrace`](https://github.com/microsoft/vscode-js-debug/blob/v1.117.0/src/adapter/threads.ts#L917) rebuilds the paused stack, calls `_onThreadResumed`, then `_onThreadPaused`, without a CDP runtime resume. Current `onEvent` requires every DAP `continued` at an owned pause to have an owned continuation, so it rejects this presentation refresh. `onRequest` already rejects manual/competing resume; `onCdpResumed` already rejects actual runtime resume without an owned continuation.
+- **Selected change:** recognize a pending native refresh only for the exact current owned session/thread and retained same-generation CDP pause, with no continuation. Temporarily refuse Codebook continuation until the matching DAP stop and an exact top-frame source/line/column check confirm the refresh. Keep the original gate generation and immutable snapshot; do not append a new captured stop or issue a resume. Actual CDP resume, manual request, changed session/thread/frame, extra stop or stale async verification must retain refusal.
+- **Source:** `configuredBrowserRun.ts` and existing `nativeParticipants.test.ts` / `nativeParticipantsHarness.ts`. Reuse `PauseGate` identity/matches and existing `awaitResponse`, `track`, source binding and evidence; no new execution engine or utility.
+- **Starting action → result:** learner updates native stack presentation while paused in an owned configured server/browser run → current capture remains the same generation, values and source; Codebook can continue afterward and the run reaches its actual result. A continuation during the unconfirmed interval is refused.
+- **Frozen red checks:** refresh on server and browser retains one snapshot/generation and completes; pending refresh refuses continuation; a changed top-frame location, different thread, CDP resume, manual client continue and a duplicate stop still fail; stop/cleanup during delayed verification cannot revive authority. Existing three-receipt continuation tests remain regression guards.
+- **Proof:** red/green mechanism tests before production edits, focused configured-runtime suites, full extension and package suites sequentially, then a new VSIX and Copilot Auto dashboard native regression for increments 2–4. Native evidence remains NOT RUN until executed. Mechanism tests are isolated ports, not an embedded validation app or final acceptance credit.
+
+### Increment 4 mechanism result, 2026-09-30 04:24 JST
+
+- Red: 4 predicted failures / 23 passing guards, `artifacts/cycle-0030/codebook-c30-i4-red.log`. The server/browser refresh and pending-control behavior failed at the original unconditional continuation refusal.
+- Green: **75/75 focused PASS**, `codebook-c30-i4-focused.log` (native participants, native recording and configured runtime); delayed cleanup is included. Full extension suite **1,361/1,361 PASS**, 0 failures/cancelled, 210,941 ms (`codebook-c30-i4-full.log`), owned session 9903 exit 0. Package **175/175 PASS**, 20,869 ms (`codebook-c30-i4-package.log`), session 38942 exit 0. Suites were sequential.
+- Negative controls: disable refresh recognition → two positive tests fail; disable source-location refusal → changed-source test fails; disable pending-control refusal → pending-continue test fails. Restoring the byte-exact compiled module passes all eight refresh cases. `codebook-c30-i4-negative.log` retains each result. The negative source check times out waiting for the required failure; it cannot certify a false source.
+- Implementation: current CDP pause identity is retained while DAP refresh awaits its stop and bounded native stack verification. Codebook continuation is refused during that interval. The verified source/line/column keeps the original generation and immutable snapshot. Manual client resume, actual CDP resume, changed thread/source, duplicate stop and late cleanup retain revocation. Existing three-receipt continuation and full recording tests pass.
+- Installed js-debug 1.117.0 metadata and its exact upstream tag were checked; its refresh implementation matches the diagnosed event sequence. No new UI layout or custom values surface was added.
+- Native: **NOT RUN** on this candidate. The next action is the dashboard Copilot Auto Node learner-breakpoint regression plus configured-runtime stack refresh. Current installed increment 1 bytes do not prove increments 2–4.
+
 ## Result and decision
 
 - Result: pending
@@ -334,7 +353,7 @@ Cycle 0029 delivered through PR #48 (`ad476d3`); Issue #46 is closed with its re
 
 ## Next action
 
-- **Exact next action:** increment 4, test-first: protect configured browser/server pauses from js-debug stack refresh while refusing actual manual/foreign continuation. Freeze checks against `ConfiguredBrowserRun.onEvent/onRequest/onCdpResumed` and the native-participants harness before edits, then run final-candidate Copilot Auto native regression.
+- **Exact next action:** build/install the increments 1–4 VSIX and run Copilot Auto dashboard native regression: learner pauses and same-line breakpoint retirement, complete ordered Node history, and configured browser/server stack refresh. Preserve breakpoints/source and record actual source/package/history identities. Then OCR plus local CodeRabbit, /ship, CI and merge.
 - **Branch / processes:** `codex/cycle-0030-node-run-integrity`, increments 1–2 committed and increment 3 being recorded; fresh suite processes have ended. QA VS Code is on the dashboard with the earlier increment 1 candidate and Auto selected. Isolated probe projects remain `/private/tmp/codebook-vitest-filter` and `/private/tmp/codebook-vitest-v4`.
 - **State:** PROJECT_STATE names this cycle as active.
 
