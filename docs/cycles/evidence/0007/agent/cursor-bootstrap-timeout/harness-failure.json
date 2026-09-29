@@ -1,8 +1,0 @@
-{
-  "passed": false,
-  "kind": "agent-bootstrap-deadline",
-  "reason": "300-second bootstrap window elapsed; delayed agent discovery/start consumed most of it before first action. Checkout call then failed after editor cleanup.",
-  "lastObserved": "cartCount 1, completedClicks 1, four phase images captured; order path untested",
-  "retryChange": "Begin discovery and agent actions immediately after fresh bootstrap; product source and timeout unchanged.",
-  "nativePixelsInspected": false
-}

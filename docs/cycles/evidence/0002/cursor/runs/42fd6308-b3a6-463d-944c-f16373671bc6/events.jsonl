@@ -1,7 +1,0 @@
-{"sequence": 1, "elapsedMs": 0.086917, "wallTime": "2026-09-18T13:02:00.660Z", "type": "run.created", "detail": {"runId": "42fd6308-b3a6-463d-944c-f16373671bc6", "scenario": "missing-endpoint"}}
-{"sequence": 2, "elapsedMs": 32.356834, "wallTime": "2026-09-18T13:02:00.692Z", "type": "breakpoint.requested", "detail": {"id": "1f58aed8-19cb-4856-819c-4928c3ce3802", "sourcePath": "<repo>/artifacts/cycle-0002/cursor/42fd6308-b3a6-463d-944c-f16373671bc6/fixture/cart.ts", "line": 9}}
-{"sequence": 3, "elapsedMs": 35.21975, "wallTime": "2026-09-18T13:02:00.695Z", "type": "fault.endpoint-missing", "detail": {}}
-{"sequence": 4, "elapsedMs": 35.273209, "wallTime": "2026-09-18T13:02:00.695Z", "type": "run.failed", "detail": {"reason": "Error: Cursor debugging endpoint descriptor is missing"}}
-{"sequence": 5, "elapsedMs": 53.99875, "wallTime": "2026-09-18T13:02:00.714Z", "type": "cleanup.started", "detail": {}}
-{"sequence": 6, "elapsedMs": 55.915459, "wallTime": "2026-09-18T13:02:00.716Z", "type": "browser.cleanup-verified", "detail": {"host": "cursor", "remainingOwnedTabs": 0}}
-{"sequence": 7, "elapsedMs": 59.838334, "wallTime": "2026-09-18T13:02:00.720Z", "type": "cleanup.completed", "detail": {}}

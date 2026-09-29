@@ -10,7 +10,7 @@ Goal issue: https://github.com/laststance/codebook/issues/1\
 Goal links: G02, G03, G04, G05, G06, G07, G08, G09, G10, G11\
 Implementation base: `8e2665489a48103d3bf60b1906397bf0b6883ccc`\
 Branch: `codex/cycle-0017-packaged-repository-study`\
-Source state: [Cycle 0016](0016-packaged-installation.md), [verified private delivery](evidence/0016/delivery-20260921.md)
+Source state: [Cycle 0016](0016-packaged-installation.md), [verified private delivery](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0016/delivery-20260921.md)
 
 ## Question and expected value
 
@@ -84,11 +84,11 @@ Cursor's ordinary restart restores its exact unsaved draft, fresh server identit
 
 Private restart V4–V9 receipts, `restart-persistence-only.json`, `restart-paint-probe.log`, screenshots and the 501.25-second native-rendered video retain the sequence. Some early helper timeouts mean this is not a clean single-variable root-cause reproduction. Do not attribute it to the old V3-I1 native ordering hypothesis without further evidence. Both normal Cursor closes confirm through its actual Close dialog. Final independent shutdown checks retain the exact saved draft plus one exact unsaved backup and zero owned processes/descriptors. A late final draft-UI command overlaps Close after a yielded poll; that UI check is not a pass and cannot explain the earlier completed failures. The independent filesystem/backup result remains valid.
 
-The [QA and investigation record](evidence/0017/native-validation.md) retains that failed checkpoint. It led to the corrected, serialized native grid/group investigation completed below before selecting any product repair.
+The [QA and investigation record](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0017/native-validation.md) retains that failed checkpoint. It led to the corrected, serialized native grid/group investigation completed below before selecting any product repair.
 
 ## Completed diagnostic
 
-The [isolated Cursor investigation](evidence/0017/cursor-layout-investigation.md) reproduces a native scope mismatch: one visible editor leaf has two API groups; three visible leaves have four. The extra empty group belongs outside the measured grid. Cold Wiki/Study column reservation and later group-count/ownership checks use the global list. The measured split ratios are correct. Reopening Wiki after the actual three-leaf grid exists succeeds, while Study Restore still rejects the fourth API group. The original profile remains unchanged across all 62 User/Backups files; both auxiliary profiles close normally with exact drafts and zero owned resources. No product change or repaired restart is claimed.
+The [isolated Cursor investigation](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0017/cursor-layout-investigation.md) reproduces a native scope mismatch: one visible editor leaf has two API groups; three visible leaves have four. The extra empty group belongs outside the measured grid. Cold Wiki/Study column reservation and later group-count/ownership checks use the global list. The measured split ratios are correct. Reopening Wiki after the actual three-leaf grid exists succeeds, while Study Restore still rejects the fourth API group. The original profile remains unchanged across all 62 User/Backups files; both auxiliary profiles close normally with exact drafts and zero owned resources. No product change or repaired restart is claimed.
 
 ## Result and decision
 
@@ -104,7 +104,7 @@ The [isolated Cursor investigation](evidence/0017/cursor-layout-investigation.md
 
 ## Handoff
 
-- Delivery complete: [PR #22 and actual main-CI artifact verification](evidence/0017/delivery-20260921.md); Issue #21 closed at merge. The pre-PR review checkpoints above retain their historical scope and are superseded by this delivery record.
+- Delivery complete: [PR #22 and actual main-CI artifact verification](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0017/delivery-20260921.md); Issue #21 closed at merge. The pre-PR review checkpoints above retain their historical scope and are superseded by this delivery record.
 - Exact next action: [Cycle 0018](0018-editor-group-scope.md) repairs native editor-group scope/reservation with focused red controls and both-host packaged restart. The original Cursor restart remains failed/unverified.
 - The isolated VS Code editor, MCP and owned runtimes are stopped, with the exact unsaved QA draft preserved in its profile backup. Cursor has completed its bounded live/replay/Wiki run and failed the restart sequence; its editor/MCP/runtime processes are now stopped with exact draft backup retained. Frozen Cycle 0016 review worktrees and private evidence remain untouched; Claude automatic retries remain disabled.
 - This cycle preserves its goal-version-3 experiment contract. The subsequent explicit D022 acceptance refinement belongs to goal version 4; no successful final trial is inferred. Cycle 0018 is now the sole active cycle.
