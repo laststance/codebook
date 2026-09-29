@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -74,6 +74,26 @@ test('Node reader restores a verified event cursor without changing the sealed j
     // Assert
     await assert.rejects(restarted.readReaderPosition(header.studyId), /no longer present in the verified history/i);
     assert.deepEqual(await readFile(journalPath), journalBefore, 'a stale cursor leaves the sealed journal byte-identical');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('stepping through an opened Node history saves each reader position without re-verifying the whole journal', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-node-history-position-steps-')), header = nodeTestHistoryHeader(createWorkspaceKey());
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey), writer = await store.start(header);
+  try {
+    for (const sequence of [1, 2, 3]) await writer.appendOutput({ sequence, elapsedMs: sequence, channel: 'stdout', text: `output ${sequence}` });
+    await writer.finish('partial', 'The test process was stopped.');
+    const opened = await store.read(header.studyId);
+    const journalReads = mock.method(store, 'read');
+
+    // Act: playback advances through each event of the history the reader already verified.
+    for (const sequence of [1, 2, 3]) await store.saveReaderPosition(header.studyId, sequence, opened);
+
+    // Assert
+    assert.equal(journalReads.mock.callCount(), 0);
+    assert.equal(await new NodeTestHistoryStore(directory, header.workspaceKey).readReaderPosition(header.studyId), 3);
+    await assert.rejects(store.saveReaderPosition(header.studyId, 4, opened), /unavailable in verified history/i);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

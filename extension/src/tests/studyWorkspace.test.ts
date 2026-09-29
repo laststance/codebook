@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, readdir, realpath, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rm, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 import { sha256 } from '../runtimeSupport/utils/sha256';
@@ -828,6 +828,24 @@ test('restored Observed moments leaves its loading state after workspace initial
   } finally {
     await harness.close();
   }
+});
+
+test('an unreadable Node history folder is reported while the saved-study reader still opens', async () => {
+  // Arrange
+  const harness = await workspaceHarness();
+  try {
+    const learningDirectory = join(harness.directory, 'storage', 'learning', harness.service.nodeHistoryStore!.workspaceKey);
+    await rm(join(learningDirectory, 'node-tests.v1'), { recursive: true, force: true });
+    await mkdir(learningDirectory, { recursive: true });
+    await writeFile(join(learningDirectory, 'node-tests.v1'), 'not a history folder');
+
+    // Act
+    await harness.reader.open();
+
+    // Assert
+    await waitUntil(() => Boolean(harness.reader.inspect().view?.errors.some(error => /ENOTDIR/.test(error))), 'the Node history catalog failure is reported', 1_000);
+    assert.ok(harness.postedMessages().slice(-1)[0]?.studies, 'Saved studies remain available beside the reported Node history failure');
+  } finally { await harness.close(); }
 });
 
 test('saved Node history is selectable in the reader without entering browser playback', async () => {

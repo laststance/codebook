@@ -210,11 +210,17 @@ export class NodeTestHistoryStore {
     }
   }
 
-  /** Atomically remembers one selected event without changing the sealed execution journal. @example await store.saveReaderPosition(studyId, 12) */
-  saveReaderPosition(studyId: string, sequence: number): Promise<void> {
+  /** Atomically remembers one selected event without changing the sealed execution journal. Called on every reader selection, including playback steps.
+   * @param studyId - The exact workspace-bound Node history.
+   * @param sequence - The selected journal event.
+   * @param verified - The history the reader already verified; supplying it avoids re-reading the whole journal on each step.
+   * @throws When the event is absent from the verified history.
+   * @example await store.saveReaderPosition(studyId, 12, openedHistory)
+   */
+  saveReaderPosition(studyId: string, sequence: number, verified?: NodeTestHistoryIndex): Promise<void> {
     const previous = this.readerPositionWrites.get(studyId) ?? Promise.resolve();
     const operation = previous.catch(() => undefined).then(async () => {
-      const history = await this.read(studyId);
+      const history = verified?.header.studyId === studyId ? verified : await this.read(studyId);
       if (!history.entries.some(entry => entry.sequence === sequence)) throw new Error('The selected Node reader position is unavailable in verified history.');
       const position: NodeTestHistoryReaderPosition = nodeTestHistoryReaderPositionSchema.parse({ version: NODE_TEST_READER_POSITION_VERSION,
         studyId, sequence, updatedAt: new Date().toISOString() });

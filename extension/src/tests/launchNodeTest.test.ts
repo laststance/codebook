@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Cdp } from '../runtimeSupport/cdp';
 import type * as vscode from 'vscode';
@@ -85,6 +85,30 @@ test('a Node test reports its final exit and output after a long log', async () 
     assert.ok(outputEvents.every((event, index) => event.elapsedMs >= (outputEvents[index - 1]?.elapsedMs ?? 0)));
     assert.match(outputEvents.map(event => event.text).join(''), /9 tests passed\n$/);
   } finally {
+    await owned.close();
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('a test file still running 20 seconds after its final continuation reports its real exit instead of timing out', async () => {
+  // Arrange
+  const workspace = await mkdtemp(join(tmpdir(), 'codebook-node-long-result-'));
+  const program = join(workspace, 'runner.cjs');
+  await writeFile(program, "setTimeout(() => { process.stdout.write('1 test passed\\n'); process.exitCode = 0; }, 300);\n");
+  const launch = { workspace, program, sourceFile: program, testFile: program, stops: [], args: ['run', 'src/test.test.ts', '--inspect-brk', '--no-file-parallelism'] };
+  const owned = await launchNodeTest(launch, process.execPath, () => undefined);
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    // Act: the remaining tests outlast the 20-second DAP response bound before the process exits.
+    const pending = owned.result(new AbortController().signal);
+    mock.timers.tick(20_001);
+    const result = await pending;
+
+    // Assert
+    assert.equal(result.exitCode, 0);
+    assert.match(result.output, /1 test passed\n$/);
+  } finally {
+    mock.timers.reset();
     await owned.close();
     await rm(workspace, { recursive: true, force: true });
   }

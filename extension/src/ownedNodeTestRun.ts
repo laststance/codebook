@@ -216,7 +216,8 @@ export class OwnedNodeTestRun {
     // A declared line inside a loop or shared helper would otherwise pause the finishing test with nobody to resume it.
     await this.breakpoint?.retire(bound.session, signal);
     await bound.session.customRequest('continue', { threadId: stop.threadId });
-    const result = await owned.result(signal);
+    // The attach timeout bounds only the retirement above; the remaining tests may run until cancellation or the run deadline.
+    const result = await owned.result(this.abort.signal);
     const elapsedMs = owned.elapsedMs();
     this.record('node-test.result', { exitCode: result.exitCode, signal: result.signal, elapsedMs, output: result.output });
     this.outputTerminal?.reveal();

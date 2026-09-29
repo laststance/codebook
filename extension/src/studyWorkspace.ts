@@ -1652,7 +1652,8 @@ export class StudyWorkspace {
       this.library = new LearningLibrary(join(this.context.globalStorageUri.fsPath, 'learning', key), key, capacity);
       this.recordings = new RecordingStore(this.library.directory, key, {}, undefined, capacity);
       this.nodeHistoryStore = new NodeTestHistoryStore(this.library.directory, key, () => this.library!.storageLimit(), async () => (await this.library!.list()).length);
-      this.nodeHistoryCatalog = await this.nodeHistoryStore.list();
+      // An unreadable Node history store stays visible without blocking browser studies, progress or playback.
+      this.nodeHistoryCatalog = await this.nodeHistoryStore.list().catch(error => { this.report('archive', error); return []; });
       this.playback = new PlaybackController({
         load: (studyId, signal) => this.loadPlayback(studyId, signal),
         frame: async (studyId, hash, signal) => { signal.throwIfAborted(); const bytes = await this.recordings!.readFrame(studyId, hash); signal.throwIfAborted(); return bytes; },
@@ -1710,7 +1711,7 @@ export class StudyWorkspace {
     if (this.refreshing) return this.refreshing;
     const attempt = (async () => {
       const record = this.currentRecord();
-      if (this.nodeHistoryStore) this.nodeHistoryCatalog = await this.nodeHistoryStore.list();
+      if (this.nodeHistoryStore) this.nodeHistoryCatalog = await this.nodeHistoryStore.list().catch(error => { this.report('archive', error); return this.nodeHistoryCatalog; });
       // Refresh every retained projection without letting an older run replace current runtime ownership.
       if (this.service) for (const retained of this.service.records.values()) { await this.checkpoint(this.service, retained); signal?.throwIfAborted(); }
       if (this.selection.follow && this.activeArchive) {
@@ -3240,7 +3241,7 @@ export class StudyWorkspace {
       this.replayDebugger?.invalidate();
       this.selectedNodeHistoryDebugAvailable = false;
     }
-    try { await this.nodeHistoryStore!.saveReaderPosition(history.header.studyId, entry.sequence); }
+    try { await this.nodeHistoryStore!.saveReaderPosition(history.header.studyId, entry.sequence, history); }
     catch (error) { this.report('history-position', error); }
     if (request !== this.selectedNodeHistoryRequest) return;
     this.selectedNodeHistorySequence = entry.sequence;

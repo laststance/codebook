@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
+import { REPOSITORY_RUN_TIMEOUT_MS } from '../constants';
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint';
 import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse';
@@ -70,7 +71,8 @@ export async function launchNodeTest(launch: PreparedNodeTestLaunch, node: strin
     output: () => output,
     /** Waits for the launched test command's actual exit before sealing its output result. @example const result = await testRun.result(signal) */
     async result(signal: AbortSignal): Promise<{ exitCode: number | null; signal: NodeJS.Signals | null; output: string }> {
-      await awaitResponse(exit, 'owned Node test result', signal);
+      // The rest of the test file runs after the final continuation, so only cancellation and the owned run deadline bound it.
+      await awaitResponse(exit, 'owned Node test result', signal, REPOSITORY_RUN_TIMEOUT_MS);
       await outputWrites;
       if (error) throw error;
       return { exitCode: child.exitCode, signal: child.signalCode, output };
