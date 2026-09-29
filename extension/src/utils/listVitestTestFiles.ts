@@ -1,0 +1,91 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { z } from 'zod';
+import { VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS, VITEST_FILE_LIST_TIMEOUT_MS, VITEST_LIST_ERROR_LIMIT_CHARS } from '../constants';
+import { buildNodeTestEnvironment } from './buildNodeTestEnvironment';
+import { awaitResponse } from '../runtimeSupport/utils/awaitResponse';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
+
+/** One test file Vitest would run; a file included by several Vitest projects appears once per project. */
+export type VitestListedFile = { file: string; projectName?: string };
+/** What {@link prepareNodeTestLaunch} asks Vitest; the caller binds the Node executable and cancellation. */
+export type ListVitestTestFilesRequest = { program: string; workspace: string; filter: string; excludes: string[] };
+
+const listedFilesSchema = z.array(z.object({ file: z.string().min(1), projectName: z.string().optional() }));
+
+/**
+ * Asks the repository's own Vitest which test files a `run` with the same file filter and exclusions would select, without importing any test module.
+ *
+ * Vitest's positional file filter is a case-insensitive substring match, so only Vitest itself can say which files a filter selects under the
+ * repository's configuration and projects. The JSON path is always passed as one `--json=<path>` token: a separate token would make Vitest take the
+ * next argument as its output file and overwrite it. Called by the owned Node test run before launch, through {@link prepareNodeTestLaunch}.
+ *
+ * @param request.node - External Node executable that will also run the test.
+ * @param request.program - Owned `node_modules/vitest/vitest.mjs`.
+ * @param request.workspace - Canonical repository root, used as the working directory.
+ * @param request.filter - The cited repository-relative test file.
+ * @param request.excludes - Escaped absolute paths passed as `--exclude=` globs.
+ * @param request.signal - The run's cancellation.
+ * @param request.timeoutMs - Listing deadline; the default fits inside the attach phase.
+ * @returns Every file entry Vitest reports, in Vitest's order.
+ * @throws When Vitest fails, times out, is cancelled or writes no readable list.
+ * @example
+ * ```ts
+ * await listVitestTestFiles({ node, program, workspace: '/repo', filter: 'src/a.test.ts', excludes: [], signal })
+ * // => [{ file: '/repo/src/a.test.ts' }, { file: '/repo/copy/src/a.test.ts' }]
+ * ```
+ */
+export async function listVitestTestFiles(request: ListVitestTestFilesRequest & { node: string; signal: AbortSignal; timeoutMs?: number }): Promise<VitestListedFile[]> {
+  const timeoutMs = request.timeoutMs ?? VITEST_FILE_LIST_TIMEOUT_MS;
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-vitest-list-'));
+  const output = join(directory, 'files.json');
+  let release: (() => Promise<void>) | undefined;
+  try {
+    const child = spawn(request.node, [request.program, 'list', '--filesOnly', `--json=${output}`, request.filter, ...request.excludes.map(exclude => `--exclude=${exclude}`)],
+      { cwd: request.workspace, env: buildNodeTestEnvironment(), detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    // Cancellation rejects the wait before close; ownership and draining must survive that early rejection.
+    const closed = new Promise<void>(resolve => child.once('close', () => resolve()));
+    release = async () => {
+      const processGroup = child.pid;
+      if (processGroup === undefined) { await awaitResponse(closed, 'Vitest listing exit', undefined, VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS); return; }
+      const signalGroup = (signal: NodeJS.Signals) => {
+        try { process.kill(-processGroup, signal); }
+        catch (error) { if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH')) throw error; }
+      };
+      const groupGone = () => {
+        try { process.kill(-processGroup, 0); return false; }
+        catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH') return true; throw error; }
+      };
+      const drain = async () => {
+        await awaitResponse(closed, 'Vitest listing exit', undefined, VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS);
+        await waitUntil(groupGone, 'Vitest listing process group exit', VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS);
+      };
+      signalGroup('SIGTERM');
+      // Repository configuration can spawn a helper or intercept SIGTERM; release the complete owned group.
+      try { await drain(); } catch { signalGroup('SIGKILL'); await drain(); }
+    };
+    let errorText = '';
+    child.stderr.setEncoding('utf8');
+    // Keep the start: Vitest prints the failing message before its stack.
+    child.stderr.on('data', (text: string) => { if (errorText.length < VITEST_LIST_ERROR_LIMIT_CHARS) errorText = (errorText + text).slice(0, VITEST_LIST_ERROR_LIMIT_CHARS); });
+    try {
+      const [exitCode]: unknown[] = await awaitResponse(once(child, 'close'), 'Vitest test file listing', AbortSignal.any([request.signal, deadline]), timeoutMs);
+      if (exitCode !== 0) throw new Error(`Vitest could not list the cited test file (exit code ${exitCode}): ${errorText.trim()}`);
+    } catch (error) {
+      // The bounded wait reports a generic cancellation; name the run's actual reason instead.
+      if (request.signal.aborted) throw request.signal.reason;
+      if (deadline.aborted) throw new Error(`Vitest did not list its test files within ${timeoutMs} ms.`);
+      throw error;
+    }
+    const listed = listedFilesSchema.safeParse(await readFile(output, 'utf8').then((text): unknown => JSON.parse(text)).catch(() => undefined));
+    if (!listed.success) throw new Error('Vitest wrote an unreadable test file list.');
+    return listed.data.map(entry => entry.projectName === undefined ? { file: entry.file } : { file: entry.file, projectName: entry.projectName });
+  } finally {
+    // Never remove the listing destination while an owned process may still be writing it.
+    try { await release?.(); } finally { await rm(directory, { recursive: true, force: true }); }
+  }
+}

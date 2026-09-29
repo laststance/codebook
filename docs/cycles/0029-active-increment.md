@@ -1,6 +1,6 @@
 # Cycle 0029 — Active product increment
 
-Status: closed at `d639c29` (review converged, adversarial gate passed); delivering 0.2.12.0 through PR #48. Goal version 9; G01–G07 and G10–G12 remain active. This file owns the current bounded plan/results; [PROJECT_STATE.md](../../PROJECT_STATE.md) owns all thirteen product gaps. Earlier chronology and the full engineering review were preserved byte-for-byte in [the reader checkpoint](../history/CYCLE_0029-before-shared-reader-proof-3649a2123259.md), SHA-256 `3649a2123259fe915d90f5b1d52cb2b2764c5a1968f872bf012cc35a2f5915a5`. Older full cycle/state checkpoints remain linked there and are historical evidence, not mandatory recursive reads.
+Status: closed. Delivered 0.2.12.0 through PR #48, squash-merged as `ad476d3` after the required checks passed; Issue #46 closed. Successor: [Cycle 0030](0030-node-run-integrity.md). Goal version 9; G01–G07 and G10–G12 remain active. This file owns the current bounded plan/results; [PROJECT_STATE.md](../../PROJECT_STATE.md) owns all thirteen product gaps. Earlier chronology and the full engineering review were preserved byte-for-byte in [the reader checkpoint](../history/CYCLE_0029-before-shared-reader-proof-3649a2123259.md), SHA-256 `3649a2123259fe915d90f5b1d52cb2b2764c5a1968f872bf012cc35a2f5915a5`. Older full cycle/state checkpoints remain linked there and are historical evidence, not mandatory recursive reads.
 
 ## Authority and current baseline
 

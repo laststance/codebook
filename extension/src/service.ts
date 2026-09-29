@@ -575,6 +575,10 @@ export class StudyService {
               sameSource: input.sameSource === true, exact: input.exact === true, elapsedMs: input.elapsedMs }
             : type === 'node-test.snapshot-started' ? { index: input.index, elapsedMs: input.elapsedMs }
             : type === 'node-test.pause-refreshed' ? { line: input.line, column: input.column }
+            // A pause Codebook did not make holds the test until the learner continues it; the agent reads where.
+            : type === 'node-test.learner-paused' ? { index: input.index, path: typeof input.path === 'string' ? input.path.slice(0, 512) : null,
+              line: Number.isInteger(input.line) ? input.line : null, column: Number.isInteger(input.column) ? input.column : null,
+              reason: typeof input.reason === 'string' ? input.reason.slice(0, 128) : 'paused' }
             : { omitted: true };
           const serialized = JSON.stringify(safe);
           const byteLength = Buffer.byteLength(serialized);

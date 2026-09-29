@@ -5,9 +5,13 @@ import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Cdp } from '../runtimeSupport/cdp';
 import type * as vscode from 'vscode';
+import { NodeTestHistoryStore } from '../nodeTestHistoryStore';
+import { sha256 } from '../runtimeSupport/utils/sha256';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 import { bindOwnedNodeTestDebugSession } from '../utils/bindOwnedNodeTestDebugSession';
 import { launchNodeTest, type NodeTestOutputEvent } from '../utils/launchNodeTest';
 import { verifyNodeTestInspectorOwnership } from '../utils/verifyNodeTestInspectorOwnership';
+import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture';
 
 test('an owned Node test announces its own loopback debugger and releases the paused process', async () => {
   // Arrange
@@ -135,6 +139,48 @@ test('a Node test reports stdout and stderr separately with valid Unicode text',
   }
 });
 
+test('output that arrives while an earlier line is still being saved reaches the history before a debugger stop accepted after it', async () => {
+  // Arrange: the test prints two lines 150 ms apart; the history confirms the first line's durable write only when the driver allows it, as a slow disk would.
+  const workspace = await mkdtemp(join(tmpdir(), 'codebook-node-output-order-'));
+  const program = join(workspace, 'runner.cjs');
+  await writeFile(program, "process.stdout.write('first line\\n'); setTimeout(() => process.stdout.write('second line\\n'), 150); setTimeout(() => { process.exitCode = 0; }, 400);\n");
+  const launch = { workspace, program, sourceFile: program, testFile: program, stops: [], args: ['run', 'src/test.test.ts', '--inspect-brk', '--no-file-parallelism'] };
+  const header = nodeTestHistoryHeader(sha256('node-output-order-workspace'));
+  const store = new NodeTestHistoryStore(join(workspace, '.learning'), header.workspaceKey), writer = await store.start(header);
+  let confirmFirstWrite!: () => void;
+  const firstWriteConfirmed = new Promise<void>(resolve => { confirmFirstWrite = resolve; });
+  const owned = await launchNodeTest(launch, process.execPath, () => undefined, event => {
+    const saved = writer.appendOutput(event);
+    return event.sequence === 1 ? saved.then(() => firstWriteConfirmed) : saved;
+  });
+  const sourceText = 'const nextTheme = "dark";\n';
+  try {
+    // Act: the debugger stop is accepted after the second line arrived but before the first line's write is confirmed.
+    await waitUntil(() => owned.output().includes('second line'), 'second test output line', 10_000);
+    const stopSaved = writer.appendStop({ index: 0, runId: 'test-run', sessionId: 'test-session', threadId: 1, elapsedMs: owned.elapsedMs(),
+      worker: { pid: 1, processGroup: 1, workspace: '/private/test' }, source: header.configuration.source,
+      frame: { id: 1, name: 'notifyManager', line: 1, column: 1 }, variables: [{ name: 'nextTheme', value: 'dark', variablesReference: 0 }],
+      facts: [{ path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' }],
+      debuggerSnapshot: { version: 1, frames: [{ name: 'notifyManager', line: 1, column: 1,
+        source: { name: header.configuration.source.path, text: sourceText, hash: sha256(sourceText), line: 1 }, scopes: [{ name: 'Local', variables: [0] }] }],
+        variables: [{ name: 'nextTheme', value: 'dark', type: 'string', children: [] }], limitations: [] } });
+    confirmFirstWrite();
+    await stopSaved;
+    const result = await owned.result(AbortSignal.timeout(10_000));
+    const history = await store.read(header.studyId);
+
+    // Assert
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(history.entries.map(entry => entry.type === 'output' ? entry.text : entry.type), ['first line\n', 'second line\n', 'stop']);
+    assert.ok(history.entries.every((entry, index) => entry.elapsedMs >= (history.entries[index - 1]?.elapsedMs ?? 0)), 'the journal stays in time order');
+  } finally {
+    confirmFirstWrite();
+    await owned.close();
+    await writer.finish('partial', 'Output order test.').catch(() => undefined);
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test('a failed Node output observer refuses capture and releases its process', async () => {
   // Arrange
   const workspace = await mkdtemp(join(tmpdir(), 'codebook-node-output-failure-'));
@@ -157,17 +203,22 @@ test('a Node test logging faster than its history can be saved fails capture ins
   const program = join(workspace, 'runner.cjs');
   await writeFile(program, "process.stdout.write('x'.repeat(12 * 1024 * 1024)); process.stdout.write('END'); process.exitCode = 0;\n");
   const launch = { workspace, program, sourceFile: program, testFile: program, stops: [], args: ['run', 'src/test.test.ts', '--inspect-brk', '--no-file-parallelism'] };
-  let deliveredBytes = 0, owned: Awaited<ReturnType<typeof launchNodeTest>> | undefined;
-  owned = await launchNodeTest(launch, process.execPath, () => undefined, async event => {
-    // The first history write stays pending until the whole log has arrived, as a slow disk would; a regression fails here instead of hanging.
-    if (deliveredBytes === 0) await new Promise<void>((resolve, reject) => {
-      const deadline = Date.now() + 30_000;
-      const poll = setInterval(() => {
-        if (owned?.output().endsWith('END')) { clearInterval(poll); resolve(); }
-        else if (Date.now() > deadline) { clearInterval(poll); reject(new Error('The flooding test output never finished arriving.')); }
-      }, 10);
+  let deliveredBytes = 0, historyWrites = Promise.resolve(), owned: Awaited<ReturnType<typeof launchNodeTest>> | undefined;
+  owned = await launchNodeTest(launch, process.execPath, () => undefined, event => {
+    // Like the durable history, each write waits for the one before it. The first stays pending until the whole log has arrived, as a slow disk would;
+    // a regression fails here instead of hanging.
+    const isFirstWrite = event.sequence === 1;
+    historyWrites = historyWrites.then(async () => {
+      if (isFirstWrite) await new Promise<void>((resolve, reject) => {
+        const deadline = Date.now() + 30_000;
+        const poll = setInterval(() => {
+          if (owned?.output().endsWith('END')) { clearInterval(poll); resolve(); }
+          else if (Date.now() > deadline) { clearInterval(poll); reject(new Error('The flooding test output never finished arriving.')); }
+        }, 10);
+      });
+      deliveredBytes += Buffer.byteLength(event.text);
     });
-    deliveredBytes += Buffer.byteLength(event.text);
+    return historyWrites;
   });
   try {
     // Act

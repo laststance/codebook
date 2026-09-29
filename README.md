@@ -14,7 +14,7 @@ The owner retired the three selectable UI themes, not these distinct feature scr
 
 ## Implementation status
 
-This is a private preview, not a Marketplace or Open VSX release. [Cycle 0028](docs/cycles/0028-ordinary-chat-study-entry.md) delivered extension 0.2.11 through [PR #45](https://github.com/laststance/codebook/pull/45), with bounded ordinary-chat development evidence in both hosts and a qualified Cursor recovery path. [Cycle 0029](docs/cycles/0029-active-increment.md) delivers extension 0.2.12 through [PR #48](https://github.com/laststance/codebook/pull/48): the cart demonstration is removed, saved Node test runs reopen in the native debugger, and the DeepWiki reader uses a shared renderer and guarded publisher. Its evidence is development-level only.
+This is a private preview, not a Marketplace or Open VSX release. [Cycle 0028](docs/cycles/0028-ordinary-chat-study-entry.md) delivered extension 0.2.11 through [PR #45](https://github.com/laststance/codebook/pull/45), with bounded ordinary-chat development evidence in both hosts and a qualified Cursor recovery path. [Cycle 0029](docs/cycles/0029-active-increment.md) delivered extension 0.2.12 through [PR #48](https://github.com/laststance/codebook/pull/48): the cart demonstration is removed, saved Node test runs reopen in the native debugger, and the DeepWiki reader uses a shared renderer and guarded publisher. Its evidence is development-level only. [Cycle 0030](docs/cycles/0030-node-run-integrity.md) prepares 0.2.13 through [PR #51](https://github.com/laststance/codebook/pull/51), hardening exact cited-test execution, ordered saved history and native pause ownership; its bounded native evidence remains tied to the recorded 0.2.12 checkpoint.
 
 [Cycle 0029](docs/cycles/0029-feature-specification.md) updates the specification to [goal version 9](PRODUCT_GOAL.md). The implementation now targets external repositories. The Study pane's retired presentation selector and duplicate custom value display are removed; the three presentation layouts remain selectable through **Codebook: Select Presentation** and `codebook_presentation` until their retirement. The specified learning replay and independent Wiki remain implementation work. Historical fixture or coupled-Wiki success is not proof of the new destination.
 
@@ -40,7 +40,7 @@ Read [AGENTS.md](AGENTS.md) when starting or resuming work. Claude Code also ent
 ## Tracking and continuation
 
 - [Goal Issue #1](https://github.com/laststance/codebook/issues/1) remains open until all acceptance conditions and owner acceptance hold.
-- [Cycle 0029 Issue #46](https://github.com/laststance/codebook/issues/46) tracks the specification, subsequent design and implementation changes.
+- [Cycle 0030 Issue #50](https://github.com/laststance/codebook/issues/50) tracks trustworthy Node runs; Cycle 0029 Issue #46 is closed after PR #48.
 - Closed cycle records preserve historical results, failed attempts and their exact source/host boundaries.
 
 Advance only the active phase authorized by the owner. After the v9 design review, the owner authorized product implementation; [PROJECT_STATE.md](PROJECT_STATE.md) records the current phase and next action. Record actual evidence and update the active cycle and PROJECT_STATE.md before handoff.

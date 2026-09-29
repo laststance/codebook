@@ -45,6 +45,32 @@ test('a Node test file path cannot be passed to Vitest as a command-line option'
   assert.equal(nodeTestConfigSchema.safeParse({ ...base, testFile: 'src/--config=value.test.ts' }).success, true, 'an option-like name deeper in the path is still an ordinary file filter');
 });
 
+test('a Node test cites its test by the enclosing describe titles followed by the test title', () => {
+  // Arrange
+  const browser = createConfiguredStudy().configuration;
+  const base = { version: 1, adapter: 'vitest-node', book: browser.book, testFile: 'app/lib/data.test.ts', testHash: 'a'.repeat(64), source: browser.source,
+    inspections: [{ path: 'invoice', mode: 'value', required: true }] };
+  // Act
+  const result = nodeTestConfigSchema.parse({ ...base, testTitles: ['invoice data queries', 'converts stored invoice cents to dollars for the edit form'] });
+  // Assert
+  assert.deepEqual(result.testTitles, ['invoice data queries', 'converts stored invoice cents to dollars for the edit form']);
+  assert.equal(nodeTestConfigSchema.safeParse({ ...base, testTitles: [] }).success, false, 'an empty title path names no test');
+  assert.equal(nodeTestConfigSchema.safeParse({ ...base, testTitles: ['invoice data queries', 'converts\n--inspect=0.0.0.0'] }).success, false);
+  assert.equal(nodeTestConfigSchema.safeParse({ ...base, testTitles: Array.from({ length: 17 }, () => 'nested') }).success, false);
+  assert.equal(nodeTestConfigSchema.safeParse({ ...base, testTitles: ['adds'], testName: 'adds' }).success, false, 'one citation cannot name its test twice');
+});
+
+test('a saved Node history that named its test with the retired testName still parses', () => {
+  // Arrange
+  const browser = createConfiguredStudy().configuration;
+  const saved = { version: 1, adapter: 'vitest-node', book: browser.book, testFile: 'app/lib/data.test.ts', testHash: 'a'.repeat(64), source: browser.source,
+    inspections: [{ path: 'invoice', mode: 'value', required: true }], testName: 'converts stored invoice cents to dollars for the edit form' };
+  // Act
+  const result = nodeTestConfigSchema.safeParse(saved);
+  // Assert
+  assert.equal(result.success, true);
+});
+
 test('a Node test stop requires a captured runtime value', () => {
   // Arrange
   const browser = createConfiguredStudy().configuration;

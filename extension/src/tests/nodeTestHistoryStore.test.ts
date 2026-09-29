@@ -215,6 +215,53 @@ test('a new Node test is refused when saved studies and histories reach the conf
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test('a refused history entry still lets the run seal its verified prefix as partial history', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-node-history-refused-entry-'));
+  const header = nodeTestHistoryHeader(createWorkspaceKey());
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey), writer = await store.start(header);
+  try {
+    await writer.appendOutput({ sequence: 1, elapsedMs: 4, channel: 'stdout', text: 'RUN src/theme.test.ts' });
+
+    // Act: an entry stamped before the last saved one is refused, leaving a gap after the verified prefix.
+    const refused = writer.appendOutput({ sequence: 2, elapsedMs: 3, channel: 'stdout', text: 'late output' });
+    const afterGap = writer.appendOutput({ sequence: 3, elapsedMs: 5, channel: 'stdout', text: 'output after the gap' });
+
+    // Assert
+    await assert.rejects(refused, /time moved backward/);
+    await assert.rejects(afterGap, /stopped accepting evidence after an earlier entry failed/);
+    await assert.rejects(writer.finish('complete'), /cannot be marked complete/);
+    await writer.finish('partial', 'Node test output capture failed.');
+    const history = await new NodeTestHistoryStore(directory, header.workspaceKey).read(header.studyId);
+    assert.equal(history.status, 'partial');
+    assert.equal(history.reason, 'Node test output capture failed.');
+    assert.deepEqual(history.entries.map(entry => entry.type === 'output' ? entry.text : entry.type), ['RUN src/theme.test.ts']);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('a journal holding bytes its writer never confirmed stays an unsealed interrupted prefix', async () => {
+  // Arrange: a write torn by an I/O failure leaves an incomplete line after the confirmed entries.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-node-history-torn-write-'));
+  const header = nodeTestHistoryHeader(createWorkspaceKey());
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey), writer = await store.start(header);
+  const journalPath = join(directory, NODE_TEST_HISTORY_DIRECTORY, header.studyId, 'events.jsonl');
+  try {
+    await writer.appendOutput({ sequence: 1, elapsedMs: 4, channel: 'stdout', text: 'RUN src/theme.test.ts' });
+    await appendFile(journalPath, '{"type":"output","sequence":2,"elapsedMs":5,"outp');
+
+    // Act
+    const sealing = writer.finish('partial', 'Node test output capture failed.');
+
+    // Assert
+    await assert.rejects(sealing, /bytes its writer never confirmed/);
+    writer.abandon();
+    const history = await new NodeTestHistoryStore(directory, header.workspaceKey).read(header.studyId);
+    assert.equal(history.status, 'interrupted');
+    assert.equal(history.seal, undefined);
+    assert.deepEqual(history.entries.map(entry => entry.type === 'output' ? entry.text : entry.type), ['RUN src/theme.test.ts']);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test('a failing Node test result can be sealed only as partial history', async () => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-node-history-failing-result-'));

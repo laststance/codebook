@@ -1,5 +1,5 @@
 export const API_VERSION = '1.5';
-export const EXTENSION_VERSION = '0.2.12';
+export const EXTENSION_VERSION = '0.2.13';
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0';
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12';
 export const LOOPBACK_ADDRESS = '127.0.0.1';
@@ -199,6 +199,24 @@ export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608;
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000;
 /** Longest debugger type name a saved Node fact keeps; the type is supplementary, so a longer one is omitted rather than failing the run. */
 export const NODE_TEST_FACT_TYPE_LIMIT_CHARS = 256;
+/** Oldest Vitest major whose file listing, exclusion, name matching and JSON report were verified for exact node-test selection (4.1.11 and 5.0.2). */
+export const NODE_TEST_MINIMUM_VITEST_MAJOR = 4;
+/** Deepest cited title path: enclosing `describe` titles plus the test title. */
+export const NODE_TEST_TITLE_PATH_LIMIT = 16;
+/** Other test files Vitest's substring file filter may add before Codebook refuses instead of excluding each one. */
+export const NODE_TEST_EXCLUDED_FILE_LIMIT = 64;
+/** Bound for one `vitest list --filesOnly` preflight; the whole attach phase is bounded separately. */
+export const VITEST_FILE_LIST_TIMEOUT_MS = 30_000;
+/** Grace period for releasing the owned Vitest listing group before escalating to SIGKILL. */
+export const VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS = 1_000;
+/** Error text kept from a failed Vitest preflight. */
+export const VITEST_LIST_ERROR_LIMIT_CHARS = 2_048;
+/** Largest Vitest JSON report read to confirm which test ran. */
+export const VITEST_REPORT_LIMIT_BYTES = 8_388_608;
+/** Wait for the owned test process to report its exit after its debugger session ended early. */
+export const NODE_TEST_EXIT_GRACE_MS = 2_000;
+/** Budget for each owned Node test phase: attach through the entry pause, reaching a declared stop while the test runs, and capturing it. */
+export const NODE_TEST_ATTACH_TIMEOUT_MS = 45_000;
 export const REPOSITORY_BROWSER_ACTION = 'repository-click';
 export const REPOSITORY_CONFIG_VERSION = 1;
 export const CROSS_RUNTIME_CONFIG_VERSION = 2;

@@ -242,11 +242,15 @@ export class NodeTestHistoryStore {
   }
 }
 
-/** Serializes fsynced journal appends so output and debugger stops keep one verified timeline. @example await writer.appendOutput(output) */
+/** Serializes fsynced journal appends so output and debugger stops keep one verified timeline. The first failed entry ends that timeline; the verified prefix can still be sealed as partial. @example await writer.appendOutput(output) */
 export class NodeTestHistoryWriter {
   private sequence = 0;
   private lastElapsedMs = 0;
   private entries = 0;
+  /** Journal bytes written by confirmed entries; anything beyond them is a torn write. */
+  private confirmedBytes = 0;
+  /** The first refused or failed entry; later evidence would follow a gap. */
+  private failure?: Error;
   private pending: Promise<void> = Promise.resolve();
   private closed = false;
   private closing = false;
@@ -257,7 +261,7 @@ export class NodeTestHistoryWriter {
 
   constructor(private readonly directory: string, readonly header: NodeTestHistoryHeader, private readonly onClosed: () => void) {}
 
-  /** Persists one ordered stdout/stderr receipt before allowing the process stream to advance. @example await writer.appendOutput(event) */
+  /** Queues one stdout/stderr receipt in stamp order; the promise settles when it is durable. @example await writer.appendOutput(event) */
   appendOutput(event: NodeTestOutputEvent): Promise<void> {
     return this.append({ type: 'output', elapsedMs: event.elapsedMs, outputSequence: event.sequence, channel: event.channel, text: event.text });
   }
@@ -274,16 +278,21 @@ export class NodeTestHistoryWriter {
     return this.append({ type: 'result', elapsedMs, exitCode: result.exitCode, signal: result.signal, outputTail: result.output });
   }
 
-  /** Fsyncs and seals complete evidence only when the caller verified all ordered stops and a passing result. @example await writer.finish('partial', 'Cancelled by the learner.') */
+  /** Fsyncs and seals complete evidence only when the caller verified all ordered stops and a passing result; after a failed entry only the verified prefix can be sealed, as partial. @example await writer.finish('partial', 'Cancelled by the learner.') */
   finish(status: 'complete' | 'partial', reason?: string): Promise<void> {
     if (this.closed) return Promise.resolve();
     if (this.finishOperation) return this.finishOperation;
     const operation = (async () => {
       this.closing = true;
       await this.pending;
-      if (status === 'complete' && (!this.resultPassed || this.stopCount !== 1 + (this.header.configuration.additionalStops?.length ?? 0)))
+      if (status === 'complete' && (this.failure || !this.resultPassed || this.stopCount !== 1 + (this.header.configuration.additionalStops?.length ?? 0)))
         throw new Error('Node history cannot be marked complete without every ordered stop and an observed passing result.');
       const path = join(this.directory, JOURNAL_FILE), journal = await readFile(path);
+      // A write torn by an I/O failure leaves bytes no entry confirmed; sealing them would certify a journal readers must refuse.
+      if (journal.byteLength !== this.confirmedBytes) {
+        this.failure ??= new Error('Node history journal has bytes its writer never confirmed.');
+        throw new Error('Node history journal has bytes its writer never confirmed; it remains an interrupted prefix.');
+      }
       const seal = nodeTestHistorySealSchema.parse({ version: 1, studyId: this.header.studyId, entryCount: this.entries, journalBytes: journal.byteLength,
         journalHash: sha256(journal), status, endedAt: new Date().toISOString(), reason: reason?.slice(0, REASON_LIMIT_CHARS) });
       await atomicPrivateWrite(join(this.directory, SEAL_FILE), seal, 16_384);
@@ -299,6 +308,8 @@ export class NodeTestHistoryWriter {
 
   private append(input: NodeTestHistoryEntryInput): Promise<void> {
     const operation = this.pending.then(async () => {
+      // Evidence after a failed entry would follow a gap, so the verified prefix ends at the first failure.
+      if (this.failure) throw new Error(`Node history stopped accepting evidence after an earlier entry failed: ${this.failure.message}`);
       if (this.closed || this.closing) throw new Error('Node history is already sealing or sealed.');
       if (this.entries >= NODE_TEST_HISTORY_MAX_ENTRIES) throw new Error('Node history reached its event limit.');
       const entry = nodeTestHistoryEntrySchema.parse({ ...input, sequence: this.sequence + 1 });
@@ -312,11 +323,12 @@ export class NodeTestHistoryWriter {
         if (stat.size + line.byteLength > NODE_TEST_HISTORY_LIMIT_BYTES) throw new Error('Node history reached its storage limit; existing evidence remains readable.');
         await handle.writeFile(line); await handle.sync();
       } finally { await handle.close(); }
-      this.sequence = entry.sequence; this.lastElapsedMs = entry.elapsedMs; this.entries++;
+      this.sequence = entry.sequence; this.lastElapsedMs = entry.elapsedMs; this.entries++; this.confirmedBytes += line.byteLength;
       if (entry.type === 'stop') this.stopCount++;
       if (entry.type === 'result') { this.resultWritten = true; this.resultPassed = entry.exitCode === 0 && entry.signal === null; }
     });
-    this.pending = operation;
+    // Later entries and the seal wait for this one without inheriting its rejection.
+    this.pending = operation.catch((error: unknown) => { this.failure ??= error instanceof Error ? error : new Error(String(error)); });
     return operation;
   }
 }

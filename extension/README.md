@@ -82,7 +82,7 @@ Package builds require a POSIX host (macOS or Linux); Windows builds are rejecte
 ```sh
 pnpm --dir extension install --frozen-lockfile
 pnpm --dir extension package
-pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.12.vsix"
+pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.13.vsix"
 ```
 
 The package command checks pnpm, clears only the extension compiler output, rebuilds, bundles production modules and stages an explicit file allowlist. Test/application fixtures and experimental dependencies are rejected. The independent checker validates archive entries, hashes, manifests and dependency notices before accepting the VSIX.
@@ -143,7 +143,7 @@ Run **Codebook: Set Up AI Chat**, then use `/codebook` in the editor's standard 
 
 ## First study through MCP
 
-Read `codebook_status` and `codebook://help/repository-browser`. Prepare an article from actual workspace source, then supply its exact immutable revision and source-bound configuration to `codebook_start`. `repository-browser` drives one configured browser action. The `node-test` profile (0.2.12+) instead runs one cited repository Vitest test with ordered native Node source stops; read `codebook://help/node-test` for its configuration. Saved Node test histories are listed at `codebook://node-history`. Follow returned `nextActions`, snapshot/source resources and exact continuation tuples. A saved article or recording never launches the application by itself.
+Read `codebook_status` and `codebook://help/repository-browser`. Prepare an article from actual workspace source, then supply its exact immutable revision and source-bound configuration to `codebook_start`. `repository-browser` drives one configured browser action. The `node-test` profile (0.2.12+) instead runs one cited repository Vitest test with ordered native Node source stops. It needs Vitest 4 or later and cites the test by `testTitles` (enclosing `describe` titles, then the test title); the retired `testName` is refused. Codebook runs only that file and fails the run unless Vitest reports exactly the cited test as executed. Read `codebook://help/node-test` for its configuration. Saved Node test histories are listed at `codebook://node-history`. Follow returned `nextActions`, snapshot/source resources and exact continuation tuples. A saved article or recording never launches the application by itself.
 
 ## Learn this repository
 

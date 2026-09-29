@@ -48,6 +48,8 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
 type DebugParticipant = {
   gate: PauseGate; selected?: vscode.DebugSession; cdp?: Cdp;
   stopped?: { event: Protocol.Debugger.PausedEvent; generation?: number };
+  /** A DAP presentation refresh awaiting its matching stop and source check; the CDP target stays paused. */
+  refresh?: { pause: PauseIdentity; stopped: NonNullable<DebugParticipant['stopped']>; stage: 'awaiting-stop' | 'validating' };
   expectedResumeRequests: number;
 };
 type Continuation = { participant: Participant; pause: PauseIdentity; response: boolean; dap: boolean; cdp: boolean; afterStarted: boolean };
@@ -410,6 +412,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (event.event === 'stopped') {
       const body: DebugProtocol.StoppedEvent['body'] = event.body;
       if (name === 'browser' && this.transientBrowserPause) { this.fail('Unowned browser DAP stop invalidated the declared operation'); return; }
+      const refresh = participant.refresh;
+      // A presentation refresh must re-announce exactly the retained session/thread without a runtime resume.
+      if (refresh) {
+        if (refresh.stage !== 'awaiting-stop' || refresh.pause.sessionId !== session.id || refresh.pause.threadId !== body.threadId
+          || !participant.gate.matches(refresh.pause) || participant.stopped !== refresh.stopped || this.continuation) {
+          this.fail('Unexpected stop invalidated native stack refresh'); return;
+        }
+        refresh.stage = 'validating'; this.track(this.verifyStackRefresh(name, session, refresh)); return;
+      }
       if (this.continuation) {
         const next = this.stops[this.stopIndex + 1];
         if (!next || next.participant !== name || name === this.continuation.participant && !this.continuation.dap || this.pendingDapStop || !Number.isInteger(body.threadId)) { this.fail(`Unexpected or additional ${name} stop invalidated the declared operation`); return; }
@@ -429,9 +440,51 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (!participant.gate.current && continuation?.participant !== name && this.pendingDapStop?.participant !== name && this.pendingCdpStop?.participant !== name) {
         this.evidence.record('dap.idle-continued-ignored', { participant: name, sequence: event.seq }); return;
       }
+      const pause = participant.gate.current, stopped = participant.stopped;
+      // js-debug refreshStackTrace emits continued/stopped without resuming the CDP runtime; it is not continuation authority.
+      if (!continuation && !participant.refresh && pause && participant.gate.matches(pause) && pause.sessionId === session.id
+        && pause.threadId === event.body?.threadId && stopped && (stopped.generation === undefined || stopped.generation === pause.generation)) {
+        participant.refresh = { pause: { ...pause }, stopped, stage: 'awaiting-stop' };
+        this.progressDeadline(ACTIVE_TIMEOUT_MS, 'Native stack refresh did not confirm the retained pause');
+        this.evidence.record('dap.pause-refresh-pending', { participant: name, ...pause }); return;
+      }
       if (this.pendingDapStop?.participant === name || !continuation || continuation.participant !== name || continuation.dap || continuation.pause.threadId !== event.body?.threadId || continuation.pause.generation !== participant.gate.generation) { this.fail('Unowned continuation invalidated live pause'); return; }
       continuation.dap = true; participant.gate.invalidate(); if (name === 'browser') this.browser.resumeViewport(); this.beginAfter(continuation);
     }
+  }
+
+  /**
+   * Confirms the same native source after js-debug refreshes its paused stack, called by {@link onEvent}.
+   * Keeps the original captured generation; {@link continue} refuses control until this verification finishes.
+   * @param name - Participant whose retained CDP pause must remain unchanged.
+   * @param session - Exact owned native session that re-announced the pause.
+   * @param refresh - Current refresh receipt; replacement or cleanup makes it stale.
+   * @throws When source location, runtime pause or ownership changes during verification.
+   * @example
+   * ```ts
+   * await this.verifyStackRefresh('server', session, refresh) // retains generation 1 instead of creating generation 2
+   * ```
+   */
+  private async verifyStackRefresh(name: Participant, session: vscode.DebugSession, refresh: NonNullable<DebugParticipant['refresh']>): Promise<void> {
+    const participant = this.participants[name], stop = this.stops[this.stopIndex]!;
+    const current = () => {
+      this.alive();
+      if (participant.refresh !== refresh || !participant.gate.matches(refresh.pause) || participant.stopped !== refresh.stopped
+        || participant.selected !== session || stop.participant !== name || this.continuation) throw new Error('Native stack refresh lost its retained pause');
+    };
+    current();
+    const stack: DebugProtocol.StackTraceResponse['body'] = await awaitResponse(session.customRequest('stackTrace', {
+      threadId: refresh.pause.threadId, startFrame: 0, levels: REPOSITORY_STACK_FRAME_LIMIT,
+    }), 'native stack refresh', this.abort.signal);
+    current();
+    const frame = stack.stackFrames[0];
+    // New source mappings or a different location cannot certify the prior captured source.
+    if (!frame?.source?.path || resolve(frame.source.path) !== stop.bundle.sourcePath || frame.line !== stop.source.line || frame.column !== stop.source.column) {
+      throw new Error('Native stack refresh changed the captured source location');
+    }
+    participant.refresh = undefined;
+    this.progressDeadline(REPOSITORY_PAUSE_HOLD_TIMEOUT_MS, 'Repository pause hold deadline exceeded');
+    this.evidence.record('dap.pause-refreshed', { participant: name, ...refresh.pause, line: frame.line, column: frame.column });
   }
   /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
@@ -512,7 +565,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Reserves one exact tuple before source revalidation; only owned retired breakpoints can lead to an acknowledged continuation. @example await run.continue('browser', pause) */
   async continue(name: Participant, pause: PauseIdentity): Promise<void> {
     const stop = this.stops[this.stopIndex], participant = this.participants[name];
-    if (stop?.participant !== name || this.cleaning || !this.snapshotReady || !this.snapshot || !stop.breakpoint?.retired || !participant.gate.matches(this.snapshot.pause) || !participant.gate.reserve(pause)) throw new Error('conflict: stale, foreign or unverified pause');
+    if (stop?.participant !== name || this.cleaning || participant.refresh || !this.snapshotReady || !this.snapshot || !stop.breakpoint?.retired || !participant.gate.matches(this.snapshot.pause) || !participant.gate.reserve(pause)) throw new Error('conflict: stale, foreign or unverified pause');
     try {
       await this.verifySources(); this.alive();
       if (participant.gate.phase !== 'resume-requested' || participant.gate.current?.generation !== pause.generation) throw new Error('conflict: pause changed before continue');
