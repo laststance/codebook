@@ -174,7 +174,7 @@ test('a live browser or server stop never copies global, closure or caller-frame
   const serverStack: DebugProtocol.StackTraceResponse['body'] = { stackFrames: [stack.stackFrames[0]!, { id: 78, name: 'handleSubmit', line: 2, column: 1 }], totalFrames: 2 };
   const references = new Map([
     [11, [{ name: 'amount', value: '120', variablesReference: 0 }]],
-    [12, [{ name: 'sql', value: 'postgres://user:password@db', variablesReference: 0 }]],
+    [12, [{ name: 'sql', value: 'postgres://USER:PASSWORD@db', variablesReference: 0 }]],
     [13, [{ name: 'process', value: 'process', variablesReference: 0 }]],
     [14, [{ name: 'cookie', value: 'session=private', variablesReference: 0 }]],
   ]);
