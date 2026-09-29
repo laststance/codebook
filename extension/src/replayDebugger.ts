@@ -26,7 +26,8 @@ export class ReplayDebugger {
   }) {
     this.disposables.push(this.editor.debug.registerDebugAdapterDescriptorFactory(REPLAY_DEBUG_TYPE, {
       createDebugAdapterDescriptor: session => {
-        if (this.closed || session.configuration.codebookReplayOwner !== this.token || this.session) throw new Error('Open historical debugging through Codebook learning replay.');
+        // A learner-stopped owner stays detached: an editor relaunch would otherwise be adopted without history.
+        if (this.closed || this.detached || session.configuration.codebookReplayOwner !== this.token || this.session) throw new Error('Open historical debugging through Codebook learning replay.');
         const events = new this.editor.EventEmitter<vscode.DebugProtocolMessage>();
         this.session = session;
         const adapter = this.adapter = new ReplayDebugAdapter(message => events.fire(message), () => { this.detached = true; });
@@ -40,6 +41,9 @@ export class ReplayDebugger {
       if (session.id === this.retiringSessionId) { this.detached = false; this.starting = undefined; }
     }));
   }
+
+  /** Reports whether playback may still present history; false after the learner stops the owned session, so an explicit replay reopen replaces this owner. @example if (!debuggerView.available) await debuggerView.dispose() */
+  get available(): boolean { return !this.closed && !this.detached; }
 
   /** Clears native state immediately when a pending seek retires the displayed bundle. @example debuggerView.invalidate() */
   invalidate(): void { this.revision++; this.selected = undefined; this.adapter?.select(undefined, 'Not recorded at this moment'); }
@@ -69,13 +73,15 @@ export class ReplayDebugger {
     if (this.closed || this.detached) throw new Error('Historical debugger closed. Reopen the learning replay to restore it.');
     const revision = ++this.revision;
     await this.retiring;
-    this.starting ??= (async () => {
+    const starting = this.starting ??= (async () => {
       const started = await this.editor.debug.startDebugging(undefined, { type: REPLAY_DEBUG_TYPE, request: 'launch', name: 'Codebook · Recorded learning',
         codebookReplayOwner: this.token, internalConsoleOptions: 'neverOpen' }, { suppressSaveBeforeStart: true, suppressDebugToolbar: true, suppressDebugStatusbar: true });
       if (!started || !this.session || !this.adapter) throw new Error('The editor did not start its historical debug session.');
       if (this.closed) throw new Error('Historical debugger closed during startup.');
     })();
-    await this.starting; signal.throwIfAborted();
+    // A refused startup must not poison later presentations; the next one retries it.
+    try { await starting; } catch (error) { if (this.starting === starting && !this.session) this.starting = undefined; throw error; }
+    signal.throwIfAborted();
     if (this.closed || this.detached || revision !== this.revision) throw new Error('Historical debugger presentation was superseded.');
     if (this.selected && this.selected.snapshot === snapshot && this.selected.label === label && this.selected.sourceUri === sourceDocument?.uri) return;
     this.adapter!.select(snapshot, label, sourceDocument); this.selected = { snapshot, label, sourceUri: sourceDocument?.uri };

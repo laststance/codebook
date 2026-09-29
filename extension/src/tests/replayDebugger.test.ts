@@ -17,7 +17,7 @@ class TestEmitter<Value> {
   dispose(): void { this.listeners.clear(); }
 }
 /** Exposes only the four native debug operations used by the historical owner. @example harness().stopped */
-function harness(startGate?: Promise<void>, terminationGate?: Promise<void>) {
+function harness(startGate?: Promise<void>, terminationGate?: Promise<void>, refusedStarts = 0) {
   const terminated = new TestEmitter<vscode.DebugSession>(), stopped: string[] = [], messages: vscode.DebugProtocolMessage[] = [];
   let factory: vscode.DebugAdapterDescriptorFactory | undefined, adapter: vscode.DebugAdapter | undefined, session: vscode.DebugSession | undefined;
   let sessionCount = 0;
@@ -34,6 +34,7 @@ function harness(startGate?: Promise<void>, terminationGate?: Promise<void>) {
       onDidTerminateDebugSession: terminated.event,
       async startDebugging(_folder, configuration) {
         if (typeof configuration === 'string') throw new Error('Expected an owned inline configuration');
+        if (refusedStarts > 0) { refusedStarts--; return false; }
         session = { id: ++sessionCount === 1 ? 'historical-owned' : `historical-owned-${sessionCount}`, type: 'codebook-replay', name: configuration.name, configuration, workspaceFolder: undefined,
           customRequest: async () => undefined, getDebugProtocolBreakpoint: async () => undefined };
         await factory?.createDebugAdapterDescriptor(session, undefined);
@@ -45,7 +46,8 @@ function harness(startGate?: Promise<void>, terminationGate?: Promise<void>) {
   const owner = new ReplayDebugger(editor);
   return { owner, stopped, messages, started, stopRequested, terminate: () => { assert.ok(session); terminated.fire(session); },
     terminateForeign: () => { assert.ok(session); terminated.fire({ ...session, id: 'unrelated-live-session' }); },
-    foreignStart: async () => { assert.ok(factory); assert.ok(session); return factory.createDebugAdapterDescriptor({ ...session, id: 'foreign', configuration: { ...session.configuration, codebookReplayOwner: 'other-owner' } }, undefined); } };
+    foreignStart: async () => { assert.ok(factory); assert.ok(session); return factory.createDebugAdapterDescriptor({ ...session, id: 'foreign', configuration: { ...session.configuration, codebookReplayOwner: 'other-owner' } }, undefined); },
+    relaunch: async () => { assert.ok(factory); assert.ok(session); return factory.createDebugAdapterDescriptor({ ...session, id: 'relaunched-by-editor' }, undefined); } };
 }
 
 test('historical workspace closure stops only its owned native session', async () => {
@@ -90,6 +92,40 @@ test('manual native termination does not silently relaunch a session during play
   // Assert
   await assert.rejects(owner.present(undefined, 'Missing', new AbortController().signal), /closed/);
   await owner.dispose(); assert.deepEqual(stopped, []);
+});
+
+test('a learner-stopped historical session reports itself unavailable so an explicit replay reopen can replace it', async () => {
+  // Arrange
+  const { owner, terminate } = harness(); await owner.present(firstSnapshot, 'Recorded pause', new AbortController().signal);
+  assert.equal(owner.available, true);
+  // Act
+  terminate();
+  // Assert
+  assert.equal(owner.available, false);
+  await owner.dispose();
+});
+
+test('an editor relaunch of a learner-stopped historical session is refused instead of adopted without history', async () => {
+  // Arrange
+  const { owner, terminate, relaunch } = harness(); await owner.present(firstSnapshot, 'Recorded pause', new AbortController().signal);
+  // Act
+  terminate();
+  // Assert
+  await assert.rejects(relaunch(), /Open historical debugging/);
+  await owner.dispose();
+});
+
+test('a refused native startup is retried by the next historical presentation', async () => {
+  // Arrange
+  const { owner, stopped } = harness(undefined, undefined, 1);
+  const signal = new AbortController().signal;
+  await assert.rejects(owner.present(firstSnapshot, 'Recorded pause', signal), /did not start/);
+  // Act
+  await owner.present(firstSnapshot, 'Recorded pause', signal);
+  // Assert
+  assert.equal(owner.available, true);
+  await owner.dispose();
+  assert.deepEqual(stopped, ['historical-owned']);
 });
 
 test('seeking another recorded stop retires the old owned session before opening new native values', async () => {

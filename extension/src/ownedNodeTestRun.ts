@@ -212,8 +212,11 @@ export class OwnedNodeTestRun {
     if (!stop || !bound || !owned || this.cleanup || this.advancing || this.hasNextStop()) throw new Error('Node test has no final owned source pause to continue.');
     this.abort.signal.throwIfAborted();
     this.assertActive(stop.sessionId);
+    const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(NODE_ATTACH_TIMEOUT_MS)]);
+    // A declared line inside a loop or shared helper would otherwise pause the finishing test with nobody to resume it.
+    await this.breakpoint?.retire(bound.session, signal);
     await bound.session.customRequest('continue', { threadId: stop.threadId });
-    const result = await owned.result(AbortSignal.any([this.abort.signal, AbortSignal.timeout(NODE_ATTACH_TIMEOUT_MS)]));
+    const result = await owned.result(signal);
     const elapsedMs = owned.elapsedMs();
     this.record('node-test.result', { exitCode: result.exitCode, signal: result.signal, elapsedMs, output: result.output });
     this.outputTerminal?.reveal();

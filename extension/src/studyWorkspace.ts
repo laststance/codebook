@@ -1902,6 +1902,7 @@ export class StudyWorkspace {
     const intent = this.repositoryRecordingOpen;
     const origin = intent?.studyId === studyId && intent.revision === this.playback!.state().revision ? 'repository' : 'study';
     if (origin === 'repository') this.repositoryRecordingOpen = undefined;
+    await this.replaceUnavailableReplayDebugger(); signal.throwIfAborted();
     this.recordingActive = true; this.pendingHistory = undefined; this.selection = { ...this.selection, studyId, follow: false };
     this.viewport?.showHistory(capturedAppHtml({ ...this.message(), loading: true }));
     const index = await this.recordings!.read(studyId); signal.throwIfAborted();
@@ -1924,6 +1925,14 @@ export class StudyWorkspace {
     await this.open(signal, origin); signal.throwIfAborted();
     await this.ensureReplayViewport(signal); signal.throwIfAborted();
     return { index, context, contextHash, contextReason, preferredPositionMs };
+  }
+
+  /** Replaces a historical debugger the learner stopped; only explicit replay/history opens call this, so playback never relaunches it silently. @example await this.replaceUnavailableReplayDebugger() */
+  private async replaceUnavailableReplayDebugger(): Promise<void> {
+    const current = this.replayDebugger;
+    if (!current || current.available) return;
+    this.replayDebugger = undefined;
+    await current.dispose();
   }
 
   /** Reuses the bounded PNG renderer without CDP, acquiring a fresh lease after replay-panel recreation. @example await this.ensureReplayViewport(signal) */
@@ -3068,6 +3077,7 @@ export class StudyWorkspace {
       if (this.recordingActive) throw new Error('Close browser replay before opening a separate Node test history.');
       const request = ++this.historyRequest; this.loading = true; this.publish();
       try {
+        await this.replaceUnavailableReplayDebugger();
         const history = await this.nodeHistoryStore!.read(message.studyId);
         if (request !== this.historyRequest || message.revision !== this.revision || this.closing) return;
         let learningDecision: NodeTestHistoryLearningDecision | undefined;
@@ -3086,7 +3096,8 @@ export class StudyWorkspace {
         this.selectedNodeHistoryRequest++; this.selectedNodeHistory = history; this.selectedNodeHistoryLearningDecision = learningDecision; this.selectedNodeHistoryLearningMaterial = learningMaterial; this.selectedNodeHistoryPage = 0; this.selectedNodeHistorySequence = undefined; this.selectedNodeHistoryDebugAvailable = false;
         // A Node history has no application frames; replace pixels from the prior browser study immediately.
         this.presentApplication(this.message());
-        this.nodeHistoryPlaybackController ??= new NodeHistoryPlaybackController({
+        // Each opened history gets its own controller; the present callback is bound to this study.
+        this.nodeHistoryPlaybackController = new NodeHistoryPlaybackController({
           present: async sequence => {
             const selectedHistory = this.selectedNodeHistory;
             if (!selectedHistory || selectedHistory.header.studyId !== message.studyId) throw new Error('The selected Node history changed during playback.');

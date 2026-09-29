@@ -105,13 +105,18 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
   let sourceProvider = async (_uri: Uri) => '';
   const historicalDebugPresentations: Array<{ snapshot: ReplayDebugSnapshot | undefined; label: string; sourceDocument?: { uri: string; hash: string } }> = [];
   let historicalDebugInvalidations = 0;
+  const historicalDebuggers: TestReplayDebugger[] = [];
   class TestReplayDebugger {
-    constructor(_editor: unknown) {}
+    available = true;
+    constructor(_editor: unknown) { historicalDebuggers.push(this); }
     async present(snapshot: ReplayDebugSnapshot | undefined, label: string, signal: AbortSignal, sourceDocument?: { uri: string; hash: string }) {
-      signal.throwIfAborted(); historicalDebugPresentations.push({ snapshot, label, sourceDocument });
+      signal.throwIfAborted();
+      // Mirrors the real owner: a learner-stopped session never silently relaunches.
+      if (!this.available) throw new Error('Historical debugger closed. Reopen the learning replay to restore it.');
+      historicalDebugPresentations.push({ snapshot, label, sourceDocument });
     }
     invalidate() { historicalDebugInvalidations++; }
-    async dispose() {}
+    async dispose() { this.available = false; }
   }
   let sourceOpenFailure = false;
   let delayedPanelKind: string | undefined;
@@ -580,7 +585,7 @@ async function workspaceHarness(attach = true, deterministicClock = false) {
     isReadingLineVisible(line: number) { return retainedReadingRange?.contains(new Position(line, 0)); },
     outlineItem: (itemId: string) => outlineItem(itemId), changeOutlineCheckbox: (itemId: string, checked: boolean) => outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
     postedMessages: () => postedMessages, presentationPreferences, watchedPatterns, viewportEvents, viewportInstances, nativePanels: () => [...panels], maximizedEditorGroup: () => maximizedEditorGroup,
-    historicalDebugPresentations, historicalDebugInvalidations: () => historicalDebugInvalidations, readCapturedSource: (uri: string) => {
+    historicalDebugPresentations, historicalDebuggers, historicalDebugInvalidations: () => historicalDebugInvalidations, readCapturedSource: (uri: string) => {
       const parsed = new URL(uri); return sourceProvider(new Uri(parsed.protocol.slice(0, -1), parsed.host, parsed.pathname, parsed.search, parsed.hash));
     },
     holdPresentationMessage(mode?: 'living-book') { let entered!: () => void, release!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); heldPresentationMessage = { mode, wait, entered }; return { started, release }; },
@@ -821,7 +826,7 @@ test('restored Observed moments leaves its loading state after workspace initial
     assert.equal(message.loading, false);
     assert.equal(message.model.currentSourceAvailable, false);
   } finally {
-    await harness.reader.dispose();
+    await harness.close();
   }
 });
 
@@ -1141,6 +1146,89 @@ test('Node journal time seeking restores exact stops and clears debugger across 
     assert.equal(resultEvent.recording, undefined);
     assert.equal(resultEvent.nodeHistoryPosition?.debuggerAvailable, undefined);
     assert.ok(harness.historicalDebugInvalidations() >= 2);
+  } finally { await harness.close(); }
+});
+
+test('time seeking in a second opened Node history presents its own stop instead of reporting a changed history', async () => {
+  // Arrange: two sealed one-stop histories whose captured values differ.
+  const harness = await workspaceHarness();
+  try {
+    const store = harness.service.nodeHistoryStore!;
+    const sourceText = 'const nextTheme = "dark";\n';
+    const saveHistory = async (value: string) => {
+      const history = nodeTestHistoryHeader(store.workspaceKey);
+      const writer = await store.start(history);
+      await writer.appendOutput({ sequence: 1, elapsedMs: 100, channel: 'stdout', text: 'RUN src/theme.test.ts\n' });
+      await writer.appendStop({ index: 0, runId: 'test-run', sessionId: 'test-session', threadId: 1, elapsedMs: 200,
+        worker: { pid: 1, processGroup: 1, workspace: '/private/test' }, source: history.configuration.source,
+        frame: { id: 1, name: 'notifyManager', line: 1, column: 1 }, variables: [{ name: 'nextTheme', value, variablesReference: 0 }],
+        facts: [{ path: 'nextTheme', mode: 'value', display: value, type: 'string' }],
+        debuggerSnapshot: { version: 1, frames: [{ name: 'notifyManager', line: 1, column: 1,
+          source: { name: history.configuration.source.path, text: sourceText, hash: sha256(sourceText), line: 1 }, scopes: [{ name: 'Local', variables: [0] }] }],
+        variables: [{ name: 'nextTheme', value, type: 'string', children: [] }], limitations: [] } } satisfies NodeTestSourceStop);
+      await writer.appendResult({ exitCode: 0, signal: null, output: 'Tests 1 passed' }, 300);
+      await writer.finish('complete');
+      return history;
+    };
+    const firstHistory = await saveHistory('"dark"'), secondHistory = await saveHistory('"light"');
+    await harness.reader.open();
+    for (const history of [firstHistory, secondHistory]) {
+      harness.receiveContext({ type: 'node-history', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId });
+      await waitUntil(() => {
+        const view = harness.postedMessages().slice(-1)[0]!;
+        return view.nodeHistory?.header.studyId === history.studyId && view.nodeHistoryPosition?.sequence === 1 && !view.loading;
+      }, 'the selected Node history and its initial event are loaded', 1_000);
+    }
+
+    // Act: seek the second history through the same message sent by the time slider.
+    harness.receiveContext({ type: 'node-history-playback', revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: secondHistory.studyId, action: 'seek', positionMs: 200 });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPlayback?.positionMs === 200,
+      'time seek presents the second history stop', 1_000);
+
+    // Assert: the native debugger shows the second history's captured value.
+    const seeked = harness.postedMessages().slice(-1)[0]!;
+    assert.equal(seeked.nodeHistory?.header.studyId, secondHistory.studyId);
+    assert.equal(seeked.nodeHistoryPosition?.type, 'stop');
+    assert.equal(harness.historicalDebugPresentations.at(-1)?.snapshot?.variables[0]?.value, '"light"');
+  } finally { await harness.close(); }
+});
+
+test('reopening a Node history after the learner stops its historical debugger restores native values', async () => {
+  // Arrange: a sealed one-stop history presented once through the native debugger.
+  const harness = await workspaceHarness();
+  try {
+    const store = harness.service.nodeHistoryStore!;
+    const history = nodeTestHistoryHeader(store.workspaceKey), sourceText = 'const nextTheme = "dark";\n';
+    const writer = await store.start(history);
+    await writer.appendOutput({ sequence: 1, elapsedMs: 100, channel: 'stdout', text: 'RUN src/theme.test.ts\n' });
+    await writer.appendStop({ index: 0, runId: 'test-run', sessionId: 'test-session', threadId: 1, elapsedMs: 200,
+      worker: { pid: 1, processGroup: 1, workspace: '/private/test' }, source: history.configuration.source,
+      frame: { id: 1, name: 'notifyManager', line: 1, column: 1 }, variables: [{ name: 'nextTheme', value: 'dark', variablesReference: 0 }],
+      facts: [{ path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' }],
+      debuggerSnapshot: { version: 1, frames: [{ name: 'notifyManager', line: 1, column: 1,
+        source: { name: history.configuration.source.path, text: sourceText, hash: sha256(sourceText), line: 1 }, scopes: [{ name: 'Local', variables: [0] }] }],
+      variables: [{ name: 'nextTheme', value: 'dark', type: 'string', children: [] }], limitations: [] } } satisfies NodeTestSourceStop);
+    await writer.appendResult({ exitCode: 0, signal: null, output: 'Tests 1 passed' }, 300);
+    await writer.finish('complete');
+    await harness.reader.open();
+    harness.receiveContext({ type: 'node-history', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded', 1_000);
+    harness.receiveContext({ type: 'node-history-stop', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId, sequence: 2 });
+    await waitUntil(() => harness.historicalDebugPresentations.length === 1, 'the recorded stop reaches the native debugger', 1_000);
+    // The learner ends the "Codebook · Recorded learning" session from the native debugger.
+    harness.historicalDebuggers[0]!.available = false;
+
+    // Act: reopening the same history is the documented recovery.
+    harness.receiveContext({ type: 'node-history', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId });
+    await waitUntil(() => harness.historicalDebugPresentations.length === 2 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the reopened history presents its saved stop through a fresh historical debugger', 1_000);
+
+    // Assert
+    assert.equal(harness.historicalDebuggers.length, 2);
+    assert.equal(harness.historicalDebugPresentations[1]?.snapshot?.variables[0]?.name, 'nextTheme');
+    assert.equal(harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence, 2);
   } finally { await harness.close(); }
 });
 
