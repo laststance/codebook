@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { listVitestTestFiles } from '../utils/listVitestTestFiles';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 
 /**
  * Writes a stand-in Vitest CLI that records how it was started, then behaves as the given script body.
@@ -103,4 +104,35 @@ test('a Vitest listing that outlives its deadline is stopped and reported', asyn
     // Assert
     await assert.rejects(listing, /did not list its test files within 300 ms/);
   } finally { await rm(vitest.directory, { recursive: true, force: true }); }
+});
+
+test('cancelling a listing releases a SIGTERM-resistant launcher and its helper before rejecting', async () => {
+  // Arrange
+  const vitest = await stubVitest(`
+import { spawn } from 'node:child_process';
+process.on('SIGTERM', () => {});
+const helper = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)"], { stdio: ['ignore', 'pipe', 'ignore'] });
+helper.stdout.once('data', () => writeFileSync('ready.json', JSON.stringify({ launcher: process.pid, helper: helper.pid })));
+setInterval(() => {}, 1000);
+`);
+  const cancellation = new AbortController();
+  let processes: { launcher: number; helper: number } | undefined;
+  try {
+    // Act
+    const listing = listVitestTestFiles({ node: process.execPath, program: vitest.program, workspace: vitest.directory, filter: 'src/a.test.ts',
+      excludes: [], signal: cancellation.signal });
+    const rejected = assert.rejects(listing, /run cancelled/);
+    processes = await waitUntil(async () => readFile(join(vitest.directory, 'ready.json'), 'utf8').then(text => JSON.parse(text) as { launcher: number; helper: number }, () => undefined), 'listing helper readiness', 5_000);
+    cancellation.abort(new Error('run cancelled'));
+    await rejected;
+    // Assert
+    for (const pid of [processes.launcher, processes.helper]) assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, 'rejection must mean the owned process ended');
+    const output = (await vitest.started()).argv[2]!.slice('--json='.length);
+    await assert.rejects(stat(dirname(output)), { code: 'ENOENT' });
+  } finally {
+    // A failing negative control still releases only its own synthetic processes.
+    cancellation.abort(new Error('run cancelled'));
+    if (processes) for (const pid of [processes.helper, processes.launcher]) try { process.kill(pid, 'SIGKILL'); } catch {}
+    await rm(vitest.directory, { recursive: true, force: true });
+  }
 });

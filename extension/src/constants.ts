@@ -207,6 +207,8 @@ export const NODE_TEST_TITLE_PATH_LIMIT = 16;
 export const NODE_TEST_EXCLUDED_FILE_LIMIT = 64;
 /** Bound for one `vitest list --filesOnly` preflight; the whole attach phase is bounded separately. */
 export const VITEST_FILE_LIST_TIMEOUT_MS = 30_000;
+/** Grace period for releasing the owned Vitest listing group before escalating to SIGKILL. */
+export const VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS = 1_000;
 /** Error text kept from a failed Vitest preflight. */
 export const VITEST_LIST_ERROR_LIMIT_CHARS = 2_048;
 /** Largest Vitest JSON report read to confirm which test ran. */
