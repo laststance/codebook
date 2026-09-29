@@ -14,7 +14,7 @@ The owner retired the three selectable UI themes, not these distinct feature scr
 
 ## Implementation status
 
-This is a private preview, not a Marketplace or Open VSX release. [Cycle 0028](docs/cycles/0028-ordinary-chat-study-entry.md) delivered extension 0.2.11 through [PR #45](https://github.com/laststance/codebook/pull/45), with bounded ordinary-chat development evidence in both hosts and a qualified Cursor recovery path.
+This is a private preview, not a Marketplace or Open VSX release. [Cycle 0028](docs/cycles/0028-ordinary-chat-study-entry.md) delivered extension 0.2.11 through [PR #45](https://github.com/laststance/codebook/pull/45), with bounded ordinary-chat development evidence in both hosts and a qualified Cursor recovery path. [Cycle 0029](docs/cycles/0029-active-increment.md) delivers extension 0.2.12 through [PR #48](https://github.com/laststance/codebook/pull/48): the cart demonstration is removed, saved Node test runs reopen in the native debugger, and the DeepWiki reader uses a shared renderer and guarded publisher. Its evidence is development-level only.
 
 [Cycle 0029](docs/cycles/0029-feature-specification.md) updates the specification to [goal version 9](PRODUCT_GOAL.md). The implementation now targets external repositories. Old presentation variants and custom value display still need replacement; the specified learning replay and independent Wiki remain implementation work. Historical fixture or coupled-Wiki success is not proof of the new destination.
 

@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.2.12.0] - 2026-09-30 (development candidate)
+
+Cycle 0029 applies goal version 9: synchronized learning replay with a native historical debugger, saved Node test histories and an independent DeepWiki reader built by the shared generation skill. The bundled cart demonstration is removed; development trials use the owner-designated external `nextjs-dashboard` checkout. Bounded development evidence comes from normally installed VS Code, plus Cursor for the Wiki reader and skill. No version 9 Stage 1 or Stage 2 acceptance is claimed. Delivered through PR #48; this is not a Marketplace publication.
+
+### Added
+
+- A read-only replay debug adapter. The editor's own debugger shows the recorded source, scopes and call stack of the selected moment as **Codebook · Recorded learning**.
+- Saved Node test histories. A cited Vitest run stops at one owned breakpoint, seals a private evidence journal and reopens from the Learning Library, where seek and Play step through recorded stops, output and the result. `codebook://node-history` lists saved histories; `codebook_explain_node_history` saves the agent's question, summary and sequence for one.
+- A shared DeepWiki reader shell, an explicit-graph diagram renderer (flow and sequence, with exact source quotes for every node and edge) and a guarded publisher with prepared candidates, sealed manifest identity and verified recovery. **Change location** opens the matching editor's `codebook.wikiOutputDirectory` setting. Shared skill 1.0.41.
+- Recording error details name each paint-receipt attempt's renderer stages.
+
+### Changed
+
+- Replay snapshots copy only the stopped frame's local and block scopes. The DAP `locals` hint decides this before the English scope name, so editors in other display languages keep their values; globals, closures and caller frames are never saved.
+- A Node test name is passed as one `--testNamePattern=` token, and test file paths that Vitest would read as options are refused.
+- The node-test profile advertises 0.2.12 as its minimum extension version.
+- Wiki manifest exclusions also match directories and directory globs such as `**/fixtures`.
+- A browser **Update LLM Wiki** link now asks for a modal confirmation in the editor before the editor agent starts, naming what that agent can do.
+- A configured non-root `entryPath` proves development-server readiness by itself, so an application without a root page runs through its selected entry.
+- Saving a reading position in a Node history reuses the verified opened history instead of re-reading its journal.
+
+### Fixed
+
+- Codebook continues a Node test only from the exact pause it captured. A native Continue or step, or a later pause, now refuses a stale Codebook continue instead of resuming the learner's pause. A native stack refresh at the same frame, such as Toggle Skipping this File or Pretty Print, keeps the run going.
+- A Node stop is accepted only when the paused top frame is the declared position.
+- Node test output waiting for its durable history is bounded at the history's 8 MiB capacity; a log flood fails capture instead of buffering in the editor.
+- **Return to current pause** and `codebook_return_current` leave a selected Node history, closing its captured-source preview, so its missing-video notice no longer covers the live application. While a Node history is selected, agents see `followingCurrentRun: false`.
+- An oversized debugger type name is omitted from a saved fact instead of failing the run.
+- Native Variables no longer pair older recorded values with a newer moment while another debug session runs.
+- One lost recorded-frame paint receipt is retried after a renderer re-handshake instead of stopping playback.
+- A second opened Node history can seek and play. After the learner stops the historical debugger, selecting a stop starts a fresh one instead of failing at every stop.
+- The final Node stop retires its owned breakpoint before continuing, and a stop whose breakpoint the learner already removed no longer times out a passing run.
+- The Node history catalog stays readable past its first 4 KiB page, and each entry returns its history and events URIs.
+- Node history autoplay reports a failed step unless a newer selection superseded it.
+- The Wiki source-routing prompt stays within Cursor's prompt limit, and owned runtimes are released before the DeepWiki reader closes.
+- The rest of a Node test file finishes under the run deadline, and an unreadable Node history folder is reported without blocking the Study workspace.
+
+### Removed
+
+- The bundled cart demo, its launchers and fixtures, the retired experiment workspaces and their CI jobs.
+- Closed-cycle records 0001–0028 and their evidence files, now linked at immutable commit `273660c`.
+
 ## [0.2.11.0] - 2026-09-26 (development candidate)
 
 Cycle 0028 opens the saved/default Study presentation from ordinary editor chat before runtime input. The Live reader now reveals a complete followed pause after loading, keeps long explanations keyboard-readable in a narrow pane, and retains the first captured-value rows in view. The checked 0.2.11 VSIX completed the checkout fixture with four saved explanations and a recording in VS Code. Cursor completed the same fixture after an initial focus refusal and pane-layout recovery; clean ordinary entry remains qualified. These fixture trials do not count toward the nine-project final acceptance.
