@@ -168,3 +168,52 @@ test('an application without a root page is ready through its selected entry pat
   assert.equal(origin, 'http://127.0.0.1:43217');
   assert.deepEqual(requestedUrls, ['http://127.0.0.1:43217/login']);
 });
+
+test('a selected entry path that redirects to sign-in does not count as a ready application', async () => {
+  // Arrange: the configured "/dashboard" entry answers 307 to a sign-in page.
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'), nativeRequire = createRequire(filename);
+  const exports: Partial<typeof ServerModule> = {}, requests: Array<{ url: string; redirect?: string }> = [];
+  const child = Object.assign(new EventEmitter(), { pid: 42000, exitCode: null, signalCode: null, stdout: new EventEmitter(), stderr: new EventEmitter() });
+  runInNewContext(await readFile(filename, 'utf8'), {
+    exports, AbortSignal, Buffer, process: { env: {} },
+    fetch: async (url: string, init: { redirect?: string }) => { requests.push({ url, redirect: init.redirect }); return { ok: false, status: 307 }; },
+    require(name: string) {
+      if (name === 'node:child_process') return { spawn: () => child };
+      if (name.endsWith('/utils/waitUntil')) return { waitUntil: async (read: () => unknown) => { child.stdout.emit('data', Buffer.from('Local: http://127.0.0.1:43217\nReady')); return read(); } };
+      return nativeRequire(name);
+    },
+  }, { filename });
+  assert.ok(exports.launchDevelopmentServer);
+  const server = exports.launchDevelopmentServer('/isolated-target', '/node', () => {});
+
+  // Act
+  const ready = server.ready(new AbortController().signal, '/dashboard');
+
+  // Assert
+  await assert.rejects(ready, /Selected application page failed or redirected: 307/);
+  assert.deepEqual(requests, [{ url: 'http://127.0.0.1:43217/dashboard', redirect: 'manual' }]);
+});
+
+test('an application whose root page fails is not ready when the root is its entry', async () => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'), nativeRequire = createRequire(filename);
+  const exports: Partial<typeof ServerModule> = {};
+  const child = Object.assign(new EventEmitter(), { pid: 42000, exitCode: null, signalCode: null, stdout: new EventEmitter(), stderr: new EventEmitter() });
+  runInNewContext(await readFile(filename, 'utf8'), {
+    exports, AbortSignal, Buffer, process: { env: {} },
+    fetch: async () => ({ ok: false, status: 500 }),
+    require(name: string) {
+      if (name === 'node:child_process') return { spawn: () => child };
+      if (name.endsWith('/utils/waitUntil')) return { waitUntil: async (read: () => unknown) => { child.stdout.emit('data', Buffer.from('Local: http://127.0.0.1:43217\nReady')); return read(); } };
+      return nativeRequire(name);
+    },
+  }, { filename });
+  assert.ok(exports.launchDevelopmentServer);
+  const server = exports.launchDevelopmentServer('/isolated-target', '/node', () => {});
+
+  // Act
+  const ready = server.ready(new AbortController().signal);
+
+  // Assert
+  await assert.rejects(ready, /Application root failed: 500/);
+});

@@ -53,7 +53,7 @@ export function launchDevelopmentServer(target: string, node: string, record: (t
         return inspectorCandidate;
       }, 'owned application inspector announcement', REPOSITORY_SETUP_TIMEOUT_MS, signal);
     },
-    /** Waits for the actual ephemeral listener and root compilation, called during preparation. @example await app.ready(signal) */
+    /** Waits for the actual ephemeral listener, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @example await app.ready(signal, '/login') */
     async ready(signal: AbortSignal, entryPath = '/') {
       repositoryEntryPathSchema.parse(entryPath);
       origin = await waitUntil(() => {

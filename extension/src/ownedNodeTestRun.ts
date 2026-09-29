@@ -14,12 +14,11 @@ import { inspectNodeTestVariables, type NodeTestFact } from './utils/inspectNode
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot';
 import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame';
 import { sha256 } from './runtimeSupport/utils/sha256';
+import { RESUME_COMMANDS } from './runtimeSupport/constants';
 import { NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS, NODE_REPLAY_DEBUG_MAX_DEPTH, NODE_REPLAY_DEBUG_MAX_FRAMES, NODE_REPLAY_DEBUG_MAX_VARIABLES } from './constants';
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch';
 
 const NODE_ATTACH_TIMEOUT_MS = 45_000;
-/** DAP requests that resume or move a paused thread; any of them ends the pause Codebook captured. */
-const NODE_RESUMING_REQUESTS = new Set(['continue', 'next', 'stepIn', 'stepOut', 'stepBack', 'reverseContinue', 'goto', 'restartFrame']);
 /** One DAP `stopped` event observed on an owned session, in arrival order. */
 type NativePause = { sessionId: string; threadId: number; reason: string };
 
@@ -74,7 +73,7 @@ export class OwnedNodeTestRun {
         const request = message as DebugProtocol.Request;
         this.breakpoint?.onRequest(session, request);
         // Adapters need not send `continued` after a client resume or step, so the request itself revokes the captured pause.
-        if (NODE_RESUMING_REQUESTS.has(request.command)) this.pausedSessions.delete(session.id);
+        if (RESUME_COMMANDS.has(request.command)) this.pausedSessions.delete(session.id);
       }, onDidSendMessage: message => {
         if (message.type === 'response') this.breakpoint?.onResponse(session, message as DebugProtocol.Response);
         if (message.type === 'event' && (message as DebugProtocol.Event).event === 'continued') this.pausedSessions.delete(session.id);

@@ -151,7 +151,7 @@ test('a failed Node output observer refuses capture and releases its process', a
   }
 });
 
-test('a Node test logging faster than its history can be saved fails capture instead of buffering the whole log in memory', async () => {
+test('a Node test logging faster than its history can be saved fails capture instead of buffering the whole log in memory', { timeout: 60_000 }, async () => {
   // Arrange: 12 MiB of output while the first durable history write is still pending.
   const workspace = await mkdtemp(join(tmpdir(), 'codebook-node-output-flood-'));
   const program = join(workspace, 'runner.cjs');
@@ -159,8 +159,14 @@ test('a Node test logging faster than its history can be saved fails capture ins
   const launch = { workspace, program, sourceFile: program, testFile: program, stops: [], args: ['run', 'src/test.test.ts', '--inspect-brk', '--no-file-parallelism'] };
   let deliveredBytes = 0, owned: Awaited<ReturnType<typeof launchNodeTest>> | undefined;
   owned = await launchNodeTest(launch, process.execPath, () => undefined, async event => {
-    // The first history write stays pending until the whole log has arrived, as a slow disk would.
-    if (deliveredBytes === 0) await new Promise<void>(resolve => { const poll = setInterval(() => { if (owned?.output().endsWith('END')) { clearInterval(poll); resolve(); } }, 10); });
+    // The first history write stays pending until the whole log has arrived, as a slow disk would; a regression fails here instead of hanging.
+    if (deliveredBytes === 0) await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 30_000;
+      const poll = setInterval(() => {
+        if (owned?.output().endsWith('END')) { clearInterval(poll); resolve(); }
+        else if (Date.now() > deadline) { clearInterval(poll); reject(new Error('The flooding test output never finished arriving.')); }
+      }, 10);
+    });
     deliveredBytes += Buffer.byteLength(event.text);
   });
   try {

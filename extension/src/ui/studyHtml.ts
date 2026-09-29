@@ -386,7 +386,8 @@ function studyClient(options: typeof STUDY_UI_OPTIONS, installFocus?: typeof ins
     element('evidence-details').hidden = !message.study; text('evidence-summary', `Evidence status · ${outcomeLabel}`);
     text('errors', message.errors.join('\n')); button('retry')!.hidden = !message.errors.length && savedRecording?.contextStatus !== 'failed' && savedRecording?.status !== 'failed' && savedRecording?.status !== 'partial';
     button('continue')!.disabled = applying || message.busy || message.loading || !model.continueArguments;
-    button('return-current')!.disabled = !model.currentParticipant || model.matching && model.selection.follow;
+    // A selected Node history masks the live application even while following, so leaving it is always available.
+    button('return-current')!.disabled = !message.nodeHistory && (!model.currentParticipant || model.matching && model.selection.follow);
     button('stop')!.disabled = message.busy || !message.liveState || message.liveState === 'stopped';
     button('click')!.disabled = applying || message.busy || !message.canClick;
     button('click')!.textContent = message.nextAction ? `${message.nextAction.title} once` : 'No action available';

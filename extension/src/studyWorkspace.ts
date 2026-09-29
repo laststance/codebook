@@ -257,7 +257,8 @@ export class StudyWorkspace {
     if (input.expectedRevision !== this.revision + this.readerSelectionRevision) throw new StudyError('STALE_PRESENTATION', 'The reader content changed. Read current presentation state before returning to live execution.');
     // A return can change the selection while native source rendering fails; report that partial state honestly.
     // A failed native source open leaves the selection current, so explicit retry must render it again.
-    if (!this.selection.follow || this.recordingActive || this.selection.tab !== 'live' || !this.sourceReady()) await this.returnCurrentSelection();
+    // A selected Node journal masks the live application even while the selection still follows the run.
+    if (this.selectedNodeHistory || !this.selection.follow || this.recordingActive || this.selection.tab !== 'live' || !this.sourceReady()) await this.returnCurrentSelection();
     const state = this.presentationState();
     if (!this.sourceReady() || !state.reader.followingCurrentRun || state.reader.contentTab !== 'live') {
       throw new StudyError('EVIDENCE_UNAVAILABLE', 'Current source is not displayed in the native reader. Inspect its error and retry explicitly.');

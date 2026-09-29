@@ -1268,7 +1268,7 @@ async function saveOneStopNodeHistory(store: NodeTestHistoryStore) {
 }
 
 test('returning to the current run leaves a selected Node history so its missing-video notice no longer masks the live application', async () => {
-  // Arrange: the learner is reading a saved Node history, whose application pane explains that no video exists.
+  // Arrange: the learner is reading a saved Node stop in the historical debugger; the application pane explains that no video exists.
   const harness = await workspaceHarness();
   try {
     const history = await saveOneStopNodeHistory(harness.service.nodeHistoryStore!);
@@ -1276,16 +1276,42 @@ test('returning to the current run leaves a selected Node history so its missing
     harness.receiveContext({ type: 'node-history', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId });
     await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistory?.header.studyId === history.studyId && !harness.postedMessages().slice(-1)[0]?.loading,
       'the sealed Node history is displayed', 1_000);
+    harness.receiveContext({ type: 'node-history-stop', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId, sequence: 2 });
+    await waitUntil(() => harness.historicalDebugPresentations.length === 1, 'the recorded stop reaches the native debugger', 1_000);
+    const preview = harness.addNodeHistoryPreview(history.studyId, 2);
+    const invalidationsBefore = harness.historicalDebugInvalidations();
 
     // Act
     await harness.reader.action('return-current');
 
     // Assert
     const view = harness.postedMessages().slice(-1)[0]!;
-    const applicationHtml = harness.nativePanels().find(panel => panel.kind === 'codebook.scopedBrowser')?.webview.html ?? '';
+    const applicationPanel = harness.nativePanels().find(panel => panel.kind === 'codebook.scopedBrowser');
     assert.equal(view.nodeHistory, undefined, 'the Node journal is no longer the selected reader content');
     assert.equal(view.model.selection.follow, true);
-    assert.doesNotMatch(applicationHtml, /Node test history · application video unavailable/);
+    assert.ok(applicationPanel, 'the application pane stays open for the live run');
+    assert.doesNotMatch(applicationPanel.webview.html, /Node test history · application video unavailable/);
+    assert.equal(harness.groups.flatMap(group => group.tabs).includes(preview), false, 'the Node history debugger preview is closed');
+    assert.ok(harness.historicalDebugInvalidations() > invalidationsBefore, 'the historical debugger no longer shows the Node stop');
+  } finally { await harness.close(); }
+});
+
+test('an agent returning the reader to the current run leaves a selected Node history even while the reader still follows the run', async () => {
+  // Arrange: selecting a Node journal keeps the browser selection following the current run.
+  const harness = await workspaceHarness();
+  try {
+    const history = await saveOneStopNodeHistory(harness.service.nodeHistoryStore!);
+    await harness.reader.open();
+    harness.receiveContext({ type: 'node-history', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistory?.header.studyId === history.studyId && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is displayed', 1_000);
+    const state = harness.reader.presentationState();
+
+    // Act: this harness has no live source tab, so the return may still report EVIDENCE_UNAVAILABLE; only the journal retirement is observed.
+    await harness.reader.returnToCurrent({ presentationId: state.presentationId, expectedRevision: state.reader.contentRevision }).catch(() => undefined);
+
+    // Assert
+    assert.equal(harness.postedMessages().slice(-1)[0]?.nodeHistory, undefined, 'the MCP return never reports following the run while the journal masks the application');
   } finally { await harness.close(); }
 });
 

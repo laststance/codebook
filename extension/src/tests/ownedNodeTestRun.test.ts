@@ -229,3 +229,38 @@ test('a native step request revokes the accepted pause before Codebook advances 
     assert.deepEqual(harness.calls, ['remove', 'stop-debugging']);
   } finally { await harness.run.stop(); await harness.cleanup(); }
 });
+
+test('advancing refuses a stale Codebook continue when the learner resumes while the previous owned breakpoint is being retired', async () => {
+  // Arrange
+  let requestResume = (_command: string): void => undefined;
+  const harness = await nodeRunHarness({ declaredStops: 2, duringRetire: () => requestResume('continue') });
+  requestResume = harness.requestResume;
+  try {
+    await harness.run.prepare();
+    harness.calls.length = 0;
+
+    // Act
+    const advancing = harness.run.advance();
+
+    // Assert
+    await assert.rejects(advancing, /resumed before the next declared stop/);
+    assert.equal(harness.calls.includes('continue'), false, 'the stale continue request is never sent');
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('advancing is refused after the learner stepped to a later pause, so it cannot resume that unaccepted pause', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2 });
+  try {
+    await harness.run.prepare();
+    harness.calls.length = 0;
+    harness.stepToLaterPause();
+
+    // Act
+    const advancing = harness.run.advance();
+
+    // Assert
+    await assert.rejects(advancing, /resumed before the next declared stop/);
+    assert.deepEqual(harness.calls, ['remove', 'stop-debugging']);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
