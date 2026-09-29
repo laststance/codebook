@@ -35,6 +35,7 @@ export async function prepareNodeTestLaunch(workspace: string, configuration: No
   if (testHash !== configuration.testHash) throw new Error('Node test file changed; review the current test before running it.');
   // Native inspection pauses the test clock; the owned run deadline still bounds execution.
   const args = ['run', configuration.testFile, '--inspect-brk', '--no-file-parallelism', `--testTimeout=${REPOSITORY_RUN_TIMEOUT_MS}`];
-  if (configuration.testName) args.push('--testNamePattern', configuration.testName);
+  // One token: Vitest's parser reads a separate value that begins with "-" as a new option, such as --config.
+  if (configuration.testName) args.push(`--testNamePattern=${configuration.testName}`);
   return { workspace: root, testFile: testFile!, sourceFile: sourceFile!, stops, program: program!, args };
 }

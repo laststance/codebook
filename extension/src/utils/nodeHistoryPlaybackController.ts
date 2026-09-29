@@ -8,6 +8,8 @@ export interface NodeHistoryPlaybackEvent {
 export interface NodeHistoryPlaybackDependencies {
   present(sequence: number): Promise<void>;
   changed(): void;
+  /** Receives an autoplay presentation failure; manual seeks reject to their own caller instead. */
+  failed?(error: unknown): void;
   now?: () => number;
   manualTicks?: boolean;
 }
@@ -62,7 +64,8 @@ export class NodeHistoryPlaybackController {
     this.anchorWallMs = this.clock();
     if (!this.dependencies.manualTicks) {
       this.timer = setInterval(() => {
-        void this.tick().catch(() => this.pause());
+        // tick() has already paused on a failed presentation; the learner still needs the reason.
+        void this.tick().catch(error => { this.pause(); this.dependencies.failed?.(error); });
       }, PLAYBACK_TICK_INTERVAL_MS);
       this.timer.unref();
     }

@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { readFile, realpath, stat } from 'node:fs/promises';
-import { join, matchesGlob, relative, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { WIKI_GIT_OUTPUT_LIMIT_BYTES, WIKI_GIT_TIMEOUT_MS, WIKI_SOURCE_LIMIT_BYTES } from '../constants';
 import { sourceExclusion } from './sourceExclusion';
+import { matchesWikiExclusion } from './matchesWikiExclusion';
 import type { WikiIncludedSource } from './answerDeepWikiQuestion';
 
 const runGit = promisify(execFile);
@@ -47,7 +48,7 @@ export async function inspectDeepWikiFreshness(projectRoot: string, includedSour
       ]);
       const indexedPaths = new Set(includedSources.map(source => source.path));
       addedPaths = [...new Set([...committed.stdout.split('\0'), ...untracked.stdout.split('\0')])]
-        .filter(path => path && !indexedPaths.has(path) && !sourceExclusion(path) && !excludedPaths.some(pattern => matchesGlob(path, pattern)))
+        .filter(path => path && !indexedPaths.has(path) && !sourceExclusion(path) && !excludedPaths.some(exclusion => matchesWikiExclusion(path, exclusion)))
         .sort();
       additionCheckComplete = true;
     } catch { additionCheckComplete = false; }

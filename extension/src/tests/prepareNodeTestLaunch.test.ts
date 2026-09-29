@@ -29,8 +29,34 @@ test('a local Vitest test launches with the checked source and no shell interpre
     // Assert
     const canonicalRoot = await realpath(root);
     assert.equal(launch.program, join(canonicalRoot, 'node_modules', 'vitest', 'vitest.mjs'));
-    assert.deepEqual(launch.args, ['run', 'src/subscribable.test.ts', '--inspect-brk', '--no-file-parallelism', '--testTimeout=600000', '--testNamePattern', 'subscribes once']);
+    assert.deepEqual(launch.args, ['run', 'src/subscribable.test.ts', '--inspect-brk', '--no-file-parallelism', '--testTimeout=600000', '--testNamePattern=subscribes once']);
     assert.equal(launch.sourceFile, join(canonicalRoot, 'src', 'subscribable.ts'));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a Node test name that looks like a Vitest option stays the name filter', async () => {
+  // Arrange
+  const root = await mkdtemp(join(tmpdir(), 'codebook-node-test-name-'));
+  const source = 'export function subscribe() { return true }\n';
+  const testText = 'test("--config=evil.config.ts", () => undefined)\n';
+  await mkdir(join(root, 'src'), { recursive: true });
+  await mkdir(join(root, 'node_modules', 'vitest'), { recursive: true });
+  await writeFile(join(root, 'src', 'subscribable.ts'), source);
+  await writeFile(join(root, 'src', 'subscribable.test.ts'), testText);
+  await writeFile(join(root, 'node_modules', 'vitest', 'vitest.mjs'), 'export {}\n');
+  const configuration = nodeTestConfigSchema.parse({ version: 1, adapter: 'vitest-node',
+    book: { bookId: 'subscription', revision: 1, nodeId: 'subscribe', anchorIndex: 0 },
+    testFile: 'src/subscribable.test.ts', testName: '--config=evil.config.ts',
+    testHash: createHash('sha256').update(testText).digest('hex'),
+    source: { path: 'src/subscribable.ts', hash: createHash('sha256').update(source).digest('hex'), line: 1, column: 1 },
+    inspections: [{ path: 'listener', mode: 'value', required: true }] });
+  try {
+    // Act
+    const launch = await prepareNodeTestLaunch(root, configuration);
+    // Assert
+    // Vitest's parser does not take a separate value that begins with "-", so the name must share the option's token.
+    assert.deepEqual(launch.args.slice(-1), ['--testNamePattern=--config=evil.config.ts']);
+    assert.equal(launch.args.includes('--config=evil.config.ts'), false);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

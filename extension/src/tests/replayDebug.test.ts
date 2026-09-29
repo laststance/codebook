@@ -4,7 +4,7 @@ import type { DebugProtocol } from '@vscode/debugprotocol';
 import { ReplayDebugAdapter } from '../replayDebugAdapter';
 import { replayDebugSnapshotSchema, type ReplayDebugSnapshot } from '../replayDebugSchemas';
 import { captureReplayDebugSnapshot } from '../utils/captureReplayDebugSnapshot';
-import { shouldCaptureNodeHistoryScope } from '../utils/shouldCaptureNodeHistoryScope';
+import { shouldCaptureReplayScope } from '../utils/shouldCaptureReplayScope';
 import { sha256 } from '../runtimeSupport/utils/sha256';
 import { REPLAY_DEBUG_MAX_VARIABLES } from '../constants';
 
@@ -168,6 +168,36 @@ test('live capture serializes nested scope values without retaining DAP handles'
   assert.equal(JSON.stringify(actual).includes('variablesReference'), false);
 });
 
+test('a live browser or server stop never copies global, closure or caller-frame values into saved history', async () => {
+  // Arrange
+  const requests: string[] = [];
+  const serverStack: DebugProtocol.StackTraceResponse['body'] = { stackFrames: [stack.stackFrames[0]!, { id: 78, name: 'handleSubmit', line: 2, column: 1 }], totalFrames: 2 };
+  const references = new Map([
+    [11, [{ name: 'amount', value: '120', variablesReference: 0 }]],
+    [12, [{ name: 'sql', value: 'postgres://user:password@db', variablesReference: 0 }]],
+    [13, [{ name: 'process', value: 'process', variablesReference: 0 }]],
+    [14, [{ name: 'cookie', value: 'session=private', variablesReference: 0 }]],
+  ]);
+  // Act
+  const actual = await captureReplayDebugSnapshot({ stack: serverStack, verifiedSource: source, assertCurrent() {},
+    request(command, arguments_) {
+      requests.push(`${command}:${arguments_.frameId ?? arguments_.variablesReference}`);
+      if (command === 'scopes') return Promise.resolve({ scopes: arguments_.frameId === 77
+        ? [{ name: 'Local: createInvoice', variablesReference: 11 }, { name: 'Closure', variablesReference: 12 }, { name: 'Global', variablesReference: 13 }]
+        : [{ name: 'Local: handleSubmit', variablesReference: 14 }] });
+      return Promise.resolve({ variables: references.get(arguments_.variablesReference ?? 0) ?? [] });
+    } });
+  // Assert
+  assert.deepEqual(actual.variables.map(variable => `${variable.name}=${variable.value}`), ['amount=120']);
+  assert.deepEqual(actual.frames[0]?.scopes.map(scope => [scope.name, scope.unavailable]), [
+    ['Local: createInvoice', undefined],
+    ['Closure', 'This scope was not captured; replay keeps only the stopped frame\'s local values.'],
+    ['Global', 'This scope was not captured; replay keeps only the stopped frame\'s local values.'],
+  ]);
+  assert.equal(actual.frames[1]?.scopes[0]?.unavailable, 'This scope was not captured; replay keeps only the stopped frame\'s local values.');
+  assert.deepEqual(requests, ['scopes:77', 'variables:11', 'scopes:78']);
+});
+
 test('capture rejects a resumed pause rather than saving mixed-generation values', async () => {
   // Arrange
   let resumed = false;
@@ -227,8 +257,8 @@ test('a Node test captures local values quickly and labels skipped global histor
   assert.deepEqual(requests, ['scopes:77', 'variables:555', 'scopes:78']);
   assert.equal(actual.variables[0]?.name, 'listener');
   assert.equal(actual.variables[0]?.unavailable, 'Historical variable depth limit reached.');
-  assert.equal(actual.frames[0]?.scopes[1]?.unavailable, 'This scope was not captured for the Node test.');
-  assert.equal(actual.frames[1]?.scopes[0]?.unavailable, 'This scope was not captured for the Node test.');
+  assert.equal(actual.frames[0]?.scopes[1]?.unavailable, 'This scope was not captured; replay keeps only the stopped frame\'s local values.');
+  assert.equal(actual.frames[1]?.scopes[0]?.unavailable, 'This scope was not captured; replay keeps only the stopped frame\'s local values.');
 });
 
 test('a Node stop retains block-scoped data beside local values without copying globals or other frames', async () => {
@@ -242,7 +272,7 @@ test('a Node stop retains block-scoped data beside local values without copying 
   ]);
   // Act
   const actual = await captureReplayDebugSnapshot({ stack: nodeStack, verifiedSource: source, assertCurrent() {},
-    limits: { timeoutMs: 1_500, maxFrames: 2, maxVariables: 4, maxDepth: 1, includeScope: shouldCaptureNodeHistoryScope },
+    limits: { timeoutMs: 1_500, maxFrames: 2, maxVariables: 4, maxDepth: 1, includeScope: shouldCaptureReplayScope },
     request(command, arguments_) {
       requests.push(`${command}:${arguments_.frameId ?? arguments_.variablesReference}`);
       if (command === 'scopes') return Promise.resolve({ scopes: [
@@ -255,8 +285,8 @@ test('a Node stop retains block-scoped data beside local values without copying 
   // Assert
   assert.deepEqual(actual.frames[0]?.scopes.map(scope => scope.name), ['Block: fetchInvoiceById', 'Local: fetchInvoiceById', 'Global']);
   assert.deepEqual(actual.variables.map(variable => variable.name), ['data', 'id']);
-  assert.equal(actual.frames[0]?.scopes[2]?.unavailable, 'This scope was not captured for the Node test.');
-  assert.equal(actual.frames[1]?.scopes[0]?.unavailable, 'This scope was not captured for the Node test.');
+  assert.equal(actual.frames[0]?.scopes[2]?.unavailable, 'This scope was not captured; replay keeps only the stopped frame\'s local values.');
+  assert.equal(actual.frames[1]?.scopes[0]?.unavailable, 'This scope was not captured; replay keeps only the stopped frame\'s local values.');
   assert.deepEqual(requests, ['scopes:77', 'variables:11', 'variables:12', 'scopes:78']);
 });
 

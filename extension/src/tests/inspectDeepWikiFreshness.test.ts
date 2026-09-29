@@ -72,3 +72,28 @@ test('Wiki freshness stays unknown when its generated revision cannot prove addi
     assert.match(result.reason ?? '', /Added source files could not be checked/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('a file added under an excluded directory keeps the Wiki current', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-freshness-excluded-'));
+  const root = await realpath(directory);
+  const original = 'export const answer = 1;\n';
+  await writeFile(join(root, 'source.ts'), original);
+  await runGit('git', ['init', '-q'], { cwd: root });
+  await runGit('git', ['add', 'source.ts'], { cwd: root });
+  await runGit('git', ['-c', 'user.name=Codebook', '-c', 'user.email=codebook@example.invalid', 'commit', '-qm', 'baseline'], { cwd: root });
+  const { stdout: revisionOutput } = await runGit('git', ['rev-parse', 'HEAD'], { cwd: root });
+  const included = [{ path: 'source.ts', sha256: createHash('sha256').update(original).digest('hex') }];
+  await mkdir(join(root, 'examples', 'basic'), { recursive: true });
+  await writeFile(join(root, 'examples', 'basic', 'demo.ts'), 'export const demo = true;\n');
+  await mkdir(join(root, 'examples-extra'), { recursive: true });
+  await writeFile(join(root, 'examples-extra', 'other.ts'), 'export const other = true;\n');
+  try {
+    // Act
+    const withoutSlash = await inspectDeepWikiFreshness(root, included, revisionOutput.trim(), ['examples']);
+    const withSlash = await inspectDeepWikiFreshness(root, included, revisionOutput.trim(), ['examples/', 'examples-extra/**']);
+    // Assert
+    assert.deepEqual(withoutSlash.addedPaths, ['examples-extra/other.ts'], 'a directory entry excludes its files but not a sibling with the same prefix');
+    assert.equal(withSlash.status, 'current');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

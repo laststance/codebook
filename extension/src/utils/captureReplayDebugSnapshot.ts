@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { REPLAY_DEBUG_CAPTURE_TIMEOUT_MS, REPLAY_DEBUG_MAX_DEPTH, REPLAY_DEBUG_MAX_FRAMES, REPLAY_DEBUG_MAX_SCOPES, REPLAY_DEBUG_MAX_VARIABLES, REPLAY_DEBUG_TEXT_LIMIT_CHARS } from '../constants';
 import { replayDebugSnapshotSchema, type ReplayDebugSnapshot } from '../replayDebugSchemas';
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse';
+import { shouldCaptureReplayScope } from './shouldCaptureReplayScope';
 
 const scopeResponse = z.object({ scopes: z.array(z.object({ name: z.string(), variablesReference: z.number().int().nonnegative() })) });
 const variableResponse = z.object({ variables: z.array(z.object({ name: z.string(), value: z.string(), type: z.string().optional(), variablesReference: z.number().int().nonnegative() })) });
@@ -12,16 +13,18 @@ interface CaptureInput {
   request(command: 'scopes' | 'variables', arguments_: Record<string, number>): PromiseLike<unknown>;
   assertCurrent(): void;
   signal?: AbortSignal;
-  limits?: { timeoutMs: number; maxFrames: number; maxVariables: number; maxDepth: number; includeScope(frameIndex: number, scopeName: string): boolean };
+  limits?: { timeoutMs: number; maxFrames: number; maxVariables: number; maxDepth: number; includeScope?(frameIndex: number, scopeName: string): boolean };
 }
 
-/** Called at a verified live pause to persist bounded values, never live DAP handles; stale pauses abort the whole capture. @example await captureReplayDebugSnapshot({ stack, verifiedSource, request, assertCurrent }) */
+/** Called at a verified live pause to persist bounded values, never live DAP handles; stale pauses abort the whole capture. Only the stopped frame's local scopes are copied ({@link shouldCaptureReplayScope}). @example await captureReplayDebugSnapshot({ stack, verifiedSource, request, assertCurrent }) */
 export async function captureReplayDebugSnapshot(input: CaptureInput): Promise<ReplayDebugSnapshot> {
   const snapshot: ReplayDebugSnapshot = { version: 1, frames: [], variables: [], limitations: [] };
   const timeoutMs = Math.min(input.limits?.timeoutMs ?? REPLAY_DEBUG_CAPTURE_TIMEOUT_MS, REPLAY_DEBUG_CAPTURE_TIMEOUT_MS);
   const maxFrames = Math.min(input.limits?.maxFrames ?? REPLAY_DEBUG_MAX_FRAMES, REPLAY_DEBUG_MAX_FRAMES);
   const maxVariables = Math.min(input.limits?.maxVariables ?? REPLAY_DEBUG_MAX_VARIABLES, REPLAY_DEBUG_MAX_VARIABLES);
   const maxDepth = Math.min(input.limits?.maxDepth ?? REPLAY_DEBUG_MAX_DEPTH, REPLAY_DEBUG_MAX_DEPTH);
+  // Every stop copies only its own local values unless a caller narrows the policy further.
+  const includeScope = input.limits?.includeScope ?? shouldCaptureReplayScope;
   const deadline = performance.now() + timeoutMs;
   const shorten = (value: string) => value.length <= REPLAY_DEBUG_TEXT_LIMIT_CHARS ? value : `${value.slice(0, REPLAY_DEBUG_TEXT_LIMIT_CHARS - '… [truncated]'.length)}… [truncated]`;
   const read = async (command: 'scopes' | 'variables', arguments_: Record<string, number>) => {
@@ -64,8 +67,8 @@ export async function captureReplayDebugSnapshot(input: CaptureInput): Promise<R
       const response = scopeResponse.parse(await read('scopes', { frameId: frame.id }));
       if (response.scopes.length > REPLAY_DEBUG_MAX_SCOPES) saved.unavailable = 'Historical scope count limit reached.';
       for (const scope of response.scopes.slice(0, REPLAY_DEBUG_MAX_SCOPES)) {
-        if (input.limits && !input.limits.includeScope(index, scope.name)) {
-          saved.scopes.push({ name: shorten(scope.name), variables: [], unavailable: 'This scope was not captured for the Node test.' });
+        if (!includeScope(index, scope.name)) {
+          saved.scopes.push({ name: shorten(scope.name), variables: [], unavailable: 'This scope was not captured; replay keeps only the stopped frame\'s local values.' });
           continue;
         }
         saved.scopes.push({ name: shorten(scope.name), ...await captureVariables(scope.variablesReference, 0, new Set()) });

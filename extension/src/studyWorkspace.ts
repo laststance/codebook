@@ -3105,6 +3105,7 @@ export class StudyWorkspace {
             await this.selectNodeHistoryEvent(selectedHistory, sequence, false, false, false);
           },
           changed: () => this.publish(),
+          failed: error => this.report('control', error),
         });
         this.nodeHistoryPlaybackController.open(history.entries.map(entry => ({ sequence: entry.sequence, elapsedMs: entry.elapsedMs })), savedSequence ?? history.entries[0]?.sequence);
         if (positionError) this.report('history-position', positionError);

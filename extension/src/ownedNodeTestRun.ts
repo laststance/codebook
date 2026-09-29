@@ -13,7 +13,6 @@ import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch';
 import { inspectNodeTestVariables, type NodeTestFact } from './utils/inspectNodeTestVariables';
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot';
 import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame';
-import { shouldCaptureNodeHistoryScope } from './utils/shouldCaptureNodeHistoryScope';
 import { sha256 } from './runtimeSupport/utils/sha256';
 import { NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS, NODE_REPLAY_DEBUG_MAX_DEPTH, NODE_REPLAY_DEBUG_MAX_FRAMES, NODE_REPLAY_DEBUG_MAX_VARIABLES } from './constants';
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch';
@@ -195,8 +194,7 @@ export class OwnedNodeTestRun {
       verifiedSource: { name: selected.source.path, text: sourceBytes.toString('utf8'), hash: selected.source.hash, line: target.frame.line },
       request: (command, arguments_) => bound.session.customRequest(command, arguments_), assertCurrent, signal,
       limits: { timeoutMs: NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS, maxFrames: NODE_REPLAY_DEBUG_MAX_FRAMES,
-        maxVariables: NODE_REPLAY_DEBUG_MAX_VARIABLES, maxDepth: NODE_REPLAY_DEBUG_MAX_DEPTH,
-        includeScope: shouldCaptureNodeHistoryScope } });
+        maxVariables: NODE_REPLAY_DEBUG_MAX_VARIABLES, maxDepth: NODE_REPLAY_DEBUG_MAX_DEPTH } });
     assertCurrent();
     const stop = this.acceptedStop = { index, runId: this.id, sessionId: bound.session.id, threadId: target.stop.threadId, elapsedMs: this.owned?.elapsedMs() ?? 0,
       worker: bound.identity, source: selected.source, frame: target.frame, variables: result.variables,

@@ -126,6 +126,28 @@ test('Play follows every real-time journal boundary and pauses at the verified r
   controller.dispose();
 });
 
+test('Play that cannot present the next Node event tells the learner why it stopped', async () => {
+  // Arrange
+  const failure = new Error('Historical debugger closed by the learner');
+  const failures: unknown[] = [];
+  const controller = new NodeHistoryPlaybackController({
+    present: async () => { throw failure; },
+    changed() {},
+    failed: error => { failures.push(error); },
+  });
+  controller.open([{ sequence: 41, elapsedMs: 0 }, { sequence: 42, elapsedMs: 10 }], 41);
+
+  // Act
+  controller.play();
+  await waitUntil(() => failures.length === 1, 'autoplay reports its failed native presentation', 1_000);
+
+  // Assert
+  assert.deepEqual(failures, [failure]);
+  assert.equal(controller.state().mode, 'paused');
+  assert.equal(controller.state().sequence, 41, 'the failed event is never reported as selected');
+  controller.dispose();
+});
+
 test('Pause and seek become available after a played Node event finishes presenting', async () => {
   // Arrange
   let now = 0;
