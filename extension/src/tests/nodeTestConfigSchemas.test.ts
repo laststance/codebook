@@ -33,6 +33,18 @@ test('a Node test request cannot execute a shell command or read a test outside 
   assert.equal(nodeTestConfigSchema.safeParse({ ...base, testName: 'a\n--inspect=0.0.0.0' }).success, false);
 });
 
+test('a Node test file path cannot be passed to Vitest as a command-line option', () => {
+  // Arrange
+  const browser = createConfiguredStudy().configuration;
+  const base = { version: 1, adapter: 'vitest-node', book: browser.book, testHash: 'a'.repeat(64), source: browser.source,
+    inspections: [{ path: 'nextTheme', mode: 'value', required: true }] };
+  // Act / Assert
+  for (const testFile of ['--config=./value.test.ts', '-r/value.test.ts', '--reporter=./value.spec.js']) {
+    assert.equal(nodeTestConfigSchema.safeParse({ ...base, testFile }).success, false, testFile);
+  }
+  assert.equal(nodeTestConfigSchema.safeParse({ ...base, testFile: 'src/--config=value.test.ts' }).success, true, 'an option-like name deeper in the path is still an ordinary file filter');
+});
+
 test('a Node test stop requires a captured runtime value', () => {
   // Arrange
   const browser = createConfiguredStudy().configuration;

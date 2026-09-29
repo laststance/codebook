@@ -43,6 +43,43 @@ test('browser Wiki opening rejects a manifest from another checkout and opens a 
   } finally { await boundary.deactivate(); await rm(projectRoot, { recursive: true, force: true }); }
 });
 
+test('shutting down releases the Study workspace before the DeepWiki reader even when the reader cannot close', async () => {
+  // Arrange
+  const projectRoot = await realpath(await mkdtemp(join(tmpdir(), 'codebook-wiki-shutdown-')));
+  const outputDirectory = join(projectRoot, '.codebook', 'wiki');
+  await mkdir(outputDirectory, { recursive: true });
+  await writeFile(join(outputDirectory, 'index.html'), '<!doctype html><title>Project Wiki</title>');
+  await writeFile(join(outputDirectory, 'codebook-wiki.json'), JSON.stringify({ schemaVersion: 1, repositoryRoot: projectRoot, pages: [], assets: [], includedSources: [] }));
+  const commands = new Map<string, () => Promise<void>>();
+  const releases: string[] = [];
+  const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
+    vscode: {
+      commands: { registerCommand(name: string, action: () => Promise<void>) { commands.set(name, action); return { dispose() {} }; } },
+      workspace: { getConfiguration: () => ({ get: () => '.codebook/wiki' }), onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+      env: { openExternal: async () => true },
+      Uri: { parse: (value: string) => ({ value }), file: (fsPath: string) => ({ fsPath }) },
+      window: { showErrorMessage: async () => undefined },
+    },
+    './environment': { requireWorkspace: () => projectRoot },
+    './deepWikiReader': { readDeepWikiManifest: async () => undefined,
+      startDeepWikiReader: async () => ({ url: 'http://127.0.0.1:9/reader/index.html', close: async () => { releases.push('deepwiki-reader'); throw new Error('reader close failed'); } }) },
+    './repositoryReader': { RepositoryReader: class { async dispose() {} } },
+    './studyWorkspace': { StudyWorkspace: class { async open() {} async dispose() { releases.push('study-workspace'); } } },
+  });
+  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: projectRoot }, subscriptions: [], workspaceState: { get: () => undefined, update: async () => {} } });
+  try {
+    await commands.get('codebook.openStudyWorkspace')!();
+    await commands.get('codebook.openDeepWiki')!();
+
+    // Act
+    const stopping = boundary.deactivate();
+
+    // Assert
+    await assert.rejects(stopping, /reader close failed/);
+    assert.deepEqual(releases, ['study-workspace', 'deepwiki-reader']);
+  } finally { await rm(projectRoot, { recursive: true, force: true }); }
+});
+
 test('a Wiki question opens a source-cited editor chat draft when VS Code exposes no reader model', async () => {
   // Arrange
   const projectRoot = await realpath(await mkdtemp(join(tmpdir(), 'codebook-wiki-no-model-')));

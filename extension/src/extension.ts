@@ -234,7 +234,11 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
       },
     }));
   }
-  stopExtension = async () => { await deepWikiReader?.close(); await stop(); await repositoryReader?.dispose(); await reader?.dispose(); };
+  // Owned runtimes are released first; an in-flight or failing browser reader close cannot strand them.
+  stopExtension = async () => {
+    try { await stop(); await repositoryReader?.dispose(); await reader?.dispose(); }
+    finally { await deepWikiReader?.close(); }
+  };
   /** Checks the generated Wiki's owner before browser or update entry uses it. @example await currentDeepWiki() // => { projectRoot, outputDirectory, entry } */
   const currentDeepWiki = async () => {
     const projectRoot = await realpath(requireWorkspace());
@@ -412,7 +416,11 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       void (async () => {
         try { await context.workspaceState.update('codebook.aiChatSetup', undefined); }
-        finally { await deepWikiReader?.close(); deepWikiReader = undefined; await stop(); await repositoryReader?.dispose(); repositoryReader = undefined; await reader?.dispose(); reader = undefined; repository(); }
+        finally {
+          const closingReader = deepWikiReader; deepWikiReader = undefined;
+          try { await stop(); await repositoryReader?.dispose(); repositoryReader = undefined; await reader?.dispose(); reader = undefined; repository(); }
+          finally { await closingReader?.close(); }
+        }
       })().catch(error => vscode.window.showErrorMessage(`Codebook cleanup incomplete: ${String(error)}`));
     }));
   // Register lazy readers before restored captured documents or contributed views request their providers.

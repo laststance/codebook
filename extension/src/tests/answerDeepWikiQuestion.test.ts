@@ -81,6 +81,37 @@ test('Japanese Wiki question routes to a relevant English source before answerin
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test('a large Wiki index keeps the source-routing request within the Cursor prompt limit and still offers the best-matching source', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-route-budget-'));
+  const root = await realpath(directory);
+  const filler = `export const setting = "${'x'.repeat(380)}";\n`;
+  const sources = await Promise.all(Array.from({ length: 600 }, async (_, index) => {
+    const path = `module-${String(index).padStart(3, '0')}.ts`;
+    const content = index === 437 ? 'export function createInvoice() { return "saved"; }\n' : filler;
+    await writeFile(join(root, path), content);
+    return { path, sha256: createHash('sha256').update(content).digest('hex') };
+  }));
+  const boundary = await loadModule<typeof import('../utils/answerDeepWikiQuestion')>(resolve(__dirname, '../utils/answerDeepWikiQuestion.js'), {
+    vscode: { LanguageModelChatMessage: { User: (text: string) => ({ text }) } },
+  });
+  const prompts: string[] = [];
+  const model = { sendRequest: async (messages: { text: string }[]) => {
+    prompts.push(messages[0]!.text);
+    const result = prompts.length === 1 ? { paths: ['module-437.ts'] } : { answer: 'createInvoice returns saved.', citations: [{ id: 'S1', line: 1 }] };
+    return { text: (async function* () { yield JSON.stringify(result); })() };
+  } };
+  try {
+    // Act
+    const answer = await boundary.answerDeepWikiQuestion(model as never, root, sources, 'Where is createInvoice saved?', 'cursor');
+
+    // Assert
+    assert.ok(Buffer.byteLength(prompts[0]!, 'utf8') <= 131_072, `route request was ${Buffer.byteLength(prompts[0]!, 'utf8')} bytes`);
+    assert.match(prompts[0]!, /"path":"module-437\.ts","opening":"export function createInvoice/);
+    assert.equal(answer.citations[0]?.path, 'module-437.ts');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test('Wiki question still cites verified source when optional model routing is malformed', async () => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-route-fallback-'));

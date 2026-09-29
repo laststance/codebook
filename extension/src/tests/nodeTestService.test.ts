@@ -45,6 +45,7 @@ test('public Node test start exposes cited ordered pauses, actual result, and th
     // Act: the public service prepares citations before acquiring the owned Node test runtime.
     const profile = (await service.status()).profiles.find(candidate => candidate.id === NODE_TEST_PROFILE);
     assert.ok(profile && 'configurationVersions' in profile); assert.equal(profile.helpUri, 'codebook://help/node-test');
+    assert.equal(profile.minimumExtensionVersion, '0.2.12', 'the Node test profile names the first extension release that ships it');
     await record.preparation;
     assert.deepEqual(service.start(input), receipt, 'the same key recovers the first run without launching another test');
     const first = service.state(record);

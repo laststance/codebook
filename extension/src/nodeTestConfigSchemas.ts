@@ -3,7 +3,9 @@ import { BOOK_TITLE_LIMIT_CHARS, CONFIGURED_OBSERVATION_LIMIT, REPOSITORY_CONFIG
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas';
 import { repositoryBookSelectionSchema, repositoryInspectionSchema, repositorySourceStopSchema } from './repositoryConfigSchemas';
 
-const testFileSchema = repositoryPathSchema.refine(path => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path), 'Select a repository test or spec file.');
+const testFileSchema = repositoryPathSchema.refine(path => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path), 'Select a repository test or spec file.')
+  // Vitest receives this path as a bare argument; a leading dash would be parsed as an option such as --config.
+  .refine(path => !path.startsWith('-'), 'A test file path cannot begin with "-".');
 const nodeTestStopSchema = repositorySourceStopSchema.extend({
   anchorIndex: repositoryBookSelectionSchema.shape.anchorIndex,
   inspections: z.array(repositoryInspectionSchema).min(1).max(REPOSITORY_INSPECTION_LIMIT),

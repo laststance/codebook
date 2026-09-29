@@ -1,6 +1,7 @@
 export const API_VERSION = '1.5';
 export const EXTENSION_VERSION = '0.2.11';
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0';
+export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12';
 export const LOOPBACK_ADDRESS = '127.0.0.1';
 export const DYNAMIC_PORT = 0;
 export const TOKEN_BYTES = 32;
@@ -150,6 +151,7 @@ export const REPOSITORY_SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js
 export const WIKI_QUESTION_LIMIT_CHARS = 2_000;
 export const WIKI_SOURCE_LIMIT_BYTES = 131_072;
 export const WIKI_SOURCE_MATCH_LIMIT = 6;
+export const WIKI_ROUTE_CANDIDATE_LIMIT_BYTES = 98_304;
 export const WIKI_CONTEXT_LINE_LIMIT = 80;
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000;
 export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 120_000;
