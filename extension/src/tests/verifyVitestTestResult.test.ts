@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -93,5 +93,40 @@ test('a missing, malformed or oversized Vitest report fails the run instead of a
     await assert.rejects(verifyVitestTestResult(oversized.file, citedFile, citedTitles, 512), /larger than 512 bytes/);
   } finally {
     for (const report of [malformed, wrongShape, oversized]) await rm(report.directory, { recursive: true, force: true });
+  }
+});
+
+test('a report naming a contained symlink confirms only the exact cited test file behind that alias', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-vitest-report-alias-'));
+  const source = join(directory, 'source.test.ts');
+  const other = join(directory, 'other.test.ts');
+  const alias = join(directory, 'alias.test.ts');
+  await writeFile(source, 'test source');
+  await writeFile(other, 'another test source');
+  await symlink(source, alias);
+  const report = await writeReport({ testResults: [{ name: alias, assertionResults: [
+    { ancestorTitles: ['invoice data queries'], title: 'converts stored invoice cents to dollars for the edit form', status: 'passed' },
+  ] }] });
+  const duplicate = await writeReport({ testResults: [
+    { name: alias, assertionResults: [{ ancestorTitles: ['invoice data queries'], title: 'converts stored invoice cents to dollars for the edit form', status: 'passed' }] },
+    { name: await realpath(source), assertionResults: [{ ancestorTitles: ['invoice data queries'], title: 'converts stored invoice cents to dollars for the edit form', status: 'passed' }] },
+  ] });
+  try {
+    // Act
+    const status = await verifyVitestTestResult(report.file, await realpath(source), citedTitles);
+
+    // Assert
+    assert.equal(status, 'passed');
+    await assert.rejects(verifyVitestTestResult(duplicate.file, await realpath(source), citedTitles), /Vitest ran 2 tests/);
+    await rm(alias);
+    await symlink(other, alias);
+    await assert.rejects(verifyVitestTestResult(report.file, await realpath(source), citedTitles), /another test file/);
+    await rm(alias);
+    await assert.rejects(verifyVitestTestResult(report.file, await realpath(source), citedTitles), /another test file/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(report.directory, { recursive: true, force: true });
+    await rm(duplicate.directory, { recursive: true, force: true });
   }
 });

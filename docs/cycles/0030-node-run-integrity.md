@@ -1,9 +1,9 @@
 # Cycle 0030 — Trustworthy Node test runs
 
 Type: product-increment (hardening)\
-Status: validating (increments 1–4 mechanism and bounded VS Code native proof complete; local reviews complete; frozen checks/CI/merge pending)\
-Result: demonstrated (bounded mechanism / VS Code development)\
-Delivery: PR-open (final current-HEAD gates pending)\
+Status: validating (late Codex review remediation; earlier mechanism/native proof preserved; follow-up delivery pending)\
+Result: pending (late-review remediation; earlier bounded observations preserved)\
+Delivery: original PR #51 merged prematurely; follow-up PR/checks pending\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/50\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -445,9 +445,9 @@ Cycle 0029 delivered through PR #48 (`ad476d3`); Issue #46 is closed with its re
 
 ## Next action
 
-- **Exact next action:** finish the frozen 0.2.13 suites/package, update PR #51, audit required current-HEAD CI/review threads and merge under D039; then plan one replay transport/focus increment. Bounded installed VS Code Node and configured server/browser refresh regressions passed; keep their separate receipts and final acceptance gaps.
-- **Branch / processes:** `codex/cycle-0030-node-run-integrity`, increments 1–4 committed through `fb7f472`, cancellation repair committed as `61c10b0`; delivery records and 0.2.13 release metadata are pending the final commit. Suite and owned native runtime processes ended; local CodeRabbit reviews are complete. The owned isolated QA window was closed; the preserved original window retains the installed `a4cf0ed2…` candidate. The original learner window is preserved. Dashboard DB is restored to its initially stopped state. Isolated mechanism probes remain `/private/tmp/codebook-vitest-filter` and `/private/tmp/codebook-vitest-v4`.
-- **State:** PROJECT_STATE names this cycle as active.
+- **Exact next action:** freeze the 0.2.14 corrective candidate, run full/package suites sequentially, complete fresh OCR/local CodeRabbit/native and documentation audits, then open a Draft follow-up PR and explicitly request Codex review on its exact pushed SHA. Wait for terminal latest-HEAD cloud review and inspect required CI, bodies and threads. Hand the driving agent a concrete gate snapshot for its separate merge call; this worker must not merge or close #50. See the corrective follow-up below. Cycle 0031 starts only after remediation lands and Cycle 0030 closes.
+- **Branch / processes:** `codex/cycle-0030-review-followup` from merged `d2b96fb`; the two fixes and focused tests are committed as `dc8bd92`, with 0.2.14 release metadata and current delivery records awaiting the frozen commit. The original branch and evidence remain preserved. No owned runtime or suite process is active at this checkpoint. The owned isolated QA window was closed; the preserved original window retains the installed 0.2.12 `a4cf0ed2…` candidate. Dashboard DB is restored to its initially stopped state. No final 0.2.14 installed/native verification is claimed.
+- **State:** PROJECT_STATE names this cycle as active; all thirteen acceptance rows, Cycle #50 and Goal #1 stay open.
 
 ## GSTACK REVIEW REPORT
 
@@ -463,3 +463,18 @@ Cycle 0029 delivered through PR #48 (`ad476d3`); Issue #46 is closed with its re
 - **VERDICT:** Eng review has mapped work, not open decisions; implementation may start. eng review required (issues_open status until the mapped work lands).
 
 NO UNRESOLVED DECISIONS
+
+## Late Codex review and corrective follow-up, 2026-09-30
+
+PR #51 source `0fd7da98489a5895792a4418be4d0532f6dcee21` passed frozen full 1,362/1,362, sequential package 175/175, compaction 4/4, current-SHA local CodeRabbit 37 files/zero findings and native adversarial review. Its package/Socket checks were all successful and body/title/SHA matched. At the final gate, Codex cloud had just submitted two unresolved current-SHA P2 threads. The assertion detected them, but the shell continued to the separately sequenced merge. That was a delivery-control error, not approval of the findings. PR #51 merged as `d2b96fbbef8e65de687101981ecec957a517fc7d` at 22:49:44 UTC; post-merge main CI run 36641841569 passed separately. Keep the failed gate snapshot and thread bodies in `artifacts/cycle-0030/reviews/pr-51-before-merge-reviews.json` and `pr-51-late-threads.json`. Cycle #50 and Goal #1 remain open; next-cycle work stays preparation-only. No blind rollback.
+
+- [P2 failed assertion despite zero exit](https://github.com/laststance/codebook/pull/51#discussion_r4139087641), `PRRT_kwDOUfzkCc6nUiR0`: {@link OwnedNodeTestRun.complete} discarded the report's failed status, so a plugin resetting exit 0 could cause falsely complete history. Expected: truthful failure before success-shaped result emission; preserve ordinary failed exit 1 as actual partial history, never fabricate an exit code.
+- [P2 canonical alias](https://github.com/laststance/codebook/pull/51#discussion_r4139087649), `PRRT_kwDOUfzkCc6nUiR2`: preflight accepted an internal alias by realpath, but report verification compared literal paths. Expected: accept only the exact canonical cited file behind a valid alias; still refuse missing/foreign aliases and duplicate execution.
+
+The parent completed compaction re-entry before further delivery: full current PRODUCT_GOAL/three contracts/IMPLEMENTATION/PROJECT_STATE/this cycle/DESIGN, DEVELOPMENT, D025–D039, behavioral design and TS rules. The actual approved PNG was viewed: live app/source/native debugger/chat with capture/save; replay summary/sequence plus gap timeline; independent DeepWiki update/output/Q&A; shortcut tooltips/help. Parent Serena is ready. Its source audit maps AC-LIVE/AC-SAVE to the two defects, AC-REPLAY/AC-SKILL as dependencies, and carries nine unaffected rows forward on unchanged unrelated paths; all thirteen remain open. These reads do not claim new native or final acceptance.
+
+Fresh branch `codex/cycle-0030-review-followup` starts at `origin/main` `d2b96fb`, preserving the original delivery branch and ignored evidence. Before production edits, focused tests reproduced 27 PASS / 2 predicted FAIL: exit-0/failed-report success was accepted, and a real contained symlink was falsely rejected. `dc8bd92` adds the status contradiction guard and canonical alias check. Ordinary failed exit 1 keeps its observed code/output/result event. Alias controls cover a real contained target, a different real target, a removed alias and duplicate executions. Green 29/29 PASS. Each guard disabled independently failed its regression; byte-exact compiled restoration returned green. Private `late-review-*` logs preserve the sequence. No target application, dependency, owner app, setting or billing change.
+
+Patch 0.2.14.0/manifest/runtime 0.2.14 and package assertion/build-example synchronization are release metadata; first-supported Node 0.2.12 and API 1.5 remain. Original `fb7f472`/.2.12 native passed canonical reports have unchanged semantics; configured runtime source is unchanged. Carry only those bounded original observations with their identities. No native injected failure/alias or final 0.2.14 installed proof is claimed.
+
+**Next gate:** frozen full/package sequentially; fresh OCR/local CodeRabbit/native adversarial; Draft PR plus explicit `@codex review`; wait for terminal latest-HEAD cloud review/body and audit every latest thread. Every dependent mutation must check its own tool exit and gate snapshot; no shell continuation after assertions or unattended auto-merge. The worker must not merge or close #50. The driving agent independently checks the concrete exact-HEAD handoff and performs any authorized final merge separately. Only then close this cycle and plan Cycle 0031.
