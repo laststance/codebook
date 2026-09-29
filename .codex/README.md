@@ -2,6 +2,8 @@
 
 `hooks.json` registers only `SessionStart` with source `compact`. The command resolves the repository root from Git, reads the current checkout's `AGENTS.md`, and returns it as additional context with instructions to repeat the Mandatory entry and inspect the approved design. It preserves owner scope and explicit pauses. No editing gate, Stop continuation, or previous harness validator is restored.
 
+Claude Code uses the same command: the shared project `.claude/settings.json` registers it for `SessionStart` with the `compact` matcher and a 5-second timeout. `.gitignore` shares only that file; other local Claude state stays private. The Codex observation below does not verify Claude Code delivery.
+
 ## Activation
 
 Files alone do not establish activation. Use a Codex version with hooks enabled, trust this project, and review/trust this command hook in `/hooks`. The owner machine already has `features.hooks = true`; this repository does not change global settings. Each collaborator must inspect their own activation state. Open `/hooks` to disable only this hook when needed. Node and Git must be available on PATH; the command requires a POSIX shell.
