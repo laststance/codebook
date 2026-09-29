@@ -1928,7 +1928,7 @@ export class StudyWorkspace {
     return { index, context, contextHash, contextReason, preferredPositionMs };
   }
 
-  /** Replaces a historical debugger the learner stopped; only explicit replay/history opens call this, so playback never relaunches it silently. @example await this.replaceUnavailableReplayDebugger() */
+  /** Replaces a historical debugger the learner stopped; only explicit replay/history opens and explicit Node stop selections call this, so playback never relaunches it silently. @example await this.replaceUnavailableReplayDebugger() */
   private async replaceUnavailableReplayDebugger(): Promise<void> {
     const current = this.replayDebugger;
     if (!current || current.available) return;
@@ -3228,6 +3228,12 @@ export class StudyWorkspace {
         const verifiedSource = source;
         const sourceUri = vscode.Uri.from({ scheme: STUDY_SOURCE_SCHEME, authority: this.library!.workspaceKey,
           path: `/node-history/${history.header.studyId}/${entry.sequence}/${verifiedSource.hash}/Captured-${basename(entry.source.path)}` });
+        if (this.replayDebugger && !this.replayDebugger.available) {
+          // Only an explicit learner selection restarts a debugger the learner stopped; seek and Play report why they stopped.
+          if (!publish) throw new Error('The historical Node debugger was stopped. Select this stop or use Inspect in native debugger to restart it.');
+          await this.replaceUnavailableReplayDebugger();
+          if (request !== this.selectedNodeHistoryRequest) return;
+        }
         this.replayDebugger ??= new ReplayDebugger(vscode);
         await this.replayDebugger.present(entry.debuggerSnapshot, `Recorded Node test stop ${entry.index + 1} · ${entry.source.path}:${entry.frame.line}`, new AbortController().signal,
           { uri: sourceUri.toString(), hash: verifiedSource.hash });

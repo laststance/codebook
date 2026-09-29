@@ -65,7 +65,7 @@ export function createProtocol(service: StudyService): McpServer {
   server.registerResource('studies', 'codebook://help/studies', { description: 'Discovery-led repository study sequence, evidence distinctions and recovery.', mimeType: 'application/json' }, read);
   server.registerResource('repository-browser-help', 'codebook://help/repository-browser', { description: 'Configured application adapter, versioned configuration schema, evidence sequence, limits and recovery.', mimeType: 'application/json' }, read);
   server.registerResource('node-test-help', 'codebook://help/node-test', { description: 'Cited Node/Vitest execution, ordered source stops, bounded output and explicit recording limitation.', mimeType: 'application/json' }, read);
-  server.registerResource('node-history-catalog', 'codebook://node-history', { description: 'Saved Node test history identities and learning-material resources for this workspace.', mimeType: 'application/json' }, read);
+  server.registerResource('node-history-catalog', 'codebook://node-history', { description: 'Saved Node test history identities with their history, events and learning-material resources for this workspace.', mimeType: 'application/json' }, read);
   server.registerResource('repository-help', 'codebook://help/repository', { description: 'Source-only repository authoring, limits, migration and recoverable publication.', mimeType: 'application/json' }, read);
   const templates = [
     ['presentation', 'codebook://{instance}/presentation', 'Current reader identity/control revision, applied/requested mode, layout confirmation and independent preference receipt. Reading never opens a view or performs runtime input.'],

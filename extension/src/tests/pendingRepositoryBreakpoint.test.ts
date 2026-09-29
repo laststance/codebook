@@ -27,7 +27,7 @@ async function breakpointHarness() {
     seq: sequence + 100, type: 'response', command: 'setBreakpoints', request_seq: sequence, success: true,
     body: { breakpoints: [{ id: 7, verified: true, line: 2, column: 1 }, selected] },
   });
-  return { breakpoint, session, request, response, signal: new AbortController().signal };
+  return { breakpoint, session, request, response, signal: new AbortController().signal, editorBreakpoints: breakpoints };
 }
 
 test('an acknowledged lazy server breakpoint remains pending rather than claiming a loaded binding', async () => {
@@ -159,4 +159,30 @@ test('a malformed same-source replacement cannot retain an earlier valid acknowl
   breakpoint.onRequest(session, malformed); breakpoint.onResponse(session, response(1));
   // Assert
   await assert.rejects(breakpoint.registered(session, signal), /Malformed breakpoint registration replacement/);
+});
+
+test('an owned breakpoint the learner already removed retires without waiting for another adapter reply', async () => {
+  // Arrange: the stop was acknowledged, then the learner clicked the owned gutter breakpoint away during the pause.
+  const { breakpoint, session, request, response, signal, editorBreakpoints } = await breakpointHarness();
+  breakpoint.onRequest(session, request()); breakpoint.onResponse(session, response());
+  await breakpoint.registered(session, signal);
+  editorBreakpoints.splice(editorBreakpoints.indexOf(breakpoint.breakpoint), 1);
+  breakpoint.onRequest(session, request(2, [{ line: 2, column: 1 }]));
+  // Act: finishing the stop must not wait for a setBreakpoints request the editor will never send.
+  await breakpoint.retire(session, AbortSignal.timeout(1_000));
+  // Assert
+  assert.equal(breakpoint.retired, true);
+});
+
+test('a learner-removed owned breakpoint still counts as retired only after the adapter releases it', async () => {
+  // Arrange: the editor removed the breakpoint, but the adapter still reports it bound.
+  const { breakpoint, session, request, response, signal, editorBreakpoints } = await breakpointHarness();
+  breakpoint.onRequest(session, request()); breakpoint.onResponse(session, response());
+  await breakpoint.registered(session, signal);
+  editorBreakpoints.splice(editorBreakpoints.indexOf(breakpoint.breakpoint), 1);
+  breakpoint.onRequest(session, request(2, [{ line: 2, column: 1 }]));
+  const stillBound: DebugSession = { ...session, getDebugProtocolBreakpoint: async () => ({ id: 8, verified: true }) };
+  // Act / Assert
+  await assert.rejects(breakpoint.retire(stillBound, AbortSignal.timeout(300)));
+  assert.equal(breakpoint.retired, false);
 });

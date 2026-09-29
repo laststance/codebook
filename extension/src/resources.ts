@@ -24,10 +24,13 @@ export type ResourceContent = { uri: string; mimeType: string; text: string } | 
 export async function readResource(service: StudyService, uri: string): Promise<ResourceContent> {
   const json = (value: unknown): ResourceContent => ({ uri, mimeType: 'application/json', text: JSON.stringify(value) });
   if (uri === 'codebook://help/errors') return json(ERROR_RECOVERY);
-  if (uri === 'codebook://node-history') {
+  // The catalog pages like every other JSON resource, so its returned page URIs must route back here.
+  const nodeHistoryCatalogMatch = /^codebook:\/\/node-history(?:\/(pages\/[a-f0-9]{64}\/\d+))?$/.exec(uri);
+  if (nodeHistoryCatalogMatch) {
     if (!service.nodeHistoryStore) throw new StudyError('NOT_FOUND', 'Node history storage is unavailable for this workspace.');
     const histories = await service.nodeHistoryStore.list();
-    return readJsonPage(uri, histories.map(history => ({ ...history, learningMaterialUri: `codebook://node-history/${history.studyId}/learning-material` })));
+    return readJsonPage('codebook://node-history', histories.map(history => ({ ...history, historyUri: `codebook://node-history/${history.studyId}`,
+      eventsUri: `codebook://node-history/${history.studyId}/events`, learningMaterialUri: `codebook://node-history/${history.studyId}/learning-material` })), nodeHistoryCatalogMatch[1]);
   }
   const nodeHistoryMatch = /^codebook:\/\/node-history\/([0-9a-f-]{36}_[0-9a-f-]{36})(?:\/(events(?:\/pages\/[a-f0-9]{64}\/\d+)?|learning-material(?:\/pages\/[a-f0-9]{64}\/\d+)?|pages\/[a-f0-9]{64}\/\d+))?$/.exec(uri);
   if (nodeHistoryMatch?.[1]) {

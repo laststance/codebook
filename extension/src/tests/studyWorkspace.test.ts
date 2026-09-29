@@ -1250,6 +1250,75 @@ test('reopening a Node history after the learner stops its historical debugger r
   } finally { await harness.close(); }
 });
 
+/** Saves one sealed Node history with output, one verified stop and a passing result for historical debugger recovery tests. @example const history = await saveOneStopNodeHistory(store) */
+async function saveOneStopNodeHistory(store: NodeTestHistoryStore) {
+  const history = nodeTestHistoryHeader(store.workspaceKey), sourceText = 'const nextTheme = "dark";\n';
+  const writer = await store.start(history);
+  await writer.appendOutput({ sequence: 1, elapsedMs: 100, channel: 'stdout', text: 'RUN src/theme.test.ts\n' });
+  await writer.appendStop({ index: 0, runId: 'test-run', sessionId: 'test-session', threadId: 1, elapsedMs: 200,
+    worker: { pid: 1, processGroup: 1, workspace: '/private/test' }, source: history.configuration.source,
+    frame: { id: 1, name: 'notifyManager', line: 1, column: 1 }, variables: [{ name: 'nextTheme', value: 'dark', variablesReference: 0 }],
+    facts: [{ path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' }],
+    debuggerSnapshot: { version: 1, frames: [{ name: 'notifyManager', line: 1, column: 1,
+      source: { name: history.configuration.source.path, text: sourceText, hash: sha256(sourceText), line: 1 }, scopes: [{ name: 'Local', variables: [0] }] }],
+      variables: [{ name: 'nextTheme', value: 'dark', type: 'string', children: [] }], limitations: [] } } satisfies NodeTestSourceStop);
+  await writer.appendResult({ exitCode: 0, signal: null, output: 'Tests 1 passed' }, 300);
+  await writer.finish('complete');
+  return history;
+}
+
+test('selecting a Node stop after the learner stops its historical debugger restarts it instead of freezing the reader', async () => {
+  // Arrange: the stop was presented, then the learner ended "Codebook · Recorded learning" and stepped back to output.
+  const harness = await workspaceHarness();
+  try {
+    const history = await saveOneStopNodeHistory(harness.service.nodeHistoryStore!);
+    await harness.reader.open();
+    harness.receiveContext({ type: 'node-history', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded', 1_000);
+    harness.receiveContext({ type: 'node-history-stop', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId, sequence: 2 });
+    await waitUntil(() => harness.historicalDebugPresentations.length === 1, 'the recorded stop reaches the native debugger', 1_000);
+    harness.historicalDebuggers[0]!.available = false;
+    harness.receiveContext({ type: 'node-history-step', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId, direction: 'previous' });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 1, 'the learner steps back to the output event', 1_000);
+
+    // Act: the learner selects the stop again from the event list.
+    harness.receiveContext({ type: 'node-history-event', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId, sequence: 2 });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 2, 'the explicit selection reaches the stop', 1_000);
+
+    // Assert
+    assert.equal(harness.historicalDebuggers.length, 2, 'a fresh historical debugger replaces the one the learner stopped');
+    assert.equal(harness.historicalDebugPresentations[1]?.snapshot?.variables[0]?.name, 'nextTheme');
+    assert.equal(harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.debuggerAvailable, true);
+  } finally { await harness.close(); }
+});
+
+test('seeking a Node history onto a stop after the learner stops its historical debugger explains how to restart it', async () => {
+  // Arrange: the learner ended "Codebook · Recorded learning" while the output event was selected.
+  const harness = await workspaceHarness();
+  try {
+    const history = await saveOneStopNodeHistory(harness.service.nodeHistoryStore!);
+    await harness.reader.open();
+    harness.receiveContext({ type: 'node-history', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded', 1_000);
+    harness.receiveContext({ type: 'node-history-stop', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId, sequence: 2 });
+    await waitUntil(() => harness.historicalDebugPresentations.length === 1, 'the recorded stop reaches the native debugger', 1_000);
+    harness.receiveContext({ type: 'node-history-step', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId, direction: 'previous' });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 1, 'the learner steps back to the output event', 1_000);
+    harness.historicalDebuggers[0]!.available = false;
+
+    // Act: the time slider seeks onto the stop.
+    harness.receiveContext({ type: 'node-history-playback', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId, action: 'seek', positionMs: 200 });
+    await waitUntil(() => Boolean(harness.reader.inspect().view?.errors.some(error => /historical Node debugger was stopped/.test(error))),
+      'the seek reports why the stop was not presented', 1_000);
+
+    // Assert
+    assert.equal(harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence, 1, 'a stop the debugger cannot show is never reported as selected');
+    assert.equal(harness.historicalDebuggers.length, 1, 'a seek never relaunches the debugger the learner stopped');
+  } finally { await harness.close(); }
+});
+
 test('sealed repository source remains restorable before the first debugger observation', async () => {
   // Arrange
   const harness = await workspaceHarness(false);

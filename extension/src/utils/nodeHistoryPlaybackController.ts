@@ -64,8 +64,9 @@ export class NodeHistoryPlaybackController {
     this.anchorWallMs = this.clock();
     if (!this.dependencies.manualTicks) {
       this.timer = setInterval(() => {
-        // tick() has already paused on a failed presentation; the learner still needs the reason.
-        void this.tick().catch(error => { this.pause(); this.dependencies.failed?.(error); });
+        const generation = this.generation;
+        // tick() has already paused on a failed presentation; the learner needs the reason unless a newer selection superseded this step.
+        void this.tick().catch(error => { if (generation === this.generation) this.dependencies.failed?.(error); });
       }, PLAYBACK_TICK_INTERVAL_MS);
       this.timer.unref();
     }

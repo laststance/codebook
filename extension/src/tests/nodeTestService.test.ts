@@ -96,6 +96,37 @@ test('public Node test start exposes cited ordered pauses, actual result, and th
   } finally { await harness.close(); }
 });
 
+test('the saved Node history catalog stays readable after it spans several resource pages', async () => {
+  // Arrange
+  const harness = await createHarness(), { service } = harness;
+  const workspaceKey = '0'.repeat(64);
+  const store = new NodeTestHistoryStore(join(harness.directory, '.learning'), workspaceKey);
+  const studyIds: string[] = [];
+  for (let index = 0; index < 6; index++) {
+    const header = nodeTestHistoryHeader(workspaceKey);
+    const writer = await store.start(header);
+    await writer.finish('partial', `Interrupted run ${index}: ${'x'.repeat(900)}`);
+    studyIds.push(header.studyId);
+  }
+  service.nodeHistoryStore = store;
+  try {
+    // Act: follow every returned page URI, as the catalog tells agents to.
+    const pages: Array<{ content: string; nextUri?: string }> = [];
+    let uri: string | undefined = 'codebook://node-history';
+    while (uri) {
+      const resource = await readResource(service, uri);
+      if (!('text' in resource)) throw new Error('The Node history catalog did not return JSON.');
+      const page = JSON.parse(resource.text) as { content: string; nextUri?: string };
+      pages.push(page); uri = page.nextUri;
+    }
+    const catalog = JSON.parse(pages.map(page => page.content).join('')) as Array<{ studyId: string; historyUri: string }>;
+    // Assert
+    assert.equal(pages.length, 3, 'six long partial reasons span three catalog pages');
+    assert.deepEqual(catalog.map(entry => entry.studyId).sort(), [...studyIds].sort());
+    assert.deepEqual(catalog.map(entry => entry.historyUri).sort(), studyIds.map(studyId => `codebook://node-history/${studyId}`).sort());
+  } finally { await harness.close(); }
+});
+
 test('public Node start rejects cited source drift before creating a process owner', async () => {
   // Arrange
   const harness = await createHarness(), { service } = harness;

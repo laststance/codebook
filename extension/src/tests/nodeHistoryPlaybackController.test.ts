@@ -148,6 +148,31 @@ test('Play that cannot present the next Node event tells the learner why it stop
   controller.dispose();
 });
 
+test('selecting another Node event while Play is presenting a stop reports no playback failure', async () => {
+  // Arrange: the played stop is still starting its native debugger when the learner selects another event.
+  const failures: unknown[] = [];
+  let rejectPresentation!: (error: Error) => void;
+  const controller = new NodeHistoryPlaybackController({
+    present: sequence => sequence === 52 ? new Promise<void>((_resolve, reject) => { rejectPresentation = reject; }) : Promise.resolve(),
+    changed() {},
+    failed: error => { failures.push(error); },
+  });
+  controller.open([{ sequence: 51, elapsedMs: 0 }, { sequence: 52, elapsedMs: 10 }, { sequence: 53, elapsedMs: 20 }], 51);
+  controller.play();
+  await waitUntil(() => controller.state().loading, 'Play starts presenting the next stop', 1_000);
+
+  // Act: the learner's selection supersedes the played step, whose presentation then rejects.
+  controller.select(53);
+  rejectPresentation(new Error('Historical debugger presentation was superseded.'));
+  await waitUntil(() => !controller.state().loading, 'the superseded presentation settles', 1_000);
+  await new Promise(resolve => setImmediate(resolve));
+
+  // Assert
+  assert.deepEqual(failures, []);
+  assert.equal(controller.state().sequence, 53);
+  controller.dispose();
+});
+
 test('Pause and seek become available after a played Node event finishes presenting', async () => {
   // Arrange
   let now = 0;

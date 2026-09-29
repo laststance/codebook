@@ -111,6 +111,13 @@ export class OwnedRepositoryBreakpoint {
   async retire(session: vscode.DebugSession, signal: AbortSignal): Promise<void> {
     if (this.retired) return;
     if (this.retirement) throw new Error('Breakpoint retirement already pending');
+    // The learner already removed it and the editor's latest replacement for this session excluded it; no further request will confirm removal.
+    if (!vscode.debug.breakpoints.some(breakpoint => breakpoint.id === this.breakpoint.id) && this.registrations.get(session.id)?.index === -1) {
+      await waitUntil(async () => await awaitResponse(session.getDebugProtocolBreakpoint(this.breakpoint), 'owned breakpoint retirement', signal) === undefined,
+        'adapter release of the learner-removed owned breakpoint', ACTIVE_TIMEOUT_MS, signal);
+      signal.throwIfAborted(); this.registrations.clear(); this.retired = true;
+      return;
+    }
     const retirement = this.retirement = { sessionId: session.id, confirmed: false };
     this.remove();
     await waitUntil(async () => {
