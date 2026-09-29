@@ -1,0 +1,19 @@
+{
+  "description": "Restore Codebook product-goal reading instructions after context compaction.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "^compact$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/restore-product-context.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Restoring Codebook product context",
+            "additionalContextLimit": 4000
+          }
+        ]
+      }
+    ]
+  }
+}
