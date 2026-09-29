@@ -651,6 +651,70 @@ Gap audit: no product source changed since the 21:00 record, so all thirteen row
 
 **Closure decision (D039):** Cycle 0029 closes at this cut. Its delivered increments — cart-demo removal, version 9 contracts and records, the native historical debugger, the DeepWiki shared reader/renderer/guarded publisher/settings link, shared skill 1.0.41, replay paint-ACK diagnostics and the stale native Variables fix — each have mechanism proof and bounded native evidence, and the uncommitted tree is now large enough that further increments raise review and integration risk. Closing is not acceptance: all thirteen rows stay below integrated/final acceptance. The remaining replay transport gaps (first command dropped while the Recorded application tab is hidden, first click after refocus consumed, blank native readiness interval) and the same-candidate Cursor trial move to Cycle 0030 planning. Delivery: four logical commits (historical consolidation, product source, records, project hooks), merge PR head `e768e4b7` keeping the newer hook revisions, `open-code-review-delegate` plus local CodeRabbit CLI, `/ship` to update PR #48, required CI, merge, then Cycle 0030 planning.
 
+### Closure source review and fixes, 21:10–22:05 JST
+
+Reviews ran against `origin/main` merge base `5c9fd0dd830f1e15d9b8135743c99894a77aa061` → `b77361c`. After compaction, the mandatory entry was repeated from disk: PRODUCT_GOAL, the three feature contracts, IMPLEMENTATION, PROJECT_STATE, this cycle and DESIGN were reread in full, and the approved PNG was viewed again. The four regions and the D036 header ruling were unchanged.
+
+**open-code-review-delegate coverage.** `ocr delegate preview` listed 2,011 changed files.
+- **Reviewable, 220 total, 220 accounted for:** 108 added, 93 modified, 19 renamed.
+  - Four read-only reviewer subagents covered 163 code files, grouped by OCR rule: A replay/runtime 33, B Wiki/skills/scripts/CI 35, C Node-test history 15, D service/recording 80. Each listed every file as reviewed; none was skipped.
+  - The driver reviewed the remaining 57 directly: `.gitignore`, which shares only the hook registrations, and 56 `docs/cycles/evidence/0029/*.json` manifests. All parse and are under 1 MB. They contain no credential, token or token-bearing loopback pattern; the one `password` match is prose about an unobserved comparison. `ordered-stops.json` is not linked from any current document.
+- **Excluded by OCR defaults:** tests and experiment/lock files, unsupported Markdown, deleted paths and binaries. Deletions are the intended consolidation audited above.
+
+**Local CodeRabbit CLI 0.8.1.** A whole-branch run is refused at 2,011 files against its 300-file limit. `--dir extension` reviewed the 263 extension files and completed with 9 findings (`/tmp/codebook-coderabbit-cycle0029-extension.json`). Its two majors independently match OCR findings. Hosted CodeRabbit stays skipped through `@coderabbitai ignore`.
+
+**Fixed with red-then-green regressions:**
+- **Node history switching** (OCR A-F1, CodeRabbit major). Opening a second history reused the disposed controller. Its present callback still named the first study, so every seek or Play on the second history failed with "The selected Node history changed during playback".
+  - Fix: `StudyWorkspace` builds a controller per opened history.
+  - Regression: time seeking in a second opened history presents its own stop (red log `/tmp/codebook-review-node-history-red.log`).
+- **Learner-stopped historical debugger** (OCR A-F2). After the learner stopped `Codebook · Recorded learning`, `ReplayDebugger` stayed detached. Every seek threw before rendering video, and reopening the replay reused the same owner.
+  - Fixes: `ReplayDebugger.available` reports this state. An editor relaunch of a stopped owner is refused instead of adopted empty. A refused startup no longer poisons later presentations. `StudyWorkspace` replaces an unavailable owner only on explicit replay/history opens, so playback still never relaunches silently.
+  - Regressions: three owner tests plus a workspace test in which reopening a Node history presents its stop through a fresh debugger (`/tmp/codebook-review-replay-debugger-red.log`).
+- **Final Node stop** (OCR C-F1, CodeRabbit major). `OwnedNodeTestRun.complete` continued without retiring the owned breakpoint. A declared line that runs again, in a loop or a shared helper, re-paused the finishing test with nobody to resume it. The run then timed out and was sealed partial.
+  - Fix: `complete` retires the owned breakpoint under the same deadline before continuing.
+  - Regression: a new module-injected `ownedNodeTestRun.test.ts` asserts retire → continue → result (`/tmp/codebook-review-node-complete-red.log`).
+- **Documentation and test cleanup:**
+  - `extension/README.md` names the actual `artifacts/native-repository/<host>/` evidence location (CodeRabbit minor).
+  - Triage found seven `blob/main/docs/cycles/evidence/...` README links that would 404 after this merge; they are pinned to `273660c`, where all seven files exist.
+  - One workspace test now releases its whole harness (CodeRabbit minor).
+
+**Verification:**
+- TypeScript build PASS.
+- Full extension suite **1,264/1,264 PASS** (`/tmp/codebook-review-fix-full.log`; 1,258 plus six new tests).
+- Package suite **172/172 PASS**.
+- Hook test **4/4 PASS**.
+- `git diff --check` clean.
+
+These fixes are mechanism-level. The native learner-stop/reopen path and a real repeated-line Node run are **NOT RUN** in an editor.
+
+**Not fixed in this cycle.** These medium and low findings are real or plausible and need their own tests or design choices, so they move to the Cycle 0030 review-debt increment:
+- **Safety and truthfulness first:**
+  - D-F2: an invalid `after` selector is detected only after the irreversible application click.
+  - C-F4: Vitest file/name filters are substring/regex matches, so evidence can be attributed to the wrong test.
+  - B-F3: the `/update` URI starts an unattended Cursor Agent run without a modal confirmation.
+  - C-F3: a rejected journal append poisons sealing, so a partial history is never sealed.
+  - D-F3: legacy demo aliases make whole stored books unreadable.
+  - A-F5: a Node stop is accepted at any stack depth.
+  - D-F4: a failed capture can stay pending.
+- **Then:**
+  - B-F1: freshness `unknown` is reported as a failed update.
+  - B-F2: failed publication leaves copied manual files in the stage.
+  - A-F3: the Node catalog is re-read every 250 ms.
+  - A-F4: a background-window open fails on a summary focus throw.
+  - C-F2: output/stop timestamp ordering.
+  - D-F1: Node catalog pagination.
+  - D-F6: 4 KiB pages.
+  - B-F4: reader CSP.
+  - B-F5: `closeAllConnections`.
+  - B-F6: `ps` sampling queue.
+  - B-F7: manual file mode.
+  - C-F5–C-F8: run-directory cleanup, tick-error surfacing, bounded `customRequest`, PGID reuse.
+  - D-F5: per-stop manifest hashes.
+  - CodeRabbit: `launchNodeTest` close retry, Wiki named-source import slot.
+- **Maintainability:** literals and dead code (A-F6, D-F7, CodeRabbit trivials).
+
+The README's stale "0.2.4 current candidate" sentence is corrected with the `/ship` version bump. No finding reopened an accepted design decision. All thirteen AC rows keep their prior status: the fixes restore specified behavior at mechanism level only.
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
