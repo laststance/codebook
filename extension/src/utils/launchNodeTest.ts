@@ -24,7 +24,7 @@ async function availableInspectorPort(): Promise<number> {
   return address.port;
 }
 
-/** Starts exactly the sealed Vitest file in an owned process group before native debugger attachment. Called by the Node test runtime after source verification. @param launch - Checked in-repository program and argv. @param node - External Node executable. @param record - Bounded process event sink. @example const testRun = await launchNodeTest(launch, '/usr/bin/node', record); await testRun.inspectorEndpoint(signal) */
+/** Starts exactly the sealed Vitest file in an owned process group before native debugger attachment. Called by the Node test runtime after source verification. @param launch - Checked in-repository program and argv. @param node - External Node executable. @param record - Bounded process event sink. @param onOutput - Receives each stamped chunk at once, in arrival order; its promise settles when the chunk is durable. @example const testRun = await launchNodeTest(launch, '/usr/bin/node', record); await testRun.inspectorEndpoint(signal) */
 export async function launchNodeTest(launch: Pick<PreparedNodeTestLaunch, 'workspace' | 'program' | 'args'>, node: string, record: (type: string, detail?: unknown) => unknown,
   onOutput?: (event: NodeTestOutputEvent) => void | Promise<void>) {
   const started = process.hrtime.bigint();
@@ -48,8 +48,12 @@ export async function launchNodeTest(launch: Pick<PreparedNodeTestLaunch, 'works
       }
       pendingOutputBytes += bytes;
       const event = { sequence: ++outputSequence, elapsedMs: Number(process.hrtime.bigint() - started) / 1_000_000, channel, text };
-      outputWrites = outputWrites.then(() => error ? undefined : deliver(event)).catch(cause => { error = new Error(`Node test output capture failed: ${String(cause)}`); })
+      // Hand the chunk over in the step that stamps it; the history serializes its own durable writes, so a debugger stop accepted later cannot overtake it.
+      let delivery: Promise<void>;
+      try { delivery = Promise.resolve(deliver(event)); } catch (cause) { delivery = Promise.reject(cause); }
+      const settled = delivery.catch(cause => { error ??= new Error(`Node test output capture failed: ${String(cause)}`); })
         .finally(() => { pendingOutputBytes -= bytes; });
+      outputWrites = outputWrites.then(() => settled);
     };
     const accept = (text: string) => {
       if (!text) return;
