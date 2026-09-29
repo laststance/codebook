@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { z } from 'zod';
 import { VITEST_REPORT_LIMIT_BYTES } from '../constants';
 
@@ -31,8 +31,13 @@ export async function verifyVitestTestResult(reportFile: string, testFile: strin
   if (size > limitBytes) throw new Error(`Vitest's test report is larger than ${limitBytes} bytes.`);
   const report = reportSchema.safeParse(await readFile(reportFile, 'utf8').then((text): unknown => JSON.parse(text)).catch(() => undefined));
   if (!report.success) throw new Error('Vitest wrote an unreadable test report.');
-  const otherFile = report.data.testResults.find(result => result.name !== testFile);
-  if (otherFile) throw new Error(`Vitest reported another test file, ${otherFile.name}, beside the cited one.`);
+  // Preflight admits an in-repository alias only when its real file is the cited one; the report must use the same identity rule.
+  for (const result of report.data.testResults) {
+    if (result.name === testFile) continue;
+    // Refuse the first foreign or missing alias before scheduling more filesystem reads.
+    const reportedFile = await realpath(result.name).catch(() => undefined);
+    if (reportedFile !== testFile) throw new Error(`Vitest reported another test file, ${result.name}, beside the cited one.`);
+  }
   const executed = report.data.testResults.flatMap(result => result.assertionResults).filter(test => EXECUTED_STATUSES.has(test.status));
   // A title array keeps a top-level test named "a > b" distinct from describe("a") > test("b").
   const describe = (test: (typeof executed)[number]) => JSON.stringify([...test.ancestorTitles, test.title]);

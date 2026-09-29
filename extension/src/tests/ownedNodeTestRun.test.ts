@@ -24,6 +24,8 @@ const LEARNER_BREAKPOINT_ID = 12;
  * @param options.duringRetire - Learner action performed while the owned breakpoint is being retired.
  * @param options.exitAfterEntry - The test process exits after the entry pause, as when Vitest skips the cited test.
  * @param options.reportFailure - Error the Vitest report check raises after the process finishes.
+ * @param options.reportStatus - Actual assertion result reported by Vitest, independent of the process exit code.
+ * @param options.exitCode - The process result, which a repository plugin can reset even after a failed assertion.
  * @param options.firstPause - A pause that is not Codebook's (a learner breakpoint, for example) reached before the first declared stop; `file` is relative to the test repository.
  * @param options.neverReachStop - The test keeps running after the entry pause without reaching a declared stop.
  * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
@@ -33,8 +35,9 @@ const LEARNER_BREAKPOINT_ID = 12;
  * const harness = await nodeRunHarness({ declaredStops: 2 }); await harness.run.prepare(); await harness.run.advance();
  * ```
  */
-async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetire, exitAfterEntry, reportFailure, firstPause, neverReachStop, budgetMs }:
+async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetire, exitAfterEntry, reportFailure, reportStatus = 'passed', exitCode = 0, firstPause, neverReachStop, budgetMs }:
   { declaredStops?: number; observedLine?: number; duringRetire?: () => void; exitAfterEntry?: boolean; reportFailure?: Error;
+    reportStatus?: 'passed' | 'failed'; exitCode?: number;
     firstPause?: { line: number; file?: string; reason?: string; hitBreakpointIds?: number[] }; neverReachStop?: boolean; budgetMs?: number } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'));
   const reportDirectory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-report-'));
@@ -113,12 +116,12 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
     './nodeTestOutputTerminal': { NodeTestOutputTerminal: OutputTerminal },
     './utils/prepareNodeTestLaunch': { prepareNodeTestLaunch: async () => launch },
     './utils/launchNodeTest': { launchNodeTest: async () => ({ processGroup: 4242, inspectorEndpoint: async () => 'ws://127.0.0.1:9229/owned', elapsedMs: () => 10,
-      async result() { calls.push('result'); return { exitCode: 0, signal: null, output: 'Tests 1 passed' }; },
+      async result() { calls.push('result'); return { exitCode, signal: null, output: reportStatus === 'failed' ? 'Tests 1 failed' : 'Tests 1 passed' }; },
       async waitForExit() { return exitAfterEntry ? { exitCode: 0, signal: null } : undefined; }, async close() {} }) },
     './utils/verifyVitestTestResult': { verifyVitestTestResult: async (...request: unknown[]) => {
       calls.push('verify'); verified.push(request);
       if (reportFailure) throw reportFailure;
-      return 'passed';
+      return reportStatus;
     } },
     './utils/bindOwnedNodeTestDebugSession': { bindOwnedNodeTestDebugSession: async (value: vscode.DebugSession) => ({ session: value, identity: { pid: 1, processGroup: 4242, workspace: directory }, cdp: { close() {} } }) },
     './utils/inspectNodeTestVariables': { inspectNodeTestVariables: async () => ({ variables: [], facts: [] }) },
@@ -407,6 +410,38 @@ test('a finished run whose Vitest report shows another executed test fails inste
 
     // Assert
     await assert.rejects(completing, /instead of the cited test/);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a failed cited assertion cannot return a successful result when a plugin resets the process exit code to zero', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ reportStatus: 'failed', exitCode: 0 });
+  try {
+    await harness.run.prepare();
+
+    // Act
+    const completing = harness.run.complete();
+
+    // Assert
+    await assert.rejects(completing, /cited test failed.*exit code 0/);
+    assert.equal(harness.events.some(event => event.type === 'node-test.result'), false, 'a success-shaped result never reaches the history writer');
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a failed cited assertion with a failing process exit preserves its observed result for partial history', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ reportStatus: 'failed', exitCode: 1 });
+  try {
+    await harness.run.prepare();
+
+    // Act
+    const result = await harness.run.complete();
+
+    // Assert
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.signal, null);
+    assert.equal(result.output, 'Tests 1 failed');
+    assert.equal(harness.events.some(event => event.type === 'node-test.result'), true);
   } finally { await harness.run.stop(); await harness.cleanup(); }
 });
 

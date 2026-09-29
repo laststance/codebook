@@ -282,7 +282,10 @@ export class OwnedNodeTestRun {
     // The attach timeout bounds only the retirement above; the remaining tests may run until cancellation or the run deadline.
     const result = await owned.result(this.abort.signal);
     // A stop and an exit code cannot show which test ran: module loading can reach the stop while Vitest skips the cited test.
-    await verifyVitestTestResult(launch.report.file, launch.testFile, launch.testTitles);
+    const reportedStatus = await verifyVitestTestResult(launch.report.file, launch.testFile, launch.testTitles);
+    // A plugin can reset process.exitCode after failed assertions; a successful exit cannot override the report.
+    if (reportedStatus === 'failed' && result.exitCode === 0 && result.signal === null)
+      throw new Error('Vitest reported that the cited test failed despite process exit code 0; the run cannot be marked successful.');
     const elapsedMs = owned.elapsedMs();
     this.record('node-test.result', { exitCode: result.exitCode, signal: result.signal, elapsedMs, output: result.output });
     this.outputTerminal?.reveal();
