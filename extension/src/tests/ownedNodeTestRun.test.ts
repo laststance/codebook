@@ -29,18 +29,21 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
   const launch = { workspace: directory, testFile: join(directory, 'theme.test.ts'), sourceFile, program: 'vitest', args: [],
     stops: Array.from({ length: declaredStops }, () => ({ file: sourceFile, source, inspections: [] })) };
   const calls: string[] = [];
-  let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined, tracker: vscode.DebugAdapterTracker | undefined, continued = 0;
+  let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined, tracker: vscode.DebugAdapterTracker | undefined, continued = 0, pausedLine = observedLine;
   const stopped = (reason: string) => tracker?.onDidSendMessage?.({ type: 'event', event: 'stopped', body: { threadId: 1, reason } });
+  const clientRequest = (command: string) => tracker?.onWillReceiveMessage?.({ type: 'request', seq: 90, command, arguments: { threadId: 1 } });
   const session = { id: 'owned-node-session', type: 'pwa-node', name: '', workspaceFolder: undefined, configuration: { type: 'pwa-node', name: '', request: 'attach' },
     getDebugProtocolBreakpoint: async () => undefined,
     async customRequest(command: string): Promise<unknown> {
+      // The editor passes Codebook's own requests through the same tracker as the learner's.
+      clientRequest(command);
       if (command === 'continue') {
         calls.push('continue');
         // Each continuation before a declared stop reaches the line again; the final one lets the test finish.
         if (++continued <= declaredStops) queueMicrotask(() => stopped('breakpoint'));
         return {};
       }
-      if (command === 'stackTrace') return { stackFrames: [{ id: 1, name: 'loadTheme', line: observedLine, column: source.column, source: { path: sourceFile } }] } satisfies DebugProtocol.StackTraceResponse['body'];
+      if (command === 'stackTrace') return { stackFrames: [{ id: 1, name: 'loadTheme', line: pausedLine, column: source.column, source: { path: sourceFile } }] } satisfies DebugProtocol.StackTraceResponse['body'];
       if (command === 'scopes') return { scopes: [{ name: 'Local', variablesReference: 1, expensive: false }] } satisfies DebugProtocol.ScopesResponse['body'];
       throw new Error(`Unexpected request ${command}`);
     } };
@@ -93,10 +96,14 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
   return { run, calls, cleanup: () => rm(directory, { recursive: true, force: true }),
     // Another debugger control resumes the accepted source pause outside Codebook.
     resume: () => tracker?.onDidSendMessage?.({ type: 'event', event: 'continued', body: { threadId: 1 } }),
-    // The learner steps in the native debugger and the adapter reports the new pause without a `continued` event.
-    stepToLaterPause: () => stopped('step'),
+    // The learner steps in the native debugger: the editor sends `next` and the adapter reports the new pause without a `continued` event.
+    stepToLaterPause: () => { clientRequest('next'); stopped('step'); },
     // The native debugger sends a resume request; adapters need not follow it with a `continued` event.
-    requestResume: (command: string) => tracker?.onWillReceiveMessage?.({ type: 'request', seq: 90, command, arguments: { threadId: 1 } }) };
+    requestResume: clientRequest,
+    // js-debug refreshes the stack (e.g. Toggle Skipping this File) by re-announcing the same pause with no client resume request.
+    refreshPause: () => { tracker?.onDidSendMessage?.({ type: 'event', event: 'continued', body: { threadId: 1 } }); stopped('breakpoint'); },
+    // Something outside the editor client moves the paused thread, so the stack reports another position.
+    movePausedFrame: (line: number) => { pausedLine = line; } };
 }
 
 test('continuing the final declared stop retires its owned breakpoint first so a repeated line cannot pause the finished test again', async () => {
@@ -262,5 +269,75 @@ test('advancing is refused after the learner stepped to a later pause, so it can
     // Assert
     await assert.rejects(advancing, /resumed before the next declared stop/);
     assert.deepEqual(harness.calls, ['remove', 'stop-debugging']);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('Codebook finishes a two-stop Node test even though its own continue requests pass through the pause-revoking tracker', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2 });
+  try {
+    await harness.run.prepare();
+    harness.calls.length = 0;
+
+    // Act
+    await harness.run.advance();
+    const result = await harness.run.complete();
+
+    // Assert
+    assert.deepEqual(harness.calls, ['retire', 'arm', 'continue', 'retire', 'continue', 'result']);
+    assert.equal(result.exitCode, 0);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a native stack refresh at the accepted pause (Toggle Skipping this File) still lets Codebook finish the test', async () => {
+  // Arrange
+  const harness = await nodeRunHarness();
+  try {
+    await harness.run.prepare();
+    harness.calls.length = 0;
+    harness.refreshPause();
+
+    // Act
+    const result = await harness.run.complete();
+
+    // Assert
+    assert.deepEqual(harness.calls, ['retire', 'continue', 'result']);
+    assert.equal(result.exitCode, 0);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a native stack refresh while the previous owned breakpoint is being retired still lets Codebook advance to the next declared stop', async () => {
+  // Arrange
+  let refreshPause = (): void => undefined;
+  const harness = await nodeRunHarness({ declaredStops: 2, duringRetire: () => refreshPause() });
+  refreshPause = harness.refreshPause;
+  try {
+    await harness.run.prepare();
+    harness.calls.length = 0;
+
+    // Act
+    const next = await harness.run.advance();
+
+    // Assert
+    assert.deepEqual(harness.calls, ['retire', 'arm', 'continue']);
+    assert.equal(next.index, 1);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a pause re-announced at another position without a client resume is refused, so Codebook never continues an unaccepted pause', async () => {
+  // Arrange
+  const harness = await nodeRunHarness();
+  try {
+    await harness.run.prepare();
+    harness.calls.length = 0;
+    harness.movePausedFrame(5);
+    harness.refreshPause();
+
+    // Act
+    const completing = harness.run.complete();
+
+    // Assert
+    await assert.rejects(completing, /resumed before the final continuation/);
+    assert.equal(harness.calls.includes('continue'), false, 'the unaccepted pause is never continued');
   } finally { await harness.run.stop(); await harness.cleanup(); }
 });

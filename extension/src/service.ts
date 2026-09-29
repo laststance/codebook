@@ -574,6 +574,7 @@ export class StudyService {
               observedColumn: Number.isInteger(input.observedColumn) ? input.observedColumn : null,
               sameSource: input.sameSource === true, exact: input.exact === true, elapsedMs: input.elapsedMs }
             : type === 'node-test.snapshot-started' ? { index: input.index, elapsedMs: input.elapsedMs }
+            : type === 'node-test.pause-refreshed' ? { line: input.line, column: input.column }
             : { omitted: true };
           const serialized = JSON.stringify(safe);
           const byteLength = Buffer.byteLength(serialized);

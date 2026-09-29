@@ -1307,10 +1307,13 @@ test('an agent returning the reader to the current run leaves a selected Node hi
       'the sealed Node history is displayed', 1_000);
     const state = harness.reader.presentationState();
 
-    // Act: this harness has no live source tab, so the return may still report EVIDENCE_UNAVAILABLE; only the journal retirement is observed.
-    await harness.reader.returnToCurrent({ presentationId: state.presentationId, expectedRevision: state.reader.contentRevision }).catch(() => undefined);
+    // Act
+    const returned = await harness.reader.returnToCurrent({ presentationId: state.presentationId, expectedRevision: state.reader.contentRevision });
 
     // Assert
+    assert.equal(state.reader.followingCurrentRun, false, 'an agent reading state sees that the journal masks the current run');
+    assert.equal(returned.reader.followingCurrentRun, true);
+    assert.equal(returned.reader.contentTab, 'live');
     assert.equal(harness.postedMessages().slice(-1)[0]?.nodeHistory, undefined, 'the MCP return never reports following the run while the journal masks the application');
   } finally { await harness.close(); }
 });

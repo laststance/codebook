@@ -227,8 +227,9 @@ export class StudyWorkspace {
       else if (!matchingLayoutReceipt) reason = 'The native editor layout receipt no longer matches the Study panes. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.';
       else reason = 'The Study arrangement is not confirmed. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.';
     }
+    // A selected Node journal masks the live application, so agents must not read the reader as following the run.
     return { presentationId: this.presentationId, presentationControlRevision: this.presentationControlRevision,
-      reader: { contentRevision: this.revision + this.readerSelectionRevision, contentTab: this.recordingActive ? 'recording' : this.selection.tab, followingCurrentRun: this.selection.follow && !this.recordingActive }, mode: this.presentationMode,
+      reader: { contentRevision: this.revision + this.readerSelectionRevision, contentTab: this.recordingActive ? 'recording' : this.selection.tab, followingCurrentRun: this.selection.follow && !this.recordingActive && !this.selectedNodeHistory }, mode: this.presentationMode,
       requestedMode: this.requestedPresentation, state: this.presentationTransition ? 'applying' : this.opened && !this.closing ? 'open' : 'closed',
       layoutConfirmed,
       preference: { ...this.presentationPreference }, reason, playbackRevision: this.recordingActive ? this.playback?.state().revision : undefined,

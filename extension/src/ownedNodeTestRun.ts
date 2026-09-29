@@ -20,7 +20,7 @@ import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch';
 
 const NODE_ATTACH_TIMEOUT_MS = 45_000;
 /** One DAP `stopped` event observed on an owned session, in arrival order. */
-type NativePause = { sessionId: string; threadId: number; reason: string };
+type NativePause = { sessionId: string; threadId: number; reason: string; afterClientResume: boolean };
 
 export type NodeTestSourceStop = {
   index: number;
@@ -43,6 +43,8 @@ export class OwnedNodeTestRun {
   private readonly active = new Map<string, vscode.DebugSession>();
   private readonly stops: NativePause[] = [];
   private readonly pausedSessions = new Set<string>();
+  /** Sessions whose client sent a resume or step request after their latest `stopped` event. */
+  private readonly clientResumes = new Set<string>();
   private readonly name = `codebook node test ${this.id}`;
   private readonly tracker: vscode.Disposable;
   private readonly termination: vscode.Disposable;
@@ -53,7 +55,7 @@ export class OwnedNodeTestRun {
   private preparation?: Promise<NodeTestSourceStop>;
   private cleanup?: Promise<void>;
   private acceptedStop?: NodeTestSourceStop;
-  /** The native pause event behind {@link acceptedStop}; a later pause or a client resume revokes its continuation authority. */
+  /** The native pause event behind {@link acceptedStop}; a client resume or a different later pause revokes its continuation authority, while a same-frame stack refresh inherits it. */
   private acceptedPause?: NativePause;
   private launch?: PreparedNodeTestLaunch;
   private advancing = false;
@@ -73,7 +75,7 @@ export class OwnedNodeTestRun {
         const request = message as DebugProtocol.Request;
         this.breakpoint?.onRequest(session, request);
         // Adapters need not send `continued` after a client resume or step, so the request itself revokes the captured pause.
-        if (RESUME_COMMANDS.has(request.command)) this.pausedSessions.delete(session.id);
+        if (RESUME_COMMANDS.has(request.command)) { this.pausedSessions.delete(session.id); this.clientResumes.add(session.id); }
       }, onDidSendMessage: message => {
         if (message.type === 'response') this.breakpoint?.onResponse(session, message as DebugProtocol.Response);
         if (message.type === 'event' && (message as DebugProtocol.Event).event === 'continued') this.pausedSessions.delete(session.id);
@@ -81,7 +83,7 @@ export class OwnedNodeTestRun {
           const body = (message as DebugProtocol.StoppedEvent).body;
           if (Number.isInteger(body.threadId)) {
             this.pausedSessions.add(session.id);
-            this.stops.push({ sessionId: session.id, threadId: body.threadId!, reason: body.reason });
+            this.stops.push({ sessionId: session.id, threadId: body.threadId!, reason: body.reason, afterClientResume: this.clientResumes.delete(session.id) });
             this.record('node-test.dap-stopped', { sessionId: session.id, threadId: body.threadId, reason: body.reason });
           }
         }
@@ -89,6 +91,7 @@ export class OwnedNodeTestRun {
     } });
     this.termination = vscode.debug.onDidTerminateDebugSession(session => {
       this.pausedSessions.delete(session.id);
+      this.clientResumes.delete(session.id);
       if (this.active.delete(session.id)) this.record('node-test.session-terminated', { sessionId: session.id });
     });
   }
@@ -150,13 +153,13 @@ export class OwnedNodeTestRun {
     this.advancing = true;
     try {
       const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(NODE_ATTACH_TIMEOUT_MS)]);
-      this.assertAcceptedPause(previous, 'the next declared stop');
+      await this.assertAcceptedPause(previous, 'the next declared stop');
       await breakpoint.retire(bound.session, signal);
       const next = launch.stops[previous.index + 1]!;
       this.breakpoint = new OwnedRepositoryBreakpoint(next.file, next.source.line, next.source.column);
       await this.breakpoint.registered(bound.session, signal);
       // The learner can resume or step while retirement and registration are awaited.
-      this.assertAcceptedPause(previous, 'the next declared stop');
+      await this.assertAcceptedPause(previous, 'the next declared stop');
       const fromIndex = this.stops.length;
       await bound.session.customRequest('continue', { threadId: previous.threadId });
       return await this.captureStop(previous.index + 1, fromIndex, signal);
@@ -220,12 +223,12 @@ export class OwnedNodeTestRun {
     const stop = this.acceptedStop, bound = this.bound, owned = this.owned;
     if (!stop || !bound || !owned || this.cleanup || this.advancing || this.hasNextStop()) throw new Error('Node test has no final owned source pause to continue.');
     this.abort.signal.throwIfAborted();
-    this.assertAcceptedPause(stop, 'the final continuation');
+    await this.assertAcceptedPause(stop, 'the final continuation');
     const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(NODE_ATTACH_TIMEOUT_MS)]);
     // A declared line inside a loop or shared helper would otherwise pause the finishing test with nobody to resume it.
     await this.breakpoint?.retire(bound.session, signal);
     // A stale continuation would otherwise resume whichever later pause the learner reached during retirement.
-    this.assertAcceptedPause(stop, 'the final continuation');
+    await this.assertAcceptedPause(stop, 'the final continuation');
     await bound.session.customRequest('continue', { threadId: stop.threadId });
     // The attach timeout bounds only the retirement above; the remaining tests may run until cancellation or the run deadline.
     const result = await owned.result(this.abort.signal);
@@ -254,18 +257,34 @@ export class OwnedNodeTestRun {
   /**
    * Refuses a Codebook continuation once the learner resumed, stepped or reached a later pause after {@link acceptedStop} was captured.
    * {@link advance} and {@link complete} call it before and after breakpoint retirement, so a stale continue never resumes an unaccepted pause.
+   * js-debug re-announces an unchanged pause (`continued`, then `stopped`) when it refreshes the stack, for example after Toggle Skipping this File;
+   * such a pause is adopted only when no client resume preceded it and the paused top frame is still the accepted position.
    * @param stop - The accepted stop being continued.
    * @param purpose - What the continuation was for, named in the refusal.
-   * @throws When the session ended, the pause was resumed, or a newer pause replaced it.
+   * @throws When the session ended, the pause was resumed, or a different pause replaced it.
    * @example
    * ```ts
-   * this.assertAcceptedPause(stop, 'the final continuation') // throws after a manual Continue in the native debugger
+   * await this.assertAcceptedPause(stop, 'the final continuation') // throws after a manual Continue in the native debugger
    * ```
    */
-  private assertAcceptedPause(stop: NodeTestSourceStop, purpose: string): void {
+  private async assertAcceptedPause(stop: NodeTestSourceStop, purpose: string): Promise<void> {
     this.assertActive(stop.sessionId);
-    const latestPause = this.stops.filter(candidate => candidate.sessionId === stop.sessionId).at(-1);
-    if (!this.pausedSessions.has(stop.sessionId) || latestPause !== this.acceptedPause) throw new Error(`Owned Node source pause was resumed before ${purpose}.`);
+    const refusal = new Error(`Owned Node source pause was resumed before ${purpose}.`);
+    const sessionPauses = () => this.stops.filter(candidate => candidate.sessionId === stop.sessionId);
+    const pauses = sessionPauses(), accepted = this.acceptedPause ? pauses.lastIndexOf(this.acceptedPause) : -1;
+    if (!this.pausedSessions.has(stop.sessionId) || accepted < 0) throw refusal;
+    const laterPauses = pauses.slice(accepted + 1), latestPause = laterPauses.at(-1);
+    if (!latestPause) return;
+    // A client resume or step always precedes a genuinely different pause; a stack refresh has none.
+    if (laterPauses.some(pause => pause.afterClientResume || pause.threadId !== stop.threadId)) throw refusal;
+    const trace = await this.bound!.session.customRequest('stackTrace', { threadId: stop.threadId, startFrame: 0, levels: 1 }) as DebugProtocol.StackTraceResponse['body'];
+    const pausedFrame = trace.stackFrames[0];
+    this.assertActive(stop.sessionId);
+    // Anything else that resumed the thread, such as another inspector client, leaves a different frame or a newer event.
+    const unchanged = pausedFrame?.source?.path === stop.frame.source?.path && pausedFrame?.line === stop.frame.line && pausedFrame?.column === stop.frame.column;
+    if (!unchanged || !this.pausedSessions.has(stop.sessionId) || sessionPauses().at(-1) !== latestPause) throw refusal;
+    this.record('node-test.pause-refreshed', { sessionId: stop.sessionId, threadId: stop.threadId, line: stop.frame.line, column: stop.frame.column });
+    this.acceptedPause = latestPause;
   }
 
   private release(): Promise<void> {
