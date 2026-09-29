@@ -1267,6 +1267,28 @@ async function saveOneStopNodeHistory(store: NodeTestHistoryStore) {
   return history;
 }
 
+test('returning to the current run leaves a selected Node history so its missing-video notice no longer masks the live application', async () => {
+  // Arrange: the learner is reading a saved Node history, whose application pane explains that no video exists.
+  const harness = await workspaceHarness();
+  try {
+    const history = await saveOneStopNodeHistory(harness.service.nodeHistoryStore!);
+    await harness.reader.open();
+    harness.receiveContext({ type: 'node-history', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistory?.header.studyId === history.studyId && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is displayed', 1_000);
+
+    // Act
+    await harness.reader.action('return-current');
+
+    // Assert
+    const view = harness.postedMessages().slice(-1)[0]!;
+    const applicationHtml = harness.nativePanels().find(panel => panel.kind === 'codebook.scopedBrowser')?.webview.html ?? '';
+    assert.equal(view.nodeHistory, undefined, 'the Node journal is no longer the selected reader content');
+    assert.equal(view.model.selection.follow, true);
+    assert.doesNotMatch(applicationHtml, /Node test history · application video unavailable/);
+  } finally { await harness.close(); }
+});
+
 test('selecting a Node stop after the learner stops its historical debugger restarts it instead of freezing the reader', async () => {
   // Arrange: the stop was presented, then the learner ended "Codebook · Recorded learning" and stepped back to output.
   const harness = await workspaceHarness();

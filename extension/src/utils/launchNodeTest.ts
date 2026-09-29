@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
-import { REPOSITORY_RUN_TIMEOUT_MS } from '../constants';
+import { NODE_TEST_HISTORY_LIMIT_BYTES, REPOSITORY_RUN_TIMEOUT_MS } from '../constants';
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint';
 import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse';
@@ -35,11 +35,23 @@ export async function launchNodeTest(launch: PreparedNodeTestLaunch, node: strin
   for (const name of ['PATH', 'HOME', 'TMPDIR', 'SHELL', 'LANG', 'LC_ALL', 'PNPM_HOME', 'USER', 'LOGNAME']) if (process.env[name]) environment[name] = process.env[name];
   const child = spawn(node, [launch.program, ...args], { cwd: launch.workspace, env: environment, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '', announcement = '', error: Error | undefined, exited = false, closing: Promise<void> | undefined, outputSequence = 0;
-  let outputWrites = Promise.resolve();
+  let outputWrites = Promise.resolve(), pendingOutputBytes = 0;
   const exit = new Promise<void>(resolve => child.once('close', () => { exited = true; resolve(); }));
   child.once('error', cause => { error = cause; });
   for (const [channel, stream] of [['stdout', child.stdout], ['stderr', child.stderr]] as const) {
     const decoder = new StringDecoder('utf8');
+    const enqueue = (text: string, deliver: (event: NodeTestOutputEvent) => void | Promise<void>) => {
+      const bytes = Buffer.byteLength(text);
+      // Output beyond the durable history's capacity can never be saved; fail capture instead of buffering it behind slow history writes.
+      if (pendingOutputBytes + bytes > NODE_TEST_HISTORY_LIMIT_BYTES) {
+        error = new Error('Node test output capture failed: output outpaced its durable history beyond the history size limit.');
+        return;
+      }
+      pendingOutputBytes += bytes;
+      const event = { sequence: ++outputSequence, elapsedMs: Number(process.hrtime.bigint() - started) / 1_000_000, channel, text };
+      outputWrites = outputWrites.then(() => error ? undefined : deliver(event)).catch(cause => { error = new Error(`Node test output capture failed: ${String(cause)}`); })
+        .finally(() => { pendingOutputBytes -= bytes; });
+    };
     const accept = (text: string) => {
       if (!text) return;
       // Keep the initial Inspector announcement and the final bounded test result separately.
@@ -49,16 +61,13 @@ export async function launchNodeTest(launch: PreparedNodeTestLaunch, node: strin
       let part = '';
       for (const character of text) {
         if (part.length + character.length > OUTPUT_EVENT_LIMIT_CHARS) {
-          const event = { sequence: ++outputSequence, elapsedMs: Number(process.hrtime.bigint() - started) / 1_000_000, channel, text: part };
-          outputWrites = outputWrites.then(() => error ? undefined : onOutput(event)).catch(cause => { error = new Error(`Node test output capture failed: ${String(cause)}`); });
+          enqueue(part, onOutput);
+          if (error) return;
           part = '';
         }
         part += character;
       }
-      if (part) {
-        const event = { sequence: ++outputSequence, elapsedMs: Number(process.hrtime.bigint() - started) / 1_000_000, channel, text: part };
-        outputWrites = outputWrites.then(() => error ? undefined : onOutput(event)).catch(cause => { error = new Error(`Node test output capture failed: ${String(cause)}`); });
-      }
+      if (part) enqueue(part, onOutput);
     };
     stream.on('data', (chunk: Buffer) => accept(decoder.write(chunk)));
     stream.on('end', () => accept(decoder.end()));

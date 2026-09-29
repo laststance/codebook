@@ -197,6 +197,8 @@ export const NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES = LEARNING_SUMMARY_LIMITS.b
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1';
 export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608;
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000;
+/** Longest debugger type name a saved Node fact keeps; the type is supplementary, so a longer one is omitted rather than failing the run. */
+export const NODE_TEST_FACT_TYPE_LIMIT_CHARS = 256;
 export const REPOSITORY_BROWSER_ACTION = 'repository-click';
 export const REPOSITORY_CONFIG_VERSION = 1;
 export const CROSS_RUNTIME_CONFIG_VERSION = 2;

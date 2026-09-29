@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 import type { DebugProtocol } from '@vscode/debugprotocol';
-import { REPOSITORY_LITERAL_LIMIT_CHARS } from '../constants';
+import { NODE_TEST_FACT_TYPE_LIMIT_CHARS, REPOSITORY_LITERAL_LIMIT_CHARS } from '../constants';
 import type { RepositoryInspection } from '../repositoryConfigSchemas';
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse';
 
@@ -40,7 +40,9 @@ export async function inspectNodeTestVariables(
       if (inspection.required) throw new Error(`Required Node debugger fact is unavailable or too large: ${inspection.mode}:${inspection.path}`);
       continue;
     }
-    facts.push({ path: inspection.path, mode: inspection.mode, display, type: variable.type });
+    // An oversized debugger type name is supplementary; omit it instead of making the saved stop invalid.
+    const type = variable.type !== undefined && variable.type.length <= NODE_TEST_FACT_TYPE_LIMIT_CHARS ? variable.type : undefined;
+    facts.push({ path: inspection.path, mode: inspection.mode, display, ...(type !== undefined && { type }) });
     selected.push(variable);
   }
   return { facts, variables: selected };

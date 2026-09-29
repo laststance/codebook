@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LEARNING_SUMMARY_LIMITS, MAX_EXPLANATION_CHARS, NODE_TEST_HISTORY_MAX_ENTRIES, NODE_TEST_HISTORY_VERSION, NODE_TEST_LEARNING_DECISION_VERSION, NODE_TEST_LEARNING_MATERIAL_VERSION, NODE_TEST_READER_POSITION_VERSION, REPOSITORY_PATH_LIMIT_CHARS, REPOSITORY_LITERAL_LIMIT_CHARS } from './constants';
+import { LEARNING_SUMMARY_LIMITS, MAX_EXPLANATION_CHARS, NODE_TEST_FACT_TYPE_LIMIT_CHARS, NODE_TEST_HISTORY_MAX_ENTRIES, NODE_TEST_HISTORY_VERSION, NODE_TEST_LEARNING_DECISION_VERSION, NODE_TEST_LEARNING_MATERIAL_VERSION, NODE_TEST_READER_POSITION_VERSION, REPOSITORY_PATH_LIMIT_CHARS, REPOSITORY_LITERAL_LIMIT_CHARS } from './constants';
 import { NODE_TEST_PROFILE } from './constants';
 import { configuredDescriptorSchema } from './configuredStudySchemas';
 import { studyIdSchema } from './legacyStudySchemas';
@@ -10,7 +10,7 @@ import { repositoryHashSchema } from './sourceSchemas';
 const elapsed = z.number().finite().nonnegative();
 const base = { sequence: z.number().int().positive().max(NODE_TEST_HISTORY_MAX_ENTRIES), elapsedMs: elapsed };
 const source = z.strictObject({ path: z.string().min(1).max(REPOSITORY_PATH_LIMIT_CHARS), hash: repositoryHashSchema, line: z.number().int().positive(), column: z.number().int().positive() });
-const fact = z.strictObject({ path: z.string().min(1).max(256), mode: z.enum(['value', 'type']), display: z.string().max(REPOSITORY_LITERAL_LIMIT_CHARS), type: z.string().max(256).optional() });
+const fact = z.strictObject({ path: z.string().min(1).max(256), mode: z.enum(['value', 'type']), display: z.string().max(REPOSITORY_LITERAL_LIMIT_CHARS), type: z.string().max(NODE_TEST_FACT_TYPE_LIMIT_CHARS).optional() });
 
 export const nodeTestHistoryHeaderSchema = z.strictObject({
   version: z.literal(NODE_TEST_HISTORY_VERSION), profile: z.literal(NODE_TEST_PROFILE), workspaceKey: repositoryHashSchema,

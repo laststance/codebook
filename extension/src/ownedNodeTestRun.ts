@@ -18,6 +18,10 @@ import { NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS, NODE_REPLAY_DEBUG_MAX_DEPTH, NODE
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch';
 
 const NODE_ATTACH_TIMEOUT_MS = 45_000;
+/** DAP requests that resume or move a paused thread; any of them ends the pause Codebook captured. */
+const NODE_RESUMING_REQUESTS = new Set(['continue', 'next', 'stepIn', 'stepOut', 'stepBack', 'reverseContinue', 'goto', 'restartFrame']);
+/** One DAP `stopped` event observed on an owned session, in arrival order. */
+type NativePause = { sessionId: string; threadId: number; reason: string };
 
 export type NodeTestSourceStop = {
   index: number;
@@ -38,7 +42,7 @@ export class OwnedNodeTestRun {
   readonly id = randomUUID();
   private readonly abort = new AbortController();
   private readonly active = new Map<string, vscode.DebugSession>();
-  private readonly stops: { sessionId: string; threadId: number; reason: string }[] = [];
+  private readonly stops: NativePause[] = [];
   private readonly pausedSessions = new Set<string>();
   private readonly name = `codebook node test ${this.id}`;
   private readonly tracker: vscode.Disposable;
@@ -50,6 +54,8 @@ export class OwnedNodeTestRun {
   private preparation?: Promise<NodeTestSourceStop>;
   private cleanup?: Promise<void>;
   private acceptedStop?: NodeTestSourceStop;
+  /** The native pause event behind {@link acceptedStop}; a later pause or a client resume revokes its continuation authority. */
+  private acceptedPause?: NativePause;
   private launch?: PreparedNodeTestLaunch;
   private advancing = false;
 
@@ -64,7 +70,11 @@ export class OwnedNodeTestRun {
       this.active.set(session.id, session);
       this.record('node-test.session-started', { sessionId: session.id, parentId: session.parentSession?.id });
       return { onWillReceiveMessage: message => {
-        if (message.type === 'request') this.breakpoint?.onRequest(session, message as DebugProtocol.Request);
+        if (message.type !== 'request') return;
+        const request = message as DebugProtocol.Request;
+        this.breakpoint?.onRequest(session, request);
+        // Adapters need not send `continued` after a client resume or step, so the request itself revokes the captured pause.
+        if (NODE_RESUMING_REQUESTS.has(request.command)) this.pausedSessions.delete(session.id);
       }, onDidSendMessage: message => {
         if (message.type === 'response') this.breakpoint?.onResponse(session, message as DebugProtocol.Response);
         if (message.type === 'event' && (message as DebugProtocol.Event).event === 'continued') this.pausedSessions.delete(session.id);
@@ -141,12 +151,13 @@ export class OwnedNodeTestRun {
     this.advancing = true;
     try {
       const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(NODE_ATTACH_TIMEOUT_MS)]);
-      this.assertActive(previous.sessionId);
-      if (!this.pausedSessions.has(previous.sessionId)) throw new Error('Owned Node source pause was resumed before the next declared stop.');
+      this.assertAcceptedPause(previous, 'the next declared stop');
       await breakpoint.retire(bound.session, signal);
       const next = launch.stops[previous.index + 1]!;
       this.breakpoint = new OwnedRepositoryBreakpoint(next.file, next.source.line, next.source.column);
       await this.breakpoint.registered(bound.session, signal);
+      // The learner can resume or step while retirement and registration are awaited.
+      this.assertAcceptedPause(previous, 'the next declared stop');
       const fromIndex = this.stops.length;
       await bound.session.customRequest('continue', { threadId: previous.threadId });
       return await this.captureStop(previous.index + 1, fromIndex, signal);
@@ -196,6 +207,7 @@ export class OwnedNodeTestRun {
       limits: { timeoutMs: NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS, maxFrames: NODE_REPLAY_DEBUG_MAX_FRAMES,
         maxVariables: NODE_REPLAY_DEBUG_MAX_VARIABLES, maxDepth: NODE_REPLAY_DEBUG_MAX_DEPTH } });
     assertCurrent();
+    this.acceptedPause = target.stop;
     const stop = this.acceptedStop = { index, runId: this.id, sessionId: bound.session.id, threadId: target.stop.threadId, elapsedMs: this.owned?.elapsedMs() ?? 0,
       worker: bound.identity, source: selected.source, frame: target.frame, variables: result.variables,
       facts: result.facts, debuggerSnapshot };
@@ -209,10 +221,12 @@ export class OwnedNodeTestRun {
     const stop = this.acceptedStop, bound = this.bound, owned = this.owned;
     if (!stop || !bound || !owned || this.cleanup || this.advancing || this.hasNextStop()) throw new Error('Node test has no final owned source pause to continue.');
     this.abort.signal.throwIfAborted();
-    this.assertActive(stop.sessionId);
+    this.assertAcceptedPause(stop, 'the final continuation');
     const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(NODE_ATTACH_TIMEOUT_MS)]);
     // A declared line inside a loop or shared helper would otherwise pause the finishing test with nobody to resume it.
     await this.breakpoint?.retire(bound.session, signal);
+    // A stale continuation would otherwise resume whichever later pause the learner reached during retirement.
+    this.assertAcceptedPause(stop, 'the final continuation');
     await bound.session.customRequest('continue', { threadId: stop.threadId });
     // The attach timeout bounds only the retirement above; the remaining tests may run until cancellation or the run deadline.
     const result = await owned.result(this.abort.signal);
@@ -236,6 +250,23 @@ export class OwnedNodeTestRun {
 
   private assertActive(sessionId: string): void {
     if (this.abort.signal.aborted || !this.active.has(sessionId)) throw new Error('Owned Node debugger session terminated or was cancelled.');
+  }
+
+  /**
+   * Refuses a Codebook continuation once the learner resumed, stepped or reached a later pause after {@link acceptedStop} was captured.
+   * {@link advance} and {@link complete} call it before and after breakpoint retirement, so a stale continue never resumes an unaccepted pause.
+   * @param stop - The accepted stop being continued.
+   * @param purpose - What the continuation was for, named in the refusal.
+   * @throws When the session ended, the pause was resumed, or a newer pause replaced it.
+   * @example
+   * ```ts
+   * this.assertAcceptedPause(stop, 'the final continuation') // throws after a manual Continue in the native debugger
+   * ```
+   */
+  private assertAcceptedPause(stop: NodeTestSourceStop, purpose: string): void {
+    this.assertActive(stop.sessionId);
+    const latestPause = this.stops.filter(candidate => candidate.sessionId === stop.sessionId).at(-1);
+    if (!this.pausedSessions.has(stop.sessionId) || latestPause !== this.acceptedPause) throw new Error(`Owned Node source pause was resumed before ${purpose}.`);
   }
 
   private release(): Promise<void> {

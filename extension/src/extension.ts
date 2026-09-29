@@ -291,6 +291,11 @@ export function activate(context: Pick<vscode.ExtensionContext, 'extensionPath' 
         }
         if (incomingUri.path === '/update') {
           if (citedRoot !== projectRoot) throw new Error('The Wiki update link belongs to another checkout.');
+          // Any page can open this link and the project root is printed in the Wiki, so only an explicit in-editor choice starts the agent.
+          const updateChoice = 'Update LLM Wiki';
+          const agentAccess = isCursorHost ? 'Cursor Agent runs without further prompts and can edit files and run commands in this project.' : 'Copilot Chat receives the update request for this project.';
+          const choice = await vscode.window.showWarningMessage('Update this project’s LLM Wiki with the editor agent?', { modal: true, detail: `${projectRoot}\n\n${agentAccess}` }, updateChoice);
+          if (choice !== updateChoice) return;
           await updateDeepWiki();
           return;
         }

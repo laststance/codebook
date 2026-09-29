@@ -36,3 +36,15 @@ test('an unrelated debugger pause does not claim the declared Node source stop',
   // Assert
   assert.deepEqual(result, { status: 'unrelated', observedFrame: undefined });
 });
+
+test('a pause inside a callee is not saved as the declared stop even when the declared call site is on the stack', () => {
+  // Arrange: a learner breakpoint paused the callee while the declared line is only its caller.
+  const callee: DebugProtocol.StackFrame = { id: 1, name: 'formatCurrency', source: { path: '/project/utils.ts' }, line: 3, column: 9 };
+  const declaredCaller: DebugProtocol.StackFrame = { id: 2, name: 'fetchInvoiceById', source: { path: '/project/data.ts' }, line: 224, column: 17 };
+
+  // Act
+  const result = selectCheckedNodeFrame([callee, declaredCaller], '/project/data.ts', 224, 17, 'breakpoint');
+
+  // Assert
+  assert.deepEqual(result, { status: 'unrelated', observedFrame: declaredCaller });
+});

@@ -232,7 +232,7 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
   await writeFile(join(outputDirectory, 'index.html'), '<!doctype html><title>Project Wiki</title>');
   await writeFile(join(outputDirectory, 'codebook-wiki.json'), JSON.stringify({ schemaVersion: 1, repositoryRoot: projectRoot }));
   let handleUri: ((uri: { path: string; query: string }) => Promise<void>) | undefined;
-  const commands = new Map<string, () => Promise<void>>(), submissions: unknown[] = [], errors: string[] = [];
+  const commands = new Map<string, () => Promise<void>>(), submissions: unknown[] = [], errors: string[] = [], confirmations: string[] = [];
   const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
     vscode: {
       commands: {
@@ -242,6 +242,8 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
       workspace: { getConfiguration: () => ({ get: () => '.codebook/wiki' }), onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
       window: {
         registerUriHandler: (handler: { handleUri(uri: { path: string; query: string }): Promise<void> }) => { handleUri = handler.handleUri; return { dispose() {} }; },
+        // The learner confirms each browser request in the editor.
+        showWarningMessage: (message: string, _options: unknown, ...choices: string[]) => { confirmations.push(message); return Promise.resolve(choices[0]); },
         showErrorMessage: (message: string) => { errors.push(message); return Promise.resolve(undefined); },
       },
     },
@@ -260,6 +262,7 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
     await handleUri({ path: '/update', query: new URLSearchParams({ root: projectRoot }).toString() });
     // Assert
     assert.equal(errors.length, 2);
+    assert.equal(confirmations.length, 2, 'only requests for the opened checkout ask for confirmation');
     assert.equal(submissions.length, 1);
     assert.match(JSON.stringify(submissions[0]), /workbench\.action\.chat\.open/);
     assert.match(JSON.stringify(submissions[0]), /Update LLM Wiki/);
@@ -326,6 +329,7 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
       window: {
         registerUriHandler: (handler: { handleUri(uri: { path: string; query: string }): Promise<void> }) => { handleUri = handler.handleUri; return { dispose() {} }; },
         showInformationMessage: (message: string) => { messages.push(message); return Promise.resolve(undefined); },
+        showWarningMessage: (_message: string, _options: unknown, ...choices: string[]) => Promise.resolve(choices[0]),
         showErrorMessage: (message: string) => { messages.push(message); return Promise.resolve(undefined); },
       },
     },
@@ -515,6 +519,7 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
       window: {
         registerUriHandler: (handler: { handleUri(uri: { path: string; query: string }): Promise<void> }) => { handleUri = handler.handleUri; return { dispose() {} }; },
         showInformationMessage: (message: string) => { messages.push(message); return Promise.resolve(undefined); },
+        showWarningMessage: (_message: string, _options: unknown, ...choices: string[]) => Promise.resolve(choices[0]),
         showErrorMessage: (message: string) => { messages.push(message); return Promise.resolve(undefined); },
       },
     },
@@ -535,5 +540,49 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
     assert.deepEqual(agentRuns, [projectRoot]);
     assert.equal(messages.length, 1);
     assert.match(messages[0]!, /could not start the Wiki update: Error: Cursor Agent finished, but the published Wiki is not verified current/);
+  } finally { await boundary.deactivate(); await rm(projectDirectory, { recursive: true, force: true }); }
+});
+
+test('a browser Wiki update link starts no Cursor Agent unless the learner confirms it in the editor', async () => {
+  // Arrange: any web page can open the update link, and the project root is printed in every generated page.
+  const projectDirectory = await mkdtemp(join(tmpdir(), 'codebook-cursor-wiki-update-declined-'));
+  const projectRoot = await realpath(projectDirectory);
+  const outputDirectory = join(projectRoot, '.codebook', 'wiki');
+  await mkdir(outputDirectory, { recursive: true });
+  await writeFile(join(outputDirectory, 'index.html'), '<!doctype html><title>Project Wiki</title>');
+  await writeFile(join(outputDirectory, 'codebook-wiki.json'), JSON.stringify({ schemaVersion: 1, repositoryRoot: projectRoot, pages: [], assets: [], includedSources: [] }));
+  let handleUri: ((uri: { path: string; query: string }) => Promise<void>) | undefined;
+  const agentRuns: string[] = [], messages: string[] = [], confirmations: Array<{ message: string; modal: boolean; detail: string }> = [];
+  const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
+    vscode: {
+      env: { appName: 'Cursor' },
+      commands: { registerCommand: () => ({ dispose() {} }), executeCommand: async () => undefined },
+      workspace: { getConfiguration: () => ({ get: () => '.codebook/wiki' }), onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+      window: {
+        registerUriHandler: (handler: { handleUri(uri: { path: string; query: string }): Promise<void> }) => { handleUri = handler.handleUri; return { dispose() {} }; },
+        showInformationMessage: (message: string) => { messages.push(message); return Promise.resolve(undefined); },
+        // The learner dismisses the modal instead of choosing Update LLM Wiki.
+        showWarningMessage: (message: string, options: { modal: boolean; detail: string }) => { confirmations.push({ message, ...options }); return Promise.resolve(undefined); },
+        showErrorMessage: (message: string) => { messages.push(message); return Promise.resolve(undefined); },
+      },
+    },
+    './environment': { requireWorkspace: () => projectRoot },
+    './repositoryReader': { RepositoryReader: class { async dispose() {} } },
+    './studyWorkspace': { StudyWorkspace: class { async dispose() {} } },
+    './utils/runCursorWikiUpdate': { runCursorWikiUpdate: async (root: string) => { agentRuns.push(root); return 'Updated'; } },
+  });
+  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: projectRoot }, subscriptions: [], workspaceState: { get: () => undefined, update: async () => {} } });
+  try {
+    assert.ok(handleUri);
+
+    // Act
+    await handleUri({ path: '/update', query: new URLSearchParams({ root: projectRoot }).toString() });
+
+    // Assert
+    assert.deepEqual(agentRuns, []);
+    assert.deepEqual(messages, []);
+    assert.equal(confirmations.length, 1);
+    assert.equal(confirmations[0]!.modal, true);
+    assert.match(confirmations[0]!.detail, /can edit files and run commands in this project/);
   } finally { await boundary.deactivate(); await rm(projectDirectory, { recursive: true, force: true }); }
 });

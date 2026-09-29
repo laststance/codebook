@@ -61,10 +61,12 @@ export function launchDevelopmentServer(target: string, node: string, record: (t
         // Process chunks may split a port; only a received delimiter proves its complete value.
         return /http:\/\/127\.0\.0\.1:\d+(?=\D)/.exec(log.toString('utf8'))?.[0];
       }, 'owned Next listener', REPOSITORY_SETUP_TIMEOUT_MS, signal);
-      const response = await fetch(origin, { signal: AbortSignal.any([signal, AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS)]) });
-      await response.body?.cancel();
-      if (!response.ok) throw new Error(`Application root failed: ${response.status}: ${log}`);
-      if (entryPath !== '/') {
+      // A selected non-root entry proves readiness itself; an application without a root page is still usable through it.
+      if (entryPath === '/') {
+        const response = await fetch(origin, { signal: AbortSignal.any([signal, AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS)]) });
+        await response.body?.cancel();
+        if (!response.ok) throw new Error(`Application root failed: ${response.status}: ${log}`);
+      } else {
         const entry = await fetch(`${origin}${entryPath}`, { redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS)]) });
         await entry.body?.cancel();
         if (!entry.ok) throw new Error(`Selected application page failed or redirected: ${entry.status}. Select the actual entry path and prerequisites.`);

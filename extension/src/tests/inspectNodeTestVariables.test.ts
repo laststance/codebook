@@ -50,3 +50,17 @@ test('a Node pause refuses a missing required value', async () => {
   // Act / Assert
   await assert.rejects(inspectNodeTestVariables(session, scopes, [{ path: 'listener', mode: 'value', required: true }], AbortSignal.timeout(1_000)), /Required Node debugger fact is unavailable/);
 });
+
+test('a Node pause keeps a declared value whose debugger type name is too long to save, omitting only that type', async () => {
+  // Arrange: a deeply generic TypeScript value can report a type name longer than the saved 256-character field.
+  const longTypeName = `Map<string, ${'Array<Record<string, number>>, '.repeat(12)}number>`;
+  const session = { customRequest: async () => ({ variables: [{ name: 'totals', value: 'Map(3)', type: longTypeName, variablesReference: 0 }] }) } as unknown as Pick<vscode.DebugSession, 'customRequest'>;
+  const scopes = [{ name: 'Local', variablesReference: 1, expensive: false }];
+
+  // Act
+  const result = await inspectNodeTestVariables(session, scopes, [{ path: 'totals', mode: 'value', required: true }], AbortSignal.timeout(1_000));
+
+  // Assert
+  assert.ok(longTypeName.length > 256);
+  assert.deepEqual(result.facts, [{ path: 'totals', mode: 'value', display: 'Map(3)' }]);
+});

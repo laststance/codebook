@@ -1549,6 +1549,8 @@ export class StudyWorkspace {
     this.assertPresentationIdle(); this.returningCurrent = true;
     try {
       this.historyRequest++; this.leavePlayback(); this.pendingHistory = undefined;
+      // A selected Node journal would otherwise keep masking the live application and debugger after the return.
+      await this.retireNodeHistorySelection();
       this.readerSelectionRevision++; this.selection = { ...this.selection, follow: true, tab: 'live' };
       await this.refresh(); await this.renderSelection(true, true);
     } finally { this.returningCurrent = false; }
@@ -2045,6 +2047,32 @@ export class StudyWorkspace {
     if (!this.recordingActive) return;
     this.playback?.leave(); this.clearLearningSummary(); this.replayViewport?.close(); this.replayViewport = undefined; this.recordingActive = false;
     this.playbackPending = undefined; this.playbackPresentingReady = false; this.lastApplicationKey = undefined; this.lastSelectionKey = undefined;
+  }
+
+  /**
+   * Retires the selected Node journal with its playback and historical debugger context when the learner leaves it for a browser history or the current run.
+   * Closes only unmodified, unpinned source previews that this history's debugger opened; pinned, edited and unrelated tabs belong to the learner.
+   * @returns Whether a Node history was selected, so a history switch can recheck its request after the native preview close.
+   * @example
+   * ```ts
+   * await this.retireNodeHistorySelection() // => true when a Node journal was open
+   * ```
+   */
+  private async retireNodeHistorySelection(): Promise<boolean> {
+    const previousNodeHistoryId = this.selectedNodeHistory?.header.studyId;
+    this.selectedNodeHistoryRequest++; this.nodeHistoryPlaybackController?.dispose(); this.nodeHistoryPlaybackController = undefined;
+    this.selectedNodeHistory = undefined; this.selectedNodeHistoryLearningDecision = undefined; this.selectedNodeHistoryLearningMaterial = undefined;
+    this.selectedNodeHistorySequence = undefined; this.selectedNodeHistoryDebugAvailable = false; this.replayDebugger?.invalidate();
+    if (!previousNodeHistoryId) return false;
+    const previousHistoryPath = `/node-history/${previousNodeHistoryId}/`;
+    const previews = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.isPreview && !tab.isDirty && !tab.isPinned
+      && tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === STUDY_SOURCE_SCHEME
+      && tab.input.uri.authority === this.library?.workspaceKey && tab.input.uri.path.startsWith(previousHistoryPath));
+    if (previews.length) {
+      try { if (!await vscode.window.tabGroups.close(previews, true)) throw new Error('The editor kept the previous Node history preview.'); }
+      catch (error) { this.report('layout', new Error(`Previous Node history previews could not close. Arrange the Codebook panes manually. ${String(error)}`)); }
+    }
+    return true;
   }
 
   /** Selects retained definition bytes for every reader surface without borrowing a different history during replay loading. @example this.selectedStudy()?.profile */
@@ -3183,20 +3211,7 @@ export class StudyWorkspace {
         if (this.pendingHistory !== request || message.revision !== this.revision || this.closing) return;
         this.pendingHistory = undefined; this.selectedArchive = archive;
         // Browser selection retires the separate Node journal and its historical debugger context.
-        const previousNodeHistoryId = this.selectedNodeHistory?.header.studyId;
-        this.selectedNodeHistoryRequest++; this.nodeHistoryPlaybackController?.dispose(); this.nodeHistoryPlaybackController = undefined;
-        this.selectedNodeHistory = undefined; this.selectedNodeHistoryLearningDecision = undefined; this.selectedNodeHistoryLearningMaterial = undefined;
-        this.selectedNodeHistorySequence = undefined; this.selectedNodeHistoryDebugAvailable = false; this.replayDebugger?.invalidate();
-        // Retire only debugger-opened previews from this history; pinned, edited and unrelated tabs belong to the learner.
-        if (previousNodeHistoryId) {
-          const previousHistoryPath = `/node-history/${previousNodeHistoryId}/`;
-          const previews = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.isPreview && !tab.isDirty && !tab.isPinned
-            && tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === STUDY_SOURCE_SCHEME
-            && tab.input.uri.authority === this.library?.workspaceKey && tab.input.uri.path.startsWith(previousHistoryPath));
-          if (previews.length) {
-            try { if (!await vscode.window.tabGroups.close(previews, true)) throw new Error('The editor kept the previous Node history preview.'); }
-            catch (error) { this.report('layout', new Error(`Previous Node history previews could not close. Arrange the Codebook panes manually. ${String(error)}`)); }
-          }
+        if (await this.retireNodeHistorySelection()) {
           // Closing a native preview can publish a new reader revision; the owned history request still controls this switch.
           if (this.pendingHistory !== undefined || request !== this.historyRequest || this.closing) return;
         }

@@ -143,3 +143,28 @@ test('competing inspector announcements and an exited application cannot reuse a
   exitCode = 0;
   await assert.rejects(inspected.inspectorEndpoint(new AbortController().signal), /Application stopped/);
 });
+
+test('an application without a root page is ready through its selected entry path', async () => {
+  // Arrange: "/" answers 404 while the configured "/login" entry renders.
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'), nativeRequire = createRequire(filename);
+  const exports: Partial<typeof ServerModule> = {}, requestedUrls: string[] = [];
+  const child = Object.assign(new EventEmitter(), { pid: 42000, exitCode: null, signalCode: null, stdout: new EventEmitter(), stderr: new EventEmitter() });
+  runInNewContext(await readFile(filename, 'utf8'), {
+    exports, AbortSignal, Buffer, process: { env: {} },
+    fetch: async (url: string) => { requestedUrls.push(url); return { ok: url.endsWith('/login'), status: url.endsWith('/login') ? 200 : 404 }; },
+    require(name: string) {
+      if (name === 'node:child_process') return { spawn: () => child };
+      if (name.endsWith('/utils/waitUntil')) return { waitUntil: async (read: () => unknown) => { child.stdout.emit('data', Buffer.from('Local: http://127.0.0.1:43217\nReady')); return read(); } };
+      return nativeRequire(name);
+    },
+  }, { filename });
+  assert.ok(exports.launchDevelopmentServer);
+  const server = exports.launchDevelopmentServer('/isolated-target', '/node', () => {});
+
+  // Act
+  const origin = await server.ready(new AbortController().signal, '/login');
+
+  // Assert
+  assert.equal(origin, 'http://127.0.0.1:43217');
+  assert.deepEqual(requestedUrls, ['http://127.0.0.1:43217/login']);
+});

@@ -150,3 +150,28 @@ test('a failed Node output observer refuses capture and releases its process', a
     await rm(workspace, { recursive: true, force: true });
   }
 });
+
+test('a Node test logging faster than its history can be saved fails capture instead of buffering the whole log in memory', async () => {
+  // Arrange: 12 MiB of output while the first durable history write is still pending.
+  const workspace = await mkdtemp(join(tmpdir(), 'codebook-node-output-flood-'));
+  const program = join(workspace, 'runner.cjs');
+  await writeFile(program, "process.stdout.write('x'.repeat(12 * 1024 * 1024)); process.stdout.write('END'); process.exitCode = 0;\n");
+  const launch = { workspace, program, sourceFile: program, testFile: program, stops: [], args: ['run', 'src/test.test.ts', '--inspect-brk', '--no-file-parallelism'] };
+  let deliveredBytes = 0, owned: Awaited<ReturnType<typeof launchNodeTest>> | undefined;
+  owned = await launchNodeTest(launch, process.execPath, () => undefined, async event => {
+    // The first history write stays pending until the whole log has arrived, as a slow disk would.
+    if (deliveredBytes === 0) await new Promise<void>(resolve => { const poll = setInterval(() => { if (owned?.output().endsWith('END')) { clearInterval(poll); resolve(); } }, 10); });
+    deliveredBytes += Buffer.byteLength(event.text);
+  });
+  try {
+    // Act
+    const result = owned.result(AbortSignal.timeout(20_000));
+
+    // Assert
+    await assert.rejects(result, /output outpaced its durable history beyond the history size limit/);
+    assert.ok(deliveredBytes <= 8_388_608, `at most the 8 MiB history limit was queued for saving, not ${deliveredBytes} bytes`);
+  } finally {
+    await owned.close();
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
