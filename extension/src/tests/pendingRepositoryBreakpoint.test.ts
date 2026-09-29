@@ -186,3 +186,54 @@ test('a learner-removed owned breakpoint still counts as retired only after the 
   await assert.rejects(breakpoint.retire(stillBound, AbortSignal.timeout(300)));
   assert.equal(breakpoint.retired, false);
 });
+
+test('a learner gutter breakpoint on the owned line does not block retiring the owned breakpoint', async () => {
+  // Arrange: the owned stop 20:5 is acknowledged as breakpoint 8; the learner also has a line-only gutter breakpoint on line 20.
+  const { breakpoint, session, request, response, signal } = await breakpointHarness();
+  breakpoint.onRequest(session, request()); breakpoint.onResponse(session, response());
+  await breakpoint.registered(session, signal);
+
+  // Act: after Codebook removes its breakpoint, the editor's replacement keeps only the learner's breakpoints, and the adapter no longer lists id 8.
+  const retiring = breakpoint.retire(session, AbortSignal.timeout(1_000));
+  breakpoint.onRequest(session, { seq: 2, type: 'request', command: 'setBreakpoints', arguments: { source: { path: '/repo/actions.ts' }, breakpoints: [{ line: 2, column: 1 }, { line: 20 }] } });
+  breakpoint.onResponse(session, { seq: 102, type: 'response', command: 'setBreakpoints', request_seq: 2, success: true,
+    body: { breakpoints: [{ id: 7, verified: true, line: 2, column: 1 }, { id: 9, verified: true, line: 20, column: 5 }] } });
+  await retiring;
+
+  // Assert
+  assert.equal(breakpoint.retired, true);
+});
+
+test('a retirement reply that still lists the owned breakpoint id does not count as retirement', async () => {
+  // Arrange
+  const { breakpoint, session, request, response, signal } = await breakpointHarness();
+  breakpoint.onRequest(session, request()); breakpoint.onResponse(session, response());
+  await breakpoint.registered(session, signal);
+
+  // Act: the adapter's reply to the replacement still reports owned breakpoint 8.
+  const retiring = breakpoint.retire(session, AbortSignal.timeout(1_000));
+  breakpoint.onRequest(session, { seq: 2, type: 'request', command: 'setBreakpoints', arguments: { source: { path: '/repo/actions.ts' }, breakpoints: [{ line: 2, column: 1 }, { line: 20 }] } });
+  breakpoint.onResponse(session, { seq: 102, type: 'response', command: 'setBreakpoints', request_seq: 2, success: true,
+    body: { breakpoints: [{ id: 7, verified: true, line: 2, column: 1 }, { id: 8, verified: true, line: 20, column: 5 }] } });
+
+  // Assert
+  await assert.rejects(retiring, /did not confirm retirement of the owned breakpoint/);
+  assert.equal(breakpoint.retired, false);
+});
+
+test('without breakpoint ids in the adapter reply, a breakpoint left on the owned position still blocks retirement', async () => {
+  // Arrange
+  const { breakpoint, session, request, response, signal } = await breakpointHarness();
+  breakpoint.onRequest(session, request()); breakpoint.onResponse(session, response());
+  await breakpoint.registered(session, signal);
+
+  // Act: the reply cannot say which breakpoint remains on 20:5.
+  const retiring = breakpoint.retire(session, AbortSignal.timeout(1_000));
+  breakpoint.onRequest(session, { seq: 2, type: 'request', command: 'setBreakpoints', arguments: { source: { path: '/repo/actions.ts' }, breakpoints: [{ line: 2, column: 1 }, { line: 20 }] } });
+  breakpoint.onResponse(session, { seq: 102, type: 'response', command: 'setBreakpoints', request_seq: 2, success: true,
+    body: { breakpoints: [{ verified: true, line: 2, column: 1 }, { verified: true, line: 20, column: 5 }] } });
+
+  // Assert
+  await assert.rejects(retiring, /did not confirm retirement of the owned breakpoint/);
+  assert.equal(breakpoint.retired, false);
+});

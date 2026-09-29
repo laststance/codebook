@@ -213,6 +213,8 @@ export const VITEST_LIST_ERROR_LIMIT_CHARS = 2_048;
 export const VITEST_REPORT_LIMIT_BYTES = 8_388_608;
 /** Wait for the owned test process to report its exit after its debugger session ended early. */
 export const NODE_TEST_EXIT_GRACE_MS = 2_000;
+/** Budget for each owned Node test phase: attach through the entry pause, reaching a declared stop while the test runs, and capturing it. */
+export const NODE_TEST_ATTACH_TIMEOUT_MS = 45_000;
 export const REPOSITORY_BROWSER_ACTION = 'repository-click';
 export const REPOSITORY_CONFIG_VERSION = 1;
 export const CROSS_RUNTIME_CONFIG_VERSION = 2;

@@ -6,8 +6,15 @@ import { join, resolve } from 'node:path';
 import type * as vscode from 'vscode';
 import type { DebugProtocol } from '@vscode/debugprotocol';
 import type { NodeTestConfiguration } from '../nodeTestConfigSchemas';
+import * as constants from '../constants';
 import { loadModule } from './utils/loadModule';
 import { sha256 } from '../runtimeSupport/utils/sha256';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
+
+/** The adapter's DAP id for Codebook's own breakpoint, as its registration receipt reports it. */
+const OWNED_BREAKPOINT_ID = 7;
+/** A breakpoint the learner set in the editor. */
+const LEARNER_BREAKPOINT_ID = 12;
 
 /**
  * Drives one owned Node test run through fake editor/process ports, recording the order of breakpoint, continuation and release effects.
@@ -17,14 +24,18 @@ import { sha256 } from '../runtimeSupport/utils/sha256';
  * @param options.duringRetire - Learner action performed while the owned breakpoint is being retired.
  * @param options.exitAfterEntry - The test process exits after the entry pause, as when Vitest skips the cited test.
  * @param options.reportFailure - Error the Vitest report check raises after the process finishes.
+ * @param options.firstPause - A pause that is not Codebook's (a learner breakpoint, for example) reached before the first declared stop; `file` is relative to the test repository.
+ * @param options.neverReachStop - The test keeps running after the entry pause without reaching a declared stop.
+ * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
  *
  * @example
  * ```ts
  * const harness = await nodeRunHarness({ declaredStops: 2 }); await harness.run.prepare(); await harness.run.advance();
  * ```
  */
-async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetire, exitAfterEntry, reportFailure }:
-  { declaredStops?: number; observedLine?: number; duringRetire?: () => void; exitAfterEntry?: boolean; reportFailure?: Error } = {}) {
+async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetire, exitAfterEntry, reportFailure, firstPause, neverReachStop, budgetMs }:
+  { declaredStops?: number; observedLine?: number; duringRetire?: () => void; exitAfterEntry?: boolean; reportFailure?: Error;
+    firstPause?: { line: number; file?: string; reason?: string; hitBreakpointIds?: number[] }; neverReachStop?: boolean; budgetMs?: number } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'));
   const reportDirectory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-report-'));
   const sourceText = 'export const nextTheme = "dark";\n', sourceFile = join(directory, 'theme.ts');
@@ -34,10 +45,10 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
   const launch = { workspace: directory, testFile: join(directory, 'theme.test.ts'), sourceFile, program: 'vitest', args: [], testTitles,
     report: { directory: reportDirectory, file: join(reportDirectory, 'vitest-report.json') },
     stops: Array.from({ length: declaredStops }, () => ({ file: sourceFile, source, inspections: [] })) };
-  const calls: string[] = [], verified: unknown[][] = [];
-  let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined, tracker: vscode.DebugAdapterTracker | undefined, continued = 0, pausedLine = observedLine;
+  const calls: string[] = [], verified: unknown[][] = [], events: Array<{ type: string; detail: unknown }> = [];
+  let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined, tracker: vscode.DebugAdapterTracker | undefined, continued = 0, pausedLine = observedLine, pausedFile = sourceFile;
   let terminate: ((session: vscode.DebugSession) => void) | undefined;
-  const stopped = (reason: string) => tracker?.onDidSendMessage?.({ type: 'event', event: 'stopped', body: { threadId: 1, reason } });
+  const stopped = (reason: string, hitBreakpointIds?: number[]) => tracker?.onDidSendMessage?.({ type: 'event', event: 'stopped', body: { threadId: 1, reason, ...(hitBreakpointIds ? { hitBreakpointIds } : {}) } });
   const clientRequest = (command: string) => tracker?.onWillReceiveMessage?.({ type: 'request', seq: 90, command, arguments: { threadId: 1 } });
   const session = { id: 'owned-node-session', type: 'pwa-node', name: '', workspaceFolder: undefined, configuration: { type: 'pwa-node', name: '', request: 'attach' },
     getDebugProtocolBreakpoint: async () => undefined,
@@ -48,17 +59,24 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
         calls.push('continue');
         // A cited test that Vitest skipped never reaches the source: its process exits and the owned session ends.
         if (exitAfterEntry) { queueMicrotask(() => terminate?.(session as unknown as vscode.DebugSession)); return {}; }
+        if (neverReachStop) return {};
+        // A pause Codebook did not make holds the test before its first declared stop; only the learner releases it.
+        if (firstPause && continued === 0) {
+          continued++; pausedLine = firstPause.line; pausedFile = firstPause.file ? join(directory, firstPause.file) : sourceFile;
+          queueMicrotask(() => stopped(firstPause.reason ?? 'breakpoint', firstPause.hitBreakpointIds));
+          return {};
+        }
         // Each continuation before a declared stop reaches the line again; the final one lets the test finish.
-        if (++continued <= declaredStops) queueMicrotask(() => stopped('breakpoint'));
+        if (++continued <= declaredStops) queueMicrotask(() => stopped('breakpoint', [OWNED_BREAKPOINT_ID]));
         return {};
       }
-      if (command === 'stackTrace') return { stackFrames: [{ id: 1, name: 'loadTheme', line: pausedLine, column: source.column, source: { path: sourceFile } }] } satisfies DebugProtocol.StackTraceResponse['body'];
+      if (command === 'stackTrace') return { stackFrames: [{ id: 1, name: 'loadTheme', line: pausedLine, column: source.column, source: { path: pausedFile } }] } satisfies DebugProtocol.StackTraceResponse['body'];
       if (command === 'scopes') return { scopes: [{ name: 'Local', variablesReference: 1, expensive: false }] } satisfies DebugProtocol.ScopesResponse['body'];
       throw new Error(`Unexpected request ${command}`);
     } };
   class Breakpoint {
     constructor() { calls.push('arm'); }
-    async registered() { return { status: 'bound' }; }
+    async registered() { return { status: 'bound', breakpointId: OWNED_BREAKPOINT_ID }; }
     async retire() { calls.push('retire'); duringRetire?.(); }
     remove() { calls.push('remove'); }
     onRequest() {}
@@ -90,6 +108,7 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
   };
   const module = await loadModule<typeof import('../ownedNodeTestRun')>(resolve(__dirname, '../ownedNodeTestRun.js'), {
     vscode: editor,
+    './constants': { ...constants, NODE_TEST_ATTACH_TIMEOUT_MS: budgetMs ?? constants.NODE_TEST_ATTACH_TIMEOUT_MS },
     './ownedRepositoryBreakpoint': { OwnedRepositoryBreakpoint: Breakpoint },
     './nodeTestOutputTerminal': { NodeTestOutputTerminal: OutputTerminal },
     './utils/prepareNodeTestLaunch': { prepareNodeTestLaunch: async () => launch },
@@ -107,8 +126,8 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
   });
   const configuration: NodeTestConfiguration = { version: 1, adapter: 'vitest-node', book: { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 0 },
     testFile: 'theme.test.ts', testTitles, testHash: sha256('test'), source, inspections: [] };
-  const run = new module.OwnedNodeTestRun(directory, configuration, process.execPath, () => undefined);
-  return { run, calls, verified, launch, reportDirectory,
+  const run = new module.OwnedNodeTestRun(directory, configuration, process.execPath, (type, detail) => { events.push({ type, detail }); });
+  return { run, calls, verified, events, launch, reportDirectory, sourceFile,
     cleanup: async () => { await rm(directory, { recursive: true, force: true }); await rm(reportDirectory, { recursive: true, force: true }); },
     // Another debugger control resumes the accepted source pause outside Codebook.
     resume: () => tracker?.onDidSendMessage?.({ type: 'event', event: 'continued', body: { threadId: 1 } }),
@@ -119,7 +138,12 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
     // js-debug refreshes the stack (e.g. Toggle Skipping this File) by re-announcing the same pause with no client resume request.
     refreshPause: () => { tracker?.onDidSendMessage?.({ type: 'event', event: 'continued', body: { threadId: 1 } }); stopped('breakpoint'); },
     // Something outside the editor client moves the paused thread, so the stack reports another position.
-    movePausedFrame: (line: number) => { pausedLine = line; } };
+    movePausedFrame: (line: number) => { pausedLine = line; },
+    // The learner presses Continue at their own pause; the test then runs for `runningMs` before reaching Codebook's declared stop.
+    learnerContinues: (runningMs = 0) => {
+      clientRequest('continue'); pausedLine = observedLine; pausedFile = sourceFile;
+      setTimeout(() => stopped('breakpoint', [OWNED_BREAKPOINT_ID]), runningMs);
+    } };
 }
 
 test('continuing the final declared stop retires its owned breakpoint first so a repeated line cannot pause the finished test again', async () => {
@@ -412,4 +436,67 @@ test('releasing a run removes its private Vitest report folder', async () => {
   // Assert
   await assert.rejects(stat(harness.reportDirectory), { code: 'ENOENT' });
   await harness.cleanup();
+});
+
+test('a learner breakpoint earlier in the declared source holds the run until the learner continues, without failing or being resumed by Codebook', async () => {
+  // Arrange: the learner's own breakpoint on line 5 of the cited source pauses the test before Codebook's stop on line 1.
+  const harness = await nodeRunHarness({ firstPause: { line: 5, hitBreakpointIds: [LEARNER_BREAKPOINT_ID] } });
+  try {
+    // Act
+    const preparing = harness.run.prepare();
+    await waitUntil(() => harness.events.some(event => event.type === 'node-test.learner-paused'), 'learner pause event', 2_000);
+    harness.learnerContinues();
+    const stop = await preparing;
+
+    // Assert
+    assert.equal(stop.frame.line, 1);
+    // Event details are created inside the loaded module's context, so compare their JSON form.
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.events.filter(event => event.type === 'node-test.learner-paused').map(event => event.detail))),
+      [{ index: 0, path: 'theme.ts', line: 5, column: 14, reason: 'breakpoint' }]);
+    assert.equal(harness.calls.filter(call => call === 'continue').length, 1, 'Codebook resumed only its own entry pause');
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a test held at a learner pause longer than the stop budget still reaches its declared stop after the learner continues', async () => {
+  // Arrange: a 300 ms budget; a learner breakpoint in another file holds the test for 700 ms, then the test runs 150 ms more to the declared stop.
+  const harness = await nodeRunHarness({ budgetMs: 300, firstPause: { line: 3, file: 'helper.ts', hitBreakpointIds: [LEARNER_BREAKPOINT_ID] } });
+  try {
+    // Act
+    const preparing = harness.run.prepare();
+    await waitUntil(() => harness.events.some(event => event.type === 'node-test.learner-paused'), 'learner pause event', 2_000);
+    await new Promise(resolve => setTimeout(resolve, 700));
+    harness.learnerContinues(150);
+    const stop = await preparing;
+
+    // Assert
+    assert.equal(stop.frame.line, 1);
+    assert.equal(harness.calls.filter(call => call === 'continue').length, 1, 'Codebook never resumed the learner pause');
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a declared stop that a freely running test never reaches still fails at the stop budget', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ budgetMs: 300, neverReachStop: true });
+  try {
+    const startedAt = performance.now();
+
+    // Act
+    const preparing = harness.run.prepare();
+
+    // Assert
+    await assert.rejects(preparing, /Timed out waiting for checked Node source stop/);
+    assert.ok(performance.now() - startedAt < 5_000, 'the running test is bounded by the stop budget');
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('Codebook\'s own breakpoint reported hit elsewhere in the declared source still fails at once as a moved stop', async () => {
+  // Arrange: the adapter reports the owned breakpoint id for a pause on line 5 instead of the declared line 1.
+  const harness = await nodeRunHarness({ firstPause: { line: 5, hitBreakpointIds: [OWNED_BREAKPOINT_ID] } });
+  try {
+    // Act
+    const preparing = harness.run.prepare();
+
+    // Assert
+    await assert.rejects(preparing, /stopped at 5:14 instead of declared 1:14/);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
 });

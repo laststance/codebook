@@ -1,7 +1,7 @@
 # Cycle 0030 — Trustworthy Node test runs
 
 Type: product-increment (hardening)\
-Status: implementation (increment 1 complete; increment 2 next)\
+Status: implementation (increments 1–3 mechanism complete; increment 4 next)\
 Result: pending\
 Delivery: local-only\
 Goal version: 9\
@@ -233,6 +233,97 @@ Source commit `8834485` implements T1–T3 as reviewed (19 files). Logs are in t
 
 **Validation contract results:** metacharacter titles, prefix sibling, substring path, nested suites, refusals and result check PASS at mechanism level. The native regression PASS is at development level in VS Code. The full suites PASS.
 
+### Increment 2 plan: ordered output/stop journal (C-F2, C-F3), frozen 2026-09-30
+
+- **AC IDs:** primary AC-SAVE, because a passing Node run must save as a complete history. Dependencies: AC-LIVE (the run must not fail on its own bookkeeping) and AC-REPLAY (the history timeline).
+- **Inspected source.**
+  - `launchNodeTest` stamps each output chunk when it arrives. It hands the chunk to the history (`onOutput` → `service.ts` → `NodeTestHistoryWriter.appendOutput`) only after the previous chunk's durable write has finished.
+  - `OwnedNodeTestRun.captureStop` stamps a stop when it accepts it. `service.ts` then appends that stop through the writer's queue after only microtasks, so an output cannot be stamped between the stop's stamp and its append.
+  - `NodeTestHistoryWriter.append` refuses an entry stamped earlier than the last one written ("Node history time moved backward").
+  - C-F2: while one output write is slow, a later chunk that was stamped before the stop can still be waiting in `launchNodeTest`. The stop is then written first, and that chunk is refused. The output capture fails, so a passing run fails.
+  - C-F3: `append` stores the rejected promise as `pending`, and the writer never recovers. Every later append and `finish('partial')` reject too, so `service.ts` abandons the history unsealed (status `failed`).
+- **Change.**
+  - `launchNodeTest` hands each chunk to the history as soon as it is stamped, in arrival order. The writer's own queue serializes the durable writes, so the queue order is the stamp order. The pending-byte bound and `result()`/`close()` waiting for every hand-off stay.
+  - `NodeTestHistoryWriter` records the first failed entry and does not let it poison the queue. Later appends are refused, because they would follow a gap. `finish('partial')` seals the verified prefix. `finish('complete')` stays refused. If the journal holds bytes the writer did not confirm (a write torn by an I/O failure), the writer refuses to seal, and the history reads as an interrupted prefix.
+- **Expected result.**
+  - A chunk that arrives while an earlier write is pending reaches the journal before a stop accepted after it. The run's output capture does not fail, and the journal stays in time order.
+  - After a refused entry, the history is sealed `partial` with its verified prefix and a reason, and the library reads it.
+- **Falsifiers:** the red launch test still gets "Node test output capture failed"; `finish('partial')` still rejects after a refused entry; a torn journal is sealed.
+- **Procedure.**
+  1. Red tests: a real `launchNodeTest` process plus a real `NodeTestHistoryWriter` whose first write confirms late, with a stop appended after the second chunk arrived; the writer after a refused entry and after foreign journal bytes.
+  2. The fix, then the focused, full extension and package suites.
+  3. Negative controls: restore the deferred hand-off and the poisoned queue, and see the new tests fail.
+  4. Native: the dashboard Copilot Auto regression at cycle end, together with increments 3–4. Slow durable writes cannot be forced natively without changing the target.
+
+### Increment 2 result, 2026-09-30
+
+Source commit `a205937`. Logs are in `artifacts/cycle-0030/` (`codebook-c30-i2-*`).
+
+- **Red** (`codebook-c30-i2-red.log`): all three new tests failed for the predicted reasons.
+  - The launch test failed with `Node test output capture failed: Error: Node history time moved backward.`, which is C-F2 reproduced with a real process and a real writer.
+  - After a refused entry, the next append failed with the same backward-time error instead of a gap refusal, and `finish('partial')` rejected (C-F3).
+  - A journal with an unconfirmed partial line was sealed.
+- **Green.** Focused 45/45 PASS: launch, history store, owned run, service and output terminal. The full extension suite PASS 1,345/1,345, and the package suite 175/175.
+- **Negative controls** (`codebook-c30-i2-negative.log`): restoring the deferred hand-off, the poisoned queue and the missing torn-journal check each failed exactly its new test. All three passed again after the restore.
+- **Behavior change.** Output chunks are handed to the history in arrival order, and the history's own queue serializes the durable writes. A failed entry ends the verified prefix, and `service.ts` now seals such a run `partial` with its reason instead of abandoning it as `failed`. The existing flood test now models the history's serialized writes explicitly and still proves the 8 MiB bound.
+- **Native:** NOT RUN for this increment. The dashboard regression at cycle end covers it.
+
+### Increment 3 plan: learner pauses and breakpoints during an owned Node run, frozen 2026-09-30
+
+- **AC IDs:** primary AC-LIVE: the learner can use the native debugger during a run without breaking it. Dependency AC-SAVE: such a run still saves complete.
+- **Rules from the behavioral design.** Codebook never auto-resumes. A process that is still paused is surfaced. The debugger's actual bound location is authoritative. The learner resumes explicitly.
+- **Inspected source.**
+  - js-debug 1.117.0 (installed with VS Code 1.139.1) sends `hitBreakpointIds` in `stopped`. `OwnedRepositoryBreakpoint` already knows the owned DAP id from its registration receipt, but `OwnedNodeTestRun` drops `hitBreakpointIds`.
+  - `captureStop` treats any breakpoint pause elsewhere in the declared source as the owned breakpoint having moved, and fails the run. A pause anywhere else is ignored while the process stays held, and the run then fails on the 45 s budget without naming the pause.
+  - Retirement fails whenever any breakpoint remains at the owned line (`position.column === undefined || …`). A learner's gutter breakpoint on the declared line has no column, so it passes registration but fails the final continuation ("owned removal cannot retire learner breakpoints"). A successful run then ends partial.
+- **Change.**
+  1. Move the 45 s budget into `constants.ts` as `NODE_TEST_ATTACH_TIMEOUT_MS`, with no behavior change.
+  2. Record `hitBreakpointIds` on each native pause. A breakpoint pause whose hit ids exclude the owned id is the learner's; it is never reported as a moved owned breakpoint. A pause at the declared position is still accepted as before. A breakpoint pause elsewhere in the declared source still fails fast when its hit ids include the owned id or are absent.
+  3. While the owned session is held at any pause that is not the declared stop, Codebook does not resume it. It records `node-test.learner-paused` once, with the repository-relative location and the reason. That held time does not count against the stop budget, and cancellation and the service's wall deadline still bound it. The capture that follows gets its own budget.
+  4. Retirement confirms by the owned DAP id: the adapter's reply must be successful and must no longer contain that id. When the reply carries no ids, the position rule stays. A learner breakpoint on the same line no longer blocks the continuation.
+- **Decisions (auto-chosen, recommended; disclosed in the PR).**
+  - L1: a learner pause is waited for, not failed or resumed (design rule).
+  - L2: held time is excluded from the budget, rather than letting the learner's inspection time count toward it.
+  - L3: retirement confirms by id, instead of refusing any same-line learner breakpoint.
+  - L4: a breakpoint pause without hit ids in the declared source keeps failing fast (conservative).
+- **Expected result.**
+  - A learner breakpoint before the declared stop holds the run and appears as an event. After the learner continues, the declared stop is captured.
+  - A run held longer than the budget does not fail.
+  - A free-running test that never reaches the stop still fails at the budget.
+  - A gutter breakpoint on the declared line lets the run finish.
+- **Falsifiers:** the red tests keep failing ("instead of declared", "Timed out waiting", "cannot retire learner breakpoints"), or Codebook sends a `continue` for a learner pause.
+- **Procedure.**
+  1. Red tests: an owned run with a learner breakpoint in the declared source; one held past a 300 ms stubbed budget in another file; the free-running timeout guard; the owned id hit elsewhere still failing; retirement with a same-line learner breakpoint and with the owned id still listed.
+  2. Then the fix, the focused, full and package suites, and negative controls.
+  3. Native: in the dashboard, add a gutter breakpoint on `data.ts` line 217 and one earlier line, run the Copilot Auto regression, continue the learner pause natively, and then remove both breakpoints. The owner's breakpoints are restored afterwards.
+
+### Restore and increment 3 validation entry, 2026-09-30 04:04 JST
+
+The owner resumed the full D039 goal after the read-only context restore. No new product scope or design decision is introduced. Previous turn: progress, because locating the terminated suite changed the next action from waiting to fresh verification. Current branch `codex/cycle-0030-node-run-integrity`, HEAD `a205937`, one commit ahead of draft PR #51 (`f8b82d1`); nine dirty files are preserved. The remote package and Socket checks passed on that remote revision, not on this local candidate. Dashboard `1936e41913729663cc99081e3224db89bb2d8e56` remains unchanged except the pre-existing `.codebook/`.
+
+Full entry reads completed in this session: PRODUCT_GOAL, replay/DeepWiki/shortcut contracts, IMPLEMENTATION, PROJECT_STATE, this cycle, DESIGN, DEVELOPMENT, controlling D025–D028/D039, behavioral design, and local TypeScript rules. Serena's TypeScript server is active. Context7 was probed again and returned `Monthly quota reached`; use official primary documentation and installed sources for third-party contracts.
+
+Opened the approved PNG through the image-viewing tool and verified SHA `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`: live app above paused source with native Variables/Watch/Call Stack and chat, bottom capture/save; replay uses recorded native state and replaces chat with summary/sequence, one timeline and missing interval; independent three-column DeepWiki has update/output/source links; shortcut strip shows tooltip and searchable help. This increment changes capture ownership, not the visual layout. Required native proof remains separate.
+
+Affected-row audit: AC-LIVE — current `OwnedNodeTestRun.captureStop` waits for learner-owned pauses without resuming them, using the registered owned breakpoint id and held-time budget; `OwnedRepositoryBreakpoint.retire` distinguishes same-line learner breakpoints by DAP id. AC-SAVE — `service.ts` exposes a bounded learner-pause event; complete-history/native proof remains open. AC-REPLAY/AC-SKILL are dependencies: captured history and public help must remain accurate. The other nine rows (AC-GAPS, AC-LEARNING, AC-WIKI, AC-WIKI-UPDATE, AC-SOURCE-LINKS, AC-ENTRY, AC-DESKTOP, AC-SHORTCUTS, AC-REAL-PROJECTS) carry forward with their existing unverified boundaries because this increment does not change their implementation paths. All thirteen active requirements remain accounted for; no final acceptance credit is claimed.
+
+Validation gap: the saved task output ends `[killed]`; the old full log explicitly reports `Interrupted while running`, 1,193 passed / 1 cancelled, and no package log exists. Hypothesis: external interruption during context-save, rather than a study-workspace regression. Procedure: freshly build the retained increment 3 candidate, run focused/full/package suites under owned live process handles, retain exit codes and logs, and investigate further only if fresh execution reproduces the cancellation. No code fix is justified by the interrupted log alone.
+
+The three former 03:50/04:05/04:15 headings exceeded the saved 03:56 timestamp. Their dates and ordering are retained above; unsupported minute-level times were removed rather than replaced with invented times.
+
+### Increment 3 mechanism result, 2026-09-30 04:11 JST
+
+Retained implementation and diff review complete. No auto-resume branch was added; continuation still checks native pause authority, and exposed learner-pause paths are repository-relative or an outside basename. Existing red/negative evidence remains under `artifacts/cycle-0030/`: six predicted red failures and one passing guard; N1–N3 controls, including N2's 150 ms running interval after learner continuation, failed with the relevant mechanism disabled and passed after restoration.
+
+- Fresh build PASS; focused touched-module tests **42/42 PASS** (`codebook-c30-i3-focused-sequential.log`). This invocation covers owned Node runs, pending breakpoints and public Node service; the saved 107/107 receipt used a broader invocation.
+- Full extension suite **1,352/1,352 PASS, 0 failures, 0 cancelled**, 210,733 ms (`codebook-c30-i3-full-sequential.log`). Owned PID 62930 was observed live and then absent with the terminal summary retained.
+- Package suite **175/175 PASS**, 22,059 ms (`codebook-c30-i3-package-restored.log`), on the same retained product source.
+- Old validation was interrupted: `Interrupted while running` / `[killed]`. Fresh uninterrupted execution passes; no product fix was justified by that cancellation.
+- The first fresh full/focused attempt was invalidated by concurrent packaging. `package.test.mjs` invokes `buildPackage` on this checkout; `cleanPackageOutputs` removes `extension/dist`, so parallel readers failed ENOENT. Failed `*-restored.log` receipts remain. Run full and package suites sequentially.
+- Native increments 2–3: **NOT RUN**; the installed increment 1 candidate predates both. Native regression follows increment 4.
+
+AC-LIVE/AC-SAVE implementation and mechanism evidence advance; AC-REPLAY/AC-SKILL dependency checks retain their native gaps. Other rows carry forward per the entry audit. No final acceptance credit.
+
 ## Result and decision
 
 - Result: pending
@@ -243,11 +334,8 @@ Cycle 0029 delivered through PR #48 (`ad476d3`); Issue #46 is closed with its re
 
 ## Next action
 
-- **Exact next action:** start increment 2 (C-F2 with C-F3) in `nodeTestHistoryStore.ts` and its callers in `ownedNodeTestRun.ts`, test-first.
-  - C-F2: the stop is stamped when it is accepted but appended after its snapshot. An entry stamped earlier can therefore reach the journal after a later-stamped one, and `append` refuses it with "Node history time moved backward".
-  - C-F3: that rejected append becomes `pending`, so every later append, and the seal, rejects too. A partial history is never sealed.
-  - First write red tests that reproduce both. Then order entries by stamp through one history channel, and keep a rejected append from poisoning sealing.
-- **Branch / processes:** `codex/cycle-0030-node-run-integrity` at `8834485` plus this record. No Codebook-owned Vitest process is running. The QA VS Code window stays open on the dashboard with the 0.2.12 candidate. Isolated probe projects: `/private/tmp/codebook-vitest-filter` (Vitest 5.0.2, installed offline for the mechanism rerun) and `/private/tmp/codebook-vitest-v4` (4.1.11).
+- **Exact next action:** increment 4, test-first: protect configured browser/server pauses from js-debug stack refresh while refusing actual manual/foreign continuation. Freeze checks against `ConfiguredBrowserRun.onEvent/onRequest/onCdpResumed` and the native-participants harness before edits, then run final-candidate Copilot Auto native regression.
+- **Branch / processes:** `codex/cycle-0030-node-run-integrity`, increments 1–2 committed and increment 3 being recorded; fresh suite processes have ended. QA VS Code is on the dashboard with the earlier increment 1 candidate and Auto selected. Isolated probe projects remain `/private/tmp/codebook-vitest-filter` and `/private/tmp/codebook-vitest-v4`.
 - **State:** PROJECT_STATE names this cycle as active.
 
 ## GSTACK REVIEW REPORT

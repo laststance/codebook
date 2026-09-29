@@ -93,6 +93,7 @@ test('public Node test start exposes cited ordered pauses, actual result, and th
     assert.ok('text' in help); assert.match(help.text, /history journal/i); assert.match(help.text, /not application video or synchronized application replay/i);
     assert.match(help.text, /\[\\"invoice data queries\\", \\"converts stored invoice cents to dollars for the edit form\\"\]/, 'help shows a nested test cited by its title path');
     assert.match(help.text, /testName is retired and refused for new runs/);
+    assert.match(help.text, /Codebook does not resume it.*node-test\.learner-paused.*continue it in the native debugger/, 'help tells the agent a learner pause waits for the learner');
     assert.match(state.recording.reason!, /application video and synchronized replay are unavailable/i);
     assert.equal(releases, 1);
   } finally { await harness.close(); }

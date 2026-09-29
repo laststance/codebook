@@ -9,7 +9,7 @@ import { ACTIVE_TIMEOUT_MS } from './constants';
 const requestSourceSchema = z.object({ source: z.object({ path: z.string() }) });
 const requestSchema = requestSourceSchema.extend({ sourceModified: z.boolean().optional(),
   breakpoints: z.array(z.object({ line: z.number().int(), column: z.number().int().optional(), condition: z.string().optional(), hitCondition: z.string().optional(), logMessage: z.string().optional() })) });
-const responseSchema = z.object({ breakpoints: z.array(z.object({ line: z.number().int().optional(), column: z.number().int().optional() })) });
+const responseSchema = z.object({ breakpoints: z.array(z.object({ id: z.number().int().optional(), line: z.number().int().optional(), column: z.number().int().optional() })) });
 const registrationResponseSchema = z.object({ breakpoints: z.array(z.object({
   id: z.number().int().optional(), verified: z.boolean(), line: z.number().int().optional(), column: z.number().int().optional(),
   source: z.object({ path: z.string().optional() }).optional(), reason: z.enum(['pending', 'failed']).optional(),
@@ -20,7 +20,8 @@ type RegistrationReceipt = { sessionId: string; requestSequence: number; breakpo
 export class OwnedRepositoryBreakpoint {
   readonly breakpoint: vscode.SourceBreakpoint;
   private readonly registrations = new Map<string, { requestSequence: number; index: number; count: number; receipt?: RegistrationReceipt; failure?: string }>();
-  private retirement?: { sessionId: string; requestSequence?: number; confirmed: boolean; failure?: string };
+  /** `ownedBreakpointId` is the adapter id acknowledged for this breakpoint; with it, a learner breakpoint left on the same line is told apart from the owned one. */
+  private retirement?: { sessionId: string; ownedBreakpointId?: number; requestSequence?: number; confirmed: boolean; failure?: string };
   retired = false;
   constructor(readonly path: string, readonly line: number, readonly column: number) {
     this.breakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(path), new vscode.Position(line - 1, column - 1)));
@@ -50,8 +51,8 @@ export class OwnedRepositoryBreakpoint {
       return;
     }
     if (session.id !== retirement.sessionId) return;
-    // A same-position learner breakpoint cannot be disabled to satisfy this run's one-stop contract.
-    if (parsed.data.breakpoints.some(position => position.line === this.line && (position.column === undefined || position.column === this.column))) {
+    // Without the owned id, a same-position learner breakpoint is indistinguishable from the owned one, and it cannot be disabled for this run.
+    if (retirement.ownedBreakpointId === undefined && parsed.data.breakpoints.some(position => position.line === this.line && (position.column === undefined || position.column === this.column))) {
       retirement.failure = 'A breakpoint still targets the selected position; owned removal cannot retire learner breakpoints.'; return;
     }
     retirement.requestSequence = request.seq; retirement.confirmed = false;
@@ -88,7 +89,12 @@ export class OwnedRepositoryBreakpoint {
     const retirement = this.retirement;
     if (!retirement || session.id !== retirement.sessionId || response.command !== 'setBreakpoints' || response.request_seq !== retirement.requestSequence) return;
     const parsed = responseSchema.safeParse(response.body);
-    if (!response.success || !parsed.success || parsed.data.breakpoints.some(position => position.line === this.line && (position.column === undefined || position.column === this.column))) {
+    const ownedBreakpointId = retirement.ownedBreakpointId;
+    // With every remaining breakpoint identified, only the owned id counts; otherwise any breakpoint left on the owned position might be it.
+    const identified = parsed.success && ownedBreakpointId !== undefined && parsed.data.breakpoints.every(position => position.id !== undefined);
+    const ownedRemains = !parsed.success || (identified ? parsed.data.breakpoints.some(position => position.id === ownedBreakpointId)
+      : parsed.data.breakpoints.some(position => position.line === this.line && (position.column === undefined || position.column === this.column)));
+    if (!response.success || ownedRemains) {
       retirement.failure = 'Selected adapter did not confirm retirement of the owned breakpoint.'; return;
     }
     retirement.confirmed = true;
@@ -118,7 +124,8 @@ export class OwnedRepositoryBreakpoint {
       signal.throwIfAborted(); this.registrations.clear(); this.retired = true;
       return;
     }
-    const retirement = this.retirement = { sessionId: session.id, confirmed: false };
+    // Read the acknowledged id before removal clears the registrations.
+    const retirement = this.retirement = { sessionId: session.id, ownedBreakpointId: this.registrations.get(session.id)?.receipt?.breakpointId, confirmed: false };
     this.remove();
     await waitUntil(async () => {
       if (this.retirement?.failure) throw new Error(this.retirement.failure);
