@@ -159,3 +159,14 @@ test('competing or trailing script identities cannot impersonate the selected we
     assert.throws(() => extractDevelopmentModule(`eval(${JSON.stringify(module + directives)});`, sourcePath, source, '/repo/layout.js', 'webpack-internal:///theme.tsx'), /ambiguous script identity/);
   }
 });
+
+
+test('lazy breakpoint admission recognizes exact nonminimum mapped columns without accepting nearby columns', () => {
+  // Arrange
+  const verifier = createBundleVerifier({ ...bundle, sourceMap: JSON.stringify({ ...payload, mappings: 'ACAE,EAAE' }) });
+  // Act / Assert
+  assert.equal(verifier.hasMappedPosition(1, 3), true);
+  assert.equal(verifier.hasMappedPosition(1, 5), true);
+  assert.equal(verifier.hasMappedPosition(1, 4), false);
+  assert.equal(verifier.hasMappedPosition(2, 3), false);
+});

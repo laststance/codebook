@@ -4,15 +4,21 @@ import { editorLayoutSchema } from './isProportionalEditorLayout';
 
 type EditorLayout = z.infer<typeof editorLayoutSchema>;
 
-/** Sizes explicit {@link StudyWorkspace} placement from measured native axes so minimum-size groups need no host proportional expansion. @example toPixelEditorLayout(requested, measured) // absolute pixel grid, or undefined when either axis is unavailable */
+/** Sizes {@link StudyWorkspace} placement from measured native axes when a host retains a minimum-size group.
+ * @param expected - The requested editor group proportions.
+ * @param actual - The measured native editor group sizes.
+ * @returns A pixel layout when its required axes are measured; otherwise undefined.
+ * @example toPixelEditorLayout({ orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] }, { orientation: 1, groups: [{ size: 70 }, { size: 1200 }] }) // two 635px rows
+ */
 export function toPixelEditorLayout(expected: unknown, actual: unknown): EditorLayout | undefined {
   const requested = editorLayoutSchema.safeParse(expected), received = editorLayoutSchema.safeParse(actual);
   if (!requested.success || !received.success) return undefined;
   const primarySize = received.data.groups.reduce((sum, group) => sum + group.size, 0);
   const crossSizes = received.data.groups.flatMap(group => group.groups ? [group.groups.reduce((sum, child) => sum + child.size, 0)] : []);
   const crossSize = Math.max(0, ...crossSizes);
-  // A flat grid omits its orthogonal axis; fractional descriptors are not native measurements.
-  if (!Number.isFinite(primarySize) || !Number.isFinite(crossSize) || primarySize <= 1 || crossSize <= 1) return undefined;
+  // A flat requested grid needs only its primary axis; nested panes still require a measured cross axis.
+  const needsCrossAxis = requested.data.groups.some(group => group.groups);
+  if (!Number.isFinite(primarySize) || primarySize <= 1 || (crossSize <= 1 && (needsCrossAxis || requested.data.orientation !== received.data.orientation))) return undefined;
   const width = received.data.orientation === HORIZONTAL_EDITOR_ORIENTATION ? primarySize : crossSize;
   const height = received.data.orientation === HORIZONTAL_EDITOR_ORIENTATION ? crossSize : primarySize;
   const scale = (groups: EditorLayout['groups'], availableWidth: number, availableHeight: number, orientation: EditorLayout['orientation']): EditorLayout['groups'] => {

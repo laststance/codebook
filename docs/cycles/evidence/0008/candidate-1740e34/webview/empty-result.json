@@ -1,8 +1,0 @@
-{
-  "passed": true,
-  "checks": 3,
-  "live": "No agent explanation attached. Captured facts remain available below.",
-  "recorded": "No explanation was available by this recorded time.",
-  "restored": "No agent explanation attached. Captured facts remain available below.",
-  "scope": "Actual webview HTML in isolated browser page with controlled empty projections; no native/recording evidence claim"
-}

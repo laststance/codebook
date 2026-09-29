@@ -1,0 +1,44 @@
+{
+  "date": "2026-09-27",
+  "scope": [
+    "AC-LIVE",
+    "AC-SAVE",
+    "AC-REPLAY",
+    "AC-LEARNING"
+  ],
+  "sourceHash": "5087b0668acfa3c3d132030c57689be5ba565a80f9c3d10494ea64a4b1e219c8",
+  "candidate": "/Users/ryotamurakami/laststance/vscode-extension/codebook/artifacts/cycle-0029/undefined-facts/codebook.vsix",
+  "candidateSha256": "e5065aa217aca7b5c7a169a8646b7cec9a9673ae5ed9f22c0fe99a27380a7bdb",
+  "behavior": "Observed undefined is stored as strict {type:undefined} marker; literal string, null, rejected objects and missing responses stay distinct. Saved interpretation facts compare by content.",
+  "tests": {
+    "command": "node --test extension/dist/tests/configured*.test.js extension/dist/tests/learningSummary.test.js extension/dist/tests/recordingContext.test.js",
+    "passed": 164,
+    "failed": 0,
+    "log": "/Users/ryotamurakami/laststance/vscode-extension/codebook/artifacts/cycle-0029/undefined-facts/tests.log",
+    "oldBehavior": "Both newly added capture/archive regressions failed before the fix.",
+    "intermediateFailures": [
+      "Required-unavailable harness used actual undefined; changed its negative control to an application object.",
+      "Replay assertion expected a later explanation at the earlier pause; corrected to inspect saved context while retaining temporal filtering."
+    ]
+  },
+  "v8Probe": {
+    "result": "PASS",
+    "method": "Node inspector Debugger.evaluateOnCallFrame at an actual debugger statement, generated capture expression, returnByValue and throwOnSideEffect enabled",
+    "value": {
+      "type": "undefined"
+    },
+    "exceptionDetails": false,
+    "limit": "Node V8 protocol probe, not installed browser/editor proof"
+  },
+  "build": "PASS",
+  "packageValidation": "PASS",
+  "native": "Bounded VS Code PASS; see undefined-facts-native.json. Cursor/current-candidate restart remain unverified.",
+  "preservation": [
+    "Old primitive archive cases pass",
+    "Application lookalike objects/functions/oversized/nonfinite values remain unavailable",
+    "Bare missing CDP responses and evaluation exceptions remain unavailable",
+    "Tampered string/null/extra-property interpretations rejected",
+    "Coordinator continuation, explanation, disk archive/context restart and historical debugger values pass controlled protocol tests"
+  ],
+  "next": "Provide bounded discoverable snapshot/context reads so ordinary agents can inspect facts and saved learning without a missing temporary file; retain full historical content and hash binding."
+}

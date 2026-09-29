@@ -6,16 +6,16 @@
     {
       "revision": 1,
       "key": "first",
-      "inputDigest": "46c306d3050b3e64b99b3eea0435478693a040345c9c3a3f13581f0e4c34bc1b",
+      "inputDigest": "512543316e941dce362bbff1dd905efd16691c8e92274d1f4dcc2a5ca0a8f6bc",
       "expectedRevision": 0,
       "publishedAt": "2026-09-19T00:00:02.000Z",
       "document": {
-        "title": "Cart architecture",
-        "summary": "Source-derived cart state.",
+        "title": "Module architecture",
+        "summary": "Source-derived module state.",
         "nodes": [
           {
-            "id": "cart",
-            "title": "Cart",
+            "id": "module",
+            "title": "Module",
             "sections": [
               {
                 "title": "Price",
@@ -24,7 +24,7 @@
             ],
             "anchors": [
               {
-                "path": "src/cart.ts",
+                "path": "src/module.ts",
                 "hash": "5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b",
                 "startLine": 1,
                 "endLine": 2
@@ -37,7 +37,7 @@
       },
       "sources": [
         {
-          "path": "src/cart.ts",
+          "path": "src/module.ts",
           "hash": "5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b",
           "text": "export const price = 24;\n",
           "lineCount": 2
@@ -45,14 +45,14 @@
       ],
       "sourceChecks": [
         {
-          "path": "src/cart.ts",
+          "path": "src/module.ts",
           "hash": "5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b",
           "acquiredAt": "2026-09-19T00:00:00.000Z",
           "checkedAt": "2026-09-19T00:00:01.000Z"
         }
       ],
       "observations": [],
-      "hash": "31886758b5000328fb26c2431817b589d008c61ba2c3a048ded20625d8fcba80"
+      "hash": "a772171df763a8ecf607b077b1ecff6a995fbbde8bbf18e7fee848e7b2028290"
     }
   ]
 }

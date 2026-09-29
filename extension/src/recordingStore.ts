@@ -3,8 +3,8 @@ import { lstat, mkdir, open, opendir } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { isDeepStrictEqual } from 'node:util';
 import { join } from 'node:path';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { CONFIGURED_RECORDING_VERSION, IMAGE_LIMIT_BYTES, MAX_RECORDINGS, MAX_RECORDING_CONTEXT_BYTES, MAX_RECORDING_FRAMES, MAX_RECORDING_HEADER_BYTES, MAX_RECORDING_JOURNAL_BYTES, MAX_RECORDING_METADATA_FILES, MAX_RECORDING_PENDING_BYTES, MAX_RECORDING_PNG_BYTES, MAX_RECORDING_TOTAL_BYTES, MAX_UI_TEXT_CHARS, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, RECORDING_CONTEXT_FILE, RECORDING_DIRECTORY, RECORDING_HEADER_FILE, RECORDING_JOURNAL_FILE, RECORDING_REASON_LIMIT_CHARS, RECORDING_SAMPLE_INTERVAL_MS, RECORDING_SEAL_FILE, RECORDING_STORAGE_FORMATS, RECORDING_TERMINAL_RESERVE_BYTES, RECORDING_VERSION, REPOSITORY_BROWSER_PROFILE } from './constants';
+import { sha256 } from './runtimeSupport/utils/sha256';
+import { CONFIGURED_RECORDING_VERSION, CROSS_RUNTIME_RECORDING_VERSION, IMAGE_LIMIT_BYTES, MAX_SAVED_STUDIES, DEFAULT_SAVED_STUDY_LIMIT, MAX_RECORDING_CONTEXT_BYTES, MAX_RECORDING_FRAMES, MAX_RECORDING_HEADER_BYTES, MAX_RECORDING_JOURNAL_BYTES, MAX_RECORDING_METADATA_FILES, MAX_RECORDING_PENDING_BYTES, MAX_RECORDING_PNG_BYTES, MAX_RECORDING_TOTAL_BYTES, MAX_UI_TEXT_CHARS, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, RECORDING_CONTEXT_FILE, CONFIGURED_RECORDING_DIRECTORY, RECORDING_HEADER_FILE, RECORDING_JOURNAL_FILE, RECORDING_REASON_LIMIT_CHARS, RECORDING_SAMPLE_INTERVAL_MS, RECORDING_SEAL_FILE, RECORDING_STORAGE_FORMATS, RECORDING_TERMINAL_RESERVE_BYTES } from './constants';
 import { studyIdSchema } from './legacyStudySchemas';
 import { retainedRecordingBindingSchema, recordingEntrySchema, recordingFrameSchema, recordingHashSchema, retainedRecordingHeaderSchema, retainedRecordingSealSchema, type RecordingBinding, type RecordingCatalogEntry, type RecordingContext, type RecordingEntry, type RecordingFrame, type RecordingHeader, type RecordingIndex, type RecordingSeal } from './recordingSchemas';
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite';
@@ -16,9 +16,10 @@ import { LearningLibrary } from './learningLibrary';
 import { PLAYBACK_PREFERENCE_FILE, PLAYBACK_PREFERENCE_LIMIT_BYTES } from './constants';
 import { playbackPreferenceSchema, type PlaybackPreference } from './playbackSchemas';
 import { recordingPhases } from './utils/recordingPhases';
+import { savedStudyLimit } from './utils/savedStudyLimit';
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint';
 
-const defaultLimits = { slots: MAX_RECORDINGS, frames: MAX_RECORDING_FRAMES, pngBytes: MAX_RECORDING_PNG_BYTES, pendingBytes: MAX_RECORDING_PENDING_BYTES, journalBytes: MAX_RECORDING_JOURNAL_BYTES };
+const defaultLimits = { slots: MAX_SAVED_STUDIES, frames: MAX_RECORDING_FRAMES, pngBytes: MAX_RECORDING_PNG_BYTES, pendingBytes: MAX_RECORDING_PENDING_BYTES, journalBytes: MAX_RECORDING_JOURNAL_BYTES };
 export type RecordingLimits = typeof defaultLimits;
 export interface RecordingIo {
   json: typeof atomicPrivateWrite;
@@ -47,11 +48,11 @@ export class RecordingStore {
   private writes: Promise<unknown> = Promise.resolve();
   private resourceVerification?: { key: string; pending: Promise<RecordingIndex> };
 
-  constructor(readonly learningDirectory: string, readonly workspaceKey: string, limits: Partial<RecordingLimits> = {}, private readonly io: RecordingIo = recordingDiskIo) {
+  constructor(readonly learningDirectory: string, readonly workspaceKey: string, limits: Partial<RecordingLimits> = {}, private readonly io: RecordingIo = recordingDiskIo, private readonly capacity: () => unknown = () => limits.slots ?? DEFAULT_SAVED_STUDY_LIMIT) {
     recordingHashSchema.parse(workspaceKey);
-    this.directory = join(learningDirectory, RECORDING_DIRECTORY);
+    this.directory = join(learningDirectory, CONFIGURED_RECORDING_DIRECTORY);
     this.limits = { ...defaultLimits, ...limits };
-    // Overrides only lower bounds for controlled tests; no caller can enlarge the production budget.
+    // Slot admission is configurable; frame/byte budgets and the catalog ceiling remain fixed.
     for (const key of Object.keys(defaultLimits)) {
       const limit = Reflect.get(this.limits, key), maximum = Reflect.get(defaultLimits, key);
       if (!Number.isInteger(limit) || limit < 1 || limit > maximum) throw new Error(`Invalid recording limit: ${key}`);
@@ -59,14 +60,21 @@ export class RecordingStore {
     if (this.limits.journalBytes <= RECORDING_TERMINAL_RESERVE_BYTES) throw new Error('Recording journal must reserve terminal metadata.');
   }
 
+  /** Reports the current admission setting to {@link StudyService.status} without blocking history discovery on bad configuration. @example store.capacityStatus().limit // 64 */
+  capacityStatus(): { setting: string; maximum: number; limit?: number; error?: string } {
+    const setting = 'codebook.savedStudyLimit', maximum = MAX_SAVED_STUDIES;
+    try { return { setting, maximum, limit: savedStudyLimit(this.capacity()) }; }
+    catch (error) { return { setting, maximum, error: String(error) }; }
+  }
+
   /** Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted. @example await store.start(binding, runtime.evidence.elapsedMs()) */
-  start(input: RecordingBinding, startedMs: number): Promise<RecordingWriter> {
-    const binding = retainedRecordingBindingSchema.parse(input), version = binding.profile === REPOSITORY_BROWSER_PROFILE ? CONFIGURED_RECORDING_VERSION : RECORDING_VERSION;
+  start(input: RecordingBinding, startedMs: number, version: typeof CONFIGURED_RECORDING_VERSION | typeof CROSS_RUNTIME_RECORDING_VERSION = CONFIGURED_RECORDING_VERSION): Promise<RecordingWriter> {
+    const binding = retainedRecordingBindingSchema.parse(input);
     if (binding.workspaceKey !== this.workspaceKey) return Promise.reject(new Error('Recording belongs to another workspace.'));
     const pending = this.writes.then(() => withStorageLock(this.learningDirectory, async () => {
       await this.initialize(version);
       const identities = await this.identities();
-      if (identities.length >= this.limits.slots) throw new Error('Recording library is full; no recording was removed.');
+      if (identities.length >= savedStudyLimit(this.capacity())) throw new Error('Recording library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another session. Existing recordings were kept.');
       if (identities.includes(binding.studyId)) throw new Error('Recording already exists for this study.');
       const directory = this.path(binding.studyId, version);
       await mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE });
@@ -108,7 +116,7 @@ export class RecordingStore {
         if (entry.sequence !== entries.length + 1 || entry.elapsedMs < lastMs || entries.at(-1)?.type === 'end') throw new Error('Recording order or receipt time changed.');
         if (entry.type === 'frame') {
           if (hasGap) throw new Error('Recording frames continue after a declared missing tail.');
-          if (entry.phase && !recordingPhases(header.profile).some(phase => phase === entry.phase)) throw new Error('Recording contains a foreign image phase.');
+          if (entry.phase && !recordingPhases(header.profile, header.version).some(phase => phase === entry.phase)) throw new Error('Recording contains a foreign image phase.');
           let verified = verifiedFrames.get(entry.hash);
           if (!verified) {
             const png = await this.readFrame(studyId, entry.hash, header.version);
@@ -174,11 +182,12 @@ export class RecordingStore {
         const previous = (await this.readContextFile(context.studyId)).context;
         if (context.historyRevision < previous.historyRevision) throw new Error('Older recording context cannot replace a later revision.');
         if (context.historyRevision === previous.historyRevision && !isDeepStrictEqual(context, previous)) throw new Error('Recording context revision already names different bytes.');
-        if (previous.study.version === 3 && context.study.version === 3) assertStudyCheckpoint({ ...previous.study, captures: [] }, { ...context.study, captures: [] });
+        assertStudyCheckpoint({ ...previous.study, captures: [] }, { ...context.study, captures: [] });
         // Recorded availability is immutable even when a later context adds interpretation/confirmation.
         for (const prior of previous.interpretationAvailability) if (!context.interpretationAvailability.some(value => isDeepStrictEqual(prior, value))) throw new Error('Recorded interpretation availability changed.');
         for (const prior of previous.phases) {
-          const next = context.phases.find(value => value.phase === prior.phase);
+          // Repeated pauses share a phase name but retain their own immutable receipt identity.
+          const next = context.phases.find(value => value.phase === prior.phase && (prior.snapshotId === undefined || value.snapshotId === prior.snapshotId));
           if (!next || Object.entries(prior).some(([key, value]) => value !== undefined && !isDeepStrictEqual(value, Reflect.get(next, key)))) throw new Error('Recorded phase availability changed.');
         }
         for (const prior of previous.study.observations) {
@@ -262,7 +271,7 @@ export class RecordingStore {
   }
 
   /** Gives writers an explicit format destination; readers use {@link location} to honor newer-file presence. @example store.path(studyId, 2) */
-  path(studyId: string, version: RecordingHeader['version'] = RECORDING_VERSION): string {
+  path(studyId: string, version: RecordingHeader['version'] = CONFIGURED_RECORDING_VERSION): string {
     const storage = RECORDING_STORAGE_FORMATS.find(format => format.version === version)!;
     return join(this.learningDirectory, storage.directory, studyIdSchema.parse(studyId));
   }
@@ -318,17 +327,17 @@ export class RecordingStore {
       if (!stat.isDirectory()) throw new Error('Recording root is not a regular directory.');
       let count = 0;
       for await (const entry of await opendir(directory)) {
-        if (++count > MAX_RECORDINGS) throw new Error('Recording library exceeds its directory limit; no history was deleted.');
+        if (++count > MAX_SAVED_STUDIES) throw new Error('Recording library exceeds its directory limit; no history was deleted.');
         if (!entry.isDirectory()) throw new Error('Recording library contains a non-directory entry.');
         identities.add(studyIdSchema.parse(entry.name));
-        if (identities.size > MAX_RECORDINGS) throw new Error('Recording library exceeds its directory limit; no history was deleted.');
+        if (identities.size > MAX_SAVED_STUDIES) throw new Error('Recording library exceeds its directory limit; no history was deleted.');
       }
     }
     return [...identities];
   }
 
   /** Creates private storage without following a symlink in the recording root. @example await this.initialize() */
-  private async initialize(version: RecordingHeader['version'] = RECORDING_VERSION): Promise<void> {
+  private async initialize(version: RecordingHeader['version'] = CONFIGURED_RECORDING_VERSION): Promise<void> {
     const storage = RECORDING_STORAGE_FORMATS.find(format => format.version === version)!, directory = join(this.learningDirectory, storage.directory);
     await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
     if (!(await lstat(directory)).isDirectory()) throw new Error('Recording root is not a regular directory.');
@@ -367,7 +376,7 @@ export class RecordingWriter {
       if (input.kind === 'stream' && input.elapsedMs - this.lastStreamMs < RECORDING_SAMPLE_INTERVAL_MS) return false;
       const dimensions = readPngDimensions(input.bytes), hash = sha256(input.bytes), isNew = !this.hashes.has(hash);
       const entry = recordingFrameSchema.parse({ type: 'frame', sequence: this.sequence + 1, elapsedMs: input.elapsedMs, hash, byteLength: input.bytes.byteLength, ...dimensions, kind: input.kind, phase: input.phase, browserTimestamp: input.browserTimestamp });
-      if (entry.phase && !recordingPhases(this.header.profile).some(phase => phase === entry.phase)) throw new Error('Recording contains a foreign image phase.');
+      if (entry.phase && !recordingPhases(this.header.profile, this.header.version).some(phase => phase === entry.phase)) throw new Error('Recording contains a foreign image phase.');
       const line = JSON.stringify(entry) + '\n', lineBytes = Buffer.byteLength(line), binaryBytes = isNew ? input.bytes.byteLength : 0;
       if (this.frameCount >= this.limits.frames || this.pngBytes + binaryBytes > this.limits.pngBytes || this.pendingBytes + binaryBytes + lineBytes > this.limits.pendingBytes || this.journalBytes + lineBytes > this.limits.journalBytes - RECORDING_TERMINAL_RESERVE_BYTES) throw new Error('Recording frame capacity reached; verified prefix retained.');
       this.sequence++; this.frameCount++; this.pngBytes += binaryBytes; this.journalBytes += lineBytes; this.hashes.add(hash); this.lastAdmittedMs = input.elapsedMs;

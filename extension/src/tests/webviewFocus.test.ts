@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
-import { installWebviewFocus } from 'codebook-cycle-0001/dist/utils/installWebviewFocus';
+import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus';
 import { focusWebview } from '../utils/focusWebview';
 
 /** Executes the actual serialized renderer protocol with isolated document events, without claiming native focus proof. @example const renderer = focusRenderer(); renderer.send(request) */

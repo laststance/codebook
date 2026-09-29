@@ -1,24 +1,82 @@
-# codebook design entry point
+# Codebook visual specification
 
-This is the stable entry point for GStack design-document discovery. Follow the links below instead of selecting a design by file modification time.
+Status: **owner approved on 2026-09-26**; corrected iteration 8 adopted unchanged.\
+Cycle: [0029](docs/cycles/0029-feature-specification.md) / [Issue #46](https://github.com/laststance/codebook/issues/46)\
+Review: [GStack plan-design-review](docs/plans/cycle-0029-product-design.md)\
+Authority: [PRODUCT_GOAL version 9](PRODUCT_GOAL.md), D030–D036, [behavioral design](docs/designs/codebook.md)\
+Identity and history: see the table below; this file owns current visual metadata.
 
-## Product and current scope
+## Open this image before implementing
 
-- [PRODUCT_GOAL.md](PRODUCT_GOAL.md) defines the final experience and G01–G12 acceptance in VS Code and Cursor.
-- [PROJECT_STATE.md](PROJECT_STATE.md) identifies current evidence and the active cycle.
-- [DECISIONS.md](DECISIONS.md) records later decisions and supersession.
-- [Approved product design](docs/designs/codebook.md) supplies architectural and behavioral context.
+![Approved Codebook product specification: native live explanation, synchronized learning replay, independent DeepWiki and shortcut discovery](docs/designs/assets/codebook-product-spec-v9.png)
 
-The approved destination is a chat-driven application walkthrough with actual debugger stops, source and runtime-value explanations, recording/replay, a connected wiki/codemap, and learner-owned progress. Architecture B makes the extension the owner of runtime state and evidence while external agents plan and explain through MCP.
+**This is the product's visual target. Open the actual PNG and inspect it with an image-viewing tool.** Follow [IMPLEMENTATION.md](IMPLEMENTATION.md) and record the inspection in the active cycle. The image's generated header says Review candidate because it predates the owner's adoption; the approval above and D036 establish its current status. Its bytes have not changed since approval.
 
-[D023](DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21) adds a common thin bundled skill and explicit `/codebook` entry in standard Copilot Chat and Cursor Agent, with safe skill/MCP onboarding. This later requirement supplements the approved baseline and all three layouts. Its [development contract](docs/plans/bundled-codebook-skill.md) is implemented in bounded increments. [Cycle 0021](docs/cycles/0021-ordinary-copilot-chat.md) demonstrates one ordinary VS Code chat result, and [Cycle 0022](docs/cycles/0022-ordinary-cursor-agent.md) records one bounded standalone Cursor Agent development result. Integrated G12 acceptance remains unverified. Discovery or skill loading alone is not proof of the AI's runtime results.
+Use this root file for stable GStack design discovery. [PROJECT_STATE.md](PROJECT_STATE.md) owns the active phase and next action. Read [the behavioral design](docs/designs/codebook.md) before runtime/capture/replay changes and [the full state/interaction review](docs/plans/cycle-0029-product-design.md) before UI implementation.
 
-## Visual direction
+This is one design family with separate feature screens. Host-owned VS Code/Cursor chrome uses each actual editor's native UI. Sample values, filenames, line numbers and timestamps illustrate the experience; they are neither pixel-exact native requirements nor execution evidence. The whole sheet is a specification board, not a screen containing all features at once.
 
-[Study workspace](docs/designs/assets/01-study-workspace.png) is the default. [Living book](docs/designs/assets/02-living-book.png) and [Guided walkthrough](docs/designs/assets/03-guided-walkthrough.png) are later required selectable layouts over the same data/session. The images are approved concepts, not implemented UI or a precise component/token specification.
+## Required visible outcomes
 
-For the repository Wiki within Study workspace, [D016](DECISIONS.md#d016--preserve-the-approved-repository-reader-experience-2026-09-19) and the [Cycle 0009 design review](docs/cycles/0009-repository-learning-book.md#formal-design-review-checkpoint) record the approved B composition: compact `understand`, article review state across every citation, one column with relationships below in narrow readers, and return to the original section/reading position. These refine this reader; they do not replace the three required product layouts. The cycle records the immutable local reference image path/hash and implementation checks.
+| Image region | Implement this outcome | Local acceptance |
+| --- | --- | --- |
+| 1 — Live explanation | Actual app, stopped source and native debugger support an explanation in standard Copilot Chat/Cursor Agent. Native source/value inspection stays available. Bottom status shows capture and **Save learning replay** (2A). | G01/G03/G06/G11/G12; AC-LIVE/AC-SAVE |
+| 2 — Learning replay | Keep the live composition, replacing chat with **Learning summary**. One recorded playhead synchronizes application video, executed source and historical native-debugger values/scopes/stack. Replay, step and repeatedly seek backward/forward after the original runtime exits, without repeating target side effects. | G03/G04/G05/G07; D032; [replay contract](docs/specs/learning-replay.md) |
+| 2 — Summary and gaps | Summary/sequence support time travel; understanding is explicit. Summary can collapse/reopen through **Learning summary** (5A), preserving moment and reading/focus context. Across missing history, continue video, mark timeline gaps and show **Not recorded at this moment** on affected source/debugger surfaces (4A). | AC-REPLAY/AC-GAPS/AC-LEARNING; D032/D034 |
+| 3 — Independent DeepWiki | **Reproduce DeepWiki itself**, using the editor agent's generation skill: chapters, substantial articles, diagrams, relevant-source/inline citations, reader/outline navigation and repository Q&A. Reading and generation are independent of live/replay and runtime/debug MCP. | G02/G06/G12; D033; [Wiki contract](docs/specs/llm-wiki.md), [generation skill](docs/plans/deepwiki-generation-skill.md) |
+| 3 — Update/output/source | Browser **Update LLM Wiki** starts the same editor-agent procedure as chat (3A). Show freshness and project-local/configurable output; Change location reaches ordinary settings. Citations open the matching file/location in the user's local editor. | AC-WIKI-UPDATE/AC-SOURCE-LINKS |
+| Shortcut strip | Every assigned shortcut appears in its action tooltip. **?** opens a searchable **Keyboard shortcuts** list with actual applicable action/key pairs. Normal question-mark typing remains usable. | D035; [shortcut contract](docs/specs/keyboard-shortcuts.md); AC-SHORTCUTS |
 
-## Review boundary
+The Codebook Activity Bar entry and learning library are required even though this board emphasizes an opened learning item. The image does not exhaust loading, empty, error or unavailable states; implement the full [review state table](docs/plans/cycle-0029-product-design.md#pass-2--interaction-states-complete) and linked feature contracts. No custom Variables/Watch clone or selectable theme trio is introduced. Wiki update cannot rewrite saved replay or learner progress.
 
-Review and plan only the active, explicitly selected cycle. Keep the full product goal as context and acceptance direction. Decision D002 replaces the baseline design's original first-task sizing with adaptive increments; do not turn the full checkout plus all layouts into one implementation plan. Preserve each skill's scope gate and applicable requirements.
+## Layout and accessibility baseline
+
+D034 requires an ordinary desktop display with the editor/browser window expanded to available space at normal/default zoom. OS full-screen is optional. Extremely small windows and extreme zoom such as 200% are outside mandatory design/acceptance. At the supported layout, preserve keyboard access, meaningful labels, focus/reading return, native themes, readable contrast and reduced-motion behavior. Verify actual UI and motion in both hosts; this raster proves none of those behaviors.
+
+## Example causality and evidence boundary
+
+The illustration uses the owner's `nextjs-dashboard` at the inspected source revision `26e5b2c`. Read-only inspection of `app/ui/invoices/create-form.tsx` and `app/lib/actions.ts` established this source path:
+
+```mermaid
+sequenceDiagram
+    participant F as Invoice form
+    participant A as createInvoice
+    participant D as PostgreSQL
+    participant L as Invoice list
+    F->>A: Submit form
+    A->>A: Validate and convert amount to cents
+    A->>D: Insert invoice
+    D-->>A: Result
+    A->>A: Revalidate invoice list
+    A->>L: Redirect to invoice list
+```
+
+Both compact raster diagrams preserve ownership: PostgreSQL returns a result; createInvoice revalidates and redirects. The replay sequence represents that final action as a self-loop; the Wiki figure uses a note. The exact source flow above expands the simplification. Failed validation/database operations take their actual paths in real explanations.
+
+No application, database, debugger or editor AI flow was executed for this image. Sample amount/customer, frames, line numbers, times and URLs are illustrative. The selected before-insert moment is distinct from the full summary; it does not establish that insertion or redirect has completed. Do not embed this example as an answer key in skills or acceptance.
+
+## Approval and verification boundary
+
+GStack evaluated all seven design passes; the owner answered **採用する。修正版v9を視覚仕様にする（推奨）**. D036 adopts the corrected image. Its approval does not establish implementation, native accessibility, motion, packaging or final acceptance. Before the unchanged nine-project campaign, development trials use `/Users/ryotamurakami/repository/nextjs-dashboard` under D031.
+
+## Artifact identity and history
+
+| Field | Value |
+| --- | --- |
+| Current approved file | `docs/designs/assets/codebook-product-spec-v9.png` |
+| Dimensions / bytes | 1024 × 1536 / 1,878,402 |
+| SHA-256 | `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa` |
+| Tool | Built-in image generation; installed GStack design binary unavailable |
+| Prompts | [v9 update and correction](docs/designs/prompts/cycle-0029-product-spec-v9.md) |
+| Prior current candidate | [v8 historical record](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/designs/codebook-product-spec-v8.md), superseded by this image |
+| Original generation | `/Users/ryotamurakami/.codex/generated_images/01a0dc12-5778-7582-8742-eb844b132411/exec-66032de8-43a2-4cca-9765-d1f37f868aa8.png` |
+
+The retired three-theme images and earlier candidate records remain in [Git history](https://github.com/laststance/codebook/tree/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/designs). Offline, use `git show 273660c:path/to/file` or the local closed-cycle links; they are not current targets.
+
+All eight sequential attempts remain under `/Users/ryotamurakami/.gstack/projects/codebook/designs/cycle-0029-product-spec-20260926/`. Original generated files were copied, not moved. Iterations 1–6 establish the prior direction; 7 adds desktop/shortcut decisions; 8 corrects both diagrams. These are revisions of one target, not selectable product variants.
+
+## Inspected references
+
+Native editor surfaces follow [VS Code Views](https://code.visualstudio.com/api/ux-guidelines/views) and [Webviews](https://code.visualstudio.com/api/ux-guidelines/webviews). The Activity Bar exposes navigation rather than directly launching a webview. Codebook actions use appropriate view controls. Native editor vocabulary controls over generic marketing typography.
+
+D033's reference is the [DeepWiki repository reader](https://deepwiki.com/microsoft/vscode) and [official description](https://docs.devin.ai/work-with-devin/deepwiki), inspected read-only on 2026-09-26. Observed reader typography was Geist 16px/24px body and 22px/30px headings, text `#333333`, background `#F8F7F6`. The generated raster is not CSS measurement. Chapters, on-page outline, relevant-source disclosure, citations and question composer were visible; no external question, upload or indexing request was sent. Local source links replace hosted destinations; hosted publishing/promotional actions are outside this local product requirement.

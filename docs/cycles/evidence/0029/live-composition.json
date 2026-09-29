@@ -1,0 +1,450 @@
+{
+  "sourceHash": "735dfc037c0928a7625b3ed79a9c9db94b4baa314d86f85f6750d33cbb3e9360",
+  "baselineSourceHash": "e8452b51556f2380660342c8a9b13e9c05bc3cff59bf645096beef778218042b",
+  "scope": "Native-chat-first live workspace; retain saved replay summary and native history",
+  "changes": [
+    "Two main panes for current live execution; no custom explanation panel.",
+    "Only the just-retired empty owned summary group can be removed; foreign tabs and separate editor parts remain.",
+    "Historical selection/replay opens its summary again.",
+    "Live Continue relies on matching native source instead of an absent custom-panel acknowledgement.",
+    "Live layout recovery preserves native focus guards and rejects retired mode selection."
+  ],
+  "mechanism": {
+    "build": "PASS",
+    "focusedTests": 11,
+    "focusedResult": "PASS",
+    "fullSuite": "PASS",
+    "previousWorkspaceRun": {
+      "failures": 5,
+      "cause": "History tests sent messages through the removed default live context pane; migrated those operations to the existing moments sidebar and realistic native groups without removing persistence/failure assertions."
+    },
+    "fullSuiteTests": 1125,
+    "fullSuiteFailures": 0,
+    "fullSuiteDurationMs": 219339.565333
+  },
+  "native": {
+    "status": "FAIL — initial composition; explicit recovery succeeded with image clipping",
+    "target": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "procedure": [
+      "Install the checked candidate and use ordinary Copilot Auto; if quota is exhausted, Claude Code extension.",
+      "Natural live explanation through one meaningful actual pause: app above source, native debugger, native chat, bottom capture/save; no extra Study pane.",
+      "Open the previously saved six-stop replay; verify summary, historical source and debugger correspondence, then return to live without losing unrelated work.",
+      "Compare approved v9 image; record video and inspect frames."
+    ],
+    "limits": "Replay summary still uses an editor pane; final replacement of the native chat area, summary collapse, retired public API cleanup, Wiki and shortcuts remain open.",
+    "instanceId": "35d9e167-cb44-4a5e-b247-a6d09dc36e17",
+    "ordinaryChatSession": "d297d3a6-c008-4853-8d0a-e3a5267b86ae",
+    "chat": "Claude Code extension; Copilot Quota reached directly observed",
+    "runId": "4df66139-1107-4a30-a177-173ccc7f5d27",
+    "runtimeResult": "demonstrated",
+    "recordedStudyOutcome": "demonstrated",
+    "resourcesReleased": true,
+    "observations": 1,
+    "initialLayout": "Custom Study pane remained until explicit source/recovery commands.",
+    "recoveredLayout": "Two app/source panes retained native debugger and Claude chat; app image clipped vertically.",
+    "preservation": {
+      "priorLearningFiles": 10585,
+      "unchanged": 10585,
+      "missing": 0,
+      "targetGit": "clean"
+    },
+    "cleanup": "VS Code exited; recorder finalized; owned temporary Claude MCP registration removed.",
+    "video": {
+      "path": "artifacts/cycle-0029/live-composition/native.mp4",
+      "durationSeconds": 508.100001,
+      "sha256": "4532008e072e8313aca1a0d1a60cfe93744f9abc00c4c037c6eecb5ab718273f"
+    },
+    "inspectedFrames": [
+      "artifacts/cycle-0029/live-composition/live-initial.png",
+      "artifacts/cycle-0029/live-composition/live-recovered.png"
+    ]
+  },
+  "artifacts": "artifacts/cycle-0029/live-composition",
+  "acceptanceCredit": false,
+  "package": {
+    "sha256": "84dd6aca107ddbd7ddde3c1d35e1a96dc2eec68dc3317ede2d92bfd4a7198459",
+    "bytes": 892243,
+    "entries": 25,
+    "path": "artifacts/cycle-0029/live-composition/codebook.vsix",
+    "independentCheck": "PASS",
+    "installed": true
+  },
+  "correction": {
+    "sourceHash": "5ac0dcefbc34ef4f470b4b4e56743fe0733e51ecb4a951982e0ffb209b13aecc",
+    "behavior": "Enter live on the normal followed-run refresh without requiring another Open or source reveal; contain live image within available height.",
+    "regressionBefore": "FAIL: normal run retained context column 3",
+    "focusedAfter": "12 PASS",
+    "fullSuite": "PASS",
+    "native": {
+      "status": "PARTIAL — live entry/image containment and saved replay regression verified in VS Code; approved composition remains incomplete",
+      "ordinaryChatSession": "479f4974-07ea-42db-8801-20b2414747c4",
+      "artifacts": "artifacts/cycle-0029/live-composition/corrected-native",
+      "installedIdentityVerified": true,
+      "chat": "Claude Code extension; Quota reached observed in Copilot",
+      "instanceId": "23ae0854-1467-4103-9ac9-df7618b57bf1",
+      "runId": "830683f9-ce9b-4af1-bb26-955f765fa5c3",
+      "runtimeResult": "demonstrated",
+      "recordedStudyOutcome": "demonstrated",
+      "resourcesReleased": true,
+      "observations": 1,
+      "recording": {
+        "capture": {
+          "status": "finalized",
+          "frameCount": 4120,
+          "pngBytes": 137141421,
+          "pendingBytes": 0,
+          "pendingHighWaterBytes": 270208,
+          "lastWrittenMs": 283920.887916
+        },
+        "status": "finalized",
+        "endMs": 283920.887916,
+        "contextStatus": "saved",
+        "contextHash": "d9516607389814be3d7a883998f8885ebce45a688d36973d203e62987682243b",
+        "studyHash": "3ba9810c59e6fc2649f6d309c11468746ef6dfdee79e8c5ab0043d9f19fa50c8"
+      },
+      "targetGit": "clean",
+      "failedAttempts": [
+        {
+          "runId": "3fe7bdd6-cf89-4d38-aa42-3d128baa6eac",
+          "reason": "No exact sealed source-map position; no input dispatched"
+        },
+        {
+          "runId": "7f89454c-9587-4a1a-a834-83116cf4959f",
+          "reason": "Pending server breakpoint did not bind to captured source after input"
+        }
+      ],
+      "limits": "Current VS Code development evidence only. Initial two-pane live placement and contained application were observed; retained large console/narrow chat still impair legibility. Replay summary placement, Cursor, Wiki, shortcuts and final acceptance remain open.",
+      "video": {
+        "path": "artifacts/cycle-0029/live-composition/corrected-native/native.mp4",
+        "durationSeconds": 883.100001,
+        "bytes": 26531938,
+        "sha256": "49d7113d4160c6fa815c1fb4d41466f408b70a5f17838d73a64ab61ddec1f96c"
+      },
+      "inspectedFrames": [
+        {
+          "path": "artifacts/cycle-0029/live-composition/corrected-native/live-pause.png",
+          "seconds": 430,
+          "sha256": "fee99a3fcd02d958042f175c035e3ec5e80fea697d6b903025785241204081af"
+        },
+        {
+          "path": "artifacts/cycle-0029/live-composition/corrected-native/replay-final-stop.png",
+          "seconds": 850,
+          "sha256": "666b223694fc8e9d42b463faadf01b79b910a7f94049b102a9e17e50a90b3192"
+        },
+        {
+          "path": "artifacts/cycle-0029/live-composition/corrected-native/replay-first-stop.png",
+          "seconds": 880,
+          "sha256": "97f8b8b277268a370cb68e8906e20f60317b6da162c7e527bcc56142407476fa"
+        }
+      ],
+      "replay": {
+        "currentRecording": "Ordinary agent opened at 46000 ms; source/frame/history and reader revision verified through public resources.",
+        "previousRecording": "bd8b31e2-d027-4e49-b323-2d178ce7b29c",
+        "sequenceMs": [
+          83000,
+          315000,
+          83000
+        ],
+        "ordinaryAgent": "Same first-stop observation and frame hash restored after round trip; retained six observations/explanations and ten summary steps. Old snapshot URI returned STALE_INSTANCE; agent checked captured hashes against unchanged current files, which is not proof of an available historical resource URI.",
+        "mainAgentVisual": "Inspected recorded 315 s source 75:13 and historical LoginForm scope/stack, then 83 s source 90:5 with native pending=true. Recorded app changed with the selected moment.",
+        "limits": "Application remains too small; summary occupies an extra editor column beside chat; console consumes height. No current Cursor or final acceptance proof."
+      },
+      "preservation": {
+        "baseline": 14920,
+        "unchanged": 14919,
+        "changed": [
+          "dd749a97af190a225967c061011c37c3c12c649bbaa8ea367bc9c69761263f8e/playback.v1.json"
+        ],
+        "missing": []
+      },
+      "cleanup": "All runs released resources; editor PID 15647 and recorder PID 16506 absent after normal quit/finalization; exact owned temporary local Claude registration removed; target Git clean.",
+      "postStopAnnotation": "Agent reports final annotation timestamp beyond recording end. Replay UI exposes Later annotations separately and retains final overall summary; no data-loss claim. Selection semantics require source/behavior investigation before repair."
+    },
+    "previousFullSuite": {
+      "tests": 1126,
+      "failures": 5,
+      "assessment": "Two obsolete Context expectations updated to live-native and saved-summary behavior; return-current composition now retains its own navigation gate; two manual-resume tests now exercise native live layout reads/writes and the missing runtime-identity guard is restored."
+    },
+    "fullSuiteTests": 1126,
+    "fullSuiteFailures": 0,
+    "fullSuiteDurationMs": 217010.740958,
+    "package": {
+      "path": "artifacts/cycle-0029/live-composition/corrected.vsix",
+      "sha256": "399cc82a59ff6e2e7a8cacd575cdb6787046e2e335b2e6a24c479be83c74d6b8",
+      "bytes": 892324,
+      "entries": 25,
+      "independentCheck": "PASS",
+      "installed": true
+    }
+  },
+  "summarySidebarImplementation": {
+    "status": "INCOMPLETE",
+    "sourceHash": "2e44af93354c5f4126eef8d3dcc457d363d5c2a9996f48621f013dd93a9b7052",
+    "revision": "273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf",
+    "dirty": true,
+    "changes": [
+      "Validate the restored main-grid leaf count once before comparing two-pane replay destinations.",
+      "Model a fresh reader only after disposing the prior registered reader.",
+      "Verify two main replay panes plus a native summary sidebar while retaining separate chat groups.",
+      "Reject late summary controls after reader closure without changing saved learning or playback.",
+      "Preserve the learner-owned third editor group while using a sidebar; update exact two-pane Wiki Return/cancellation assertions.",
+      "Guard summary focus against an unfocused window and a departure/reentry during the asynchronous focus command.",
+      "Restore maximized live/replay main panes before measuring their grid; retain focus ownership and recorded-bundle identity.",
+      "Hide retired central-summary enlargement and replay layout-preference saving; label sidebar summary actions correctly.",
+      "Do not reuse a restored main-grid receipt across feature compositions with different pane counts.",
+      "Reserve the new article reader destinations before source I/O and record only its verified insertion; cancellation and retry retain the article origin while newer learner moves remain authoritative.",
+      "Limit this transition receipt to repository reentry so first live entry still confirms its newly displayed source.",
+      "Replace retired replay mode/enlargement assertions with same-layout Restore, retained application identity, source reading-position preservation and refusal of unsupported enlargement. Model actual three-column contraction on observation entry, and separately verify two-pane replay reentry."
+    ],
+    "checks": {
+      "typescriptBuild": "PASS",
+      "focused": {
+        "tests": 33,
+        "pass": 33,
+        "fail": 0,
+        "durationMs": 10143.398083,
+        "log": "artifacts/cycle-0029/live-composition/sidebar-current-migration-final.log"
+      },
+      "workspaceRegressionBeforeFinalTestCorrections": {
+        "tests": 459,
+        "pass": 419,
+        "fail": 40,
+        "durationMs": 170732.341125,
+        "log": "artifacts/cycle-0029/live-composition/sidebar-workspace-reentry.log",
+        "qualification": "Run completed before the final mode/enlargement/contraction test migration and the first-live-entry receipt restriction. Thirty-three final focused checks pass; no inferred full-suite pass count. Remaining recorded failures include obsolete mode transfers and source-group/cancellation ownership scenarios needing inspection."
+      },
+      "renderer": {
+        "checks": 31,
+        "pass": 31,
+        "errors": [],
+        "report": "artifacts/cycle-0029/live-composition/sidebar-renderer/result.json",
+        "qualification": "Chromium with compiled product HTML and simulated native messages; not installed-host proof.",
+        "video": {
+          "path": "artifacts/cycle-0029/live-composition/sidebar-renderer/flow.webm",
+          "durationSeconds": 7.36,
+          "bytes": 262978,
+          "inspectedFrames": [
+            "frame-06.png",
+            "frame-07.png",
+            "frame-08.png",
+            "frame-10.png"
+          ],
+          "limit": "Recorder fixed at 420x720 while viewport changes, producing gray padding/cropping. Frame 07 shows summary controls with no retired enlargement/preference action; this is not full desktop composition or native focus proof."
+        }
+      },
+      "compositionTransition": {
+        "tests": 19,
+        "pass": 19,
+        "fail": 0,
+        "log": "artifacts/cycle-0029/live-composition/sidebar-composition-reentry.log",
+        "initialFailure": "An initial count-only repair still overwrote manual layout during source loading and lost article origin after cancellation/retry (five failing cases). Reserving and retaining the owned insertion before I/O corrected all five."
+      }
+    },
+    "native": "NOT RUN for this candidate; installed baseline remains 5ac0dcef.",
+    "delivery": "Not packaged, installed, committed or merged. PR 48 remains OPEN/draft; body contains @coderabbitai ignore.",
+    "preservation": "Designated nextjs-dashboard working tree is clean. No desktop, application, hook or bundled target was introduced.",
+    "next": "Normally install the verified sidebar VSIX and validate native live/replay composition on the designated real dashboard; full mechanism tests passed 1130/1130. Independent Wiki, shortcuts and final acceptance remain open.",
+    "previousSourceHash": "ace622e4b5523649990b08ad9c1b01886923bbc2cf721725dde1e8b44058aa96"
+  },
+  "summarySidebarRegressionAudit": {
+    "status": "INCOMPLETE",
+    "sourceHash": "6d51c7b744e27be526f04db110e208020dc10d1e1f563059377abfa75a62b297",
+    "workspaceRun": {
+      "log": "artifacts/cycle-0029/live-composition/sidebar-workspace-reopen.log",
+      "passed": 437,
+      "failed": 22,
+      "total": 459,
+      "durationMs": 170019.122833,
+      "scope": "Before latest test corrections"
+    },
+    "focusedRun": {
+      "log": "artifacts/cycle-0029/live-composition/sidebar-preservation-checkpoint.log",
+      "passed": 7,
+      "failed": 0,
+      "durationMs": 1860.853459
+    },
+    "remainingReproducedFailure": "Geometry overwrite repaired in focused suite. Full suite must rerun; remaining known failures concern retired-mode tests at focus, covered-source, late-frame and failed-renderer boundaries.",
+    "acceptanceCredit": false,
+    "geometryRepair": {
+      "sourceHash": "1056d9940ae36e5dcd874ca3d76e084e12b5af0dcf2f0053cadd3e4b3a24a585",
+      "log": "artifacts/cycle-0029/live-composition/sidebar-reentry-all-repaired.log",
+      "passed": 43,
+      "failed": 0,
+      "durationMs": 12239.093542,
+      "coverage": "mechanism only; includes geometry ownership, superseding navigation and initial-entry regression repair",
+      "initialRegressionLog": "artifacts/cycle-0029/live-composition/sidebar-reentry-all-current.log"
+    }
+  },
+  "sidebarFullSuitePackage": {
+    "status": "MECHANISM_AND_PACKAGE_PASS_NATIVE_PENDING",
+    "sourceHash": "2e44af93354c5f4126eef8d3dcc457d363d5c2a9996f48621f013dd93a9b7052",
+    "tests": {
+      "command": "node --test extension/dist/tests/*.test.js",
+      "log": "artifacts/cycle-0029/live-composition/sidebar-full-suite.log",
+      "total": 1130,
+      "passed": 1130,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "durationMs": 182959.583084
+    },
+    "package": {
+      "path": "artifacts/cycle-0029/live-composition/sidebar.vsix",
+      "sha256": "216a12afdea6af9e78bdffb839e2731e0f4d487765d01c09c6e1aa07c428fc85",
+      "bytes": 893947,
+      "entries": 25,
+      "check": "artifacts/cycle-0029/live-composition/sidebar-package-check.json",
+      "isolatedModuleLoad": true
+    },
+    "native": "NOT RUN for this candidate",
+    "acceptanceCredit": false
+  },
+  "sidebarNativeDevelopment": {
+    "date": "2026-09-27",
+    "host": "VS Code",
+    "sourceHash": "2e44af93354c5f4126eef8d3dcc457d363d5c2a9996f48621f013dd93a9b7052",
+    "installation": "Normal VSIX install; installed build identity verified",
+    "target": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "savedRun": "830683f9-ce9b-4af1-bb26-955f765fa5c3",
+    "observations": [
+      "At 45.74 seconds, recorded login pixels, auth.ts 41:24, native historical call stack and expandable Block variables correspond.",
+      "Play advanced to 59.53 seconds; pause retained historical source.",
+      "Slider Home moved to 0 seconds: application gap, explicit missing-source placeholder and cleared native variables/stack. Next recorded stop restored 45.74 seconds and source/stack.",
+      "Secondary sidebar summary and two central application/source panes rendered. Sidebar manually widened for reading."
+    ],
+    "gaps": [
+      "Playback toolbar remains inside summary sidebar, unlike approved bottom layout.",
+      "Sequence diagram exceeds sidebar width; normal reading and collapse/reopen need further work.",
+      "Effective zoom was reduced by two Zoom Out operations; exact effective value not independently verified. Reset Zoom executed afterward.",
+      "No new ordinary-chat execution or Cursor proof in this trial."
+    ],
+    "preservation": {
+      "priorFiles": 19042,
+      "unchanged": 19041,
+      "missing": 0,
+      "expectedChange": "playback.v1.json",
+      "targetGit": "clean",
+      "startupInput": "Accidental unsaved command text in auth.ts immediately undone; target remained clean."
+    },
+    "artifacts": {
+      "video": "artifacts/cycle-0029/live-composition/sidebar-native/native.mp4",
+      "durationSeconds": 390.8,
+      "inspectedFrames": [
+        350,
+        355,
+        380
+      ],
+      "manifest": "artifacts/cycle-0029/live-composition/sidebar-native/preservation.json"
+    },
+    "acceptanceCredit": false,
+    "next": "Implement approved bottom playback controls while preserving source/debugger correspondence and summary independence."
+  },
+  "bottomPlaybackImplementation": {
+    "sourceHash": "7f1a89f8e2ddf9a2062518b5db892a1e718fba342c0157f295b9a6c20e5447a1",
+    "behavior": [
+      "Direct replay entry reveals existing bottom panel; summary focus then restored.",
+      "Visible bottom panel suppresses duplicate summary transport; hiding or disposing panel restores fallback.",
+      "Collapsed summary retains independent revision-bound playback.",
+      "Retired panel messages rejected.",
+      "Wiki evidence entry preserves navigation chrome."
+    ],
+    "tests": {
+      "initialWorkspace": {
+        "passed": 460,
+        "failed": 1,
+        "total": 461,
+        "failure": "Wiki evidence entry opened hidden panel",
+        "log": "artifacts/cycle-0029/live-composition/bottom-panel-tests.log"
+      },
+      "correctedRelated": {
+        "passed": 34,
+        "failed": 0,
+        "log": "artifacts/cycle-0029/live-composition/bottom-panel-recovery-tests.log"
+      },
+      "renderer": {
+        "passed": 35,
+        "failed": 0,
+        "report": "artifacts/cycle-0029/live-composition/bottom-panel-renderer-final/result.json",
+        "scope": "Compiled HTML and simulated host messages, not native behavior"
+      },
+      "packageIO": {
+        "passed": 35,
+        "failed": 0
+      }
+    },
+    "packagingRepair": "Run pnpm build from extension cwd so Corepack selects its declared version before pnpm argument parsing.",
+    "package": {
+      "path": "artifacts/cycle-0029/live-composition/bottom-panel.vsix",
+      "sha256": "91125d7459f2e5aff4621ba7d9b9a934b7acce6e3e95c8f2f40ca457aca2f085",
+      "bytes": 894145,
+      "validated": true
+    },
+    "native": "Not yet installed or verified. Previous native evidence belongs to sidebar candidate.",
+    "remaining": [
+      "Native bottom-panel placement and height",
+      "Summary collapse/reopen with source/debugger synchronization",
+      "Full current-candidate suite and both-host validation"
+    ]
+  },
+  "bottomPlaybackNative": {
+    "date": "2026-09-27",
+    "sourceHash": "7f1a89f8e2ddf9a2062518b5db892a1e718fba342c0157f295b9a6c20e5447a1",
+    "host": "VS Code",
+    "target": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "run": "830683f9-ce9b-4af1-bb26-955f765fa5c3",
+    "installedBuildVerified": true,
+    "observed": [
+      "Normal VSIX installation and window reload; explicit Recording tab showed independent bottom playback panel.",
+      "At 45.74 seconds, source auth.ts 41:24, historical native stack/variables and captured application corresponded.",
+      "With summary hidden, bottom Play advanced recording; Pause and slider Home cleared source/debugger at the missing-history start.",
+      "Next recorded stop restored 45.74 seconds, source and native debugger; reopening summary preserved moment.",
+      "Closing bottom panel restored summary playback controls."
+    ],
+    "limitations": [
+      "Bottom panel included Open article and redundant saved-evidence labels; CSS correction and renderer regression follow this trial.",
+      "Panel height remains host-owned and needs comparison against approved compact strip.",
+      "This is saved-history development proof, not new ordinary-chat execution, Cursor proof or final acceptance.",
+      "Two Zoom Out operations used; exact effective zoom not independently established; Reset Zoom executed after trial."
+    ],
+    "preservation": {
+      "priorFiles": 19042,
+      "unchanged": 19042,
+      "missing": 0,
+      "targetGit": "clean"
+    },
+    "artifacts": {
+      "video": "artifacts/cycle-0029/live-composition/bottom-panel-native/native.mp4",
+      "durationSeconds": 91.3,
+      "inspectedFrames": [
+        35,
+        55,
+        75
+      ],
+      "preservation": "artifacts/cycle-0029/live-composition/bottom-panel-native/preservation.json"
+    },
+    "fullSuite": {
+      "passed": 1132,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 186487.888416,
+      "log": "artifacts/cycle-0029/live-composition/bottom-panel-full-suite.log"
+    }
+  },
+  "bottomPlaybackCleanup": {
+    "sourceHash": "032ad264791c815df59533cba83020eb9aaed405bcb34dc1cf1fba71e9ce0c1a",
+    "changes": "Replay-panel CSS hides duplicate article navigation and saved-evidence labels; errors and retry remain available.",
+    "renderer": {
+      "passed": 35,
+      "failed": 0,
+      "report": "artifacts/cycle-0029/live-composition/bottom-panel-clean-renderer/result.json"
+    },
+    "package": {
+      "path": "artifacts/cycle-0029/live-composition/bottom-panel-clean.vsix",
+      "sha256": "8b26777303e8f21d86b3f9867c5e4652045eb7d312be53caf239c1a7a1be29fa",
+      "bytes": 894192,
+      "validated": true
+    },
+    "native": "Not yet installed. Native bottom-playback evidence belongs to 7f1a89f8.",
+    "testCarryForward": "Only UI CSS and its renderer regression changed after 1132 passing tests. The changed rendering was tested separately; no claim of a fresh full-suite run."
+  }
+}

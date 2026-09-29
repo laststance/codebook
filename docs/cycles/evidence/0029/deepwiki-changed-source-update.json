@@ -1,0 +1,61 @@
+{
+  "kind": "development-mechanism-rehearsal",
+  "date": "2026-09-27",
+  "primaryAcceptance": "AC-WIKI-UPDATE",
+  "dependencies": [
+    "AC-WIKI",
+    "AC-SOURCE-LINKS",
+    "AC-LEARNING"
+  ],
+  "productSourceHash": "3bf4a7ad9dfccec41fa8a6bc6ab28c31641b101b3d5dddb77e7cf3c0afde1b94",
+  "target": {
+    "ownerCheckout": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "isolatedWorktree": "/tmp/codebook-dashboard-wiki-update-20260927",
+    "revision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+    "ownerStatusAfter": "?? .codebook/",
+    "changedSource": "README.md",
+    "changedSourceSha256": "f12ed39813c7ddbd08707ea8480992a05e1ed0faded7de620e93c1354fb35720"
+  },
+  "before": {
+    "freshness": "changed",
+    "changedPaths": [
+      "README.md"
+    ],
+    "addedPaths": [],
+    "priorOwnedFiles": 13,
+    "manualFile": "Manual note retained across Wiki updates."
+  },
+  "agent": {
+    "route": "cursor-agent CLI, installed shared skill 1.0.28, packaged publisher",
+    "exitCode": 0,
+    "isError": false,
+    "durationMs": 635412,
+    "normalInstalledEditorTrial": false
+  },
+  "after": {
+    "manifestRoot": "/private/tmp/codebook-dashboard-wiki-update-20260927",
+    "includedSourceHashesVerified": 49,
+    "ownedFileHashesVerified": 13,
+    "sourceCitationsVerified": 243,
+    "internalLinksVerified": 151,
+    "sourceDeltaModified": [
+      "README.md"
+    ],
+    "manualFilePreserved": true,
+    "previousVersionPreserved": true,
+    "priorCopyDifferences": [
+      "codebook-wiki.json root canonicalization only"
+    ],
+    "publicationJournalPresent": false,
+    "generatedWorkingTreeClean": false,
+    "validationFailures": []
+  },
+  "limits": [
+    "No normally installed editor update",
+    "No browser read of the new output",
+    "No native citation opening on the new output",
+    "No failure or cancellation publication trial",
+    "No final nine-project acceptance"
+  ],
+  "next": "Recover VS Code README buffer and answer citation destination; run installed-editor changed-source update with browser and preservation proof."
+}

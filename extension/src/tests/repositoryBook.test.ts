@@ -3,13 +3,12 @@ import assert from 'node:assert/strict';
 import filesystem, { readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import { repositoryHarness } from './utils/repositoryHarness';
 import { LearningLibrary } from '../learningLibrary';
 import { RepositoryBookStore } from '../repositoryBook';
 import { RepositorySourceService } from '../repositorySource';
 import { repositoryBookSchema, type BookDocument, type BookPublishIntent } from '../repositorySchemas';
-import { decodeStudyArchive } from '../utils/decodeStudyArchive';
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite';
 import { loadModule } from './utils/loadModule';
 import { createConfiguredStudy } from './utils/createConfiguredStudy';
@@ -18,22 +17,21 @@ const workspaceKey = '1'.repeat(64), sourceHash = '5e707638ceba927d6f9dbef0ee993
 
 /** Builds real tracked source and independent shared storage for book publication regressions. @example const { books, intent } = await bookHarness(context) */
 async function bookHarness(context: TestContext) {
-  const source = await repositoryHarness(context); await source.track('src/cart.ts');
+  const source = await repositoryHarness(context); await source.track('src/module.ts');
   const library = new LearningLibrary(join(source.directory, '.learning'), workspaceKey), books = new RepositoryBookStore(source.sources, library);
   context.after(() => books.dispose());
-  const document: BookDocument = { title: 'Cart architecture', summary: 'Source-derived cart state.', nodes: [{ id: 'cart', title: 'Cart', sections: [{ title: 'Price', text: 'The module exports price 24.' }], anchors: [{ path: 'src/cart.ts', hash: sourceHash, startLine: 1, endLine: 2 }], observations: [] }], edges: [] };
+  const document: BookDocument = { title: 'Module architecture', summary: 'Source-derived module state.', nodes: [{ id: 'module', title: 'Module', sections: [{ title: 'Price', text: 'The module exports price 24.' }], anchors: [{ path: 'src/module.ts', hash: sourceHash, startLine: 1, endLine: 2 }], observations: [] }], edges: [] };
   const intent: BookPublishIntent = { bookId: 'architecture', key: 'first', expectedRevision: 0, document };
   return { ...source, library, books, intent, path: join(library.directory, 'architecture.book.v2.json') };
 }
 
-/** Reuses captured legacy facts to test exact checkpoint links, without claiming a new native run. @example const study = await linkCheckpoint(harness) */
+/** Uses synthetic configured facts to test exact checkpoint links, without claiming a new native run. @example const study = await linkCheckpoint(harness) */
 async function linkCheckpoint(harness: Awaited<ReturnType<typeof bookHarness>>) {
-  const value: unknown = JSON.parse(await readFile(resolve(__dirname, '../../src/tests/fixtures/cycle-0006-legacy/study.v1.json'), 'utf8'));
-  const study = { ...decodeStudyArchive(value, '67bf38abd3f309bf29b1eed73e4f3ea88863995c0f207b70a50eec48d36f8743'), workspaceKey };
+  const study = { ...createConfiguredStudy(), workspaceKey, finalOutcome: 'partial' as const };
   await harness.library.saveStudy(study);
   const observation = study.observations[0]!;
-  await harness.track('src/cart.ts', observation.source.text);
-  harness.intent.document.nodes[0]!.anchors = [{ path: 'src/cart.ts', hash: observation.source.hash, startLine: 1, endLine: 2 }];
+  await harness.track('src/module.ts', observation.source.text);
+  harness.intent.document.nodes[0]!.anchors = [{ path: 'src/module.ts', hash: observation.source.hash, startLine: 1, endLine: 2 }];
   harness.intent.document.nodes[0]!.observations = [{ studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash }];
   harness.intent.document.nodes[0]!.learningItemId = observation.itemId;
   return study;
@@ -45,11 +43,11 @@ test('whole book publication retains immutable source revisions without navigati
   // Act
   const first = await books.publish(intent);
   const second = await books.publish({ ...intent, key: 'second', expectedRevision: 1, document: { ...intent.document, title: 'Clearer title' } });
-  await writeFile(join(directory, 'src/cart.ts'), 'export const price = 30;\n');
+  await writeFile(join(directory, 'src/module.ts'), 'export const price = 30;\n');
   const historical = await books.read('architecture', 1), states = await sources.inspect(historical.revision.sources);
   // Assert
   assert.equal(first.revision, 1); assert.equal(second.revision, 2); assert.equal(historical.latestRevision, 2);
-  assert.equal(historical.revision.document.title, 'Cart architecture'); assert.equal(historical.revision.sources[0]?.text, 'export const price = 24;\n');
+  assert.equal(historical.revision.document.title, 'Module architecture'); assert.equal(historical.revision.sources[0]?.text, 'export const price = 24;\n');
   assert.equal(states[0]?.status, 'changed'); assert.equal((await library.readProgress()).decisions.length, 0);
   assert.equal((await library.readProgress()).repositorySelection, undefined);
 });
@@ -59,9 +57,9 @@ test('lost publication responses recover the original receipt after source edits
   const { books, intent, directory, path, sources, library } = await bookHarness(context);
   const first = await books.publish(intent), before = await readFile(path);
   // Act / Assert
-  await writeFile(join(directory, 'src/cart.ts'), 'changed after successful commit');
+  await writeFile(join(directory, 'src/module.ts'), 'changed after successful commit');
   assert.deepEqual(await books.publish(intent), first);
-  await rm(join(directory, 'src/cart.ts'));
+  await rm(join(directory, 'src/module.ts'));
   assert.deepEqual(await new RepositoryBookStore(sources, library).publish(intent), first);
   await assert.rejects(books.publish({ ...intent, document: { ...intent.document, title: 'Changed intent' } }), /already names different input/);
   assert.deepEqual(await readFile(path), before); assert.equal((await books.list())[0]?.revision, 1);
@@ -73,12 +71,12 @@ test('same-key recovery survives unavailable checkpoints while public reads labe
   const first = await harness.books.publish(harness.intent);
   const verified = await harness.books.read('architecture', 1);
   // Act
-  await writeFile(join(harness.library.directory, `${study.id}.study.meta.v2.json`), '{corrupt');
+  await writeFile(join(harness.library.directory, `${study.id}.study.meta.v3.json`), '{corrupt');
   const repeated = await harness.books.publish(harness.intent), unavailable = await harness.books.read('architecture', 1);
   // Assert
   assert.equal(verified.links[0]?.status, 'available'); assert.equal(verified.links[0]?.outcome, 'partial');
   assert.deepEqual(repeated, first); assert.equal(unavailable.links[0]?.status, 'unavailable');
-  assert.equal(unavailable.revision.document.title, 'Cart architecture'); assert.equal(unavailable.latestRevision, 1);
+  assert.equal(unavailable.revision.document.title, 'Module architecture'); assert.equal(unavailable.latestRevision, 1);
 });
 
 test('slow source preparation lets another learner writer finish before publication enters the shared queue', async context => {
@@ -90,7 +88,7 @@ test('slow source preparation lets another learner writer finish before publicat
   sources.prepare = async (...arguments_: Parameters<typeof prepare>) => { const value = await prepare(...arguments_); enter(); await held; return value; };
   // Act
   const publishing = books.publish(intent); await entered;
-  const progress = await library.decide({ id: randomUUID(), item: 'checkout-demo/cart-mutation', sourceHash, understood: true, at: '2026-09-19T10:00:00.000Z' });
+  const progress = await library.decide({ id: randomUUID(), item: 'repository/interface/theme', sourceHash, understood: true, at: '2026-09-19T10:00:00.000Z' });
   release(); const receipt = await publishing;
   // Assert
   assert.equal(progress.decisions.length, 1); assert.equal(receipt.revision, 1); assert.equal((await library.readProgress()).decisions.length, 1);
@@ -125,7 +123,7 @@ test('source edits after hash revalidation but before final commit retain the ol
   const prepare = sources.prepare.bind(sources);
   sources.prepare = async (...arguments_: Parameters<typeof prepare>) => {
     const prepared = await prepare(...arguments_), revalidate = prepared.revalidate;
-    return { ...prepared, revalidate: async () => { const checks = await revalidate(); await writeFile(join(directory, 'src/cart.ts'), 'edited during final link checks'); return checks; } };
+    return { ...prepared, revalidate: async () => { const checks = await revalidate(); await writeFile(join(directory, 'src/module.ts'), 'edited during final link checks'); return checks; } };
   };
   // Act / Assert
   await assert.rejects(books.publish({ ...intent, key: 'next', expectedRevision: 1 }), /changed before commit/);
@@ -194,16 +192,16 @@ test('partial linked observations remain exact and later article revisions canno
   const before = await readFile(harness.path), node = harness.intent.document.nodes[0]!;
   // Act / Assert
   const linked = await harness.books.read('architecture', 1);
-  assert.equal(linked.links[0]?.studyId, study.id); assert.equal(linked.links[0]?.outcome, 'partial'); assert.equal(linked.links[0]?.itemId, 'paired-cart-demo/server');
+  assert.equal(linked.links[0]?.studyId, study.id); assert.equal(linked.links[0]?.outcome, 'partial'); assert.equal(linked.links[0]?.itemId, 'repository/interface/theme');
   const { learningItemId: _identity, ...withoutAlias } = node;
-  await assert.rejects(harness.books.publish({ ...harness.intent, key: 'changed-alias', expectedRevision: 1, document: { ...harness.intent.document, nodes: [withoutAlias] } }), { code: 'BOOK_CONFLICT', message: 'Learning identity changed for cart. Keep its original learningItemId or omit it as in the retained revision.' });
+  await assert.rejects(harness.books.publish({ ...harness.intent, key: 'changed-alias', expectedRevision: 1, document: { ...harness.intent.document, nodes: [withoutAlias] } }), { code: 'BOOK_CONFLICT', message: 'Learning identity changed for module. Keep its original learningItemId or omit it as in the retained revision.' });
   assert.deepEqual(await readFile(harness.path), before);
 });
 
 test('a changed captured fact cannot become a valid book destination even after its archive sidecar is repaired', async context => {
   // Arrange
   const harness = await bookHarness(context), study = await linkCheckpoint(harness); await harness.books.publish(harness.intent);
-  const path = join(harness.library.directory, `${study.id}.study.v2.json`), changed = JSON.parse(await readFile(path, 'utf8'));
+  const path = join(harness.library.directory, `${study.id}.study.v3.json`), changed = JSON.parse(await readFile(path, 'utf8'));
   // Act
   changed.observations[0].elapsedMs += 1; await writeFile(path, JSON.stringify(changed)); await harness.library.reconcile();
   const read = await harness.books.read('architecture', 1);
@@ -211,14 +209,17 @@ test('a changed captured fact cannot become a valid book destination even after 
   assert.equal((await harness.library.readCheckpoint(study.id)).status, 'saved'); assert.equal(read.links[0]?.status, 'unavailable');
 });
 
-test('the seventeenth book and twenty-first revision are rejected without evicting retained history', async context => {
+test('a seventeenth distinct book is saved and a sixty-fifth is rejected without evicting retained history', async context => {
   // Arrange
   const { books, intent, path, library } = await bookHarness(context); await books.publish(intent);
   const original = JSON.parse(await readFile(path, 'utf8'));
   await writeFile(join(library.directory, 'architecture.book.v1.json'), JSON.stringify({ ...original, version: 1 }));
   for (let index = 1; index < 16; index++) await books.publish({ ...intent, bookId: `book-${index}` });
   // Act / Assert
-  await assert.rejects(books.publish({ ...intent, bookId: 'overflow' }), /16 books/); assert.equal((await books.list()).length, 16);
+  await books.publish({ ...intent, bookId: 'book-16' });
+  assert.equal((await books.list()).length, 17, 'the former cap cannot prevent a new current-source article');
+  for (let index = 17; index < 64; index++) await books.publish({ ...intent, bookId: `book-${index}` });
+  await assert.rejects(books.publish({ ...intent, bookId: 'overflow' }), /64 books/); assert.equal((await books.list()).length, 64);
   for (let revision = 1; revision < 20; revision++) await books.publish({ ...intent, key: `revision-${revision + 1}`, expectedRevision: revision });
   const before = await readFile(path);
   await assert.rejects(books.publish({ ...intent, key: 'overflow-revision', expectedRevision: 20 }), /20 revisions/);
@@ -249,14 +250,14 @@ test('reading a version 1 book preserves its exact revision hash and retry recei
   const legacyPath = join(library.directory, 'architecture.book.v1.json'); await writeFile(legacyPath, bytes);
   // Act
   const historical = await books.read('architecture', 1);
-  await rm(join(directory, 'src/cart.ts')); const retry = await books.publish(intent);
+  await rm(join(directory, 'src/module.ts')); const retry = await books.publish(intent);
   // Assert
-  assert.equal(sha256(bytes), '5bee2841bd0a6934685a0f3b1dc8aa1ac689516d61264f5207bd40cb81e485b9');
-  assert.equal(historical.revision.hash, '31886758b5000328fb26c2431817b589d008c61ba2c3a048ded20625d8fcba80');
-  assert.equal(historical.revision.inputDigest, '46c306d3050b3e64b99b3eea0435478693a040345c9c3a3f13581f0e4c34bc1b');
-  assert.deepEqual(retry, { bookId: 'architecture', revision: 1, hash: '31886758b5000328fb26c2431817b589d008c61ba2c3a048ded20625d8fcba80', publishedAt: '2026-09-19T00:00:02.000Z' });
+  assert.equal(sha256(bytes), '073dea7dd3f21bad0b2ba2feaaa1711054d539c4e6711b9ca9178b60dfdd46dc');
+  assert.equal(historical.revision.hash, 'a772171df763a8ecf607b077b1ecff6a995fbbde8bbf18e7fee848e7b2028290');
+  assert.equal(historical.revision.inputDigest, '512543316e941dce362bbff1dd905efd16691c8e92274d1f4dcc2a5ca0a8f6bc');
+  assert.deepEqual(retry, { bookId: 'architecture', revision: 1, hash: 'a772171df763a8ecf607b077b1ecff6a995fbbde8bbf18e7fee848e7b2028290', publishedAt: '2026-09-19T00:00:02.000Z' });
   assert.deepEqual(await readdir(library.directory), ['architecture.book.v1.json']);
-  await track('src/cart.ts');
+  await track('src/module.ts');
   const next = await books.publish({ ...intent, key: 'second', expectedRevision: 1, document: { ...intent.document, title: 'Clearer title' } });
   const current = JSON.parse(await readFile(path, 'utf8')), legacy = repositoryBookSchema.parse(JSON.parse(bytes.toString()));
   assert.equal(next.revision, 2); assert.equal(current.version, 2); assert.deepEqual(current.revisions[0], legacy.revisions[0]);
@@ -286,7 +287,7 @@ test('an interrupted first version 2 publication preserves the legacy book and i
   // Act / Assert
   await assert.rejects(books.publish({ ...intent, key: 'second', expectedRevision: 1 }), /migration rename failure/);
   assert.deepEqual(await readFile(legacyPath), bytes); await assert.rejects(readFile(path), { code: 'ENOENT' });
-  assert.equal((await books.publish(intent)).hash, '31886758b5000328fb26c2431817b589d008c61ba2c3a048ded20625d8fcba80');
+  assert.equal((await books.publish(intent)).hash, 'a772171df763a8ecf607b077b1ecff6a995fbbde8bbf18e7fee848e7b2028290');
   assert.deepEqual(await readdir(library.directory), ['architecture.book.v1.json']);
 });
 

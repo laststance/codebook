@@ -433,7 +433,7 @@ Completion: Step 0 accepts the bounded outcome and reduces mechanism complexity;
 
 ## Result and decision
 
-Falsified at DX0. Two supported reveal/grid sequences failed to retain the context panel when moving from Living book toward Guided in VS Code. The second sequence achieved the intended Living geometry, but neither completed three-mode retention. [Native failure evidence](evidence/0012/placement-investigation-20260920.md) and [manifest](evidence/0012/placement-manifest.json) preserve both attempts. Cursor and new-mode product tests were not run after the blocking prerequisite failed. No product code/build changed; G08/G09 remain unimplemented. Keep the reviewed shared-model contract; replace its unproven native placement mechanism through one bounded follow-up investigation.
+Falsified at DX0. Two supported reveal/grid sequences failed to retain the context panel when moving from Living book toward Guided in VS Code. The second sequence achieved the intended Living geometry, but neither completed three-mode retention. [Native failure evidence](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0012/placement-investigation-20260920.md) and [manifest](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0012/placement-manifest.json) preserve both attempts. Cursor and new-mode product tests were not run after the blocking prerequisite failed. No product code/build changed; G08/G09 remain unimplemented. Keep the reviewed shared-model contract; replace its unproven native placement mechanism through one bounded follow-up investigation.
 
 ## Handoff
 

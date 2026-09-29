@@ -34,6 +34,45 @@ test('ordinary Cursor setup installs the packaged skill once and reconnect check
   assert.equal(first.sha256, createHash('sha256').update(INITIAL_SKILL).digest('hex'));
 });
 
+test('Cursor setup records the active installed Wiki publisher and refreshes that path after an extension update', async context => {
+  // Arrange
+  const paths = await fixture(context);
+  const publisherMarker = '{{CODEBOOK_PUBLISHER_PATH}}';
+  const skillWithPublisher = INITIAL_SKILL + `\nWiki publisher: \`${publisherMarker}\`\n`;
+  await writeFile(paths.sourcePath, skillWithPublisher);
+  const firstPublisher = join(paths.extensionPath, 'skills', 'codebook', 'publish-wiki.mjs');
+  await writeFile(firstPublisher, 'console.log("publisher");\n');
+
+  // Act
+  const first = await deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot);
+  const firstBody = await readFile(paths.targetPath, 'utf8');
+  const replacementExtension = join(paths.homeRoot, 'updated-extension');
+  await mkdir(join(replacementExtension, 'skills', 'codebook'), { recursive: true });
+  await writeFile(join(replacementExtension, 'skills', 'codebook', 'SKILL.md'), skillWithPublisher);
+  const secondPublisher = join(replacementExtension, 'skills', 'codebook', 'publish-wiki.mjs');
+  await writeFile(secondPublisher, 'console.log("publisher");\n');
+  const updated = await deployCursorSkill(replacementExtension, paths.storageRoot, paths.homeRoot);
+  const verified = await verifyManagedCursorSkill(replacementExtension, paths.storageRoot, paths.homeRoot);
+
+  // Assert
+  assert.equal(first.status, 'installed');
+  assert.equal(firstBody.includes(firstPublisher), true);
+  assert.equal(firstBody.includes(publisherMarker), false);
+  assert.equal(updated.status, 'updated');
+  assert.equal(verified.status, 'current');
+  assert.equal(await readFile(paths.targetPath, 'utf8'), skillWithPublisher.replace(publisherMarker, secondPublisher));
+});
+
+test('Cursor setup refuses a Wiki skill whose installed publisher is missing without creating a managed skill', async context => {
+  // Arrange
+  const paths = await fixture(context);
+  await writeFile(paths.sourcePath, `${INITIAL_SKILL}\nWiki publisher: {{CODEBOOK_PUBLISHER_PATH}}\n`);
+
+  // Act / Assert
+  await assert.rejects(deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot), /missing its Wiki publisher/);
+  await assert.rejects(lstat(paths.targetPath), { code: 'ENOENT' });
+});
+
 test('setup refuses a pre-existing same-name Cursor skill without changing its content', async context => {
   // Arrange
   const paths = await fixture(context), custom = 'My own codebook skill';

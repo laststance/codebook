@@ -2,8 +2,8 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
+import { sha256 } from '../runtimeSupport/utils/sha256';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 import { LearningLibrary } from '../learningLibrary';
 import { repositoryHarness } from './utils/repositoryHarness';
 import { loadModule } from './utils/loadModule';
@@ -12,7 +12,7 @@ import type { RepositorySelection } from '../learnerSchemas';
 /** Drives failed webview clicks through the real reader and ledger; notification tests replace only native editor effects. @example const harness = await feedbackHarness(context) */
 async function feedbackHarness(context: TestContext) {
   const source = await repositoryHarness(context), root = await realpath(source.directory);
-  await source.track('src/cart.ts');
+  await source.track('src/module.ts');
   const library = new LearningLibrary(join(root, '.learning'), sha256(root)), notifications: string[] = [];
   const disposable = () => ({ dispose() {} });
   class Uri {
@@ -48,12 +48,12 @@ async function feedbackHarness(context: TestContext) {
   });
   const reader = new boundary.RepositoryReader({ storage: async () => library, connect: async () => {}, arrange: async () => {}, evidence: async () => { enteredEvidence++; } });
   context.after(() => reader.dispose());
-  const store = await reader.storage(), citation = await source.sources.read('src/cart.ts');
+  const store = await reader.storage(), citation = await source.sources.read('src/module.ts');
   await store.publish({ bookId: 'architecture', key: 'first', expectedRevision: 0, document: {
-    title: 'Architecture', summary: 'Retained evidence.', nodes: [{ id: 'cart', title: 'Cart', sections: [{ title: 'Price', text: 'The captured price is 24.' }],
+    title: 'Architecture', summary: 'Retained evidence.', nodes: [{ id: 'module', title: 'Module', sections: [{ title: 'Price', text: 'The captured price is 24.' }],
       anchors: [{ path: citation.path, hash: citation.hash, startLine: 1, endLine: 2 }], observations: [] }], edges: [],
   } });
-  const selection: RepositorySelection = { bookId: 'architecture', revision: 1, nodeId: 'cart', anchorIndex: 0, location: { sectionIndex: 3, fraction: 0.65, focusId: 'evidence-0-recording' } };
+  const selection: RepositorySelection = { bookId: 'architecture', revision: 1, nodeId: 'module', anchorIndex: 0, location: { sectionIndex: 3, fraction: 0.65, focusId: 'evidence-0-recording' } };
   await reader.open(selection); await reader.understand(true);
   return { reader, store, library, selection, notifications, enteredEvidence: () => enteredEvidence, receive: (value: unknown) => receive(value) };
 }

@@ -11,7 +11,7 @@ import { resolvePackageDestination } from './resolvePackageDestination.mjs';
 import { inspectBundle } from './inspectBundle.mjs';
 import { readVsixEntries } from './readVsixEntries.mjs';
 import { readVsixBytes } from './readVsixBytes.mjs';
-import { REQUIRED_DEMO_FILES, REQUIRED_PACKAGE_FILES, verifyPackageContent } from './verifyPackageContent.mjs';
+import { REQUIRED_PACKAGE_FILES, verifyPackageContent } from './verifyPackageContent.mjs';
 import { loadBuiltExtension } from './loadBuiltExtension.mjs';
 import { withPackageOutput } from './withPackageOutput.mjs';
 import { runPackageCommand } from './runPackageCommand.mjs';
@@ -28,10 +28,10 @@ export async function buildPackage(repository, output, runCommand = runPackageCo
   return withPackageOutput(destination, async ({ directory, candidate, stage }) => {
     // Source snapshot -> clean compilation -> closed stage -> real archive -> isolated load -> atomic publication.
     await cleanPackageOutputs(repository);
-    await runCommand('pnpm', ['--dir', extensionRoot, 'build'], repository);
+    // Corepack selects the package manager from cwd before pnpm processes --dir.
+    await runCommand('pnpm', ['build'], extensionRoot);
     assert.deepEqual(await readBuildIdentity(repository, directory), before, 'Source inputs changed during compilation. Retry from a stable checkout.');
     const compiled = await import(pathToFileURL(join(extensionRoot, 'dist/constants.js')).href);
-    assert.deepEqual([...compiled.DEMO_ASSET_PATHS].sort(), [...REQUIRED_DEMO_FILES].sort(), 'Runtime and package asset contracts differ.');
     const developmentManifest = JSON.parse(await readFile(join(extensionRoot, 'package.json'), 'utf8'));
     assert.equal(compiled.EXTENSION_VERSION, developmentManifest.version, 'Runtime and package versions differ.');
     const build = JSON.parse(await readFile(join(extensionRoot, 'dist/build.json'), 'utf8'));
@@ -73,6 +73,7 @@ export async function buildPackage(repository, output, runCommand = runPackageCo
     files.set(PACKAGE_MANIFEST_PATH, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
     for (const [file, content] of files) { const path = join(stage, file); await mkdir(dirname(path), { recursive: true }); await writeFile(path, content); }
     await runCommand(process.execPath, ['--check', join(stage, 'dist/cursorMcpBridge.js')], repository);
+    await runCommand(process.execPath, ['--check', join(stage, 'skills/codebook/publish-wiki.mjs')], repository);
     // A syntax-valid bridge can still exit without entering its bundled CLI; require the fixed recovery path.
     let bridgeStartupFailure;
     try { await runCommand(process.execPath, [join(stage, 'dist/cursorMcpBridge.js'), join(stage, 'missing.connection.json')], repository); }

@@ -1,5 +1,5 @@
 import type { TextEditor } from 'vscode';
-import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 import { PRESENTATION_READY_TIMEOUT_MS } from '../constants';
 
 /** Retains visible source context for {@link StudyWorkspace} before native relocation, then restores it after the final grid settles. @example const restore = retainEditorReadingPosition(editor); await restore(relocated, signal) */

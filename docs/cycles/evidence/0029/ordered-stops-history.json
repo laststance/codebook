@@ -1,0 +1,54 @@
+{
+  "sourceHash": "3751875df3879035e1e415a45faf6bda1f49250662d2d7f6a05f28c53bf07a26",
+  "skillVersion": "1.0.24",
+  "mechanism": {
+    "focused": 191,
+    "full": 1058,
+    "failed": 0,
+    "fullLog": "artifacts/cycle-0029/ordered-stops-history/full-tests.log"
+  },
+  "package": {
+    "result": "PASS",
+    "entries": 25,
+    "sha256": "54e4f2fbe73cf1c866bff61aeaabd211ea2890ab89e9f84471ded78758a27f1a",
+    "path": "artifacts/cycle-0029/ordered-stops-history/codebook.vsix"
+  },
+  "native": {
+    "result": "NOT DEMONSTRATED: storage capacity exhausted before input",
+    "host": "VS Code 1.139.1",
+    "chat": "Claude Code extension Opus 5.5 High; Copilot credits exhausted",
+    "sessionId": "5f66299f-4a89-4169-8e77-af9b5530f97c",
+    "targetRevision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+    "attempts": [
+      {
+        "runId": "e66ae369-34a3-4809-923d-d05eafff35b0",
+        "result": "89:3 did not bind; no submit; failed prefix retained"
+      },
+      {
+        "runId": "c4b465aa-89d8-4613-a3d5-e261ccdc9620",
+        "result": "90:5 ready; both libraries at 16/16; agent stopped without submit"
+      }
+    ],
+    "actualInputCount": 0,
+    "sharedSkillRead": "Installed 1.0.24 read through normal agent Bash; this is explicit path guidance, not slash discovery proof",
+    "video": "artifacts/cycle-0029/ordered-stops-history/native.mp4",
+    "durationSeconds": 292.800001,
+    "inspectedFrames": [
+      {
+        "seconds": 150,
+        "path": "artifacts/cycle-0029/ordered-stops-history/native-midpoint.png"
+      },
+      {
+        "seconds": 250,
+        "path": "artifacts/cycle-0029/ordered-stops-history/native-result.png"
+      }
+    ],
+    "cleanup": "Owned VS Code/ffmpeg exited; exact owned local MCP registration removed; target Git-clean; no settings edited"
+  },
+  "limits": [
+    "Immutable-history repair has mechanism proof only",
+    "Prior unowned continuation remains unresolved/not reproduced",
+    "No Cursor, final acceptance, merge or publication proof"
+  ],
+  "next": "Implement bounded learner-controlled storage recovery/capacity handling without deleting prior evidence; rerun two-stop saved learning"
+}

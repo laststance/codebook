@@ -1,0 +1,48 @@
+{
+  "date": "2026-09-27",
+  "revision": "273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf",
+  "dirty": true,
+  "sourceHash": "b0eb772248d1209735b29367686bedea5b0f981b0570bf89cf6bf88a8f2d0eda",
+  "scope": [
+    "AC-LIVE",
+    "AC-ENTRY",
+    "AC-SKILL"
+  ],
+  "behavior": "Explicit codebook_presentation action focus returns to the existing Study explanation with current presentation identity, revision and mode. It preserves native groups, Wiki, drafts, learning and runtime state.",
+  "guards": [
+    "Closed or wrong-mode reader rejects before reveal.",
+    "Stale identity/revision rejects before reveal.",
+    "Temporary window departure cancels the handoff.",
+    "Newer learner tab choice is preserved.",
+    "Native owned-tab and inner-document focus receipts are both required."
+  ],
+  "checks": {
+    "build": "PASS",
+    "workspaceAndProtocol": {
+      "passed": 450,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 182731.300792
+    },
+    "newRecoveryCases": 7,
+    "diffCheck": "PASS"
+  },
+  "limits": [
+    "Native Copilot Auto trial completed; see ordinary-chat-learning.json for bounded results and remaining layout failures.",
+    "Specific focus action arguments were not independently inspected.",
+    "No final acceptance credit."
+  ],
+  "failureReceipt": "ordinary-chat-focus-failure.json",
+  "package": {
+    "status": "PASS",
+    "sha256": "66862b91dbbeba997723d1b05f6e1e59415e92a0a00bd6c44985f4d37a3ed15a",
+    "bytes": 875929,
+    "path": "artifacts/cycle-0029/focus-recovery/codebook.vsix"
+  },
+  "installed": {
+    "host": "VS Code default profile",
+    "sourceHash": "b0eb772248d1209735b29367686bedea5b0f981b0570bf89cf6bf88a8f2d0eda",
+    "reload": "completed"
+  },
+  "nativeReceipt": "ordinary-chat-learning.json"
+}

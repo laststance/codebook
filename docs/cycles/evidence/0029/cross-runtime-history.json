@@ -1,0 +1,72 @@
+{
+  "sourceHash": "7c45e8b2db4265372371b0798777fddc00ca98cc8b3aabe7a06ca9c41b350507",
+  "implementation": {
+    "intentVersion": 2,
+    "archiveVersion": 4,
+    "recordingVersion": 3,
+    "publicLiveIntentVersion": 1,
+    "features": [
+      "Per-stop participant, retained source and citation identity",
+      "Independent session generations with global observation order",
+      "Versioned archive/catalog/recording context and selected-source restoration",
+      "Append-only observations and cross-participant continuation",
+      "Native debugger history required for completed new-format studies"
+    ]
+  },
+  "verification": {
+    "build": "PASS",
+    "focused": {
+      "passed": 56,
+      "failed": 0
+    },
+    "full": {
+      "passed": 1092,
+      "failed": 0
+    },
+    "priorNativeHistory": {
+      "sourceHash": "7c45e8b2db4265372371b0798777fddc00ca98cc8b3aabe7a06ca9c41b350507",
+      "studyId": "98f4bcfa-ecfd-431c-9e79-8ffa02e7ee4d_33dcebc3-745b-436c-99b1-1157e4906307",
+      "archiveVersion": 3,
+      "recordingVersion": 2,
+      "observations": 2,
+      "historyRevision": 21,
+      "decodedArchiveMatchesExistingMetadata": true,
+      "filesUnchanged": 3,
+      "sha256": [
+        "65a77ce7a1584b87d382e77f5a951cdd037034256d26b3e84e9308719ba53b47",
+        "2a89376bb2c1395225b2ec454927372b8e0f53eab0592a54fde59f41c6447902",
+        "873c93e69f00608968c8269b2b3b7bfe9b3fc90bac3aaa5ea89a662a510b343a"
+      ]
+    },
+    "initialRegression": "First full run found old browser films accepting server phases (1087/1088). Dedicated recording version and version-bound phase admission fixed it; the existing rejection test remains and passes."
+  },
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0029/server-acquisition/cross-runtime-build.log",
+      "sha256": "c1e4221689806446d653f795a4d163d18ddd1b1017e9e4b5b64313333ce66eda"
+    },
+    {
+      "path": "artifacts/cycle-0029/server-acquisition/cross-runtime-tests.log",
+      "sha256": "48707b3c7f61fcfb2757dcd7c51da3052275890a31baba0fa967f0f0d286d9e8"
+    },
+    {
+      "path": "artifacts/cycle-0029/server-acquisition/cross-runtime-full-tests.log",
+      "sha256": "440e6859fe1e2367ecb209bcf3056aa470251dd43b83364a11e82974e1049e31"
+    },
+    {
+      "path": "artifacts/cycle-0029/server-acquisition/cross-runtime-full-tests-final.log",
+      "sha256": "626fd12215752c4792937e26b10a46807e2dc578729fb3a5c917297f590c7357"
+    },
+    {
+      "path": "artifacts/cycle-0029/server-acquisition/prior-native-history-read.json",
+      "sha256": "1f092a0531580b5f092470ac42f253372f1294ef1d185c79be6310fbc187b8c6"
+    }
+  ],
+  "limits": [
+    "New-format positive cases are inert storage/protocol tests, not execution of a bundled application.",
+    "Public live configuration remains version 1 and native runtime rejects version 2 before acquisition.",
+    "No new VSIX, installed v4 replay or server DAP pause, normal-chat server workflow, Cursor trial or final acceptance.",
+    "Existing installed candidate remains 4eaa0bb9; formal engineering review remains pending target selection."
+  ],
+  "next": "Integrate participant-local native debugger state, lazy pending breakpoints, exact-snapshot source resource/reveal and live version selection; then package and verify actual dashboard normal-chat control."
+}

@@ -100,8 +100,10 @@ reviews:
         Follow DESIGN.md and the approved design, as amended by DECISIONS.md and
         the active cycle. Preserve compact understand controls, complete citation
         context, exact reading returns, and shared learning/recording identities.
-        Check keyboard focus, constrained widths, 200% zoom, supported themes,
-        loading/error/paused states, escaped dynamic content, and message validation.
+        Check keyboard focus, supported themes, loading/error/paused states,
+        escaped dynamic content, and message validation at the ordinary expanded
+        desktop/default-zoom baseline. D034 excludes extreme-small windows and
+        extreme zoom such as 200% from required coverage.
         Static HTML or screenshots do not establish native usability or motion;
         animation claims require recorded video and inspected frames in each host.
 
@@ -115,13 +117,6 @@ reviews:
         Check meaningful cancellation, race, persistence, and partial-failure cases;
         distinguish mocked boundaries from real debugger/browser/native evidence.
         Do not add redundant tests for reversible low-impact documentation changes.
-
-    - path: "experiments/**"
-      instructions: |
-        These are maintained feasibility harnesses, not generated throwaway output.
-        Review observation fidelity, deadlines, cleanup, target isolation, and
-        reproducibility. Keep fixture/mechanism success separate from real-repository
-        and installed-product support; avoid demanding production feature scope.
 
     - path: "**/*.md"
       instructions: |
@@ -147,7 +142,9 @@ knowledge_base:
       - "DECISIONS.md"
       - "DESIGN.md"
       # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
-      - files: "docs/cycles/0028-ordinary-chat-study-entry.md"
+      - files: "docs/cycles/0029-active-increment.md"
+        applyTo: "**/*"
+      - files: "docs/cycles/0029-feature-specification.md"
         applyTo: "**/*"
       - files: "docs/designs/codebook.md"
         applyTo: "extension/src/**"

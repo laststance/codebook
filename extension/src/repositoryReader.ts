@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from './runtimeSupport/utils/sha256';
 import { requireWorkspace } from './environment';
 import { REPOSITORY_FIXED_READING_SECTIONS, REPOSITORY_READER_DEBOUNCE_MS, REPOSITORY_SOURCE_SCHEME } from './constants';
 import { repositorySelectionSchema, type LearnerDecision, type LearnerProgress, type RepositorySelection } from './learnerSchemas';
@@ -422,7 +422,7 @@ export class RepositoryReader {
   private publish(): void { if (!this.disposed && this.panel) void this.panel.webview.postMessage(this.message()); }
   /** Locates the selected node inside the immutable selected revision. @example this.selectedNode()?.anchors */
   private selectedNode() { return this.book?.revision.document.nodes.find(node => node.id === this.selection?.nodeId); }
-  /** Guards workspace changes without imposing demo prerequisites. @example this.assertOwner() */
+  /** Guards workspace changes without requiring a running application. @example this.assertOwner() */
   private assertOwner(): void { if (this.disposed || !this.workspacePath || requireWorkspace() !== this.workspacePath) throw new Error('Repository reader no longer owns the selected workspace.'); }
   /** Prevents old navigation I/O from altering a newer selection or reopening closed panels. @example this.assertCurrent(generation) */
   private assertCurrent(generation: number): void { this.assertOwner(); if (generation !== this.generation || this.navigation.signal.aborted) throw new Error('Repository navigation was superseded or closed.'); }

@@ -4,10 +4,7 @@ import { isBuiltin } from 'node:module';
 import { parseStringPromise } from 'xml2js';
 import { PACKAGE_MANIFEST_PATH } from './packageConstants.mjs';
 
-// The checker independently enforces the shipped fixture format; packaging compares it with the runtime contract.
-export const REQUIRED_DEMO_FILES = ['fixture/server.mts', 'fixture/client.mts', 'fixture/constants.mts', 'fixture/index.html',
-  'build/server.mjs', 'build/server.mjs.map', 'build/client.mjs', 'build/client.mjs.map', 'build/constants.mjs', 'build/constants.mjs.map'];
-export const REQUIRED_PACKAGE_FILES = ['package.json', 'readme.md', 'dist/extension.js', 'dist/cursorMcpBridge.js', 'dist/build.json', 'src/assets/book.svg', 'skills/codebook/SKILL.md', 'THIRD_PARTY_NOTICES.md', ...REQUIRED_DEMO_FILES.map(file => `dist/demo/${file}`)];
+export const REQUIRED_PACKAGE_FILES = ['package.json', 'readme.md', 'dist/extension.js', 'dist/cursorMcpBridge.js', 'dist/build.json', 'src/assets/book.svg', 'skills/codebook/SKILL.md', 'skills/codebook/publish-wiki.mjs', 'skills/codebook/render-wiki.mjs', 'skills/codebook/render-wiki-diagrams.mjs', 'skills/codebook/reader-shell.html', 'THIRD_PARTY_NOTICES.md'];
 
 /** Checks a closed file inventory, metadata, notices and manifest references without loading extension code. @example await verifyPackageContent(entries, expectedStageFiles) */
 export async function verifyPackageContent(entries, expectedFiles) {
@@ -19,6 +16,7 @@ export async function verifyPackageContent(entries, expectedFiles) {
   assert.ok(Array.isArray(manifest.externals) && manifest.externals.every(name => typeof name === 'string' && (name === 'vscode' || isBuiltin(name))), 'Unresolved runtime import.');
   assert.ok(Array.isArray(manifest.inputs) && manifest.inputs.length > 0, 'Missing bundle input inventory.');
   for (const input of manifest.inputs) assert.ok(typeof input.path === 'string' && /^[a-f0-9]{64}$/.test(input.sha256) && Number.isSafeInteger(input.bytes) && input.bytes > 0, 'Invalid bundle input.');
+  assert.ok(manifest.inputs.every(input => !/(?:^|\/)(?:tests|fixtures|fixture|demo|experiments)(?:\/|$)/.test(input.path)), 'Validation application or test input entered the bundle.');
   const requiredFiles = [...REQUIRED_PACKAGE_FILES], noticeFiles = new Set();
   for (const dependency of manifest.dependencies) {
     assert.ok(typeof dependency.name === 'string' && typeof dependency.version === 'string' && typeof dependency.license === 'string' && dependency.license, 'Missing dependency license/version.');

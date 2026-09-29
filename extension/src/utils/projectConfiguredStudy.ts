@@ -1,6 +1,5 @@
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import type { StudyProjection, StudyProjectionInput } from '../studyModel';
-import { CONFIGURED_STUDY_VERSION } from '../constants';
 import { citationLearningState } from './citationLearningState';
 import { describeStudy } from './describeStudy';
 
@@ -8,10 +7,11 @@ import { describeStudy } from './describeStudy';
 export function projectConfiguredStudy(input: StudyProjectionInput): StudyProjection {
   const { selection, progress, live } = input;
   if (selection.profile !== 'repository-browser') throw new Error('Configured selection is required.');
-  const study = input.study?.version === CONFIGURED_STUDY_VERSION && input.study.id === selection.studyId ? input.study : undefined;
-  const descriptor = describeStudy(study ?? selection), selectedItem = descriptor.items[0]!;
-  if (selection.itemId !== selectedItem.id) throw new Error('Selected item belongs to another configured article.');
-  const observation = study?.observations.find(value => value.itemId === selection.itemId);
+  const study = input.study && input.study.id === selection.studyId ? input.study : undefined;
+  const descriptor = describeStudy(study ?? selection), declaredItem = descriptor.items[0]!;
+  if (selection.itemId !== declaredItem.id) throw new Error('Selected item belongs to another configured article.');
+  const observation = study?.observations.findLast(value => value.itemId === selection.itemId);
+  const selectedItem = { ...declaredItem, participant: observation?.participant ?? declaredItem.participant, capturePhase: observation?.capturePhase ?? declaredItem.capturePhase };
   const captured = study?.descriptor?.sources.find(source => source.path === study.configuration.source.path);
   const placeholder = '// Configured source is unavailable. Open the article or retry preparation.\n';
   const source = observation?.source ?? (captured ? { ...captured, line: study!.configuration.source.line } : { text: placeholder, hash: sha256(placeholder), line: 1 });
@@ -31,7 +31,7 @@ export function projectConfiguredStudy(input: StudyProjectionInput): StudyProjec
   return { selection, selectedItem, observation, source, currentSourceAvailable, sourceChanged, selectedUnderstanding,
     progressByItem: [itemProgress], understoodCount: itemProgress.understood ? 1 : 0, reviewCount: itemProgress.reviewNeeded ? 1 : 0,
     currentParticipant, currentItemId: current?.itemId, currentItemTitle: currentItem?.title ?? (current?.itemId === selectedItem.id ? selectedItem.title : undefined), currentSnapshotUri: current ? current.snapshotUri : undefined,
-    matching, continueArguments: matching && current ? current.continueArguments : undefined, image: observation ? study?.captures.find(capture => capture.phase === observation.capturePhase) : undefined,
+    matching, continueArguments: matching && current ? current.continueArguments : undefined, image: observation ? study?.captures.find(capture => capture.phase === observation.capturePhase && (capture.snapshotId === observation.id || study.observations.length === 1 && !capture.snapshotId)) : undefined,
     scenarioProgress: study && { lastObservedTitle: observation ? selectedItem.title : undefined, unverifiedLinkCount: 0,
       missingImageTitles: descriptor.capturePhases.filter(phase => !study.captures.some(capture => capture.phase === phase && capture.status === 'captured')).map(phase => phase === 'before' ? 'Before action' : phase === 'after' ? `${selectedItem.title} result` : selectedItem.title) } };
 }

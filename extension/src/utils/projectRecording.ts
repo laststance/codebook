@@ -7,18 +7,22 @@ export function projectRecording(index: RecordingIndex, context: RecordingContex
   let frame: RecordingFrame | undefined, missing: string | undefined;
   for (const entry of index.entries) {
     if (entry.elapsedMs > positionMs) break;
-    if (entry.type === 'frame') frame = entry;
+    if (entry.type === 'frame') { frame = entry; missing = undefined; }
     if (entry.type === 'gap') { missing = entry.reason; frame = undefined; }
   }
   const observed = context?.study.observations.filter(value => value.elapsedMs <= positionMs).sort((left, right) => left.elapsedMs - right.elapsedMs).at(-1);
+  const interval = context?.pausedIntervals?.find(value => value.snapshotId === observed?.id && value.startMs === observed.elapsedMs);
+  const hasHistoricalState = Boolean(observed && (positionMs === observed.elapsedMs || interval && positionMs >= interval.startMs && positionMs < interval.endMs));
+  const currentObservation = observed?.debugger && !hasHistoricalState ? undefined : observed;
   const available = (id: string) => context?.interpretationAvailability.find(value => value.id === id)?.elapsedMs;
   const atPosition = (value: { id: string }) => { const elapsed = available(value.id); return elapsed !== undefined && elapsed !== null && elapsed <= positionMs; };
-  // Narrow before filtering so demo interpretations cannot acquire configured-only fact types.
-  const observation = observed?.actionId === 'repository-click' ? { ...observed, interpretations: observed.interpretations.filter(atPosition) }
-    : observed && { ...observed, interpretations: observed.interpretations.filter(atPosition) };
+  // Keep interpretation availability bound to the selected recorded source.
+  const observation = currentObservation && { ...currentObservation, interpretations: currentObservation.interpretations.filter(atPosition) };
   const laterInterpretations = observed?.interpretations.filter(value => { const elapsed = available(value.id); return elapsed === null || elapsed === undefined || elapsed > positionMs; }).map(value => ({ ...value, availableMs: available(value.id) ?? null })) ?? [];
-  const phase = frame?.kind === 'phase' ? context?.phases.find(phase => phase.phase === frame.phase && phase.hash === frame.hash) : undefined;
-  return { positionMs, frame, missing: missing ?? (!frame ? 'No application frame was received at this position.' : undefined), observation, laterInterpretations,
+  const phase = frame?.kind === 'phase' ? context?.phases.findLast(phase => phase.phase === frame.phase && phase.hash === frame.hash && (phase.pixelsMs === undefined || phase.pixelsMs <= positionMs) && (!observation || !phase.snapshotId || phase.snapshotId === observation.id)) : undefined;
+  // No sealed pause interval means only the exact receipt point establishes debugger correspondence.
+  const debuggerSnapshot = hasHistoricalState ? observed?.debugger : undefined;
+  return { positionMs, frame, missing: missing ?? (!frame ? 'No application frame was received at this position.' : undefined), observation, debugger: debuggerSnapshot, laterInterpretations,
     pauseConfirmed: Boolean(phase?.pauseVerifiedMs !== undefined && phase.pauseVerifiedMs <= positionMs && phase.snapshotId === observation?.id),
     rendererConfirmed: Boolean(phase?.rendererConfirmedMs !== undefined && phase.rendererConfirmedMs <= positionMs && (!phase.snapshotId || context?.study.observations.some(value => value.id === phase.snapshotId && value.elapsedMs <= positionMs))),
     contextStatus: context ? 'available' as const : 'unavailable' as const };

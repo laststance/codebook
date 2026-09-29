@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "at": "2026-09-26T16:07:55.302879+00:00",
+  "scope": "Bundled application removal and external repository source-reading preservation",
+  "extensionRevision": "273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf",
+  "dirty": true,
+  "sourceHash": "7278bfc7944399900e7ac729172ef187123441aa5e21aaff24db7b413b2f1a27",
+  "vsix": {
+    "path": "artifacts/packages/codebook-external-project.vsix",
+    "sha256": "d47e4a4927e1cd145e23f1377f04a8dabd4b59e1ffc766d5297322aea83f602a",
+    "bytes": 861877,
+    "entries": 25
+  },
+  "tests": {
+    "fullRun": {
+      "total": 947,
+      "passed": 944,
+      "failed": 3,
+      "artifact": "artifacts/cycle-0029/removal/extension-suite.txt"
+    },
+    "failure": "Native-launcher mocks omitted the now-required explicit external workspace. Corrected those mocks; no product assertion weakened.",
+    "correctionRun": {
+      "total": 36,
+      "passed": 36,
+      "failed": 0,
+      "artifact": "artifacts/cycle-0029/removal/corrected-cases.txt"
+    },
+    "packaging": {
+      "total": 94,
+      "passed": 94,
+      "failed": 0,
+      "artifact": "artifacts/cycle-0029/removal/packaging-suite.txt"
+    },
+    "interpretation": "All 947 cases have passing evidence across the full run and targeted correction run; no final single all-green full-suite run claimed."
+  },
+  "native": [
+    {
+      "host": {
+        "id": "vscode",
+        "productVersion": "1.139.1",
+        "apiVersion": "1.139.1",
+        "commit": "04c0d99f4fb0d8afe6ce4f0c58e31e183ac3e4b1",
+        "browserBackend": "managed"
+      },
+      "workspaceRevision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+      "workspaceDirtyAfter": false,
+      "source": {
+        "path": "app/lib/actions.ts",
+        "hash": "6eaa5e8528faf21e0698c5faf72db475fa4b3000de70ea85da0e09a7c4a68161",
+        "startLine": 65,
+        "endLine": 99,
+        "bytes": 4188
+      },
+      "profiles": [
+        "repository-browser"
+      ],
+      "result": "passed",
+      "scope": "Normal command activation, public MCP source acquisition, source-derived article publication and native cited-source display.",
+      "ordinaryEditorChat": "not run",
+      "applicationExecution": "not run",
+      "artifact": "artifacts/cycle-0029/native/vscode/proof.json",
+      "screenshot": "artifacts/cycle-0029/native/vscode/source-reading.png",
+      "cleanup": "server stopped; owned profile and extension installation removed"
+    },
+    {
+      "host": {
+        "id": "cursor",
+        "productVersion": "3.22.9",
+        "apiVersion": "1.128.0",
+        "commit": "2ca0f45baa06796a86f6c6ba2b9bedacaf94c370",
+        "browserBackend": "managed"
+      },
+      "workspaceRevision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+      "workspaceDirtyAfter": false,
+      "source": {
+        "path": "app/lib/actions.ts",
+        "hash": "6eaa5e8528faf21e0698c5faf72db475fa4b3000de70ea85da0e09a7c4a68161",
+        "startLine": 65,
+        "endLine": 99,
+        "bytes": 4188
+      },
+      "profiles": [
+        "repository-browser"
+      ],
+      "result": "passed",
+      "scope": "Normal command activation, public MCP source acquisition, source-derived article publication and native cited-source display.",
+      "ordinaryEditorChat": "not run",
+      "applicationExecution": "not run",
+      "artifact": "artifacts/cycle-0029/native/cursor/proof.json",
+      "screenshot": "artifacts/cycle-0029/native/cursor/source-reading.png",
+      "cleanup": "server stopped; owned profile and extension installation removed"
+    }
+  ],
+  "reviews": {
+    "localCodeRabbit": {
+      "completed": true,
+      "findings": 8,
+      "fixed": 7,
+      "notAdopted": 1,
+      "reason": "Retired runtime-bound v1 books intentionally remain unsupported with original bytes preserved; source-only v1 books and current v2 books remain supported.",
+      "artifact": "artifacts/cycle-0029/removal/coderabbit.jsonl"
+    },
+    "inHostAdversarial": {
+      "initialFindings": 3,
+      "followupFindings": 2,
+      "fixed": 5,
+      "remainingP1P2": 0,
+      "token": "983efddd-e31b-4a51-9a03-102c9685229a",
+      "completedWithoutEdits": true
+    },
+    "OCR": {
+      "reviewed": 94,
+      "skipped": 0,
+      "defaultExcluded": 3352,
+      "artifact": "artifacts/cycle-0029/removal/ocr-accounting.json"
+    },
+    "claudeCode": "owner-skipped",
+    "hostedCodeRabbit": "owner-skipped"
+  },
+  "limits": [
+    "No approved final-layout claim.",
+    "No ordinary Copilot Chat or Cursor Agent session executed in these fresh signed-out profiles.",
+    "No application/debugger execution in this smoke test.",
+    "No nine-project final acceptance, CI, merge or publication."
+  ]
+}

@@ -1,22 +1,9 @@
-import { progressSchema as legacyProgressSchema } from '../legacyStudySchemas';
-import { progressSchema as progressV2Schema } from '../studySchemas';
 import { progressV3Schema, progressV4Schema, type LearnerProgress } from '../learnerSchemas';
-import { LEARNING_SCHEMA_VERSION_V2, LEARNING_SCHEMA_VERSION_V3, LEARNING_SCHEMA_VERSION_V4 } from '../constants';
+import { LEARNING_SCHEMA_VERSION_V3, LEARNING_SCHEMA_VERSION_V4 } from '../constants';
 
-/** Normalizes validated legacy choices for {@link LearningLibrary} reads without writing or changing their ownership. @example decodeLearnerProgress(v1, workspaceKey).decisions[0]?.item // 'paired-cart-demo/server' */
+/** Validates current repository choices on {@link LearningLibrary} reads without restoring runtime authority. @example decodeLearnerProgress(value, workspaceKey).version // 4 */
 export function decodeLearnerProgress(value: unknown, workspaceKey: string): LearnerProgress {
   let normalized = value;
-  if (value && typeof value === 'object' && 'version' in value && value.version === 1) {
-    const legacy = legacyProgressSchema.parse(value);
-    normalized = { ...legacy, version: LEARNING_SCHEMA_VERSION_V2,
-      decisions: legacy.decisions.map(decision => ({ ...decision, item: `paired-cart-demo/${decision.item}` })),
-      selection: legacy.selection && { studyId: legacy.selection.studyId, profile: 'paired-cart-demo', itemId: `paired-cart-demo/${legacy.selection.participant}`, follow: false, tab: legacy.selection.tab } };
-  }
-  // Only validated older formats receive explicit single-source meaning; future/corrupt data never falls back.
-  if (normalized && typeof normalized === 'object' && 'version' in normalized && normalized.version === LEARNING_SCHEMA_VERSION_V2) {
-    const legacy = progressV2Schema.parse(normalized);
-    normalized = { ...legacy, version: LEARNING_SCHEMA_VERSION_V3, decisions: legacy.decisions.map(decision => ({ ...decision, context: { kind: 'source' } })) };
-  }
   if (normalized && typeof normalized === 'object' && 'version' in normalized && normalized.version === LEARNING_SCHEMA_VERSION_V3) {
     const legacy = progressV3Schema.parse(normalized);
     normalized = { ...legacy, version: LEARNING_SCHEMA_VERSION_V4 };

@@ -36,11 +36,11 @@ Reason: cross-session and off-machine continuity without a premature backlog or 
 Source: explicit user answers D1–D5 and request to implement the reviewed plan.\
 Decision: isolated experimental HTTP extension and tiny TypeScript fixture; verify actually executed JS, explicit targets and pause generations; multiplex CDP and test continuation conflicts. No production MCP contract is selected.\
 Reason: test the live browser/debugger coupling and its correctness limits before committing to product APIs.\
-Reference: [Cycle 0001](docs/cycles/0001-click-pause-resume.md). Status: active for this experiment.
+Reference: [Cycle 0001](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0001-click-pause-resume.md). Status: active for this experiment.
 
 ## D006 — Keep the proven runtime core; next test one async boundary, 2026-09-18
 
-Source: [Cycle 0001 native execution and review](docs/cycles/0001-click-pause-resume.md), within the approved adaptive process.\
+Source: [Cycle 0001 native execution and review](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0001-click-pause-resume.md), within the approved adaptive process.\
 Decision: keep explicit session/thread/pause identity, independent input/control lifetimes, multiplexed CDP, and immutable source/value/frame evidence. Revise integrated-browser lifecycle handling to make owned-tab visibility/layout explicit. The temporary HTTP bridge is not a production MCP decision.\
 Evidence: 12 unit tests and 15 final native scenarios passed; one synchronous fixture has matching source, values, and before/pause/after images. Earlier layout/capture failures remain recorded.\
 Next candidate: one asynchronous browser-to-backend boundary with request correlation and an unrelated concurrent request. Plan only that bounded question next; do not start it as part of Cycle 0001.\
@@ -62,7 +62,7 @@ Limits: neither fixture success, a completed cycle, an engineering review, nor a
 
 ## D009 — Preserve shared runtime evidence; replace experimental host transport, 2026-09-18
 
-Source: [Cycle 0002](docs/cycles/0002-cursor-runtime-compatibility.md), 26 unit checks and native matrices of 17 VS Code / 20 Cursor cases.\
+Source: [Cycle 0002](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0002-cursor-runtime-compatibility.md), 26 unit checks and native matrices of 17 VS Code / 20 Cursor cases.\
 Decision: retain explicit target/pause identity, immutable source/value/frame evidence, independent input/control, and best-effort owned cleanup. Keep the Cursor target-metadata bridge as an experiment; do not treat its editor-wide remote-debug endpoint as the product integration.\
 Reason: both native hosts demonstrate the synchronous mechanism, while everyday deployment and native full-product presentation remain unproven. Select one scoped-browser transport investigation next, then return to the asynchronous boundary. This updates D006's next candidate without removing that functional uncertainty.\
 Limits: development review is non-converged after three fix cycles, outside review unavailable, Cursor final-source native before/after screenshots missing. No complete product or package claim. Status: active.
@@ -70,21 +70,21 @@ Limits: development review is non-converged after three fix cycles, outside revi
 
 ## D010 — Use owned-browser transport for the next functional experiment, 2026-09-18
 
-Source: [Cycle 0003](docs/cycles/0003-scoped-browser-transport.md), 38 unit tests and 21/21 real-host scenarios in each editor at `8ceb901`. Agent-selected route within D008.
+Source: [Cycle 0003](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0003-scoped-browser-transport.md), 38 unit tests and 21/21 real-host scenarios in each editor at `8ceb901`. Agent-selected route within D008.
 Decision: provisionally retain js-debug-owned Chrome via a debugging pipe, selected-child CDP, isolated pixel viewport and exact phase receipts. Replace the experimental editor-wide Cursor endpoint for subsequent functional experiments. Return to one correlated browser-to-backend async boundary.
 Reason: the installed native Cursor facade exposed command responses but no observed general target/event connection. The alternative preserves real source/value evidence and owned cleanup without editor-wide remote debugging.
 Limits: Cycle 0003 is inconclusive for native presentation because Mac lock prevented independent editor screenshots. Render ACK is not native visual proof. Ordinary-workspace installation, finished UX, browser input UI and recording remain unverified. External review unavailable; fresh in-host source review has no findings, without a whole-tree convergence/approval claim. No final outcome changed. Status: provisional; revalidate native presentation and packaged integration before product acceptance.
 
 ## D011 — Advance the proven paired runtime to an agent interface, 2026-09-19
 
-Source: [Cycle 0004](docs/cycles/0004-async-request-boundary.md), 18/18 native cases per required editor and 26 paired / 40 shared unit tests at `f968e02`. Agent-selected route within D008.
+Source: [Cycle 0004](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0004-async-request-boundary.md), 18/18 native cases per required editor and 26 paired / 40 shared unit tests at `f968e02`. Agent-selected route within D008.
 Decision: retain explicit request identity, complete expected traffic, participant pause generations, executed-source validation and qualified persisted outcomes. Next select one extension-owned MCP integration increment; do not keep polishing the solved private HTTP fixture.
 Reason: the browser/server boundary is now demonstrated on the instrumented fixture. The next core gap is allowing an external agent to discover and use it through the product's required control interface.
 Limits: public MCP contract still needs DX/engineering review; no arbitrary-repository, full checkout, native product UX, recording, layouts or package claim. Implementation review remains non-converged and outside coverage unavailable. Final requirements are unchanged. Status: active route, not a final API decision.
 
 ## D012 — Connect the proven agent interface to a learner workspace, 2026-09-19
 
-Source: [Cycle 0005](docs/cycles/0005-live-study-mcp.md), clean implementation `c813053`, six native MCP cases and three shared native regressions per required host, plus an actual driving-agent smoke. Agent-selected route within D008.
+Source: [Cycle 0005](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0005-live-study-mcp.md), clean implementation `c813053`, six native MCP cases and three shared native regressions per required host, plus an actual driving-agent smoke. Agent-selected route within D008.
 Decision: retain the extension-owned MCP service with explicit demo capability, immutable source/value/image references and separately labeled agent interpretations. Move next to one learner-facing Study workspace increment that links a selected learning item to the application, exact source, explanation and a durable learner-owned check.
 Reason: the required external-agent boundary now works on the proven instrumented fixture. A visible learning experience is the next missing connection; repeated transport refinement would not establish usefulness.
 Limits: no arbitrary-repository or natural-language checkout proof; native product UX remains unverified while the desktop is locked. Implementation review reached three fixing passes without convergence; outside coverage is unavailable. Recording, all layouts, packaging, real-repository use and the final ten-review gate remain required. Status: active route; no final outcome changed.
@@ -92,7 +92,7 @@ Limits: no arbitrary-repository or natural-language checkout proof; native produ
 
 ## D013 — Extend connected observations through purchase confirmation, 2026-09-19
 
-Source: [Cycle 0006](docs/cycles/0006-study-workspace.md), clean implementation `c873b43`, learner normal/history and MCP regressions in each required host. Agent-selected route within D008.
+Source: [Cycle 0006](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0006-study-workspace.md), clean implementation `c873b43`, learner normal/history and MCP regressions in each required host. Agent-selected route within D008.
 Decision: keep one shared selection, exact captured source, separate live identity, append-only learner decisions and self-contained historical reading. Next investigate a reusable scenario sequence from cart addition through order confirmation, with the same learning/observation identities available for later recording and layouts.
 Reason: the learner can now inspect and retain the proven two-stop flow. The largest immediate experience gap is the requested complete purchase narrative; another transport-only cycle would not close it.
 Limits: full native usability remains inconclusive while independent editor pixels are unavailable. Three fixing passes repaired 23 findings without certified convergence; fresh-reviewer and outside-provider coverage remain limited. Recording, wiki, all layouts, installation, real repositories and the final ten fresh sequential reviews remain required. No final outcome changed. Status: active route.
@@ -100,7 +100,7 @@ Limits: full native usability remains inconclusive while independent editor pixe
 
 ## D014 — Record and replay the proven connected scenario, 2026-09-19
 
-Source: [Cycle 0007](docs/cycles/0007-checkout-scenario.md), clean `8be0913`, six product-native and ten runtime cases across both hosts, plus actual agent checkout (Cursor complete; VS Code partial images). Agent-selected route under D008.
+Source: [Cycle 0007](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0007-checkout-scenario.md), clean `8be0913`, six product-native and ten runtime cases across both hosts, plus actual agent checkout (Cursor complete; VS Code partial images). Agent-selected route under D008.
 Decision: retain the connected four-item checkout and its immutable source/value/explanation records. Next build one synchronized recording/replay increment for this same scenario after the app/debugger exit. Reuse learning identities and evidence timing; represent missing frames and incomplete recording explicitly.
 Reason: the complete fixed purchase narrative now runs, but learners cannot replay its motion and explanation correspondence. G04 is the next missing connection and a shared playback model is also required by both later layouts. Repeated transport/reader polishing would not establish it.
 Limits: native presentation remains inconclusive; one actual VS Code run misses three render ACKs and a bounded diagnostic does not identify a cause. Native pixels, arbitrary repositories, generated wiki, additional layouts, packaging, intended-use acceptance and ten fresh sequential reviews remain required. No capability is removed and no complete product claim is made. Status: active route.
@@ -108,14 +108,14 @@ Limits: native presentation remains inconclusive; one actual VS Code run misses 
 
 ## D015 — Connect repository learning content to retained observations, 2026-09-19
 
-Source: [Cycle 0008](docs/cycles/0008-recording-replay.md), clean `1740e34`, 238 tests, native VS Code recording/restart, actual-agent replay in both required hosts, browser motion/error/layout evidence; current Cursor phase presentation remains partial. Agent-selected route under D008.
+Source: [Cycle 0008](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0008-recording-replay.md), clean `1740e34`, 238 tests, native VS Code recording/restart, actual-agent replay in both required hosts, browser motion/error/layout evidence; current Cursor phase presentation remains partial. Agent-selected route under D008.
 Decision: retain bounded immutable recording, as-of source/value/interpretation context and shared revision-checked playback. Next build one source-grounded repository learning-document/wiki and codemap increment through the existing agent/learner boundary. Start with actual source in this repository and navigation to established observed learning items; source-derived content must never imply runtime proof.
 Reason: macro learning content remains hard-coded to demonstration profiles. Establishing an agent-authored source-backed document is the next connection toward unfamiliar real repositories and can later supply both required alternate layouts. Repeating unchanged transport or renderer trials would not resolve their intermittent native condition or this missing macro capability.
 Limits: keep native phase-presentation reliability unresolved and require a measured failing-stage/owner-driven reproduction before claiming a repair. No ordinary-repository runtime, independent native pixels, packaging, final layout/host acceptance or fresh sequential review pass follows. No final requirement changes. Status: selected route.
 
 ## D016 — Preserve the approved repository reader experience, 2026-09-19
 
-Source: Raphtalia's actual Cycle 0009 design-review answers D3–D6 and the [recorded seven-pass review](docs/cycles/0009-repository-learning-book.md#formal-design-review-checkpoint).
+Source: Raphtalia's actual Cycle 0009 design-review answers D3–D6 and the [recorded seven-pass review](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0009-repository-learning-book.md#formal-design-review-checkpoint).
 Decision: retain B's article/source/context composition with a small lowercase `understand` checkbox. Any changed citation makes the article Review needed while preserving historical learner decisions. Narrow readers use one article column, a small contents disclosure and source relationships below; wide readers retain B. Return from an observation or recording restores the same book/revision/node, section and reading position, including saved-reader restart, without execution or understanding changes.
 Reason: preserve reading context while the learner moves between macro explanations, exact source and recorded evidence. The small check remains a learner action; source validation and observed execution remain separate facts.
 Limits: these are approved behavior and layout requirements, not native UX or runtime evidence. Source-context identity, position persistence and storage mechanics remain engineering-review work. Living book and Guided walkthrough remain required later modes. Approved image: `/Users/ryotamurakami/.gstack/projects/codebook/designs/cycle0009-repository-wiki-20260919/variant-B-compact.png`, SHA-256 `9fe687a6ff72923d70f55db20065f00e6d7a9518368af70361679996b6d41e8a`. Status: approved by owner.
@@ -123,7 +123,7 @@ Limits: these are approved behavior and layout requirements, not native UX or ru
 
 ## D017 — Preserve complete citation context and short publication ownership, 2026-09-19
 
-Source: Raphtalia's actual Cycle 0009 engineering-review answers D1 B, D2 A and D3 A, recorded in the [engineering plan review](docs/cycles/0009-repository-learning-book.md#engineering-review--architecture).
+Source: Raphtalia's actual Cycle 0009 engineering-review answers D1 B, D2 A and D3 A, recorded in the [engineering plan review](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/0009-repository-learning-book.md#engineering-review--architecture).
 Decision: keep a dedicated small book validation/persistence module with the existing shared storage primitives. Bind explicit understanding to the stable learning item and canonical complete citation set (path, full-byte hash and inclusive range), preserving legacy single-source meaning. Prepare bounded source/link data outside the shared writer queue; under the queue revalidate expected revision, source identity/hash and checkpoint facts before atomic publication.
 Reason: unrelated prose edits should not clear understanding, secondary source edits must not inherit it, and source preparation should not hold up existing learner/recording saves. Conflicts or failed validation preserve prior content; identical intent recovers the original committed receipt after response loss.
 Limits: this is an approved implementation contract, not a working implementation or an atomic whole-workspace snapshot guarantee. Primary plan reviews completed; independent review and new integration/native evidence remain outstanding. Status: approved by owner.
@@ -146,7 +146,7 @@ Limits: the original native after-frame ACK failure remains unexplained; success
 
 ## D020 — Advance the configured path to shared presentations, 2026-09-20
 
-Source: [Cycle 0011 final reconciliation](docs/cycles/evidence/0011/final-reconciliation-20260920.md), source-equivalent implementation `58f08cd`, 476 tests, actual VS Code/Cursor configured runs, offline/partial replay and native UX evidence. Agent-selected route within D008.
+Source: [Cycle 0011 final reconciliation](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0011/final-reconciliation-20260920.md), source-equivalent implementation `58f08cd`, 476 tests, actual VS Code/Cursor configured runs, offline/partial replay and native UX evidence. Agent-selected route within D008.
 
 Decision: keep the bounded configured browser adapter and shared immutable study/recording/learner identities. Select one shared presentation-mode increment next, after reading Issue #1 purpose and inspecting the approved images again. Switching must preserve the same run, item, understanding and playhead; it must not create another runtime or reinterpret recorded evidence as live.
 
@@ -192,7 +192,7 @@ Status: accepted requirement; Cycle 0019 has partial ordinary-install developmen
 
 ## D024 — Bridge Cursor MCP over local stdio on the target version, 2026-09-23
 
-Source: Cycle 0019 [ordinary-install development diagnostics](docs/cycles/evidence/0019/installed-chat-development.md), a routine implementation decision within G12.
+Source: Cycle 0019 [ordinary-install development diagnostics](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0019/installed-chat-development.md), a routine implementation decision within G12.
 
 Decision: for the declared Cursor 3.21.16 target, register a local stdio MCP child through the Cursor extension API. That child reads only the current work window's private 0600 descriptor and forwards to Codebook's authenticated loopback MCP service. Keep the bearer out of registration arguments, the skill, the VSIX and user MCP configuration. Unregister the prior instance on stop and register the new descriptor after the extension window restarts. Use the same VSIX's canonical skill body through the receipted Cursor user-skill setup already required by D023.
 
@@ -245,3 +245,125 @@ Stage 2 starts only after all required Stage 1 rows pass and the complete candid
 No consecutive success requirement remains. Preserve failures and remedied retries. Every extension/skill/setup/connection change requires impact assessment; shared execution/recording/explanation changes require retesting all affected targets. Justify unaffected evidence explicitly. All final passes must be valid for the final fixed distributed VSIX, never pooled across incompatible implementations.
 
 Preserved: G01–G12, both hosts, explicit `/codebook` in ordinary Copilot Chat/Cursor Agent, common bundled thin skill, public onboarding, recording, both later display modes, stage-specific evidence and separate owner acceptance. Existing demos and preflight are historical development evidence, not new Stage 1 or Stage 2 passes. Goal #1 remains open.
+
+
+## D030 — Separate live explanation, learning replay and independent Wiki, 2026-09-26
+
+Source: Raphtalia's explicit Cycle 0029 request, followed by the clarification that retiring three UI themes does **not** mean one permanent screen or removal of replay/Wiki screens. The owner requested documentation first and a separate screen-design review afterward.
+
+Decision: advance PRODUCT_GOAL to version 7 with three feature areas:
+
+1. **Live explanation:** the standard Copilot Chat/Cursor Agent AI operates a real project's application/runtime and debugger, pauses actual source, explains the observed code path and continues. The native debugger displays values, watches and call stacks. Retire Codebook's duplicate runtime-value display; retain bounded internal facts needed to ground explanations and recordings.
+2. **Learning replay:** save an explained session as learning material, including its processing summary, sequence diagram of logic flow, source-linked explanation and recorded execution. A library and replay screen remain. Capture must occur in time to preserve the explanation being saved; later saving cannot fabricate missed execution. Learner progress remains explicit and independent of run success.
+3. **Independent LLM Wiki / DeepWiki:** generate a complete navigable browser site from repository source, defaulting to output inside the project with a configurable location. Provide explicit updates through a natural chat request and an **Update LLM Wiki** button, understandable freshness/status, and source deep links to the editor being used. Wiki generation, update and browsing require no live explanation, debugger, application browser or learning replay. In-editor opening is a permitted convenience. Automatic regeneration/indexing architecture is not prescribed.
+
+The three selectable UI variants are retired; G08/G09 remain retired historical IDs. Distinct functional screens remain required. A Codebook icon in the left Activity Bar is the proposed extension entry. Do not interpret “one variation” as showing chat, debugger, browser, source, replay and Wiki together at all times. The initial agent interpretation of a single fixed composition was corrected by the owner and is not product authority.
+
+Remove the active bundled cart demo project and its packaged copies/assets, launch paths and fixture-specific product instructions. Use actual GitHub/Laststance projects opened in the editor for practical validation. Inspect active/generated/package/local trial locations before implementation removal. Preserve historical reports and Git history; isolated unit inputs do not qualify as practical product use. No remote repository deletion or destruction of unrelated projects is authorized.
+
+Supersession: replace the old three-mode visual mandate, duplicate value UI, shared Wiki/lesson lifecycle and compulsory packaged checkout fixture in earlier decisions/designs. G01 now uses a real project scenario; G02 owns independent Wiki; G04/G05 own learning replay/progress; G07 owns usable feature screens. Preserve Architecture B, runtime truth, recording, both hosts, G12 skill/setup ownership, D027/D028 review policy and D029's nine fixed projects/two stages. D021 refreshes the **current** goal/design/visual status at cycle selection; old images are archival, and a missing new image does not block this written phase. Historical evidence retains its original scope.
+
+Sequence: Cycle 0028 was completed and the broad goal paused as requested. The owner then resumed Cycle 0029 **documentation first**. Update written authority, feature specifications and Issues #1/#46; conduct the screen-design review separately afterward, then produce the replacement concept image and proceed with bounded implementation/real-project proof. The written phase does not delete demo code, implement the new features or establish acceptance. Subsequent owner direction explicitly authorizes GStack design review and a matching final-product design image after document consistency review, within the same Cycle 0029; this supersedes stopping after the written phase.
+
+
+## D031 — Use nextjs-dashboard for development until final acceptance starts, 2026-09-26
+
+Source: Raphtalia explicitly designated `/Users/ryotamurakami/repository/nextjs-dashboard` for editor-based behavior verification until the product reaches the nine-project acceptance stage.
+
+Decision: before final acceptance begins, open that existing project in the actual editor for development validation. Use it in VS Code and Cursor as applicable to the current capability; retain separate host evidence. Do not select another easier development repository, revive the bundled cart demo or move prematurely into the nine acceptance targets. Preserve the project's source/settings/work and use public product setup; failures or missing prerequisites become development gaps.
+
+The path exists. Read-only inspection on 2026-09-26 found clean `main` at `26e5b2c`, with origin `ryota-murakami/nextjs-dashboard`. This is a locator/preflight observation, not an editor launch, runtime test or Codebook success. Recheck revision and existing changes before each trial.
+
+The D029 acceptance matrix remains exactly its nine designated projects. Dashboard development evidence is neither Stage 1 nor Stage 2, adds no tenth target and cannot substitute for a required project. Once the candidate is ready for acceptance, follow the normal frozen Stage 1 protocol. D030's written-specification-first and separate-design-review boundary still applies to the current task.
+
+## D032 — Synchronize learning replay with recorded source and native debugger state, 2026-09-26
+
+Source: Raphtalia's individual answer during Cycle 0029 GStack design review. The owner rejected the summary/video-reader emphasis and clarified the essential replay experience:
+
+> ラーニングリプレイはライブ説明のチャット欄がサマリーに置き換わったUIで大丈夫です。
+>
+> 最も重要なのは、映像と同時に、再生と同時に、その時実行されていたソースが表示され、デバッガでランタイムの値を見れる点です。
+>
+> アプリケーションとコードがどう対応しているのか、何回もリプレイ、タイムトラベルデバッキングができる点です。
+
+Decision: advance PRODUCT_GOAL to version 8. Learning replay inherits the live explanation's application/source/native-debugger composition, replacing the chat area with the learning summary. Repeated playback, backward/forward stepping and seeking synchronize the recorded application, the source executing at that time and inspectable historical values/call stacks in the editor's native debugger. The processing summary, explanation and sequence diagram accompany that synchronized experience; they do not replace it.
+
+This selects the replay composition instead of the agent's proposed standalone document-like reader or sidebar-contained player. Codebook's Activity Bar remains the library/feature entry. The standard live chat remains native; the summary is a Codebook-owned replay surface in its place, not a mutation of native chat internals. Preserve unrelated chats/layout and use supported editor capabilities.
+
+D030's removal of a custom Variables/Watch panel does not remove replay-time inspection in the native debugger. Persist the historical state needed for that inspection, identify the replay context clearly and synchronize its source/frame/value identity with the playhead. Never present present-day variables, stale live handles or values from another recorded point as the selected historical state. A video with source links or a summary-only reader cannot meet G04. Missing/partial capture is explicit and does not pass required replay points.
+
+Replay remains usable after the original runtime/debugger/chat exit. Time travel navigates captured history without repeating purchases or other target side effects; any deliberate new execution is a separate run. Exact recording/debug-adapter mechanics remain engineering work and need proof in both editors. No screenshot or specification establishes that capability.
+
+Preserve the independent Wiki, recording/sequence/summary requirements, explicit learner progress, G12, D031 development target and D029's unchanged nine-project acceptance. Continue the remaining GStack passes and update the visual candidate in Cycle 0029. This individual decision settles the replay hierarchy; it does not approve unrelated control placement, missing states or the entire generated image.
+
+Subsequent individual design choice **2A**: show capture status and **Save learning replay** in the editor's bottom status area, outside standard chat. The owner explicitly selected the placement shown in the version 8 candidate. Retain that affordance during live explanation; do not reopen this choice under later review passes.
+
+Subsequent individual design choice **4A**: when video exists but source/debugger history is missing, continue video playback, mark the interval on the timeline and show **Not recorded at this moment** on the affected source/debugger surfaces. The owner's selected copy was “この時点は未記録”. Never substitute values or execution highlights from another moment. Entering a gap clears misleading prior state; reaching a recorded point restores its corresponding history. Apply this consistently to playback and seeking, with no automatic gap pause. Missing required evidence still prevents acceptance PASS. This resolves question 4, including its later re-display; it does not approve other state/layout changes.
+
+## D033 — Reproduce DeepWiki through the editor agent's generation skill, 2026-09-26
+
+Source: the owner selected design choice **3A**, then required that LLM Wiki reproduce DeepWiki itself and emphasized the generation skill as the primary implementation. Source links should open the user's local editor. These clarify the in-progress version 8 specification.
+
+Decision: reproduce the DeepWiki repository documentation and reader experience: full chapter hierarchy, architecture/process explanations and diagrams, relevant-source/inline citations, page navigation and code-grounded repository Q&A. Treat the real inspected DeepWiki as the product reference. Emphasize this requirement in both written specification and the design image. Source citations target the matching local VS Code/Cursor checkout. Retain independent local/configurable output and the owner-approved browser **Update LLM Wiki** button, which starts updating in the correct editor without manual prompt re-entry.
+
+The key implementation is a carefully authored DeepWiki generation skill used by the editor's AI agent. It teaches source exploration, chapter structure, explanation depth, accurate diagrams/citations, updates and quality checks. The shared thin `/codebook` entry delegates to that guidance. Wiki generation uses the agent's normal source/file capabilities and does not require the runtime/debug MCP service. The extension supplies configuration, update/status/open and source-link support; any bridge is supporting transport, not the Wiki-content engine. Route Wiki requests before the runtime `codebook_status` prerequisite. Runtime/replay still use their MCP/native-debugger contracts.
+
+The independent Wiki remains readable without the editor, debugger, original chat or a learning replay. Agent/model setup may be needed for generation, updating and interactive Q&A; it does not become a dependency of reading already generated pages. The [Wiki specification](docs/specs/llm-wiki.md) and [generation-skill plan](docs/plans/deepwiki-generation-skill.md) own detailed outcomes. The observed external service is a reference, not Codebook implementation evidence.
+
+## D034 — Use an ordinary expanded desktop window as the layout baseline, 2026-09-26
+
+Source: the owner selected replay summary choice **5A**, then explicitly narrowed the layout requirement:
+
+> 基本的には一般的なディスプレイでのフルスクリーンではないけど、画面いっぱいに広げた時のレイアウト基準でOKです。
+>
+> 極端に小さいウィンドウサイズだったり、200%とか極端な拡大倍率の時は正直考慮しなくてもいいです。
+
+Decision: advance the product goal to **version 9** for this acceptance-scope change. Design and verify the editor/browser on an ordinary desktop display, with the window expanded to the available screen area at normal/default zoom. OS full-screen mode is not required. Extremely small windows and extreme zoom such as 200% are outside mandatory design and final acceptance. Do not turn generic skill prescriptions for mobile, tablet or high zoom into extra requirements for this product.
+
+Preserve the chosen **5A** behavior: the replay's learning summary can collapse behind a clearly labeled **Learning summary** button when space is limited, prioritizing application video, source and native debugger. This remains a useful secondary behavior, not a requirement to make extreme sizes/zoom pass. In the ordinary expanded-window reference, show the summary alongside the primary context. Preserve the selected moment, source/debugger state, summary reading position and user focus when opening/closing it. Do not rearrange unrelated chats or native work layouts.
+
+Keyboard access, meaningful labels, focus/reading return, supported host themes, contrast and reduced-motion behavior remain required at the supported ordinary desktop layout. Source/runtime truth, both hosts, D029's nine projects/two stages, D031's development target and all active feature capabilities remain unchanged. Older constrained/high-zoom results retain their historical scope; they no longer define a current product-completion gate.
+
+## D035 — Make every shortcut discoverable in tooltips and a question-mark list, 2026-09-26
+
+Source: the owner supplied tooltip/shortcut-list visual references and required:
+
+> キーボードショートカットをつけるならUIのツールチップに明記必須、"?"キーでのshortcutリスト必須
+
+Decision: every Codebook action with an assigned keyboard shortcut must show the operation name and applicable key combination in its UI tooltip. Pressing **?** in a Codebook non-editing context opens an accessible **Keyboard shortcuts** list. Use a readable operation/key layout matching the supplied references. Keep a visible list-entry control so the shortcut list can itself be discovered without already knowing the key.
+
+The list and tooltips must agree with the shortcuts actually available in the active editor/browser, platform and feature context. The example screenshot's Codex commands and key assignments are visual references, not Codebook bindings. Only **?** is fixed by this decision; choose other assignments during implementation without conflicts or invented documentation. Preserve ordinary question-mark input in text fields, chat, source editors, terminals and IME composition. Native host actions retain native behavior.
+
+The [keyboard-shortcut specification](docs/specs/keyboard-shortcuts.md) owns focus, discovery, list, tooltip and acceptance details. Apply it to Codebook-owned editor UI and the generated independent Wiki. This clarifies the in-progress version 9 design; it is not implementation evidence.
+
+## D036 — Adopt the v9 visual target and a local implementation harness, 2026-09-26
+
+Source: after design review, the owner requested an instruction/specification harness that a less capable agent can follow from AGENTS.md and linked local files. Issues may duplicate the local material; reading an issue must not be necessary to know the product or next action. The owner then explicitly adopted the corrected v9 image: **採用する。修正版v9を視覚仕様にする（推奨）**.
+
+Decision: use [the approved v9 PNG](docs/designs/assets/codebook-product-spec-v9.png), SHA-256 `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`, as the product's visual specification together with its [written companion](DESIGN.md). The generated Review candidate header predates adoption; keep the approved bytes and record identity and approval in [DESIGN.md](DESIGN.md). Native editor chrome and illustrative sample values retain the companion's evidence boundary.
+
+AGENTS.md must lead to a local execution guide, complete active-goal acceptance map and current cycle/state. Require the implementing agent to open the actual image through an image-viewing tool, describe the relevant observed composition and compare implemented UI against it. A filename/prompt/metadata read is not visual inspection. Keep the PNG, generation prompts, identity, full feature contracts and evidence procedure in the repository so another checkout needs no private chat or GStack cache to understand the target.
+
+The harness directs one bounded observable increment, its verification and local state update at a time. Preserve existing authorization boundaries, adaptive cycle selection and all final outcomes; it does not start runtime implementation during the current documentation/design/harness phase. Local documents own requirements and evidence; Issues #1/#46 mirror them. Reading/synchronizing issues remains useful tracking but their availability is not a prerequisite for otherwise authorized local progress. Keep the fixed nine projects, both hosts, ordered stages and owner acceptance intact.
+
+Owner follow-up: give AGENTS.md stronger force, ensure every Cycle 0029 product requirement is reflected in PRODUCT_GOAL.md and its related contracts, and reduce document sprawl. Consolidate the execution loop, acceptance map and evidence template into IMPLEMENTATION.md. Make full normative reading, current assignment/cycle and actual PNG inspection an explicit implementation-entry gate; require mapped verification and local updates at review/closure. Preserve a fixed mandatory set and feature-triggered additional contracts, with historical/reference links consulted on demand. Record omissions as incomplete rather than claiming readiness. This is an auditable instruction protocol; Markdown alone cannot mechanically prove comprehension.
+
+Review follow-up: require a source-grounded baseline for every acceptance row when a goal/design/cycle changes, then reassess affected rows after each increment. PROJECT_STATE records inspected source, concrete implementation gaps or UNKNOWN, separate proof gaps and next actions. Select work from those gaps and record before/after evidence at closure. Keep state/cycle records current, consolidate visual authority in DESIGN.md, and retain superseded detail in immutable Git history. The owner requested four-agent review of this instruction path; findings and verification belong in Cycle 0029.
+
+## D037 — External application boundary, 2026-09-27
+
+Source: the owner required complete removal of the bundled validation application and resumed extension development.
+
+Decision: no demonstration or validation application may be embedded in extension source, runtime dependencies, build tasks, commands or VSIX assets. Open the designated external repository for actual-editor development. Isolated unit-test data remains outside production imports and package assets; package validation must reject accidental inclusion. Obsolete trial assets are removed and historical reports remain in Git. The approved product goals, both hosts and nine-project acceptance are unchanged.
+
+## D038 — Restore the compaction product-context reminder, 2026-09-27
+
+Source: the owner explicitly requested restoring the discarded Codex hook that makes an agent reread Product Goal materials after compaction, using the preceding 24-hour design/implementation transcript.
+
+Decision: restore only `SessionStart` for `source: compact`. Supply the current AGENTS.md as developer context and require its full normative reads, current cycle, actual approved-image inspection and gap reassessment before continuing implementation/trials. Keep AGENTS.md as the reading-list authority. This narrowly supersedes the earlier hook deletion; tool interception, preparation receipts, Stop retries and CI harness gates remain retired. Injection proves delivery of instructions, not compliance or comprehension. Existing owner scope and pause instructions still control work.
+
+## D039 — Deliver each completed cycle through review, PR, CI and merge, 2026-09-29
+
+Source: Raphtalia's Goal direction during Cycle 0029: “Codebookを完成させてください。現在のCycleの作業が終わったら/open-code-review-delegate でレビュー後 /shipでPRを作成し、CIが通ったらマージして次のCycleを計画してください。VSCodeの実機試験では料金が安いCopilotのAutoモデルを使用してください。クレジットがなくなった場合はClaude CodeのExtensionを使用してください。”
+
+Decision: continue toward the complete product. When the current cycle's authorized work is finished, review it with `open-code-review-delegate`, create or update its PR through `/ship`, merge once required CI passes, then plan the next cycle from the updated gap ledger. This authorizes the merge step for completed cycles; it does not waive D028's local CodeRabbit CLI review, D027's hosted-review skip, recorded findings, native evidence or any final acceptance gate. VS Code practical trials keep D025's order: Copilot Chat **Auto** first and the installed Claude Code extension only after observed Copilot credit exhaustion. Cursor evidence stays separate. Goal Issue #1 stays open until final acceptance and owner approval.

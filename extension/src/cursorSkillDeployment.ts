@@ -7,6 +7,8 @@ import { atomicPrivateWrite } from './utils/atomicPrivateWrite';
 import { withStorageLock } from './utils/withStorageLock';
 
 const SKILL_RELATIVE_PATH = join('skills', 'codebook', 'SKILL.md');
+const WIKI_PUBLISHER_RELATIVE_PATH = join('skills', 'codebook', 'publish-wiki.mjs');
+const WIKI_PUBLISHER_PATH_MARKER = '{{CODEBOOK_PUBLISHER_PATH}}';
 
 type SkillReceipt = {
   schemaVersion: 1;
@@ -200,12 +202,17 @@ async function recoverRemoval(path: string, receiptPath: string, targetPath: str
   return { owner: pending.owner, completed: !target };
 }
 
-/** Reads the installed canonical skill when {@link deployCursorSkill} starts setup. @param extensionPath - Installed VSIX root. @returns Exact bytes, version and digest. @example await packageSkill('/extensions/laststance.codebook-0.2.3') // => { bytes, version, sha256 } */
+/** Binds the installed publisher path into Cursor's owned skill when {@link deployCursorSkill} starts setup. @param extensionPath - Installed VSIX root. @returns Deployable bytes, version and digest. @example await packageSkill('/extensions/laststance.codebook-0.2.3') // => { bytes, version, sha256 } */
 async function packageSkill(extensionPath: string): Promise<{ bytes: Buffer; version: string; sha256: string }> {
-  const path = join(extensionPath, SKILL_RELATIVE_PATH), bytes = await regularFile(path);
-  if (!bytes) throw new Error('This Codebook installation is missing its bundled skill. Reinstall the VSIX.');
-  const version = /^---\nname: codebook\ndescription: [^\n]+\nmetadata:\n  version: "(\d+\.\d+\.\d+)"\n---\n/.exec(bytes.toString('utf8'))?.[1];
+  const path = join(extensionPath, SKILL_RELATIVE_PATH), canonicalBytes = await regularFile(path);
+  if (!canonicalBytes) throw new Error('This Codebook installation is missing its bundled skill. Reinstall the VSIX.');
+  const canonicalText = canonicalBytes.toString('utf8');
+  const version = /^---\nname: codebook\ndescription: [^\n]+\nmetadata:\n  version: "(\d+\.\d+\.\d+)"\n---\n/.exec(canonicalText)?.[1];
   if (!version) throw new Error('This Codebook installation has an invalid bundled skill. Reinstall the VSIX.');
+  const publisherPath = join(extensionPath, WIKI_PUBLISHER_RELATIVE_PATH);
+  if (canonicalText.includes(WIKI_PUBLISHER_PATH_MARKER) && !await regularFile(publisherPath))
+    throw new Error('This Codebook installation is missing its Wiki publisher. Reinstall the VSIX.');
+  const bytes = Buffer.from(canonicalText.replaceAll(WIKI_PUBLISHER_PATH_MARKER, publisherPath));
   return { bytes, version, sha256: sha256(bytes) };
 }
 

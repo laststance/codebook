@@ -19,8 +19,10 @@ export async function inspectBundle(metafile, repository, capturedInputs) {
     const absolute = await realpath(resolve(root, input)), bytes = capturedInputs.get(absolute);
     if (!bytes || bytes.length !== metafile.inputs[input].bytes || !bytes.equals(await readFile(absolute))) throw new Error(`Bundle input changed or was not captured: ${input}`);
     const local = relative(root, absolute).split(sep).join('/');
+    // External workspace code must never be mistaken for a shipped third-party dependency.
+    if (local.startsWith('../')) throw new Error(`Bundle input escapes the extension repository: ${input}`);
     let path = local;
-    if (local.includes('/node_modules/') || local.startsWith('node_modules/') || local.startsWith('../')) {
+    if (local.includes('/node_modules/') || local.startsWith('node_modules/')) {
       let owner = dirname(absolute), manifest;
       while (true) {
         const candidate = await readFile(join(owner, 'package.json'), 'utf8').catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
@@ -48,7 +50,7 @@ export async function inspectBundle(metafile, repository, capturedInputs) {
     } else {
       if (!COMPILED_DIRECTORIES.some(directory => local.startsWith(`${directory}/`))) throw new Error(`Unexpected bundle source: ${input}`);
       // A transitive development import must not enter the single shipped runtime bundle.
-      if (local.split('/').includes('tests') || ['extension/dist/client.js', 'extension/dist/nativeRunner.js'].includes(local)) throw new Error(`Development-only bundle source: ${input}`);
+      if (local.split('/').some(part => ['tests', 'fixtures', 'fixture', 'demo', 'experiments'].includes(part)) || ['extension/dist/client.js', 'extension/dist/nativeRepositoryBootstrap.js', 'extension/dist/nativeNodeTestBootstrap.js'].includes(local)) throw new Error(`Development-only bundle source: ${input}`);
     }
     inputs.push({ path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
   }

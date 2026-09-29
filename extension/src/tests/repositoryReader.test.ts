@@ -1,20 +1,20 @@
+import { createConfiguredStudy } from './utils/createConfiguredStudy';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, matchesGlob, relative, resolve } from 'node:path';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
+import { sha256 } from '../runtimeSupport/utils/sha256';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 import { LearningLibrary } from '../learningLibrary';
 import { repositoryHarness } from './utils/repositoryHarness';
 import { loadModule } from './utils/loadModule';
 import type { RepositorySelection } from '../learnerSchemas';
 import type { BookDocument, BookObservationBinding } from '../repositorySchemas';
-import { decodeStudyArchive } from '../utils/decodeStudyArchive';
 
 /** Exercises the real reader/storage while mocking only editor effects, retaining explicit source/render receipts. @example const harness = await readerHarness(context) */
 async function readerHarness(context: TestContext) {
   const source = await repositoryHarness(context), root = await realpath(source.directory);
-  await source.track('src/cart.ts', 'export const price = 24;\n'); await source.track('src/order.ts', 'export const total = 48;\n');
+  await source.track('src/module.ts', 'export const price = 24;\n'); await source.track('src/order.ts', 'export const total = 48;\n');
   const library = new LearningLibrary(join(root, '.learning'), sha256(root));
   const disposable = () => ({ dispose() {} });
   class EventEmitter { event = () => disposable(); fire() {} dispose() {} }
@@ -112,13 +112,13 @@ async function readerHarness(context: TestContext) {
     if (requiresSourceFocus) { assert.ok(focus?.acquireSourceFocus, 'Ambiguous main focus requires the actual selected citation.'); const assertFocused = await focus.acquireSourceFocus(); assertFocused(); }
   }, evidence: async (binding, recording) => { linked.push({ binding, recording }); } });
   const reader = createReader(), store = await reader.storage(); context.after(() => reader.dispose());
-  const first = await source.sources.read('src/cart.ts'), second = await source.sources.read('src/order.ts');
+  const first = await source.sources.read('src/module.ts'), second = await source.sources.read('src/order.ts');
   const document: BookDocument = { title: 'Architecture', summary: 'Source-derived architecture.', nodes: [
-    { id: 'cart', title: 'Cart', sections: [{ title: 'Price', text: 'The cart exports price 24.' }, { title: 'Order', text: 'Order exports total 48.' }], anchors: [first, second].map(value => ({ path: value.path, hash: value.hash, startLine: 1, endLine: 2 })), observations: [] },
+    { id: 'module', title: 'Module', sections: [{ title: 'Price', text: 'The module exports price 24.' }, { title: 'Order', text: 'Order exports total 48.' }], anchors: [first, second].map(value => ({ path: value.path, hash: value.hash, startLine: 1, endLine: 2 })), observations: [] },
     { id: 'order', title: 'Order', sections: [{ title: 'Total', text: 'The order exports total 48.' }], anchors: [{ path: second.path, hash: second.hash, startLine: 1, endLine: 2 }], observations: [] },
-  ], edges: [{ from: 'cart', to: 'order', relationship: 'related', explanation: 'Both export pricing values.' }] };
+  ], edges: [{ from: 'module', to: 'order', relationship: 'related', explanation: 'Both export pricing values.' }] };
   await store.publish({ bookId: 'architecture', key: 'first', expectedRevision: 0, document });
-  const selection: RepositorySelection = { bookId: 'architecture', revision: 1, nodeId: 'cart', anchorIndex: 0 };
+  const selection: RepositorySelection = { bookId: 'architecture', revision: 1, nodeId: 'module', anchorIndex: 0 };
   return { ...source, library, reader, store, selection, document, shown, panels, linked, textDocuments, Uri, createReader, panelColumns, reveals, receive: (message: unknown) => receive(message),
     requireSourceFocus() { requiresSourceFocus = true; }, arrangements: () => arrangements,
     useColdLayout() { coldLayout = true; },
@@ -145,7 +145,7 @@ test('repository articles open retained source without connecting an agent or ma
   // Act
   await harness.reader.open(); const state = harness.reader.inspect();
   // Assert
-  assert.equal(state.view.selection?.nodeId, 'cart'); assert.equal(state.view.loading, false);
+  assert.equal(state.view.selection?.nodeId, 'module'); assert.equal(state.view.loading, false);
   assert.equal(harness.shown[0]?.text, 'export const price = 24;\n'); assert.equal(harness.connections(), 0);
   assert.equal(state.view.sources[0]?.status, 'current'); assert.equal((await harness.library.readProgress()).decisions.length, 0);
   assert.equal('sources' in state.view.book!.revision, false);
@@ -161,7 +161,7 @@ for (const entry of ['cold ordinary text', 'ambiguous primary'] as const) test(`
   await harness.reader.open(harness.selection);
   // Assert
   assert.deepEqual(harness.reveals, [2]); assert.equal(harness.shown.length, 1); assert.equal(harness.reader.inspect().view.loading, false);
-  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'cart'); assert.equal(harness.reader.inspect().view.sources[0]?.status, 'current');
+  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'module'); assert.equal(harness.reader.inspect().view.sources[0]?.status, 'current');
   assert.equal(harness.focusListenerCount(), listeners); assert.equal((await harness.library.readProgress()).decisions.length, 0);
 });
 
@@ -298,7 +298,7 @@ test('Wiki opens its real retained citation before resolving an otherwise ambigu
   assert.deepEqual(harness.panelColumns, [2]); assert.deepEqual(harness.reveals, [2]);
   assert.equal(harness.shown.length, 1); assert.equal(harness.shown[0]!.text, 'export const price = 24;\n');
   assert.equal(harness.reader.inspect().sourceUri, harness.shown[0]!.uri.toString());
-  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'cart'); assert.equal(harness.reader.inspect().view.loading, false);
+  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'module'); assert.equal(harness.reader.inspect().view.loading, false);
   assert.equal(harness.connections(), 0); assert.equal((await harness.library.readProgress()).decisions.length, 0);
 });
 
@@ -330,7 +330,7 @@ for (const entry of ['ambiguous scope', 'cold ordinary text'] as const) for (con
     assert.equal((await harness.library.readProgress()).decisions.length, 0);
     if (interaction === 'none') {
       assert.deepEqual(harness.reveals, [2]); assert.equal(harness.reader.inspect().view.loading, false);
-      assert.equal((await harness.library.readProgress()).repositorySelection?.nodeId, 'cart');
+      assert.equal((await harness.library.readProgress()).repositorySelection?.nodeId, 'module');
     } else {
       assert.equal(harness.panels.size, 0); assert.deepEqual(harness.reveals, []); assert.equal(harness.focusedSource(), source);
       assert.equal((await harness.library.readProgress()).repositorySelection, undefined);
@@ -423,7 +423,7 @@ test('secondary citation edits and unsaved editor changes require review while h
   // Act
   await writeFile(join(harness.directory, 'src/order.ts'), 'export const total = 72;\n'); await harness.reader.action('refresh');
   const edited = harness.reader.inspect().view;
-  harness.textDocuments.push({ uri: harness.Uri.file(join(harness.store.sources.workspace, 'src/cart.ts')), isDirty: true, getText: () => 'export const price = 30;' });
+  harness.textDocuments.push({ uri: harness.Uri.file(join(harness.store.sources.workspace, 'src/module.ts')), isDirty: true, getText: () => 'export const price = 30;' });
   await harness.reader.action('refresh');
   // Assert
   assert.equal(edited.sources[1]?.status, 'changed'); assert.equal(edited.understanding?.understood, true);
@@ -443,8 +443,8 @@ test('a fresh reader restores exact revision article citation section-relative p
 
 test('an unchanged BOM source opens in the current native editor while retained bytes keep their original hash', async context => {
   // Arrange
-  const harness = await readerHarness(context); await harness.track('src/cart.ts', '\uFEFFexport const price = 24;\n');
-  const source = await harness.sources.read('src/cart.ts'); harness.document.nodes[0]!.anchors[0]!.hash = source.hash;
+  const harness = await readerHarness(context); await harness.track('src/module.ts', '\uFEFFexport const price = 24;\n');
+  const source = await harness.sources.read('src/module.ts'); harness.document.nodes[0]!.anchors[0]!.hash = source.hash;
   await harness.store.publish({ bookId: 'architecture', key: 'bom', expectedRevision: 1, document: harness.document });
   await harness.reader.open({ ...harness.selection, revision: 2 });
   // Act
@@ -457,7 +457,7 @@ test('an unchanged BOM source opens in the current native editor while retained 
 test('an old dirty buffer cannot certify a changed or unavailable cited file as current', async context => {
   // Arrange
   const harness = await readerHarness(context); await harness.reader.open();
-  harness.textDocuments.push({ uri: harness.Uri.file(join(harness.store.sources.workspace, 'src/cart.ts')), isDirty: true, getText: () => 'export const price = 24;\n' });
+  harness.textDocuments.push({ uri: harness.Uri.file(join(harness.store.sources.workspace, 'src/module.ts')), isDirty: true, getText: () => 'export const price = 24;\n' });
   const inspect = harness.store.sources.inspect.bind(harness.store.sources), values = await inspect(harness.document.nodes[0]!.anchors);
   // Act / Assert
   for (const status of ['changed', 'unavailable'] as const) {
@@ -469,8 +469,8 @@ test('an old dirty buffer cannot certify a changed or unavailable cited file as 
 test('mixed and CR-only line endings retain bytes while citation lines and current-file reveal match the native text model', async context => {
   // Arrange
   const harness = await readerHarness(context);
-  await harness.track('src/cart.ts', 'export const price = 24;\rexport const total = 48;\r\n');
-  const source = await harness.sources.read('src/cart.ts'); harness.document.nodes[0]!.anchors[0] = { path: source.path, hash: source.hash, startLine: 2, endLine: 3 };
+  await harness.track('src/module.ts', 'export const price = 24;\rexport const total = 48;\r\n');
+  const source = await harness.sources.read('src/module.ts'); harness.document.nodes[0]!.anchors[0] = { path: source.path, hash: source.hash, startLine: 2, endLine: 3 };
   // Act
   await harness.store.publish({ bookId: 'architecture', key: 'mixed-eol', expectedRevision: 1, document: harness.document });
   await harness.reader.open({ ...harness.selection, revision: 2 }); await harness.reader.action('current-file');
@@ -507,8 +507,8 @@ test('retiring an agent open before its checkpoint completes prevents source and
   const pending = harness.reader.openFromAgent({ instanceId: '11111111-1111-4111-8111-111111111111', ...harness.selection, nodeId: 'order' }, cancellation.signal);
   const rejected = assert.rejects(pending, /superseded or closed/); await entered; cancellation.abort(); release(); await rejected;
   // Assert
-  assert.equal(harness.shown.length, shown); assert.equal((await harness.library.readProgress()).repositorySelection?.nodeId, 'cart');
-  await harness.reader.open(); assert.equal(harness.reader.inspect().view.selection?.nodeId, 'cart'); assert.equal(harness.reader.inspect().view.error, '');
+  assert.equal(harness.shown.length, shown); assert.equal((await harness.library.readProgress()).repositorySelection?.nodeId, 'module');
+  await harness.reader.open(); assert.equal(harness.reader.inspect().view.selection?.nodeId, 'module'); assert.equal(harness.reader.inspect().view.error, '');
 });
 
 test('missing saved history reports its exact revision instead of silently falling forward to the latest', async context => {
@@ -570,17 +570,17 @@ test('Retry saves an unsaved choice for its original article exactly once after 
   await harness.reader.action('retry'); await harness.reader.action('retry');
   // Assert
   const decisions = (await harness.library.readProgress()).decisions;
-  assert.equal(decisions.length, 1); assert.equal(decisions[0]?.item, 'repository/architecture/cart'); assert.equal(harness.reader.inspect().view.understanding?.understood, false);
+  assert.equal(decisions.length, 1); assert.equal(decisions[0]?.item, 'repository/architecture/module'); assert.equal(harness.reader.inspect().view.understanding?.understood, false);
 });
 
 test('corrupt shared progress leaves articles readable but understanding disabled without replacing the corrupt file', async context => {
   // Arrange
-  const harness = await readerHarness(context); await writeFile(join(harness.library.directory, 'progress.v4.json'), '{corrupt');
+  const harness = await readerHarness(context); await writeFile(join(harness.library.directory, 'progress.repository.v4.json'), '{corrupt');
   // Act
   await harness.reader.open();
   // Assert
   assert.equal(harness.reader.inspect().view.book?.bookId, 'architecture'); assert.equal(harness.reader.inspect().view.understanding?.known, false);
-  await assert.rejects(harness.reader.understand(true), /learning storage/); assert.equal(await readFile(join(harness.library.directory, 'progress.v4.json'), 'utf8'), '{corrupt');
+  await assert.rejects(harness.reader.understand(true), /learning storage/); assert.equal(await readFile(join(harness.library.directory, 'progress.repository.v4.json'), 'utf8'), '{corrupt');
 });
 
 test('captured source URIs reject forged hashes and a reader rejects actions after workspace ownership changes', async context => {
@@ -594,19 +594,20 @@ test('captured source URIs reject forged hashes and a reader rejects actions aft
 test('evidence navigation persists exact return context and rejects changed checkpoints before entering a study', async context => {
   // Arrange
   const harness = await readerHarness(context);
-  const raw: unknown = JSON.parse(await readFile(resolve(__dirname, '../../src/tests/fixtures/cycle-0006-legacy/study.v1.json'), 'utf8'));
-  const study = { ...decodeStudyArchive(raw, '67bf38abd3f309bf29b1eed73e4f3ea88863995c0f207b70a50eec48d36f8743'), workspaceKey: harness.library.workspaceKey }, observation = study.observations[0]!;
-  await harness.library.saveStudy(study); await harness.track('src/cart.ts', observation.source.text);
-  harness.document.nodes[0]!.anchors[0]!.hash = observation.source.hash;
-  harness.document.nodes[0]!.observations = [{ studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash }];
-  await harness.store.publish({ bookId: 'architecture', key: 'linked', expectedRevision: 1, document: harness.document });
-  const selection = { ...harness.selection, revision: 2, location: { sectionIndex: 1, fraction: 0.65, focusId: 'evidence-0-observation' } }; await harness.reader.open(selection);
+  const study = { ...createConfiguredStudy(), workspaceKey: harness.library.workspaceKey, finalOutcome: 'partial' as const }, observation = study.observations[0]!;
+  await harness.library.saveStudy(study);
+  for (const source of study.descriptor!.sources) await harness.track(source.path, source.text);
+  const document: BookDocument = { title: 'Interface', summary: 'Theme selection.', nodes: [{ id: 'theme', title: 'Theme',
+    sections: [{ title: 'Selection', text: 'Choose the theme.' }, { title: 'Evidence', text: 'Review the captured selection.' }],
+    anchors: study.descriptor!.anchors, observations: [{ studyId: study.id, observationId: observation.id, sourceHash: observation.source.hash }] }], edges: [] };
+  await harness.store.publish({ bookId: 'interface', key: 'linked', expectedRevision: 0, document });
+  const selection = { bookId: 'interface', nodeId: 'theme', anchorIndex: 0, revision: 1, location: { sectionIndex: 1, fraction: 0.65, focusId: 'evidence-0-observation' } }; await harness.reader.open(selection);
   // Act
   await harness.reader.evidence(selection, 0, false);
-  await writeFile(join(harness.library.directory, `${study.id}.study.meta.v2.json`), '{broken');
+  await writeFile(join(harness.library.directory, `${study.id}.study.meta.v3.json`), '{broken');
   // Assert
   assert.equal(harness.linked.length, 1); assert.equal(harness.linked[0]?.binding.observationId, observation.id); assert.equal(harness.linked[0]?.binding.outcome, 'partial');
   assert.equal(harness.reader.inspect().view.book?.links[0]?.recording.status, 'unavailable');
-  assert.equal(JSON.stringify((await harness.library.readProgress()).repositorySelection), JSON.stringify(selection));
+  assert.deepEqual((await harness.library.readProgress()).repositorySelection, selection);
   await assert.rejects(harness.reader.evidence(selection, 0, true), /missing or changed/); assert.equal(harness.linked.length, 1);
 });

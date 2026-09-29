@@ -1,10 +1,11 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { crc32 } from 'node:zlib';
 import { appendFile, mkdtemp, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import { RecordingStore, recordingDiskIo, type RecordingIo, type RecordingLimits } from '../recordingStore';
 import type { RecordingBinding } from '../recordingSchemas';
 import { LearningLibrary } from '../learningLibrary';
@@ -18,7 +19,7 @@ async function recordingHarness(context: TestContext, limits: Partial<RecordingL
   const directory = await mkdtemp(join(tmpdir(), 'codebook-recording-'));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const instanceId = randomUUID(), runId = randomUUID();
-  const binding: RecordingBinding = { workspaceKey, studyId: `${instanceId}_${runId}`, instanceId, runId, runtimeId: randomUUID(), profile: 'checkout-demo', sourceBuild: { revision: 'fixture-test', dirty: false, sourceHash: sha256('fixed-source') } };
+  const binding: RecordingBinding = { workspaceKey, studyId: `${instanceId}_${runId}`, instanceId, runId, runtimeId: randomUUID(), profile: 'repository-browser', sourceBuild: { revision: 'fixture-test', dirty: false, sourceHash: sha256('fixed-source') } };
   return { directory, binding, store: new RecordingStore(directory, workspaceKey, limits, io) };
 }
 
@@ -29,7 +30,7 @@ test('recording starts after concurrent learner storage finishes instead of losi
   const held = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
   const read = library.readProgress.bind(library);
   library.readProgress = async () => { const progress = await read(); entered(); await held; return progress; };
-  const saving = library.select({ profile: 'checkout-demo', itemId: 'checkout-demo/cart-mutation', tab: 'live', follow: false });
+  const saving = library.select({ profile: 'repository-browser', itemId: 'repository/interface/theme', tab: 'live', follow: false });
   await started;
   // Act: hold the real library lock while the independent recording owner attempts admission.
   const admission = store.start(binding, 0).then(writer => ({ writer }), error => ({ error }));
@@ -40,7 +41,7 @@ test('recording starts after concurrent learner storage finishes instead of losi
   assert.equal(result.writer.frame({ bytes: png, elapsedMs: 50, kind: 'stream' }), true);
   await result.writer.finish(100);
   assert.equal((await store.read(binding.studyId)).status, 'finalized');
-  assert.equal((await library.readProgress()).selection?.itemId, 'checkout-demo/cart-mutation');
+  assert.equal((await library.readProgress()).selection?.itemId, 'repository/interface/theme');
 });
 
 test('recording is discoverable before its first frame and survives restart without a study archive', async context => {
@@ -66,13 +67,13 @@ test('sampling preserves explicit phase frames and never upgrades stream pixels 
   // Arrange
   const { binding, store } = await recordingHarness(context), writer = await store.start(binding, 0);
   // Act
-  const admitted = [writer.frame({ bytes: png, elapsedMs: 10, kind: 'stream' }), writer.frame({ bytes: png, elapsedMs: 20, kind: 'stream' }), writer.frame({ bytes: png, elapsedMs: 21, kind: 'phase', phase: 'paused-cart-mutation' })];
+  const admitted = [writer.frame({ bytes: png, elapsedMs: 10, kind: 'stream' }), writer.frame({ bytes: png, elapsedMs: 20, kind: 'stream' }), writer.frame({ bytes: png, elapsedMs: 21, kind: 'phase', phase: 'paused-browser' })];
   await writer.finish(30); const recording = await store.read(binding.studyId);
   // Assert
   assert.deepEqual(admitted, [true, false, true]);
   assert.equal(recording.entries[0]?.type, 'frame');
   assert.equal('phase' in recording.entries[0]!, false);
-  assert.equal(recording.entries[1]?.type === 'frame' ? recording.entries[1].phase : undefined, 'paused-cart-mutation');
+  assert.equal(recording.entries[1]?.type === 'frame' ? recording.entries[1].phase : undefined, 'paused-browser');
   assert.equal(JSON.stringify(recording.entries).includes('confirmed'), false);
 });
 
@@ -174,7 +175,7 @@ test('orphan blobs count against storage and nonregular frame files cannot follo
   const { store, binding, directory } = await recordingHarness(context), writer = await store.start(binding, 0);
   writer.frame({ bytes: png, elapsedMs: 10, kind: 'stream' }); await writer.finish(100);
   const orphanPath = join(store.path(binding.studyId), `${sha256('orphan')}.png`), orphan = await open(orphanPath, 'wx');
-  await orphan.truncate(67_108_864); await orphan.close();
+  await orphan.truncate(536_870_912); await orphan.close();
   // Act / Assert
   await assert.rejects(store.read(binding.studyId), /including orphan/);
   await rm(orphanPath);
@@ -216,7 +217,7 @@ test('foreign identities and impossible PNG dimensions stop capture without enla
   assert.equal((await writer.finish(20)).status, 'partial');
   await assert.rejects(store.start({ ...binding, workspaceKey: sha256('another') }, 0), /another workspace/);
   assert.throws(() => store.path('../other'), /Invalid/);
-  assert.throws(() => new RecordingStore('/unused', workspaceKey, { slots: 17 }), /Invalid recording limit/);
+  assert.throws(() => new RecordingStore('/unused', workspaceKey, { slots: 257 }), /Invalid recording limit/);
 });
 
 
@@ -225,4 +226,34 @@ test('a study without a recording offers history recovery without exposing a fil
   const { store, binding } = await recordingHarness(context);
   // Act / Assert
   await assert.rejects(store.read(binding.studyId), /No saved recording is available for this study/);
+});
+
+
+test('ten minutes of animated application frames retain every sampled moment within bounded pending memory', async context => {
+  // Arrange: valid PNG text chunks make distinct 33 KB inert frames; binary/append I/O is counted, not native capture.
+  let writtenBytes = 0, appendedBytes = 0;
+  const { store, binding } = await recordingHarness(context, {}, {
+    ...recordingDiskIo,
+    async binary(_path, bytes) { writtenBytes += bytes.byteLength; },
+    async append(_path, line) { appendedBytes += Buffer.byteLength(line); },
+  });
+  const writer = await store.start(binding, 0);
+  // Act: preserve the production 50 ms sampling rate through the full supported run wall time.
+  for (let index = 0; index < 12_000; index++) {
+    const chunk = Buffer.alloc(32_932, 32);
+    chunk.writeUInt32BE(32_920, 0); chunk.write('tEXt', 4); chunk.write(`Frame\0${index}`, 8);
+    chunk.writeUInt32BE(crc32(chunk.subarray(4, -4)), chunk.length - 4);
+    const bytes = Buffer.concat([png.subarray(0, -12), chunk, png.subarray(-12)]);
+    assert.equal(bytes.length, 33_000);
+    assert.equal(writer.frame({ bytes, elapsedMs: (index + 1) * 50, kind: 'stream' }), true, `Frame ${index + 1} lost: ${writer.state().reason}`);
+    // Flush batches below the unchanged pending-byte budget, without buffering the whole film.
+    if ((index + 1) % 100 === 0) await writer.flush();
+  }
+  const seal = await writer.finish(600_000);
+  // Assert
+  assert.equal(seal.status, 'complete'); assert.equal(seal.frameCount, 12_000);
+  assert.equal(seal.pngBytes, 396_000_000); assert.equal(writtenBytes, 396_000_000);
+  assert.equal(seal.endMs, 600_000); assert.equal(seal.journalBytes, appendedBytes);
+  assert.ok(writer.state().pendingHighWaterBytes <= 8_388_608);
+  assert.equal(writer.state().pendingBytes, 0);
 });

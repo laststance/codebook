@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import type { PlaybackBundle } from '../playbackController';
 import type { CitationSourceStates, LiveStudy, SourceBaselines } from '../studyModel';
 import { projectStudy } from '../studyModel';
@@ -44,7 +44,7 @@ test('a configured study displays one declared browser item and actual false/nul
   assert.ok(model.observation?.actionId === 'repository-click');
   assert.equal(model.observation?.values['value:enabled'], false); assert.equal(model.observation?.values['value:selection'], null);
   assert.equal(model.observation?.actionId, 'repository-click');
-  assert.equal(model.scenarioProgress?.purchaseObserved, undefined); assert.equal(model.scenarioProgress?.unverifiedLinkCount, 0);
+  assert.equal(model.scenarioProgress?.unverifiedLinkCount, 0);
   assert.equal(model.understoodCount, 0); assert.equal(model.selectedUnderstanding.understood, false); assert.equal(model.continueArguments, undefined);
 });
 
@@ -133,7 +133,7 @@ test('only the exact current configured snapshot enables Continue while another 
 test('configured replay shows an explicit pre-observation placeholder and never borrows live Continue authority', () => {
   // Arrange
   const input = configuredProjectionInput(true), context = buildRecordingContext(input.study, [], 1), observed = input.study.observations[0]!;
-  const bundle: PlaybackBundle = { studyId: input.study.id, context, projection: { positionMs: 1000, observation: undefined, frame: undefined, missing: 'No image.', pauseConfirmed: false, rendererConfirmed: false, laterInterpretations: [], contextStatus: 'available' } };
+  const bundle: PlaybackBundle = { studyId: input.study.id, context, projection: { positionMs: 1000, observation: undefined, debugger: undefined, frame: undefined, missing: 'No image.', pauseConfirmed: false, rendererConfirmed: false, laterInterpretations: [], contextStatus: 'available' } };
   // Act
   const before = projectPlaybackStudy(input, bundle);
   const paused = projectPlaybackStudy(input, { ...bundle, projection: { ...bundle.projection, positionMs: 2000, observation: { ...observed, interpretations: [] } } });

@@ -1,0 +1,44 @@
+{
+  "date": "2026-09-27",
+  "sourceHash": "93a58009e3d172384a22e7d782cfe4f70b10eaa36e937587c86d4346299c0f7c",
+  "change": "Internal explanation calls now reuse the public value-path schema before idempotency reservation or persistence.",
+  "finding": "Public MCP already rejected empty value paths; the reproduced defect was an internal direct-call gap.",
+  "checks": {
+    "oldBehavior": "New test failed: missing expected exception.",
+    "learningTests": 16,
+    "explanationTests": 4,
+    "build": "PASS",
+    "package": "PASS",
+    "native": "PARTIAL: explicit partial-save/reopen verified; Copilot image download failed before explanation. See explicit-save-native.json."
+  },
+  "artifacts": [
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/build.log",
+      "sha256": "c1e4221689806446d653f795a4d163d18ddd1b1017e9e4b5b64313333ce66eda"
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/empty-facts-red.log",
+      "sha256": "c26ee8df5fa4e2b16319c432bfbc9bf129767db013ce63c56a4c26415adbc173"
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/learning-tests.log",
+      "sha256": "d098581d62fb902b230f69d878cff9f68064c9fd477eb8b33ce09d053526be06"
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/explanation-tests.log",
+      "sha256": "637d41b4b1a280095cee8a2f8524b0997a6db31576e4326b528e232e75815463"
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/codebook.vsix",
+      "sha256": "a7f17f78e5dddeb6ddea3ef7dba3241bbf13d5b355a8769f200de2a3480e3697"
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/package-check.json",
+      "sha256": "2a88c0a851d4949e1e43e9760decb9f252ce5cf371f9a8ad25fc89be419b80fb"
+    },
+    {
+      "path": "artifacts/cycle-0029/explicit-save-v2/native-plan.json",
+      "sha256": "5d914155ad8de3ba07c4d63e1940ef27e1da62872bd470ea451c38971bf1b746"
+    }
+  ]
+}

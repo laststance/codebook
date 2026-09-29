@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -11,7 +11,8 @@
   },
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onUri"
   ],
   "extensionKind": [
     "workspace"
@@ -24,6 +25,25 @@
     "virtualWorkspaces": false
   },
   "contributes": {
+    "debuggers": [
+      {
+        "type": "codebook-replay",
+        "label": "Codebook Recorded Learning",
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "codebookReplayOwner"
+            ],
+            "properties": {
+              "codebookReplayOwner": {
+                "type": "string",
+                "description": "Owned by the Codebook replay UI. Open saved learning to start this read-only session."
+              }
+            }
+          }
+        }
+      }
+    ],
     "chatSkills": [
       {
         "path": "./skills/codebook/SKILL.md"
@@ -141,17 +161,40 @@
         "title": "Codebook: Open Repository Wiki"
       },
       {
+        "command": "codebook.openDeepWiki",
+        "title": "Codebook: Open DeepWiki in Browser"
+      },
+      {
+        "command": "codebook.updateDeepWiki",
+        "title": "Codebook: Update LLM Wiki"
+      },
+      {
         "command": "codebook.closeRepositoryWiki",
         "title": "Codebook: Close Repository Wiki"
       },
       {
         "command": "codebook.study.return-wiki",
         "title": "Codebook: Return to Wiki"
+      },
+      {
+        "command": "codebook.saveLearningReplay",
+        "title": "Codebook: Save Learning Replay"
+      },
+      {
+        "command": "codebook.showLearningSummary",
+        "title": "Codebook: Show Learning Summary",
+        "icon": "$(book)"
       }
     ],
     "configuration": {
       "title": "codebook",
       "properties": {
+        "codebook.wikiOutputDirectory": {
+          "type": "string",
+          "default": ".codebook/wiki",
+          "scope": "resource",
+          "description": "Folder for the editor agent's generated DeepWiki site. Relative paths resolve inside the opened project; absolute paths select another local folder."
+        },
         "codebook.nodeExecutable": {
           "type": "string",
           "default": "node",
@@ -162,7 +205,15 @@
           "type": "string",
           "default": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
           "scope": "machine",
-          "description": "Chrome executable for the explicitly selected local demo or configured repository profile."
+          "description": "Chrome executable for the configured repository browser."
+        },
+        "codebook.savedStudyLimit": {
+          "type": "integer",
+          "default": 64,
+          "minimum": 1,
+          "maximum": 256,
+          "scope": "resource",
+          "description": "Maximum new saved studies and recordings per workspace. Increase this when the library is full. Lowering it keeps existing history readable; no recordings are automatically deleted. Each recording consumes disk space. Changes apply to the next admission without restarting."
         }
       }
     },
@@ -178,6 +229,13 @@
         {
           "id": "codebookMoments",
           "title": "codebook",
+          "icon": "src/assets/book.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "codebookLearning",
+          "title": "Learning summary",
           "icon": "src/assets/book.svg"
         }
       ]
@@ -199,6 +257,13 @@
           "name": "Observed moments",
           "type": "webview"
         }
+      ],
+      "codebookLearning": [
+        {
+          "id": "codebook.learningSummary",
+          "name": "Learning summary",
+          "type": "webview"
+        }
       ]
     },
     "viewsWelcome": [
@@ -206,22 +271,29 @@
         "view": "codebook.learningOutline",
         "contents": "Connect the application screen with its actual code.\n[Open Study workspace](command:codebook.openStudyWorkspace)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "codebook.showLearningSummary",
+          "when": "view == codebook.learningOutline",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
-    "build": "pnpm --dir ../experiments/cycle-0004 build && tsc -p tsconfig.json && node scripts/prepare-demo.mjs && node scripts/build-metadata.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/build-metadata.mjs",
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && node --test dist/tests/*.test.js",
-    "native": "pnpm build && node dist/nativeRunner.js",
     "package": "node scripts/package.mjs",
     "package:check": "node scripts/check-package.mjs",
     "test:package": "node --test --test-concurrency=1 scripts/tests/*.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "codebook-cycle-0001": "link:../experiments/cycle-0001",
-    "codebook-cycle-0004": "link:../experiments/cycle-0004",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "ws": "8.21.3"
   },
   "devDependencies": {
     "@types/node": "24.13.5",
@@ -233,7 +305,8 @@
     "typescript": "5.9.3",
     "xml2js": "0.6.2",
     "yauzl": "3.4.0",
-    "yazl": "3.3.1"
+    "yazl": "3.3.1",
+    "@types/ws": "8.18.1"
   },
   "license": "UNLICENSED",
   "repository": {

@@ -44,3 +44,23 @@ test('an unmeasured orthogonal axis cannot fabricate native pixel geometry', () 
   assert.equal(relative, undefined);
   assert.equal(invalid, undefined);
 });
+
+test('a collapsed replay application row receives equal native pixels on layout restore', () => {
+  // Arrange
+  const requested = { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] };
+  const measured = { orientation: 1, groups: [{ size: 70 }, { size: 1200 }] };
+  // Act
+  const layout = toPixelEditorLayout(requested, measured);
+  // Assert
+  assert.deepEqual(layout, { orientation: 1, groups: [{ size: 635 }, { size: 635 }] });
+});
+
+test('a flat replay layout does not guess row height from measured column width', () => {
+  // Arrange
+  const requested = { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] };
+  const measured = { orientation: 0, groups: [{ size: 635 }, { size: 635 }] };
+  // Act
+  const layout = toPixelEditorLayout(requested, measured);
+  // Assert
+  assert.equal(layout, undefined);
+});

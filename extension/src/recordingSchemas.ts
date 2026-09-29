@@ -1,7 +1,8 @@
+import { CONFIGURED_OBSERVATION_LIMIT, CROSS_RUNTIME_CAPTURE_PHASES, CROSS_RUNTIME_RECORDING_VERSION } from './constants';
 import { z } from 'zod';
-import { CONFIGURED_CAPTURE_PHASES, CONFIGURED_RECORDING_VERSION, IMAGE_LIMIT_BYTES, MAX_EXPLANATIONS, MAX_RECORDING_DIMENSION_PX, MAX_RECORDING_FRAMES, MAX_RECORDING_JOURNAL_BYTES, MAX_RECORDING_PNG_BYTES, MAX_STUDY_CAPTURES_V2, RECORDING_REASON_LIMIT_CHARS, RECORDING_VERSION, REFERENCE_LENGTH_LIMIT, REPOSITORY_BROWSER_PROFILE } from './constants';
+import { CONFIGURED_CAPTURE_PHASES, CONFIGURED_RECORDING_VERSION, IMAGE_LIMIT_BYTES, MAX_EXPLANATIONS, MAX_RECORDING_DIMENSION_PX, MAX_RECORDING_FRAMES, MAX_RECORDING_JOURNAL_BYTES, MAX_RECORDING_PNG_BYTES, MAX_STUDY_CAPTURES_V2, MAX_STUDY_OBSERVATIONS_V2, RECORDING_REASON_LIMIT_CHARS, RECORDING_VERSION, REFERENCE_LENGTH_LIMIT, REPOSITORY_BROWSER_PROFILE } from './constants';
 import { studyIdSchema } from './legacyStudySchemas';
-import { capturePhaseSchema, profileSchema, studyArchiveSchema } from './studySchemas';
+import { capturePhaseSchema, profileSchema } from './studySchemas';
 import { configuredStudySchema } from './configuredStudySchemas';
 
 export const recordingHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -34,9 +35,11 @@ export const configuredRecordingBindingSchema = z.strictObject({ ...recordingBin
   .refine(value => value.studyId === `${value.instanceId}_${value.runId}`, 'Recording identity differs from its study.');
 export const configuredRecordingHeaderSchema = configuredRecordingBindingSchema.safeExtend({ ...recordingHeaderSchema.shape, profile: z.literal(REPOSITORY_BROWSER_PROFILE), version: z.literal(CONFIGURED_RECORDING_VERSION) });
 export const configuredRecordingSealSchema = recordingSealSchema.extend({ version: z.literal(CONFIGURED_RECORDING_VERSION) });
-export const retainedRecordingBindingSchema = z.discriminatedUnion('profile', [recordingBindingSchema, configuredRecordingBindingSchema]);
-export const retainedRecordingHeaderSchema = z.discriminatedUnion('version', [recordingHeaderSchema, configuredRecordingHeaderSchema]);
-export const retainedRecordingSealSchema = z.discriminatedUnion('version', [recordingSealSchema, configuredRecordingSealSchema]);
+export const crossRuntimeRecordingHeaderSchema = configuredRecordingBindingSchema.safeExtend({ ...configuredRecordingHeaderSchema.shape, version: z.literal(CROSS_RUNTIME_RECORDING_VERSION) });
+export const crossRuntimeRecordingSealSchema = configuredRecordingSealSchema.extend({ version: z.literal(CROSS_RUNTIME_RECORDING_VERSION) });
+export const retainedRecordingBindingSchema = configuredRecordingBindingSchema;
+export const retainedRecordingHeaderSchema = z.discriminatedUnion('version', [recordingHeaderSchema, configuredRecordingHeaderSchema, crossRuntimeRecordingHeaderSchema]);
+export const retainedRecordingSealSchema = z.discriminatedUnion('version', [recordingSealSchema, configuredRecordingSealSchema, crossRuntimeRecordingSealSchema]);
 export type RecordingBinding = z.infer<typeof retainedRecordingBindingSchema>;
 export type RecordingHeader = z.infer<typeof retainedRecordingHeaderSchema>;
 export type RecordingFrame = z.infer<typeof recordingFrameSchema>;
@@ -50,11 +53,16 @@ export interface RecordingIndex {
 export type RecordingCatalogEntry = Pick<RecordingIndex, 'status' | 'reason' | 'endMs' | 'lastVerifiedMs'> & { studyId: string; profile?: RecordingHeader['profile']; createdAt?: string };
 export const recordingContextSchema = z.strictObject({
   version: z.literal(RECORDING_VERSION), workspaceKey: recordingHashSchema, studyId: studyIdSchema, historyRevision: z.number().int().positive(),
-  studyHash: recordingHashSchema, materialSignature: recordingHashSchema, study: studyArchiveSchema.omit({ captures: true }),
+  studyHash: recordingHashSchema, materialSignature: recordingHashSchema, study: configuredStudySchema.omit({ captures: true }),
+  pausedIntervals: z.array(z.strictObject({ snapshotId: z.string().min(1).max(REFERENCE_LENGTH_LIMIT), startMs: elapsed, endMs: elapsed })
+    .refine(interval => interval.endMs >= interval.startMs, 'Invalid recorded pause interval.')).max(MAX_STUDY_OBSERVATIONS_V2).optional(),
   interpretationAvailability: z.array(z.strictObject({ id: z.uuid(), snapshotId: z.string().min(1).max(REFERENCE_LENGTH_LIMIT), elapsedMs: elapsed.nullable() })).max(MAX_EXPLANATIONS),
   phases: z.array(z.strictObject({ phase: capturePhaseSchema, requestedMs: elapsed.optional(), pixelsMs: elapsed.optional(), hash: recordingHashSchema.optional(), snapshotId: z.string().min(1).max(REFERENCE_LENGTH_LIMIT).optional(), pauseVerifiedMs: elapsed.optional(), rendererConfirmedMs: elapsed.optional(), failedMs: elapsed.optional(), reason: reason.optional() })).max(MAX_STUDY_CAPTURES_V2),
 });
 export const configuredRecordingContextSchema = recordingContextSchema.extend({ version: z.literal(CONFIGURED_RECORDING_VERSION), study: configuredStudySchema.omit({ captures: true }),
-  phases: z.array(recordingContextSchema.shape.phases.element.extend({ phase: z.enum(CONFIGURED_CAPTURE_PHASES) })).max(CONFIGURED_CAPTURE_PHASES.length) });
-export const retainedRecordingContextSchema = z.discriminatedUnion('version', [recordingContextSchema, configuredRecordingContextSchema]);
+  pausedIntervals: z.array(recordingContextSchema.shape.pausedIntervals.unwrap().element).max(CONFIGURED_OBSERVATION_LIMIT).optional(),
+  phases: z.array(recordingContextSchema.shape.phases.element.extend({ phase: z.enum(CONFIGURED_CAPTURE_PHASES) })).max(CONFIGURED_CAPTURE_PHASES.length - 1 + CONFIGURED_OBSERVATION_LIMIT) });
+export const crossRuntimeRecordingContextSchema = configuredRecordingContextSchema.extend({ version: z.literal(CROSS_RUNTIME_RECORDING_VERSION),
+  phases: z.array(recordingContextSchema.shape.phases.element.extend({ phase: z.enum(CROSS_RUNTIME_CAPTURE_PHASES) })).max(CONFIGURED_CAPTURE_PHASES.length - 1 + CONFIGURED_OBSERVATION_LIMIT) });
+export const retainedRecordingContextSchema = z.discriminatedUnion('version', [recordingContextSchema, configuredRecordingContextSchema, crossRuntimeRecordingContextSchema]);
 export type RecordingContext = z.infer<typeof retainedRecordingContextSchema>;

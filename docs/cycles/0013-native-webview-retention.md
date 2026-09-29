@@ -41,7 +41,7 @@ Apply /investigate to this cycle only: read source/recent changes and native fai
 
 ## Attempts and evidence
 
-Cycle 0012 supplies two failed VS Code attempts. Its second reached Living geometry 631/421 before context disposal; no finalized video survived the harness's fatal report getter. The new diagnostic must retain the host and record disposed flags without reading disposed panel properties. [Native investigation](evidence/0013/native-retention-20260920.md) now records a causal preview-state/disposal reproduction and the kept-panel remedy in both hosts; [manifest](evidence/0013/manifest.json) hashes all private evidence.
+Cycle 0012 supplies two failed VS Code attempts. Its second reached Living geometry 631/421 before context disposal; no finalized video survived the harness's fatal report getter. The new diagnostic must retain the host and record disposed flags without reading disposed panel properties. [Native investigation](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0013/native-retention-20260920.md) now records a causal preview-state/disposal reproduction and the kept-panel remedy in both hosts; [manifest](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0013/manifest.json) hashes all private evidence.
 
 ## Result and decision
 

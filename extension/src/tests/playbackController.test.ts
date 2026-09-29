@@ -1,19 +1,21 @@
+import { createConfiguredStudy } from './utils/createConfiguredStudy';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { PlaybackController, type PlaybackBundle, type PlaybackData, type PlaybackDependencies } from '../playbackController';
 import type { RecordingContext, RecordingFrame, RecordingIndex } from '../recordingSchemas';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 
 /** Supplies deterministic recorded identities to control-concurrency tests, without live browser/debugger effects. @example const data = playbackFixture() */
 function playbackFixture(): PlaybackData {
   const instanceId = randomUUID(), runId = randomUUID(), studyId = `${instanceId}_${runId}`, workspaceKey = sha256('workspace');
   const frames: RecordingFrame[] = [0, 50, 100, 200].map((elapsedMs, index) => ({ type: 'frame', sequence: index + 1, elapsedMs, hash: sha256(`frame-${elapsedMs}`), byteLength: 10, width: 1, height: 1, kind: 'stream' }));
-  const index: RecordingIndex = { header: { version: 1, workspaceKey, studyId, instanceId, runId, runtimeId: randomUUID(), profile: 'paired-cart-demo', sourceBuild: { revision: 'test', dirty: false, sourceHash: sha256('source') }, createdAt: '2026-09-19T00:00:00.000Z', startedMs: 0, clock: 'runtime-receipt-ms', sampleIntervalMs: 50, owner: { pid: process.pid, hostname: 'test', sessionId: randomUUID() } },
+  const index: RecordingIndex = { header: { version: 1, workspaceKey, studyId, instanceId, runId, runtimeId: randomUUID(), profile: 'repository-browser', sourceBuild: { revision: 'test', dirty: false, sourceHash: sha256('source') }, createdAt: '2026-09-19T00:00:00.000Z', startedMs: 0, clock: 'runtime-receipt-ms', sampleIntervalMs: 50, owner: { pid: process.pid, hostname: 'test', sessionId: randomUUID() } },
     entries: [...frames, { type: 'end', sequence: 5, elapsedMs: 250, status: 'complete' }], status: 'finalized', endMs: 250, lastVerifiedMs: 250 };
   const context: RecordingContext = { version: 1, workspaceKey, studyId, historyRevision: 1, studyHash: sha256('study'), materialSignature: sha256('material'), phases: [], interpretationAvailability: [],
-    study: { version: 2, workspaceKey, id: studyId, instanceId, runId, profile: 'paired-cart-demo', createdAt: '2026-09-19T00:00:00.000Z', savedAt: '2026-09-19T00:00:00.000Z', state: 'stopped', terminal: true, finalOutcome: 'demonstrated', materialSignature: sha256('material'), links: [],
-      observations: [{ id: 'server:1', itemId: 'paired-cart-demo/server', snapshotUri: `codebook://${instanceId}/runs/${runId}/snapshots/server%3A1`, participant: 'server', actionId: 'add-to-cart', capturePhase: 'paused-server', capturedAt: '2026-09-19T00:00:00.000Z', elapsedMs: 100, pause: { sessionId: 'server', threadId: 1, generation: 1 }, source: { text: 'const count = 0;', hash: sha256('const count = 0;'), line: 1 }, values: { operationId: 'test', cartId: 'cart', productId: 'tote-01', price: 24, cartCount: 0, admittedCount: 2 }, interpretations: [] }] } };
+    study: { ...createConfiguredStudy(), workspaceKey, id: studyId, instanceId, runId,
+      observations: [{ ...createConfiguredStudy().observations[0]!, snapshotUri: `codebook://${instanceId}/runs/${runId}/snapshots/browser-session%3A1`, elapsedMs: 100, interpretations: [] }] } };
+
   return { index, context, contextHash: sha256(JSON.stringify(context)) };
 }
 
@@ -40,8 +42,20 @@ test('opening recorded data is paused and seeking does not expose values before 
   player.seek(100); await player.controller.settle();
   // Assert
   assert.equal(start?.projection.observation, undefined); assert.equal(player.controller.state().mode, 'paused');
-  assert.equal(player.controller.state().presentedMs, 100); assert.equal(player.controller.bundle()?.projection.observation?.values.cartCount, 0);
+  assert.equal(player.controller.state().presentedMs, 100); assert.equal(player.controller.bundle()?.projection.observation?.values['value:nextTheme'], 'dark');
   assert.deepEqual(player.saved, [0, 100]); await player.controller.dispose();
+});
+
+test('opening a recording publishes its sealed history gaps without changing the saved playhead', async () => {
+  // Arrange
+  const player = playbackHarness();
+  const context = player.data.context; assert.ok(context); context.pausedIntervals = [];
+  // Act
+  player.open(); await player.controller.settle();
+  // Assert
+  assert.deepEqual(player.controller.state().historyTimeline, { status: 'mapped', gaps: [{ startMs: 0, endMs: 250 }], recordedPoints: [] });
+  assert.equal(player.controller.state().presentedMs, 0);
+  await player.controller.dispose();
 });
 
 test('a newer seek wins even when the earlier frame read ignores cancellation and finishes late', async () => {
@@ -114,7 +128,7 @@ test('playback stops at an observation boundary and excludes the source-loading 
   assert.equal(player.controller.state().presentedMs, 100);
   player.clock(550); player.controller.tick(); await player.controller.settle();
   // Assert
-  assert.equal(player.controller.state().presentedMs, 150); assert.equal(player.controller.bundle()?.projection.observation?.id, 'server:1');
+  assert.equal(player.controller.state().presentedMs, 150); assert.equal(player.controller.bundle()?.projection.observation?.id, 'browser-session:1');
   assert.equal(player.controller.state().mode, 'playing'); await player.controller.dispose();
 });
 

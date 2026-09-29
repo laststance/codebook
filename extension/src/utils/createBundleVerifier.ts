@@ -2,7 +2,7 @@ import { SourceMap } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Protocol } from 'devtools-protocol';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 import { bundleSchema, mapSchema, type BundleSource } from '../repositoryBundle';
 import { isSourcePosition } from './isSourcePosition';
 import { sourceMapMappedPositions } from './sourceMapMappedPositions';
@@ -22,6 +22,8 @@ export function createBundleVerifier(input: BundleSource) {
     hashes,
     /** Reports frozen-map positions inside the selected citation after an exact binding timeout; callers must still verify a real pause. @example verifier.mappedPositions(1, 3).positions // [{ line: 1, column: 1 }] */
     mappedPositions(startLine: number, endLine: number) { return sourceMapMappedPositions(payload.mappings, matches[0]!, startLine, endLine); },
+    /** Checks an exact original position before registering a lazy native breakpoint; does not prove a runtime binding. @example verifier.hasMappedPosition(19, 5) */
+    hasMappedPosition(line: number, column: number): boolean { return sourceMapMappedPositions(payload.mappings, matches[0]!, line, line, column).positions.some(position => position.line === line && position.column === column); },
     /** Confirms exact source and generated coordinates for the guarded paused inspector. @example verifier.verify(js, tsx, location, 'script-1', 19, 5) */
     verify(executed: string, local: string, location: Protocol.Debugger.Location, scriptId: string, frameLine: number, frameColumn: number) {
       if (sha256(executed) !== hashes.javascript) throw new Error('Executed JavaScript differs from frozen module');

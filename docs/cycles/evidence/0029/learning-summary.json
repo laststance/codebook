@@ -1,0 +1,93 @@
+{
+  "date": "2026-09-27",
+  "revision": "273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf",
+  "dirty": true,
+  "sourceHash": "5dfbfef1e470d2637604a983c00824bae0ed2252def9593fced9c14a00aaff06",
+  "scope": [
+    "AC-SAVE",
+    "AC-REPLAY",
+    "AC-LEARNING",
+    "AC-GAPS",
+    "AC-SKILL"
+  ],
+  "changes": [
+    "Evidence-backed optional learningSummary transaction, including question, summary and classified interactions.",
+    "Exact same-run source references checked at write and archive/context reload.",
+    "Previous material survives failed replacement; summary participates in retry and history identity.",
+    "Plain-text/SVG replay sequence with explicit recorded-step navigation and unknown/missing states.",
+    "Array-based stop mapping survives prototype-shaped identifiers across transport.",
+    "Fresh-webview summary-link focus restoration and footer-safe reading anchor.",
+    "Shared skill version 1.0.21 and public MCP help expose the authoring path."
+  ],
+  "tests": {
+    "build": "PASS",
+    "fullUnitRegression": {
+      "passed": 1019,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 187281.038042
+    },
+    "focusedServiceStorageProtocol": {
+      "passed": 63
+    },
+    "renderer": {
+      "passed": 28
+    },
+    "readingPose": {
+      "passed": 12
+    },
+    "package": "PASS",
+    "diffCheck": "PASS"
+  },
+  "vsix": {
+    "sha256": "c3f47878bdc76d0c26f85f50e64d38f5a610adaa5c897d66a5e95a374648057b",
+    "entries": 25
+  },
+  "skill": {
+    "version": "1.0.21",
+    "sha256": "9da638db57722cbd589c5c9f8132d789da73392233384ec6c5773c2c69507713"
+  },
+  "privateArtifacts": {
+    "directory": "/Users/ryotamurakami/laststance/vscode-extension/codebook/artifacts/cycle-0029/learning-summary",
+    "rendererReport": "renderer/result.json",
+    "readingPoseReport": "reading-pose/result.json",
+    "packageCheck": "package-check.json",
+    "videos": [
+      "renderer/flow.webm",
+      "reading-pose/flow.webm"
+    ],
+    "inspectedFrames": [
+      "reading-pose/frame-7.5.png"
+    ],
+    "inspectedScreenshots": [
+      "renderer/saved-learning-sequence.png",
+      "reading-pose/sequence-focus-restored.png"
+    ]
+  },
+  "findingsResolved": [
+    "Prototype-shaped keys lost through renderer message serialization; switched stop mapping to explicit records.",
+    "Restored summary control hidden under fixed transport; added footer-aware scroll padding and a summary reading anchor."
+  ],
+  "visualComparison": "Approved v9 PNG inspected. Replay summary/sequence content implemented; no complete native composition or full-product design PASS.",
+  "native": {
+    "vscode": "NOT RUN for the new learningSummary path",
+    "cursor": "NOT RUN for the new learningSummary path",
+    "ordinaryChat": "NOT RUN"
+  },
+  "limitations": [
+    "No new installed-host source/video/native-debugger synchronization proof for saved summary.",
+    "Actual ordinary-chat authoring and loaded skill identity remain unverified.",
+    "Existing one-action/one-pause runtime, native focus/heading gaps and retired internal modes remain.",
+    "Bottom live-save workflow, independent DeepWiki, shortcut discovery and all final acceptance rows remain incomplete."
+  ],
+  "target": {
+    "path": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "modified": false
+  },
+  "pr": {
+    "number": 48,
+    "state": "OPEN",
+    "draft": true,
+    "coderabbitIgnore": true
+  }
+}

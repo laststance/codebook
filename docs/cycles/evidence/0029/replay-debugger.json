@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "scope": "Historical debugger capture, archive and native replay integration",
+  "revision": "273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf",
+  "sourceHash": "cbd6b8eb537aa231784e17ec898967b06e333fc7d1f9e44a127f274daec6bdc5",
+  "dirty": true,
+  "mechanismTests": {
+    "focused": {
+      "passed": 65,
+      "failed": 0,
+      "artifact": "artifacts/cycle-0029/replay-debugger/focused-tests.txt"
+    },
+    "storage": {
+      "passed": 51,
+      "failed": 0,
+      "artifact": "artifacts/cycle-0029/replay-debugger/storage-regressions.txt"
+    },
+    "fullSuite": {
+      "passed": 973,
+      "failed": 0,
+      "artifact": "artifacts/cycle-0029/replay-debugger/extension-suite.txt",
+      "durationMs": 187395.397833
+    }
+  },
+  "native": {
+    "vscode": "NOT RUN",
+    "cursor": "NOT RUN"
+  },
+  "review": "NOT COMPLETE; GStack target selection pending",
+  "limitations": [
+    "Current live adapter accepts one root-route browser click/stop. The designated dashboard needs route/input support before this flow can be exercised without changing its source.",
+    "Only the configured top frame has verified executed source. Other captured frames disclose missing executed source.",
+    "Capture is bounded by time, depth and count; unavailable values remain explicit.",
+    "Old archives without debugger snapshots cannot acquire historical values retroactively.",
+    "Custom value UI, old presentation modes, gap timeline, summary/sequence and multi-stop recording remain unfinished.",
+    "No final acceptance, CI, merge or publication."
+  ],
+  "package": {
+    "path": "artifacts/cycle-0029/replay-debugger/codebook-replay.vsix",
+    "sha256": "b038cf678a458138a79569faf2ecf1d0d0d294b47e2f5c4f567bb26a6be86f8d",
+    "bytes": 868721,
+    "entries": 25,
+    "isolatedModuleLoad": true,
+    "buildReceipt": "artifacts/cycle-0029/replay-debugger/build-receipt.json",
+    "verification": "artifacts/cycle-0029/replay-debugger/verification.json"
+  },
+  "realProjectProbe": {
+    "level": "owned development server and HTTP only; not native editor or standard chat",
+    "workspace": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "revision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+    "dirtyAfter": false,
+    "routes": {
+      "/": 200,
+      "/login": 200
+    },
+    "cleanup": "Owned server stopped; development lock absent",
+    "artifact": "artifacts/cycle-0029/replay-debugger/dashboard-probe.json"
+  },
+  "pullRequest": {
+    "number": 48,
+    "coderabbitIgnorePresent": true,
+    "commitPush": "not performed"
+  }
+}

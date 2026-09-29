@@ -32,23 +32,16 @@ jobs:
           cache-dependency-path: |
             extension/pnpm-lock.yaml
             extension/pnpm-workspace.yaml
-            experiments/cycle-0001/pnpm-lock.yaml
-            experiments/cycle-0004/pnpm-lock.yaml
-            experiments/cycle-0010/pnpm-lock.yaml
       - name: Test project compaction hook
         run: node --test .codex/restore-product-context.test.mjs
       - name: Install pinned dependencies
         run: |
-          pnpm --dir experiments/cycle-0001 install --frozen-lockfile
-          pnpm --dir experiments/cycle-0004 install --frozen-lockfile
-          pnpm --dir experiments/cycle-0010 install --frozen-lockfile
           pnpm --dir extension install --frozen-lockfile
       - name: Compile extension and regression suites
         run: |
-          pnpm --dir experiments/cycle-0010 build
           pnpm --dir extension build
       - name: Run product and shared runtime tests
-        run: node --test extension/dist/tests/*.test.js experiments/cycle-0001/dist/tests/*.test.js experiments/cycle-0004/dist/tests/*.test.js experiments/cycle-0010/dist/tests/*.test.js
+        run: node --test extension/dist/tests/*.test.js
       - name: Run actual package and failure regressions
         run: pnpm --dir extension test:package
       - name: Produce and verify private VSIX

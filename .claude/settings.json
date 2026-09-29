@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.codex/restore-product-context.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Restoring Codebook product context"
+          }
+        ]
+      }
+    ]
+  }
+}

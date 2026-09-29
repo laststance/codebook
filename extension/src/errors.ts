@@ -5,7 +5,7 @@ export const ERROR_RECOVERY = {
   STALE_PLAYBACK: 'Read the current playback URI and use its returned revision/study identity. Never retry by starting or continuing a run.',
   PRESENTATION_INSTANCE_GONE: 'Read codebook_status and its presentation resource; the previous reader was closed. Copy the new presentationId and revision before an explicit selection.',
   STALE_PRESENTATION: 'Read the current presentation resource and copy presentationControlRevision. After response loss inspect applied mode and layout confirmation; never retry application input.',
-  PRESENTATION_UNAVAILABLE: 'Read presentation state and its reason. Wait for input/capture/navigation to settle or restore the layout explicitly with current identities. Use focus commands when native groups cannot be arranged. Never start or continue a run to repair a layout.',
+  PRESENTATION_UNAVAILABLE: 'Read presentation state and its reason. Wait for input/capture/navigation to settle or restore the layout explicitly with current identities. For an open Study, call codebook_presentation with action focus, current mode and current identities to return from Wiki or another editor, then explicitly restore if needed. Never start or continue a run to repair a layout.',
   PLAYBACK_UNAVAILABLE: 'Inspect playback and the selected recording for missing/corrupt data. Leave and reopen Recording after repair; playback never retries application input.',
   BUSY: 'Read the run resource and its nextActions. Do not send another click with a new key.',
   SOURCE_CHANGED: 'Read the captured source resource. The current editor file no longer matches that capture.',

@@ -1,0 +1,47 @@
+{
+  "cycle": "0029",
+  "date": "2026-09-27",
+  "level": "installed VS Code development trial; not final acceptance",
+  "host": "Visual Studio Code 1.139.1, existing nextjs-dashboard window",
+  "target": {
+    "root": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "revision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+    "gitAfter": "?? .codebook/ only",
+    "wikiFiles": "All pre-existing Wiki files remained byte-identical across the trial"
+  },
+  "candidate": {
+    "version": "0.2.11",
+    "sourceHash": "3bf4a7ad9dfccec41fa8a6bc6ab28c31641b101b3d5dddb77e7cf3c0afde1b94",
+    "vsixSha256": "51b7b77e533deb7cfb77140ffe5a75e5853799eb6089c0dc221397b23cb7f44b",
+    "vsixBytes": 914748,
+    "archiveEntries": 26,
+    "installedBuildIdentityMatched": true,
+    "fullExtensionSuite": "1161/1161 PASS; zero failed, cancelled or skipped",
+    "independentPackageInspection": "PASS"
+  },
+  "nativeProcedure": {
+    "entry": "Codebook: Open DeepWiki in Browser from the designated VS Code workspace",
+    "question": "Which database ORM does this dashboard use?",
+    "observedAnswer": "The dashboard uses Drizzle ORM.",
+    "observedCitation": "app/lib/actions.ts:3 with a vscode:// source URI bound to this project root and current file SHA-256",
+    "modelPermission": "VS Code requested Codebook access to GitHub Copilot language models; allowed for this trial",
+    "browserVisual": "Actual dark Wiki answer and citation were visually inspected; browser zoom was 110%, so this is not a normal-zoom v9 visual comparison",
+    "answerResult": "PASS for this one installed VS Code browser question and returned citation",
+    "citationActivation": "The answer citation was clicked and Chrome's one-time Open Visual Studio Code prompt was accepted without enabling Always allow. VS Code's UI inspection then timed out repeatedly, so correct file/line opening remains UNVERIFIED on this candidate."
+  },
+  "cleanupAndLimits": [
+    "Two command strings were accidentally inserted into README.md when a customized command-palette shortcut did not open the palette. The exact two-line diff was inspected and restored from the initially clean HEAD; target Git returned to ?? .codebook/ only. VS Code subsequently displayed a modified README buffer, which still needs UI confirmation before this window is closed or reused.",
+    "The pre-existing Wiki files remained byte-identical; no source-change update was run.",
+    "This is one development question. Broader answer quality, failure recovery in the installed UI, replay independence and the fixed nine-project acceptance remain open.",
+    "The browser screenshot was inspected through the UI tool but not retained as a local file. No native motion/video or default-zoom visual claim is made.",
+    "PR #48 remains draft/open and currently reports CONFLICTING; @coderabbitai ignore remains in its body."
+  ],
+  "nativeFollowup": {
+    "date": "2026-09-27",
+    "result": "PASS for the bounded answer citation destination",
+    "action": "Accepted pending Codebook URI confirmation without persistent allow",
+    "observed": "VS Code selected /Users/ryotamurakami/repository/nextjs-dashboard/app/lib/actions.ts; editor status displayed Ln 3, Col 1",
+    "readmeBuffer": "README tab closed without save prompt; target git status remained only ?? .codebook/ and README diff empty",
+    "limits": "Does not prove wrong-root, drift, reading return, or final acceptance"
+  }
+}

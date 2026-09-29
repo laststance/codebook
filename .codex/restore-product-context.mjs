@@ -14,11 +14,11 @@ async function restoreProductContext() {
 
   const root = fileURLToPath(new URL('../', import.meta.url));
   const instructions = await readFile(new URL('../AGENTS.md', import.meta.url), 'utf8');
-  if (!/^## (Mandatory entry|Read before acting)$/m.test(instructions)) throw new Error('AGENTS.md is missing its entry instructions.');
+  if (!instructions.includes('## Mandatory entry')) throw new Error('AGENTS.md is missing its Mandatory entry section.');
   const context = [
     'CODEBOOK: RESTORE PRODUCT CONTEXT AFTER COMPACTION',
     `Repository root: ${root}`,
-    'Before continuing implementation or runtime trials, perform the repository entry procedure below again using the current files on disk. Read every required document in full, follow PROJECT_STATE.md to the active cycle, and open the approved PNG with an image-viewing tool. A compacted summary or this reminder is not evidence of those reads or image inspection.',
+    'Before continuing implementation or runtime trials, perform the Mandatory entry below again using the current files on disk. Read every required document in full, follow PROJECT_STATE.md to the active cycle, and open the approved PNG with an image-viewing tool. A compacted summary or this reminder is not evidence of those reads or image inspection.',
     'Reconcile the current source and affected acceptance gaps, then resume the latest owner-authorized task. Preserve pending owner instructions and any explicit pause; this reminder grants no additional work scope.',
     'Current AGENTS.md follows; resolve its relative links from the repository root:',
     instructions,

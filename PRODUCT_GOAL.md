@@ -1,54 +1,81 @@
 # Product goal
 
-Goal version: 6\
-Product design approved: 2026-09-18  
-Development structure requested: 2026-09-18  
-Owner: Raphtalia
+Goal version: 9\
+Owner: Raphtalia\
+Initial design approved: 2026-09-18\
+Current product direction: 2026-09-26, D030–D036; synchronized replay, skill-driven DeepWiki, desktop/shortcut contracts and adopted v9 visual target
 
-This file is the durable product destination. It defines outcomes, not a fixed implementation schedule. Change an outcome only with explicit user direction and a recorded decision. Progress and uncertain implementation choices belong in PROJECT_STATE.md and cycle records.
+This file owns final outcomes and acceptance. Detailed feature contracts live in the linked specifications; PROJECT_STATE.md owns implementation evidence. Version 7 established separate feature lifecycles. Version 8 records the owner's design-review clarifications: synchronized application/source/native-debugger time travel is the center of learning replay, and LLM Wiki must reproduce DeepWiki itself through the editor agent's generation skill. Version 9 applies D034: ordinary expanded desktop windows at normal zoom are the layout baseline; extremely small windows and extreme zoom are outside mandatory acceptance. These revisions specify outcomes, not implementation.
 
-## Defining experience
+## Product purpose and feature relationships
 
-The learner asks in chat:
+Codebook helps the learner understand AI-written code, unfamiliar work codebases and OSS in **both Visual Studio Code and Cursor**. It has three related feature areas:
 
-> 商品をカートに入れて購入完了までの処理を解説して
+| Feature | What the learner does | Result and relationship |
+| --- | --- | --- |
+| Live code explanation | Ask the editor's standard AI chat to explain a real code path. The AI operates the real app and debugger, pauses in actual source, explains and continues. | The explanation happens in Copilot Chat or Cursor Agent. Application/browser, native source editor and native debugger provide the execution context. A Wiki is not a prerequisite. |
+| Learning replay / time-travel debugging | Save an explained session, then repeatedly play, seek backward/forward and revisit its recorded execution. | Application video, the source executing at that moment and historical runtime values/call stacks in the native debugger stay synchronized. The live chat area becomes a learning summary, including explanation and a sequence diagram. A library opens this replay experience. |
+| LLM Wiki / DeepWiki | Have the editor AI use a carefully authored skill to create/update the codebase's DeepWiki. Read it, ask repository questions and follow source links into the local editor. | Reproduce DeepWiki's full documentation/reader/diagram/citation/Q&A experience with local/configurable output. Independent of live explanation, debug MCP, application browser and replay; generation quality is owned by the skill-driven agent. |
 
-The agent operates the application, pauses its real execution at meaningful points, explains the responsible source and actual runtime values, and continues through purchase confirmation. The learner forms a connected understanding of the application screen and the code. The complete process can be recorded and replayed.
+```mermaid
+flowchart LR
+  Repo[Real project source] --> Live[Standard chat + app + native debugger]
+  Live --> Explain[Grounded code-path explanation]
+  Explain --> Save[Save as learning replay]
+  Save --> Replay[Synchronized video + executed source + native debugger history]
+  Replay --> Summary[Learning summary + sequence diagram]
+  Repo --> Wiki[Editor AI + DeepWiki generation skill]
+  Wiki --> Site[Browser-readable DeepWiki site]
+  Site --> Links[Source deep links to the current editor]
+```
 
-This must help Raphtalia understand AI-written code, unfamiliar work codebases, and interesting OSS. A controlled commerce fixture proves mechanics; demonstrated use on real repositories establishes usefulness. A declared support matrix must make unsupported environments visible without implying universal language/framework support.
+Sharing source identities and optional links does not merge these lifecycles. A replay can be saved and viewed without generating a Wiki. A Wiki can be generated, updated and read without debugging, using the application browser or saving learning material. The learner does not need to show all these screens together.
 
-Both **Visual Studio Code and Cursor** are required host editors. The complete product experience, including agent control, runtime explanations, recording/replay, and all three display modes, must work in each. Host-specific integration may differ; a support matrix cannot exclude either required editor. Cursor support was added by explicit user request on 2026-09-18; see D007 in DECISIONS.md.
+**One UI design family, multiple feature screens.** The requirement for three selectable UI themes/layouts is retired. This does not remove learning replay or Wiki screens, and does not require one fixed arrangement containing every feature. The extension entry is a Codebook icon in the editor's left Activity Bar; selecting it exposes Codebook navigation and actions. The owner adopted [the v9 visual specification](DESIGN.md) after design review under D036.
+
+## Defining live-to-learning experience
+
+In a real project with a purchase flow, the learner might ask:
+
+> /codebook カートに入れてから購入するまでのコードパスを解説して
+
+The chat AI inspects that repository, operates its actual application, pauses the debugger at meaningful source locations and explains what is happening. For example, it may explain the relationship between the purchase button and a backend POST request. It must distinguish a stop before sending from an observed sent request; a source line alone does not prove a completed network operation. The learner inspects variables, watches and call stacks in the **editor's native debugger**. Codebook does not provide a duplicate runtime-values panel.
+
+The explained session can then be saved as a **learning replay with time-travel debugging**. Its screen inherits the live explanation composition: recorded application, historical executed source and native debugger remain visible together; the chat area becomes a learning summary. Playback, backward/forward steps and repeated seeking update all three to the same recorded moment, including inspectable historical runtime values and call stack. The summary and sequence diagram explain that history. This remains usable after the original app/debugger and chat have exited, without rerunning application side effects. A separate repository Wiki is optional for this flow.
+
+Approved partial-history behavior (4A): keep playing available video across intervals without source/debugger capture, mark the gaps on the timeline and show **Not recorded at this moment** on affected surfaces. Never reuse another moment's values or execution highlight. Restore corresponding state when reaching a recorded point. Missing required history remains an acceptance gap.
+
+Purchase is an example of a natural understanding question. Required targets use their own real behavior, including server, Chrome Extension, library test and supplied Example execution. The extension must not bundle a cart/sample project as a target. Use real opened repositories. Until final acceptance begins, development validation uses the owner-designated `nextjs-dashboard` checkout under [D031](DECISIONS.md#d031--use-nextjs-dashboard-for-development-until-final-acceptance-starts-2026-09-26) and [DEVELOPMENT.md](DEVELOPMENT.md#required-development-target-before-acceptance); final acceptance uses the unchanged nine-project matrix. Never substitute a fabricated application for a required target.
 
 ## Required final capabilities
 
-These IDs are stable and used by cycles and evidence records. They are not milestone numbers or a prescribed build order.
+IDs remain stable for historical evidence. Active requirements are **G01–G07 and G10–G12**. G08/G09 are retired identifiers, not pending features or passed checks.
 
-| ID | Required outcome | Evidence needed before marking verified |
+| ID | Required outcome | Evidence before verification |
 | --- | --- | --- |
-| G01 | One chat request drives the selected cart-to-confirmation scenario, with application operations, meaningful pauses, grounded explanations, and continuation. | A reproducible end-to-end run with required steps and causal links fixed before execution, plus observed confirmation. Per-pause manual wiring does not pass. |
-| G02 | Wiki-level explanations, a source-linked codemap, live observations, and recorded moments describe the same learning items. | Navigate in both directions between these views without losing the selected learning item or fabricating observed paths. |
-| G03 | Runtime explanations use the correct target, bound source/version, pause generation, and actual captured values. | Real-debugger checks for wrong-target/background activity, stale references, manual resume, and unresolved causal links. Required unresolved links prevent complete success. |
-| G04 | Record and replay the application screen, code, values, explanations, and their correspondence. | Replay after the app/debugger exits; inspect timing, pause-associated frames, an animated transition, source drift, and partial recordings. A browser-only video or event-only log is insufficient. |
-| G05 | The learner marks understanding and can see durable course-like progress. Execution evidence and personal understanding are independent. | Checks persist, execution never auto-checks understanding, and source changes signal review without rewriting learning history. |
-| G06 | An agent controls all host-editor capabilities needed for the experience in VS Code and Cursor through the extension-owned MCP service. | Exercise the supported capability surface in each host with a real external client, explicit target identity, lifecycle/error handling, and recovery. Existing separate tools alone do not prove this. |
-| G07 | Study workspace is the usable default presentation. | Validate app above source, contextual explanations/values, outline, and timeline in the actual extension, including constrained window sizes and loading/error/paused states. |
-| G08 | Living book is a selectable presentation of the same product. | Switch to and from it while preserving run, learning-item selection, progress, and playback position; verify its reading-focused UX. |
-| G09 | Guided walkthrough is a selectable presentation of the same product. | Switch to and from it with the same preserved state; verify its app/code-focused walkthrough UX. |
-| G10 | The tool is installable and useful beyond a prepared demonstration. | Complete the two-stage, nine-project matrix in FINAL_REVIEW.md using normal packaged installation in both hosts. Required TypeScript/JavaScript execution covers applicable Web UI, Node.js server, Chrome Extension, library tests and Examples; every library requires tests and Examples. Record compatibility, setup burden and grounded learning feedback without dropping unsupported required targets. |
-| G11 | The complete required product experience works in both VS Code and Cursor. | Install the packaged extension and run final acceptance separately in each actual editor. Record host/version, debugger/browser integration, MCP control, recording/replay, three-mode behavior, and any limitations. VS Code evidence or presumed extension compatibility alone does not verify Cursor. |
-| G12 | A bundled common thin skill lets users explicitly request Codebook with `/codebook` in standard VS Code Copilot Chat and Cursor Agent, with ordinary setup establishing the correct MCP connection. | Verify the same VSIX's skill version/content against the actually loaded skill in each host, slash discovery and explicit invocation, the chat AI's own Codebook MCP use and actual results, truthful unavailable/disconnected guidance, restart/reconnection, and protection of existing skills/settings/work. Registration alone is not execution evidence. |
-
-G08 and G09 are later implementation work, not optional final features. A working default mode or core walkthrough is a meaningful intermediate delivery, not the complete product.
+| G01 | One natural chat request drives a meaningful code path in a real opened project through application/runtime operations, debugger stops, grounded explanations and continuation to an observed result. | Freeze the scenario and required causal links before execution. The standard chat AI completes the flow without prepared answers or manual wiring at every pause. |
+| G02 | Reproduce DeepWiki itself for the opened codebase through the editor AI's generation skill. | Compare chapter hierarchy, substantial architecture/module articles, diagrams, relevant-source/inline citations, reader/navigation and working source-grounded repository Q&A with the inspected DeepWiki reference. Verify local/configured output, chat and browser **Update LLM Wiki** updates, freshness and correct-local-editor source links. Prove generation with runtime/debug MCP unavailable and independence from application/replay state. See the [Wiki contract](docs/specs/llm-wiki.md) and [skill plan](docs/plans/deepwiki-generation-skill.md). |
+| G03 | Explanations and replay use the correct target, source/version, pause generation and observed runtime facts. Native debugger views inspect live values during execution and recorded values during replay. | Check wrong/background targets, stale references, manual resume, source drift and unresolved causal links. Persist the historical values/stack required for replay and expose them through a clearly identified native replay-debug context; never reuse stale live handles or substitute current values. No custom Variables/Watch clone. |
+| G04 | Save the explained session as synchronized learning replay/time-travel debugging, with processing summary, sequence diagram and explanations. | After original app/debugger/chat exit, play and repeatedly step/seek backward and forward. At each required recorded point, application video, executed source and inspectable native debugger values/stack identify the same historical moment. Summary replaces the live chat area. Verify restart, motion, drift, partial/unavailable states and no repeated application side effects. Summary/video-only playback cannot pass. See the [replay contract](docs/specs/learning-replay.md). |
+| G05 | The learner owns saved learning material and explicit understanding/progress decisions. | Save and reopen a replay; persist learner decisions separately from execution status. Saving or successful execution never auto-marks understanding. Source changes signal review without rewriting prior learning history. Wiki generation has no dependency on this ledger. |
+| G06 | The extension-owned MCP/native-debugger services support live explanation and synchronized learning replay; independent DeepWiki uses the editor agent's source/file capabilities and generation skill. | Actual external-chat runtime/replay use in each host with target/source identity, lifecycle/error handling and recovery. Wiki update/status/source-opening integration is supporting transport; it must not require runtime/debug MCP or replace the generation skill. |
+| G07 | One coherent UI design supports live explanation, learning library/replay and independent Wiki entry points. | Codebook's Activity Bar reaches its features. Replay inherits live application's/source/debugger composition with the chat area replaced by a learning summary; Wiki opens independently in a browser. Verify navigation, focus/reading state and accessibility at the ordinary expanded desktop-window baseline under D034. Preserve approved summary collapse/reopen (5A); extreme sizes/zoom are outside required acceptance. |
+| G08 | **Retired:** mandatory Living book display variant. | D030 removes the selectable-theme requirement. Reading and Wiki capabilities are specified independently above. |
+| G09 | **Retired:** mandatory Guided walkthrough display variant. | D030 removes the selectable-theme requirement. Live explanation and replay remain required above. |
+| G10 | The packaged extension is useful on all nine required real projects, without a bundled target application. | Complete the two-stage matrix in FINAL_REVIEW.md in both hosts. Cover all applicable TS/JS Web UI, Node server, Chrome Extension, library tests and Examples; every library requires tests and Examples. Verify the final VSIX contains no cart demo source or assets. |
+| G11 | The complete active product experience works in both VS Code and Cursor. | Separate normally installed evidence per editor for standard chat execution, native debugger inspection, learning replay, independent Wiki/update/source links and usable feature navigation. One host's evidence does not verify the other. |
+| G12 | One bundled thin skill supports explicit `/codebook` use in standard Copilot Chat and Cursor Agent with ordinary skill/MCP setup. | Compare bundled and actually loaded identities; verify discovery, invocation, AI-owned results, missing-connection guidance, restart/reconnection and preservation of existing skills/settings/work. Registration alone is insufficient. |
 
 ## Bundled thin skill and explicit chat entry
 
-G12 is mandatory under [D023](DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21). It adds to every existing capability and acceptance condition; it does not replace any runtime, learning, recording, presentation or owner-acceptance requirement. The standard chat surfaces are **Copilot Chat in VS Code** and **Agent in Cursor**. Users must be able to explicitly invoke the common skill with a natural request, without depending on automatic skill selection:
+
+G12 is mandatory under [D023](DECISIONS.md#d023--bundle-one-thin-codebook-skill-for-explicit-editor-chat-entry-2026-09-21). It applies to the active capabilities below. D030 retires the former display-mode requirements and defines learning replay and independent LLM Wiki. The standard chat surfaces are **Copilot Chat in VS Code** and **Agent in Cursor**. Users must be able to explicitly invoke the common skill with a natural request, without depending on automatic skill selection:
 
 > /codebook ログイン処理を解説して
 >
 > /codebook このボタンを押してから画面が変わるまで、関係するコードと実際の値を見ながら説明して
 
-The invocation must place Codebook's usage guidance in the chat AI's context so that the AI itself can use Codebook's MCP capabilities. Discovering or loading the skill and successfully performing the requested Codebook workflow are separate acceptance checks.
+The invocation must place Codebook's usage guidance in the chat AI's context so that the AI itself can perform the selected workflow. Live explanation/replay uses Codebook's MCP capabilities; DeepWiki uses shared generation guidance and ordinary workspace capabilities. Discovering or loading the skill and successfully performing the requested workflow are separate acceptance checks.
 
 **One versioned artifact.** Bundle a common `SKILL.md` with frontmatter `name: codebook` in the same VSIX as the extension. Track and distribute its version and content with the extension; do not maintain different procedure bodies for the two editors. VS Code must register the bundled skill through the official `contributes.chatSkills` contribution. The primary Cursor route is a Codebook setup operation in the ordinary onboarding flow that installs the bundled skill into Cursor's officially supported user skill directory (`~/.cursor/skills/codebook/SKILL.md`, subject to verification in the declared target version). Users must not have to find, author or manually copy the skill body.
 
@@ -56,16 +83,16 @@ Track installed-file ownership, originating extension/skill version and content 
 
 **Thin shared procedure.** The skill connects the user's request to public Codebook capabilities. Its required guidance is:
 
-- Begin with `codebook_status` to establish the current workspace, connected instance, available capabilities and prerequisites. If the tool/connection is unavailable, disclose that condition instead of pretending this check succeeded.
-- Follow the public usage instructions and the state returned at that moment to select tools and resources; refer to the existing MCP descriptions and public help for detailed contracts instead of duplicating them in the skill.
-- According to the request, proceed through source inspection, application operation, real execution pauses, actual values, explanation, continuation and recording/replay using the existing product capabilities.
+- Route the request by feature. Live execution/replay begins with `codebook_status` to establish workspace, instance and current capabilities; disclose an unavailable connection. DeepWiki generation/update follows its shared generation guidance through the editor agent's normal workspace capabilities and does not require that runtime-MCP check.
+- Follow the selected feature's public usage instructions and current state. For live/replay tools, refer to the existing MCP descriptions and public help for detailed contracts instead of duplicating them in the skill.
+- For live requests, proceed through source inspection, application operation, actual pauses/values in the native debugger, chat explanation, continuation and synchronized learning replay. For Wiki requests, use the [DeepWiki generation skill](docs/plans/deepwiki-generation-skill.md): inspect the repository, generate/update full documentation, diagrams/citations and Q&A context, then validate quality. A thin entry may delegate detailed guidance within the same versioned distribution; both hosts use the same procedure.
 - Distinguish observed facts, reasoning from source and unverified boundaries. Obtain continuation arguments from the current execution state; do not guess or reuse stale arguments.
 - Leave understanding checks to the learner; the AI must never mark them complete on the learner's behalf.
 - State missing connections, unavailable capabilities and unmet prerequisites accurately. General source commentary is not a successful Codebook execution or observation.
 
 Do not embed repository-specific answers, correct stopping locations, expected variable values or test-only recipes in the skill. The skill is guidance, not an additional execution engine or an answer key.
 
-**One onboarding experience.** Public setup must prepare both skill availability and MCP connectivity. Registration alone does not establish a connection. Bind the dedicated work window and selected repository to the correct current Codebook instance, and verify that restart retains a valid connection or follows the documented reconnection flow. Keep credentials and ephemeral connection details out of `SKILL.md`, the distributed VSIX, public documentation and chat explanations. Use the supported private connection mechanism and record only sanitized identity evidence.
+**One onboarding experience.** Public setup prepares shared skill availability and, for live explanation/replay, MCP connectivity. Wiki generation remains available through the agent's normal workspace capabilities when runtime MCP is unavailable. Registration alone does not establish a runtime connection. Bind the dedicated work window and selected repository to the correct current Codebook instance, and verify that restart retains a valid connection or follows the documented reconnection flow. Keep credentials and ephemeral connection details out of `SKILL.md`, the distributed VSIX, public documentation and chat explanations. Use the supported private connection mechanism and record only sanitized identity evidence.
 
 **Optional future transport.** Record MCP Skills Extension / SEP-2640, introduced in the [requested background article](https://azukiazusa.dev/blog/mcp-skills-extension/), as an additional possible distribution route for this same skill. At this decision's research checkpoint, acquisition, host activation and slash-command availability through that extension have not been demonstrated in both required editors. Product completion must not wait for that route. Any later MCP distribution must share the bundled skill's body/version and prove host recognition and activation as a skill; exposing text as an MCP resource alone is insufficient.
 
@@ -73,34 +100,53 @@ The [implementation and validation plan](docs/plans/bundled-codebook-skill.md) t
 
 ## Product constraints
 
-- Architecture B: the extension owns runtime state, immutable evidence, and recording correspondence; external agents reason and explain through its API.
-- Treat VS Code and Cursor as required hosts when selecting APIs, debugger/browser integrations, packaging, and layout mechanisms. Validate host-specific assumptions; compatibility work may change implementation order without removing required outcomes in either host.
-- Separate content views (Overview / Live / Recording) from display layouts (Study workspace / Living book / Guided walkthrough).
-- Share the underlying learning/runtime/recording model across layouts. Switching layouts does not launch another run or duplicate progress.
-- Distinguish observed evidence, source-derived reasoning, and unknown boundaries. Time proximity alone does not establish causality.
-- Learner understanding is a user action, not an inference made from execution success.
-- Preserve source/version context and identify missing, truncated, redacted, partial, or stale evidence.
+- Architecture B governs live execution and replay: the extension owns runtime state, immutable evidence and recording correspondence; the editor chat AI reasons and explains through the API. D033's independent Wiki is skill-first: the editor agent generates its files/content; the extension supplies configuration/update/status/source-link support.
+- Standard chat is the live explanation surface. Use native source editors and debugger views for live and recorded source/value inspection. Retire Codebook's custom runtime-value display, not historical value inspection. Persist sufficient historical execution state to synchronize replay video/source/native debugger; missing capture must be visible and cannot pass a required replay point.
+- Learning replay and independent Wiki have distinct artifacts and lifecycles. Optional source-based cross-links must not make one a prerequisite for the other.
+- Generate the Wiki within the project folder by default; allow a configured output location. Source changes make existing documentation potentially stale. The learner explicitly requests an update in chat or uses **Update LLM Wiki**. An automatic background regeneration mechanism is not required by this decision.
+- Remove the active cart demo project, its packaged copies/assets, launch entry points and fixture-specific product instructions. Retain historical reports as historical evidence; source history does not become a supported target. Small isolated unit-test inputs may test mechanisms but cannot replace real-project trials or ship as a demo application.
+- Distinguish observations, source-based reasoning and unknown boundaries in chat, summaries, diagrams and Wiki pages. Source-derived documentation is not evidence of executed behavior.
+- Preserve source/version context and disclose missing, truncated, redacted, partial or stale evidence. Learning and saved replay remain available independently of the original chat's continued availability.
+- Use an ordinary expanded desktop window at normal/default zoom as the layout baseline under D034. OS full-screen is not required; extremely small windows and extreme zoom such as 200% are outside mandatory design/acceptance. Preserve keyboard/theme/focus/contrast/reduced-motion behavior at the supported layout.
+- Under D035, every assigned Codebook keyboard shortcut is shown in its UI tooltip, and **?** opens the [keyboard-shortcut list](docs/specs/keyboard-shortcuts.md) in eligible non-editing contexts. Preserve question-mark typing in chat/source/input/IME contexts; list entries and tooltips must match actual bindings in each host and the independent browser Wiki.
+- D036 adopts the corrected [v9 visual specification](DESIGN.md). Implement its hierarchy and accepted interactions using each host's native surfaces. Agents must open the actual PNG, read the full required contracts and record the entry/verification receipts under [AGENTS.md](AGENTS.md) and [IMPLEMENTATION.md](IMPLEMENTATION.md). The three old images are historical references only.
 
 ## Final acceptance
 
-Individual capability checks are necessary but not sufficient. Before declaring the product complete:
+1. Freeze the final source, distributed VSIX/version/hash, common skill/setup/guide identities, target revisions, scenarios and supported host/dependency versions. Verify removal of the bundled cart target from source/build/package paths.
+2. In each host, use standard `/codebook` chat and public onboarding to complete meaningful real-project code paths, including required causal boundaries. Verify native debugger/source inspection and truthful failures without a custom values panel.
+3. Save those explanations as learning replays. After original runtime/debugger/chat exit, verify synchronized video, historical executed source and inspectable native debugger values/stack through repeated backward/forward steps, scrubbing and restart. The live chat position shows a learning summary and evidence-linked sequence diagram. Verify motion, partial/source-drift behavior and unchanged target side effects; video/summary alone is insufficient. Persist explicit learner progress.
+4. Independently generate the repository's DeepWiki through the loaded generation skill, with runtime/debug MCP unavailable. Compare reader/content/diagrams/citations with the DeepWiki reference and exercise source-grounded Q&A. Verify default/configured output, freshness, chat/browser **Update LLM Wiki** and local-editor source links in each host. Existing replay/debug history and learner progress remain unchanged.
+5. Verify the separate feature screens and Codebook entry point against the approved v9 visual specification, at an ordinary expanded desktop window and normal/default zoom, including focus, keyboard/theme/reduced-motion behavior and preservation of unrelated work. Verify D035's actual shortcuts, action tooltips and **?** list, including ordinary typing preservation. OS full-screen mode, extremely small windows and extreme zoom such as 200% are not required under D034. Theme switching among the retired variants is not an acceptance step.
+6. Complete every Stage 1 main-agent project/host/use-case row in the [fixed nine-project matrix](docs/acceptance/ACCEPTANCE_MATRIX.md) through normal installed use. Library tests and supplied Examples are both mandatory; browser-only evidence does not establish server or Chrome Extension support.
+7. Only after all Stage 1 rows and all active capabilities are ready, assign nine independent junior-developer SubAgents, one per project, each evaluating both hosts. Every required assessment needs concrete PASS evidence and justified confidence >=9/10. Missing mandatory work, material mismatch, prohibited assistance or important unknowns prevent PASS regardless of score.
+8. Verify G12 separately in both stages: discovery, actual loaded guidance identity, current correct MCP connection for live/replay and AI-owned results for each feature; include restart, unavailable states and protection of existing skills/settings/work. Verify the Wiki route independently with runtime MCP unavailable.
+9. Preserve failures and retest affected rows after extension/skill/setup/connection changes. Assess impact and justify any unaffected carry-forward. All final PASS evidence must remain valid for the final fixed distributed VSIX; no consecutive-pass/reset counter applies.
+10. Link current evidence for all active IDs and integrated feature behavior in PROJECT_STATE.md, and separately record Raphtalia's acceptance. Keep Goal Issue #1 open until all conditions hold.
 
-1. Freeze the support matrix and full-scenario expectation table before running final acceptance. Include declared versions of both VS Code and Cursor, with debugger/browser dependencies and OS constraints. Run steps 2–6 separately in each actual host.
-2. Run the complete natural-language checkout walkthrough through the packaged extension in Study workspace, with the required causal links verified and no per-stop manual wiring.
-3. Replay its screen/code/value/explanation record after stopping the application and debugger. Verify animation and transitions with video/frame evidence.
-4. Traverse the wiki, codemap, runtime observations, and replay from the same learning items; persist learner progress.
-5. Switch among all three layouts during a live session and during replay without losing state. Verify each layout's intended use.
-6. Exercise interruption/recovery and unrelated-target cases; validate real-repository use and the declared support matrix.
-7. Link current, reproducible evidence for G01–G12, identified by host and version, in PROJECT_STATE.md and separately record Raphtalia's acceptance that the tool supports the intended understanding experience in both hosts. Owner acceptance does not replace either stage below or independently authorize final closure; all conditions must hold before closure.
-8. Complete Stage 1 main-agent practical validation on every one of the nine fixed projects in [ACCEPTANCE_MATRIX.md](docs/acceptance/ACCEPTANCE_MATRIX.md), in both hosts and every applicable required execution form. Use normal packaged installation, public skill/MCP onboarding and natural `/codebook` questions as a paying customer. Real execution, meaningful stops and values, stepping/continuation, correct source correspondence, saving/later viewing and understandable recovery must work without hidden developer assistance. Library tests and Examples are both mandatory in each host. Demos and development preflight cannot substitute.
-9. Only after every required Stage 1 row passes and the complete candidate exists, assign nine independent junior-developer SubAgents, one per project, to personally evaluate that same project in both hosts. Require all project/host/use-case results to PASS with concrete evidence and subjective confidence >=9/10, including each junior's own-word understanding and source/runtime correctness grounds. Missing mandatory work, material mismatch, unavailable user operations or important unknowns prevent PASS regardless of score. Do not provide answer keys, internal workarounds or prior evaluations.
-10. Verify G12 in both stages: bundled-versus-loaded common skill identity, explicit `/codebook` discovery/context loading, AI-owned Codebook MCP execution, truthful unavailable guidance, correct repository/instance connection after restart and protection of existing skills/settings/work. Keep all capabilities, integrated checkout, recording and all three modes mandatory; owner acceptance remains separate.
-11. Preserve failed attempts, fix and retest affected rows without a consecutive-pass requirement. Assess every extension/skill/setup/connection change for impact on existing passes, retest all targets affected by shared execution/recording/explanation changes and justify any unaffected carry-forward. Demonstrate that all final evidence is valid for the final fixed distributed VSIX; do not combine incompatible versions.
+[FINAL_REVIEW.md](docs/acceptance/FINAL_REVIEW.md) owns the detailed protocol. D029 preserves the nine required projects and two ordered stages; D030/D032/D033 define the product behavior those stages evaluate. Protect the designated private checkout and private evidence. Historical protocols/cycles preserve the criteria used at the time and do not override version 9. Claude Code CLI review remains owner-skipped and distinct from native editor-chat acceptance.
 
-[FINAL_REVIEW.md](docs/acceptance/FINAL_REVIEW.md) is the detailed protocol. D029 explicitly replaces the older random pool, ten-reviewer recommendation, reuse, consecutive-pass and reset-to-zero rules with the nine mandatory projects and ordered stages. TypeScript/JavaScript scope cannot be narrowed to browser or Next.js to exclude required runtimes. Unprepared or externally blocked targets remain unverified/BLOCKED with reasons. Preserve the designated private work checkout and keep private source, business data, credentials and recordings out of public issues/commits. Historical version 4/5 records retain their original criteria as history, never as current authority. Claude Code CLI review remains owner-skipped and distinct from actual editor chat acceptance.
+## Design authority
 
-There is no automatic percentage-complete claim based on task counts. Evidence that has been invalidated by a source, adapter, or environment change must be revalidated before final acceptance.
+Read [DESIGN.md](DESIGN.md); read the [current behavioral design](docs/designs/codebook.md) when the corresponding implementation branch in AGENTS.md applies. Open and visually inspect [the actual PNG](docs/designs/assets/codebook-product-spec-v9.png). GStack design review and whole-image adoption are complete; implementation and native proof remain separate. The [local execution guide](IMPLEMENTATION.md) consolidates the implementation loop, complete acceptance map and evidence template.
 
-## Approved reference
+## Cycle 0029 requirement coverage
 
-See the [approved product design](docs/designs/codebook.md) and [three visual concepts](docs/designs/README.md). They explain the product direction; the current cycle determines what to implement next.
+Every accepted product change in [Cycle 0029](docs/cycles/0029-feature-specification.md) must appear here or in the full feature contract linked here. A cycle-only requirement is a documentation defect. Update this crosswalk when the owner changes that cycle's product scope; an entry means **specified**, not implemented or passed.
+
+| Owner decision | Goal / controlling local requirement |
+| --- | --- |
+| Delete the active cart demo; use actual repositories | G10; Product constraints; final VSIX inventory |
+| Use the exact nextjs-dashboard until final acceptance | Defining live-to-learning experience; D031 development target; unchanged nine-project final protocol |
+| Retire three UI themes while retaining learning and Wiki screens | G07; retired G08/G09; Product purpose and feature relationships |
+| Standard chat explains app operations at real debugger stops; values use native debugger | G01/G03/G06/G11; Defining live-to-learning experience |
+| Save explanations with summary and sequence; synchronized time-travel replay after runtime exit | G04/G05; [complete replay contract](docs/specs/learning-replay.md); D032 |
+| Bottom capture/save and truthful missing-history continuation | G04/G07; replay contract; individually approved 2A/4A |
+| Reproduce DeepWiki itself, independently of debug/replay, primarily through the generation skill | G02/G06/G12; [complete Wiki contract](docs/specs/llm-wiki.md); D033 |
+| Project-local/configurable Wiki output, chat/browser update and correct-local-editor citations | G02/G11; Wiki contract; individually approved 3A |
+| Ordinary expanded desktop/default zoom; summary collapse/reopen | G07; Product constraints; replay contract; 5A/D034 |
+| Assigned shortcut tooltips and the ? shortcut list | G07/G11; [complete shortcut contract](docs/specs/keyboard-shortcuts.md); D035 |
+| Adopt the corrected v9 image and require agents to inspect it | Design authority; D036; AGENTS.md implementation-entry gate |
+| Local instructions sufficient without issue/chat access; mandatory reads and reviewable evidence | [IMPLEMENTATION.md](IMPLEMENTATION.md); AGENTS.md entry/closure gates; D036 |
+
+The three feature contracts above are normative parts of this goal and mandatory full reads under AGENTS.md. Detailed skill-generation/onboarding procedures and the final protocol are required when their branch of work is selected. Historical evidence and external references remain reference material. Local files own these requirements; issue bodies may repeat them but cannot be their only location.

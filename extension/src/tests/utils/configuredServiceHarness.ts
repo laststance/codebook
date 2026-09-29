@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { TestContext } from 'node:test';
-import { Evidence } from 'codebook-cycle-0001/dist/evidence';
-import { PauseGate } from 'codebook-cycle-0001/dist/pauseGate';
+import { Evidence } from '../../runtimeSupport/evidence';
+import { PauseGate } from '../../runtimeSupport/pauseGate';
 import { LearningLibrary } from '../../learningLibrary';
 import { RepositoryBookStore } from '../../repositoryBook';
 import { StudyService } from '../../service';

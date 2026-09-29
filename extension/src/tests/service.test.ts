@@ -1,23 +1,23 @@
 import { snapshotSourceHashes } from '../utils/snapshotSourceHashes';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
-import { PROFILE_ID, RUN_TIMEOUT_MS } from '../constants';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
+import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID, REPOSITORY_RUN_TIMEOUT_MS as RUN_TIMEOUT_MS } from '../constants';
 import { StudyError } from '../errors';
 import { readResource } from '../resources';
 import { ControlledRuntime, createHarness } from './helpers';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 
 test('runtime success remains pending or partial until the latest terminal reader checkpoint is saved', async () => {
   // Arrange: the runtime outcome is injected; this tests the product persistence contract, not execution success.
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'history-outcome' }), record = service.record(receipt);
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'history-outcome' }), record = service.record(receipt);
   try {
     await record.preparation;
     const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime);
-    runtime.view = () => ({ ...view(), finalOutcome: 'demonstrated' });
+    runtime.view = () => ({ ...view(), finalOutcome: 'demonstrated', operation: runtime.operation && { ...runtime.operation, afterVerified: true, continuedPause: runtime.snapshot?.pause } });
     const stopped = await service.stop(receipt);
     assert.equal(stopped.finalOutcome, 'demonstrated'); assert.equal(stopped.historyOutcome.status, 'unavailable'); assert.equal(stopped.studyOutcome, 'partial');
     // Act
@@ -40,17 +40,17 @@ test('runtime success remains pending or partial until the latest terminal reade
 test('a post-stop explanation invalidates the earlier saved checkpoint until its own material revision is persisted', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'late-interpretation' }), record = service.record(receipt);
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'late-interpretation' }), record = service.record(receipt);
   try {
-    await record.preparation; service.action({ ...receipt, key: 'one', action: 'add-to-cart' });
+    await record.preparation; service.action({ ...receipt, key: 'one', action: 'repository-click' });
     const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime);
-    runtime.view = () => ({ ...view(), finalOutcome: 'demonstrated' });
+    runtime.view = () => ({ ...view(), finalOutcome: 'demonstrated', operation: runtime.operation && { ...runtime.operation, afterVerified: true, continuedPause: runtime.snapshot?.pause } });
     await service.stop(receipt);
     const old = service.state(record), revision = service.beginHistory(record, old.materialSignature)!;
     service.reportHistory(record, old.materialSignature, revision, 'saved');
     assert.equal(service.state(record).studyOutcome, 'demonstrated');
     // Act
-    await service.explain({ ...receipt, key: 'late', snapshotUri: old.observations[0]!.snapshotUri, sourceHash: sha256('const price = 24;'), valuePaths: ['price'], interpretation: 'The captured price is 24.' });
+    await service.explain({ ...receipt, key: 'late', snapshotUri: old.observations[0]!.snapshotUri, sourceHash: sha256('const nextTheme = "dark";\n'), valuePaths: ['value:nextTheme'], interpretation: 'The captured price is 24.' });
     const changed = service.state(record);
     // Assert
     assert.notEqual(changed.materialSignature, old.materialSignature); assert.equal(changed.historyOutcome.status, 'pending'); assert.equal(changed.studyOutcome, 'pending');
@@ -61,60 +61,16 @@ test('a post-stop explanation invalidates the earlier saved checkpoint until its
   } finally { await harness.close(); }
 });
 
-test('a cart observation cannot borrow order facts from a later stop on the same participant', async () => {
-  // Arrange
-  const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: 'checkout-demo', key: 'facts' }), record = service.record(receipt);
-  try {
-    await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
-    const cart = service.state(record).observations[0]!; const hash = snapshotSourceHashes(service.snapshot(record, cart.snapshotUri)).typescript;
-    await service.continue(service.state(record).participants.server!.continueArguments!); harness.runtimes[0]!.status = 'ready';
-    service.action({ ...receipt, key: 'order', action: 'checkout' });
-    const order = service.state(record).observations[1]!;
-    // Act / Assert
-    assert.throws(() => service.explain({ ...receipt, key: 'invalid-cart-order', snapshotUri: cart.snapshotUri, sourceHash: hash, valuePaths: ['orderId'], interpretation: 'This fact was never captured at the cart stop.' }), error => error instanceof StudyError && error.code === 'INVALID_REFERENCE');
-    const explanation = await service.explain({ ...receipt, key: 'order-facts', snapshotUri: order.snapshotUri, sourceHash: hash, valuePaths: ['total', 'orderCount'], interpretation: 'The order will contain the selected cart total.' });
-    const saved = await readResource(service, explanation.explanationUri); assert.ok('text' in saved);
-    assert.deepEqual(JSON.parse(saved.text).capturedFacts, [{ path: 'total', value: 24 }, { path: 'orderCount', value: 0 }]);
-    assert.equal(record.explanations.size, 1); assert.equal(service.snapshot(record, cart.snapshotUri).values.cartCount, 0);
-  } finally { await harness.close(); }
-});
-
-test('historical source and missing cart image remain bound to their item after order creation', async () => {
-  // Arrange
-  const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: 'checkout-demo', key: 'assets' }), record = service.record(receipt);
-  try {
-    await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
-    const runtime = harness.runtimes[0]!, cart = service.state(record).observations[0]!;
-    const original = await readResource(service, cart.sourceUri);
-    await service.continue(service.state(record).participants.server!.continueArguments!); runtime.status = 'ready';
-    service.action({ ...receipt, key: 'order', action: 'checkout' });
-    const order = service.state(record).observations[1]!;
-    const orderSource = { ...runtime.seal, source: 'const total = 24;' };
-    runtime.snapshot!.source.typescriptHash = sha256(orderSource.source);
-    runtime.source = item => item === 'checkout-demo/cart-mutation' ? runtime.seal : item === 'checkout-demo/order-creation' ? orderSource : undefined;
-    const bytes = Buffer.from('synthetic order image'); await writeFile(join(runtime.evidence.directory, 'paused-order-creation.png'), bytes);
-    const view = runtime.view.bind(runtime);
-    runtime.view = () => ({ ...view(), captures: { 'paused-cart-mutation': { status: 'failed', error: 'No cart image' }, 'paused-order-creation': { status: 'captured', file: 'paused-order-creation.png', renderer: { epoch: 'test', id: 2, hash: sha256(bytes) } } } });
-    // Act / Assert
-    assert.deepEqual(await readResource(service, cart.sourceUri), original);
-    const currentSource = await readResource(service, order.sourceUri); assert.ok('text' in currentSource); assert.equal(currentSource.text, 'const total = 24;');
-    await assert.rejects(readResource(service, service.uri(record.id, 'images/paused-cart-mutation')), error => error instanceof StudyError && error.code === 'EVIDENCE_UNAVAILABLE');
-    const currentImage = await readResource(service, service.uri(record.id, 'images/paused-order-creation')); assert.ok('blob' in currentImage); assert.equal(currentImage.blob, bytes.toString('base64'));
-  } finally { await harness.close(); }
-});
-
 for (const shutdown of ['run stop', 'server shutdown'] as const) {
   test(`${shutdown} drains an accepted source display before releasing ownership and rejects later displays`, async () => {
     // Arrange
     const harness = await createHarness(), service = harness.service;
-    const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'source-owner' });
+    const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'source-owner' });
     let release!: () => void, entered = false, editorOpen = false, settled = false;
     const barrier = new Promise<void>(resolve => { release = resolve; });
     try {
-      await service.record(receipt).preparation; service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
-      const snapshotUri = service.state(service.record(receipt)).participants.server!.snapshotUri!, runtime = harness.runtimes[0]!;
+      await service.record(receipt).preparation; service.action({ ...receipt, key: 'click', action: 'repository-click' });
+      const snapshotUri = service.state(service.record(receipt)).participants.browser.snapshotUri!, runtime = harness.runtimes[0]!;
       const stop = runtime.stop.bind(runtime);
       runtime.reveal = async () => { entered = true; await barrier; editorOpen = true; runtime.evidence.record('agent.source-revealed'); };
       runtime.stop = async () => { editorOpen = false; await stop(); };
@@ -128,7 +84,7 @@ for (const shutdown of ['run stop', 'server shutdown'] as const) {
       const before = runtime.evidence.events.length;
       await assert.rejects(service.reveal({ ...receipt, snapshotUri }), error => error instanceof StudyError && error.code === (shutdown === 'run stop' ? 'BUSY' : 'SERVER_STOPPING'));
       assert.equal(runtime.evidence.events.length, before);
-      const source = await readResource(service, `${snapshotUri}/source/typescript`); assert.ok('text' in source); assert.equal(source.text, 'const price = 24;');
+      const source = await readResource(service, `${snapshotUri}/source/typescript`); assert.ok('text' in source); assert.equal(source.text, 'const nextTheme = "dark";\n');
     } finally { release(); await harness.close(); }
   });
 }
@@ -136,7 +92,7 @@ for (const shutdown of ['run stop', 'server shutdown'] as const) {
 test('repeated start intent creates one runtime and a conflicting key never silently changes its profile', async () => {
   // Arrange
   const harness = await createHarness(); const service = harness.service;
-  const input = { instanceId: service.instanceId, profile: PROFILE_ID, key: 'one' };
+  const input = { instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'one' };
   try {
     // Act
     const first = service.start(input), second = service.start(input); const record = service.record(first);
@@ -153,7 +109,7 @@ test('stop during delayed runtime acquisition waits and releases the late resour
   // Arrange
   let release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; }); let acquiring = false;
   const harness = await createHarness({ create: async directory => { acquiring = true; await barrier; return new ControlledRuntime(directory); } });
-  const service = harness.service, receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'late' });
+  const service = harness.service, receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'late' });
   try {
     await waitUntil(() => acquiring, 'acquisition', 1_000);
     // Act
@@ -169,7 +125,7 @@ test('shutdown during prerequisite validation prevents a late runtime launch', a
   // Arrange
   let release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; });
   const harness = await createHarness({ prerequisites: async () => { await barrier; return { ready: true, missing: [] }; } });
-  const service = harness.service; service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'late' });
+  const service = harness.service; service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'late' });
   // Act
   const stopping = service.shutdown(); release(); await stopping;
   // Assert
@@ -179,8 +135,8 @@ test('shutdown during prerequisite validation prevents a late runtime launch', a
 test('an action submitted before readiness is rejected without dispatch and a replay after stop keeps its original receipt', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'ready' }); const record = service.record(receipt);
-  const action = { ...receipt, key: 'click', action: 'add-to-cart' as const };
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'ready' }); const record = service.record(receipt);
+  const action = { ...receipt, key: 'click', action: 'repository-click' as const };
   try {
     // Act / Assert
     assert.throws(() => service.action(action), error => error instanceof StudyError && error.code === 'BUSY');
@@ -192,7 +148,7 @@ test('an action submitted before readiness is rejected without dispatch and a re
 test('a failed prerequisite becomes an actionable terminal record and never creates a runtime', async () => {
   // Arrange
   const harness = await createHarness({ prerequisites: async () => ({ ready: false, missing: ['codebook.nodeExecutable missing'] }) });
-  const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, key: 'missing' });
+  const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'missing' });
   try {
     // Act
     await harness.service.record(receipt).preparation; await harness.service.stop(receipt);
@@ -207,34 +163,34 @@ test('a failed prerequisite becomes an actionable terminal record and never crea
 test('simultaneous continuation consumes only one exact pause and historical snapshots stay readable after expiry', async () => {
   // Arrange
   let now = 0; const harness = await createHarness({ now: () => now }), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'pause' }); const record = service.record(receipt);
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'pause' }); const record = service.record(receipt);
   try {
-    await record.preparation; service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
-    const state = service.state(record), continuation = state.participants.server!.continueArguments!;
+    await record.preparation; service.action({ ...receipt, key: 'click', action: 'repository-click' });
+    const state = service.state(record), continuation = state.participants.browser.continueArguments!;
     // Act
     const results = await Promise.allSettled([service.continue(continuation), service.continue(continuation)]);
     now = RUN_TIMEOUT_MS + 1; service.maintain(); await service.stop(receipt);
-    const snapshot = await readResource(service, state.participants.server!.snapshotUri!);
+    const snapshot = await readResource(service, state.participants.browser.snapshotUri!);
     // Assert
     assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
-    assert.equal(service.state(record).participants.server!.resumable, false);
+    assert.equal(service.state(record).participants.browser.resumable, false);
     await assert.rejects(service.continue(continuation), error => error instanceof StudyError && error.code === 'STALE_PAUSE');
-    assert.ok('text' in snapshot); assert.equal(JSON.parse(snapshot.text).values.price, 24); assert.equal(harness.runtimes[0]?.dispatches, 1);
+    assert.ok('text' in snapshot); assert.equal(JSON.parse(snapshot.text).values['value:nextTheme'], 'dark'); assert.equal(harness.runtimes[0]?.dispatches, 1);
   } finally { await harness.close(); }
 });
 
 test('explanations publish captured values only after persistence and same-key callers share the pending write', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'explain' }), record = service.record(receipt);
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'explain' }), record = service.record(receipt);
   let release: (() => void) | undefined;
   try {
-    await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
-    const snapshotUri = service.state(record).participants.server!.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
+    await record.preparation; service.action({ ...receipt, key: 'module', action: 'repository-click' });
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
     const evidence = harness.runtimes[0]!.evidence, originalSave = evidence.save.bind(evidence);
     let entered = false; const barrier = new Promise<void>(resolve => { release = resolve; });
     evidence.save = async (name, contents) => { entered = true; await barrier; await originalSave(name, contents); };
-    const input = { ...receipt, key: 'explanation', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: ['price', 'cartCount'] as ('price' | 'cartCount')[], interpretation: 'The cart is still empty at the captured statement.' };
+    const input = { ...receipt, key: 'explanation', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: ['value:nextTheme', 'value:enabled'], interpretation: 'The theme is dark at the captured statement.' };
     // Act
     const first = service.explain(input), duplicate = service.explain(input);
     await waitUntil(() => entered, 'explanation write', 1_000);
@@ -243,7 +199,7 @@ test('explanations publish captured values only after persistence and same-key c
     assert.throws(() => service.explain({ ...input, interpretation: 'different' }), error => error instanceof StudyError && error.code === 'IDEMPOTENCY_CONFLICT');
     release?.(); const result = await first; const resource = await readResource(service, result.explanationUri);
     assert.ok('text' in resource); const saved = JSON.parse(resource.text);
-    assert.deepEqual(saved.capturedFacts, [{ path: 'price', value: 24 }, { path: 'cartCount', value: 0 }]); assert.equal(saved.learnerUnderstandingChanged, false);
+    assert.deepEqual(saved.capturedFacts, [{ path: 'value:nextTheme', value: 'dark' }, { path: 'value:enabled', value: false }]); assert.equal(saved.learnerUnderstandingChanged, false);
     assert.deepEqual(JSON.parse(await readFile(join(evidence.directory, `agent-explanation-${saved.id}.json`), 'utf8')), saved);
   } finally { release?.(); await harness.close(); }
 });
@@ -251,13 +207,13 @@ test('explanations publish captured values only after persistence and same-key c
 test('a failed explanation write never appears as committed history or a successful final outcome', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'storage' }), record = service.record(receipt);
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'storage' }), record = service.record(receipt);
   try {
-    await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
-    const snapshotUri = service.state(record).participants.server!.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
+    await record.preparation; service.action({ ...receipt, key: 'module', action: 'repository-click' });
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
     harness.runtimes[0]!.evidence.save = async () => { throw new Error('ENOSPC'); };
     // Act / Assert
-    await assert.rejects(service.explain({ ...receipt, key: 'explain', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: ['price'], interpretation: 'Price captured.' }), error => error instanceof StudyError && error.code === 'EVIDENCE_UNAVAILABLE');
+    await assert.rejects(service.explain({ ...receipt, key: 'explain', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: ['value:nextTheme'], interpretation: 'Price captured.' }), error => error instanceof StudyError && error.code === 'EVIDENCE_UNAVAILABLE');
     assert.equal(record.explanations.size, 0); assert.equal(service.state(record).finalOutcome, 'not-demonstrated');
   } finally { await harness.close(); }
 });
@@ -265,7 +221,7 @@ test('a failed explanation write never appears as committed history or a success
 test('completed runtime resources are released without a further client request', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'complete' });
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'complete' });
   try {
     await service.record(receipt).preparation; harness.runtimes[0]!.status = 'completed';
     // Act
@@ -278,17 +234,17 @@ test('completed runtime resources are released without a further client request'
 test('event pagination bounds response detail and a source resource retains the captured bytes', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'history' });
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'history' });
   try {
-    const record = service.record(receipt); await record.preparation; service.action({ ...receipt, key: 'cart', action: 'add-to-cart' });
+    const record = service.record(receipt); await record.preparation; service.action({ ...receipt, key: 'module', action: 'repository-click' });
     for (let index = 0; index < 60; index += 1) harness.runtimes[0]!.evidence.record('test.detail', { text: 'x'.repeat(9_000) });
     // Act
     const page = await readResource(service, service.uri(record.id, 'events/0'));
-    const source = await readResource(service, service.state(record).participants.server!.sourceUri!);
+    const source = await readResource(service, service.state(record).participants.browser.sourceUri!);
     // Assert
     assert.ok('text' in page && 'text' in source); const parsed = JSON.parse(page.text);
     assert.equal(parsed.events.length, 50); assert.equal(parsed.events[1].detail.truncated, true); assert.match(parsed.nextUri, /events\/50$/);
-    assert.equal(source.text, 'const price = 24;');
+    assert.equal(source.text, 'const nextTheme = "dark";\n');
     await assert.rejects(readResource(service, service.uri(record.id, 'events/-1')), /cursor/);
   } finally { await harness.close(); }
 });

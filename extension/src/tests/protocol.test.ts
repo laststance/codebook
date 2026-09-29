@@ -5,11 +5,18 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod';
 import { request } from 'node:http';
 import { connect as connectSocket } from 'node:net';
-import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 import { httpStatus } from './utils/httpStatus';
 import { startServer, type ConnectionDescriptor } from '../server';
-import { PROFILE_ID, SESSION_IDLE_TIMEOUT_MS } from '../constants';
+import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID, SESSION_IDLE_TIMEOUT_MS } from '../constants';
 import { createHarness } from './helpers';
+import { snapshotSourceHashes } from '../utils/snapshotSourceHashes';
+import { NodeTestHistoryStore } from '../nodeTestHistoryStore';
+import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture';
+import { sha256 } from '../runtimeSupport/utils/sha256';
 
 /** Connects the actual SDK client rather than emulating JSON-RPC in tests. @example const connected = await connect(endpoint.descriptor) */
 async function connect(descriptor: ConnectionDescriptor) {
@@ -55,31 +62,6 @@ test('status identifies extension build changes without claiming that the target
   } finally { await connection.close(); await endpoint.close(); await harness.close(); }
 });
 
-test('ordinary chats discover readable help for both demo profiles without starting an application', async () => {
-  // Arrange
-  const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
-  try {
-    // Act
-    const result = await connection.client.callTool({ name: 'codebook_status', arguments: {} });
-    const profiles = z.object({ data: z.object({ profiles: z.array(z.object({ id: z.string(), helpUri: z.string().optional() })) }) }).parse(result.structuredContent).data.profiles;
-    // Assert
-    assert.deepEqual(profiles, [
-      { id: 'paired-cart-demo', helpUri: 'codebook://help/studies' },
-      { id: 'checkout-demo', helpUri: 'codebook://help/studies' },
-      { id: 'repository-browser', helpUri: 'codebook://help/repository-browser' },
-    ]);
-    // Read the discovered URIs through the same tool surface that ordinary editor chats use.
-    for (const profile of profiles) {
-      assert.ok(profile.helpUri);
-      const help = await connection.client.callTool({ name: 'codebook_read_resource', arguments: { uri: profile.helpUri } });
-      const resource = z.object({ ok: z.literal(true), uri: z.string(), mimeType: z.string(), data: z.object({ sequence: z.array(z.string()) }) }).parse(help.structuredContent);
-      assert.equal(resource.uri, profile.helpUri); assert.equal(resource.mimeType, 'application/json');
-      assert.ok(resource.data.sequence.length > 0);
-    }
-    assert.equal(harness.runtimes.length, 0);
-  } finally { await connection.close(); await endpoint.close(); await harness.close(); }
-});
-
 test('tool-only editor chats receive public help and current run data in structured results', async () => {
   // Arrange
   const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
@@ -88,7 +70,7 @@ test('tool-only editor chats receive public help and current run data in structu
     const helpUri = 'codebook://help/repository-browser';
     const helpTool = await connection.client.callTool({ name: 'codebook_read_resource', arguments: { uri: helpUri } });
     const helpResource = await connection.client.readResource({ uri: helpUri });
-    const started = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: PROFILE_ID, key: 'resource-tool' } });
+    const started = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'resource-tool' } });
     const receipt = z.object({ data: receiptSchema }).parse(started.structuredContent).data;
     await harness.service.record(receipt).preparation;
     const runTool = await connection.client.callTool({ name: 'codebook_read_resource', arguments: { uri: receipt.runUri } });
@@ -118,60 +100,24 @@ test('real MCP discovery, action and reconnect retain one runtime and one click 
   try {
     // Act
     const discovery = await first.client.listTools(); const templates = await first.client.listResourceTemplates();
-    const started = await first.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: PROFILE_ID, key: 'study' } });
+    const started = await first.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'study' } });
     const receipt = z.object({ data: receiptSchema }).parse(started.structuredContent).data;
     await harness.service.record(receipt).preparation;
-    const arguments_ = { instanceId: receipt.instanceId, runId: receipt.runId, key: 'click', action: 'add-to-cart' };
+    const arguments_ = { instanceId: receipt.instanceId, runId: receipt.runId, key: 'click', action: 'repository-click' };
     const accepted = await first.client.callTool({ name: 'codebook_action', arguments: arguments_ });
     await first.client.close();
     second = await connect(endpoint.descriptor);
     const repeated = await second.client.callTool({ name: 'codebook_action', arguments: arguments_ });
     const state = await second.client.readResource({ uri: receipt.runUri });
     // Assert
-    assert.deepEqual(discovery.tools.map(tool => tool.name).sort(), ['codebook_action', 'codebook_continue', 'codebook_explain', 'codebook_open_book', 'codebook_playback', 'codebook_presentation', 'codebook_publish_book', 'codebook_read_resource', 'codebook_return_current', 'codebook_reveal', 'codebook_source', 'codebook_sources', 'codebook_start', 'codebook_status', 'codebook_stop']);
+    assert.deepEqual(discovery.tools.map(tool => tool.name).sort(), ['codebook_action', 'codebook_continue', 'codebook_explain', 'codebook_explain_node_history', 'codebook_open_book', 'codebook_playback', 'codebook_presentation', 'codebook_publish_book', 'codebook_read_resource', 'codebook_return_current', 'codebook_reveal', 'codebook_source', 'codebook_sources', 'codebook_start', 'codebook_status', 'codebook_stop']);
     assert.equal(templates.resourceTemplates.length, 17); assert.equal(accepted.isError, undefined);
     assert.deepEqual(repeated.structuredContent, accepted.structuredContent); assert.equal(harness.runtimes[0]?.dispatches, 1);
-    assert.match(JSON.stringify(state), /paused-server/);
+    assert.match(JSON.stringify(state), /paused-browser/);
     const get = await fetch(endpoint.descriptor.url, { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } }); assert.equal(get.status, 405);
     const stopped = await second.client.callTool({ name: 'codebook_stop', arguments: { instanceId: receipt.instanceId, runId: receipt.runId } }); assert.equal(stopped.isError, undefined);
     const history = await second.client.readResource({ uri: receipt.runUri }); assert.match(JSON.stringify(history), /stopped/);
   } finally { await first.client.close(); await second?.close(); await endpoint.close(); await harness.close(); }
-});
-
-test('MCP checkout discovers its action order and preserves the first receipt and observation after the second action', async () => {
-  // Arrange: real HTTP/SDK/service, explicitly synthetic editor effects.
-  const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
-  try {
-    const discovery = await connection.client.callTool({ name: 'codebook_status', arguments: {} });
-    const catalog = z.object({ data: z.object({ apiVersion: z.string(), profiles: z.array(z.object({ id: z.string(), actions: z.array(z.object({ id: z.string() })), items: z.array(z.object({ id: z.string() })), limits: z.object({ runTimeoutMs: z.number() }) })) }) }).parse(discovery.structuredContent).data;
-    assert.equal(catalog.apiVersion, '1.5');
-    const checkout = catalog.profiles.find(profile => profile.id === 'checkout-demo')!;
-    assert.deepEqual(checkout.actions.map(action => action.id), ['add-to-cart', 'checkout']); assert.equal(checkout.items.length, 4); assert.equal(checkout.limits.runTimeoutMs, 300_000);
-    const started = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: 'checkout-demo', key: 'purchase' } });
-    const receipt = z.object({ data: receiptSchema }).parse(started.structuredContent).data;
-    const record = harness.service.record(receipt); await record.preparation;
-    const identity = { instanceId: receipt.instanceId, runId: receipt.runId };
-    const runtime = harness.runtimes[0]!; assert.equal(runtime.profile, 'checkout-demo');
-    // Act / Assert: supported action in the wrong order is a recoverable domain error, not schema rejection.
-    const early = await connection.client.callTool({ name: 'codebook_action', arguments: { ...identity, key: 'early', action: 'checkout' } });
-    assert.equal(early.isError, true); assert.match(JSON.stringify(early.structuredContent), /BUSY.*Expected add-to-cart/); assert.equal(runtime.dispatches, 0);
-    const firstInput = { ...identity, key: 'cart', action: 'add-to-cart' };
-    const first = await connection.client.callTool({ name: 'codebook_action', arguments: firstInput });
-    const original = harness.service.state(record).observations[0]!;
-    const originalPause = harness.service.state(record).participants.server!.continueArguments!;
-    const originalBytes = await connection.client.readResource({ uri: original.snapshotUri });
-    await connection.client.callTool({ name: 'codebook_continue', arguments: originalPause });
-    runtime.status = 'ready'; // Synthetic completion boundary; the native matrix verifies actual cart completion.
-    const second = await connection.client.callTool({ name: 'codebook_action', arguments: { ...identity, key: 'order', action: 'checkout' } }); assert.equal(second.isError, undefined);
-    assert.equal(runtime.dispatches, 2); assert.equal(harness.service.state(record).observations.length, 2);
-    assert.deepEqual(await connection.client.readResource({ uri: original.snapshotUri }), originalBytes);
-    const replay = await connection.client.callTool({ name: 'codebook_action', arguments: firstInput }); assert.deepEqual(replay.structuredContent, first.structuredContent);
-    const conflict = await connection.client.callTool({ name: 'codebook_action', arguments: { ...identity, key: 'cart', action: 'checkout' } }); assert.match(JSON.stringify(conflict.structuredContent), /IDEMPOTENCY_CONFLICT/);
-    const stale = await connection.client.callTool({ name: 'codebook_continue', arguments: originalPause }); assert.match(JSON.stringify(stale.structuredContent), /STALE_PAUSE/);
-    assert.equal(runtime.dispatches, 2);
-    await connection.client.callTool({ name: 'codebook_stop', arguments: identity });
-    assert.deepEqual((await connection.client.callTool({ name: 'codebook_action', arguments: firstInput })).structuredContent, first.structuredContent);
-  } finally { await connection.close(); await endpoint.close(); await harness.close(); }
 });
 
 test('authentication and Host Origin body boundaries reject requests even with a valid transport session', async () => {
@@ -195,8 +141,8 @@ test('foreign instance and run errors are structured domain failures and invalid
   const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
   try {
     // Act
-    const foreign = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: 'eeb4a708-853e-4f38-8eac-ddf6d1415f14', profile: PROFILE_ID, key: 'wrong' } });
-    const invalid = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: PROFILE_ID, key: '', arbitrary: 'eval' } });
+    const foreign = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: 'eeb4a708-853e-4f38-8eac-ddf6d1415f14', profile: PROFILE_ID, configuration: harness.configuration, key: 'wrong' } });
+    const invalid = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: endpoint.descriptor.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: '', arbitrary: 'eval' } });
     // Assert
     assert.equal(foreign.isError, true); assert.match(JSON.stringify(foreign.structuredContent), /STALE_INSTANCE/); assert.equal(invalid.isError, true); assert.equal(harness.runtimes.length, 0);
   } finally { await connection.close(); await endpoint.close(); await harness.close(); }
@@ -208,14 +154,14 @@ test('eight idle MCP clients exhaust capacity but expiry releases their slots wi
   const connections: Awaited<ReturnType<typeof connect>>[] = [];
   try {
     for (let index = 0; index < 8; index += 1) connections.push(await connect(endpoint.descriptor));
-    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, key: 'retained' });
-    await harness.service.record(receipt).preparation; harness.service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
+    const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'retained' });
+    await harness.service.record(receipt).preparation; harness.service.action({ ...receipt, key: 'click', action: 'repository-click' });
     // Act / Assert
     await assert.rejects(connect(endpoint.descriptor), /MCP session limit exceeded/);
     now = SESSION_IDLE_TIMEOUT_MS + 1; endpoint.expire();
     const recovered = await connect(endpoint.descriptor); connections.push(recovered);
     assert.equal(harness.runtimes[0]?.stopped, false); assert.equal(harness.runtimes[0]?.dispatches, 1);
-    const result = await recovered.client.readResource({ uri: receipt.runUri }); assert.match(JSON.stringify(result), /paused-server/);
+    const result = await recovered.client.readResource({ uri: receipt.runUri }); assert.match(JSON.stringify(result), /paused-browser/);
   } finally { await Promise.allSettled(connections.map(connection => connection.client.close())); await endpoint.close(); await harness.close(); }
 });
 
@@ -252,8 +198,8 @@ test('an incomplete HTTP header is rejected near the five-second read deadline b
 test('deleting an in-flight MCP session settles its HTTP response and preserves capacity and the paused study', async () => {
   // Arrange
   const harness = await createHarness(), endpoint = await startServer(harness.service);
-  const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, key: 'study' });
-  await harness.service.record(receipt).preparation; harness.service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
+  const receipt = harness.service.start({ instanceId: harness.service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'study' });
+  await harness.service.record(receipt).preparation; harness.service.action({ ...receipt, key: 'click', action: 'repository-click' });
   try {
     // Act: exceed the global thirty-two-request capacity through normal session deletion.
     for (let index = 0; index < 36; index += 1) {
@@ -271,7 +217,7 @@ test('deleting an in-flight MCP session settles its HTTP response and preserves 
     }
     // Assert
     const recovered = await connect(endpoint.descriptor);
-    try { assert.equal((await recovered.client.listTools()).tools.length, 15); }
+    try { assert.equal((await recovered.client.listTools()).tools.length, 16); }
     finally { await recovered.close(); }
     assert.equal(harness.runtimes[0]?.dispatches, 1); assert.equal(harness.runtimes[0]?.stopped, false);
   } finally { await endpoint.close(); await harness.close(); }
@@ -290,10 +236,76 @@ test('cancelled MCP calls release HTTP capacity without closing their shared ses
       const pending = assert.rejects(connection.client.callTool({ name: 'codebook_status', arguments: {} }, undefined, { signal: abort.signal }));
       try { await waitUntil(() => entered, 'held cancellable status', 1_000); abort.abort(); await pending; }
       finally { release(); }
-      assert.equal((await connection.client.listTools()).tools.length, 15);
+      assert.equal((await connection.client.listTools()).tools.length, 16);
     }
     // Assert
     assert.equal((await connection.client.listResourceTemplates()).resourceTemplates.length, 17);
     assert.equal(harness.runtimes.length, 0);
+  } finally { await connection.close(); await endpoint.close(); await harness.close(); }
+});
+
+test('Node learning material is exposed through MCP with exact workspace history identity and revisions', async () => {
+  // Arrange
+  const harness = await createHarness(), directory = await mkdtemp(join(tmpdir(), 'codebook-node-learning-protocol-'));
+  const header = nodeTestHistoryHeader(sha256('node-learning-protocol-workspace'));
+  const historyStore = new NodeTestHistoryStore(directory, header.workspaceKey);
+  const writer = await historyStore.start(header);
+  await writer.appendOutput({ sequence: 1, elapsedMs: 2, channel: 'stdout', text: 'partial test output' });
+  await writer.finish('partial', 'Protocol storage test.');
+  harness.service.nodeHistoryStore = historyStore;
+  const endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
+  try {
+    const discovery = await connection.client.listTools();
+    const historyResource = await connection.client.readResource({ uri: 'codebook://node-history' });
+    const historyContent = historyResource.contents[0]; assert.ok(historyContent && 'text' in historyContent);
+    const catalogPage = z.object({ content: z.string(), complete: z.boolean() }).parse(JSON.parse(historyContent.text));
+    assert.equal(catalogPage.complete, true);
+    const [entry] = JSON.parse(catalogPage.content) as Array<{ studyId: string; learningMaterialUri: string }>;
+    assert.ok(entry);
+    const materialUri = entry.learningMaterialUri;
+    const content = { question: 'What happened in this interrupted test?', title: 'Interrupted test', summary: 'Output was recorded, but no verified stop or result is available.',
+      participants: [{ id: 'test', label: 'Vitest test' }], steps: [{ id: 'interrupted', from: 'test', to: 'test', label: 'Test output',
+        explanation: 'The journal contains output only; execution behavior remains unknown.', evidence: 'unknown' }] };
+
+    // Act: save and retrieve the bounded agent-authored material.
+    const saved = await connection.client.callTool({ name: 'codebook_explain_node_history', arguments: { studyId: entry.studyId, expectedRevision: 0, content } });
+    const material = await connection.client.callTool({ name: 'codebook_read_resource', arguments: { uri: materialUri } });
+    const stale = await connection.client.callTool({ name: 'codebook_explain_node_history', arguments: { studyId: entry.studyId, expectedRevision: 0, content } });
+
+    // Assert
+    assert.ok(discovery.tools.some(tool => tool.name === 'codebook_explain_node_history'));
+    assert.equal(z.object({ data: z.object({ revision: z.number() }) }).parse(saved.structuredContent).data.revision, 1);
+    const materialPage = z.object({ data: z.object({ content: z.string(), complete: z.boolean() }) }).parse(material.structuredContent).data;
+    assert.equal(materialPage.complete, true);
+    const materialData = z.object({ revision: z.number(), content: z.unknown() }).parse(JSON.parse(materialPage.content));
+    assert.equal(materialData.revision, 1); assert.deepEqual(materialData.content, content);
+    assert.equal(stale.isError, true); assert.match(JSON.stringify(stale.structuredContent), /IDEMPOTENCY_CONFLICT/);
+  } finally { await connection.close(); await endpoint.close(); await harness.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('standard MCP explanation calls persist learning material and reject foreign sequence references', async () => {
+  // Arrange
+  const harness = await createHarness(), endpoint = await startServer(harness.service), connection = await connect(endpoint.descriptor);
+  try {
+    const started = await connection.client.callTool({ name: 'codebook_start', arguments: { instanceId: harness.service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'learning' } });
+    const receipt = z.object({ data: receiptSchema }).parse(started.structuredContent).data;
+    const record = harness.service.record(receipt); await record.preparation;
+    await connection.client.callTool({ name: 'codebook_action', arguments: { instanceId: receipt.instanceId, runId: receipt.runId, key: 'select', action: 'repository-click' } });
+    const snapshotUri = harness.service.state(record).participants.browser.snapshotUri!, sourceHash = snapshotSourceHashes(harness.service.snapshot(record, snapshotUri)).typescript;
+    const learningSummary = { question: 'Which theme was selected?', title: 'Selection', summary: 'The recorded value is dark.',
+      participants: [{ id: 'source', label: 'Source' }], steps: [{ id: '__proto__', from: 'source', to: 'source', label: 'Selection', explanation: 'nextTheme is dark at this stop.', evidence: 'observed', reference: { snapshotUri, sourceHash } }] };
+    const input = { instanceId: receipt.instanceId, runId: receipt.runId, key: 'summary', snapshotUri, sourceHash, valuePaths: ['value:nextTheme'], interpretation: 'The selected theme is dark.', learningSummary };
+    // Act
+    const explained = await connection.client.callTool({ name: 'codebook_explain', arguments: input });
+    const explanationUri = z.object({ data: z.object({ explanationUri: z.string() }) }).parse(explained.structuredContent).data.explanationUri;
+    const resource = await connection.client.readResource({ uri: explanationUri });
+    const invalid = await connection.client.callTool({ name: 'codebook_explain', arguments: { ...input, key: 'foreign', learningSummary: { ...learningSummary, steps: [{ ...learningSummary.steps[0], reference: { snapshotUri: snapshotUri + '/foreign', sourceHash } }] } } });
+    // Assert
+    assert.equal(explained.isError, undefined);
+    const content = resource.contents[0]; assert.ok(content && 'text' in content);
+    assert.deepEqual(JSON.parse(content.text).learningSummary, learningSummary);
+    assert.equal(invalid.isError, true); assert.match(JSON.stringify(invalid), /INVALID_REFERENCE/);
+    assert.equal(record.explanations.size, 1);
   } finally { await connection.close(); await endpoint.close(); await harness.close(); }
 });

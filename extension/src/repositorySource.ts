@@ -4,7 +4,7 @@ import { lstat, open, realpath } from 'node:fs/promises';
 import { devNull } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from './runtimeSupport/utils/sha256';
 import { BOOK_MAX_SOURCES, BOOK_PREPARE_TIMEOUT_MS, BOOK_SOURCE_CONCURRENCY, REPOSITORY_GIT_LIMIT_BYTES, REPOSITORY_GIT_TIMEOUT_MS, REPOSITORY_MAX_TRACKED_FILES, REPOSITORY_SOURCE_LIMIT_BYTES, REPOSITORY_SOURCE_PAGE_SIZE } from './constants';
 import { StudyError } from './errors';
 import { repositoryPathSchema, type BookAnchor, type RepositorySource } from './repositorySchemas';

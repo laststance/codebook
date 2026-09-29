@@ -4,7 +4,7 @@ import { presentationPoseSchema } from '../presentationSchemas';
 
 const captured = {
   type: 'presentation-pose', captureId: '11111111-1111-4111-8111-111111111111', presentationId: '22222222-2222-4222-8222-222222222222',
-  expectedRevision: 1, revision: 2, itemId: 'checkout-demo/cart-mutation', sourceHash: 'a'.repeat(64), contentTab: 'live',
+  expectedRevision: 1, revision: 2, itemId: 'repository/interface/theme', sourceHash: 'a'.repeat(64), contentTab: 'live',
   pose: { anchorId: 'source-version', fraction: 0.5, leadingOffsetPx: 24, scrollY: 432, valuesScrollLeft: 12,
     expanded: ['presentation-options'], visited: ['source'], focus: { kind: 'action', action: 'source', index: 1 } },
 };
@@ -20,9 +20,9 @@ test('a reader handoff carries only a bounded location and semantic control iden
 
 test('an observed-moment focus retains its session and pause identity rather than requiring a UUID', () => {
   // Arrange / Act
-  const parsed = presentationPoseSchema.parse({ ...captured, pose: { ...captured.pose, focus: { kind: 'item', region: 'moments', itemId: 'checkout-demo/cart-mutation', observationId: 'browser-session:1' } } });
+  const parsed = presentationPoseSchema.parse({ ...captured, pose: { ...captured.pose, focus: { kind: 'item', region: 'moments', itemId: 'repository/interface/theme', observationId: 'browser-session:1' } } });
   // Assert
-  assert.deepEqual(parsed.pose.focus, { kind: 'item', region: 'moments', itemId: 'checkout-demo/cart-mutation', observationId: 'browser-session:1' });
+  assert.deepEqual(parsed.pose.focus, { kind: 'item', region: 'moments', itemId: 'repository/interface/theme', observationId: 'browser-session:1' });
 });
 
 for (const [name, pose] of [

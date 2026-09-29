@@ -8,18 +8,21 @@
 # Large or private runtime evidence; keep sanitized manifests in cycle records
 artifacts/
 node_modules/
-experiments/*/dist/
-experiments/*/build/
 extension/dist/
 
 # Share this project's agent entry points despite user-global ignore rules
 !/AGENTS.md
 !/CLAUDE.md
 
-# Share project hook files without exposing local Codex state.
+# Share only the project compaction hook; keep other local Codex state private.
 !/.codex/
 /.codex/*
 !/.codex/hooks.json
 !/.codex/restore-product-context.mjs
 !/.codex/restore-product-context.test.mjs
 !/.codex/README.md
+
+# Share only the Claude Code compaction hook registration; keep other local Claude state private.
+!/.claude/
+/.claude/*
+!/.claude/settings.json

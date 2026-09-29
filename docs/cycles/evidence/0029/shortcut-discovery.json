@@ -1,0 +1,28 @@
+{
+  "acceptanceRow": "AC-SHORTCUTS",
+  "scope": "Study webviews in installed VS Code; not independent Wiki, Cursor or final acceptance",
+  "repositoryRevision": "273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf",
+  "sourceHash": "f95cfbbf337cb66633222d70c87a195d952d3a9d2c881c7be079312d2ec400da",
+  "package": {
+    "path": "artifacts/cycle-0029/shortcut-discovery/shortcuts-escape-fix.vsix",
+    "sha256": "92abdba61202f686cc014a98f2aaa84f29dbcef6b633655d3cc5ac35476d8dd8",
+    "version": "0.2.11",
+    "check": "node extension/scripts/check-package.mjs artifacts/cycle-0029/shortcut-discovery/shortcuts-escape-fix.vsix",
+    "independentCheck": "passed; 25 entries; no bundled application"
+  },
+  "renderer": {
+    "result": "artifacts/cycle-0029/shortcut-discovery/native-escape-fix/result.json",
+    "passed": 46,
+    "total": 46,
+    "checks": ["visible help", "hover/focus tooltip", "search and no matches", "question mark in editable search", "one Escape with nonempty search", "focus return", "IME and modified key exclusions", "timeline/tab binding scope"]
+  },
+  "installedVsCode": {
+    "workspace": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "workspaceRevision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+    "workspaceGitCleanAfter": true,
+    "installedBuildIdentity": "/Users/ryotamurakami/.vscode/extensions/laststance.codebook-0.2.11/dist/build.json",
+    "observed": ["Study help button and title include ?", "search filters visible shortcuts", "nonempty search closes on one Escape", "focus returns to help button", "? reopens the dialog"],
+    "visualScope": "Native screenshot inspected at the user's existing enlarged VS Code zoom; ordinary default-zoom visual acceptance is pending"
+  },
+  "remaining": ["independent Wiki shortcut coverage", "Cursor installed-host behavior", "normal desktop visual comparison", "rebindings and conflicts", "both-host text/IME validation"]
+}

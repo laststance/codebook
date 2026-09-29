@@ -1,7 +1,0 @@
-{"sequence": 1, "elapsedMs": 0.197, "wallTime": "2026-09-18T13:02:00.593Z", "type": "run.created", "detail": {"runId": "cc5e3545-d5a8-436e-80a0-aa63bdc8acd9", "scenario": "missing-capability"}}
-{"sequence": 2, "elapsedMs": 40.559833, "wallTime": "2026-09-18T13:02:00.633Z", "type": "breakpoint.requested", "detail": {"id": "d24db133-0758-4818-b133-65ceedf81b45", "sourcePath": "<repo>/artifacts/cycle-0002/cursor/cc5e3545-d5a8-436e-80a0-aa63bdc8acd9/fixture/cart.ts", "line": 9}}
-{"sequence": 3, "elapsedMs": 44.915875, "wallTime": "2026-09-18T13:02:00.638Z", "type": "fault.capability-missing", "detail": {}}
-{"sequence": 4, "elapsedMs": 44.980583, "wallTime": "2026-09-18T13:02:00.638Z", "type": "run.failed", "detail": {"reason": "Error: Missing Cursor browser capability: codebook.deliberately-missing-browser"}}
-{"sequence": 5, "elapsedMs": 55.01475, "wallTime": "2026-09-18T13:02:00.648Z", "type": "cleanup.started", "detail": {}}
-{"sequence": 6, "elapsedMs": 61.51375, "wallTime": "2026-09-18T13:02:00.654Z", "type": "browser.cleanup-verified", "detail": {"host": "cursor", "remainingOwnedTabs": 0}}
-{"sequence": 7, "elapsedMs": 65.590916, "wallTime": "2026-09-18T13:02:00.659Z", "type": "cleanup.completed", "detail": {}}

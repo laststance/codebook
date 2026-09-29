@@ -22,7 +22,7 @@ const message = {
     revision: { revision: 1, publishedAt: '2026-09-21T00:00:00.000Z', document: {
       title: 'Checkout', summary: 'Retain the exact article while reading captured evidence.', edges: [],
       nodes: [{ id: 'order', title: 'Create the selected order', anchors: [anchor], observations: [], sections: [
-        { title: 'Retained cart', text: 'Read the captured cart and selected product before the order is stored.\n\nThe article explains the cited source. Runtime evidence retains its separate identity.' },
+        { title: 'Retained operation', text: 'Read the captured operation state before it completes.\n\nThe article explains the cited source. Runtime evidence retains its separate identity.' },
         { title: 'Order creation', text: 'The paused observation identifies the selected order operation. Returning from its recording must preserve the original reading location.\n\nMoving native panes may save a different temporary viewport. That cached viewport must not replace the explicit return location.' },
       ] }],
     } },

@@ -1,8 +1,7 @@
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { CONFIGURED_STUDY_VERSION, LEARNING_SCHEMA_VERSION_V2, REPOSITORY_BROWSER_ACTION, REPOSITORY_BROWSER_PROFILE } from '../constants';
+import { sha256 } from '../runtimeSupport/utils/sha256';
+import { CONFIGURED_STUDY_VERSION, CROSS_RUNTIME_STUDY_VERSION, REPOSITORY_BROWSER_ACTION, REPOSITORY_BROWSER_PROFILE } from '../constants';
 import { readResource } from '../resources';
 import type { StudyRecord, StudyService } from '../service';
-import { observationSchema } from '../studyModel';
 import { configuredObservationSchema } from '../configuredStudySchemas';
 import type { RetainedStudy } from '../retainedStudySchemas';
 import { decodeRetainedStudy } from './decodeRetainedStudy';
@@ -10,6 +9,8 @@ import { describeStudy } from './describeStudy';
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(service: StudyService, record: StudyRecord, workspaceKey: string): Promise<RetainedStudy | undefined> {
+  // Node source stops are live evidence only until the cross-runtime recording schema can retain them.
+  if (record.profile !== REPOSITORY_BROWSER_PROFILE) return undefined;
   const state = service.state(record), signature = state.materialSignature, runtime = record.runtime?.view();
   const observations: RetainedStudy['observations'][number][] = [];
   const captures: RetainedStudy['captures'][number][] = [];
@@ -25,24 +26,34 @@ export async function captureStudy(service: StudyService, record: StudyRecord, w
     if (snapshot.actionId === REPOSITORY_BROWSER_ACTION) {
       if (record.profile !== REPOSITORY_BROWSER_PROFILE || source.text !== snapshot.source.text || committed.elapsedMs !== snapshot.elapsedMs || committed.wallTime !== snapshot.capturedAt) throw new Error('Configured snapshot differs from its committed source/receipt.');
       observations.push(configuredObservationSchema.parse({ ...snapshot, snapshotUri, interpretations }));
-    } else observations.push(observationSchema.parse({ id: snapshot.id, snapshotUri, participant: snapshot.participant, itemId: snapshot.itemId, actionId: snapshot.actionId, capturePhase: snapshot.capturePhase, capturedAt: committed.wallTime, elapsedMs: committed.elapsedMs,
-      pause: snapshot.pause, source: { text: source.text, hash: snapshot.source.typescriptHash, line: snapshot.frame.line }, values: snapshot.values, interpretations }));
+    }
   }
   const descriptor = describeStudy(record.profile === REPOSITORY_BROWSER_PROFILE ? { ...record, descriptor: record.definition?.descriptor } : record);
   for (const phase of record.profile === REPOSITORY_BROWSER_PROFILE && !record.definition ? [] : descriptor.capturePhases) {
-    const capture = state.captures.find(value => value.phase === phase);
-    if (capture?.status === 'captured') {
-      if (!capture.uri) throw new Error('Confirmed image has no canonical resource.');
-      const image = await readResource(service, capture.uri);
-      if (!('blob' in image)) throw new Error('Captured image is unavailable.');
-      captures.push({ phase, status: 'captured', base64: image.blob, hash: sha256(Buffer.from(image.blob, 'base64')) });
-    } else captures.push({ phase, status: capture?.status ?? 'absent', reason: capture?.error ?? (capture?.status === 'pending' ? 'Capturing this observation…' : 'No confirmed image for this phase.') });
+    const current = state.captures.find(value => value.phase === phase);
+    // New runtimes retain every committed pause; a pending next stop cannot overwrite its predecessor.
+    const references = phase.startsWith('paused-') && runtime?.snapshotCaptures !== undefined
+      ? runtime.snapshots.length ? runtime.snapshots.filter(snapshot => snapshot.capturePhase === phase).map(snapshot => ({ phase, snapshotId: snapshot.id,
+        ...runtime.snapshotCaptures![snapshot.id]!, uri: service.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}/image`) }))
+        : [{ phase, snapshotId: undefined, status: current ? 'pending' : 'absent', error: current?.error, uri: undefined }]
+      : [{ phase, snapshotId: undefined, status: current?.status ?? 'absent', error: current?.error, uri: current?.uri }];
+    for (const capture of references) {
+      const identity = capture.snapshotId ? { phase, snapshotId: capture.snapshotId } : { phase };
+      if (capture.status === 'captured') {
+        if (!capture.uri) throw new Error('Confirmed image has no canonical resource.');
+        const image = await readResource(service, capture.uri);
+        if (!('blob' in image)) throw new Error('Captured image is unavailable.');
+        captures.push({ ...identity, status: 'captured', base64: image.blob, hash: sha256(Buffer.from(image.blob, 'base64')) });
+      } else captures.push({ ...identity, status: capture.status === 'failed' ? 'failed' : capture.status === 'pending' ? 'pending' : 'absent', reason: capture.error ?? (capture.status === 'pending' ? 'Capturing this observation…' : 'No confirmed image for this phase.') });
+    }
   }
   // Never combine a completed control state with evidence gathered across a different transition.
   if (service.state(record).materialSignature !== signature) return undefined;
-  const configured = record.profile === REPOSITORY_BROWSER_PROFILE ? { version: CONFIGURED_STUDY_VERSION, configuration: record.configuration, configurationHash: sha256(JSON.stringify(record.configuration)),
-    descriptor: record.definition?.descriptor, operation: runtime?.profile === REPOSITORY_BROWSER_PROFILE ? runtime.operation : undefined } : { version: LEARNING_SCHEMA_VERSION_V2 };
+  const summaryExplanation = [...record.explanations.values()].filter(value => value.learningSummary).at(-1);
+  const learningSummary = summaryExplanation?.learningSummary && { content: summaryExplanation.learningSummary, explanationId: summaryExplanation.id, createdAt: summaryExplanation.createdAt };
+  const configured = record.profile === REPOSITORY_BROWSER_PROFILE ? { version: record.configuration.version === 2 ? CROSS_RUNTIME_STUDY_VERSION : CONFIGURED_STUDY_VERSION, configuration: record.configuration, configurationHash: sha256(JSON.stringify(record.configuration)),
+    descriptor: record.definition?.descriptor, operation: runtime?.profile === REPOSITORY_BROWSER_PROFILE ? runtime.operation : undefined } : {};
   return decodeRetainedStudy({ ...configured, workspaceKey, id: `${service.instanceId}_${record.id}`, instanceId: service.instanceId, runId: record.id, profile: record.profile,
     createdAt: state.createdAt, savedAt: new Date().toISOString(), state: state.state, terminal: record.stopped || state.resourcesReleased, finalOutcome: state.finalOutcome,
-    materialSignature: signature, reason: state.terminalReason ?? state.cleanupError?.message, observations, captures, links: (state.links ?? []).map(link => ({ id: link.id, status: link.status })) }, workspaceKey);
+    materialSignature: signature, reason: state.terminalReason ?? state.cleanupError?.message, learningSummary, observations, captures, links: [] }, workspaceKey);
 }

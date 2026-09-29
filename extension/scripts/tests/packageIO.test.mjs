@@ -84,7 +84,7 @@ test('case-variant compiler destinations are rejected before missing output dire
   // Arrange: reserve the same compiler names on case-sensitive and case-insensitive filesystems.
   const fixture = await sourceFixture(context);
   // Act / Assert
-  for (const path of ['extension/DIST', 'experiments/cycle-0001/BUILD', 'experiments/cycle-0004/Dist']) {
+  for (const path of ['extension/DIST', 'extension/DIST/runtimeSupport']) {
     await assert.rejects(resolvePackageDestination(fixture.repository, join(fixture.repository, path, 'candidate.vsix')), /overlaps/);
   }
   const literal = join(await realpath(fixture.directory), 'Package Output.vsix');
@@ -96,12 +96,12 @@ test('a compilation failure stops packaging without replacing the previous VSIX'
   // Arrange
   const fixture = await sourceFixture(context), commands = [];
   // Act / Assert
-  await assert.rejects(buildPackage(fixture.repository, fixture.output, async (executable, arguments_) => {
-    commands.push([executable, ...arguments_]);
+  await assert.rejects(buildPackage(fixture.repository, fixture.output, async (executable, arguments_, cwd) => {
+    commands.push([executable, ...arguments_, cwd]);
     if (arguments_[0] === '--version') return { stdout: '12.4.2\n', stderr: '' };
     throw new Error('Compilation failed');
   }), /Compilation failed/);
-  assert.deepEqual(commands, [['pnpm', '--version'], ['pnpm', '--dir', join(fixture.repository, 'extension'), 'build']]);
+  assert.deepEqual(commands, [['pnpm', '--version', join(fixture.repository, 'extension')], ['pnpm', 'build', join(fixture.repository, 'extension')]]);
   assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact');
   assert.deepEqual((await readdir(fixture.directory)).sort(), ['existing.vsix', 'repository']);
 });
@@ -168,14 +168,13 @@ test('clean packaging prevents a stale declaration from making absent source com
   assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact');
 });
 
-test('cleanup refuses a redirected output directory before deleting any other compiler outputs', async context => {
+test('cleanup refuses a redirected compiler directory and preserves the foreign contents', async context => {
   // Arrange
   const fixture = await sourceFixture(context), foreign = join(fixture.directory, 'foreign'); await mkdir(foreign); await writeFile(join(foreign, 'keep.txt'), 'unrelated');
-  await mkdir(join(fixture.repository, 'extension/dist')); await writeFile(join(fixture.repository, 'extension/dist/keep.js'), 'previous');
-  await symlink(foreign, join(fixture.repository, 'experiments/cycle-0001/dist'));
+  await symlink(foreign, join(fixture.repository, 'extension/dist'));
   // Act / Assert
   await assert.rejects(cleanPackageOutputs(fixture.repository), /not an owned directory/);
-  assert.equal(await readFile(join(foreign, 'keep.txt'), 'utf8'), 'unrelated'); assert.equal(await readFile(join(fixture.repository, 'extension/dist/keep.js'), 'utf8'), 'previous');
+  assert.equal(await readFile(join(foreign, 'keep.txt'), 'utf8'), 'unrelated');
 });
 
 test('dependency inspection rejects a non-native emitted import before staging a package', async context => {
@@ -384,7 +383,7 @@ test('SHA-256 repositories preserve clean input identity for literal tabs and Un
 });
 
 // Each accidental development entry must be rejected before the dependency inventory can accept it.
-for (const path of ['extension/dist/tests/leaked.test.js', 'extension/dist/client.js', 'extension/dist/nativeRunner.js']) {
+for (const path of ['extension/dist/tests/leaked.test.js', 'extension/dist/client.js', 'extension/dist/nativeRepositoryBootstrap.js', 'extension/dist/nativeNodeTestBootstrap.js']) {
   test(`an accidental import of ${path} cannot enter the installed runtime bundle`, async context => {
     // Arrange
     const fixture = await sourceFixture(context), input = join(fixture.repository, path), content = Buffer.from('module.exports = 1;');
@@ -394,3 +393,13 @@ for (const path of ['extension/dist/tests/leaked.test.js', 'extension/dist/clien
     await assert.rejects(inspectBundle(metafile, fixture.repository, new Map([[await realpath(input), content]])), /Development-only bundle source/);
   });
 }
+
+test('bundling a sibling application is rejected even when it has a package manifest', async context => {
+  // Arrange
+  const fixture = await sourceFixture(context), application = join(fixture.directory, 'external-application');
+  await mkdir(application); await writeFile(join(application, 'package.json'), JSON.stringify({ name: 'external-application', version: '1.0.0', license: 'MIT' }));
+  const input = join(application, 'app.js'), bytes = Buffer.from('module.exports = 1;'); await writeFile(input, bytes);
+  const metafile = { inputs: { [input]: { bytes: bytes.length } }, outputs: { bundle: { imports: [] } } };
+  // Act / Assert
+  await assert.rejects(inspectBundle(metafile, fixture.repository, new Map([[await realpath(input), bytes]])), /escapes the extension repository/);
+});

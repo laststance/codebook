@@ -1,10 +1,10 @@
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
+import { sha256 } from '../../runtimeSupport/utils/sha256';
 import type { ConfiguredStudy } from '../../configuredStudySchemas';
-import { repositoryConfigSchema } from '../../repositoryConfigSchemas';
+import { repositoryConfigSchema, type RepositoryConfiguration } from '../../repositoryConfigSchemas';
 import { citationContext } from '../../utils/citationContext';
 
 /** Supplies immutable configured history for decoder/storage tests without pretending to run an app or debugger. @example createConfiguredStudy().observations[0]?.values['value:nextTheme'] // 'dark' */
-export function createConfiguredStudy(source = 'const nextTheme = "dark";\n'): ConfiguredStudy {
+export function createConfiguredStudy(source = 'const nextTheme = "dark";\n'): ConfiguredStudy & { version: 3; configuration: RepositoryConfiguration } {
   const instanceId = '11111111-1111-4111-8111-111111111111', runId = '22222222-2222-4222-8222-222222222222';
   const secondary = 'export const mode = "display";\n';
   const anchors = [{ path: 'src/theme.ts', hash: sha256(source), startLine: 1, endLine: 1 }, { path: 'src/mode.ts', hash: sha256(secondary), startLine: 1, endLine: 1 }];

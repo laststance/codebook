@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { sha256 } from 'codebook-cycle-0001/dist/utils/sha256';
-import { waitUntil } from 'codebook-cycle-0001/dist/utils/waitUntil';
-import { PROFILE_ID } from '../constants';
+import { sha256 } from '../runtimeSupport/utils/sha256';
+import { waitUntil } from '../runtimeSupport/utils/waitUntil';
+import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants';
 import { StudyError } from '../errors';
 import { readResource } from '../resources';
 import { readBoundedFile } from '../utils/readBoundedFile';
@@ -14,13 +14,13 @@ import { createHarness } from './helpers';
 test('retaining sixteen stopped runs rejects a seventeenth without evicting original history or idempotency', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const initial = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'first' });
+  const initial = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'first' });
   try {
     await service.stop(initial);
-    for (let index = 1; index < 16; index += 1) await service.stop(service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: `study-${index}` }));
+    for (let index = 1; index < 16; index += 1) await service.stop(service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: `study-${index}` }));
     // Act / Assert
-    assert.throws(() => service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'excess' }), error => error instanceof StudyError && error.code === 'LIMIT_EXCEEDED');
-    assert.deepEqual(service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'first' }), initial);
+    assert.throws(() => service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'excess' }), error => error instanceof StudyError && error.code === 'LIMIT_EXCEEDED');
+    assert.deepEqual(service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'first' }), initial);
     assert.equal(service.records.size, 16); assert.equal(service.state(service.record(initial)).cleaned, true);
   } finally { await harness.close(); }
 });
@@ -28,11 +28,11 @@ test('retaining sixteen stopped runs rejects a seventeenth without evicting orig
 test('explanation capacity preserves thirty-two captured records and rejects a new intent', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'explanations' }), record = service.record(receipt);
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'explanations' }), record = service.record(receipt);
   try {
-    await record.preparation; service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
-    const snapshotUri = service.state(record).participants.server!.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
-    const input = { ...receipt, key: 'first', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: [], interpretation: 'An explicitly labeled interpretation.' };
+    await record.preparation; service.action({ ...receipt, key: 'click', action: 'repository-click' });
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
+    const input = { ...receipt, key: 'first', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: ['value:nextTheme'], interpretation: 'An explicitly labeled interpretation.' };
     const first = await service.explain(input);
     for (let index = 1; index < 32; index += 1) await service.explain({ ...input, key: `explain-${index}` });
     // Act / Assert
@@ -44,14 +44,14 @@ test('explanation capacity preserves thirty-two captured records and rejects a n
 test('foreign snapshots, duplicate value paths and wrong source hashes cannot commit an explanation', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'references' }), record = service.record(receipt);
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'references' }), record = service.record(receipt);
   try {
-    await record.preparation; service.action({ ...receipt, key: 'click', action: 'add-to-cart' });
-    const snapshotUri = service.state(record).participants.server!.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
-    const input = { ...receipt, key: 'invalid', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: [], interpretation: 'Not yet committed.' };
+    await record.preparation; service.action({ ...receipt, key: 'click', action: 'repository-click' });
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!, snapshot = service.snapshot(record, snapshotUri);
+    const input = { ...receipt, key: 'invalid', snapshotUri, sourceHash: snapshotSourceHashes(snapshot).typescript, valuePaths: ['value:nextTheme'], interpretation: 'Not yet committed.' };
     // Act / Assert
     assert.throws(() => service.explain({ ...input, snapshotUri: `${snapshotUri}other` }), /Snapshot is absent/);
-    assert.throws(() => service.explain({ ...input, valuePaths: ['price', 'price'] }), /distinct value paths/);
+    assert.throws(() => service.explain({ ...input, valuePaths: ['value:nextTheme', 'value:nextTheme'] }), /distinct value paths/);
     assert.throws(() => service.explain({ ...input, sourceHash: '0'.repeat(64) }), /Source hash/);
     assert.equal(record.explanationKeys.size, 0); assert.equal(record.explanations.size, 0);
     await assert.rejects(readResource(service, `${receipt.runUri}/images/../../etc/passwd`), /Unknown resource/);
@@ -62,7 +62,7 @@ test('foreign snapshots, duplicate value paths and wrong source hashes cannot co
 test('a failed cleanup remains retryable and cannot report cleaned history', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'cleanup' }), record = service.record(receipt);
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'cleanup' }), record = service.record(receipt);
   try {
     await record.preparation; const runtime = harness.runtimes[0]!, originalStop = runtime.stop.bind(runtime);
     runtime.stop = async () => { throw new Error('Owned process still alive'); };
@@ -88,7 +88,7 @@ test('bounded evidence reads reject oversized and missing bytes with an actionab
 test('a persistent cleanup failure stays visible in status without automatic retries and remains explicitly retryable', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'failed-storage' }), record = service.record(receipt);
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'failed-storage' }), record = service.record(receipt);
   await record.preparation;
   const runtime = harness.runtimes[0]!, originalStop = runtime.stop.bind(runtime); let attempts = 0;
   runtime.status = 'failed'; runtime.stop = async () => { attempts += 1; throw new Error('Persistent disk failure'); };
@@ -110,7 +110,7 @@ test('a persistent cleanup failure stays visible in status without automatic ret
 test('a captured image URI rejects substituted or truncated bytes after the runtime stops', async () => {
   // Arrange
   const harness = await createHarness(), service = harness.service;
-  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, key: 'image-integrity' });
+  const receipt = service.start({ instanceId: service.instanceId, profile: PROFILE_ID, configuration: harness.configuration, key: 'image-integrity' });
   try {
     await service.record(receipt).preparation;
     const runtime = harness.runtimes[0]!, view = runtime.view.bind(runtime), original = Buffer.from('captured-png-bytes');

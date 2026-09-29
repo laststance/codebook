@@ -1,6 +1,6 @@
 # Cycle 0019 integration review — skill and MCP onboarding
 
-Status: bounded design/engineering review on the active cycle, followed by [partial installed-host development evidence](../cycles/evidence/0019/installed-chat-development.md). Reviewed 2026-09-23 against [G12](../../PRODUCT_GOAL.md#bundled-thin-skill-and-explicit-chat-entry), [Cycle 0019](../cycles/0019-bundled-codebook-skill.md), the extension/package code and official host contracts. This is not a completed interactive GStack plan-review verdict or product validation. The owner's standing autonomous-development direction supplies routine implementation choices while they are unavailable.
+Status: bounded design/engineering review on the active cycle, followed by [partial installed-host development evidence](https://github.com/laststance/codebook/blob/273660c49bb1aa5a88082ab6d43cd1ebae6ee7cf/docs/cycles/evidence/0019/installed-chat-development.md). Reviewed 2026-09-23 against [G12](../../PRODUCT_GOAL.md#bundled-thin-skill-and-explicit-chat-entry), [Cycle 0019](../cycles/0019-bundled-codebook-skill.md), the extension/package code and official host contracts. This is not a completed interactive GStack plan-review verdict or product validation. The owner's standing autonomous-development direction supplies routine implementation choices while they are unavailable.
 
 ## First-use contract
 

@@ -1,0 +1,82 @@
+{
+  "sourceHash": "4eaa0bb97ab0de1b109b89c8c19cc14354804d046041978dca48d5c345b60cf4",
+  "skillVersion": "1.0.24",
+  "rootCause": "Append-only phase validation matched the second paused-browser receipt to the first receipt by phase name. Match phase and existing snapshot identity, preserving immutable receipt fields.",
+  "mechanism": {
+    "redRegressions": 2,
+    "focusedPassed": 28,
+    "fullPassed": 1062,
+    "fullFailed": 0,
+    "alteredPriorReceiptRejected": true
+  },
+  "package": {
+    "path": "artifacts/cycle-0029/repeated-phase-context/codebook.vsix",
+    "sha256": "3d185bbd04c103184bd9675ad8262a468919808c059cddce9aa72f8a65378323",
+    "entries": 25,
+    "result": "PASS"
+  },
+  "native": {
+    "host": "VS Code 1.139.1",
+    "chat": "Claude Code extension Opus 5.5 High; visible Copilot Quota reached",
+    "sessionId": "a1aca3b5-92c3-4531-ab29-c0b917e7207e",
+    "target": "/Users/ryotamurakami/repository/nextjs-dashboard",
+    "targetRevision": "26e5b2c4091bf2d1408f4e8962406eb93489c74e",
+    "runId": "33dcebc3-745b-436c-99b1-1157e4906307",
+    "studyId": "98f4bcfa-ecfd-431c-9e79-8ffa02e7ee4d_33dcebc3-745b-436c-99b1-1157e4906307",
+    "result": "PASS for bounded two-stop save and synchronized replay",
+    "inputCount": 1,
+    "observations": 2,
+    "summarySequenceSteps": 10,
+    "historyRevision": 21,
+    "finalOutcome": "demonstrated",
+    "recordedFrames": 1196,
+    "replayedStops": [
+      {
+        "source": "app/ui/login-form.tsx",
+        "line": 90,
+        "column": 5,
+        "value": "pending=true",
+        "atMs": 17292.13
+      },
+      {
+        "source": "app/ui/login-form.tsx",
+        "line": 75,
+        "column": 13,
+        "value": "state='CredentialsSignin'",
+        "atMs": 55874.13
+      }
+    ],
+    "agentReopenedAtMs": [
+      45000,
+      115000
+    ],
+    "mainAgentVerification": "Previous stop twice, then next stop: native Variables, selected stack frame, source highlight and recorded application changed together. No new application submit.",
+    "preservation": {
+      "priorFiles": 2771,
+      "changedOrMissing": []
+    },
+    "targetGitClean": true,
+    "cleanup": "Owned VS Code exited, recorder stopped, exact matching local Claude MCP registration removed.",
+    "video": {
+      "path": "artifacts/cycle-0029/repeated-phase-context/native.mp4",
+      "sha256": "00e97e55010754378a461819d4f1db377ae766035ed43fdef5b160506e2514e2",
+      "durationSeconds": 590,
+      "inspectedFramesSeconds": [
+        480,
+        535,
+        572,
+        585
+      ]
+    }
+  },
+  "limits": [
+    "Development evidence only; no final matrix credit.",
+    "Host restart for this candidate not run; durable reopened-store regression passes.",
+    "No current Cursor proof, cross-file or Node-server coverage.",
+    "Replay summary still coexists with chat instead of replacing its area; approved composition remains incomplete.",
+    "At the exact stop timestamp explanation is a later annotation; both later in-pause positions show saved explanations.",
+    "Earlier unowned DAP continuation remains unresolved/not reproduced.",
+    "No commit, CI, merge or publication claim."
+  ],
+  "next": "Audit cross-file and server debugger operation against AC-LIVE; freeze one real dashboard client-to-server path and implement missing runtime support."
+}
