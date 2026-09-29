@@ -1,7 +1,7 @@
 # Cycle 0030 — Trustworthy Node test runs
 
 Type: product-increment (hardening)\
-Status: planning\
+Status: implementation (increment 1 complete; increment 2 next)\
 Result: pending\
 Delivery: local-only\
 Goal version: 9\
@@ -196,6 +196,43 @@ Sequential implementation, no parallelization opportunity.
 
 **Completion summary.** Scope accepted (FULL_REVIEW, original arrangement). Architecture 3, code quality 2, tests: diagram produced with 17 gaps, performance 1. NOT in scope and existing solutions written. TODOS: none. Critical silent gaps: 0. Unresolved decisions: 0. Outside voice: Codex completed, 4 findings, all accepted. Lake score 3/3.
 
+### Increment 1 implementation and proof, 2026-09-30 03:05–03:36 JST
+
+Source commit `8834485` implements T1–T3 as reviewed (19 files). Logs are in the private `artifacts/cycle-0030/` folder.
+
+- **What changed.**
+  - `testTitles` is the test identity; `requireNodeTestTitles` refuses `testName` and a missing identity in both `prepareNodeTestStudy` (before the history exists) and `prepareNodeTestLaunch`.
+  - `listVitestTestFiles` runs the owned `vitest list --filesOnly --json=<private file>` with the shared `buildNodeTestEnvironment`, a 30 s deadline, the run's abort signal and a 2,048-character error head.
+  - `prepareNodeTestLaunch` refuses Vitest below 4, a missing or duplicated cited file, more than 64 other files and any remaining extra after exclusion. It escapes titles and exclusion globs and adds the JSON reporter with a private report folder.
+  - `OwnedNodeTestRun.complete()` calls `verifyVitestTestResult` before recording a result. A test that ends before its first stop fails at once with its exit code and the `testTitles` hint. `release()` removes the report folder, and an ended session no longer waits out the 45 s stop deadline.
+  - `codebook://help/node-test`, the schema descriptions and the README state the new contract. The shared skill never named `testName` and is unchanged.
+- **Red, then green.** Before the source existed, the new tests failed to compile with 31 TypeScript errors (`codebook-c30-i1-red-compile.log`). After it: focused 42/42, full extension suite 1,342/1,342, package suite 175/175 and compaction hook 4/4 PASS.
+- **Negative controls** (`codebook-c30-i1-negative.log`). Each check was disabled in turn, then restored:
+  - N1: exclusion disabled → 2 tests fail.
+  - N2: raw name pattern → 3 fail.
+  - N3: result check skipped → 5 fail.
+  - N4: ended-session check removed → the early-exit test fails after 45,031 ms.
+- **Mechanism reruns** (`codebook-c30-i1-mechanism.log`). The built `prepareNodeTestLaunch` and `verifyVitestTestResult` ran with the real `vitest list` and `vitest run` in the isolated projects. Six cases ran on each version.
+  - Vitest 5.0.2: the nested metacharacter title and `outer > adds` loaded only `src/a.test.ts`, with `src/a.test.tsx` and `copy/src/a.test.ts` excluded, and were verified. `["a","b"]` and `["a > b"]` both ran two tests and were refused. A missing title ran nothing and was refused. `app/[id]/page.test.ts` excluded the escaped `copy/app/\[id\]/page.test.ts` and was verified.
+  - Vitest 4.1.11: the same nested and `outer adds` cases were verified. `["a","b"]` ran only the nested test and `["a > b"]` only the top-level one; both were verified. The missing title was refused, and the `[id]` case was verified.
+- **Native regression: PASS (development level, VS Code only).** Private receipt `artifacts/cycle-0030/native/c30-i1-vscode-auto-node-regression-20260930.json`.
+  - Candidate: VSIX `codebook-0.2.12-c30-test-identity-20260930.vsix`, SHA `521d961c…`. The installed `dist/extension.js` matches the VSIX at `efe5a2e5…`.
+  - Host: VS Code 1.139.1, profile `Codebook QA 0029 Clean`, Copilot Chat agent mode with **Auto**, which routed to GPT-6 Luna. The dashboard was at `1936e41`, with only the pre-existing `.codebook/` before and after.
+  - The prompt named the article, the `describe` title, the test title and `data.ts:217:21`, but not the array. The agent built `testTitles: ["invoice data queries", "converts stored invoice cents to dollars for the edit form"]` from the help.
+  - The launched process was `vitest run app/lib/data.test.ts … --testNamePattern=^invoice data queries > converts stored invoice cents to dollars for the edit form$ --reporter=default --reporter=json --outputFile.json=<private>`. It had no `--exclude`, because Vitest listed only the cited file.
+  - History `…12e00f82`:
+    - stopped at `app/lib/data.ts:217:21` in `Module.fetchInvoiceById`, with `data = (1) [{…}]` and `id = 'invoice-456'` (sequence 5, 20.6 s);
+    - completed with exit 0, **1 passed / 13 skipped** (the same result as `…374f74ad`), passed the report check and was sealed complete with 14 entries (journal `6a4e8980…`);
+    - its report folder was removed on release.
+  - The native debugger showed the stop with Block `data` and the `Module.fetchInvoiceById` frame. The agent saved learning material revision 1. It separated what it observed from source reasoning: 875 cents becomes 8.75 at `data.ts:228`, and the DB is mocked, so no real database was exercised.
+  - Limits:
+    - Copilot hit its request limit once after the run had finished; the driver pressed **Continue**.
+    - The agent's first explanation save cited an output number instead of an event sequence. It was refused, and the agent corrected it.
+    - One dashboard file matches the cited path, so exclusion is proven at mechanism level only.
+- **Temporary folders.** One empty `codebook-vitest-report-*` folder from 03:08:58 was left by an intentionally failing negative-control test and was removed. The passing suites leave none: a count before and after 36 Node-test tests was 1 → 1.
+
+**Validation contract results:** metacharacter titles, prefix sibling, substring path, nested suites, refusals and result check PASS at mechanism level. The native regression PASS is at development level in VS Code. The full suites PASS.
+
 ## Result and decision
 
 - Result: pending
@@ -206,8 +243,11 @@ Cycle 0029 delivered through PR #48 (`ad476d3`); Issue #46 is closed with its re
 
 ## Next action
 
-- **Exact next action:** implement increment 1 tasks T1–T3 test-first as reviewed above, then T4's mechanism reruns and the native Copilot Auto regression.
-- **Branch / processes:** `codex/cycle-0030-node-run-integrity`; no editor, dashboard or Node process is running for this cycle. Isolated probe projects: `/private/tmp/codebook-vitest-filter` (Vitest 5.0.2 via symlink) and `/private/tmp/codebook-vitest-v4` (4.1.11).
+- **Exact next action:** start increment 2 (C-F2 with C-F3) in `nodeTestHistoryStore.ts` and its callers in `ownedNodeTestRun.ts`, test-first.
+  - C-F2: the stop is stamped when it is accepted but appended after its snapshot. An entry stamped earlier can therefore reach the journal after a later-stamped one, and `append` refuses it with "Node history time moved backward".
+  - C-F3: that rejected append becomes `pending`, so every later append, and the seal, rejects too. A partial history is never sealed.
+  - First write red tests that reproduce both. Then order entries by stamp through one history channel, and keep a rejected append from poisoning sealing.
+- **Branch / processes:** `codex/cycle-0030-node-run-integrity` at `8834485` plus this record. No Codebook-owned Vitest process is running. The QA VS Code window stays open on the dashboard with the 0.2.12 candidate. Isolated probe projects: `/private/tmp/codebook-vitest-filter` (Vitest 5.0.2, installed offline for the mechanism rerun) and `/private/tmp/codebook-vitest-v4` (4.1.11).
 - **State:** PROJECT_STATE names this cycle as active.
 
 ## GSTACK REVIEW REPORT
