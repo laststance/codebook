@@ -3,6 +3,7 @@ import { createServer } from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
 import { NODE_TEST_HISTORY_LIMIT_BYTES, REPOSITORY_RUN_TIMEOUT_MS } from '../constants';
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint';
+import { buildNodeTestEnvironment } from './buildNodeTestEnvironment';
 import { waitUntil } from '../runtimeSupport/utils/waitUntil';
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse';
 import type { PreparedNodeTestLaunch } from './prepareNodeTestLaunch';
@@ -24,16 +25,14 @@ async function availableInspectorPort(): Promise<number> {
 }
 
 /** Starts exactly the sealed Vitest file in an owned process group before native debugger attachment. Called by the Node test runtime after source verification. @param launch - Checked in-repository program and argv. @param node - External Node executable. @param record - Bounded process event sink. @example const testRun = await launchNodeTest(launch, '/usr/bin/node', record); await testRun.inspectorEndpoint(signal) */
-export async function launchNodeTest(launch: PreparedNodeTestLaunch, node: string, record: (type: string, detail?: unknown) => unknown,
+export async function launchNodeTest(launch: Pick<PreparedNodeTestLaunch, 'workspace' | 'program' | 'args'>, node: string, record: (type: string, detail?: unknown) => unknown,
   onOutput?: (event: NodeTestOutputEvent) => void | Promise<void>) {
   const started = process.hrtime.bigint();
   const port = await availableInspectorPort();
   const args = launch.args.map(argument => argument === '--inspect-brk' ? `--inspect-brk=${port}` : argument);
   if (args.filter(argument => argument === `--inspect-brk=${port}`).length !== 1) throw new Error('Node test launch has no single Inspector pause.');
-  const environment: NodeJS.ProcessEnv = { CI: 'true', NODE_ENV: 'test' };
-  // The owned test receives basic process settings without inheriting unrelated account credentials.
-  for (const name of ['PATH', 'HOME', 'TMPDIR', 'SHELL', 'LANG', 'LC_ALL', 'PNPM_HOME', 'USER', 'LOGNAME']) if (process.env[name]) environment[name] = process.env[name];
-  const child = spawn(node, [launch.program, ...args], { cwd: launch.workspace, env: environment, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  // The owned test receives basic process settings without inheriting unrelated account credentials, exactly as its file-listing preflight did.
+  const child = spawn(node, [launch.program, ...args], { cwd: launch.workspace, env: buildNodeTestEnvironment(), detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '', announcement = '', error: Error | undefined, exited = false, closing: Promise<void> | undefined, outputSequence = 0;
   let outputWrites = Promise.resolve(), pendingOutputBytes = 0;
   const exit = new Promise<void>(resolve => child.once('close', () => { exited = true; resolve(); }));
@@ -85,6 +84,12 @@ export async function launchNodeTest(launch: PreparedNodeTestLaunch, node: strin
       await outputWrites;
       if (error) throw error;
       return { exitCode: child.exitCode, signal: child.signalCode, output };
+    },
+    /** Reports how the process ended once it exits within `timeoutMs`, or `undefined` while it is still running. Used to explain a debugger session that ended before its first stop. @example await testRun.waitForExit(2_000) // => { exitCode: 0, signal: null } */
+    async waitForExit(timeoutMs: number): Promise<{ exitCode: number | null; signal: NodeJS.Signals | null } | undefined> {
+      try { await awaitResponse(exit, 'owned Node test exit', undefined, timeoutMs); }
+      catch { return undefined; }
+      return { exitCode: child.exitCode, signal: child.signalCode };
     },
     /** Waits for this process's complete Inspector announcement, never guessing an endpoint from a partial chunk. @example await testRun.inspectorEndpoint(signal) */
     async inspectorEndpoint(signal: AbortSignal): Promise<string> {

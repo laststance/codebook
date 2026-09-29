@@ -20,7 +20,7 @@ async function nodeStudyHarness(context: TestContext) {
     sections: [{ title: 'Theme choice', text: 'Explains the captured sources.' }], anchors: reference.descriptor!.anchors, observations: [] }], edges: [] };
   await books.publish({ bookId: 'interface', key: 'first', expectedRevision: 0, document });
   const configuration = nodeTestConfigSchema.parse({ version: 1, adapter: 'vitest-node', book: reference.configuration.book,
-    testFile: 'src/theme.test.ts', testHash: 'a'.repeat(64), source: reference.configuration.source,
+    testFile: 'src/theme.test.ts', testTitles: ['theme', 'selects the dark theme'], testHash: 'a'.repeat(64), source: reference.configuration.source,
     inspections: [{ path: 'nextTheme', mode: 'value', required: true }] });
   const control = { signal: new AbortController().signal, deadlineAt: Date.now() + 20_000 };
   return { ...repository, books, library, document, configuration, control };
@@ -38,6 +38,16 @@ test('a Node test stop binds the exact article citation before acquiring its exe
   assert.equal(definition.descriptor.bookTitle, 'Interface');
   assert.deepEqual(definition.descriptor.sources.map(source => source.path), ['src/theme.ts', 'src/mode.ts']);
   assert.equal(definition.configurationHash.length, 64);
+});
+
+test('a new Node test that names its test with the retired testName, or not at all, is refused before its history exists', async context => {
+  // Arrange
+  const { books, configuration, control } = await nodeStudyHarness(context);
+  const { testTitles: _cited, ...withoutIdentity } = configuration;
+  // Act / Assert
+  await assert.rejects(prepareNodeTestStudy({ ...withoutIdentity, testName: 'selects the dark theme' }, books, control),
+    { code: 'INVALID_CONFIGURATION', message: /testName is retired.*testTitles/ });
+  await assert.rejects(prepareNodeTestStudy(withoutIdentity, books, control), { code: 'INVALID_CONFIGURATION', message: /needs testTitles/ });
 });
 
 test('a Node test stop outside its cited line or column is refused before source acquisition', async context => {

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import type { DebugProtocol } from '@vscode/debugprotocol';
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas';
 import type { ReplayDebugSnapshot } from './replayDebugSchemas';
@@ -10,12 +10,14 @@ import { waitUntil } from './runtimeSupport/utils/waitUntil';
 import { bindOwnedNodeTestDebugSession } from './utils/bindOwnedNodeTestDebugSession';
 import { launchNodeTest } from './utils/launchNodeTest';
 import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch';
+import { listVitestTestFiles } from './utils/listVitestTestFiles';
+import { verifyVitestTestResult } from './utils/verifyVitestTestResult';
 import { inspectNodeTestVariables, type NodeTestFact } from './utils/inspectNodeTestVariables';
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot';
 import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame';
 import { sha256 } from './runtimeSupport/utils/sha256';
 import { RESUME_COMMANDS } from './runtimeSupport/constants';
-import { NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS, NODE_REPLAY_DEBUG_MAX_DEPTH, NODE_REPLAY_DEBUG_MAX_FRAMES, NODE_REPLAY_DEBUG_MAX_VARIABLES } from './constants';
+import { NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS, NODE_REPLAY_DEBUG_MAX_DEPTH, NODE_REPLAY_DEBUG_MAX_FRAMES, NODE_REPLAY_DEBUG_MAX_VARIABLES, NODE_TEST_EXIT_GRACE_MS } from './constants';
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch';
 
 const NODE_ATTACH_TIMEOUT_MS = 45_000;
@@ -99,13 +101,16 @@ export class OwnedNodeTestRun {
   /** Acquires the exact checked test and waits for its native source breakpoint and variable scope. @example const sourceStop = await run.prepare() */
   prepare(): Promise<NodeTestSourceStop> {
     if (this.preparation) return this.preparation;
-    this.preparation = this.prepareOwned().catch(async error => { await this.release(); throw error; });
+    this.preparation = this.prepareOwned().catch(async (error: unknown) => {
+      const failure = await this.explainEarlyExit(error);
+      await this.release(); throw failure;
+    });
     return this.preparation;
   }
 
   private async prepareOwned(): Promise<NodeTestSourceStop> {
     const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(NODE_ATTACH_TIMEOUT_MS)]);
-    const launch = this.launch = await prepareNodeTestLaunch(this.workspace, this.configuration);
+    const launch = this.launch = await prepareNodeTestLaunch(this.workspace, this.configuration, request => listVitestTestFiles({ ...request, node: this.node, signal }));
     signal.throwIfAborted();
     this.outputTerminal = new NodeTestOutputTerminal(this.id, vscode, () => {
       this.record('node-test.output-surface-closed');
@@ -171,6 +176,8 @@ export class OwnedNodeTestRun {
     const launch = this.launch!, bound = this.bound!, selected = launch.stops[index]!;
     const reportedStops = new Set<(typeof this.stops)[number]>();
     const target = await waitUntil(async () => {
+      // A test process that ended can never reach this stop; fail now instead of at the attach deadline.
+      this.assertActive(bound.session.id);
       for (const stop of this.stops.slice(fromIndex).filter(candidate => candidate.sessionId === bound.session.id)) {
         const trace = await bound.session.customRequest('stackTrace', { threadId: stop.threadId, startFrame: 0, levels: NODE_REPLAY_DEBUG_MAX_FRAMES }) as DebugProtocol.StackTraceResponse['body'];
         const checkedFrame = selectCheckedNodeFrame(trace.stackFrames, selected.file, selected.source.line, selected.source.column, stop.reason);
@@ -220,8 +227,8 @@ export class OwnedNodeTestRun {
 
   /** Continues only the accepted paused session and waits for the real test command outcome. @example const result = await run.complete() */
   async complete(): Promise<{ exitCode: number | null; signal: NodeJS.Signals | null; output: string; elapsedMs: number }> {
-    const stop = this.acceptedStop, bound = this.bound, owned = this.owned;
-    if (!stop || !bound || !owned || this.cleanup || this.advancing || this.hasNextStop()) throw new Error('Node test has no final owned source pause to continue.');
+    const stop = this.acceptedStop, bound = this.bound, owned = this.owned, launch = this.launch;
+    if (!stop || !bound || !owned || !launch || this.cleanup || this.advancing || this.hasNextStop()) throw new Error('Node test has no final owned source pause to continue.');
     this.abort.signal.throwIfAborted();
     await this.assertAcceptedPause(stop, 'the final continuation');
     const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(NODE_ATTACH_TIMEOUT_MS)]);
@@ -232,6 +239,8 @@ export class OwnedNodeTestRun {
     await bound.session.customRequest('continue', { threadId: stop.threadId });
     // The attach timeout bounds only the retirement above; the remaining tests may run until cancellation or the run deadline.
     const result = await owned.result(this.abort.signal);
+    // A stop and an exit code cannot show which test ran: module loading can reach the stop while Vitest skips the cited test.
+    await verifyVitestTestResult(launch.report.file, launch.testFile, launch.testTitles);
     const elapsedMs = owned.elapsedMs();
     this.record('node-test.result', { exitCode: result.exitCode, signal: result.signal, elapsedMs, output: result.output });
     this.outputTerminal?.reveal();
@@ -243,6 +252,29 @@ export class OwnedNodeTestRun {
     this.abort.abort();
     await this.preparation?.catch(() => undefined);
     await this.release();
+  }
+
+  /**
+   * Names the likely cause when the owned test process ended before its first declared stop, most often because Vitest skipped the cited test.
+   *
+   * Called by {@link prepare} when preparation fails. Cancellation and failures after a captured stop keep their original error.
+   *
+   * @param error - The preparation failure.
+   * @returns The original error, or one that states the exit code and points to `testTitles`.
+   * @example
+   * ```ts
+   * await this.explainEarlyExit(new Error('Owned Node debugger session terminated or was cancelled.'))
+   * // => Error('Owned Node test exited with code 0 before declared stop 1. ...')
+   * ```
+   */
+  private async explainEarlyExit(error: unknown): Promise<unknown> {
+    if (this.abort.signal.aborted || this.acceptedStop || !this.owned) return error;
+    // A still-attached session means the process is alive, so this failure has another cause.
+    if (this.bound && this.active.has(this.bound.session.id)) return error;
+    const exit = await this.owned.waitForExit(NODE_TEST_EXIT_GRACE_MS);
+    if (!exit) return error;
+    return new Error(`Owned Node test exited with ${exit.signal ? `signal ${exit.signal}` : `code ${exit.exitCode}`} before declared stop 1. `
+      + 'Its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.', { cause: error });
   }
 
   private owner(session: vscode.DebugSession): boolean {
@@ -297,6 +329,8 @@ export class OwnedNodeTestRun {
       let processFailure: unknown;
       try { await this.owned?.close(); } catch (error) { processFailure = error; }
       finally { this.tracker.dispose(); this.termination.dispose(); }
+      // The private Vitest report is evidence only until the result check; nothing else reads it.
+      if (this.launch) await rm(this.launch.report.directory, { recursive: true, force: true }).catch((error: unknown) => { processFailure ??= error; });
       const failure = results.find(result => result.status === 'rejected');
       if (failure?.status === 'rejected') throw failure.reason;
       if (processFailure) throw processFailure;

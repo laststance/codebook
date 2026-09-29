@@ -18,7 +18,7 @@ test('public Node test start exposes cited ordered pauses, actual result, and th
   service.nodeHistoryStore = new NodeTestHistoryStore(join(harness.directory, '.learning'), '0'.repeat(64));
   service.environment.build.sourceHash = 'f'.repeat(64);
   const base = harness.configuration;
-  const configuration: NodeTestConfiguration = { version: 1, adapter: 'vitest-node', book: base.book, testFile: 'src/theme.test.ts', testHash: 'a'.repeat(64),
+  const configuration: NodeTestConfiguration = { version: 1, adapter: 'vitest-node', book: base.book, testFile: 'src/theme.test.ts', testTitles: ['theme', 'selects the dark theme'], testHash: 'a'.repeat(64),
     source: base.source, inspections: base.inspections.slice(0, 1), additionalStops: [{ ...base.source, anchorIndex: 0, inspections: base.inspections.slice(0, 1) }] };
   const stops = [0, 1].map(index => ({ index, runId: 'node-run', sessionId: 'owned-session', threadId: 7, elapsedMs: 10 + index * 10, worker: {},
     source: index ? configuration.additionalStops![0]! : configuration.source, frame: { id: 10 + index, name: 'notifyManager', line: 1, column: 1 },
@@ -91,6 +91,8 @@ test('public Node test start exposes cited ordered pauses, actual result, and th
     assert.ok('text' in historyResource);
     assert.doesNotMatch(JSON.stringify(storedHistory), /\"pid\"|\"processGroup\"|\"workspace\":/);
     assert.ok('text' in help); assert.match(help.text, /history journal/i); assert.match(help.text, /not application video or synchronized application replay/i);
+    assert.match(help.text, /\[\\"invoice data queries\\", \\"converts stored invoice cents to dollars for the edit form\\"\]/, 'help shows a nested test cited by its title path');
+    assert.match(help.text, /testName is retired and refused for new runs/);
     assert.match(state.recording.reason!, /application video and synchronized replay are unavailable/i);
     assert.equal(releases, 1);
   } finally { await harness.close(); }
@@ -132,7 +134,7 @@ test('public Node start rejects cited source drift before creating a process own
   const harness = await createHarness(), { service } = harness;
   let acquisitions = 0;
   service.environment.createNodeTestRun = async () => { acquisitions++; throw new Error('must not launch'); };
-  const configuration: NodeTestConfiguration = { version: 1, adapter: 'vitest-node', book: harness.configuration.book, testFile: 'src/theme.test.ts', testHash: 'a'.repeat(64),
+  const configuration: NodeTestConfiguration = { version: 1, adapter: 'vitest-node', book: harness.configuration.book, testFile: 'src/theme.test.ts', testTitles: ['theme', 'selects the dark theme'], testHash: 'a'.repeat(64),
     source: harness.configuration.source, inspections: harness.configuration.inspections.slice(0, 1) };
   const receipt = service.start({ instanceId: service.instanceId, profile: NODE_TEST_PROFILE, key: 'source-drift', configuration });
   try {
@@ -183,7 +185,7 @@ test('a failed advance to the next Node stop releases the test and seals its rec
   service.nodeHistoryStore = store;
   service.environment.build.sourceHash = 'f'.repeat(64);
   const base = harness.configuration;
-  const configuration: NodeTestConfiguration = { version: 1, adapter: 'vitest-node', book: base.book, testFile: 'src/theme.test.ts', testHash: 'a'.repeat(64),
+  const configuration: NodeTestConfiguration = { version: 1, adapter: 'vitest-node', book: base.book, testFile: 'src/theme.test.ts', testTitles: ['theme', 'selects the dark theme'], testHash: 'a'.repeat(64),
     source: base.source, inspections: base.inspections.slice(0, 1), additionalStops: [{ ...base.source, anchorIndex: 0, inspections: base.inspections.slice(0, 1) }] };
   const firstStop = { index: 0, runId: 'node-run', sessionId: 'owned-session', threadId: 7, elapsedMs: 10, worker: {},
     source: configuration.source, frame: { id: 10, name: 'notifyManager', line: 1, column: 1 },

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type * as vscode from 'vscode';
@@ -15,21 +15,28 @@ import { sha256 } from '../runtimeSupport/utils/sha256';
  * @param options.declaredStops - Ordered checked stops, all at the same source line as a loop body would declare them.
  * @param options.observedLine - Line the native debugger reports for every breakpoint pause.
  * @param options.duringRetire - Learner action performed while the owned breakpoint is being retired.
+ * @param options.exitAfterEntry - The test process exits after the entry pause, as when Vitest skips the cited test.
+ * @param options.reportFailure - Error the Vitest report check raises after the process finishes.
  *
  * @example
  * ```ts
  * const harness = await nodeRunHarness({ declaredStops: 2 }); await harness.run.prepare(); await harness.run.advance();
  * ```
  */
-async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetire }: { declaredStops?: number; observedLine?: number; duringRetire?: () => void } = {}) {
+async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetire, exitAfterEntry, reportFailure }:
+  { declaredStops?: number; observedLine?: number; duringRetire?: () => void; exitAfterEntry?: boolean; reportFailure?: Error } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'));
+  const reportDirectory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-report-'));
   const sourceText = 'export const nextTheme = "dark";\n', sourceFile = join(directory, 'theme.ts');
   await writeFile(sourceFile, sourceText);
   const source = { path: 'theme.ts', hash: sha256(sourceText), line: 1, column: 14 };
-  const launch = { workspace: directory, testFile: join(directory, 'theme.test.ts'), sourceFile, program: 'vitest', args: [],
+  const testTitles = ['theme', 'loads the dark theme'];
+  const launch = { workspace: directory, testFile: join(directory, 'theme.test.ts'), sourceFile, program: 'vitest', args: [], testTitles,
+    report: { directory: reportDirectory, file: join(reportDirectory, 'vitest-report.json') },
     stops: Array.from({ length: declaredStops }, () => ({ file: sourceFile, source, inspections: [] })) };
-  const calls: string[] = [];
+  const calls: string[] = [], verified: unknown[][] = [];
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined, tracker: vscode.DebugAdapterTracker | undefined, continued = 0, pausedLine = observedLine;
+  let terminate: ((session: vscode.DebugSession) => void) | undefined;
   const stopped = (reason: string) => tracker?.onDidSendMessage?.({ type: 'event', event: 'stopped', body: { threadId: 1, reason } });
   const clientRequest = (command: string) => tracker?.onWillReceiveMessage?.({ type: 'request', seq: 90, command, arguments: { threadId: 1 } });
   const session = { id: 'owned-node-session', type: 'pwa-node', name: '', workspaceFolder: undefined, configuration: { type: 'pwa-node', name: '', request: 'attach' },
@@ -39,6 +46,8 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
       clientRequest(command);
       if (command === 'continue') {
         calls.push('continue');
+        // A cited test that Vitest skipped never reaches the source: its process exits and the owned session ends.
+        if (exitAfterEntry) { queueMicrotask(() => terminate?.(session as unknown as vscode.DebugSession)); return {}; }
         // Each continuation before a declared stop reaches the line again; the final one lets the test finish.
         if (++continued <= declaredStops) queueMicrotask(() => stopped('breakpoint'));
         return {};
@@ -67,7 +76,7 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
     workspace: { getWorkspaceFolder: () => undefined },
     debug: {
       registerDebugAdapterTrackerFactory(_type: string, factory: vscode.DebugAdapterTrackerFactory) { trackerFactory = factory; return { dispose() {} }; },
-      onDidTerminateDebugSession: () => ({ dispose() {} }),
+      onDidTerminateDebugSession: (listener: (session: vscode.DebugSession) => void) => { terminate = listener; return { dispose() {} }; },
       async startDebugging(_folder: unknown, configuration: vscode.DebugConfiguration) {
         // The run recognizes only sessions carrying its own configuration name.
         session.name = configuration.name; session.configuration = { ...session.configuration, name: configuration.name };
@@ -85,15 +94,22 @@ async function nodeRunHarness({ declaredStops = 1, observedLine = 1, duringRetir
     './nodeTestOutputTerminal': { NodeTestOutputTerminal: OutputTerminal },
     './utils/prepareNodeTestLaunch': { prepareNodeTestLaunch: async () => launch },
     './utils/launchNodeTest': { launchNodeTest: async () => ({ processGroup: 4242, inspectorEndpoint: async () => 'ws://127.0.0.1:9229/owned', elapsedMs: () => 10,
-      async result() { calls.push('result'); return { exitCode: 0, signal: null, output: 'Tests 1 passed' }; }, async close() {} }) },
+      async result() { calls.push('result'); return { exitCode: 0, signal: null, output: 'Tests 1 passed' }; },
+      async waitForExit() { return exitAfterEntry ? { exitCode: 0, signal: null } : undefined; }, async close() {} }) },
+    './utils/verifyVitestTestResult': { verifyVitestTestResult: async (...request: unknown[]) => {
+      calls.push('verify'); verified.push(request);
+      if (reportFailure) throw reportFailure;
+      return 'passed';
+    } },
     './utils/bindOwnedNodeTestDebugSession': { bindOwnedNodeTestDebugSession: async (value: vscode.DebugSession) => ({ session: value, identity: { pid: 1, processGroup: 4242, workspace: directory }, cdp: { close() {} } }) },
     './utils/inspectNodeTestVariables': { inspectNodeTestVariables: async () => ({ variables: [], facts: [] }) },
     './utils/captureReplayDebugSnapshot': { captureReplayDebugSnapshot: async () => ({ version: 1, frames: [], variables: [], limitations: [] }) },
   });
   const configuration: NodeTestConfiguration = { version: 1, adapter: 'vitest-node', book: { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 0 },
-    testFile: 'theme.test.ts', testHash: sha256('test'), source, inspections: [] };
+    testFile: 'theme.test.ts', testTitles, testHash: sha256('test'), source, inspections: [] };
   const run = new module.OwnedNodeTestRun(directory, configuration, process.execPath, () => undefined);
-  return { run, calls, cleanup: () => rm(directory, { recursive: true, force: true }),
+  return { run, calls, verified, launch, reportDirectory,
+    cleanup: async () => { await rm(directory, { recursive: true, force: true }); await rm(reportDirectory, { recursive: true, force: true }); },
     // Another debugger control resumes the accepted source pause outside Codebook.
     resume: () => tracker?.onDidSendMessage?.({ type: 'event', event: 'continued', body: { threadId: 1 } }),
     // The learner steps in the native debugger: the editor sends `next` and the adapter reports the new pause without a `continued` event.
@@ -117,7 +133,7 @@ test('continuing the final declared stop retires its owned breakpoint first so a
     const result = await harness.run.complete();
 
     // Assert
-    assert.deepEqual(harness.calls, ['retire', 'continue', 'result']);
+    assert.deepEqual(harness.calls, ['retire', 'continue', 'result', 'verify']);
     assert.equal(result.exitCode, 0);
   } finally { await harness.run.stop(); await harness.cleanup(); }
 });
@@ -284,7 +300,7 @@ test('Codebook finishes a two-stop Node test even though its own continue reques
     const result = await harness.run.complete();
 
     // Assert
-    assert.deepEqual(harness.calls, ['retire', 'arm', 'continue', 'retire', 'continue', 'result']);
+    assert.deepEqual(harness.calls, ['retire', 'arm', 'continue', 'retire', 'continue', 'result', 'verify']);
     assert.equal(result.exitCode, 0);
   } finally { await harness.run.stop(); await harness.cleanup(); }
 });
@@ -301,7 +317,7 @@ test('a native stack refresh at the accepted pause (Toggle Skipping this File) s
     const result = await harness.run.complete();
 
     // Assert
-    assert.deepEqual(harness.calls, ['retire', 'continue', 'result']);
+    assert.deepEqual(harness.calls, ['retire', 'continue', 'result', 'verify']);
     assert.equal(result.exitCode, 0);
   } finally { await harness.run.stop(); await harness.cleanup(); }
 });
@@ -340,4 +356,60 @@ test('a pause re-announced at another position without a client resume is refuse
     await assert.rejects(completing, /resumed before the final continuation/);
     assert.equal(harness.calls.includes('continue'), false, 'the unaccepted pause is never continued');
   } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a finished run is checked against the cited test in Vitest\'s report before its result is returned', async () => {
+  // Arrange
+  const harness = await nodeRunHarness();
+  try {
+    await harness.run.prepare();
+
+    // Act
+    await harness.run.complete();
+
+    // Assert
+    assert.deepEqual(harness.verified, [[harness.launch.report.file, harness.launch.testFile, ['theme', 'loads the dark theme']]]);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a finished run whose Vitest report shows another executed test fails instead of returning a result', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ reportFailure: new Error('Vitest ran "theme > loads the light theme" instead of the cited test.') });
+  try {
+    await harness.run.prepare();
+
+    // Act
+    const completing = harness.run.complete();
+
+    // Assert
+    await assert.rejects(completing, /instead of the cited test/);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a cited test that ends before its first declared stop fails at once with the exit code and the testTitles hint', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ exitAfterEntry: true });
+  try {
+    const startedAt = performance.now();
+
+    // Act
+    const preparing = harness.run.prepare();
+
+    // Assert
+    await assert.rejects(preparing, /exited with code 0 before declared stop 1.*testTitles.*codebook:\/\/help\/node-test/s);
+    assert.ok(performance.now() - startedAt < 5_000, 'the ended session fails the run instead of waiting for the attach deadline');
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('releasing a run removes its private Vitest report folder', async () => {
+  // Arrange
+  const harness = await nodeRunHarness();
+  await harness.run.prepare();
+
+  // Act
+  await harness.run.stop();
+
+  // Assert
+  await assert.rejects(stat(harness.reportDirectory), { code: 'ENOENT' });
+  await harness.cleanup();
 });

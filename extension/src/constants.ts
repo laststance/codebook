@@ -199,6 +199,20 @@ export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608;
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000;
 /** Longest debugger type name a saved Node fact keeps; the type is supplementary, so a longer one is omitted rather than failing the run. */
 export const NODE_TEST_FACT_TYPE_LIMIT_CHARS = 256;
+/** Oldest Vitest major whose file listing, exclusion, name matching and JSON report were verified for exact node-test selection (4.1.11 and 5.0.2). */
+export const NODE_TEST_MINIMUM_VITEST_MAJOR = 4;
+/** Deepest cited title path: enclosing `describe` titles plus the test title. */
+export const NODE_TEST_TITLE_PATH_LIMIT = 16;
+/** Other test files Vitest's substring file filter may add before Codebook refuses instead of excluding each one. */
+export const NODE_TEST_EXCLUDED_FILE_LIMIT = 64;
+/** Bound for one `vitest list --filesOnly` preflight; the whole attach phase is bounded separately. */
+export const VITEST_FILE_LIST_TIMEOUT_MS = 30_000;
+/** Error text kept from a failed Vitest preflight. */
+export const VITEST_LIST_ERROR_LIMIT_CHARS = 2_048;
+/** Largest Vitest JSON report read to confirm which test ran. */
+export const VITEST_REPORT_LIMIT_BYTES = 8_388_608;
+/** Wait for the owned test process to report its exit after its debugger session ended early. */
+export const NODE_TEST_EXIT_GRACE_MS = 2_000;
 export const REPOSITORY_BROWSER_ACTION = 'repository-click';
 export const REPOSITORY_CONFIG_VERSION = 1;
 export const CROSS_RUNTIME_CONFIG_VERSION = 2;
