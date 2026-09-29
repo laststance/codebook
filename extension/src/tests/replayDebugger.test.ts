@@ -16,8 +16,8 @@ class TestEmitter<Value> {
   fire(value: Value): void { for (const listener of this.listeners) listener(value); }
   dispose(): void { this.listeners.clear(); }
 }
-/** Exposes only the four native debug operations used by the historical owner. @example harness().stopped */
-function harness(startGate?: Promise<void>, terminationGate?: Promise<void>, refusedStarts = 0) {
+/** Exposes only the four native debug operations used by the historical owner; `disconnectBeforeTermination` mirrors the editor sending DAP disconnect before it reports the ended session. @example harness().stopped */
+function harness(startGate?: Promise<void>, terminationGate?: Promise<void>, refusedStarts = 0, disconnectBeforeTermination = false) {
   const terminated = new TestEmitter<vscode.DebugSession>(), stopped: string[] = [], messages: vscode.DebugProtocolMessage[] = [];
   let factory: vscode.DebugAdapterDescriptorFactory | undefined, adapter: vscode.DebugAdapter | undefined, session: vscode.DebugSession | undefined;
   let sessionCount = 0;
@@ -41,10 +41,16 @@ function harness(startGate?: Promise<void>, terminationGate?: Promise<void>, ref
         adapter?.handleMessage({ type: 'request', seq: 1, command: 'configurationDone' }); signalStarted();
         await startGate; return true;
       },
-      async stopDebugging(target) { assert.ok(target); stopped.push(target.id); signalStopRequested(); await terminationGate; terminated.fire(target); },
+      async stopDebugging(target) {
+        assert.ok(target); stopped.push(target.id); signalStopRequested();
+        // The editor asks the inline adapter to disconnect before the session-ended event arrives.
+        if (disconnectBeforeTermination) adapter?.handleMessage({ type: 'request', seq: 1_000, command: 'disconnect' });
+        await terminationGate; terminated.fire(target);
+      },
     } };
   const owner = new ReplayDebugger(editor);
   return { owner, stopped, messages, started, stopRequested, terminate: () => { assert.ok(session); terminated.fire(session); },
+    disconnect: () => { assert.ok(adapter); adapter.handleMessage({ type: 'request', seq: 999, command: 'disconnect' }); },
     terminateForeign: () => { assert.ok(session); terminated.fire({ ...session, id: 'unrelated-live-session' }); },
     foreignStart: async () => { assert.ok(factory); assert.ok(session); return factory.createDebugAdapterDescriptor({ ...session, id: 'foreign', configuration: { ...session.configuration, codebookReplayOwner: 'other-owner' } }, undefined); },
     relaunch: async () => { assert.ok(factory); assert.ok(session); return factory.createDebugAdapterDescriptor({ ...session, id: 'relaunched-by-editor' }, undefined); } };
@@ -202,4 +208,37 @@ test('an unrelated debugger ending does not detach or stop the selected historic
   assert.deepEqual(stopped, []);
   await owner.dispose();
   assert.deepEqual(stopped, ['historical-owned']);
+});
+
+test('stopping the recorded session from the native debugger marks history unavailable before the editor reports termination', async () => {
+  // Arrange
+  const { owner, messages, disconnect } = harness();
+  const signal = new AbortController().signal;
+  await owner.present(firstSnapshot, 'Recorded pause', signal);
+
+  // Act: the native Stop button sends DAP disconnect to the historical adapter.
+  disconnect();
+
+  // Assert
+  assert.equal(owner.available, false);
+  assert.equal(messages.some(message => 'event' in message && message.event === 'terminated'), true);
+  await assert.rejects(owner.present(firstSnapshot, 'Recorded pause', signal), /Reopen the learning replay/);
+  await owner.dispose();
+});
+
+test('replacing a recorded stop keeps history available when the editor disconnects the old adapter before termination', async () => {
+  // Arrange
+  const { owner, stopped } = harness(undefined, undefined, 0, true);
+  const signal = new AbortController().signal;
+  await owner.present(firstSnapshot, 'First recorded stop', signal);
+
+  // Act
+  owner.invalidate();
+  await owner.retire(undefined, signal);
+  await owner.present(undefined, 'Second recorded stop', signal);
+
+  // Assert
+  assert.equal(owner.available, true);
+  await owner.dispose();
+  assert.deepEqual(stopped, ['historical-owned', 'historical-owned-2']);
 });

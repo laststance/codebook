@@ -126,3 +126,45 @@ test('the same published Wiki opens source and update links in the active editor
     await rm(projectDirectory, { recursive: true, force: true });
   }
 });
+
+test('a local page without this reader’s private path token cannot read the generated Wiki', async () => {
+  // Arrange
+  const projectDirectory = await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-token-'));
+  const projectRoot = await realpath(projectDirectory);
+  const output = join(projectRoot, '.codebook', 'wiki');
+  await mkdir(output, { recursive: true });
+  await writeFile(join(output, 'index.html'), '<!doctype html><body>Private architecture notes</body>');
+  await writeFile(join(output, 'codebook-wiki.json'), JSON.stringify({ schemaVersion: 1, repositoryRoot: projectRoot, pages: [{ path: 'index.html' }], assets: [], includedSources: [] }));
+  const reader = await startDeepWikiReader(output, projectRoot, async () => { throw new Error('No model request expected.'); });
+  try {
+    // Act
+    const guessedToken = await fetch(new URL('/w/not-the-reader-token/index.html', reader.url));
+    const rootPage = await fetch(new URL('/index.html', reader.url));
+
+    // Assert
+    assert.equal(guessedToken.status, 404);
+    assert.doesNotMatch(await guessedToken.text(), /Private architecture notes/);
+    assert.equal(rootPage.status, 404);
+    assert.doesNotMatch(await rootPage.text(), /Private architecture notes/);
+  } finally { await reader.close(); await rm(projectDirectory, { recursive: true, force: true }); }
+});
+
+test('a failed editor-model answer reaches the browser reader as an error instead of an empty answer', async () => {
+  // Arrange
+  const projectDirectory = await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-model-failure-'));
+  const projectRoot = await realpath(projectDirectory);
+  const output = join(projectRoot, '.codebook', 'wiki');
+  await mkdir(output, { recursive: true });
+  await writeFile(join(output, 'index.html'), '<!doctype html><body><form id="qa-form"><textarea></textarea><div class="qa-answer"></div></form></body>');
+  await writeFile(join(output, 'codebook-wiki.json'), JSON.stringify({ schemaVersion: 1, repositoryRoot: projectRoot, pages: [{ path: 'index.html' }], assets: [], includedSources: [] }));
+  const reader = await startDeepWikiReader(output, projectRoot, async () => { throw new Error('The editor model is unavailable.'); });
+  try {
+    // Act
+    const response = await fetch(new URL('api/ask', reader.url), { method: 'POST',
+      headers: { Origin: new URL(reader.url).origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ question: 'Where is invoice creation validated?' }) });
+
+    // Assert
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'Error: The editor model is unavailable.' });
+  } finally { await reader.close(); await rm(projectDirectory, { recursive: true, force: true }); }
+});

@@ -414,3 +414,89 @@ test('a failed physical release keeps its owner and rejects starting or copying 
     const freshPath = await commands.get('codebook.startAgentServer')!(); assert.notEqual(freshPath, firstPath); assert.equal(services.length, 2);
   } finally { if (restore) harness.runtimes[0]!.stop = restore; await boundary.deactivate(); await harness.close(); }
 });
+
+test('a browser citation with an invalid line opens no source and explains the refusal', async () => {
+  // Arrange
+  const projectDirectory = await mkdtemp(join(tmpdir(), 'codebook-wiki-invalid-line-'));
+  const projectRoot = await realpath(projectDirectory);
+  await writeFile(join(projectRoot, 'source.ts'), 'export const answer = 42;\n');
+  const sourceHash = createHash('sha256').update('export const answer = 42;\n').digest('hex');
+  let handleUri: ((uri: { path: string; query: string }) => Promise<void>) | undefined;
+  const opened: string[] = [], errors: string[] = [];
+  const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
+    vscode: {
+      commands: { registerCommand: () => ({ dispose() {} }) },
+      workspace: {
+        onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+        openTextDocument: async (uri: { fsPath: string }) => ({ uri, lineCount: 2 }),
+      },
+      Uri: { file: (fsPath: string) => ({ fsPath }) },
+      Position: class { constructor(readonly line: number, readonly character: number) {} },
+      Range: class { constructor(readonly start: unknown, readonly end: unknown) {} },
+      window: {
+        registerUriHandler: (handler: { handleUri(uri: { path: string; query: string }): Promise<void> }) => { handleUri = handler.handleUri; return { dispose() {} }; },
+        showTextDocument: async (document: { uri: { fsPath: string } }) => { opened.push(document.uri.fsPath); },
+        showWarningMessage: () => Promise.resolve(undefined),
+        showErrorMessage: (message: string) => { errors.push(message); return Promise.resolve(undefined); },
+      },
+    },
+    './environment': { requireWorkspace: () => projectRoot },
+    './repositoryReader': { RepositoryReader: class { async dispose() {} } },
+    './studyWorkspace': { StudyWorkspace: class { async dispose() {} } },
+  });
+  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: projectRoot }, subscriptions: [], workspaceState: { get: () => undefined, update: async () => {} } });
+  try {
+    assert.ok(handleUri);
+
+    // Act
+    for (const line of ['0', '-3', 'first']) {
+      await handleUri({ path: '/source', query: new URLSearchParams({ root: projectRoot, path: 'source.ts', line, sha256: sourceHash }).toString() });
+    }
+
+    // Assert
+    assert.deepEqual(opened, []);
+    assert.equal(errors.length, 3);
+    assert.match(errors[0]!, /could not open the Wiki citation: Error: The Wiki citation has an invalid line number/);
+  } finally { await boundary.deactivate(); await rm(projectDirectory, { recursive: true, force: true }); }
+});
+
+test('a Cursor Wiki update that leaves source changed reports a failure instead of claiming the Wiki was updated', async () => {
+  // Arrange
+  const projectDirectory = await mkdtemp(join(tmpdir(), 'codebook-cursor-wiki-stale-update-'));
+  const projectRoot = await realpath(projectDirectory);
+  const outputDirectory = join(projectRoot, '.codebook', 'wiki');
+  await mkdir(outputDirectory, { recursive: true });
+  await writeFile(join(outputDirectory, 'index.html'), '<!doctype html><title>Project Wiki</title>');
+  await writeFile(join(outputDirectory, 'codebook-wiki.json'), JSON.stringify({ schemaVersion: 1, repositoryRoot: projectRoot, pages: [], assets: [], includedSources: [] }));
+  let handleUri: ((uri: { path: string; query: string }) => Promise<void>) | undefined;
+  const agentRuns: string[] = [], messages: string[] = [];
+  const boundary = await loadModule<typeof import('../extension')>(resolve(__dirname, '../extension.js'), {
+    vscode: {
+      env: { appName: 'Cursor' },
+      commands: { registerCommand: () => ({ dispose() {} }), executeCommand: async () => undefined },
+      workspace: { getConfiguration: () => ({ get: () => '.codebook/wiki' }), onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+      window: {
+        registerUriHandler: (handler: { handleUri(uri: { path: string; query: string }): Promise<void> }) => { handleUri = handler.handleUri; return { dispose() {} }; },
+        showInformationMessage: (message: string) => { messages.push(message); return Promise.resolve(undefined); },
+        showErrorMessage: (message: string) => { messages.push(message); return Promise.resolve(undefined); },
+      },
+    },
+    './environment': { requireWorkspace: () => projectRoot },
+    './repositoryReader': { RepositoryReader: class { async dispose() {} } },
+    './studyWorkspace': { StudyWorkspace: class { async dispose() {} } },
+    './utils/runCursorWikiUpdate': { runCursorWikiUpdate: async (root: string) => { agentRuns.push(root); return 'Updated'; } },
+    './utils/inspectDeepWikiFreshness': { inspectDeepWikiFreshness: async () => ({ status: 'changed', changedPaths: ['source.ts'], addedPaths: [] }) },
+  });
+  boundary.activate({ extensionPath: resolve(__dirname, '../..'), globalStorageUri: { fsPath: projectRoot }, subscriptions: [], workspaceState: { get: () => undefined, update: async () => {} } });
+  try {
+    assert.ok(handleUri);
+
+    // Act
+    await handleUri({ path: '/update', query: new URLSearchParams({ root: projectRoot }).toString() });
+
+    // Assert
+    assert.deepEqual(agentRuns, [projectRoot]);
+    assert.equal(messages.length, 1);
+    assert.match(messages[0]!, /could not start the Wiki update: Error: Cursor Agent finished, but the published Wiki is not verified current/);
+  } finally { await boundary.deactivate(); await rm(projectDirectory, { recursive: true, force: true }); }
+});

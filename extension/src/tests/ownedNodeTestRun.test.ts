@@ -9,14 +9,24 @@ import type { NodeTestConfiguration } from '../nodeTestConfigSchemas';
 import { loadModule } from './utils/loadModule';
 import { sha256 } from '../runtimeSupport/utils/sha256';
 
-/** Drives one owned Node test run through fake editor/process ports, recording the order of breakpoint and continuation effects. @example const harness = await nodeRunHarness(); await harness.run.prepare() */
-async function nodeRunHarness() {
+/**
+ * Drives one owned Node test run through fake editor/process ports, recording the order of breakpoint, continuation and release effects.
+ *
+ * @param options.declaredStops - Ordered checked stops, all at the same source line as a loop body would declare them.
+ * @param options.observedLine - Line the native debugger reports for every breakpoint pause.
+ *
+ * @example
+ * ```ts
+ * const harness = await nodeRunHarness({ declaredStops: 2 }); await harness.run.prepare(); await harness.run.advance();
+ * ```
+ */
+async function nodeRunHarness({ declaredStops = 1, observedLine = 1 }: { declaredStops?: number; observedLine?: number } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'));
   const sourceText = 'export const nextTheme = "dark";\n', sourceFile = join(directory, 'theme.ts');
   await writeFile(sourceFile, sourceText);
   const source = { path: 'theme.ts', hash: sha256(sourceText), line: 1, column: 14 };
   const launch = { workspace: directory, testFile: join(directory, 'theme.test.ts'), sourceFile, program: 'vitest', args: [],
-    stops: [{ file: sourceFile, source, inspections: [] }] };
+    stops: Array.from({ length: declaredStops }, () => ({ file: sourceFile, source, inspections: [] })) };
   const calls: string[] = [];
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined, tracker: vscode.DebugAdapterTracker | undefined, continued = 0;
   const stopped = (reason: string) => tracker?.onDidSendMessage?.({ type: 'event', event: 'stopped', body: { threadId: 1, reason } });
@@ -25,11 +35,11 @@ async function nodeRunHarness() {
     async customRequest(command: string): Promise<unknown> {
       if (command === 'continue') {
         calls.push('continue');
-        // The entry continuation reaches the declared line; the final one lets the test finish.
-        if (++continued === 1) queueMicrotask(() => stopped('breakpoint'));
+        // Each continuation before a declared stop reaches the line again; the final one lets the test finish.
+        if (++continued <= declaredStops) queueMicrotask(() => stopped('breakpoint'));
         return {};
       }
-      if (command === 'stackTrace') return { stackFrames: [{ id: 1, name: 'loadTheme', line: source.line, column: source.column, source: { path: sourceFile } }] } satisfies DebugProtocol.StackTraceResponse['body'];
+      if (command === 'stackTrace') return { stackFrames: [{ id: 1, name: 'loadTheme', line: observedLine, column: source.column, source: { path: sourceFile } }] } satisfies DebugProtocol.StackTraceResponse['body'];
       if (command === 'scopes') return { scopes: [{ name: 'Local', variablesReference: 1, expensive: false }] } satisfies DebugProtocol.ScopesResponse['body'];
       throw new Error(`Unexpected request ${command}`);
     } };
@@ -62,7 +72,7 @@ async function nodeRunHarness() {
         queueMicrotask(() => stopped('entry'));
         return true;
       },
-      async stopDebugging() {},
+      async stopDebugging() { calls.push('stop-debugging'); },
     },
   };
   const module = await loadModule<typeof import('../ownedNodeTestRun')>(resolve(__dirname, '../ownedNodeTestRun.js'), {
@@ -79,7 +89,9 @@ async function nodeRunHarness() {
   const configuration: NodeTestConfiguration = { version: 1, adapter: 'vitest-node', book: { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 0 },
     testFile: 'theme.test.ts', testHash: sha256('test'), source, inspections: [] };
   const run = new module.OwnedNodeTestRun(directory, configuration, process.execPath, () => undefined);
-  return { run, calls, cleanup: () => rm(directory, { recursive: true, force: true }) };
+  return { run, calls, cleanup: () => rm(directory, { recursive: true, force: true }),
+    // Another debugger control resumes the accepted source pause outside Codebook.
+    resume: () => tracker?.onDidSendMessage?.({ type: 'event', event: 'continued', body: { threadId: 1 } }) };
 }
 
 test('continuing the final declared stop retires its owned breakpoint first so a repeated line cannot pause the finished test again', async () => {
@@ -95,5 +107,68 @@ test('continuing the final declared stop retires its owned breakpoint first so a
     // Assert
     assert.deepEqual(harness.calls, ['retire', 'continue', 'result']);
     assert.equal(result.exitCode, 0);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('advancing to the next declared stop retires the captured breakpoint before arming and continuing to the next one', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2 });
+  try {
+    await harness.run.prepare();
+    harness.calls.length = 0;
+
+    // Act
+    const next = await harness.run.advance();
+
+    // Assert
+    assert.deepEqual(harness.calls, ['retire', 'arm', 'continue']);
+    assert.equal(next.index, 1);
+    assert.equal(harness.run.hasNextStop(), false);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a source pause resumed outside Codebook cannot advance and releases the owned test', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2 });
+  try {
+    await harness.run.prepare();
+    harness.calls.length = 0;
+
+    // Act
+    harness.resume();
+    const advancing = harness.run.advance();
+
+    // Assert
+    await assert.rejects(advancing, /resumed before the next declared stop/);
+    assert.deepEqual(harness.calls, ['remove', 'stop-debugging']);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('a native stop at another line of the declared source fails preparation instead of recording the wrong position', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ observedLine: 2 });
+  try {
+    // Act
+    const preparing = harness.run.prepare();
+
+    // Assert
+    await assert.rejects(preparing, /stopped at 2:14 instead of declared 1:14/);
+    assert.deepEqual(harness.calls, ['arm', 'continue', 'remove', 'stop-debugging']);
+  } finally { await harness.run.stop(); await harness.cleanup(); }
+});
+
+test('finishing the test is refused while another declared source stop remains uncaptured', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2 });
+  try {
+    await harness.run.prepare();
+    harness.calls.length = 0;
+
+    // Act
+    const completing = harness.run.complete();
+
+    // Assert
+    await assert.rejects(completing, /no final owned source pause/);
+    assert.deepEqual(harness.calls, []);
   } finally { await harness.run.stop(); await harness.cleanup(); }
 });

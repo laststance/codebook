@@ -143,3 +143,42 @@ test('paged Node history events follow the returned continuation URI', async () 
     assert.equal(events[1].channel, 'stderr');
   } finally { await harness.close(); }
 });
+
+test('a failed advance to the next Node stop releases the test and seals its recorded prefix as partial history', async () => {
+  // Arrange
+  const harness = await createHarness(), { service } = harness;
+  const store = new NodeTestHistoryStore(join(harness.directory, '.learning'), '0'.repeat(64));
+  service.nodeHistoryStore = store;
+  service.environment.build.sourceHash = 'f'.repeat(64);
+  const base = harness.configuration;
+  const configuration: NodeTestConfiguration = { version: 1, adapter: 'vitest-node', book: base.book, testFile: 'src/theme.test.ts', testHash: 'a'.repeat(64),
+    source: base.source, inspections: base.inspections.slice(0, 1), additionalStops: [{ ...base.source, anchorIndex: 0, inspections: base.inspections.slice(0, 1) }] };
+  const firstStop = { index: 0, runId: 'node-run', sessionId: 'owned-session', threadId: 7, elapsedMs: 10, worker: {},
+    source: configuration.source, frame: { id: 10, name: 'notifyManager', line: 1, column: 1 },
+    variables: [{ name: 'listener', value: '() => undefined' }], facts: [{ path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' }],
+    debuggerSnapshot: { version: 1, frames: [{ name: 'notifyManager', line: 1, column: 1, scopes: [{ name: 'Local', variables: [0] }] }],
+      variables: [{ name: 'listener', value: '() => undefined', children: [] }], limitations: [] } } as unknown as NodeTestSourceStop;
+  let releases = 0;
+  const runtime: NodeTestRuntime = { id: 'node-run', async prepare() { return firstStop; }, hasNextStop() { return true; },
+    async advance() { throw new Error('Owned Node source pause was resumed before the next declared stop.'); },
+    async complete() { throw new Error('The final result must not be requested before the second stop.'); }, async stop() { releases++; } };
+  service.environment.createNodeTestRun = async () => runtime;
+  const receipt = service.start({ instanceId: service.instanceId, profile: NODE_TEST_PROFILE, key: 'node-advance-failure', configuration });
+  const record = service.record(receipt);
+  try {
+    await record.preparation;
+    const paused = service.state(record);
+
+    // Act
+    const continuing = service.continue(paused.participants.server!.continueArguments!);
+
+    // Assert
+    await assert.rejects(continuing, { code: 'RUNTIME_FAILED' });
+    await waitUntil(() => record.stopped, 'Node failure cleanup', 1_000);
+    const history = await store.read(`${service.instanceId}_${record.id}`);
+    assert.equal(releases, 1);
+    assert.equal(service.state(record).nodeTest!.historyStatus, 'partial');
+    assert.equal(history.status, 'partial');
+    assert.deepEqual(history.entries.map(entry => entry.type), ['stop']);
+  } finally { await harness.close(); }
+});

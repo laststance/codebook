@@ -332,3 +332,49 @@ test('recorded history cannot cancel the editor cleanup of a missing-history sto
   assert.equal(request('stackTrace', { threadId: 1 }).success, false);
   assert.equal(request('stackTrace', { threadId: 2 }).body.stackFrames[0].name, 'createInvoice');
 });
+
+test('native debugger paging returns only the requested recorded frames and values', () => {
+  // Arrange
+  const { adapter, request } = harness();
+  const snapshot: ReplayDebugSnapshot = { version: 1, frames: [
+    { name: 'createInvoice', line: 1, column: 1, scopes: [{ name: 'Locals', variables: [0, 1, 2] }] },
+    { name: 'handleSubmit', line: 5, column: 3, scopes: [] },
+    { name: 'dispatch', line: 9, column: 2, scopes: [] },
+  ], variables: [
+    { name: 'amount', value: '120', type: 'number', children: [] },
+    { name: 'currency', value: '"USD"', type: 'string', children: [] },
+    { name: 'status', value: '"pending"', type: 'string', children: [] },
+  ], limitations: [] };
+  adapter.select(snapshot, 'Recorded · 00:42');
+
+  // Act
+  const page = request('stackTrace', { threadId: 1, startFrame: 1, levels: 1 }).body;
+  const firstFrameId = request('stackTrace', { threadId: 1 }).body.stackFrames[0].id;
+  const reference = request('scopes', { frameId: firstFrameId }).body.scopes[0].variablesReference;
+  const values = request('variables', { variablesReference: reference, start: 1, count: 1 }).body.variables;
+
+  // Assert
+  assert.equal(page.totalFrames, 3);
+  assert.equal(page.stackFrames.length, 1);
+  assert.equal(page.stackFrames[0].name, 'handleSubmit');
+  assert.deepEqual(values, [{ name: 'currency', value: '"USD"', type: 'string', variablesReference: 0 }]);
+});
+
+test('recording limitations appear as a native Variables scope so uncaptured history is disclosed', () => {
+  // Arrange
+  const { adapter, request } = harness();
+  const snapshot = recorded();
+  snapshot.frames[0]!.unavailable = 'Scope unavailable';
+  snapshot.limitations = ['Historical variable count limit reached.'];
+  adapter.select(snapshot, 'Recorded · 00:42');
+
+  // Act
+  const frameId = request('stackTrace', { threadId: 1 }).body.stackFrames[0].id;
+  const scopes = request('scopes', { frameId }).body.scopes;
+  const limitationRows = request('variables', { variablesReference: scopes[1].variablesReference }).body.variables;
+
+  // Assert
+  assert.equal(scopes.length, 2);
+  assert.equal(scopes[1].name, 'Recording limitations');
+  assert.deepEqual(limitationRows, [{ name: 'Not recorded', value: 'Scope unavailable\nHistorical variable count limit reached.', variablesReference: 0 }]);
+});

@@ -172,3 +172,55 @@ test('Node learning explanation restores by revision and accepts only exact seal
     assert.deepEqual(await restarted.readLearningMaterial(header.studyId), saved, 'invalid revisions and references preserve the last valid explanation');
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('a new Node test is refused when saved studies and histories reach the configured limit, keeping existing history readable', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-node-history-capacity-'));
+  const workspaceKey = createWorkspaceKey();
+  const savedBrowserStudies = async () => 1;
+  const store = new NodeTestHistoryStore(directory, workspaceKey, () => 2, savedBrowserStudies);
+  const first = nodeTestHistoryHeader(workspaceKey), second = nodeTestHistoryHeader(workspaceKey);
+  try {
+    const writer = await store.start(first);
+    await writer.appendOutput({ sequence: 1, elapsedMs: 4, channel: 'stdout', text: 'RUN src/theme.test.ts' });
+    await writer.finish('partial', 'The learner stopped this run.');
+
+    // Act
+    const starting = store.start(second);
+
+    // Assert
+    await assert.rejects(starting, /Saved study storage is full/);
+    assert.deepEqual((await store.list()).map(entry => entry.studyId), [first.studyId]);
+    assert.equal((await store.read(first.studyId)).status, 'partial');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('a failing Node test result can be sealed only as partial history', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-node-history-failing-result-'));
+  const header = nodeTestHistoryHeader(createWorkspaceKey());
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey), writer = await store.start(header);
+  try {
+    await writer.appendOutput({ sequence: 1, elapsedMs: 4, channel: 'stdout', text: 'RUN src/theme.test.ts' });
+    const sourceText = 'const nextTheme = "dark";\n';
+    await writer.appendStop({ index: 0, runId: 'test-run', sessionId: 'test-session', threadId: 1, elapsedMs: 5,
+      worker: { pid: 1, processGroup: 1, workspace: '/private/test' }, source: header.configuration.source,
+      frame: { id: 1, name: 'notifyManager', line: 1, column: 1 }, variables: [{ name: 'nextTheme', value: 'dark', variablesReference: 0 }],
+      facts: [{ path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' }],
+      debuggerSnapshot: { version: 1, frames: [{ name: 'notifyManager', line: 1, column: 1,
+        source: { name: header.configuration.source.path, text: sourceText, hash: sha256(sourceText), line: 1 }, scopes: [{ name: 'Local', variables: [0] }] }],
+      variables: [{ name: 'nextTheme', value: 'dark', type: 'string', children: [] }], limitations: [] } });
+    await writer.appendResult({ exitCode: 1, signal: null, output: 'Tests 1 failed' }, 6);
+
+    // Act
+    const completing = writer.finish('complete');
+
+    // Assert
+    await assert.rejects(completing, /cannot be marked complete/);
+    await writer.finish('partial', 'The test failed after its recorded stop.');
+    const history = await store.read(header.studyId);
+    assert.equal(history.status, 'partial');
+    assert.equal(history.reason, 'The test failed after its recorded stop.');
+    assert.deepEqual(history.entries.map(entry => entry.type), ['output', 'stop', 'result']);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

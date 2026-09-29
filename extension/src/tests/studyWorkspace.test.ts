@@ -8028,3 +8028,36 @@ test('disposed bottom playback documents cannot move the selected recorded momen
     assert.deepEqual(harness.controller.state(), playback);
   } finally { await harness.close(); }
 });
+
+test('inspecting a Node stop whose captured source differs from its recorded position refuses native debugging', async () => {
+  // Arrange: a sealed one-stop history whose debugger snapshot carries another source text.
+  const harness = await workspaceHarness();
+  try {
+    const store = harness.service.nodeHistoryStore!;
+    const history = nodeTestHistoryHeader(store.workspaceKey), unrelatedText = 'const nextTheme = "light";\n';
+    const writer = await store.start(history);
+    await writer.appendOutput({ sequence: 1, elapsedMs: 100, channel: 'stdout', text: 'RUN src/theme.test.ts\n' });
+    await writer.appendStop({ index: 0, runId: 'test-run', sessionId: 'test-session', threadId: 1, elapsedMs: 200,
+      worker: { pid: 1, processGroup: 1, workspace: '/private/test' }, source: history.configuration.source,
+      frame: { id: 1, name: 'notifyManager', line: 1, column: 1 }, variables: [{ name: 'nextTheme', value: 'dark', variablesReference: 0 }],
+      facts: [{ path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' }],
+      debuggerSnapshot: { version: 1, frames: [{ name: 'notifyManager', line: 1, column: 1,
+        source: { name: history.configuration.source.path, text: unrelatedText, hash: sha256(unrelatedText), line: 1 }, scopes: [{ name: 'Local', variables: [0] }] }],
+      variables: [{ name: 'nextTheme', value: 'dark', type: 'string', children: [] }], limitations: [] } } satisfies NodeTestSourceStop);
+    await writer.appendResult({ exitCode: 0, signal: null, output: 'Tests 1 passed' }, 300);
+    await writer.finish('complete');
+    await harness.reader.open();
+    harness.receiveContext({ type: 'node-history', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId });
+    await waitUntil(() => harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence === 1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded', 1_000);
+
+    // Act
+    harness.receiveContext({ type: 'node-history-stop', revision: harness.postedMessages().slice(-1)[0]!.revision, studyId: history.studyId, sequence: 2 });
+    await waitUntil(() => harness.reader.inspect().view?.errors.some(error => /no matching verified captured source/.test(error)),
+      'the refused native stop is reported to the reader', 1_000);
+
+    // Assert
+    assert.equal(harness.historicalDebugPresentations.length, 0);
+    assert.equal(harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence, 1);
+  } finally { await harness.close(); }
+});

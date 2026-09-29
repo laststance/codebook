@@ -873,3 +873,44 @@ for (const [label, content, error] of [
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 }
+
+test('a stray file left in a prepared stage cannot be published as Wiki content', async () => {
+  // Arrange
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'codebook-wiki-stray-stage-file-')));
+  const output = join(root, '.codebook/wiki'), stage = join(root, '.codebook/next');
+  try {
+    await writeStage(stage, root, '<h1>Candidate</h1>', undefined, output);
+    await writeFile(join(stage, 'scratch-notes.md'), 'Agent working notes');
+
+    // Act
+    const publishing = publishWiki({ projectRoot: root, outputDirectory: output, stageDirectory: stage });
+
+    // Assert
+    await assert.rejects(publishing, /outside its published manifest/);
+    await assert.rejects(access(output));
+    await assert.rejects(access(output + '.publish-journal.json'));
+    assert.equal(await readFile(join(stage, 'scratch-notes.md'), 'utf8'), 'Agent working notes');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('recovering an interrupted first publication reports the retained stage without inventing a prior Wiki', async () => {
+  // Arrange
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'codebook-wiki-first-publication-recovery-')));
+  const output = join(root, '.codebook/wiki'), stage = join(root, '.codebook/next');
+  try {
+    await writeStage(stage, root, '<h1>First article</h1>', undefined, output);
+    const record = JSON.stringify({ projectRoot: root, output, stage, pid: 99999999, id: '00000000-0000-4000-8000-000000000000',
+      operation: 'publish', manifestSha256: '1'.repeat(64), priorLegacy: false });
+    await writeFile(output + '.publish-journal.json', record);
+
+    // Act
+    const recovered = await recoverWikiPublication({ projectRoot: root, outputDirectory: output });
+
+    // Assert
+    assert.deepEqual(recovered, { status: 'no-prior-wiki', stage });
+    await assert.rejects(access(output));
+    await assert.rejects(access(output + '.publish-journal.json'));
+    await assert.rejects(access(output + '.publish-journal.json.recovery-' + createHash('sha256').update(record).digest('hex')));
+    assert.equal(await readFile(join(stage, 'index.html'), 'utf8'), '<h1>First article</h1>');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

@@ -151,3 +151,22 @@ test('Pause and seek become available after a played Node event finishes present
   assert.deepEqual(published.at(-1), { sequence: 2, loading: false, mode: 'playing' });
   controller.dispose();
 });
+
+test('a Node history seek outside the recorded time range is refused and keeps the selected event', async () => {
+  // Arrange
+  const presented: number[] = [];
+  const controller = new NodeHistoryPlaybackController({ present: async sequence => { presented.push(sequence); }, changed() {}, now: () => 0, manualTicks: true });
+  controller.open([{ sequence: 4, elapsedMs: 100 }, { sequence: 7, elapsedMs: 1_000 }], 7);
+
+  // Act
+  const beforeStart = controller.seek(50);
+  const afterEnd = controller.seek(1_001);
+
+  // Assert
+  await assert.rejects(beforeStart, /outside the verified Node history range/);
+  await assert.rejects(afterEnd, /outside the verified Node history range/);
+  assert.deepEqual(presented, []);
+  assert.equal(controller.state().sequence, 7);
+  assert.equal(controller.state().positionMs, 1_000);
+  controller.dispose();
+});
