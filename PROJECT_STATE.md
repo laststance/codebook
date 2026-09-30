@@ -112,3 +112,15 @@ Latest cold/Node checkpoint (2026-09-30): separate f95562ba Cursor44.866667s and
 
 
 Ship review checkpoint (2026-10-01): `/ship` Step 9 pass 1 found that Codebook's own navigation and ordinary layouts (collapsed or hidden Variables, another stopped debug session with focus) leave native Run and Debug without value requests, so the 5,000 ms readiness boundary would fail common playback. The replay owner now waits at most 1,000 ms, commits the recorded moment without claiming loaded values and shows a visible Run and Debug hint; later frames of that stop do not wait again. Other review fixes cover retried stops after the owned session ends, superseded Node-history stops, placement cancellation reasons and cleanup. Red-before-green controls 7/7, full 1,410/1,410, package 175/175, hook 4/4. At that checkpoint the hint's webview rendering had host review only, and the soft gate still has no native take; f95562ba clips carry forward only where native retrieval completed within the grace. Step 9 pass 2 then fixed a hidden gap wait that polled every 50 ms and a hint that vanished on Play ticks. It made the grace session-level (later stops commit at once until Run and Debug loads values, which clears the hint without a new seek) and fixed retry, supersede and stop notifications. It also moved the hint to a muted status region, with Chromium DOM cases in the existing bootstrap harness. Evidence: 11+2 disabled-fix controls, full 1,420/1,420, package 175/175, hook 4/4; native behavior of these changes is NOT RUN. Step 9 pass 3 (the third and last fix cycle) found that Codebook's own session restarts and repeated gap frames defeated the session-level grace on the real Play path. It fixed those, plus close/open/Node-reset hint ownership, the final-poll race, Node Play timing and the separate Node hint row, with 8+1 disabled-fix controls, full 1,427/1,427, package 175/175 and hook 4/4. `/ship` now waits for the owner's decision on five judgment items and on continuing to Step 10. All 13 integrated rows remain open. Queued owner direction after this merge: a separate lint/format/fallow/husky and pnpm CI + Codecov PR modelled on `laststance/switch-time`.
+
+Delivery checkpoint (2026-10-01), superseding the ship-review checkpoint above:
+- **Owner decisions.** The owner directed continuation without a fourth fix cycle and deferred the informational items.
+- **Final reviews.** Review-only pass 4 and the Step 11 adversarial reviews found no critical issue. They are bound to reviewed tree `fd59c5eb`.
+- **Merge.** PR #54 merged 0.2.15 as `58f2fa6` after exact-HEAD CI, Codex cloud review with every thread resolved, and a separate root gate. Post-merge main CI 36774901521 succeeded.
+- **Package.** The checked private 0.2.15 VSIX is `367723e2…`.
+- **Carried to the next cycle:**
+  - native verification of the soft gate;
+  - the deferred review backlog;
+  - an intermittent checkpoint race (P0).
+
+[Delivery closure](docs/cycles/0031-replay-transport.md#delivery-closure-2026-10-01). All 13 integrated rows remain open.
