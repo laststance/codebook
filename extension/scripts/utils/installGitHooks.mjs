@@ -11,10 +11,12 @@ export const PRE_COMMIT_HOOK_MARKER = '# codebook-lint-staged-hook'
 /** Shared hook body: every worktree runs it, so a checkout without this tooling installed skips it instead of failing. */
 export const PRE_COMMIT_HOOK = `#!/bin/sh
 ${PRE_COMMIT_HOOK_MARKER} (installed by extension/scripts/install-git-hooks.mjs)
-# Git runs this for every worktree; a checkout without lint-staged installed commits unchanged.
+# Git runs this for every worktree; a checkout without lint-staged installed or configured commits unchanged.
 root=$(git rev-parse --show-toplevel) || exit 0
 bin="$root/extension/node_modules/.bin/lint-staged"
 [ -x "$bin" ] || exit 0
+# An older branch can keep ignored node_modules after checkout while its package.json has no lint-staged configuration.
+node -e 'process.exit(require(process.argv[1])["lint-staged"] ? 0 : 1)' "$root/extension/package.json" 2>/dev/null || exit 0
 cd "$root/extension" && exec "$bin"
 `
 

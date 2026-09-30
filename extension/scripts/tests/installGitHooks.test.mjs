@@ -187,3 +187,71 @@ test('CI installs no Git hook', async (context) => {
     { code: 'ENOENT' },
   )
 })
+
+/** Installs a stand-in lint-staged executable that fails every commit, recording that it ran. @example await failingLintStaged(directory) */
+async function failingLintStaged(directory) {
+  const bin = join(directory, 'extension', 'node_modules', '.bin')
+  await mkdir(bin, { recursive: true })
+  await writeFile(
+    join(bin, 'lint-staged'),
+    '#!/bin/sh\ntouch "$(git rev-parse --show-toplevel)/lint-staged-ran"\nexit 1\n',
+  )
+  await chmod(join(bin, 'lint-staged'), 0o755)
+}
+
+/** Commits one staged file with a throwaway identity. @example await commitNote(directory) */
+async function commitNote(directory) {
+  await writeFile(join(directory, 'note.txt'), 'note\n')
+  await run('git', ['add', 'note.txt'], { cwd: directory })
+  return run(
+    'git',
+    [
+      '-c',
+      'user.name=Codebook Test',
+      '-c',
+      'user.email=test@example.invalid',
+      'commit',
+      '--quiet',
+      '-m',
+      'note',
+    ],
+    { cwd: directory },
+  )
+}
+
+test('a checkout whose package.json has no lint-staged configuration commits even with a stale lint-staged installed', async (context) => {
+  // Arrange
+  const directory = await repositoryFixture(context)
+  await installGitHooks({ cwd: join(directory, 'extension'), env: LOCAL_ENV })
+  await failingLintStaged(directory)
+  await writeFile(
+    join(directory, 'extension', 'package.json'),
+    JSON.stringify({ name: 'older-branch' }),
+  )
+
+  // Act
+  await commitNote(directory)
+
+  // Assert
+  await assert.rejects(readFile(join(directory, 'lint-staged-ran'), 'utf8'), {
+    code: 'ENOENT',
+  })
+})
+
+test('a checkout with lint-staged configured runs it before every commit', async (context) => {
+  // Arrange
+  const directory = await repositoryFixture(context)
+  await installGitHooks({ cwd: join(directory, 'extension'), env: LOCAL_ENV })
+  await failingLintStaged(directory)
+  await writeFile(
+    join(directory, 'extension', 'package.json'),
+    JSON.stringify({ 'lint-staged': { '*': 'prettier --write' } }),
+  )
+
+  // Act
+  const commit = commitNote(directory)
+
+  // Assert
+  await assert.rejects(commit)
+  assert.equal(await readFile(join(directory, 'lint-staged-ran'), 'utf8'), '')
+})
