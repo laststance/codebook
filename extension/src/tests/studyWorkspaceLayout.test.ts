@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { PRESENTATION_READY_TIMEOUT_MS } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
@@ -3222,3 +3223,109 @@ for (const [pane, kind] of [
       await harness.close()
     }
   })
+
+/** Settles a navigation to a short label so a regression that waits forever fails the test instead of hanging it. @example await settleWithin(opening, 6_500) */
+async function settleWithin(
+  operation: Promise<unknown>,
+  limitMs: number,
+): Promise<string> {
+  return Promise.race([
+    operation.then(
+      () => 'completed',
+      (error: unknown) =>
+        error instanceof Error && 'code' in error
+          ? String(error.code)
+          : String(error),
+    ),
+    new Promise<string>((resolve) =>
+      setTimeout(() => resolve('still waiting'), limitMs),
+    ),
+  ])
+}
+
+// Value: protects=repository evidence navigation while the recorded application cannot paint (for example a hidden replay panel); fails_when=the navigation waits for the frame forever, so the reader stays busy and the next recording never presents; why_new=Cycle 0032 B1/D2/D5 at the repository evidence site; seam=none
+test('repository evidence whose recorded frame never paints fails within its bound and the next recording open presents its frame', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true)
+  let release = (): void => {}
+  try {
+    const neverPainted = harness.holdNextImage()
+    release = neverPainted.release
+    const startedAt = performance.now()
+
+    // Act
+    const outcome = await settleWithin(
+      harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      ),
+      PRESENTATION_READY_TIMEOUT_MS + 1_500,
+    )
+    const elapsedMs = performance.now() - startedAt
+    // A navigation that still waits leaves playback busy; stop here instead of hanging the recovery open.
+    assert.equal(outcome, 'PRESENTATION_UNAVAILABLE')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.ok(
+      elapsedMs >= PRESENTATION_READY_TIMEOUT_MS - 250 &&
+        elapsedMs < PRESENTATION_READY_TIMEOUT_MS + 1_000,
+      `bounded evidence navigation took ${Math.round(elapsedMs)} ms`,
+    )
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.controller.bundle()?.studyId, harness.studyId)
+    assert.equal(
+      harness.controller.state().presentedMs,
+      harness.controller.state().requestedMs,
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner seek made while an evidence navigation waits on a frame that never paints; fails_when=the navigation's expired bound hides playback although the learner's seek now owns it, so the seek never presents; why_new=Cycle 0032 D4 (outside voice); seam=none
+test('an evidence navigation that gives up never cancels a newer learner seek', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true)
+  const releases: Array<() => void> = []
+  try {
+    const stuckPaint = harness.holdNextImage()
+    releases.push(stuckPaint.release)
+    const navigation = settleWithin(
+      harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      ),
+      PRESENTATION_READY_TIMEOUT_MS + 1_500,
+    )
+    await stuckPaint.started
+    const seekPaint = harness.holdNextImage()
+    releases.push(seekPaint.release)
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 150,
+    })
+    await seekPaint.started
+    const navigationOutcome = await navigation
+    seekPaint.release()
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(navigationOutcome, 'PRESENTATION_UNAVAILABLE')
+    assert.equal(harness.controller.state().presentedMs, 150)
+    assert.equal(harness.controller.state().readiness, 'ready')
+  } finally {
+    for (const release of releases) release()
+    await harness.close()
+  }
+})

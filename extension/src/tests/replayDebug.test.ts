@@ -1165,3 +1165,132 @@ test('recording limitations appear as a native Variables scope so uncaptured his
     },
   ])
 })
+
+// Value: protects=no false Run and Debug hint when a recorded stop's top frame is library code without source; fails_when=inspection stays tied to frames[0] while native Call Stack focuses the caller with source; why_new=Cycle 0032 H5, only top-frame stops were covered; seam=none
+test('a stop whose top frame has no source is inspected when Variables loads the first frame with source', () => {
+  // Arrange
+  let reports = 0
+  const { adapter, request } = harness(() => {
+    reports++
+  })
+  const snapshot = recorded()
+  snapshot.variables.push({ name: 'queued', value: '1', children: [] })
+  snapshot.frames.unshift({
+    name: 'processTicksAndRejections',
+    line: 95,
+    column: 5,
+    scopes: [{ name: 'Internal', variables: [1] }],
+  })
+  adapter.select(snapshot, 'Recorded')
+  request('configurationDone')
+  const frames = request('stackTrace', { threadId: 1 }).body.stackFrames
+  const withSource = frames.find(
+    (frame: DebugProtocol.StackFrame) => frame.source,
+  )
+  const scope = request('scopes', { frameId: withSource.id }).body.scopes[0]
+
+  // Act
+  request('variables', { variablesReference: scope.variablesReference })
+
+  // Assert
+  assert.equal(withSource.name, 'createInvoice')
+  assert.equal(adapter.inspectionReady, true)
+  assert.equal(reports, 1)
+})
+
+// Value: protects=no false hint for a library-top stop when only its sourceless top frame is expanded; fails_when=top-frame values count although native Variables shows the caller with source; why_new=Cycle 0032 H5 counterpart; seam=none
+test('loading only the sourceless top frame of a stop does not count as inspecting it', () => {
+  // Arrange
+  let reports = 0
+  const { adapter, request } = harness(() => {
+    reports++
+  })
+  const snapshot = recorded()
+  snapshot.variables.push({ name: 'queued', value: '1', children: [] })
+  snapshot.frames.unshift({
+    name: 'processTicksAndRejections',
+    line: 95,
+    column: 5,
+    scopes: [{ name: 'Internal', variables: [1] }],
+  })
+  adapter.select(snapshot, 'Recorded')
+  request('configurationDone')
+  const top = request('stackTrace', { threadId: 1 }).body.stackFrames[0]
+  const scope = request('scopes', { frameId: top.id }).body.scopes[0]
+
+  // Act
+  request('variables', { variablesReference: scope.variablesReference })
+
+  // Assert
+  assert.equal(top.name, 'processTicksAndRejections')
+  assert.equal(adapter.inspectionReady, false)
+  assert.equal(reports, 0)
+})
+
+// Value: protects=native Variables never receiving two answers for one request; fails_when=a throwing loaded-values listener makes the adapter send a failure response after the success; why_new=Cycle 0032 H7; seam=none
+test('a failing loaded-values listener still answers each native request exactly once and reports the failure', () => {
+  // Arrange
+  const messages: (DebugProtocol.Response | DebugProtocol.Event)[] = [],
+    failures: unknown[] = []
+  const adapter = new ReplayDebugAdapter(
+    (message) => messages.push(message),
+    () => {},
+    () => {
+      throw new Error('reader refresh failed')
+    },
+    (error) => failures.push(error),
+  )
+  let sequence = 0
+  const request = (command: string, arguments_?: unknown) => {
+    const requestSequence = ++sequence
+    adapter.handleMessage({
+      seq: requestSequence,
+      type: 'request',
+      command,
+      arguments: arguments_,
+    })
+    return messages.filter(
+      (message) =>
+        'request_seq' in message && message.request_seq === requestSequence,
+    ) as DebugProtocol.Response[]
+  }
+  adapter.select(recorded(), 'Recorded')
+  request('configurationDone')
+  const frame = request('stackTrace', { threadId: 1 })[0]!.body.stackFrames[0]
+  const scope = request('scopes', { frameId: frame.id })[0]!.body.scopes[0]
+
+  // Act
+  const responses = request('variables', {
+    variablesReference: scope.variablesReference,
+  })
+
+  // Assert
+  assert.deepEqual(
+    responses.map((response) => response.success),
+    [true],
+  )
+  assert.equal(failures.length, 1)
+  assert.equal(String(failures[0]), 'Error: reader refresh failed')
+})
+
+// Value: protects=gaps and scope-less stops committing at once; fails_when=a selection with nothing for Variables to load reports loadable values and makes playback wait; why_new=Cycle 0032 H4 adapter contract; seam=none
+test('only a recorded stop with scopes has values for native Variables to load', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  request('configurationDone')
+  const withoutScopes = recorded()
+  withoutScopes.frames[0]!.scopes = []
+
+  // Act
+  adapter.select(undefined, 'Not recorded at this moment')
+  const gap = adapter.hasLoadableValues
+  adapter.select(withoutScopes, 'Recorded without scopes')
+  const scopeLess = adapter.hasLoadableValues
+  adapter.select(recorded(), 'Recorded')
+  const withValues = adapter.hasLoadableValues
+
+  // Assert
+  assert.equal(gap, false)
+  assert.equal(scopeLess, false)
+  assert.equal(withValues, true)
+})

@@ -642,3 +642,65 @@ for (const interrupt of ['pause', 'hide'] as const)
     assert.equal(player.controller.state().mode, 'playing')
     await player.controller.dispose()
   })
+
+// Value: protects=presentation changes and evidence navigation while a replay frame never presents; fails_when=a bounded settle keeps waiting past its bound; why_new=Cycle 0032 B1 settle contract; seam=none
+test('a bounded settle gives up after its bound while the replay frame never presents, without cancelling the frame', async () => {
+  // Arrange
+  const player = playbackHarness()
+  player.open()
+  await player.controller.settle()
+  let release: () => void = () => undefined
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  player.dependencies.present = async (bundle): Promise<void> => {
+    await waiting
+    player.presented.push(bundle.projection.positionMs)
+  }
+  player.seek(100)
+
+  // Act
+  const outcome = await player.controller
+    .settle(new AbortController().signal, 50)
+    .then(
+      () => 'settled',
+      (error: unknown) => String(error),
+    )
+  release()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(outcome, 'Error: Timed out waiting for the replay frame')
+  assert.equal(player.controller.state().presentedMs, 100)
+  await player.controller.dispose()
+})
+
+// Value: protects=focus-loss and navigation cancellation while a replay frame never presents; fails_when=a settle ignores its caller's signal; why_new=Cycle 0032 B1 settle contract; seam=none
+test('a settle with a signal ends as soon as its caller aborts', async () => {
+  // Arrange
+  const player = playbackHarness()
+  player.open()
+  await player.controller.settle()
+  let release: () => void = () => undefined
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  player.dependencies.present = async (): Promise<void> => {
+    await waiting
+  }
+  player.seek(100)
+  const caller = new AbortController()
+  const settling = player.controller.settle(caller.signal, 60_000).then(
+    () => 'settled',
+    (error: unknown) => String(error),
+  )
+
+  // Act
+  caller.abort()
+  const outcome = await settling
+
+  // Assert
+  assert.equal(outcome, 'Error: Cancelled the replay frame')
+  release()
+  await player.controller.dispose()
+})

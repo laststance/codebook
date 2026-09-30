@@ -341,7 +341,7 @@
         "count": 1
       },
       "crap_moderate": {
-        "count": 4
+        "count": 6
       }
     },
     "src/repositoryBook.ts": {
@@ -522,7 +522,7 @@
         "count": 55
       },
       "crap_high": {
-        "count": 35
+        "count": 36
       },
       "crap_moderate": {
         "count": 33
@@ -625,7 +625,7 @@
         "count": 1
       },
       "crap_moderate": {
-        "count": 1
+        "count": 2
       }
     },
     "src/utils/capturedAppHtml.ts": {
@@ -1054,40 +1054,40 @@
     "src/studyModel.ts:dead code",
     "src/recordingSchemas.ts:dead code",
     "src/utils/projectRecording.ts:high impact",
-    "src/service.ts:complexity",
+    "src/utils/captureStudy.ts:complexity",
     "skills/codebook/render-wiki.mjs:complexity",
+    "src/service.ts:complexity",
     "src/resources.ts:complexity",
     "src/recordingStore.ts:complexity",
-    "src/utils/captureStudy.ts:complexity",
     "src/utils/validateRecordingContext.ts:high impact",
-    "src/utils/projectConfiguredStudy.ts:complexity",
     "src/utils/decodeConfiguredStudy.ts:complexity",
-    "src/playbackController.ts:complexity",
+    "src/utils/projectConfiguredStudy.ts:complexity",
     "src/utils/validateConfiguredStudyEvidence.ts:complexity",
     "src/ui/studyHtml.ts:high impact",
     "src/ownedRepositoryBreakpoint.ts:high impact",
     "src/ownedNodeTestRun.ts:complexity",
-    "skills/codebook/publish-wiki.mjs:complexity",
     "src/utils/configuredDomExpression.ts:untested risk",
     "src/runtimeSupport/utils/installWebviewFocus.ts:high impact",
+    "skills/codebook/publish-wiki.mjs:complexity",
     "skills/codebook/render-wiki-diagrams.mjs:complexity",
-    "src/studyWorkspace.ts:complexity",
     "src/utils/answerDeepWikiQuestion.ts:complexity",
-    "src/configuredBrowserRun.ts:complexity",
+    "src/studyWorkspace.ts:complexity",
     "src/utils/validateRepositoryBook.ts:complexity",
-    "src/utils/resolveNextClientManifest.ts:complexity",
-    "src/deepWikiReader.ts:complexity",
+    "src/configuredBrowserRun.ts:complexity",
     "src/utils/readDevelopmentBundle.ts:complexity",
+    "src/deepWikiReader.ts:complexity",
     "src/nodeTestHistoryStore.ts:complexity",
+    "src/utils/resolveNextClientManifest.ts:complexity",
+    "src/playbackController.ts:complexity",
     "src/utils/retainEditorReadingPosition.ts:untested risk",
-    "scripts/utils/inspectBundle.mjs:complexity",
+    "src/runtimeSupport/hostBrowser.ts:complexity",
     "src/utils/inspectDeepWikiFreshness.ts:complexity",
     "src/utils/readRecordingResource.ts:complexity",
-    "src/runtimeSupport/hostBrowser.ts:complexity",
+    "scripts/utils/inspectBundle.mjs:complexity",
+    "src/replayDebugAdapter.ts:complexity",
     "src/utils/sourceMapMappedPositions.ts:complexity",
     "src/ui/repositoryHtml.ts:complexity",
     "scripts/utils/runPackageCommand.mjs:complexity",
-    "src/replayDebugAdapter.ts:complexity",
     "scripts/utils/readBuildIdentity.mjs:complexity",
     "src/cursorSkillDeployment.ts:complexity",
     "scripts/study-bootstrap-qa.mjs:complexity"

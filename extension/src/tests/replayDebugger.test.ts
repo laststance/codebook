@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict'
-import { createRequire } from 'node:module'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
-import type * as TimersPromisesModule from 'node:timers/promises'
 
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import type * as vscode from 'vscode'
 
-import { REPLAY_DEBUG_INSPECTION_GRACE_MS } from '../constants'
+import {
+  REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+  REPLAY_DEBUG_INSPECTION_GRACE_MS,
+} from '../constants'
+import { ReplayDebugAdapter } from '../replayDebugAdapter'
 import { ReplayDebugger } from '../replayDebugger'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 import { POLL_INTERVAL_MS } from '../runtimeSupport/constants'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 
 const firstSnapshot: ReplayDebugSnapshot = {
   version: 1,
@@ -53,13 +56,19 @@ class TestEmitter<Value> {
     this.listeners.clear()
   }
 }
-/** Exposes owned native lifecycle operations and counts reader notifications; `manualInspection` lets readiness tests withhold client requests, while `disconnectBeforeTermination` models native Stop ordering. @example harness().changes() */
+/** Lets queued promise continuations run while fake timers hold every timeout; the check queue is not faked. @example await flushNative() */
+async function flushNative(): Promise<void> {
+  for (let turn = 0; turn < 5; turn++)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+}
+/** Exposes owned native lifecycle operations and counts reader notifications; `manualInspection` lets readiness tests withhold client requests, `disconnectBeforeTermination` models native Stop ordering and `configurationGate` delays the editor's configurationDone (and so the first stopped event). @example harness().changes() */
 function harness(
   startGate?: Promise<void>,
   terminationGate?: Promise<void>,
   refusedStarts = 0,
   disconnectBeforeTermination = false,
   manualInspection = false,
+  configurationGate?: Promise<void>,
 ) {
   const terminated = new TestEmitter<vscode.DebugSession>(),
     stopped: string[] = [],
@@ -154,11 +163,15 @@ function harness(
           getDebugProtocolBreakpoint: async () => undefined,
         }
         await factory?.createDebugAdapterDescriptor(session, undefined)
-        adapter?.handleMessage({
-          type: 'request',
-          seq: 1,
-          command: 'configurationDone',
-        })
+        const configured = adapter
+        const configure = (): void =>
+          configured?.handleMessage({
+            type: 'request',
+            seq: 1,
+            command: 'configurationDone',
+          })
+        if (configurationGate) void configurationGate.then(configure)
+        else configure()
         signalStarted()
         await startGate
         return true
@@ -874,7 +887,7 @@ test('an empty gap stack shown in Call Stack does not make the next recorded sto
     ])
 
     // Assert
-    assert.equal(gap, 'uninspected')
+    assert.equal(gap, 'no-values')
     assert.equal(laterStop, 'uninspected')
     assert.equal(fixture.changes(), 0)
   } finally {
@@ -974,38 +987,33 @@ test('several video frames of a gap shown in Call Stack do not make the next rec
 })
 
 // Value: protects=a stop whose values load during the last poll interval of the grace commits as inspected, so no stale hint follows the reader notification; fails_when=the grace deadline reports 'uninspected' without reading readiness once more; why_new=waitUntil sleeps before its final deadline check; seam=node:test mocks of performance.now and the shared timers/promises setTimeout drive the grace clock
-test('values Run and Debug loads during the last grace poll commit the stop as inspected', async (context) => {
+test('values Run and Debug loads just before the grace deadline commit the stop as inspected', async (context) => {
   // Arrange
-  const promiseTimers: typeof TimersPromisesModule = createRequire(__filename)(
-    'node:timers/promises',
-  )
-  const fixture = harness(undefined, undefined, 0, false, true),
-    realSleep = promiseTimers.setTimeout
-  let clockMs = 0
-  context.mock.method(performance, 'now', () => clockMs)
-  context.mock.method(
-    promiseTimers,
-    'setTimeout',
-    (delayMs: number, value?: unknown, options?: { signal?: AbortSignal }) => {
-      clockMs += delayMs
-      // Native Variables finishes loading after the last readiness read but before the grace deadline check.
-      if (clockMs >= REPLAY_DEBUG_INSPECTION_GRACE_MS) fixture.inspect()
-      return realSleep(0, value, options)
-    },
-  )
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fixture = harness(undefined, undefined, 0, false, true)
+  let outcome = 'pending'
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then((result) => {
+      outcome = result
+    })
   try {
+    await fixture.started
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS - 1)
+    await flushNative()
+    const beforeValues = outcome
+
     // Act
-    const inspection = await fixture.owner.present(
-      inspectedSnapshot,
-      'Recorded pause',
-      new AbortController().signal,
-    )
+    fixture.inspect()
+    await showing
 
     // Assert
-    assert.equal(inspection, 'inspected')
+    assert.equal(beforeValues, 'pending')
+    assert.equal(outcome, 'inspected')
     assert.equal(fixture.changes(), 1)
   } finally {
-    context.mock.restoreAll()
+    context.mock.timers.reset()
     await fixture.owner.dispose()
   }
 })
@@ -1034,31 +1042,24 @@ test('stopping the recorded session from the native debugger notifies the reader
   }
 })
 
-test('a missing-history interval is confirmed by its current empty stack alone', async () => {
+// Value: protects=Play crossing an unrecorded interval while Call Stack is hidden; fails_when=a gap waits for an empty-stack request that a hidden Call Stack never sends; why_new=Cycle 0032 H4 replaces the empty-stack wait; seam=none
+test('a missing-history interval commits at once without waiting for native Call Stack', async () => {
   // Arrange
   const fixture = harness(undefined, undefined, 0, false, true)
-  let outcome = 'pending'
-  const showing = fixture.owner
-    .present(
-      undefined,
-      'Not recorded at this moment',
-      new AbortController().signal,
-    )
-    .then((result) => {
-      outcome = result
-    })
   try {
-    await fixture.started
-    await delay(POLL_INTERVAL_MS * 2)
-    const beforeStack = outcome
-
     // Act
-    fixture.inspect()
-    await showing
+    const outcome = await Promise.race([
+      fixture.owner.present(
+        undefined,
+        'Not recorded at this moment',
+        new AbortController().signal,
+      ),
+      delay(POLL_INTERVAL_MS * 4, 'still waiting for Call Stack'),
+    ])
 
     // Assert
-    assert.equal(beforeStack, 'pending')
-    assert.equal(outcome, 'inspected')
+    assert.equal(outcome, 'no-values')
+    assert.equal(fixture.changes(), 0)
   } finally {
     await fixture.owner.dispose()
   }
@@ -1176,6 +1177,295 @@ test('video frames at an already inspected stop reuse recorded values without as
     assert.equal(fixture.messages.length, originalMessages)
     assert.deepEqual(fixture.stopped, [])
   } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=hidden-Variables playback cost and hint timing; fails_when=the wait polls readiness or measures its grace from somewhere other than the stopped event; why_new=Cycle 0032 H8 event-driven wait; seam=none
+test('with Variables hidden a stop commits without values exactly one grace after Run and Debug is told about it, without polling', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const readiness = Object.getOwnPropertyDescriptor(
+    ReplayDebugAdapter.prototype,
+    'inspectionReady',
+  )!.get!
+  let readinessReads = 0
+  context.mock.method(
+    ReplayDebugAdapter.prototype,
+    'inspectionReady',
+    function (this: ReplayDebugAdapter) {
+      readinessReads++
+      return readiness.call(this)
+    },
+    { getter: true },
+  )
+  const fixture = harness(undefined, undefined, 0, false, true)
+  let outcome = 'pending'
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then((result) => {
+      outcome = result
+    })
+  try {
+    await fixture.started
+    await flushNative()
+    const readsWhileWaiting = readinessReads
+
+    // Act
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS - 1)
+    await flushNative()
+    const beforeDeadline = outcome
+    const readsBeforeDeadline = readinessReads
+    context.mock.timers.tick(1)
+    await showing
+
+    // Assert
+    assert.equal(beforeDeadline, 'pending')
+    assert.equal(
+      readsBeforeDeadline,
+      readsWhileWaiting,
+      'no readiness polls while nothing changes',
+    )
+    assert.equal(outcome, 'uninspected')
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=a (re)started session getting its whole grace; fails_when=the grace starts at select() and a slow session launch eats it, so a visible Variables view still gets the hint; why_new=Cycle 0032 H8; seam=none
+test('a stop that Run and Debug learns about late still gets the whole grace from that moment', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  let configure = (): void => {}
+  const configurationGate = new Promise<void>((resolve) => {
+    configure = resolve
+  })
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    true,
+    configurationGate,
+  )
+  let outcome = 'pending'
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then((result) => {
+      outcome = result
+    })
+  try {
+    await fixture.started
+    await flushNative()
+    context.mock.timers.tick(3_000)
+    await flushNative()
+    const beforeStopped = outcome
+
+    // Act
+    configure()
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS - 1)
+    await flushNative()
+    const beforeDeadline = outcome
+    context.mock.timers.tick(1)
+    await showing
+
+    // Assert
+    assert.equal(beforeStopped, 'pending')
+    assert.equal(beforeDeadline, 'pending')
+    assert.equal(outcome, 'uninspected')
+  } finally {
+    configure()
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=playback when the editor never tells Run and Debug about the stop; fails_when=the wait has no deadline without a stopped event and playback stalls; why_new=Cycle 0032 H8 capture deadline; seam=none
+test('a stop that Run and Debug is never told about commits without values at the capture deadline', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    true,
+    new Promise<void>(() => {}),
+  )
+  let outcome = 'pending'
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then((result) => {
+      outcome = result
+    })
+  try {
+    await fixture.started
+    await flushNative()
+
+    // Act
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS - 1)
+    await flushNative()
+    const beforeDeadline = outcome
+    context.mock.timers.tick(1)
+    await showing
+
+    // Assert
+    assert.equal(beforeDeadline, 'pending')
+    assert.equal(outcome, 'uninspected')
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=Play through a stop without captured scopes while Variables is hidden; fails_when=a scope-less stop waits, shows a hint or resets the session-level unrequested state; why_new=Cycle 0032 H4; seam=none
+test('a recorded stop without scopes commits at once and later stops keep committing without waiting while Variables stays hidden', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true),
+    signal = new AbortController().signal
+  const laterSnapshot: ReplayDebugSnapshot = {
+    ...inspectedSnapshot,
+    frames: [
+      {
+        name: 'LoginForm',
+        line: 75,
+        column: 13,
+        scopes: [{ name: 'Local', variables: [0] }],
+      },
+    ],
+  }
+  try {
+    const hidden = await fixture.owner.present(
+      inspectedSnapshot,
+      'First recorded pause',
+      signal,
+    )
+
+    // Act
+    const scopeLess = await Promise.race([
+      fixture.owner.present(
+        firstSnapshot,
+        'Recorded pause without scopes',
+        signal,
+      ),
+      delay(POLL_INTERVAL_MS * 4, 'still waiting for Run and Debug'),
+    ])
+    const laterStop = await Promise.race([
+      fixture.owner.present(laterSnapshot, 'Later recorded pause', signal),
+      delay(POLL_INTERVAL_MS * 4, 'still waiting for Run and Debug'),
+    ])
+
+    // Assert
+    assert.equal(hidden, 'uninspected')
+    assert.equal(scopeLess, 'no-values')
+    assert.equal(laterStop, 'uninspected')
+    assert.equal(fixture.changes(), 0)
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=Run and Debug showing the stop the learner returns to after a failed selection; fails_when=the duplicate-selection guard skips select() and native views stay empty; why_new=Cycle 0032 H6; seam=none
+test('a stop is selected again in Run and Debug after a failed selection of another stop', async () => {
+  // Arrange
+  const fixture = harness(),
+    signal = new AbortController().signal
+  const tampered: ReplayDebugSnapshot = {
+    ...inspectedSnapshot,
+    frames: [
+      {
+        ...inspectedSnapshot.frames[0]!,
+        source: {
+          name: 'LoginButton.tsx',
+          text: 'export const pending = true',
+          hash: sha256('different source'),
+          line: 1,
+        },
+      },
+    ],
+  }
+  try {
+    await fixture.owner.present(inspectedSnapshot, 'Recorded pause A', signal)
+    await assert.rejects(
+      fixture.owner.present(tampered, 'Tampered pause', signal),
+      /Recorded debugger source hash mismatch/,
+    )
+
+    // Act
+    const shown = await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause A',
+      signal,
+    )
+
+    // Assert
+    const thread = fixture.request('threads').body.threads[0]
+    const frames = fixture.request('stackTrace', { threadId: thread.id }).body
+      .stackFrames
+    assert.equal(shown, 'inspected')
+    assert.equal(thread.name, 'Recorded pause A')
+    assert.deepEqual(
+      frames.map((frame: { name: string }) => frame.name),
+      ['LoginButton'],
+    )
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=the playback queue when the editor never answers a session startup; fails_when=an abandoned presentation keeps waiting for startDebugging, so PlaybackController never processes the next frame; why_new=Cycle 0032 D5 (outside voice); seam=none
+test('an abandoned presentation leaves a native startup that never answers, and the next presentation shows its stop once startup completes', async () => {
+  // Arrange
+  let releaseStart = (): void => {}
+  const startGate = new Promise<void>((resolve) => {
+    releaseStart = resolve
+  })
+  const fixture = harness(startGate),
+    abandoned = new AbortController()
+  const laterSnapshot: ReplayDebugSnapshot = {
+    ...inspectedSnapshot,
+    frames: [
+      {
+        name: 'LoginForm',
+        line: 75,
+        column: 13,
+        scopes: [{ name: 'Local', variables: [0] }],
+      },
+    ],
+  }
+  try {
+    const first = fixture.owner
+      .present(inspectedSnapshot, 'First recorded pause', abandoned.signal)
+      .then(
+        () => 'committed',
+        (error: unknown) => String(error),
+      )
+    await fixture.started
+
+    // Act
+    abandoned.abort(new Error('Playback presentation superseded'))
+    const firstOutcome = await Promise.race([
+      first,
+      delay(POLL_INTERVAL_MS * 4, 'still waiting for native startup'),
+    ])
+    releaseStart()
+    const next = await fixture.owner.present(
+      laterSnapshot,
+      'Later recorded pause',
+      new AbortController().signal,
+    )
+
+    // Assert
+    assert.equal(firstOutcome, 'Error: Playback presentation superseded')
+    assert.equal(next, 'inspected')
+    assert.equal(
+      fixture.request('threads').body.threads[0].name,
+      'Later recorded pause',
+    )
+  } finally {
+    releaseStart()
     await fixture.owner.dispose()
   }
 })

@@ -76,6 +76,23 @@ export class NodeHistoryPlaybackController {
     this.dependencies.changed()
   }
 
+  /**
+   * Gives up the in-flight native presentation when another owner takes the shared historical debugger.
+   *
+   * {@link StudyWorkspace} calls it when a browser recording opens and when the reader closes. Unlike {@link pause}, a
+   * presentation that resolves later can no longer commit its event or publish; the confirmed event and the list stay.
+   *
+   * @example
+   * ```ts
+   * controller.abandon() // a pending Node stop no longer becomes the selected event
+   * ```
+   */
+  abandon(): void {
+    this.generation++
+    this.mode = 'paused'
+    this.stopTimer()
+  }
+
   /** Starts at the confirmed event and advances only after each native event has been presented. @example controller.play() */
   play(): void {
     if (

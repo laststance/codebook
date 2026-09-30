@@ -606,3 +606,44 @@ test('ordinary readers discover bounded actual facts and saved explanations with
     await harness.close()
   }
 })
+
+test('a checkpoint that loses a confirmed phase image while copying it is discarded instead of failing the refresh', async () => {
+  // Arrange: preparation confirmed every phase image; the checkpoint snapshots that state before its first file read.
+  const harness = await contextHarness(),
+    { runtime, record, service, workspaceKey } = harness
+  try {
+    // Act: the runtime withdraws the after image while the before image is still being read.
+    const pending = captureStudy(service, record, workspaceKey)
+    delete runtime.captures.after
+    const discarded = await pending
+    // Assert: the stale copy is dropped like any other changed read; the newer state is left for the next checkpoint.
+    assert.equal(discarded, undefined)
+    assert.deepEqual(
+      service.state(record).captures.map((capture) => capture.phase),
+      ['before', 'paused-browser'],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('a checkpoint still fails when a confirmed phase image no longer matches its sealed hash', async () => {
+  // Arrange: the runtime state is unchanged, but the saved before image bytes were altered on disk.
+  const harness = await contextHarness(),
+    { runtime, record, service, workspaceKey } = harness
+  try {
+    await writeFile(
+      join(runtime.evidence.directory, 'before.png'),
+      Buffer.from('tampered'),
+    )
+    // Act
+    const checkpoint = captureStudy(service, record, workspaceKey)
+    // Assert: tampered evidence is an integrity failure, not a changed read to discard silently.
+    await assert.rejects(checkpoint, {
+      code: 'EVIDENCE_UNAVAILABLE',
+      message: 'Captured image no longer matches its sealed hash.',
+    })
+  } finally {
+    await harness.close()
+  }
+})

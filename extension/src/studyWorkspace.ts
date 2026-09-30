@@ -61,7 +61,11 @@ import {
   type ReturnCurrentIntent,
 } from './presentationSchemas'
 import { RecordingStore } from './recordingStore'
-import { ReplayDebugger, type ReplayInspection } from './replayDebugger'
+import {
+  ReplayDebugger,
+  type ReplayDebuggerChange,
+  type ReplayInspection,
+} from './replayDebugger'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import type {
   RepositoryFocusTarget,
@@ -1501,10 +1505,10 @@ export class StudyWorkspace {
             replay.cleared
           ) {
             this.playback!.hide()
-            await this.playback!.settle()
+            await this.settleOwnedPlayback(signal)
             assertCurrent()
             this.playback!.reveal()
-            await this.playback!.settle()
+            await this.settleOwnedPlayback(signal)
             assertCurrent()
           }
           if (
@@ -1587,7 +1591,7 @@ export class StudyWorkspace {
         if (this.recordingActive) {
           this.replayNeedsReveal = true
           this.playback!.reveal()
-          await this.playback!.settle()
+          await this.settleOwnedPlayback(signal)
         } else if (viewport) await viewport.restorePlacement(signal)
         else this.presentApplication(this.message())
         assertCurrent()
@@ -3065,7 +3069,7 @@ export class StudyWorkspace {
           ownedRevision = this.playback!.state().revision
           if (signal?.aborted) cancel()
           assertCurrent()
-          await this.playback!.settle()
+          await this.settleOwnedPlayback(signal)
           assertCurrent()
           const state = this.playback!.state()
           if (
@@ -3082,7 +3086,7 @@ export class StudyWorkspace {
             expectedRevision: state.revision,
             positionMs: binding.elapsedMs,
           }).revision
-          await this.playback!.settle()
+          await this.settleOwnedPlayback(signal)
           assertCurrent()
           const bundle = this.playback!.bundle()
           if (
@@ -4027,8 +4031,10 @@ export class StudyWorkspace {
     this.repositoryRecordingOpen = undefined
     // Closing disposes the native session: a Node stop still loading its values is abandoned, and no Run and Debug hint may survive a reopen.
     this.selectedNodeHistoryRequest++
+    this.nodeHistoryPlaybackController?.abandon()
     this.replayUninspectedSnapshot = undefined
     this.selectedNodeHistoryValuesUninspected = false
+    this.selectedNodeHistoryDebugAvailable = false
     this.playback?.hide()
     this.clearLearningSummary()
     const pending = (this.closingPromise = (async () => {
@@ -4699,7 +4705,10 @@ export class StudyWorkspace {
     const id = studyIdSchema.parse(studyId)
     // Once admitted, browser replay takes over the shared historical debugger; a Node stop still loading its values no longer owns it.
     this.selectedNodeHistoryRequest++
-    this.nodeHistoryPlaybackController?.pause()
+    this.nodeHistoryPlaybackController?.abandon()
+    // The Node stop no longer owns Run and Debug: its hint goes, and Inspect restarts the debugger for it.
+    this.selectedNodeHistoryValuesUninspected = false
+    this.selectedNodeHistoryDebugAvailable = false
     // A closed reader has no native panes; reload its saved position instead of accepting a loaded-controller no-op.
     if (!this.opened) this.playback!.leave()
     const revision = this.playback!.state().revision
@@ -4869,9 +4878,7 @@ export class StudyWorkspace {
       ) ||
       this.replayDebugger
     ) {
-      this.replayDebugger ??= new ReplayDebugger(vscode, () =>
-        this.replayDebuggerChanged(),
-      )
+      this.replayDebugger ??= this.createReplayDebugger()
       inspection = await this.replayDebugger.present(
         bundle.projection.debugger,
         bundle.projection.debugger
@@ -4988,6 +4995,37 @@ export class StudyWorkspace {
     const summary = `${describeViewportDelivery(this.replayDelivery)}; panel ${this.app?.visible ? 'visible' : 'hidden'}`
     this.replayDelivery = { receipts: [], omitted: 0 }
     return summary
+  }
+
+  /**
+   * Waits for the replay frame a presentation change or repository navigation just requested, without holding its lock forever.
+   *
+   * A frame revealed while the replay panel is hidden may never paint, so the wait ends at `signal` or after
+   * {@link PRESENTATION_READY_TIMEOUT_MS}. The pending frame is then hidden only while this caller's playback revision is
+   * still current, so an expired older wait never cancels a newer navigation's frame.
+   *
+   * @param signal - The presentation transition's or navigation's cancellation.
+   * @throws The signal's reason when it aborted, otherwise a `PRESENTATION_UNAVAILABLE` {@link StudyError} after the bound.
+   * @example
+   * ```ts
+   * this.playback!.reveal()
+   * await this.settleOwnedPlayback(signal)
+   * ```
+   */
+  private async settleOwnedPlayback(signal?: AbortSignal): Promise<void> {
+    const playback = this.playback!,
+      ownedRevision = playback.state().revision
+    try {
+      await playback.settle(signal, PRESENTATION_READY_TIMEOUT_MS)
+    } catch {
+      // Only the owner of the pending frame retires it; its confirmed moment stays for the next reveal.
+      if (playback.state().revision === ownedRevision) playback.hide()
+      signal?.throwIfAborted()
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        'The recorded replay frame did not finish presenting. Show the replay, then try again.',
+      )
+    }
   }
 
   /** Leaves historical presentation on explicit navigation, never stopping or continuing the independently owned runtime. @example this.leavePlayback() */
@@ -8357,19 +8395,36 @@ export class StudyWorkspace {
   }
 
   /**
-   * Drops a stale Run and Debug hint when {@link ReplayDebugger} reports loaded values or an ended session; the next presentation re-evaluates it.
-   * @example new ReplayDebugger(vscode, () => this.replayDebuggerChanged())
+   * Creates the shared historical debugger that browser replay and saved Node stops present through.
+   * @returns A {@link ReplayDebugger} whose notifications reach {@link replayDebuggerChanged} and whose listener failures reach the reader's errors.
+   * @example this.replayDebugger ??= this.createReplayDebugger()
    */
-  private replayDebuggerChanged(): void {
-    if (
-      this.closing ||
-      (!this.replayUninspectedSnapshot &&
-        !this.selectedNodeHistoryValuesUninspected)
+  private createReplayDebugger(): ReplayDebugger {
+    return new ReplayDebugger(
+      vscode,
+      (reason) => this.replayDebuggerChanged(reason),
+      (error) => this.report('replay-debugger', error),
     )
-      return
+  }
+
+  /**
+   * Drops a stale Run and Debug hint when {@link ReplayDebugger} reports loaded values or an ended session; the next presentation re-evaluates it.
+   * An ended session also re-enables Node Inspect, which restarts the debugger through {@link replaceUnavailableReplayDebugger}.
+   * @param reason - Whether native Run and Debug loaded values or the learner ended the owned session.
+   * @example this.replayDebuggerChanged('session-ended')
+   */
+  private replayDebuggerChanged(reason: ReplayDebuggerChange): void {
+    if (this.closing) return
+    // The ended session no longer shows the Node stop, whether or not a hint was showing.
+    const availabilityChanged =
+      reason === 'session-ended' && this.selectedNodeHistoryDebugAvailable
+    if (availabilityChanged) this.selectedNodeHistoryDebugAvailable = false
+    const hintShown =
+      Boolean(this.replayUninspectedSnapshot) ||
+      this.selectedNodeHistoryValuesUninspected
     this.replayUninspectedSnapshot = undefined
     this.selectedNodeHistoryValuesUninspected = false
-    this.publish()
+    if (availabilityChanged || hintShown) this.publish()
   }
 
   /** Selects one verified Node journal moment and clears stale debugger state across unrecorded intervals. @example await this.selectNodeHistoryEvent(history, 24) */
@@ -8419,9 +8474,7 @@ export class StudyWorkspace {
           await this.replaceUnavailableReplayDebugger()
           if (request !== this.selectedNodeHistoryRequest) return
         }
-        this.replayDebugger ??= new ReplayDebugger(vscode, () =>
-          this.replayDebuggerChanged(),
-        )
+        this.replayDebugger ??= this.createReplayDebugger()
         let inspection: ReplayInspection
         try {
           inspection = await this.replayDebugger.present(
