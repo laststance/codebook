@@ -1,8 +1,8 @@
 # Cycle 0032 — Truthful, bounded native-inspection hints
 
 Type: hardening\
-Status: validating\
-Result: pending\
+Status: validated (delivery pending: /ship, CI, exact-HEAD gate, merge)\
+Result: demonstrated (mechanism: all Issue #56 items red/green with disabled-fix controls; bounded installed native N1 in VS Code and Cursor; open: N1-c paused-foreign variant, N1-d, Cursor first-scope expansion O2, deferred minor B1 test bound)\
 Delivery: local-only\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/56\
@@ -143,17 +143,86 @@ Source: `d526695` plus the Cycle 0032 working tree (the commit that follows this
 | R1 stress: 50 parallel runs (10 at a time) of `studyWorkspacePresentation.test.js` on the fixed harness | 50/50 exit 0, each 60/60 PASS |
 | Lint, `format:check`, typecheck, `dead-code`, `dupes`, `health` | PASS |
 
-R1 acceptance (0/50 partition failures and two consecutive clean full suites) holds at mechanism level. Native N1 is NOT RUN.
+R1 acceptance (0/50 partition failures and two consecutive clean full suites) holds at mechanism level. Native N1 was not run at this point; results follow below.
+
+### Reviews of `38e4620`, 2026-10-01
+
+Following the owner's direction, only CRITICAL findings would be fixed. None were reported.
+
+| Review | Coverage | Findings | Disposition |
+| --- | --- | --- | --- |
+| Local CodeRabbit CLI (included reviews, no paid credits) | 21 changed files | 1 minor, in `studyWorkspaceLayout.test.ts`: tighten the B1 upper bound to `PRESENTATION_READY_TIMEOUT_MS + 250` | Deferred (not CRITICAL). The test currently accepts [4,750, 6,000) ms to tolerate loaded CI, so the "+250 ms" side of the B1 contract is not enforced by the test. |
+| OCR 1.12.11, delegate mode, host review | 11 of 11 reviewable files; 0 skipped. Default exclusions: 8 test files and 2 Markdown files | 0 critical, 0 high, 0 medium, 0 low | None |
+
+### Package and installation, 2026-10-01
+
+- Private VSIX `codebook-0.2.15-c32-inspection-hints-20261001.vsix`:
+  - Built from clean `38e4620` with 29 entries.
+  - SHA-256 `43c7377067e6417dd26dc344d4cec70845acebd38c79bb80ea73de2cbceaf1ee`.
+  - Runtime `4db5d716b3cd17647ed68d044828b0ac0ef99804121ac6c0f648338ccc53d49e`.
+  - sourceHash `4b55785c541b6dbe6ad8648c27d389685882f9b4325aca1f6fdd98873ccf28fd`.
+- VS Code 1.139.1: installed into the default extensions, which the QA profile "Codebook QA 0029 Clean" uses. Extension host 14401 activated it.
+- Cursor 3.23.5 needed two installs:
+  - The first CLI install without `--profile` updated only the default profile. Take 01 therefore ran the old 0.2.14 runtime `f95562ba`. It is kept as a control (see below).
+  - Reinstalled with `--profile "Codebook QA 0029 Settings"` and relaunched the window. Extension host 43696 then ran the new runtime.
+
+### N1 — installed native trials, 2026-10-01
+
+Method: OBS 32.2.2 Window Capture of the exact QA window, following `docs/qa/native-recording.md`.
+- Canvas and output are both 3456×2168. The transform was reset and checked (0/0, scale 1, crop 0), and both audio sources were muted.
+- Each host passed a changing-content preflight clip before its main take.
+- Clicks only: nothing was typed or key-pressed into the editors.
+- Event times come from ffmpeg scene scores per region (hint row, Variables, Call Stack, source, application, presented time), confirmed by inspecting contact sheets at 30 fps. Scores that change every 8.33 s are encoder keyframes and were ignored.
+- The expectations were frozen before any native action: `artifacts/cycle-0032/native/n1-expectations.json`.
+
+Private evidence (in `artifacts/cycle-0032/native/`, not committed):
+
+| Clip | SHA-256 (video-only remux / original) | Result |
+| --- | --- | --- |
+| `n1-vscode-preflight-01-FAILED-scaled.mov` | `25830cfc…` | FAIL. Changing the canvas rescaled the source to 1.2044, which cropped the right side bar and the bottom panel. A second transform reset fixed it. |
+| `n1-vscode-preflight-02.mov` | `7c7e0a17…` | PASS: 13.8 s, full window |
+| `n1-vscode-main-01.mov` | `5bbec680…` / `f889c017…` | Main take. 430.17 s, 12,906 frames, started 08:13:35 JST. Receipt: `n1-vscode-receipt.json` |
+| `n1-cursor-preflight-01.mov`, `-02.mov` | `ba267cd2…`, `5551123a…` | PASS. Preflight 02 was recorded after the window was relaunched. |
+| `n1-cursor-main-01-old-runtime-0.2.14.mov` | `724b5af0…` / `969e3312…` | Control run on the old 0.2.14 runtime. Opening the Recording requested 74.59 s, then failed with "Timed out waiting for matching recorded native inspection". This is the defect that Cycle 0031's soft gate removes. |
+| `n1-cursor-main-02.mov` | `abe17d33…` / `98beafa6…` | Main take. 204.27 s, 6,128 frames, started 08:33:06 JST. Receipt: `n1-cursor-receipt.json` |
+
+Studies used: VS Code `e4906307` (stops 17.29 s and 55.87 s); Cursor `57bbb9ae` (stops 40.98 s and 74.59 s).
+
+| Check | VS Code 1.139.1 | Cursor 3.23.5 |
+| --- | --- | --- |
+| N1-a: hint with Variables collapsed | **PASS**. Opening the Recording showed the hint at 55.87 s. A collapsed Next 17.29→55.87 s showed it at t=128.97 s. | **PASS**. Opening the Recording showed the hint at t=27.43 s and committed at 27.50 s; the 0.2.14 control timed out on the same action. A collapsed Next 40.98→74.59 s showed the hint at 191.27 s. |
+| N1-b: expand without seeking | **PASS**. Expanding Variables loaded the values and removed the hint, three times. | **PARTIAL** (host difference). Expanding the Variables section (t=107.50 s) listed its scopes, but Cursor did not expand the first scope, so no values were requested and the hint rightly stayed for 30.9 s. Expanding `Local: LoginForm` at 138.23 s loaded `state = 'CredentialsSignin'` and removed the hint at 138.37 s, with no seek. On later stops Cursor expanded the first scope itself, and no hint appeared. |
+| N1-c: foreign session focused | **PARTIAL**. The dashboard's own "Next.js: debug server-side" session was focused. On Previous, VS Code refocused "Codebook · Recorded learning" and the values loaded with no hint; the foreign session kept running. The variant with the foreign session paused was NOT RUN, because pausing the node-terminal parent had no effect. The trial's dev-server processes were terminated. | NOT RUN. Not repeated, to avoid starting another dashboard server. |
+| N1-d: Node hint cleared by opening a recording | NOT RUN. Browser replay hides Observed moments and Saved studies, so no click-only route selects a saved Node stop. Mechanism proof: the H1 test and its disabled-fix control. | Not applicable (the frozen check covers VS Code only). |
+| N1-e: entering a gap from loaded values (D3) | **PASS**. Seek 17.29→7.25 s: Variables cleared at 109.90 s. By 110.37 s the Call Stack showed "Not recorded" and the highlight was gone; the source cleared at 110.40 s. The gap frame appeared at 110.43 s, with no hint. | **PASS**. Seek 40.98→7.35 s: Variables and highlight cleared at 162.97 s. The Call Stack showed "Not recorded at this moment" at 163.03 s, and the source cleared at 163.50 s. "No application frame was received at this position." appeared at 163.53 s and the commit followed at 163.60 s, with no hint. |
+| N1-f: per-stop latency (D6), 30 fps | Collapsed Next: from the native stop (127.90 s) to the hint (128.97 s) took 1.07 s. Expanded Previous: from the stop (101.13 s) to values plus the app frame (101.57 s) took 0.43 s. | Collapsed Next: from the Call Stack stop (190.30 s) to the hint (191.27 s) took 0.97 s; commit at 191.33 s. Expanded Previous: from the stop (149.13 s) to values plus the app frame (149.50 s) took 0.37 s; commit at 149.57 s. |
+
+Observations (neither is CRITICAL):
+- O1. In Cursor, the hint row renders two frames (~67 ms) before "Paused · finalized" (at t=27.43 s and 191.27 s), next to "Loading matching image, source and values…". The native stop for that moment is already shown, so the text is still true.
+- O2. In Cursor, if Variables was collapsed at the stop, expanding it lists the scopes without loading any values. The hint's "expand Variables" is therefore not enough there: the learner must also expand the first scope.
+
+Preservation after both hosts:
+- The four protected files are unchanged: Code settings `0ac38ba2`, the VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd` and the Cursor codebook skill `d578b9e3`.
+- The dashboard is still at `1936e41`, with only the untracked `.codebook/`.
+- No dev server is running, no target source was edited, and OBS is closed.
 
 ## Result and decision
 
-- Result: pending.
+- Result: demonstrated at mechanism level (every Issue #56 item has a red-before-green test and a disabled-fix control; clean full suites; R1 stress) plus bounded installed native evidence in both hosts.
+  - The truthful soft hint: VS Code PASS; Cursor PASS apart from the O2 scope difference.
+  - Gap entry: PASS in both hosts.
+  - Latency: measured in both hosts, about 1 s to the hint and about 0.4 s to values.
+- Still open: the N1-c paused-foreign variant, N1-d (no click route), O2 in Cursor, and the deferred CodeRabbit minor finding. None of these is final product acceptance.
+- Decision: deliver this cut. The candidate for the next cycle is Cursor's first-scope behavior (O2), together with the Cycle 0031 items that remain deferred.
 
 ## Handoff
 
+- Evidence: `artifacts/cycle-0032/native/` holds the receipts, action logs, contact sheets and hashes listed above. `artifacts/cycle-0032/reviews/` holds the review outputs.
+- No test, recorder or dev-server process is running. The VS Code and Cursor QA windows stay open on their Recordings.
+
 ## Next action
 
-- Exact next action: commit this cut, run local CodeRabbit CLI (included reviews only) and OCR on it and fix CRITICAL findings only; then build a private VSIX, install it in the existing VS Code and Cursor QA profiles and run N1 with OBS Window Capture (hint appears with Variables collapsed and clears on expand without a seek; foreign-session naming; Node hint cleared by opening a recording; gap-entry frames (D3); per-stop latency from frames (D6)); then `/ship`, CI, a separate exact-HEAD gate and merge.
-- Changed files / branch / active processes: see `git show --stat` of the Cycle 0032 commit on `codex/cycle-0032-inspection-hints`; no test, editor or recorder process is running.
-- State updated in PROJECT_STATE.md: active cycle and next action updated; closure pending.
+- Exact next action: `/ship` this branch (the PR body starts with `@coderabbitai ignore`), wait for CI, run a separate exact-HEAD gate, then merge in its own step. After that, record the delivery and plan Cycle 0033 through `/spec` (D044).
+- Changed files / branch / active processes: `codex/cycle-0032-inspection-hints`; no active processes.
+- State updated in PROJECT_STATE.md: active cycle, AC-REPLAY, AC-GAPS and AC-ENTRY native receipts, next action.
 - Durable decisions updated: none.
