@@ -28,8 +28,39 @@ export class ReplayDebugAdapter {
   private retiredFrameIds = new Set<number>();
   private configured = false;
   private closed = false;
+  private selectionValid = false;
+  private inspectedStack = false;
+  private inspectedScopes = false;
+  private inspectedVariables = false;
+  private reportedInspection = false;
 
-  constructor(private readonly send: (message: DebugProtocol.Response | DebugProtocol.Event) => void, private readonly disconnected: () => void = () => {}) {}
+  /**
+   * Serves one owned historical session for {@link ReplayDebugger}.
+   * @param send - Emits DAP responses/events to the editor's inline session.
+   * @param disconnected - Runs when the editor disconnects or terminates this session.
+   * @param inspected - Runs once per selection when the native client first retrieves its recorded values, so a moment committed without them can drop its hint.
+   * @example new ReplayDebugAdapter(message => events.fire(message), () => { this.detached = true; }, () => { this.valuesUnrequested = false; this.changed(); })
+   */
+  constructor(private readonly send: (message: DebugProtocol.Response | DebugProtocol.Event) => void, private readonly disconnected: () => void = () => {}, private readonly inspected: () => void = () => {}) {}
+
+  /**
+   * Lets {@link ReplayDebugger.present} await the current native-client retrieval after a selected moment changes.
+   * @returns Whether current stack, scopes and initial values were retrieved; this is not a native paint acknowledgement.
+   * @example adapter.select(undefined, 'Not recorded at this moment'); adapter.inspectionReady // false until the native client retrieves the empty stack
+   */
+  get inspectionReady(): boolean {
+    if (this.closed || !this.configured || !this.selectionValid || !this.inspectedStack) return false;
+    const executingFrameId = this.executingFrameId;
+    // Missing history needs only its current empty stack; frames without scopes need no invented variable request.
+    return executingFrameId === undefined || this.inspectedScopes && (!this.frameScopes.get(executingFrameId)?.length || this.inspectedVariables);
+  }
+
+  /**
+   * Identifies the selected recorded execution frame (top of the stack) whose retrieval {@link inspectionReady} requires.
+   * @returns The current top frame handle, or `undefined` for missing history.
+   * @example this.executingFrameId // => 1001
+   */
+  private get executingFrameId(): number | undefined { return this.frames.keys().next().value; }
 
   /** Replaces every handle on committed moment changes; an invalid snapshot first clears previous state. @example adapter.select(undefined, 'Not recorded at this moment') */
   select(value: ReplayDebugSnapshot | undefined, label: string, sourceDocument?: ReplaySourceDocument): void {
@@ -43,6 +74,7 @@ export class ReplayDebugAdapter {
       this.threadId++;
     }
     this.sourceDocument = undefined;
+    this.selectionValid = false; this.inspectedStack = false; this.inspectedScopes = false; this.inspectedVariables = false; this.reportedInspection = false;
     this.snapshot = undefined; this.frames.clear(); this.sources.clear(); this.groups.clear(); this.frameSources.clear(); this.frameScopes.clear();
     this.label = 'Not recorded at this moment';
     try {
@@ -62,6 +94,7 @@ export class ReplayDebugAdapter {
           this.frameScopes.set(frameId, scopes);
         }
       }
+      this.selectionValid = true;
     } finally {
       if (this.configured) {
         this.event('thread', { reason: 'started', threadId: this.threadId });
@@ -93,17 +126,28 @@ export class ReplayDebugAdapter {
             ...(frame.source ? { source: { name: frame.source.name,
               ...(this.sourceDocument?.hash === frame.source.hash ? { path: this.sourceDocument.uri, sourceReference: 0 } : { sourceReference: this.frameSources.get(id) }) } } : {}) }));
           const start = arguments_.startFrame ?? 0;
-          respond({ stackFrames: frames.slice(start, arguments_.levels ? start + arguments_.levels : undefined), totalFrames: frames.length }); return;
+          const selectedFrames = frames.slice(start, arguments_.levels ? start + arguments_.levels : undefined);
+          respond({ stackFrames: selectedFrames, totalFrames: frames.length });
+          // A caller-only page cannot confirm that the native client inspected the selected execution frame.
+          if (!frames.length || selectedFrames.some(frame => frame.id === this.executingFrameId)) this.inspectedStack = true;
+          this.reportInspection(); return;
         }
         case 'scopes': {
           // A just-retired frame answers empty so the invalidated Variables tree shows no rows instead of an error.
           const { frameId } = frameArguments.parse(request.arguments), scopes = this.frameScopes.get(frameId) ?? (this.retiredFrameIds.has(frameId) ? [] : undefined);
-          if (!scopes) throw new Error('Recorded frame is no longer selected.'); respond({ scopes }); return;
+          if (!scopes) throw new Error('Recorded frame is no longer selected.'); respond({ scopes });
+          // Only the executing frame's scopes count; a caller or retired frame cannot confirm the selected moment.
+          if (frameId === this.executingFrameId) this.inspectedScopes = true;
+          this.reportInspection(); return;
         }
         case 'variables': {
           const arguments_ = variablesArguments.parse(request.arguments), variables = this.groups.get(arguments_.variablesReference);
           if (!variables) throw new Error('Recorded variables are no longer selected.');
-          const start = arguments_.start ?? 0; respond({ variables: variables.slice(start, arguments_.count ? start + arguments_.count : undefined) }); return;
+          const start = arguments_.start ?? 0; respond({ variables: variables.slice(start, arguments_.count ? start + arguments_.count : undefined) });
+          const executingFrameId = this.executingFrameId;
+          // Native Variables expands the first scope; other groups or later pages do not establish its initial rows.
+          if (start === 0 && executingFrameId !== undefined && arguments_.variablesReference === this.frameScopes.get(executingFrameId)?.[0]?.variablesReference) this.inspectedVariables = true;
+          this.reportInspection(); return;
         }
         case 'source': {
           const { sourceReference } = sourceArguments.parse(request.arguments), source = this.sources.get(sourceReference);
@@ -121,7 +165,15 @@ export class ReplayDebugAdapter {
   }
 
   /** Drops references when the editor ends this historical adapter, without touching a live target. @example adapter.dispose() */
-  dispose(): void { this.closed = true; this.sourceDocument = undefined; this.snapshot = undefined; this.frames.clear(); this.sources.clear(); this.groups.clear(); this.frameSources.clear(); this.frameScopes.clear(); this.retiredFrameIds.clear(); }
+  dispose(): void { this.closed = true; this.selectionValid = false; this.sourceDocument = undefined; this.snapshot = undefined; this.frames.clear(); this.sources.clear(); this.groups.clear(); this.frameSources.clear(); this.frameScopes.clear(); this.retiredFrameIds.clear(); }
+
+  /** Tells {@link ReplayDebugger} once per selection that the native client has now retrieved its recorded values. @example this.reportInspection() */
+  private reportInspection(): void {
+    const executingFrameId = this.executingFrameId;
+    // An empty gap stack or a frame without scopes proves Call Stack is open, not that Variables loads values.
+    if (this.reportedInspection || !this.inspectionReady || executingFrameId === undefined || !this.frameScopes.get(executingFrameId)?.length) return;
+    this.reportedInspection = true; this.inspected();
+  }
 
   /** Materializes native variable groups from validated forward-only archive indices. @example this.group([0], undefined) */
   private group(indices: number[], unavailable?: string): number {

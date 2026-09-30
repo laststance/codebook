@@ -108,9 +108,16 @@ export class PlaybackController {
     this.readiness = this.presented ? 'ready' : 'idle'; this.dependencies.changed();
   }
 
-  /** Re-presents the committed bundle after a new renderer becomes visible, always paused after a hide. @example controller.reveal() */
+  /**
+   * Re-presents committed history when {@link StudyWorkspace} reports Application visibility, opens a replay or restores a moved renderer.
+   *
+   * A request that is still loading keeps ownership of its requested moment instead; a hidden first load restarts its read.
+   * @example controller.reveal()
+   */
   reveal(): void {
     if (this.disposed || !this.studyId) return;
+    // A seek may itself reveal Application; its pending presentation keeps ownership of the requested moment.
+    if (this.readiness === 'loading') return;
     // A hidden first load has no committed bundle; revealing explicitly restarts that cancelled read.
     if (!this.presented) { if (this.readiness === 'idle') this.queue({ studyId: this.studyId, save: true }); return; }
     this.queue({ studyId: this.studyId, positionMs: this.presented.projection.positionMs, restore: this.presented, save: false });

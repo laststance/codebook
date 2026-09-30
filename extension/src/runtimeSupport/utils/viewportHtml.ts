@@ -17,9 +17,11 @@ const epoch = crypto.randomUUID();
 const page = document.getElementById('page');
 const phase = document.getElementById('phase');
 let renderRevision = 0;
+// Report actual document availability; a selected native tab may still be occluded on macOS.
+document.addEventListener('visibilitychange', () => api.postMessage({type:'visibility',epoch,visibility:document.visibilityState}));
 window.addEventListener('message', async event => {
   const message = event.data;
-  if (message?.type === 'requestReady') { api.postMessage({type:'ready',epoch,requestId:message.requestId}); return; }
+  if (message?.type === 'requestReady') { api.postMessage({type:'ready',epoch,requestId:message.requestId,visibility:document.visibilityState}); return; }
   if (!message || message.epoch !== epoch) return;
   if (message.type === 'reset') { renderRevision++; if (message.clear) { page.hidden = true; page.removeAttribute('src'); } phase.textContent = message.clear ? 'Loading recorded position…' : 'Waiting for live frame'; return; }
   if (message.type === 'missing') {

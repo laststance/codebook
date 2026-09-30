@@ -6,7 +6,8 @@ interface PendingFrame {
   message: FrameMessage;
   resolve: (receipt: { epoch: string; id: number; hash: string }) => void;
   reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
+  deadlineMs: number;
   sent: boolean;
 }
 
@@ -20,7 +21,19 @@ export class FrameDelivery {
   private frozen = false;
   private closed = false;
 
-  constructor(private readonly send: (message: FrameMessage) => PromiseLike<boolean>, private readonly record: (type: string, detail?: unknown) => unknown, private readonly timeoutMs = CAPTURE_TIMEOUT_MS) {}
+  /** Configures {@link BrowserViewport}'s existing delivery slots and paint budget.
+   * @param clock - Monotonic milliseconds available for painting; defaults to wall time for live capture.
+   * @example new FrameDelivery(postFrame, record, CAPTURE_TIMEOUT_MS)
+   */
+  constructor(private readonly send: (message: FrameMessage) => PromiseLike<boolean>, private readonly record: (type: string, detail?: unknown) => unknown, private readonly timeoutMs = CAPTURE_TIMEOUT_MS, private readonly clock: () => number = () => performance.now()) {}
+
+  /** Re-arms unchanged paint budgets when {@link BrowserViewport} observes renderer visibility; this never confirms a frame. @example delivery.refreshDeadlines() */
+  refreshDeadlines(): void {
+    for (const entry of [this.inFlight, this.pending]) {
+      // Each slot keeps its original deadline across any number of visibility changes.
+      if (entry) this.armDeadline(entry);
+    }
+  }
 
   /** Starts a fresh renderer epoch after webview readiness; old decode/ACK work loses ownership. @example delivery.begin('new-view') */
   begin(epoch: string): void {
@@ -55,11 +68,9 @@ export class FrameDelivery {
     if (this.pending) this.reject(this.pending, 'Live frame coalesced');
     const message: FrameMessage = { ...frame, type: 'frame', epoch: this.epoch, id: ++this.nextId };
     return new Promise((resolve, reject) => {
-      const entry: PendingFrame = { message, resolve, reject, sent: false, timer: setTimeout(() => {
-        this.reject(entry, VIEWPORT_ACK_TIMEOUT_REASON);
-        this.flush();
-      }, this.timeoutMs) };
+      const entry: PendingFrame = { message, resolve, reject, sent: false, deadlineMs: this.clock() + this.timeoutMs };
       this.pending = entry;
+      this.armDeadline(entry);
       this.flush();
     });
   }
@@ -90,6 +101,22 @@ export class FrameDelivery {
   private invalidate(reason: string): void {
     if (this.inFlight) this.reject(this.inFlight, reason);
     if (this.pending) this.reject(this.pending, reason);
+  }
+
+  /**
+   * Expires only consumed paint time for {@link offer} and visibility refreshes, retaining lifecycle cancellation of hidden work.
+   * @param entry - Frame whose original deadline is checked and re-armed.
+   * @param clockStopped - The previous timer woke without any clock progress (hidden recording), so the next check waits a full budget instead of the tiny remainder.
+   * @example this.armDeadline(entry)
+   */
+  private armDeadline(entry: PendingFrame, clockStopped = false): void {
+    clearTimeout(entry.timer);
+    if (this.closed || this.inFlight !== entry && this.pending !== entry) return;
+    const clockTimeMs = this.clock(), remainingMs = entry.deadlineMs - clockTimeMs;
+    // A recording clock stops while Chromium suspends painting; ordinary live clocks still expire in wall time.
+    if (remainingMs <= 0) { this.reject(entry, VIEWPORT_ACK_TIMEOUT_REASON); this.flush(); return; }
+    // Hidden near-expiry clocks poll quietly; visibility refresh still applies their exact remaining deadline.
+    entry.timer = setTimeout(() => this.armDeadline(entry, this.clock() === clockTimeMs), clockStopped ? this.timeoutMs : remainingMs);
   }
 
   /** Sends the next image immediately only when the previous frame has left its slot. @example this.flush() */

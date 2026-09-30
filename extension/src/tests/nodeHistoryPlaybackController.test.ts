@@ -33,6 +33,34 @@ test('Node history playback seeks to verified events and presents every boundary
   controller.dispose();
 });
 
+// Value: protects=test output recorded right after a slow native stop keeps its recorded spacing during Play; fails_when=time spent waiting for Run and Debug counts as recorded time, so later events flash past back-to-back; why_new=existing timing tests present every event instantly; seam=none
+test('Node history Play does not count a slow native stop presentation as recorded test time', async () => {
+  // Arrange
+  let now = 0;
+  const presented: number[] = [], events = [{ sequence: 1, elapsedMs: 0 }, { sequence: 2, elapsedMs: 100 }, { sequence: 3, elapsedMs: 150 }];
+  const controller = new NodeHistoryPlaybackController({ present: async sequence => {
+    presented.push(sequence);
+    // Native Run and Debug takes one second to load the recorded stop's values.
+    if (sequence === 2) now += 1_000;
+  }, changed() {}, now: () => now, manualTicks: true });
+  controller.open(events, 1);
+  controller.play();
+  now = 100;
+  await controller.tick();
+
+  // Act: shortly after the slow stop settles, less recorded time than the gap to the next output has passed.
+  now += 20;
+  await controller.tick();
+  const afterShortWait = [...presented];
+  now += 30;
+  await controller.tick();
+
+  // Assert
+  assert.deepEqual(afterShortWait, [2]);
+  assert.deepEqual(presented, [2, 3]);
+  controller.dispose();
+});
+
 test('pausing Node history playback settles its current event without advancing to a later event', async () => {
   // Arrange
   let now = 0, settlePresentation!: () => void;

@@ -100,9 +100,11 @@ export class NodeHistoryPlaybackController {
     const nextIndex = this.selectedIndex + 1;
     if (nextIndex >= this.events.length) { this.pause(); return; }
     if (this.events[nextIndex]!.elapsedMs > targetTime) return;
-    const generation = this.generation;
+    const generation = this.generation, presentationStartedWallMs = this.clock();
     try { await this.present(nextIndex, generation); }
     catch (error) { this.pause(); throw error; }
+    // Waiting for native Run and Debug is a visible pause, not recorded test time; later output keeps its recorded spacing.
+    this.anchorWallMs += this.clock() - presentationStartedWallMs;
     if (this.mode === 'playing' && this.selectedIndex === this.events.length - 1) this.pause();
   }
 

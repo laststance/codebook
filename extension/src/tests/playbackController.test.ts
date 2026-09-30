@@ -146,6 +146,56 @@ test('hiding a replay invalidates its pending frame and a later reveal remains p
   assert.deepEqual(player.presented, [0, 0]); await player.controller.dispose();
 });
 
+test('the first seek after hiding Application reaches the requested moment when presentation reveals the pane', async () => {
+  // Arrange
+  const player = playbackHarness();
+  player.open(); await player.controller.settle(); player.controller.hide();
+  const present = player.dependencies.present;
+  let didReveal = false;
+  player.dependencies.present = async (bundle, signal) => {
+    // A native hidden-to-visible notification occurs inside the requested presentation.
+    if (!didReveal) { didReveal = true; player.controller.reveal(); }
+    await present(bundle, signal);
+  };
+  try {
+    // Act
+    player.seek(100); await player.controller.settle();
+    // Assert
+    assert.equal(player.controller.state().presentedMs, 100);
+    assert.equal(player.displayed(), 100);
+    assert.equal(player.controller.bundle()?.projection.observation?.values['value:nextTheme'], 'dark');
+    assert.equal(player.controller.state().readiness, 'ready');
+    assert.deepEqual(player.presented, [0, 100]);
+    assert.deepEqual(player.saved, [0, 0, 100]);
+  } finally { await player.controller.dispose(); }
+});
+
+test('revealing Application during a delayed seek retains the requested frame instead of restoring the previous moment', async () => {
+  // Arrange
+  const player = playbackHarness();
+  player.open(); await player.controller.settle();
+  let releaseFrame: () => void = () => undefined;
+  let notifyFrameStarted: () => void = () => undefined;
+  const frameWaiting = new Promise<void>(resolve => { releaseFrame = resolve; });
+  const frameStarted = new Promise<void>(resolve => { notifyFrameStarted = resolve; });
+  player.dependencies.frame = async (_studyId, hash) => {
+    if (hash === sha256('frame-100')) { notifyFrameStarted(); await frameWaiting; }
+    return Buffer.from(hash);
+  };
+  try {
+    // Act
+    player.seek(100); await frameStarted; player.controller.reveal();
+    releaseFrame(); await player.controller.settle();
+    // Assert
+    assert.equal(player.controller.state().presentedMs, 100);
+    assert.equal(player.displayed(), 100);
+    assert.equal(player.controller.bundle()?.projection.observation?.values['value:nextTheme'], 'dark');
+    assert.equal(player.controller.state().readiness, 'ready');
+    assert.deepEqual(player.presented, [0, 100]);
+    assert.deepEqual(player.saved, [0, 100]);
+  } finally { releaseFrame(); await player.controller.dispose(); }
+});
+
 test('failed frame reads pause playback and clear misleading pixels without changing the confirmed source bundle', async () => {
   // Arrange
   const player = playbackHarness(); player.open(); await player.controller.settle();

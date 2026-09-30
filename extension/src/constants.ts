@@ -290,6 +290,10 @@ export const REPLAY_DEBUG_MAX_VARIABLES = 2_000;
 export const REPLAY_DEBUG_MAX_DEPTH = 5;
 export const REPLAY_DEBUG_TEXT_LIMIT_CHARS = 4_096;
 export const REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 5_000;
+/** Native Call Stack name of the owned historical session; the Study hint names it for learners. */
+export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning';
+/** How long a replay moment waits for native Run and Debug to load its recorded values (VS Code defers Variables ~400 ms) before committing without them. */
+export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000;
 export const NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 1_500;
 export const NODE_REPLAY_DEBUG_MAX_FRAMES = 8;
 export const NODE_REPLAY_DEBUG_MAX_VARIABLES = 64;

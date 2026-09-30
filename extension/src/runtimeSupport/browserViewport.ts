@@ -1,11 +1,15 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
+// Explicit Node clock/timer bindings keep this module runnable in the viewport tests' vm context, which has no Node globals.
+import { performance } from 'node:perf_hooks';
+import { clearTimeout, setTimeout } from 'node:timers';
 import type { Cdp } from './cdp';
 import { FrameDelivery, type ViewFrame } from './frameDelivery';
 import { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, STREAM_TELEMETRY_INTERVAL_MS, VIEWPORT_HEIGHT_PX, VIEWPORT_WIDTH_PX, type Scenario } from './constants';
 import { sha256 } from './utils/sha256';
 import { waitUntil } from './utils/waitUntil';
 import { viewportHtml } from './utils/viewportHtml';
+import { awaitResponse } from './utils/awaitResponse';
 
 export interface ViewportLease { panel: vscode.WebviewPanel; released(): void }
 export type BrowserViewportFactory = (runId: string, record: (type: string, detail?: unknown) => unknown, fail: (reason: string) => void, scenario: Scenario) => BrowserViewport;
@@ -19,6 +23,9 @@ export interface ViewportRecordingObserver {
 export class BrowserViewport {
   private panel: vscode.WebviewPanel;
   private readonly delivery: FrameDelivery;
+  private rendererVisible = true;
+  private paintElapsedMs = 0;
+  private paintStartedMs = performance.now();
   private epoch?: string;
   private readinessRequest = randomUUID();
   private presentationRevision = 0;
@@ -35,12 +42,13 @@ export class BrowserViewport {
   private summaryAt = 0;
   private readonly liveCounts = new Map<string, number>();
   private missingReceipt?: { epoch: string; id: string };
+  private readonly gapWakers = new Set<() => void>();
   private readonly rendererOperations = new Set<Promise<unknown>>();
   private placement?: { released: Promise<void>; ready: boolean; release(): void };
 
   constructor(runId: string, private readonly record: (type: string, detail?: unknown) => unknown, private readonly fail: (reason: string) => void, private readonly scenario: Scenario, private readonly lease?: ViewportLease, private readonly observer?: ViewportRecordingObserver, private readonly mode: 'live' | 'recording' = 'live') {
     this.panel = lease?.panel ?? vscode.window.createWebviewPanel('codebook.scopedBrowser', `codebook ${runId.slice(0, 8)}`, vscode.ViewColumn.One, { enableScripts: true, localResourceRoots: [] });
-    this.delivery = new FrameDelivery(message => this.panel.webview.postMessage(message), (type, detail) => this.recordDelivery(type, detail));
+    this.delivery = new FrameDelivery(message => this.panel.webview.postMessage(message), (type, detail) => this.recordDelivery(type, detail), CAPTURE_TIMEOUT_MS, () => this.paintTime());
     this.bindPanel();
     this.panel.webview.html = viewportHtml(this.mode);
   }
@@ -50,7 +58,7 @@ export class BrowserViewport {
     const panel = this.panel;
     this.listeners.push(panel.onDidDispose(() => {
       if (panel !== this.panel || this.closed) return;
-      this.closed = true;
+      this.closed = true; this.wakeGapWaits();
       // Current closure releases queued work; retired panels cannot release the replacement's hold.
       this.placement?.release();
       this.delivery.dispose();
@@ -70,19 +78,27 @@ export class BrowserViewport {
         // Startup announces a renderer; only the current request can prove reveal readiness.
         if (!('requestId' in message)) { this.requestReadiness(); return; }
         if (!this.panel.visible || message.requestId !== this.readinessRequest || message.epoch === this.epoch) return;
-        this.epoch = message.epoch;
+        this.epoch = message.epoch; this.wakeGapWaits();
         this.delivery.begin(message.epoch);
+        this.setRendererVisibility(!('visibility' in message) || message.visibility !== 'hidden');
         this.record('viewport.ready', { epoch: this.epoch });
         const latest = this.pinnedPause ?? this.latestLive;
         if (latest && !this.placement) this.offerLiveOrRestored(latest);
+      } else if (message.type === 'visibility' && message.epoch === this.epoch && 'visibility' in message && (message.visibility === 'visible' || message.visibility === 'hidden')) {
+        // Native panel visibility does not describe macOS occlusion of the inner document.
+        this.setRendererVisibility(message.visibility === 'visible');
       } else if (message.type === 'frame-stage' && message.epoch === this.epoch && 'id' in message && typeof message.id === 'number' && Number.isSafeInteger(message.id)
         && 'stage' in message && typeof message.stage === 'string' && ['received', 'decoded', 'decode-failed', 'paint-queued', 'first-frame'].includes(message.stage)
         && 'visibility' in message && (message.visibility === 'visible' || message.visibility === 'hidden')
         && 'hasArea' in message && typeof message.hasArea === 'boolean') {
         // Required-frame stages are private diagnostics only; they never authorize a painted receipt.
         this.record('viewport.frame-stage', { id: message.id, stage: message.stage, visibility: message.visibility, hasArea: message.hasArea });
-      } else if (message.type === 'painted' && 'id' in message && typeof message.id === 'number') this.delivery.acknowledge(message.epoch, message.id);
-      else if (message.type === 'missing-painted' && 'id' in message && typeof message.id === 'string' && this.mode === 'recording' && message.epoch === this.epoch) this.missingReceipt = { epoch: message.epoch, id: message.id };
+      }
+      // A hidden recording document cannot have painted; its receipts are refused so only visible pixels confirm history. Live capture keeps wall-clock ACKs.
+      else if (message.type === 'painted' && 'id' in message && typeof message.id === 'number' && (this.mode !== 'recording' || this.rendererVisible)) this.delivery.acknowledge(message.epoch, message.id);
+      else if (message.type === 'missing-painted' && 'id' in message && typeof message.id === 'string' && this.mode === 'recording' && this.rendererVisible && message.epoch === this.epoch) {
+        this.missingReceipt = { epoch: message.epoch, id: message.id }; this.wakeGapWaits();
+      }
     }));
   }
 
@@ -122,7 +138,9 @@ export class BrowserViewport {
     this.placement = placement;
     try {
       // New required operations wait outside this set; already accepted paints drain before any native move.
-      await Promise.all([...this.rendererOperations]); signal.throwIfAborted();
+      // A bounded drain rejects with its own cancellation error; surface the caller's abort reason instead.
+      await awaitResponse(Promise.all([...this.rendererOperations]), 'viewport placement drain', signal).catch((error: unknown) => { signal.throwIfAborted(); throw error; });
+      signal.throwIfAborted();
       if (this.closed) throw new Error('Viewport closed before placement.');
       placement.ready = true;
       return placement.release;
@@ -218,7 +236,7 @@ export class BrowserViewport {
     this.placement?.release();
     this.closeObserver(true);
     if (this.lease) {
-      this.closed = true; this.delivery.dispose();
+      this.closed = true; this.delivery.dispose(); this.wakeGapWaits();
       for (const listener of this.listeners) listener.dispose();
       this.record('viewport.lease-released'); this.lease.released(); return;
     }
@@ -244,7 +262,7 @@ export class BrowserViewport {
   /** Clears a superseded recorded presentation before a seek/pause can load another bundle; it has no debugger effect. @example viewport.clearRecorded() */
   clearRecorded(): void {
     if (this.mode !== 'recording' || this.closed) return;
-    this.presentationRevision++; this.delivery.resume(); this.missingReceipt = undefined;
+    this.presentationRevision++; this.delivery.resume(); this.missingReceipt = undefined; this.wakeGapWaits();
     if (this.epoch) void this.panel.webview.postMessage({ type: 'reset', epoch: this.epoch, clear: true });
   }
 
@@ -257,17 +275,65 @@ export class BrowserViewport {
     this.clearRecorded();
     const epoch = this.epoch, id = randomUUID(), revision = this.presentationRevision;
     if (!await this.panel.webview.postMessage({ type: 'missing', epoch, id, reason })) throw new Error('Recorded gap message was rejected.');
-    await waitUntil(() => {
+    const deadlineMs = this.paintTime() + CAPTURE_TIMEOUT_MS;
+    // The explicit visible-time deadline bounds painting; revision/closure/epoch, and an optional AbortSignal, release hidden waits.
+    for (;;) {
+      signal?.throwIfAborted();
       if (revision !== this.presentationRevision || this.closed || epoch !== this.epoch) throw new Error('Recorded gap presentation invalidated.');
-      return this.missingReceipt?.epoch === epoch && this.missingReceipt.id === id;
-    }, 'recorded gap presentation', CAPTURE_TIMEOUT_MS, signal);
+      if (this.missingReceipt?.epoch === epoch && this.missingReceipt.id === id) return;
+      const remainingMs = deadlineMs - this.paintTime();
+      if (remainingMs <= 0) throw new Error('Timed out waiting for recorded gap presentation');
+      // A hidden document cannot paint, so it sleeps without polling until a receipt, visibility or ownership change wakes it.
+      await this.gapChange(this.rendererVisible ? remainingMs : undefined, signal);
+    }
   }
+
+  /**
+   * Resolves on the next {@link wakeGapWaits}, after `timeoutMs` of wall time when given, or on abort; {@link presentMissingNow} rechecks its state after each.
+   * @param timeoutMs - Remaining visible paint budget, or `undefined` while the recording document is hidden.
+   * @param signal - Optional caller cancellation.
+   * @example await this.gapChange(this.rendererVisible ? remainingMs : undefined, signal)
+   */
+  private gapChange(timeoutMs: number | undefined, signal?: AbortSignal): Promise<void> {
+    return new Promise(resolve => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const wake = () => { clearTimeout(timer); signal?.removeEventListener('abort', wake); this.gapWakers.delete(wake); resolve(); };
+      if (timeoutMs !== undefined) timer = setTimeout(wake, timeoutMs);
+      this.gapWakers.add(wake); signal?.addEventListener('abort', wake, { once: true });
+    });
+  }
+
+  /** Wakes every pending {@link gapChange} after a gap receipt, renderer visibility, epoch, revision or closure change. @example this.wakeGapWaits() */
+  private wakeGapWaits(): void { for (const wake of [...this.gapWakers]) wake(); }
 
   /** Invalidates readiness across hide, reveal and reload so old renderer messages cannot qualify. @example this.suspendRenderer() */
   private suspendRenderer(): void {
-    this.epoch = undefined;
+    this.epoch = undefined; this.wakeGapWaits();
     this.readinessRequest = randomUUID();
     this.delivery.suspend();
+    // No current visibility receipt means an unresponsive replacement must retain a bounded timeout.
+    this.setRendererVisibility(true);
+  }
+
+  /** Supplies {@link FrameDelivery} and gap paints with monotonic available time; live capture retains its wall-clock deadline. @example const deadline = this.paintTime() + CAPTURE_TIMEOUT_MS */
+  private paintTime(): number {
+    if (this.mode !== 'recording') return performance.now();
+    return this.paintElapsedMs + (this.rendererVisible ? performance.now() - this.paintStartedMs : 0);
+  }
+
+  /**
+   * Switches the recording paint clock between visible and hidden time; changes preserve consumed paint budget and never ACK pixels.
+   *
+   * {@link bindPanel} applies the current renderer's ready and visibility reports (a ready report without visibility counts as visible).
+   * {@link suspendRenderer} resets it to visible so an unresponsive replacement renderer keeps a bounded deadline.
+   *
+   * @param visible - Whether the current recording document can paint.
+   * @example this.setRendererVisibility(false)
+   */
+  private setRendererVisibility(visible: boolean): void {
+    if (this.mode !== 'recording' || visible === this.rendererVisible) return;
+    this.paintElapsedMs = this.paintTime(); this.paintStartedMs = performance.now(); this.rendererVisible = visible;
+    this.delivery.refreshDeadlines(); this.wakeGapWaits();
   }
 
   /** Rehydrates only an explicitly selected replacement after {@link rebindPanel}; background leases cannot overwrite replay. @example this.restorePanelContents() */

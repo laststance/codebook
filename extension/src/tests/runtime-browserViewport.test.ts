@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type * as ViewportModule from '../runtimeSupport/browserViewport';
 import type { Scenario } from '../runtimeSupport/constants';
 import { Cdp } from '../runtimeSupport/cdp';
+import { ACTIVE_TIMEOUT_MS, CAPTURE_TIMEOUT_MS, POLL_INTERVAL_MS } from '../runtimeSupport/constants';
 
 /** Models multiple viewport listeners on one reader so {@link viewportHarness} can verify shared lease retirement. @example const renderer = viewportPanel() */
 function viewportPanel() {
@@ -71,6 +72,290 @@ async function viewportHarness(scenario: Scenario, leased = false, observer?: Vi
     },
   };
 }
+
+/** Runs the real serialized image document for hidden-paint regressions; tests alone control animation availability. @example const renderer = await recordedRenderer(false); renderer.show(); renderer.paint() */
+async function recordedRenderer(initiallyVisible: boolean) {
+  const harness = await viewportHarness('normal', true, undefined, 'recording');
+  const events = new Map<string, (() => void)[]>(), messages: ((event: { data: unknown }) => unknown)[] = [], animations: (() => void)[] = [];
+  const page = { hidden: true, src: '', removeAttribute() {} }, phase = { textContent: '' };
+  let visible = initiallyVisible;
+  harness.panel.webview.postMessage = message => {
+    harness.messages.push(message);
+    for (const callback of messages) void callback({ data: message });
+    return Promise.resolve(true);
+  };
+  const script = harness.panel.webview.html.match(/<script nonce="[^"]+">([\s\S]*)<\/script>/)?.[1];
+  assert.ok(script);
+  runInNewContext(script, {
+    crypto, Date, setTimeout,
+    acquireVsCodeApi: () => ({ postMessage: (message: unknown) => harness.receive(message) }),
+    document: { get visibilityState() { return visible ? 'visible' : 'hidden'; }, hasFocus: () => visible,
+      body: { clientWidth: 720, clientHeight: 640 }, getElementById: (id: string) => id === 'page' ? page : phase,
+      addEventListener(name: string, callback: () => void) { events.set(name, [...events.get(name) ?? [], callback]); } },
+    window: { addEventListener(name: string, callback: (event: { data: unknown }) => unknown) { if (name === 'message') messages.push(callback); } },
+    Image: class { src = ''; decode() { return Promise.resolve(); } }, requestAnimationFrame: (callback: () => void) => animations.push(callback),
+  });
+  return { ...harness, page, phase,
+    hide() { visible = false; for (const callback of events.get('visibilitychange') ?? []) callback(); },
+    show() { visible = true; for (const callback of events.get('visibilitychange') ?? []) callback(); },
+    paint() { while (animations.length) animations.shift()?.(); },
+  };
+}
+
+for (const start of ['already hidden', 'hidden after decode'] as const) test(`a recorded image ${start} waits for real painting instead of exhausting its deadline in the background`, async () => {
+  // Arrange
+  const renderer = await recordedRenderer(start !== 'already hidden');
+  let outcome = 'pending';
+  const capture = renderer.viewport.present('cGl4ZWxz', 'Recorded · 55.87 s').then(() => { outcome = 'painted'; }, error => { outcome = String(error); });
+  try {
+    await delay(0); if (start === 'hidden after decode') renderer.hide();
+    // Act: Chromium cannot run animation callbacks while hidden, even though decoding and native panel visibility succeed.
+    await delay(CAPTURE_TIMEOUT_MS + 100);
+    const hiddenOutcome = outcome;
+    renderer.show(); renderer.paint(); await capture;
+    // Assert
+    assert.equal(hiddenOutcome, 'pending'); assert.equal(outcome, 'painted');
+    assert.equal(renderer.panel.visible, true);
+    assert.equal(renderer.events.filter(event => event.type === 'viewport.acknowledged').length, 1);
+  } finally { renderer.viewport.close(); await capture; }
+});
+
+test('an explicit recorded gap waits through background suspension and confirms only its own painted placeholder', async () => {
+  // Arrange
+  const renderer = await recordedRenderer(false);
+  let outcome = 'pending';
+  const missing = renderer.viewport.presentMissing('Not recorded at this moment', new AbortController().signal).then(() => { outcome = 'painted'; }, error => { outcome = String(error); });
+  try {
+    // Act
+    await delay(CAPTURE_TIMEOUT_MS + 100); const hiddenOutcome = outcome;
+    renderer.show(); renderer.paint(); await missing;
+    // Assert
+    assert.equal(hiddenOutcome, 'pending'); assert.equal(outcome, 'painted');
+    assert.equal(renderer.page.hidden, true);
+    assert.equal(renderer.events.some(event => event.type === 'viewport.acknowledged'), false);
+  } finally { renderer.viewport.close(); await missing; }
+});
+
+// Value: protects=a hidden recorded gap sleeps until Application can paint instead of waking the extension host every poll interval; fails_when=the gap wait polls its paint clock while the document is hidden; why_new=the performance review found the hidden gap wait polling at 50 ms without limit; seam=node:test mock of the shared timers/promises module counts poll timers
+test('a hidden recorded gap waits without polling until Application becomes visible', async context => {
+  // Arrange
+  const nodeRequire = createRequire(__filename);
+  const promiseTimers: typeof import('node:timers/promises') = nodeRequire('node:timers/promises'), callbackTimers: typeof import('node:timers') = nodeRequire('node:timers');
+  const renderer = await recordedRenderer(false);
+  const pollCalls = context.mock.method(promiseTimers, 'setTimeout'), wakeTimerCalls = context.mock.method(callbackTimers, 'setTimeout');
+  let outcome = 'pending';
+  const missing = renderer.viewport.presentMissing('Not recorded at this moment', new AbortController().signal).then(() => { outcome = 'painted'; }, error => { outcome = String(error); });
+  try {
+    // Act
+    await delay(POLL_INTERVAL_MS * 6);
+    const hiddenPolls = pollCalls.mock.calls.filter(call => call.arguments[0] === POLL_INTERVAL_MS).length, hiddenWakeTimers = wakeTimerCalls.mock.calls.length;
+    renderer.show(); renderer.paint(); await missing;
+
+    // Assert
+    assert.equal(hiddenPolls, 0);
+    assert.equal(hiddenWakeTimers, 0, 'a hidden document arms no remaining-budget timer');
+    assert.equal(outcome, 'painted');
+  } finally { renderer.viewport.close(); await missing; }
+});
+
+test('stale or malformed visibility cannot confirm hidden recorded pixels or change the current renderer clock', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true, undefined, 'recording');
+  const epoch = '11111111-1111-1111-1111-111111111111'; harness.ready(epoch);
+  harness.receive({ type: 'visibility', epoch, visibility: 'hidden' });
+  let confirmed = false;
+  const capture = harness.viewport.present('cGl4ZWxz', 'Recorded · 55.87 s').then(() => { confirmed = true; });
+  try {
+    await delay(0); const frame = harness.messages.findLast(message => message.type === 'frame');
+    // Act
+    harness.receive({ type: 'visibility', epoch: '22222222-2222-2222-2222-222222222222', visibility: 'visible' });
+    harness.receive({ type: 'visibility', epoch, visibility: true });
+    harness.receive({ type: 'painted', epoch, id: frame?.id }); await delay(0); const hiddenConfirmed = confirmed;
+    harness.receive({ type: 'visibility', epoch, visibility: 'visible' });
+    harness.receive({ type: 'painted', epoch, id: frame?.id }); await capture;
+    // Assert
+    assert.equal(hiddenConfirmed, false); assert.equal(confirmed, true);
+    assert.equal(harness.events.filter(event => event.type === 'viewport.acknowledged').length, 1);
+  } finally { harness.viewport.close(); }
+});
+
+for (const boundary of ['new seek', 'close'] as const) test(`${boundary} retires hidden recorded pixels without waiting for a foreground window`, async () => {
+  // Arrange
+  const renderer = await recordedRenderer(false);
+  const capture = renderer.viewport.present('cGl4ZWxz', 'Recorded · 55.87 s');
+  const rejected = assert.rejects(capture, /invalidated|disposed/);
+  try {
+    await delay(0);
+    // Act
+    if (boundary === 'new seek') renderer.viewport.clearRecorded(); else renderer.viewport.close();
+    await rejected; renderer.show(); renderer.paint();
+    // Assert
+    assert.equal(renderer.events.some(event => event.type === 'viewport.acknowledged'), false);
+  } finally { renderer.viewport.close(); }
+});
+
+test('cancelling a hidden recorded gap releases its wait without a fabricated placeholder receipt', async () => {
+  // Arrange
+  const renderer = await recordedRenderer(false), cancellation = new AbortController();
+  const missing = renderer.viewport.presentMissing('Not recorded at this moment', cancellation.signal);
+  const rejected = assert.rejects(missing, /aborted|cancelled/i);
+  try {
+    await delay(0);
+    // Act
+    cancellation.abort(new Error('Learner cancelled')); await rejected;
+    // Assert
+    assert.equal(renderer.events.some(event => event.type === 'viewport.acknowledged'), false);
+  } finally { renderer.viewport.close(); }
+});
+
+for (const boundary of ['new recorded selection', 'replacement renderer', 'viewport closure'] as const) {
+  test(`${boundary} promptly rejects a hidden recorded gap without an AbortSignal or fabricated paint confirmation`, async () => {
+    // Arrange
+    const renderer = await recordedRenderer(false);
+    let outcome = 'pending';
+    const missing = renderer.viewport.presentMissing('Not recorded at this moment')
+      .then(() => { outcome = 'painted'; }, error => { outcome = String(error); });
+    try {
+      await delay(0);
+      const gapMessage = renderer.messages.findLast(message => message.type === 'missing');
+      assert.ok(gapMessage && typeof gapMessage.epoch === 'string');
+      assert.equal(outcome, 'pending');
+
+      // Act: no signal or animation callback can release this stopped-clock wait.
+      if (boundary === 'new recorded selection') renderer.viewport.clearRecorded();
+      else if (boundary === 'replacement renderer') {
+        const readinessRequest = renderer.messages.findLast(message => message.type === 'requestReady');
+        assert.ok(readinessRequest && typeof readinessRequest.requestId === 'string');
+        const replacementEpoch = '22222222-2222-2222-2222-222222222222';
+        assert.notEqual(gapMessage.epoch, replacementEpoch);
+        renderer.receive({ type: 'ready', epoch: replacementEpoch, requestId: readinessRequest.requestId, visibility: 'hidden' });
+        assert.deepEqual(JSON.parse(JSON.stringify(renderer.events.findLast(event => event.type === 'viewport.ready')?.detail)),
+          { epoch: '22222222-2222-2222-2222-222222222222' });
+      } else renderer.viewport.close();
+      const promptOutcome = await Promise.race([missing.then(() => outcome), delay(500).then(() => 'still waiting for hidden paint')]);
+
+      // Assert: lifecycle retirement must reject before visibility resumes, and late paint cannot resurrect it.
+      assert.equal(promptOutcome, 'Error: Recorded gap presentation invalidated.');
+      renderer.show(); renderer.paint(); await missing;
+      assert.equal(outcome, 'Error: Recorded gap presentation invalidated.');
+      assert.equal(renderer.events.some(event => event.type === 'viewport.acknowledged'), false);
+    } finally { renderer.viewport.close(); await missing; }
+  });
+}
+
+test('cancelling placement while a recorded image is hidden releases only the placement reservation', async () => {
+  // Arrange
+  const renderer = await recordedRenderer(false), cancellation = new AbortController();
+  let captureOutcome = 'pending';
+  const capture = renderer.viewport.present('cGl4ZWxz', 'Recorded · 55.87 s').then(() => { captureOutcome = 'painted'; }, () => { captureOutcome = 'retired'; });
+  await delay(0);
+  const placement = renderer.viewport.holdPlacement(cancellation.signal).then(release => { release(); return 'acquired'; }, error => String(error));
+  try {
+    // Act
+    cancellation.abort(new Error('Learner cancelled placement'));
+    const outcome = await Promise.race([placement, delay(100).then(() => 'still waiting for hidden paint')]);
+    // Assert: cancelling a layout action reports the learner's reason without waiting for visibility or retiring another owned frame.
+    assert.equal(outcome, 'Error: Learner cancelled placement'); assert.equal(captureOutcome, 'pending');
+    renderer.show(); renderer.paint(); await capture; assert.equal(captureOutcome, 'painted');
+  } finally { renderer.viewport.close(); await Promise.all([capture, placement]); }
+});
+
+for (const mode of ['live', 'recording'] as const) test(`${mode} painting without a valid current hidden receipt retains a bounded timeout`, async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true, undefined, mode), epoch = '11111111-1111-1111-1111-111111111111';
+  harness.ready(epoch);
+  harness.receive({ type: 'visibility', epoch: mode === 'live' ? epoch : '22222222-2222-2222-2222-222222222222', visibility: 'hidden' });
+  try {
+    // Act / Assert
+    await assert.rejects(harness.viewport.present('cGl4ZWxz', 'before'), /acknowledgement timed out/);
+    assert.equal(harness.events.some(event => event.type === 'viewport.acknowledged'), false);
+  } finally { harness.viewport.close(); }
+});
+
+test('a visible unresponsive recorded gap still fails within its paint budget', async () => {
+  // Arrange
+  const renderer = await recordedRenderer(true);
+  try {
+    // Act / Assert: deliberately withhold visible animation callbacks.
+    await assert.rejects(renderer.viewport.presentMissing('Not recorded at this moment'), /Timed out waiting for recorded gap presentation/);
+    assert.equal(renderer.events.some(event => event.type === 'viewport.acknowledged'), false);
+  } finally { renderer.viewport.close(); }
+});
+
+// Value: protects=a recorded gap placeholder is confirmed only by a receipt from a visible renderer; fails_when=the missing-painted handler stops refusing receipts while the recording document is hidden; why_new=existing gap tests withhold animation callbacks until visibility returns, so no hidden gap receipt ever reaches the viewport; seam=none
+test('a recorded gap receipt sent while the recording is hidden cannot confirm the placeholder', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true, undefined, 'recording'), epoch = '11111111-1111-1111-1111-111111111111';
+  harness.ready(epoch);
+  harness.receive({ type: 'visibility', epoch, visibility: 'hidden' });
+  let confirmed = false;
+  const pending = harness.viewport.presentMissing('Not recorded at this moment').then(() => { confirmed = true; });
+  try {
+    await delay(0);
+    const missing = harness.messages.findLast(message => message.type === 'missing');
+    assert.ok(missing && typeof missing.id === 'string');
+
+    // Act: the hidden document reports its placeholder, then becomes visible and reports it again.
+    harness.receive({ type: 'missing-painted', epoch, id: missing.id });
+    await delay(200); const hiddenConfirmed = confirmed;
+    harness.receive({ type: 'visibility', epoch, visibility: 'visible' });
+    harness.receive({ type: 'missing-painted', epoch, id: missing.id }); await pending;
+
+    // Assert
+    assert.equal(hiddenConfirmed, false);
+    assert.equal(confirmed, true);
+    assert.equal(harness.events.some(event => event.type === 'viewport.acknowledged'), false);
+  } finally { harness.viewport.close(); await pending.catch(() => {}); }
+});
+
+// Value: protects=hiding and revealing Application cannot extend a stalled recorded gap beyond its visible paint budget; fails_when=the recording paint clock forgets or over-counts visible time used before a visibility change; why_new=the gap deadline reads BrowserViewport's own clock rather than FrameDelivery's, and existing gap tests never toggle visibility after visible time was consumed; seam=none
+test('a stalled recorded gap keeps the paint time it used before Application was hidden', async () => {
+  // Arrange: half of the paint budget elapses while the unpainted placeholder is visible.
+  const renderer = await recordedRenderer(true);
+  let outcome = 'pending';
+  const missing = renderer.viewport.presentMissing('Not recorded at this moment').then(() => { outcome = 'painted'; }, error => { outcome = String(error); });
+  try {
+    await delay(CAPTURE_TIMEOUT_MS / 2);
+
+    // Act: a long hidden interval, then visibility returns without any painted placeholder.
+    renderer.hide(); await delay(CAPTURE_TIMEOUT_MS / 2); renderer.show();
+    await delay(400); const soonAfterShowing = outcome;
+    const settled = await Promise.race([missing.then(() => outcome), delay(1_900).then(() => 'still waiting after a fresh budget')]);
+
+    // Assert: hidden time is free, but the remaining half expires instead of restarting the whole budget.
+    assert.equal(soonAfterShowing, 'pending');
+    assert.equal(settled, 'Error: Timed out waiting for recorded gap presentation');
+    assert.equal(renderer.events.some(event => event.type === 'viewport.acknowledged'), false);
+  } finally { renderer.viewport.close(); await missing; }
+});
+
+// Value: protects=native placement behind a hidden recorded image fails within its named active bound instead of hanging presentation; fails_when=the placement drain loses its response timeout while hidden paints may wait indefinitely; why_new=the only hidden drain test cancels explicitly, so nothing proves an uncancelled drain ends; seam=none
+test('placement behind a hidden recorded image times out, releases its reservation and leaves the image to paint later', async () => {
+  // Arrange
+  const renderer = await recordedRenderer(false), signal = new AbortController().signal;
+  let captureOutcome = 'pending';
+  const capture = renderer.viewport.present('cGl4ZWxz', 'Recorded · 55.87 s').then(() => { captureOutcome = 'painted'; }, error => { captureOutcome = String(error); });
+  try {
+    await delay(0);
+
+    // Act: nobody cancels the move, and the hidden document cannot run animation callbacks.
+    // The outer bound turns a lost drain timeout into a failed assertion instead of a hung test file.
+    const drainBound = new AbortController();
+    const drainOutcome = await Promise.race([
+      renderer.viewport.holdPlacement(signal).then(() => 'placement acquired', error => String(error)),
+      delay(ACTIVE_TIMEOUT_MS + 5_000, 'still draining after the active bound', { signal: drainBound.signal }),
+    ]).finally(() => drainBound.abort());
+    const outcomeAfterTimeout = captureOutcome;
+    renderer.show(); renderer.paint(); await capture;
+    const release = await renderer.viewport.holdPlacement(signal); release();
+
+    // Assert
+    assert.equal(drainOutcome, 'Error: Timed out waiting for viewport placement drain');
+    assert.equal(outcomeAfterTimeout, 'pending');
+    assert.equal(captureOutcome, 'painted');
+    assert.equal(renderer.events.filter(event => event.type === 'viewport.acknowledged').length, 1);
+  } finally { renderer.viewport.close(); await capture; }
+});
 
 test('closing a shared application panel ends both live and replay leases unless each lease has transferred', async () => {
   // Arrange
