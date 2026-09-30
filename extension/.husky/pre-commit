@@ -1,3 +1,0 @@
-# Husky runs hooks from the repository root; the formatter tooling lives in extension/.
-cd extension
-pnpm exec lint-staged

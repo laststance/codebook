@@ -1,6 +1,0 @@
-# core.hooksPath points at Husky, which bypasses hooks installed in the Git directory.
-# Keep running an existing repository pre-push hook (for example a managed redaction guard).
-hook="$(git rev-parse --git-common-dir)/hooks/pre-push"
-if [ -x "$hook" ]; then
-  exec "$hook" "$@"
-fi

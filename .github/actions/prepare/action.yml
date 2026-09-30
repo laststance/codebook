@@ -21,6 +21,3 @@ runs:
     - name: Install dependencies
       run: pnpm --dir extension install --frozen-lockfile
       shell: bash
-      env:
-        # CI never commits; skip installing the local pre-commit hook.
-        HUSKY: '0'
