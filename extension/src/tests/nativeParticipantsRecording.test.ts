@@ -1,22 +1,24 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { LearningLibrary } from '../learningLibrary'
-import { RepositoryBookStore } from '../repositoryBook'
-import { RecordingStore } from '../recordingStore'
 import {
   recordingContextSchema,
   retainedRecordingContextSchema,
 } from '../recordingSchemas'
-import { StudyService } from '../service'
+import { RecordingStore } from '../recordingStore'
+import { RepositoryBookStore } from '../repositoryBook'
 import { readResource } from '../resources'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startSchema } from '../schemas'
+import { StudyService } from '../service'
 import { captureStudy } from '../utils/captureStudy'
 import { createRecordingObserver } from '../utils/createRecordingObserver'
 import { projectRecording } from '../utils/projectRecording'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { nativeParticipantsHarness } from './utils/nativeParticipantsHarness'
+
 import { configuredServiceHarness } from './utils/configuredServiceHarness'
+import { nativeParticipantsHarness } from './utils/nativeParticipantsHarness'
 
 for (const scenario of [
   {
@@ -321,8 +323,8 @@ for (const scenario of [
         retainedRecordingContextSchema.safeParse({
           ...saved.context,
           pausedIntervals: [
-            ...saved.context.pausedIntervals!,
-            saved.context.pausedIntervals![0],
+            ...saved.context.pausedIntervals,
+            saved.context.pausedIntervals[0],
           ],
         }).success,
         false,

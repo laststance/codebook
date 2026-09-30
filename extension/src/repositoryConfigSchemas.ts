@@ -1,4 +1,5 @@
 import { z } from 'zod'
+
 import {
   CONFIGURED_OBSERVATION_LIMIT,
   CROSS_RUNTIME_CONFIG_VERSION,
@@ -205,7 +206,7 @@ function validateInspections(
     | z.infer<typeof repositoryConfigurationShape>
     | z.infer<typeof crossRuntimeConfigurationShape>,
   context: z.RefinementCtx,
-) {
+): void {
   // Each ordered stop must independently declare useful, unambiguous facts.
   for (const [index, inspections] of [
     configuration.inspections,

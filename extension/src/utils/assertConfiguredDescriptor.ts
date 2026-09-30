@@ -1,9 +1,10 @@
-import { configuredStops } from './configuredStops'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import { REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants'
 import type { ConfiguredDescriptor } from '../configuredStudySchemas'
+import { REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants'
 import type { RetainedRepositoryConfiguration } from '../repositoryConfigSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+
 import { citationContext } from './citationContext'
+import { configuredStops } from './configuredStops'
 
 /** Pins all copied citations and selected coordinates for preparation and retained evidence readers. @example assertConfiguredDescriptor(configuration, descriptor) // rejects an out-of-citation position */
 export function assertConfiguredDescriptor(

@@ -1,5 +1,6 @@
 import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+
 import { NANOSECONDS_PER_MILLISECOND } from './constants'
 
 export interface RecordedEvent {

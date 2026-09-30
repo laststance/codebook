@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { editorLayoutGroupCount } from '../utils/editorLayoutGroupCount'
 
 test('main-grid admission counts nested Study panes without counting their split container', () => {

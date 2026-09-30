@@ -1,4 +1,3 @@
-import { configuredStops } from './configuredStops'
 import type { ConfiguredStudy } from '../configuredStudySchemas'
 import {
   CONFIGURED_CAPTURE_PHASES,
@@ -7,6 +6,8 @@ import {
 } from '../constants'
 import type { RetainedStudySelection } from '../retainedStudySchemas'
 import type { RuntimeAction } from '../runtime'
+
+import { configuredStops } from './configuredStops'
 
 export type StudyDescriptor = {
   title: string

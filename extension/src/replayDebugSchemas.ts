@@ -1,4 +1,5 @@
 import { z } from 'zod'
+
 import {
   REPLAY_DEBUG_MAX_DEPTH,
   REPLAY_DEBUG_MAX_FRAMES,
@@ -55,7 +56,7 @@ export const replayDebugSnapshotSchema = z
   .superRefine((snapshot, context) => {
     const parents = new Set<number>(),
       depths = new Map<number, number>()
-    const claim = (index: number, depth: number) => {
+    const claim = (index: number, depth: number): void => {
       if (parents.has(index) || depth > REPLAY_DEBUG_MAX_DEPTH)
         context.addIssue({
           code: 'custom',

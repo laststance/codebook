@@ -1,7 +1,8 @@
 import { z } from 'zod'
+
+import { RECORDING_VERSION } from './constants'
 import { studyIdSchema } from './legacyStudySchemas'
 import { recordingHashSchema } from './recordingSchemas'
-import { RECORDING_VERSION } from './constants'
 
 const identity = {
   instanceId: z.uuid(),

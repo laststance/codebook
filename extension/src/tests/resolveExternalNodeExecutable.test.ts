@@ -1,6 +1,9 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
+import { test } from 'node:test'
+
+import type * as ResolveExternalNodeExecutableModule from '../utils/resolveExternalNodeExecutable'
+
 import { loadModule } from './utils/loadModule'
 
 test('Cursor bridge accepts only an absolute external Node 24 executable', async () => {
@@ -13,9 +16,7 @@ test('Cursor bridge accepts only an absolute external Node 24 executable', async
     { version: '24.21.0', executable: 'node' },
     { version: 'unknown', executable: '/opt/homebrew/bin/node' },
   ]
-  const module = await loadModule<
-    typeof import('../utils/resolveExternalNodeExecutable')
-  >(
+  const module = await loadModule<typeof ResolveExternalNodeExecutableModule>(
     resolve(__dirname, '../utils/resolveExternalNodeExecutable.js'),
     {
       'node:util': {

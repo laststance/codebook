@@ -1,21 +1,20 @@
 import { z } from 'zod'
-import { learningSummarySchema } from './learningSummarySchemas'
+
+import { configuredFactPathSchema } from './configuredStudySchemas'
 import {
+  NODE_TEST_PROFILE,
+  REPOSITORY_BROWSER_ACTION,
+  REPOSITORY_BROWSER_PROFILE,
   KEY_LENGTH_LIMIT,
   MAX_EXPLANATION_CHARS,
   MAX_VALUE_PATHS,
   REFERENCE_LENGTH_LIMIT,
 } from './constants'
-import {
-  NODE_TEST_PROFILE,
-  REPOSITORY_BROWSER_ACTION,
-  REPOSITORY_BROWSER_PROFILE,
-} from './constants'
-import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
-import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
-import { configuredFactPathSchema } from './configuredStudySchemas'
+import { learningSummarySchema } from './learningSummarySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
+import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { nodeTestLearningMaterialContentSchema } from './nodeTestHistorySchemas'
+import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
 
 const instanceShape = { instanceId: z.uuid() }
 const runShape = { ...instanceShape, runId: z.uuid() }

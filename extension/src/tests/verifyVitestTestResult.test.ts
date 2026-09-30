@@ -1,8 +1,9 @@
+import assert from 'node:assert/strict'
 import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import assert from 'node:assert/strict'
+
 import { verifyVitestTestResult } from '../utils/verifyVitestTestResult'
 
 const citedFile = '/repo/app/lib/data.test.ts'

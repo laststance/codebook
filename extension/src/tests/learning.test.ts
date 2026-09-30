@@ -1,21 +1,24 @@
-import { createConfiguredStudy } from './utils/createConfiguredStudy'
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import { test } from 'node:test'
+
 import { LearningLibrary } from '../learningLibrary'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import {
   learningState,
   type LearnerDecision,
   type StudyArchive,
 } from '../studyModel'
-import { validateStudy } from '../utils/validateStudy'
-import { loadModule } from './utils/loadModule'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
+import type * as AtomicPrivateWriteModule from '../utils/atomicPrivateWrite'
 import { decodeLearnerProgress } from '../utils/decodeLearnerProgress'
+import { validateStudy } from '../utils/validateStudy'
+
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { loadModule } from './utils/loadModule'
 
 const workspaceKey = sha256('workspace-a'),
   source = 'const nextTheme = \"dark\";\n',
@@ -232,7 +235,7 @@ test('a rejected atomic rename retains the old value and cleans its own incomple
   const path = join(directory, 'progress.repository.v4.json')
   await writeFile(path, 'old value')
   const filesystem = await import('node:fs/promises')
-  const writer = await loadModule<typeof import('../utils/atomicPrivateWrite')>(
+  const writer = await loadModule<typeof AtomicPrivateWriteModule>(
     resolve(__dirname, '../utils/atomicPrivateWrite.js'),
     {
       'node:fs/promises': {

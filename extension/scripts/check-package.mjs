@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+
 import { readVsixBytes } from './utils/readVsixBytes.mjs'
 import { readVsixEntries } from './utils/readVsixEntries.mjs'
 import { verifyPackageContent } from './utils/verifyPackageContent.mjs'

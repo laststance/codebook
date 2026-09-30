@@ -3,15 +3,18 @@ import { once } from 'node:events'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
 import { z } from 'zod'
+
 import {
   VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS,
   VITEST_FILE_LIST_TIMEOUT_MS,
   VITEST_LIST_ERROR_LIMIT_CHARS,
 } from '../constants'
-import { buildNodeTestEnvironment } from './buildNodeTestEnvironment'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
+import { buildNodeTestEnvironment } from './buildNodeTestEnvironment'
 
 /** One test file Vitest would run; a file included by several Vitest projects appears once per project. */
 export type VitestListedFile = { file: string; projectName?: string }
@@ -83,7 +86,7 @@ export async function listVitestTestFiles(
     const closed = new Promise<void>((resolve) =>
       child.once('close', () => resolve()),
     )
-    release = async () => {
+    release = async (): Promise<void> => {
       const processGroup = child.pid
       if (processGroup === undefined) {
         await awaitResponse(
@@ -94,7 +97,7 @@ export async function listVitestTestFiles(
         )
         return
       }
-      const signalGroup = (signal: NodeJS.Signals) => {
+      const signalGroup = (signal: NodeJS.Signals): void => {
         try {
           process.kill(-processGroup, signal)
         } catch (error) {
@@ -122,7 +125,7 @@ export async function listVitestTestFiles(
           throw error
         }
       }
-      const drain = async () => {
+      const drain = async (): Promise<void> => {
         await awaitResponse(
           closed,
           'Vitest listing exit',

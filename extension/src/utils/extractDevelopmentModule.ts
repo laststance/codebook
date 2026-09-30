@@ -1,12 +1,13 @@
-import { sameScriptUrl } from './sameScriptUrl'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import { mapSchema, type BundleSource } from '../repositoryBundle'
 import {
   REPOSITORY_CHUNK_LIMIT_BYTES,
   REPOSITORY_DISCOVERY_TIMEOUT_MS,
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
   REPOSITORY_MAP_LIMIT_BYTES,
 } from '../constants'
+import { mapSchema, type BundleSource } from '../repositoryBundle'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+
+import { sameScriptUrl } from './sameScriptUrl'
 
 /** Extracts JSON string payloads without executing webpack code for pre-input acquisition by {@link readDevelopmentBundle}. @example extractDevelopmentModule(chunk, sourcePath, source, chunkPath, scriptUrl) */
 export function extractDevelopmentModule(

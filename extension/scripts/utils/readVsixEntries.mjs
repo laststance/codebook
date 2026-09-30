@@ -1,4 +1,5 @@
 import yauzl from 'yauzl'
+
 import { MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES } from './packageConstants.mjs'
 import { readVsixBytes } from './readVsixBytes.mjs'
 

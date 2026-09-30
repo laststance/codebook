@@ -1,15 +1,17 @@
-import { readResource } from '../resources'
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { test } from 'node:test'
+
 import { LearningLibrary } from '../learningLibrary'
-import { RepositoryBookStore } from '../repositoryBook'
 import { RecordingStore } from '../recordingStore'
+import { RepositoryBookStore } from '../repositoryBook'
+import { readResource } from '../resources'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { StudyService } from '../service'
 import { captureStudy } from '../utils/captureStudy'
 import { createRecordingObserver } from '../utils/createRecordingObserver'
 import { projectRecording } from '../utils/projectRecording'
+
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 
 for (const failure of ['renderer acknowledgement', 'required inspection'])

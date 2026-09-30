@@ -2,13 +2,14 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { studyHtml } from '../dist/ui/studyHtml.js'
-import { repositoryHtml } from '../dist/ui/repositoryHtml.js'
+
+import { projectStudy } from '../dist/studyModel.js'
 import { createConfiguredStudy } from '../dist/tests/utils/createConfiguredStudy.js'
+import { repositoryHtml } from '../dist/ui/repositoryHtml.js'
+import { studyHtml } from '../dist/ui/studyHtml.js'
+import { citationLearningState } from '../dist/utils/citationLearningState.js'
 import { decodeLearnerProgress } from '../dist/utils/decodeLearnerProgress.js'
 import { selectStudy } from '../dist/utils/selectStudy.js'
-import { projectStudy } from '../dist/studyModel.js'
-import { citationLearningState } from '../dist/utils/citationLearningState.js'
 
 // Real Chromium verifies focus and default checkbox activation; the serialized host bridge is intentionally simulated.
 const [

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { buildPackage } from './utils/buildPackage.mjs'
 
 const arguments_ = process.argv.slice(2)

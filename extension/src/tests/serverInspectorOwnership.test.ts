@@ -1,14 +1,15 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
+import { test } from 'node:test'
+
 import { Cdp } from '../runtimeSupport/cdp'
 import { verifyServerInspectorOwnership } from '../utils/verifyServerInspectorOwnership'
 
 /** Supplies explicit inspector responses while the OS group check remains real; ownership tests call this without launching an application. @example inspectorResponse({ pid: process.pid, cwd: process.cwd(), worker: '1' }) */
 function inspectorResponse(value: unknown, exception = false) {
   class Socket extends EventTarget {
-    send(message: string) {
+    send(message: string): void {
       const request = JSON.parse(message)
       assert.equal(request.method, 'Runtime.evaluate')
       assert.equal(
@@ -29,7 +30,7 @@ function inspectorResponse(value: unknown, exception = false) {
         }),
       )
     }
-    close() {
+    close(): void {
       this.dispatchEvent(new Event('close'))
     }
   }

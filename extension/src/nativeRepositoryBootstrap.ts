@@ -1,20 +1,22 @@
-import * as vscode from 'vscode'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+
+import * as vscode from 'vscode'
 import { z } from 'zod'
-import { sha256 } from './runtimeSupport/utils/sha256'
-import { waitUntil } from './runtimeSupport/utils/waitUntil'
-import type { activate } from './extension'
-import { repositorySelectionSchema } from './learnerSchemas'
-import { LearningLibrary } from './learningLibrary'
+
 import {
   NATIVE_COMMAND_POLL_MS,
   NATIVE_OBSERVATION_TIMEOUT_MS,
   PRIVATE_FILE_MODE,
   REPOSITORY_SOURCE_SCHEME,
 } from './constants'
+import type { activate } from './extension'
+import { repositorySelectionSchema } from './learnerSchemas'
+import { LearningLibrary } from './learningLibrary'
+import { sha256 } from './runtimeSupport/utils/sha256'
+import { waitUntil } from './runtimeSupport/utils/waitUntil'
 
 // Only finite learner/lifecycle operations cross this private QA boundary; authors use public MCP separately.
 const commandSchema = z.strictObject({
@@ -94,7 +96,7 @@ export async function run(): Promise<void> {
       column: group.viewColumn,
     }
   }
-  const publish = async (error?: unknown) => {
+  const publish = async (error?: unknown): Promise<void> => {
     const study = api.inspectStudy(),
       repository = api.inspectRepository()
     assert.equal(foreign.isDirty, true)

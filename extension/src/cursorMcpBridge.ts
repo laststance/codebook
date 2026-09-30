@@ -1,4 +1,5 @@
 import { readFile, lstat } from 'node:fs/promises'
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import {
   StreamableHTTPClientTransport,
@@ -13,11 +14,12 @@ import {
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { connectionSchema } from './utils/connectionSchema'
+
 import {
   CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS,
   EXTENSION_VERSION,
 } from './constants'
+import { connectionSchema } from './utils/connectionSchema'
 
 /** Bridges Cursor's stdio MCP transport to the authenticated instance selected by its extension window. @example await runCursorMcpBridge('/private/current.connection.json') */
 export async function runCursorMcpBridge(
@@ -59,7 +61,7 @@ export async function runCursorMcpBridge(
   }
   const closeUpstream = async (
     connection: Awaited<ReturnType<typeof connectUpstream>>,
-  ) => {
+  ): Promise<void> => {
     // Releasing the HTTP session immediately keeps short Cursor restarts below the server's session limit.
     try {
       await connection.http.terminateSession()
@@ -161,7 +163,7 @@ export async function runCursorMcpBridge(
   )
   const stdio = new StdioServerTransport()
   let stopping: Promise<void> | undefined
-  const shutdown = () =>
+  const shutdown = (): Promise<void> =>
     (stopping ??= (async () => {
       closed = true
       await reconnecting?.catch(() => undefined)
@@ -171,7 +173,7 @@ export async function runCursorMcpBridge(
         await server.close()
       }
     })())
-  stdio.onclose = () => {
+  stdio.onclose = (): void => {
     void shutdown().catch(() => undefined)
   }
   try {
@@ -184,7 +186,7 @@ export async function runCursorMcpBridge(
   process.stdin.once('end', () => {
     void shutdown().catch(() => undefined)
   })
-  const stopForSignal = () => {
+  const stopForSignal = (): void => {
     void shutdown().then(
       () => {
         process.exitCode = 0

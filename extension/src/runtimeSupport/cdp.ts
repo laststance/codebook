@@ -1,4 +1,5 @@
 import type { ProtocolMapping } from 'devtools-protocol/types/protocol-mapping'
+
 import { ACTIVE_TIMEOUT_MS, STREAM_TELEMETRY_INTERVAL_MS } from './constants'
 
 interface PendingRequest {
@@ -130,7 +131,9 @@ export class Cdp {
         })
       for (const event of added) this.subscriptions.set(event, subscribed)
     }
-    await Promise.all(events.map((event) => this.subscriptions.get(event)))
+    await Promise.all(
+      events.map((event) => this.subscriptions.get(event) ?? Promise.resolve()),
+    )
   }
 
   /** Attaches schema-typed observers before input dispatch. @example cdp.on('Debugger.paused', event => inspect(event.callFrames)) */

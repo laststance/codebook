@@ -1,15 +1,19 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import type * as vscode from 'vscode'
+import { test } from 'node:test'
+
 import type { DebugProtocol } from '@vscode/debugprotocol'
-import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
+import type * as vscode from 'vscode'
+
 import * as constants from '../constants'
-import { loadModule } from './utils/loadModule'
+import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
+import type * as OwnedNodeTestRunModule from '../ownedNodeTestRun'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
+import { loadModule } from './utils/loadModule'
 
 /** The adapter's DAP id for Codebook's own breakpoint, as its registration receipt reports it. */
 const OWNED_BREAKPOINT_ID = 7
@@ -134,9 +138,7 @@ async function nodeRunHarness({
         calls.push('continue')
         // A cited test that Vitest skipped never reaches the source: its process exits and the owned session ends.
         if (exitAfterEntry) {
-          queueMicrotask(() =>
-            terminate?.(session as unknown as vscode.DebugSession),
-          )
+          queueMicrotask(() => terminate?.(session))
           return {}
         }
         if (neverReachStop) return {}
@@ -186,22 +188,22 @@ async function nodeRunHarness({
     async registered() {
       return { status: 'bound', breakpointId: OWNED_BREAKPOINT_ID }
     }
-    async retire() {
+    async retire(): Promise<void> {
       calls.push('retire')
       duringRetire?.()
     }
-    remove() {
+    remove(): void {
       calls.push('remove')
     }
-    onRequest() {}
-    onResponse() {}
+    onRequest(): void {}
+    onResponse(): void {}
   }
   class OutputTerminal {
     readonly terminal = { name: 'Codebook · Test output' }
-    async ready() {}
-    write() {}
-    reveal() {}
-    dispose() {}
+    async ready(): Promise<void> {}
+    write(): void {}
+    reveal(): void {}
+    dispose(): void {}
   }
   const editor = {
     Uri: { file: (fsPath: string) => ({ fsPath }) },
@@ -212,13 +214,13 @@ async function nodeRunHarness({
         factory: vscode.DebugAdapterTrackerFactory,
       ) {
         trackerFactory = factory
-        return { dispose() {} }
+        return { dispose(): void {} }
       },
       onDidTerminateDebugSession: (
         listener: (session: vscode.DebugSession) => void,
       ) => {
         terminate = listener
-        return { dispose() {} }
+        return { dispose(): void {} }
       },
       async startDebugging(
         _folder: unknown,
@@ -235,12 +237,12 @@ async function nodeRunHarness({
         queueMicrotask(() => stopped('entry'))
         return true
       },
-      async stopDebugging() {
+      async stopDebugging(): Promise<void> {
         calls.push('stop-debugging')
       },
     },
   }
-  const module = await loadModule<typeof import('../ownedNodeTestRun')>(
+  const module = await loadModule<typeof OwnedNodeTestRunModule>(
     resolve(__dirname, '../ownedNodeTestRun.js'),
     {
       vscode: editor,
@@ -271,7 +273,7 @@ async function nodeRunHarness({
           async waitForExit() {
             return exitAfterEntry ? { exitCode: 0, signal: null } : undefined
           },
-          async close() {},
+          async close(): Promise<void> {},
         }),
       },
       './utils/verifyVitestTestResult': {
@@ -286,7 +288,7 @@ async function nodeRunHarness({
         bindOwnedNodeTestDebugSession: async (value: vscode.DebugSession) => ({
           session: value,
           identity: { pid: 1, processGroup: 4242, workspace: directory },
-          cdp: { close() {} },
+          cdp: { close(): void {} },
         }),
       },
       './utils/inspectNodeTestVariables': {
@@ -328,7 +330,7 @@ async function nodeRunHarness({
     launch,
     reportDirectory,
     sourceFile,
-    cleanup: async () => {
+    cleanup: async (): Promise<void> => {
       await rm(directory, { recursive: true, force: true })
       await rm(reportDirectory, { recursive: true, force: true })
     },
@@ -340,14 +342,14 @@ async function nodeRunHarness({
         body: { threadId: 1 },
       }),
     // The learner steps in the native debugger: the editor sends `next` and the adapter reports the new pause without a `continued` event.
-    stepToLaterPause: () => {
+    stepToLaterPause: (): void => {
       clientRequest('next')
       stopped('step')
     },
     // The native debugger sends a resume request; adapters need not follow it with a `continued` event.
     requestResume: clientRequest,
     // js-debug refreshes the stack (e.g. Toggle Skipping this File) by re-announcing the same pause with no client resume request.
-    refreshPause: () => {
+    refreshPause: (): void => {
       tracker?.onDidSendMessage?.({
         type: 'event',
         event: 'continued',
@@ -356,11 +358,11 @@ async function nodeRunHarness({
       stopped('breakpoint')
     },
     // Something outside the editor client moves the paused thread, so the stack reports another position.
-    movePausedFrame: (line: number) => {
+    movePausedFrame: (line: number): void => {
       pausedLine = line
     },
     // The learner presses Continue at their own pause; the test then runs for `runningMs` before reaching Codebook's declared stop.
-    learnerContinues: (runningMs = 0) => {
+    learnerContinues: (runningMs = 0): void => {
       clientRequest('continue')
       pausedLine = observedLine
       pausedFile = sourceFile

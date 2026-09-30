@@ -1,6 +1,7 @@
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
+
 import { unchangedSource } from './unchangedSource'
 
 /** Acquires bounded unchanged build bytes inside the selected workspace for module discovery, rejecting linked ancestors and replacements. @example await readRepositoryBuildText(root, '.next/dev/static/chunk.js', limit, signal) */

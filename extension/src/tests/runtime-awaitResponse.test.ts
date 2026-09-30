@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
 test('deleting a run releases an inspector waiting for a missing DAP response', async () => {

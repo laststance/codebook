@@ -1,20 +1,22 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import { RecordingStore } from '../recordingStore'
+import { test } from 'node:test'
+
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
-import { createConfiguredStudy } from './utils/createConfiguredStudy'
-import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
+import { RecordingStore } from '../recordingStore'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import {
   workspaceHarness,
   saveOneStopNodeHistory,
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 test('restored Observed moments leaves its loading state after workspace initialization', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -395,7 +397,7 @@ test('saved Node history is selectable in the reader without entering browser pl
       header.configuration.source.hash,
     )
     assert.equal(
-      await harness.readCapturedSource(firstPresentation.sourceDocument!.uri),
+      await harness.readCapturedSource(firstPresentation.sourceDocument.uri),
       firstSourceText,
       'source URI survives a fresh history store',
     )
@@ -410,7 +412,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     )
     await assert.rejects(
       harness.readCapturedSource(
-        firstPresentation.sourceDocument!.uri.replace(
+        firstPresentation.sourceDocument.uri.replace(
           header.configuration.source.hash,
           secondSource.hash,
         ),
@@ -493,7 +495,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.equal(secondPresentation.snapshot?.variables[0]?.name, 'themeName')
     assert.equal(secondPresentation.sourceDocument?.hash, secondSource.hash)
     assert.equal(
-      await harness.readCapturedSource(secondPresentation.sourceDocument!.uri),
+      await harness.readCapturedSource(secondPresentation.sourceDocument.uri),
       secondSourceText,
     )
     const secondStopMessage = harness.postedMessages().slice(-1)[0]!
@@ -650,7 +652,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     )
     assert.equal(
       await harness.readCapturedSource(
-        harness.historicalDebugPresentations[4]!.sourceDocument!.uri,
+        harness.historicalDebugPresentations[4].sourceDocument!.uri,
       ),
       secondSourceText,
     )
@@ -2207,7 +2209,7 @@ test('live Restore refuses a late native receipt loss instead of claiming recove
     harness.reader['layoutReceipt'] = undefined
     harness.reader['presentationConfirmed'] = false
     const arrange = harness.reader['arrange'].bind(harness.reader)
-    harness.reader['arrange'] = async (...args) => {
+    harness.reader['arrange'] = async (...args): Promise<void> => {
       await arrange(...args)
       harness.reader['layoutReceipt'] = undefined
     }
@@ -2400,7 +2402,7 @@ for (const departure of ['draft', 'window round trip'] as const)
   test(`replay Restore preserves newer ${departure} intent during native unmaximize`, async () => {
     // Arrange
     const harness = await recordedReaderHarness()
-    let release = () => {}
+    let release = (): void => {}
     try {
       await harness.reader.openRecording(harness.studyId)
       await harness.controller.settle()
@@ -2484,7 +2486,7 @@ test('reading the replay summary leaves an unfocused work window and historical 
 test('a window round trip during summary opening cannot confirm an obsolete focus request', async () => {
   // Arrange
   const harness = await recordedReaderHarness()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()

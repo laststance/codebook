@@ -1,24 +1,26 @@
-import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import { test, type TestContext } from 'node:test'
+
 import { LearningLibrary } from '../learningLibrary'
+import {
+  recordingContextSchema,
+  recordingHeaderSchema,
+  type RecordingBinding,
+} from '../recordingSchemas'
 import {
   RecordingStore,
   recordingDiskIo,
   type RecordingIo,
   type RecordingLimits,
 } from '../recordingStore'
-import {
-  recordingContextSchema,
-  recordingHeaderSchema,
-  type RecordingBinding,
-} from '../recordingSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
 import { projectRecording } from '../utils/projectRecording'
 import { validateRecordingContext } from '../utils/validateRecordingContext'
+
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
 const png = Buffer.from(

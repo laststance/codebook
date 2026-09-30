@@ -1,13 +1,16 @@
-import { actionSchema } from '../schemas'
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
-import { startServer } from '../server'
+
 import { readResource } from '../resources'
+import { actionSchema } from '../schemas'
+import { startServer } from '../server'
+
 import { configuredServiceHarness } from './utils/configuredServiceHarness'
 
 const receiptSchema = z.object({
@@ -127,8 +130,8 @@ test('duplicate configured starts reserve one immutable intent before article I/
   const { service, books, configuration, runtimes } =
       await configuredServiceHarness(context),
     read = books.readDefinition.bind(books)
-  let release = () => {},
-    entered = () => {},
+  let release = (): void => {},
+    entered = (): void => {},
     reads = 0
   const barrier = new Promise<void>((resolve) => {
       release = resolve
@@ -240,8 +243,8 @@ test('stopping a configured start during article I/O drains its read and starts 
   const { service, books, configuration, environment, runtimes } =
       await configuredServiceHarness(context),
     read = books.readDefinition.bind(books)
-  let release = () => {},
-    entered = () => {},
+  let release = (): void => {},
+    entered = (): void => {},
     prerequisites = 0
   const barrier = new Promise<void>((resolve) => {
       release = resolve
@@ -288,8 +291,8 @@ test('a configured runtime returned after cancellation is still owned and releas
   const { service, configuration, environment, runtimes } =
       await configuredServiceHarness(context),
     create = environment.createRuntime
-  let release = () => {},
-    entered = () => {}
+  let release = (): void => {},
+    entered = (): void => {}
   const barrier = new Promise<void>((resolve) => {
       release = resolve
     }),
@@ -325,7 +328,7 @@ test('stopping a held runtime preparation delivers cancellation before waiting f
   const { service, configuration, environment, runtimes } =
       await configuredServiceHarness(context),
     create = environment.createRuntime
-  let entered = () => {}
+  let entered = (): void => {}
   const started = new Promise<void>((resolve) => {
     entered = resolve
   })
@@ -333,7 +336,7 @@ test('stopping a held runtime preparation delivers cancellation before waiting f
     const runtime = await create(...arguments_),
       stop = runtime.stop.bind(runtime),
       prepare = runtime.prepare.bind(runtime)
-    let release = () => {}
+    let release = (): void => {}
     const barrier = new Promise<void>((resolve) => {
       release = resolve
     })
@@ -343,7 +346,7 @@ test('stopping a held runtime preparation delivers cancellation before waiting f
       await barrier
       throw new Error('Preparation cancelled')
     }
-    runtime.stop = async () => {
+    runtime.stop = async (): Promise<void> => {
       release()
       await stop()
     }
@@ -377,7 +380,7 @@ test('repository preparation reports its remaining time without changing evidenc
   const { service, configuration, environment } =
     await configuredServiceHarness(context, () => currentTimeMs)
   const createRuntime = environment.createRuntime
-  let enteredPreparation = () => {}
+  let enteredPreparation = (): void => {}
   const preparationStarted = new Promise<void>((resolve) => {
     enteredPreparation = resolve
   })
@@ -385,16 +388,16 @@ test('repository preparation reports its remaining time without changing evidenc
     const runtime = await createRuntime(...arguments_),
       prepare = runtime.prepare.bind(runtime),
       stop = runtime.stop.bind(runtime)
-    let releasePreparation = () => {}
+    let releasePreparation = (): void => {}
     const barrier = new Promise<void>((resolve) => {
       releasePreparation = resolve
     })
-    runtime.prepare = async () => {
+    runtime.prepare = async (): Promise<void> => {
       await prepare()
       enteredPreparation()
       await barrier
     }
-    runtime.stop = async () => {
+    runtime.stop = async (): Promise<void> => {
       releasePreparation()
       await stop()
     }
@@ -421,7 +424,7 @@ test('repository preparation reports its remaining time without changing evidenc
   assert.equal(initialState.preparationRemainingMs, 90_000)
   assert.equal(laterState.preparationRemainingMs, 79_000)
   assert.equal(
-    Date.parse(laterState.observedAt!) + laterState.preparationRemainingMs!,
+    Date.parse(laterState.observedAt!) + laterState.preparationRemainingMs,
     Date.parse(laterState.preparationDeadlineAt!),
   )
   assert.equal(initialState.materialSignature, laterState.materialSignature)

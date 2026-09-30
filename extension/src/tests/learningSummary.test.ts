@@ -1,18 +1,20 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
-import { learningSummarySchema } from '../learningSummarySchemas'
+import { test } from 'node:test'
+
 import { LearningLibrary } from '../learningLibrary'
-import { validateRecordingContext } from '../utils/validateRecordingContext'
+import { learningSummarySchema } from '../learningSummarySchemas'
 import { presentationReadingPoseSchema } from '../presentationSchemas'
+import { readResource } from '../resources'
+import type { ConfiguredRuntimeView } from '../runtime'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
 import { captureStudy } from '../utils/captureStudy'
 import { decodeRetainedStudy } from '../utils/decodeRetainedStudy'
 import { projectLearningSummary } from '../utils/projectLearningSummary'
 import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
-import { readResource } from '../resources'
+import { validateRecordingContext } from '../utils/validateRecordingContext'
+
 import { ControlledRuntime, createHarness } from './helpers'
-import type { ConfiguredRuntimeView } from '../runtime'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
 /** Supplies bounded authoring input for storage/reference tests without running a demonstration application. @example summaryFor(snapshotUri, sourceHash).steps[0]?.id // 'select' */
@@ -251,13 +253,13 @@ for (const mutation of [
     // Act
     if (mutation === 'unverified result') study.operation!.afterVerified = false
     if (mutation === 'wrong configuration')
-      content.steps[1]!.reference = {
+      content.steps[1].reference = {
         kind: 'terminal',
         configurationHash: 'f'.repeat(64),
         captureHash: afterCapture.hash,
       }
     if (mutation === 'wrong image')
-      content.steps[1]!.reference = {
+      content.steps[1].reference = {
         kind: 'terminal',
         configurationHash: study.configurationHash,
         captureHash: 'f'.repeat(64),

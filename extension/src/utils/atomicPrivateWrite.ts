@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { open, rename, unlink } from 'node:fs/promises'
+
 import { PRIVATE_FILE_MODE } from '../constants'
 
 /** Publishes a complete private JSON replacement only after its temporary bytes are flushed. @example await atomicPrivateWrite(path, json, limit) */

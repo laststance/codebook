@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { Cdp } from '../runtimeSupport/cdp'
 
 /** Models reordered wire responses for the transport tests, without claiming a real browser result. @example socket.reply(2, { data: 'png' }) */

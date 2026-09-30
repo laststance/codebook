@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { selectHost } from '../runtimeSupport/utils/selectHost'
 import { selectPageTarget } from '../runtimeSupport/utils/selectPageTarget'
 

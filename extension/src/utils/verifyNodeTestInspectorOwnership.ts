@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
 import { promisify } from 'node:util'
+
 import { z } from 'zod'
+
 import type { Cdp } from '../runtimeSupport/cdp'
 
 const inspectorIdentitySchema = z.strictObject({

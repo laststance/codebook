@@ -1,38 +1,36 @@
 import { join } from 'node:path'
-import { sha256 } from './runtimeSupport/utils/sha256'
+
+import { z } from 'zod'
+
+import { CONFIGURED_PROFILE } from './configuredProfile'
 import {
-  EVENT_DETAIL_LIMIT_BYTES,
-  EVENT_PAGE_SIZE,
-  IMAGE_LIMIT_BYTES,
-  REPOSITORY_RUN_TIMEOUT_MS,
-  SOURCE_LIMIT_BYTES,
-} from './constants'
-import { ERROR_RECOVERY, StudyError } from './errors'
-import type { StudyService } from './service'
-import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
-import { omittedDetail } from './utils/omittedDetail'
-import { readBoundedFile } from './utils/readBoundedFile'
-import { readJsonPage } from './utils/readJsonPage'
-import { readRecordingResource } from './utils/readRecordingResource'
-import { readRepositoryResource } from './utils/readRepositoryResource'
-import {
+  REPOSITORY_BROWSER_ACTION,
+  REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
+  REPOSITORY_MAP_LIMIT_BYTES,
   BOOK_INPUT_LIMIT_BYTES,
   HTTP_BODY_LIMIT_BYTES,
   REPOSITORY_SOURCE_LIMIT_BYTES,
   REPOSITORY_SOURCE_EXTENSIONS,
   REPOSITORY_EXCLUDED_DIRECTORIES,
+  EVENT_DETAIL_LIMIT_BYTES,
+  EVENT_PAGE_SIZE,
+  IMAGE_LIMIT_BYTES,
+  REPOSITORY_RUN_TIMEOUT_MS,
+  SOURCE_LIMIT_BYTES,
+  NODE_TEST_PROFILE,
 } from './constants'
-import {
-  REPOSITORY_BROWSER_ACTION,
-  REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
-  REPOSITORY_MAP_LIMIT_BYTES,
-} from './constants'
-import { z } from 'zod'
-import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
-import { describeStudy } from './utils/describeStudy'
-import { CONFIGURED_PROFILE } from './configuredProfile'
-import { NODE_TEST_PROFILE } from './constants'
+import { ERROR_RECOVERY, StudyError } from './errors'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
+import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
+import { sha256 } from './runtimeSupport/utils/sha256'
+import type { StudyService } from './service'
+import { describeStudy } from './utils/describeStudy'
+import { omittedDetail } from './utils/omittedDetail'
+import { readBoundedFile } from './utils/readBoundedFile'
+import { readJsonPage } from './utils/readJsonPage'
+import { readRecordingResource } from './utils/readRecordingResource'
+import { readRepositoryResource } from './utils/readRepositoryResource'
+import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 
 export type ResourceContent =
   | { uri: string; mimeType: string; text: string }

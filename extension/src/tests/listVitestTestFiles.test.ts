@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import {
   mkdtemp,
   readFile,
@@ -9,9 +10,9 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
-import assert from 'node:assert/strict'
-import { listVitestTestFiles } from '../utils/listVitestTestFiles'
+
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { listVitestTestFiles } from '../utils/listVitestTestFiles'
 
 /**
  * Writes a stand-in Vitest CLI that records how it was started, then behaves as the given script body.

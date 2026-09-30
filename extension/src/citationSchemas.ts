@@ -1,4 +1,5 @@
 import { z } from 'zod'
+
 import { BOOK_MAX_ANCHORS } from './constants'
 import { bookAnchorSchema, repositoryHashSchema } from './sourceSchemas'
 import { citationContext } from './utils/citationContext'

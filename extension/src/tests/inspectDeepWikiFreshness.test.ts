@@ -1,11 +1,12 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { test } from 'node:test'
 import { promisify } from 'node:util'
+
 import { inspectDeepWikiFreshness } from '../utils/inspectDeepWikiFreshness'
 
 const runGit = promisify(execFile)

@@ -1,12 +1,14 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import { test } from 'node:test'
+
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
 import { LearningLibrary } from '../learningLibrary'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import {
   workspaceHarness,
   recordedReaderHarness,
@@ -94,7 +96,7 @@ test('starting a live viewport after closing recorded Study leaves its old film 
     await harness.controller.settle()
     await harness.reader.close()
     // Act
-    const liveViewport = harness.reader.presentation.createViewport!(
+    const liveViewport = harness.reader.presentation.createViewport(
       'next-live-run',
       () => {},
       () => {},
@@ -126,7 +128,7 @@ test('starting a live viewport while recorded Study is open preserves the indepe
     })
     await harness.controller.settle()
     // Act
-    const liveViewport = harness.reader.presentation.createViewport!(
+    const liveViewport = harness.reader.presentation.createViewport(
       'next-live-run',
       () => {},
       () => {},
@@ -422,8 +424,8 @@ test('history selected during a retained run save shows the new explanation befo
   const harness = await workspaceHarness(),
     service = harness.service,
     saveStudy = LearningLibrary.prototype.saveStudy
-  let release = () => {},
-    entered = () => {}
+  let release = (): void => {},
+    entered = (): void => {}
   const held = new Promise<void>((resolve) => {
       release = resolve
     }),
@@ -710,8 +712,8 @@ test('Close during initialization prevents the pending Open from recreating read
   // Arrange
   const harness = await workspaceHarness(false),
     readProgress = LearningLibrary.prototype.readProgress
-  let entered = () => {},
-    release = () => {}
+  let entered = (): void => {},
+    release = (): void => {}
   const started = new Promise<void>((resolve) => {
       entered = resolve
     }),
@@ -764,8 +766,8 @@ test('a slow archive writer does not delay inspection of the committed live paus
   // Arrange
   const harness = await workspaceHarness(),
     saveStudy = LearningLibrary.prototype.saveStudy
-  let entered = () => {},
-    release = () => {}
+  let entered = (): void => {},
+    release = (): void => {}
   const started = new Promise<void>((resolve) => {
       entered = resolve
     }),
@@ -832,8 +834,8 @@ test('a cold reader keeps the newer selected study and its observation when an o
     readCheckpoint = LearningLibrary.prototype.readCheckpoint
   let cold: ReturnType<typeof harness.createReader> | undefined,
     retry: Promise<void> | undefined
-  let release = () => {},
-    entered = () => {}
+  let release = (): void => {},
+    entered = (): void => {}
   const held = new Promise<void>((resolve) => {
       release = resolve
     }),
@@ -972,8 +974,8 @@ test('an obsolete failed history read cannot downgrade a newer verified reader o
   const harness = await workspaceHarness(),
     service = harness.service,
     readCheckpoint = LearningLibrary.prototype.readCheckpoint
-  let release = () => {},
-    entered = () => {},
+  let release = (): void => {},
+    entered = (): void => {},
     firstRead = true
   let olderSelection: Promise<void> | undefined
   const held = new Promise<void>((resolve) => {
@@ -1146,8 +1148,8 @@ test('an older successful save cannot erase the failed final archive from explic
   // Arrange
   const harness = await workspaceHarness(),
     saveStudy = LearningLibrary.prototype.saveStudy
-  let releaseFirst = () => {},
-    releaseFinal = () => {},
+  let releaseFirst = (): void => {},
+    releaseFinal = (): void => {},
     writes = 0
   const firstHeld = new Promise<void>((resolve) => {
       releaseFirst = resolve
@@ -1214,7 +1216,7 @@ test('an older successful save cannot erase the failed final archive from explic
 test('Close drains an accepted workbench arrangement batch without dispatching another layout change afterward', async () => {
   // Arrange
   const harness = await workspaceHarness()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     const widthsBefore = harness.commands.filter(
@@ -1311,7 +1313,7 @@ for (const command of ['vscode.setEditorLayout'])
 test('an MCP source reveal rejects a host rendering failure instead of recording a successful reveal', async () => {
   // Arrange
   const harness = await workspaceHarness()
-  let release = () => {}
+  let release = (): void => {}
   try {
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,

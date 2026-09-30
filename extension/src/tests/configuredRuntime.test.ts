@@ -1,6 +1,8 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 
 test('internal browser setup stops do not consume the configured learning pause or prevent its later completion', async (context) => {

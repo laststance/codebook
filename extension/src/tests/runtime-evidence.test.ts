@@ -1,8 +1,9 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { Evidence } from '../runtimeSupport/evidence'
 
 test('recording and debug events share the same monotonic receipt clock', async () => {

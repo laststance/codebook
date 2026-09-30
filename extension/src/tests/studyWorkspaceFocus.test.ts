@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import {
   workspaceHarness,
   configuredWorkspaceHarness,
@@ -26,7 +27,7 @@ for (const origin of ['chat', 'secondary text'] as const)
         const listenerCount = harness.focusListenerCount(),
           receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
         const focus = {
-          begin() {},
+          begin(): void {},
           retainCurrentFocus(
             acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
           ) {
@@ -121,7 +122,7 @@ for (const order of ['editor first', 'group first'] as const)
     const listenerCount = harness.focusListenerCount(),
       receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
     const focus = {
-      begin() {},
+      begin(): void {},
       retainCurrentFocus(
         acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
       ) {
@@ -180,7 +181,7 @@ for (const interaction of [
     const listenerCount = harness.focusListenerCount(),
       receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
     const focus = {
-      begin() {},
+      begin(): void {},
       retainCurrentFocus(
         acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
       ) {
@@ -264,7 +265,7 @@ for (const interaction of [
     const listenerCount = harness.focusListenerCount(),
       receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
     const focus = {
-      begin() {},
+      begin(): void {},
       retainCurrentFocus(
         acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
       ) {
@@ -339,14 +340,14 @@ for (const boundary of [
           : harness.holdNextLayoutResponse()
       let confirmation: ReturnType<typeof harness.holdNextCommand> | undefined
       const focus = {
-        begin() {},
+        begin(): void {},
         retainCurrentFocus() {
           const editor = harness.focusedSource(),
             version = draft.document.version,
             selections = JSON.stringify(editor?.selections)
           return {
-            dispose() {},
-            assertRetained() {
+            dispose(): void {},
+            assertRetained(): void {
               if (
                 editor !== harness.focusedSource() ||
                 version !== draft.document.version ||
@@ -486,7 +487,7 @@ test('chat focus after cited-source acquisition prevents cold Wiki from reservin
           harness.focusMutableDraft()
           held = harness.holdNextCommand('vscode.getEditorLayout')
           acquired()
-          return () => {
+          return (): void => {
             if (chat.focused()) throw new Error('Citation focus changed.')
           }
         },
@@ -676,7 +677,7 @@ test('Living book adopts an MCP-first application into its reserved main pane be
     mode: 'living-book',
   })
   const reader = harness.createReader(),
-    viewport = reader.presentation.createViewport!(
+    viewport = reader.presentation.createViewport(
       'mcp-first-run',
       () => {},
       () => {},
@@ -710,7 +711,7 @@ test('MCP-first Study opens when its application covers the selected chat-like t
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   const chat = harness.openWiki(1)
   const reader = harness.createReader(),
-    viewport = reader.presentation.createViewport!(
+    viewport = reader.presentation.createViewport(
       'mcp-chat-run',
       () => {},
       () => {},
@@ -742,7 +743,7 @@ test('MCP-first Study preserves a newer chat tab choice during application regis
     chat = harness.openWiki(1)
   const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser')
   const reader = harness.createReader(),
-    viewport = reader.presentation.createViewport!(
+    viewport = reader.presentation.createViewport(
       'mcp-chat-run',
       () => {},
       () => {},
@@ -780,7 +781,7 @@ test('Living book preserves a learner move of its MCP-first application before t
     mode: 'living-book',
   })
   const reader = harness.createReader(),
-    viewport = reader.presentation.createViewport!(
+    viewport = reader.presentation.createViewport(
       'mcp-first-run',
       () => {},
       () => {},
@@ -956,7 +957,7 @@ test('a presentation read preserves changed learner focus and does not certify t
   harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
   const chat = harness.addSeparateEditorPart()
   harness.focusMutableDraft()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     const state = harness.reader.presentationState()
@@ -983,8 +984,8 @@ test('an older presentation read cannot suppress original focus recovery after a
   // Arrange: the owned replacement uses the source anchor while its final layout command is pending.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let releaseRead = () => {},
-    releaseKeep = () => {}
+  let releaseRead = (): void => {},
+    releaseKeep = (): void => {}
   try {
     await harness.reader.open()
     const state = harness.reader.presentationState()
@@ -1109,7 +1110,7 @@ test('compact Study remains open when its optional first explanation read loses 
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.constrainStudyGrid()
   const readStudyPane = harness.reader['readStudyPane'].bind(harness.reader)
-  harness.reader['readStudyPane'] = (region, signal) => {
+  harness.reader['readStudyPane'] = (region, signal): Promise<void> => {
     harness.changeWindowFocus(false)
     return readStudyPane(region, signal)
   }
@@ -1188,7 +1189,7 @@ test('Read Explanation does not maximize after the work window leaves and return
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   const openStudy = harness.reader.open.bind(harness.reader)
-  harness.reader.open = async (signal, origin) => {
+  harness.reader.open = async (signal, origin): Promise<void> => {
     await openStudy(signal, origin)
     harness.changeWindowFocus(false)
     harness.changeWindowFocus(true)
@@ -1247,7 +1248,7 @@ test('Read Application does not maximize after the work window leaves during its
     await harness.reader.open()
     const application = harness.reader['app']!
     const reveal = application.reveal.bind(application)
-    application.reveal = (column, preserveFocus) => {
+    application.reveal = (column, preserveFocus): void => {
       reveal(column, preserveFocus)
       harness.changeWindowFocus(false)
       harness.changeWindowFocus(true)

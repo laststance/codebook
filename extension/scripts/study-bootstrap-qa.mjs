@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { resolve } from 'node:path'
-import { studyHtml } from '../dist/ui/studyHtml.js'
+
+import { projectStudy } from '../dist/studyModel.js'
 import { createConfiguredStudy } from '../dist/tests/utils/createConfiguredStudy.js'
+import { studyHtml } from '../dist/ui/studyHtml.js'
 import { decodeLearnerProgress } from '../dist/utils/decodeLearnerProgress.js'
 import { selectStudy } from '../dist/utils/selectStudy.js'
-import { projectStudy } from '../dist/studyModel.js'
 
 const [
   mode = 'verify',

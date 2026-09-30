@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { Module, createRequire, isBuiltin } from 'node:module'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { Module, createRequire, isBuiltin } from 'node:module'
 import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 
 /** Loads only this build's byte-verified artifact outside the checkout with native imports allowed; never used by the standalone checker. @example await loadBuiltExtension(verifiedEntries) */
 export async function loadBuiltExtension(entries) {

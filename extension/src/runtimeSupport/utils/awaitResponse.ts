@@ -8,11 +8,11 @@ export function awaitResponse<Value>(
   timeoutMs = ACTIVE_TIMEOUT_MS,
 ): Promise<Value> {
   return new Promise((resolve, reject) => {
-    const finish = () => {
+    const finish = (): void => {
       clearTimeout(timer)
       signal?.removeEventListener('abort', aborted)
     }
-    const aborted = () => {
+    const aborted = (): void => {
       finish()
       reject(new Error(`Cancelled ${description}`))
     }

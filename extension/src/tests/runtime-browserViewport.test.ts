@@ -1,13 +1,16 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { createRequire } from 'node:module'
-import { runInNewContext } from 'node:vm'
+import { join } from 'node:path'
+import { test } from 'node:test'
+import type * as TimersModule from 'node:timers'
 import { setTimeout as delay } from 'node:timers/promises'
+import type * as TimersPromisesModule from 'node:timers/promises'
+import { runInNewContext } from 'node:vm'
+
 import type * as ViewportModule from '../runtimeSupport/browserViewport'
-import type { Scenario } from '../runtimeSupport/constants'
 import { Cdp } from '../runtimeSupport/cdp'
+import type { Scenario } from '../runtimeSupport/constants'
 import {
   ACTIVE_TIMEOUT_MS,
   CAPTURE_TIMEOUT_MS,
@@ -24,11 +27,11 @@ function viewportPanel() {
   let panelDisposals = 0
   const panel = {
     visible: true,
-    reveal() {
+    reveal(): void {
       panel.visible = true
       for (const callback of visibility) callback()
     },
-    dispose() {
+    dispose(): void {
       if (panelDisposals) return
       panelDisposals++
       for (const callback of [...disposal]) callback()
@@ -36,7 +39,7 @@ function viewportPanel() {
     onDidDispose(callback: () => void) {
       disposal.add(callback)
       return {
-        dispose() {
+        dispose(): void {
           disposal.delete(callback)
         },
       }
@@ -44,7 +47,7 @@ function viewportPanel() {
     onDidChangeViewState(callback: () => void) {
       visibility.add(callback)
       return {
-        dispose() {
+        dispose(): void {
           visibility.delete(callback)
         },
       }
@@ -54,7 +57,7 @@ function viewportPanel() {
       onDidReceiveMessage(callback: (message: unknown) => void) {
         receivers.add(callback)
         return {
-          dispose() {
+          dispose(): void {
             receivers.delete(callback)
           },
         }
@@ -75,16 +78,16 @@ function viewportPanel() {
       visibility: [...visibility],
       disposal: [...disposal],
     }),
-    hide() {
+    hide(): void {
       panel.visible = false
       for (const callback of visibility) callback()
     },
-    receive(message: unknown) {
+    receive(message: unknown): void {
       for (const callback of [...receivers]) callback(message)
     },
     nextFrame(): Promise<Record<string, unknown>> {
       return new Promise((resolve) => {
-        const callback = (message: Record<string, unknown>) => {
+        const callback = (message: Record<string, unknown>): void => {
           if (message.type !== 'frame') return
           posted.delete(callback)
           resolve(message)
@@ -92,7 +95,7 @@ function viewportPanel() {
         posted.add(callback)
       })
     },
-    ready(epoch: string) {
+    ready(epoch: string): void {
       for (const callback of receivers) {
         callback({ type: 'ready', epoch })
         callback({
@@ -150,7 +153,7 @@ async function viewportHarness(
       lease: leased
         ? {
             panel,
-            released() {
+            released(): void {
               leaseReleases++
             },
           }
@@ -166,7 +169,7 @@ async function viewportHarness(
     rebind(
       replacement: ReturnType<typeof viewportPanel>,
       signal = new AbortController().signal,
-    ) {
+    ): void {
       runInNewContext('viewport.rebindPanel(panel, signal)', {
         viewport,
         panel: replacement.panel,
@@ -182,7 +185,7 @@ async function recordedRenderer(initiallyVisible: boolean) {
   const events = new Map<string, (() => void)[]>(),
     messages: ((event: { data: unknown }) => unknown)[] = [],
     animations: (() => void)[] = []
-  const page = { hidden: true, src: '', removeAttribute() {} },
+  const page = { hidden: true, src: '', removeAttribute(): void {} },
     phase = { textContent: '' }
   let visible = initiallyVisible
   harness.panel.webview.postMessage = (message) => {
@@ -199,7 +202,7 @@ async function recordedRenderer(initiallyVisible: boolean) {
     Date,
     setTimeout,
     acquireVsCodeApi: () => ({
-      postMessage: (message: unknown) => harness.receive(message),
+      postMessage: (message: unknown): void => harness.receive(message),
     }),
     document: {
       get visibilityState() {
@@ -222,7 +225,7 @@ async function recordedRenderer(initiallyVisible: boolean) {
     },
     Image: class {
       src = ''
-      decode() {
+      decode(): Promise<void> {
         return Promise.resolve()
       }
     },
@@ -232,15 +235,15 @@ async function recordedRenderer(initiallyVisible: boolean) {
     ...harness,
     page,
     phase,
-    hide() {
+    hide(): void {
       visible = false
       for (const callback of events.get('visibilitychange') ?? []) callback()
     },
-    show() {
+    show(): void {
       visible = true
       for (const callback of events.get('visibilitychange') ?? []) callback()
     },
-    paint() {
+    paint(): void {
       while (animations.length) animations.shift()?.()
     },
   }
@@ -325,10 +328,10 @@ test('an explicit recorded gap waits through background suspension and confirms 
 test('a hidden recorded gap waits without polling until Application becomes visible', async (context) => {
   // Arrange
   const nodeRequire = createRequire(__filename)
-  const promiseTimers: typeof import('node:timers/promises') = nodeRequire(
+  const promiseTimers: typeof TimersPromisesModule = nodeRequire(
       'node:timers/promises',
     ),
-    callbackTimers: typeof import('node:timers') = nodeRequire('node:timers')
+    callbackTimers: typeof TimersModule = nodeRequire('node:timers')
   const renderer = await recordedRenderer(false)
   const pollCalls = context.mock.method(promiseTimers, 'setTimeout'),
     wakeTimerCalls = context.mock.method(callbackTimers, 'setTimeout')
@@ -1336,7 +1339,7 @@ test('refreshing a visible recorded application does not reveal its native pane 
       renderer,
     )
   let nativeReveals = 0
-  renderer.panel.reveal = () => {
+  renderer.panel.reveal = (): void => {
     nativeReveals++
   }
 
@@ -1368,7 +1371,7 @@ test('live-follow refresh restores an adopted renderer after placement fails wit
   harness.panel.dispose()
   release()
   let reveals = 0
-  replacement.panel.reveal = () => {
+  replacement.panel.reveal = (): void => {
     reveals++
   }
   try {

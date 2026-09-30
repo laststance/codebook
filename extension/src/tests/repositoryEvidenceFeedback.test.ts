@@ -1,13 +1,16 @@
-import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { realpath } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { test, type TestContext } from 'node:test'
+
+import type { RepositorySelection } from '../learnerSchemas'
+import { LearningLibrary } from '../learningLibrary'
+import type * as RepositoryReaderModule from '../repositoryReader'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { LearningLibrary } from '../learningLibrary'
-import { repositoryHarness } from './utils/repositoryHarness'
+
 import { loadModule } from './utils/loadModule'
-import type { RepositorySelection } from '../learnerSchemas'
+import { repositoryHarness } from './utils/repositoryHarness'
 
 /** Drives failed webview clicks through the real reader and ledger; notification tests replace only native editor effects. @example const harness = await feedbackHarness(context) */
 async function feedbackHarness(context: TestContext) {
@@ -16,7 +19,7 @@ async function feedbackHarness(context: TestContext) {
   await source.track('src/module.ts')
   const library = new LearningLibrary(join(root, '.learning'), sha256(root)),
     notifications: string[] = []
-  const disposable = () => ({ dispose() {} })
+  const disposable = () => ({ dispose(): void {} })
   class Uri {
     readonly fragment = ''
     constructor(
@@ -37,10 +40,10 @@ async function feedbackHarness(context: TestContext) {
       return `${this.scheme}://${this.authority}${this.path}?${this.query}`
     }
   }
-  let receive = (_value: unknown) => {},
+  let receive = (_value: unknown): void => {},
     enteredEvidence = 0
   let provider = async (_uri: Uri) => ''
-  const boundary = await loadModule<typeof import('../repositoryReader')>(
+  const boundary = await loadModule<typeof RepositoryReaderModule>(
     resolve(__dirname, '../repositoryReader.js'),
     {
       './environment': { requireWorkspace: () => source.directory },
@@ -51,8 +54,8 @@ async function feedbackHarness(context: TestContext) {
         RelativePattern: class {},
         EventEmitter: class {
           event = disposable
-          fire() {}
-          dispose() {}
+          fire(): void {}
+          dispose(): void {}
         },
         workspace: {
           textDocuments: [],
@@ -65,7 +68,7 @@ async function feedbackHarness(context: TestContext) {
             return disposable()
           },
           createFileSystemWatcher: () => ({
-            dispose() {},
+            dispose(): void {},
             onDidChange: disposable,
             onDidCreate: disposable,
             onDidDelete: disposable,
@@ -93,13 +96,13 @@ async function feedbackHarness(context: TestContext) {
             notifications.push(message)
           },
           createWebviewPanel: () => {
-            let disposed = () => {}
+            let disposed = (): void => {}
             return {
-              reveal() {},
-              dispose() {
+              reveal(): void {},
+              dispose(): void {
                 disposed()
               },
-              onDidDispose(callback: () => void) {
+              onDidDispose(callback: () => void): void {
                 disposed = callback
               },
               webview: {
@@ -173,7 +176,7 @@ async function feedbackHarness(context: TestContext) {
     selection,
     notifications,
     enteredEvidence: () => enteredEvidence,
-    receive: (value: unknown) => receive(value),
+    receive: (value: unknown): void => receive(value),
   }
 }
 
@@ -223,8 +226,8 @@ for (const navigation of ['close', 'reopen']) {
     // Arrange
     const harness = await feedbackHarness(context),
       read = harness.store.read.bind(harness.store)
-    let entered = () => {},
-      rejectRead = (_error: Error) => {}
+    let entered = (): void => {},
+      rejectRead = (_error: Error): void => {}
     const started = new Promise<void>((resolveEntered) => {
       entered = resolveEntered
     })

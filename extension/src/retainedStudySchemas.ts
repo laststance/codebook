@@ -1,4 +1,5 @@
-import { z } from 'zod'
+import type { z } from 'zod'
+
 import {
   configuredStudySchema,
   configuredStudyMetadataSchema,

@@ -1,22 +1,25 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { writeFile, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { test } from 'node:test'
+import { promisify } from 'node:util'
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { createHarness } from './helpers'
+
+import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { RepositoryBookStore } from '../repositoryBook'
-import { RepositorySourceService } from '../repositorySource'
-import { startServer } from '../server'
-import { readResource } from '../resources'
 import { type BookDocument } from '../repositorySchemas'
-import { StudyError } from '../errors'
+import { RepositorySourceService } from '../repositorySource'
+import { readResource } from '../resources'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { startServer } from '../server'
+
+import { createHarness } from './helpers'
 
 const executeFile = promisify(execFile),
   sourceHash =
@@ -66,7 +69,7 @@ async function repositoryProtocolHarness() {
     endpoint,
     client,
     transport,
-    async close() {
+    async close(): Promise<void> {
       try {
         await transport.terminateSession()
       } finally {
@@ -226,8 +229,8 @@ test('explicit MCP cancellation during preparation prevents a new publication wh
   // Arrange
   const harness = await repositoryProtocolHarness(),
     store = harness.service.repository!
-  let release = () => {},
-    enter = () => {},
+  let release = (): void => {},
+    enter = (): void => {},
     signal: AbortSignal | undefined
   const held = new Promise<void>((resolve) => {
       release = resolve
@@ -337,8 +340,8 @@ test('public retry and immutable source resources survive a lost response follow
 test('MCP cancellation reaches an accepted article open before pending reader work can reveal source', async () => {
   // Arrange
   const harness = await repositoryProtocolHarness()
-  let release = () => {},
-    enter = () => {},
+  let release = (): void => {},
+    enter = (): void => {},
     signal: AbortSignal | undefined,
     opened = false
   const entered = new Promise<void>((resolve) => {
@@ -394,8 +397,8 @@ test('MCP cancellation reaches an accepted article open before pending reader wo
 test('Stop Agent Server cancels and drains pending article navigation before retirement completes', async () => {
   // Arrange
   const harness = await repositoryProtocolHarness()
-  let release = () => {},
-    enter = () => {},
+  let release = (): void => {},
+    enter = (): void => {},
     signal: AbortSignal | undefined
   const entered = new Promise<void>((resolve) => {
       enter = resolve

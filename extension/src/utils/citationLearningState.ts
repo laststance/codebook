@@ -1,5 +1,6 @@
 import type { LearnerProgress, SavedLearnerDecision } from '../learnerSchemas'
 import type { BookAnchor } from '../sourceSchemas'
+
 import { citationContext } from './citationContext'
 
 /** Projects exact article understanding from the shared ledger without borrowing primary-only runtime decisions. @example citationLearningState(progress, 'repository/book/node', anchors).understood */

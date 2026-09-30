@@ -1,4 +1,3 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createWriteStream } from 'node:fs'
 import {
@@ -9,10 +8,13 @@ import {
   truncate,
   writeFile,
 } from 'node:fs/promises'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
+import { test } from 'node:test'
+
 import { ZipFile } from 'yazl'
+
 import { readVsixEntries } from '../utils/readVsixEntries.mjs'
 
 /** Creates an owned real ZIP when archive-limit tests need compressed input; cleanup belongs to the test context. @example await archiveFixture(context, [['entry', Buffer.from('bytes')]]) */

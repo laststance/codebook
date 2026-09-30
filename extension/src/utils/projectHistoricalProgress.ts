@@ -1,4 +1,5 @@
 import { z } from 'zod'
+
 import {
   KEY_LENGTH_LIMIT,
   LEARNING_SCHEMA_VERSION,
@@ -7,14 +8,15 @@ import {
   LEARNING_SCHEMA_VERSION_V4,
   MAX_LEARNER_DECISIONS,
 } from '../constants'
-import { learnerDecisionSchema } from '../studySchemas'
+import { repositoryItemSchema } from '../identitySchemas'
 import {
   learnerDecisionV3Schema,
   progressV4Schema,
   type LearnerProgress,
 } from '../learnerSchemas'
+import { learnerDecisionSchema } from '../studySchemas'
+
 import { decodeLearnerProgress } from './decodeLearnerProgress'
-import { repositoryItemSchema } from '../identitySchemas'
 
 // Retired entries remain in their original file; this envelope grants none of them live authority.
 const historicalProgressSchema = progressV4Schema.extend({

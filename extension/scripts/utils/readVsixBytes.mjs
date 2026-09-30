@@ -1,5 +1,6 @@
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
+
 import { MAX_ARCHIVE_BYTES } from './packageConstants.mjs'
 
 /** Captures bounded VSIX bytes for {@link readVsixEntries} and package receipts so validation and hashing share one snapshot. @example const bytes = await readVsixBytes('/tmp/codebook.vsix') */

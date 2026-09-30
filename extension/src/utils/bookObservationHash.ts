@@ -1,5 +1,5 @@
-import { sha256 } from '../runtimeSupport/utils/sha256'
 import type { RetainedStudy } from '../retainedStudySchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 
 /** Pins captured facts while permitting later append-only interpretation, for publication and public link revalidation. @example bookObservationHash(study.observations[0]) */
 export function bookObservationHash(

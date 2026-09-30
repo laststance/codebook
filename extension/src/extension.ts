@@ -1,4 +1,3 @@
-import * as vscode from 'vscode'
 import {
   chmod,
   mkdir,
@@ -9,9 +8,9 @@ import {
 } from 'node:fs/promises'
 import { join } from 'node:path'
 import { URLSearchParams } from 'node:url'
-import { createEnvironment, requireWorkspace } from './environment'
-import { StudyService } from './service'
-import { startServer } from './server'
+
+import * as vscode from 'vscode'
+
 import {
   EXTENSION_VERSION,
   PRIVATE_DIRECTORY_MODE,
@@ -22,31 +21,34 @@ import {
   removeManagedCursorSkill,
   verifyManagedCursorSkill,
 } from './cursorSkillDeployment'
-import { StudyWorkspace } from './studyWorkspace'
-import { learningItemSchema } from './identitySchemas'
-import { RepositoryReader } from './repositoryReader'
-import { repositorySelectionSchema } from './learnerSchemas'
-import { repositoryActionSchema } from './repositoryView'
-import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
-import {
-  captureOwnedCursorMcpCatalogGeneration,
-  refreshCursorMcpCatalog,
-  removeOwnedCursorMcpCatalog,
-} from './utils/refreshCursorMcpCatalog'
-import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
-import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import {
   readDeepWikiManifest,
   startDeepWikiReader,
   type DeepWikiReader,
 } from './deepWikiReader'
+import { createEnvironment, requireWorkspace } from './environment'
+import { learningItemSchema } from './identitySchemas'
+import { repositorySelectionSchema } from './learnerSchemas'
+import { RepositoryReader } from './repositoryReader'
+import { repositoryActionSchema } from './repositoryView'
+import { startServer } from './server'
+import { StudyService } from './service'
+import { StudyWorkspace } from './studyWorkspace'
 import {
   answerDeepWikiQuestion,
   answerDeepWikiQuestionWithPrompt,
 } from './utils/answerDeepWikiQuestion'
-import { requestCursorWikiText } from './utils/requestCursorWikiText'
-import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
+import {
+  captureOwnedCursorMcpCatalogGeneration,
+  refreshCursorMcpCatalog,
+  removeOwnedCursorMcpCatalog,
+} from './utils/refreshCursorMcpCatalog'
+import { requestCursorWikiText } from './utils/requestCursorWikiText'
+import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
+import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
+import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
+import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
 
 let stopExtension: (() => Promise<void>) | undefined
 
@@ -145,7 +147,8 @@ export function activate(
         service.repository = await repository().storage()
         service.repositoryReader = (input, signal) =>
           repository().openFromAgent(input, signal)
-        service.repositoryPublished = () => repository().published()
+        service.repositoryPublished = (): Promise<void> =>
+          repository().published()
         endpoint = await startServer(service)
         const descriptorPath = join(
           storageRoot,
@@ -196,7 +199,7 @@ export function activate(
       if (starting === attempt) starting = undefined
     }
   }
-  const stop = async () => {
+  const stop = async (): Promise<void> => {
     const attempt = (stopping ??= (async () => {
       const target = running ?? (await starting?.catch(() => undefined))
       if (!target) return
@@ -233,7 +236,7 @@ export function activate(
       if (stopping === attempt) stopping = undefined
     }
   }
-  const connect = async () => {
+  const connect = async (): Promise<void> => {
     const descriptorPath = await start()
     const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'))
     await vscode.env.clipboard.writeText(
@@ -375,7 +378,7 @@ export function activate(
         'Codebook Cursor setup was removed while starting. Run Codebook: Set Up AI Chat again.',
       )
   }
-  const performSetupAiChat = async () => {
+  const performSetupAiChat = async (): Promise<void> => {
     requireWorkspace()
     const cursorNodeExecutable = isCursorHost
       ? await resolveExternalNodeExecutable(
@@ -451,7 +454,7 @@ export function activate(
     vscode.Uri
   ) {
     const changes = new vscode.EventEmitter<void>()
-    notifyMcpDefinitions = () => changes.fire()
+    notifyMcpDefinitions = (): void => changes.fire()
     context.subscriptions.push(
       changes,
       vscode.lm.registerMcpServerDefinitionProvider(
@@ -491,7 +494,7 @@ export function activate(
     )
   }
   // Owned runtimes are released first; an in-flight or failing browser reader close cannot strand them.
-  stopExtension = async () => {
+  stopExtension = async (): Promise<void> => {
     try {
       await stop()
       await repositoryReader?.dispose()
@@ -527,7 +530,7 @@ export function activate(
     return { projectRoot, outputDirectory, entry }
   }
   /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @example await updateDeepWiki() */
-  const updateDeepWiki = async () => {
+  const updateDeepWiki = async (): Promise<void> => {
     if (wikiUpdate) return wikiUpdate
     const attempt = (async () => {
       const { projectRoot, outputDirectory } = await currentDeepWiki()
@@ -539,7 +542,9 @@ export function activate(
         })
         return
       }
-      const update = async (token?: vscode.CancellationToken) => {
+      const update = async (
+        token?: vscode.CancellationToken,
+      ): Promise<void> => {
         await runCursorWikiUpdate(projectRoot, query, token)
         // A successful CLI exit alone does not prove that the correct project's site is readable.
         if ((await realpath(requireWorkspace())) !== projectRoot)

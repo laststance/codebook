@@ -1,5 +1,6 @@
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import { z } from 'zod'
+
 import {
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_MAX_DEPTH,
@@ -13,6 +14,7 @@ import {
   type ReplayDebugSnapshot,
 } from '../replayDebugSchemas'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
+
 import { shouldCaptureReplayScope } from './shouldCaptureReplayScope'
 
 const scopeResponse = z.object({

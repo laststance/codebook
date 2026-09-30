@@ -1,48 +1,15 @@
-import { configuredObservationPosition } from './utils/configuredObservationPosition'
+import { randomUUID } from 'node:crypto'
+import { realpath } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
+
+import * as vscode from 'vscode'
+import { z } from 'zod'
+
 import {
   NODE_TEST_PROFILE,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
-} from './constants'
-import * as vscode from 'vscode'
-import { randomUUID } from 'node:crypto'
-import { realpath } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
-import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
-import { z } from 'zod'
-import { BrowserViewport } from './runtimeSupport/browserViewport'
-import { sha256 } from './runtimeSupport/utils/sha256'
-import { itemSchema, type StudyCatalogEntry } from './studySchemas'
-import { LearningLibrary } from './learningLibrary'
-import { NodeTestHistoryStore } from './nodeTestHistoryStore'
-import type {
-  NodeTestHistoryIndex,
-  NodeTestHistoryLearningDecision,
-  NodeTestLearningMaterial,
-} from './nodeTestHistorySchemas'
-import { RecordingStore } from './recordingStore'
-import {
-  PlaybackController,
-  type PlaybackBundle,
-  type PlaybackData,
-} from './playbackController'
-import { projectLearningSummary } from './utils/projectLearningSummary'
-import { ReplayDebugger, type ReplayInspection } from './replayDebugger'
-import type { ReplayDebugSnapshot } from './replayDebugSchemas'
-import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
-import { waitUntil } from './runtimeSupport/utils/waitUntil'
-import {
-  CAPTURE_TIMEOUT_MS,
-  VIEWPORT_ACK_TIMEOUT_REASON,
-} from './runtimeSupport/constants'
-import {
-  describeViewportDelivery,
-  type ViewportDeliveryLog,
-} from './utils/describeViewportDelivery'
-import { requireWorkspace, type StudyPresentation } from './environment'
-import { StudyError } from './errors'
-import {
   HORIZONTAL_EDITOR_ORIENTATION,
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
@@ -53,50 +20,6 @@ import {
   STUDY_EDITOR_GROUP_COUNT,
   STUDY_REFRESH_INTERVAL_MS,
   STUDY_SOURCE_SCHEME,
-} from './constants'
-import {
-  projectStudy,
-  studyIdSchema,
-  type LearnerDecision,
-  type LearnerProgress,
-  type SourceBaselines,
-  type CitationSourceStates,
-} from './studyModel'
-import type { StudyRecord, StudyService } from './service'
-import { captureStudy } from './utils/captureStudy'
-import { capturedAppHtml } from './utils/capturedAppHtml'
-import { focusWebview } from './utils/focusWebview'
-import { webviewFocusReceiptSchema } from './webviewFocusSchemas'
-import { studyHtml, type StudyViewMessage } from './ui/studyHtml'
-import { createRecordingObserver } from './utils/createRecordingObserver'
-import type { BookObservationBinding } from './repositorySchemas'
-import { bookObservationHash } from './utils/bookObservationHash'
-import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
-import {
-  editorLayoutSchema,
-  isProportionalEditorLayout,
-} from './utils/isProportionalEditorLayout'
-import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
-import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
-import {
-  retainedStudySelectionSchema,
-  type RetainedStudy,
-  type RetainedStudySelection,
-} from './retainedStudySchemas'
-import { learningItemSchema } from './identitySchemas'
-import {
-  repositorySelectionSchema,
-  type RepositorySelection,
-} from './learnerSchemas'
-import { RepositorySourceService } from './repositorySource'
-import type {
-  RepositoryFocusTarget,
-  RepositoryLayoutFocus,
-} from './repositoryReader'
-import { describeStudy } from './utils/describeStudy'
-import { selectStudy } from './utils/selectStudy'
-import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
-import {
   PRESENTATION_MODE_IDS,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
@@ -104,6 +27,25 @@ import {
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
   STUDY_PRESENTATIONS,
 } from './constants'
+import { requireWorkspace, type StudyPresentation } from './environment'
+import { StudyError } from './errors'
+import { learningItemSchema } from './identitySchemas'
+import {
+  repositorySelectionSchema,
+  type RepositorySelection,
+} from './learnerSchemas'
+import { LearningLibrary } from './learningLibrary'
+import type {
+  NodeTestHistoryIndex,
+  NodeTestHistoryLearningDecision,
+  NodeTestLearningMaterial,
+} from './nodeTestHistorySchemas'
+import { NodeTestHistoryStore } from './nodeTestHistoryStore'
+import {
+  PlaybackController,
+  type PlaybackBundle,
+  type PlaybackData,
+} from './playbackController'
 import {
   presentationModeSchema,
   presentationPreferenceSchema,
@@ -118,8 +60,64 @@ import {
   type PresentationPoseRestore,
   type ReturnCurrentIntent,
 } from './presentationSchemas'
+import { RecordingStore } from './recordingStore'
+import { ReplayDebugger, type ReplayInspection } from './replayDebugger'
+import type { ReplayDebugSnapshot } from './replayDebugSchemas'
+import type {
+  RepositoryFocusTarget,
+  RepositoryLayoutFocus,
+} from './repositoryReader'
+import type { BookObservationBinding } from './repositorySchemas'
+import { RepositorySourceService } from './repositorySource'
+import {
+  retainedStudySelectionSchema,
+  type RetainedStudy,
+  type RetainedStudySelection,
+} from './retainedStudySchemas'
+import { BrowserViewport } from './runtimeSupport/browserViewport'
+import {
+  CAPTURE_TIMEOUT_MS,
+  VIEWPORT_ACK_TIMEOUT_REASON,
+} from './runtimeSupport/constants'
+import { sha256 } from './runtimeSupport/utils/sha256'
+import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { explainNodeHistorySchema } from './schemas'
+import type { StudyRecord, StudyService } from './service'
+import {
+  projectStudy,
+  studyIdSchema,
+  type LearnerDecision,
+  type LearnerProgress,
+  type SourceBaselines,
+  type CitationSourceStates,
+} from './studyModel'
+import { itemSchema, type StudyCatalogEntry } from './studySchemas'
+import { studyHtml, type StudyViewMessage } from './ui/studyHtml'
+import { bookObservationHash } from './utils/bookObservationHash'
+import { capturedAppHtml } from './utils/capturedAppHtml'
+import { captureStudy } from './utils/captureStudy'
+import { configuredObservationPosition } from './utils/configuredObservationPosition'
+import { createRecordingObserver } from './utils/createRecordingObserver'
+import { describeStudy } from './utils/describeStudy'
+import {
+  describeViewportDelivery,
+  type ViewportDeliveryLog,
+} from './utils/describeViewportDelivery'
+import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
+import { focusWebview } from './utils/focusWebview'
+import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
+import {
+  editorLayoutSchema,
+  isProportionalEditorLayout,
+} from './utils/isProportionalEditorLayout'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
+import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
+import { projectLearningSummary } from './utils/projectLearningSummary'
+import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
+import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
+import { selectStudy } from './utils/selectStudy'
+import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
+import { webviewFocusReceiptSchema } from './webviewFocusSchemas'
 
 const actionSchema = z.enum([
   'run',
@@ -911,6 +909,7 @@ export class StudyWorkspace {
       lifetime = this.lifetime
     this.presentationTransition = transition
     let checking!: Promise<PresentationState>
+    // eslint-disable-next-line prefer-const -- the async body compares the shared transition against its own promise.
     checking = (async () => {
       try {
         const layout = await this.readPassivePresentationLayout()
@@ -963,6 +962,7 @@ export class StudyWorkspace {
     this.requestedPresentation = input.mode
     this.presentationReason = undefined
     let checking!: Promise<PresentationState>
+    // eslint-disable-next-line prefer-const -- the async body compares the shared transition against its own promise.
     checking = (async () => {
       try {
         if (await this.tryConfirmEnlargedLayout(transition))
@@ -1002,6 +1002,7 @@ export class StudyWorkspace {
     this.requestedPresentation = input.mode
     this.presentationReason = undefined
     let pending!: Promise<PresentationState>
+    // eslint-disable-next-line prefer-const -- the async body compares the shared transition against its own promise.
     pending = (async () => {
       try {
         // The maximized group can hide the other leaves from getEditorLayout; restore its grid before measuring ratios.
@@ -1306,7 +1307,7 @@ export class StudyWorkspace {
     signal?: AbortSignal,
     assertSourceFocus?: () => void,
   ) => Promise<void> {
-    const assertOwnedFocus = (assertSourceFocus?: () => void) => {
+    const assertOwnedFocus = (assertSourceFocus?: () => void): void => {
       if (this.app?.active || this.contextPanel?.active) return
       // Placement may finish on its stationary source; only its exact focus/selection receipt permits restoration.
       if (!assertSourceFocus)
@@ -1320,7 +1321,7 @@ export class StudyWorkspace {
         lifetime = this.lifetime
       const presentationId = this.presentationId,
         revision = this.presentationControlRevision
-      return async (signal, assertSourceFocus) => {
+      return async (signal, assertSourceFocus): Promise<void> => {
         signal?.throwIfAborted()
         this.assertLifetime(lifetime)
         assertOwnedFocus(assertSourceFocus)
@@ -1345,7 +1346,7 @@ export class StudyWorkspace {
         selections = editor.selections,
         restoreReadingPosition = retainEditorReadingPosition(editor),
         preview = group.activeTab?.isPreview ?? false
-      return async (signal, assertSourceFocus) => {
+      return async (signal, assertSourceFocus): Promise<void> => {
         assertOwnedFocus(assertSourceFocus)
         // Edits can retain the same tab/group while invalidating its captured selections and reading position.
         if (document.version !== documentVersion)
@@ -1386,7 +1387,7 @@ export class StudyWorkspace {
     }
     // An empty group has no document to restore; retain its group focus after an explicit first entry.
     if (!vscode.window.tabGroups.activeTabGroup.activeTab)
-      return async () => {
+      return async (): Promise<void> => {
         await vscode.commands.executeCommand(
           'workbench.action.focusActiveEditorGroup',
         )
@@ -1432,7 +1433,7 @@ export class StudyWorkspace {
               ),
             )
           })
-    const assertCurrent = () => {
+    const assertCurrent = (): void => {
       signal.throwIfAborted()
       this.assertLifetime(lifetime)
       assertViewportOwnership?.()
@@ -1551,7 +1552,7 @@ export class StudyWorkspace {
             ),
           ),
         ]
-        assertViewportOwnership = () => {
+        assertViewportOwnership = (): void => {
           if (
             this.viewport !== liveViewport ||
             this.replayViewport !== replayViewport ||
@@ -1845,7 +1846,7 @@ export class StudyWorkspace {
     const isActive = () => panel.active && hasTargetTabFocus()
     let targetAcquired = false,
       focusDeparted = false
-    const observeFocus = () => {
+    const observeFocus = (): void => {
       const targetFocused = hasTargetTabFocus()
       // A return to the original editor is new learner intent, even if it ends before the next awaited response.
       if (targetAcquired && !targetFocused) focusDeparted = true
@@ -1856,7 +1857,7 @@ export class StudyWorkspace {
       vscode.window.tabGroups.onDidChangeTabGroups(observeFocus),
       vscode.window.tabGroups.onDidChangeTabs(observeFocus),
     ]
-    const assertOwnedFocus = () => {
+    const assertOwnedFocus = (): void => {
       observeFocus()
       if (focusDeparted) {
         if (
@@ -1920,7 +1921,7 @@ export class StudyWorkspace {
     const readSignal = signal
       ? AbortSignal.any([signal, focusLoss.signal])
       : focusLoss.signal
-    const assertReadFocus = () => {
+    const assertReadFocus = (): void => {
       readSignal.throwIfAborted()
       if (!vscode.window.state.focused) throw focusLost
     }
@@ -2098,7 +2099,7 @@ export class StudyWorkspace {
     let departed = false,
       borrowed: RepositoryFocusTarget | undefined,
       pendingBorrow: RepositoryFocusTarget | undefined
-    const observe = () => {
+    const observe = (): void => {
       if (departed) return
       // Leaving the work window revokes Restore even if focus returns before native measurement completes.
       if (!vscode.window.state.focused) {
@@ -2111,7 +2112,7 @@ export class StudyWorkspace {
         pendingBorrow = undefined
       } else if (!(borrowed?.matchesGroup() ?? retainsFocus())) departed = true
     }
-    const assertRetained = () => {
+    const assertRetained = (): void => {
       observe()
       if (departed)
         throw new StudyError(
@@ -2126,7 +2127,7 @@ export class StudyWorkspace {
       vscode.window.onDidChangeWindowState(observe),
     ]
     return {
-      assertCurrent() {
+      assertCurrent(): void {
         assertRetained()
         if (borrowed || pendingBorrow || !retainsFocus())
           throw new StudyError(
@@ -2134,7 +2135,7 @@ export class StudyWorkspace {
             'The Study pane did not regain native focus after layout measurement.',
           )
       },
-      beforeScopeFocus(acquire) {
+      beforeScopeFocus(acquire): void {
         assertRetained()
         if (!acquire || pendingBorrow)
           throw new StudyError(
@@ -2144,7 +2145,7 @@ export class StudyWorkspace {
         pendingBorrow = acquire
         observe()
       },
-      dispose() {
+      dispose(): void {
         for (const subscription of subscriptions) subscription.dispose()
       },
     }
@@ -2246,7 +2247,7 @@ export class StudyWorkspace {
     const source = focusedSource(),
       appActive = this.app?.active,
       contextActive = this.contextPanel?.active
-    return () => {
+    return (): void => {
       const active = vscode.window.tabGroups.activeTabGroup
       const sameWebviewTab =
         active.activeTab === focusedTab ||
@@ -2378,7 +2379,7 @@ export class StudyWorkspace {
         )
       )
     }
-    const assertRetained = () => {
+    const assertRetained = (): void => {
       signal.throwIfAborted()
       assertCurrent()
       if (!this.sameEditorGroups(groups, vscode.window.tabGroups.all))
@@ -2557,7 +2558,7 @@ export class StudyWorkspace {
             tab.input instanceof vscode.TabInputWebview &&
             [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType),
         )
-      const assertPreviewOwnership = () => {
+      const assertPreviewOwnership = (): void => {
         if (
           !vscode.window.tabGroups.all.some((group) =>
             group.tabs.some((tab) => tab.isPreview && !isOwnedPreview(tab)),
@@ -2608,7 +2609,7 @@ export class StudyWorkspace {
           'PRESENTATION_UNAVAILABLE',
           'The main editor has fewer than three groups beside another editor part. Focus the main editor and restore its panes before changing presentation.',
         )
-      const assertPlacement = () => {
+      const assertPlacement = (): void => {
         assertCurrent()
         assertEvidence()
         if (
@@ -2721,7 +2722,7 @@ export class StudyWorkspace {
       let sourceSelectionSnapshot = JSON.stringify(
         vscode.window.activeTextEditor?.selections,
       )
-      const assertSourceFocus = () => {
+      const assertSourceFocus = (): void => {
         const activeEditor = vscode.window.activeTextEditor
         // Only a verified logical survivor may replace the focused group's native wrapper.
         const sameFocus =
@@ -2916,7 +2917,7 @@ export class StudyWorkspace {
       await this.withLayout(signal, async (_lifetime, assertCurrent) => {
         focus?.begin()
         let retainedFocus = focus?.retainCurrentFocus?.()
-        const assertColdCurrent = () => {
+        const assertColdCurrent = (): void => {
           assertCurrent()
           retainedFocus?.assertRetained()
         }
@@ -2976,7 +2977,7 @@ export class StudyWorkspace {
     this.assertPresentationIdle()
     const lifetime = this.lifetime,
       request = ++this.historyRequest
-    const assertCurrent = () => {
+    const assertCurrent = (): void => {
       signal?.throwIfAborted()
       this.assertLifetime(lifetime)
       if (request !== this.historyRequest)
@@ -3050,7 +3051,7 @@ export class StudyWorkspace {
             'The recording does not contain this exact observation.',
           )
         let ownedRevision: number | undefined
-        const cancel = () => {
+        const cancel = (): void => {
           if (
             ownedRevision !== undefined &&
             this.playback!.state().revision === ownedRevision
@@ -3294,7 +3295,7 @@ export class StudyWorkspace {
     const firstOpen = !this.opened
     // Polling and source watchers cannot reveal a reader until cold entry has reserved its native destinations.
     if (firstOpen) this.sourceEntryPending = true
-    const cancel = () => {
+    const cancel = (): void => {
       // A cancelled first entry cannot let background refresh finish its UI, or retire a newer explicit Open.
       if (firstOpen && request === this.openRequest) this.opened = false
     }
@@ -3496,7 +3497,7 @@ export class StudyWorkspace {
         const assertPlacement =
           firstOpen || this.layoutReceipt
             ? this.retainPresentationPlacement(false)
-            : () => {}
+            : (): void => {}
         panel.reveal(undefined, false)
         // Drain the requested native focus change before the final layout read starts a passive ownership guard.
         await waitUntil(
@@ -5107,7 +5108,7 @@ export class StudyWorkspace {
       const watcher = vscode.workspace.createFileSystemWatcher(
         new vscode.RelativePattern(dirname(target), '*'),
       )
-      const changed = (uri: vscode.Uri) => {
+      const changed = (uri: vscode.Uri): void => {
         if (uri.fsPath === target) this.scheduleCitationRefresh()
       }
       this.citationWatchers.push(
@@ -5855,7 +5856,7 @@ export class StudyWorkspace {
     const openedGroups: vscode.TabGroup[] = [],
       closedGroups: vscode.TabGroup[] = []
     /** Records a newer tab choice during app registration so {@link open} cannot claim a focus roundtrip. @example noticeLearnerTab() */
-    const noticeLearnerTab = () => {
+    const noticeLearnerTab = (): void => {
       const selected = vscode.window.tabGroups.activeTabGroup.activeTab
       // Codebook may select its new Application; another retained tab is a learner decision even after a roundtrip.
       if (
@@ -5915,7 +5916,7 @@ export class StudyWorkspace {
       panel,
       column: panel.viewColumn,
       registration: {
-        dispose: () => {
+        dispose: (): void => {
           for (const change of changes) change.dispose()
         },
         ready: () => {
@@ -6163,7 +6164,7 @@ export class StudyWorkspace {
     const focusSubscription = vscode.window.onDidChangeWindowState((state) => {
       if (!state.focused) lostFocus = true
     })
-    const assertCurrent = () => {
+    const assertCurrent = (): void => {
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
       if (lostFocus || !vscode.window.state.focused)
@@ -6517,7 +6518,7 @@ export class StudyWorkspace {
   ): Promise<void> {
     const lifetime = this.lifetime,
       navigation = this.repositoryNavigation
-    const assertCurrent = () => {
+    const assertCurrent = (): void => {
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
       // A newer article owns subsequent native work once already issued effects have drained.
@@ -6592,7 +6593,7 @@ export class StudyWorkspace {
     acquireSourceFocus?: () => Promise<() => void>,
     beforeScopeFocus?: (acquire?: RepositoryFocusTarget) => void,
   ) {
-    let assertAcquiredFocus = () => {}
+    let assertAcquiredFocus = (): void => {}
     const assertInitial = this.retainPresentationPlacement()
     const initialTab = vscode.window.tabGroups.activeTabGroup.activeTab
     const initialWebview =
@@ -6601,7 +6602,7 @@ export class StudyWorkspace {
         : undefined
     let initialFocusError: unknown, layout: unknown
     // Passive measurement must remember learner departures even if the original tab is active again when its response arrives.
-    const retainInitial = () => {
+    const retainInitial = (): void => {
       if (initialFocusError !== undefined) return
       try {
         assertInitial()
@@ -6920,7 +6921,7 @@ export class StudyWorkspace {
       )
     const outsideContents = contents(outside),
       assertPlacement = this.retainPresentationPlacement()
-    const assertUnchanged = () => {
+    const assertUnchanged = (): void => {
       assertPlacement()
       assertAcquiredFocus()
     }

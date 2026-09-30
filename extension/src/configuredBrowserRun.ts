@@ -1,27 +1,19 @@
-import { configuredStops } from './utils/configuredStops'
-import * as vscode from 'vscode'
+import { randomUUID } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { randomUUID } from 'node:crypto'
-import { z } from 'zod'
+
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import type { Protocol } from 'devtools-protocol'
-import { Cdp } from './runtimeSupport/cdp'
-import { Evidence } from './runtimeSupport/evidence'
+import * as vscode from 'vscode'
+import { z } from 'zod'
+
 import {
-  HostBrowser,
-  type HostConfiguration,
-} from './runtimeSupport/hostBrowser'
-import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
-import { PauseGate, type PauseIdentity } from './runtimeSupport/pauseGate'
-import { CAPTURE_TIMEOUT_MS, RESUME_COMMANDS } from './runtimeSupport/constants'
-import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
-import { waitUntil } from './runtimeSupport/utils/waitUntil'
-import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
-import { sha256 } from './runtimeSupport/utils/sha256'
+  configuredDefinitionSchema,
+  type ConfiguredDefinition,
+} from './configuredStudySchemas'
+import type { CONFIGURED_CAPTURE_PHASES } from './constants'
 import {
   ACTIVE_TIMEOUT_MS,
-  CONFIGURED_CAPTURE_PHASES,
   MAX_EVENTS,
   MAX_QUEUED_EVIDENCE_BYTES,
   MAX_RETAINED_EVENT_BYTES,
@@ -36,10 +28,10 @@ import {
   REPOSITORY_SETUP_TIMEOUT_MS,
   REPOSITORY_STACK_FRAME_LIMIT,
 } from './constants'
-import {
-  configuredDefinitionSchema,
-  type ConfiguredDefinition,
-} from './configuredStudySchemas'
+import { StudyError } from './errors'
+import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint'
+import type { BundleSource } from './repositoryBundle'
+import { RepositorySourceService } from './repositorySource'
 import type {
   ConfiguredRuntimeSnapshot,
   ConfiguredRuntimeView,
@@ -49,24 +41,34 @@ import type {
   StudyRuntime,
   Participant,
 } from './runtime'
-import type { BundleSource } from './repositoryBundle'
-import { RepositorySourceService } from './repositorySource'
-import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint'
-import { StudyError } from './errors'
+import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
+import { Cdp } from './runtimeSupport/cdp'
+import { CAPTURE_TIMEOUT_MS, RESUME_COMMANDS } from './runtimeSupport/constants'
+import { Evidence } from './runtimeSupport/evidence'
+import {
+  HostBrowser,
+  type HostConfiguration,
+} from './runtimeSupport/hostBrowser'
+import { PauseGate, type PauseIdentity } from './runtimeSupport/pauseGate'
+import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
+import { sha256 } from './runtimeSupport/utils/sha256'
+import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
-import { createBundleVerifier } from './utils/createBundleVerifier'
-import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
-import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
-import { sameScriptUrl } from './utils/sameScriptUrl'
-import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
-import { configuredDomExpression } from './utils/configuredDomExpression'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
+import { configuredDomExpression } from './utils/configuredDomExpression'
+import { configuredStops } from './utils/configuredStops'
+import { createBundleVerifier } from './utils/createBundleVerifier'
+import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
+import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
+import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
+import { sameScriptUrl } from './utils/sameScriptUrl'
 
 interface ConfiguredBrowserOptions {
   directory: string
@@ -198,7 +200,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly snapshotCaptures: NonNullable<
     ConfiguredRuntimeView['snapshotCaptures']
   > = {}
-  private readonly cancel = () => {
+  private readonly cancel = (): void => {
     void this.stop().catch((error) => this.failures.push(String(error)))
   }
 
@@ -578,7 +580,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const participant = this.participants[name],
       cdp = participant.cdp
     if (!cdp) throw new Error('Selected native proxy unavailable')
-    cdp.onClose = () => {
+    cdp.onClose = (): void => {
       if (!this.cleaning) this.fail(`Selected ${name} CDP closed`)
     }
     let observedScripts = 0
@@ -1185,7 +1187,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<void> {
     const participant = this.participants[name],
       stop = this.stops[this.stopIndex]!
-    const current = () => {
+    const current = (): void => {
       this.alive()
       if (
         participant.refresh !== refresh ||
@@ -1299,7 +1301,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       CAPTURE_TIMEOUT_MS,
       this.abort.signal,
     )
-    const current = () => {
+    const current = (): void => {
       this.alive()
       if (!participant.gate.matches(pause) || participant.stopped !== stopped)
         throw new Error('Pause changed during inspection')
@@ -1371,7 +1373,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       position = stop.source
     if (
       !frame?.source?.path ||
-      resolve(frame.source.path) !== stop.bundle!.sourcePath ||
+      resolve(frame.source.path) !== stop.bundle.sourcePath ||
       frame.line !== position.line ||
       frame.column !== position.column
     )
@@ -1383,9 +1385,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       { scriptId: callFrame.location.scriptId },
     )
     current()
-    stop.verifier!.verify(
+    stop.verifier.verify(
       executed.scriptSource,
-      stop.bundle!.source,
+      stop.bundle.source,
       callFrame.location,
       stop.script!.scriptId,
       frame.line,
@@ -1403,8 +1405,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       stack,
       verifiedSource: {
         name: position.path,
-        text: stop.bundle!.source,
-        hash: stop.verifier!.hashes.typescript,
+        text: stop.bundle.source,
+        hash: stop.verifier.hashes.typescript,
         line: frame.line,
       },
       request: (command, arguments_) =>
@@ -1456,12 +1458,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       elapsedMs: receipt.elapsedMs,
       debugger: debuggerSnapshot,
       source: {
-        text: stop.bundle!.source,
-        hash: stop.verifier!.hashes.typescript,
+        text: stop.bundle.source,
+        hash: stop.verifier.hashes.typescript,
         line: frame.line,
         column: frame.column,
-        javascriptHash: stop.verifier!.hashes.javascript,
-        mapHash: stop.verifier!.hashes.sourceMap,
+        javascriptHash: stop.verifier.hashes.javascript,
+        mapHash: stop.verifier.hashes.sourceMap,
         scriptId: stop.script!.scriptId,
         scriptUrl: stop.script!.url,
         generated: {
@@ -1471,7 +1473,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       },
       ...facts,
     }
-    this.snapshotCaptures[snapshot.id] = { ...this.captures[phase]! }
+    this.snapshotCaptures[snapshot.id] = { ...this.captures[phase] }
     try {
       await this.evidence.save(
         `snapshot-${stop.participant}-${pause.generation}.json`,
@@ -1605,7 +1607,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion. @example await this.observeAfter(continuation) */
   private async observeAfter(continuation: Continuation): Promise<void> {
-    const current = () => {
+    const current = (): void => {
       this.alive()
       if (
         this.continuation !== continuation ||
@@ -1752,7 +1754,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Retains exact pixels only after the source generation and native renderer both acknowledge the phase. @example await this.capture('paused-browser', current) */
   private async capture(
     phase: (typeof CONFIGURED_CAPTURE_PHASES)[number] | 'paused-server',
-    current = () => this.alive(),
+    current = (): void => this.alive(),
     pause?: PauseIdentity,
   ): Promise<void> {
     this.captures[phase] = { status: 'pending' }
@@ -1955,7 +1957,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ...(await settleCleanup([
         {
           description: 'browser acquisitions',
-          release: () => this.browser.drainAcquisitions(),
+          release: (): Promise<void> => this.browser.drainAcquisitions(),
         },
         {
           description: 'source/proxy acquisitions',
@@ -1967,7 +1969,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         },
         {
           description: 'preparation settle',
-          release: () =>
+          release: (): Promise<void> =>
             awaitResponse(
               this.preparation?.catch(() => undefined) ?? Promise.resolve(),
               'repository preparation',
@@ -1996,7 +1998,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         },
         {
           description: 'owned browser close',
-          release: () => this.browser.close(),
+          release: (): Promise<void> => this.browser.close(),
         },
         {
           description: 'owned sessions exit',
@@ -2037,7 +2039,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         )
         .map((session) => ({
           description: 'owned debugger stop',
-          release: () =>
+          release: (): Promise<void> =>
             awaitResponse(
               vscode.debug.stopDebugging(session),
               'repository debugger stop',

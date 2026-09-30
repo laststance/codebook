@@ -1,15 +1,17 @@
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { StringDecoder } from 'node:string_decoder'
+
 import {
   NODE_TEST_HISTORY_LIMIT_BYTES,
   REPOSITORY_RUN_TIMEOUT_MS,
 } from '../constants'
-import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
-import { buildNodeTestEnvironment } from './buildNodeTestEnvironment'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
+import { buildNodeTestEnvironment } from './buildNodeTestEnvironment'
 import type { PreparedNodeTestLaunch } from './prepareNodeTestLaunch'
+import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
 
 const OUTPUT_LIMIT_BYTES = 32_768
 const OUTPUT_EVENT_LIMIT_CHARS = 4_096
@@ -86,7 +88,7 @@ export async function launchNodeTest(
     const enqueue = (
       text: string,
       deliver: (event: NodeTestOutputEvent) => void | Promise<void>,
-    ) => {
+    ): void => {
       const bytes = Buffer.byteLength(text)
       // Output beyond the durable history's capacity can never be saved; fail capture instead of buffering it behind slow history writes.
       if (pendingOutputBytes + bytes > NODE_TEST_HISTORY_LIMIT_BYTES) {
@@ -120,7 +122,7 @@ export async function launchNodeTest(
         })
       outputWrites = outputWrites.then(() => settled)
     }
-    const accept = (text: string) => {
+    const accept = (text: string): void => {
       if (!text) return
       // Keep the initial Inspector announcement and the final bounded test result separately.
       if (Buffer.byteLength(announcement) < OUTPUT_LIMIT_BYTES)
@@ -159,9 +161,7 @@ export async function launchNodeTest(
     elapsedMs: () => Number(process.hrtime.bigint() - started) / 1_000_000,
     output: () => output,
     /** Waits for the launched test command's actual exit before sealing its output result. @example const result = await testRun.result(signal) */
-    async result(
-      signal: AbortSignal,
-    ): Promise<{
+    async result(signal: AbortSignal): Promise<{
       exitCode: number | null
       signal: NodeJS.Signals | null
       output: string
@@ -246,7 +246,7 @@ export async function launchNodeTest(
             throw cause
           }
         }
-        const waitForRelease = async () => {
+        const waitForRelease = async (): Promise<void> => {
           await awaitResponse(
             exit,
             'owned Node test exit',

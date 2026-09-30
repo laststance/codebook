@@ -1,4 +1,5 @@
 import { z } from 'zod'
+
 import {
   BOOK_TITLE_LIMIT_CHARS,
   CONFIGURED_OBSERVATION_LIMIT,
@@ -6,12 +7,12 @@ import {
   REPOSITORY_CONFIG_LIMIT_BYTES,
   REPOSITORY_INSPECTION_LIMIT,
 } from './constants'
-import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
 import {
   repositoryBookSelectionSchema,
   repositoryInspectionSchema,
   repositorySourceStopSchema,
 } from './repositoryConfigSchemas'
+import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
 
 const testFileSchema = repositoryPathSchema
   .refine(

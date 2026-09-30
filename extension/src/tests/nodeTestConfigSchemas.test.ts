@@ -1,6 +1,8 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { nodeTestConfigSchema } from '../nodeTestConfigSchemas'
+
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
 test('a repository-local Vitest file can declare observed library state without a browser action', () => {

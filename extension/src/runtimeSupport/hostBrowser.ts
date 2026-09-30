@@ -1,23 +1,25 @@
-import * as vscode from 'vscode'
-import { access, mkdtemp, readFile, realpath } from 'node:fs/promises'
 import { constants as filesystemConstants } from 'node:fs'
+import { access, mkdtemp, readFile, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+
+import * as vscode from 'vscode'
+
+import type { BrowserViewport, BrowserViewportFactory } from './browserViewport'
+import type { Cdp } from './cdp'
 import {
   ACTIVE_TIMEOUT_MS,
   CAPTURE_TIMEOUT_MS,
   INTERFERENCE_DELAY_MS,
   type Scenario,
 } from './constants'
-import { awaitResponse } from './utils/awaitResponse'
-import { waitUntil } from './utils/waitUntil'
-import { selectPageTarget } from './utils/selectPageTarget'
-import type { selectHost } from './utils/selectHost'
 import { CursorCdpBridge } from './cursorCdpBridge'
-import { settleCleanup } from './utils/settleCleanup'
+import { awaitResponse } from './utils/awaitResponse'
 import { profileProcesses } from './utils/profileProcesses'
-import type { Cdp } from './cdp'
-import type { BrowserViewport, BrowserViewportFactory } from './browserViewport'
+import type { selectHost } from './utils/selectHost'
+import { selectPageTarget } from './utils/selectPageTarget'
+import { settleCleanup } from './utils/settleCleanup'
+import { waitUntil } from './utils/waitUntil'
 
 export interface HostConfiguration {
   id: ReturnType<typeof selectHost>
@@ -468,7 +470,7 @@ export class HostBrowser {
       },
       {
         description: 'owned CDP bridge close',
-        release: async () => {
+        release: async (): Promise<void> => {
           if (this.bridge)
             await awaitResponse(this.bridge.close(), 'owned CDP bridge close')
           this.bridge = undefined
@@ -476,20 +478,20 @@ export class HostBrowser {
       },
       {
         description: 'known owned browser tabs',
-        release: () => this.closeTabs(),
+        release: (): Promise<void> => this.closeTabs(),
       },
       {
         description: 'pending browser acquisitions',
-        release: () => this.drainAcquisitions(),
+        release: (): Promise<void> => this.drainAcquisitions(),
       },
       // A launch may reveal its editor after the first sweep; check again after acquisition settles.
       {
         description: 'late owned browser tabs',
-        release: () => this.closeTabs(),
+        release: (): Promise<void> => this.closeTabs(),
       },
       {
         description: 'owned Chrome process exit',
-        release: async () => {
+        release: async (): Promise<void> => {
           if (!this.managedProfile) return
           const profile = this.managedProfile
           await waitUntil(

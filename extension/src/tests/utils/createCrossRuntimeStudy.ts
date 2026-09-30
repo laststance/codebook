@@ -1,6 +1,7 @@
 import type { ConfiguredStudy } from '../../configuredStudySchemas'
 import { crossRuntimeRepositoryConfigSchema } from '../../repositoryConfigSchemas'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
+
 import { createConfiguredStudy } from './createConfiguredStudy'
 
 /** Supplies inert browser/server/browser records for history tests, never an application or native verification. @example createCrossRuntimeStudy().observations[1]?.participant // 'server' */

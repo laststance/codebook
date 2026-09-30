@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+
 import { repositoryHtml } from '../dist/ui/repositoryHtml.js'
 
 // Exercise the compiled renderer in Chromium; host messages and cached webview state are controlled inputs.

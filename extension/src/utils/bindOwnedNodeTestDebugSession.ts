@@ -1,7 +1,9 @@
 import type * as vscode from 'vscode'
 import { z } from 'zod'
+
 import { Cdp } from '../runtimeSupport/cdp'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
+
 import { verifyNodeTestInspectorOwnership } from './verifyNodeTestInspectorOwnership'
 
 const proxySchema = z.strictObject({

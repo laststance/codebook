@@ -1,4 +1,5 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
+
 import { configuredStops } from './configuredStops'
 
 /** Resolves the selected historical stop for {@link StudyWorkspace}; file links must follow its declared source rather than the first stop. @example configuredObservationPosition(study, study.observations[1]?.id).path */

@@ -1,10 +1,12 @@
-import * as vscode from 'vscode'
 import { resolve } from 'node:path'
+
 import type { DebugProtocol } from '@vscode/debugprotocol'
+import * as vscode from 'vscode'
 import { z } from 'zod'
+
+import { ACTIVE_TIMEOUT_MS } from './constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
-import { ACTIVE_TIMEOUT_MS } from './constants'
 
 const requestSourceSchema = z.object({ source: z.object({ path: z.string() }) })
 const requestSchema = requestSourceSchema.extend({

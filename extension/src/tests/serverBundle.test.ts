@@ -1,10 +1,11 @@
-import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readDevelopmentBundle } from '../utils/readDevelopmentBundle'
+import { test, type TestContext } from 'node:test'
+
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { readDevelopmentBundle } from '../utils/readDevelopmentBundle'
 
 /** Supplies inert compiler bytes for acquisition tests; no application is installed or executed. @example await serverBundleFixture(context) */
 async function serverBundleFixture(context: TestContext) {

@@ -1,8 +1,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
-import type { ConnectionDescriptor } from './server'
+
 import { sha256 } from './runtimeSupport/utils/sha256'
+import type { ConnectionDescriptor } from './server'
 import { connectionSchema } from './utils/connectionSchema'
 
 export { connectionSchema }

@@ -1,7 +1,9 @@
 import { readFile, stat } from 'node:fs/promises'
 import { posix } from 'node:path'
 import { URLSearchParams } from 'node:url'
+
 import type * as vscode from 'vscode'
+
 import {
   WIKI_ANSWER_LIMIT_CHARS,
   WIKI_CONTEXT_LINE_LIMIT,
@@ -10,9 +12,10 @@ import {
   WIKI_SOURCE_LIMIT_BYTES,
   WIKI_SOURCE_MATCH_LIMIT,
 } from '../constants'
+
+import { resolveDeepWikiSource } from './resolveDeepWikiSource'
 import { selectWikiSourceLines } from './selectWikiSourceLines'
 import { sourceExclusion } from './sourceExclusion'
-import { resolveDeepWikiSource } from './resolveDeepWikiSource'
 
 export type WikiIncludedSource = { path: string; sha256: string }
 export type WikiAnswer = {

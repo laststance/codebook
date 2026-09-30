@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
+
 import { INJECTED_DELAY_MS } from '../constants'
+
 import { installWebviewFocus } from './installWebviewFocus'
 
 /** Creates {@link BrowserViewport}'s isolated image renderer; app data enters only through messages, never HTML. @example viewportHtml() */

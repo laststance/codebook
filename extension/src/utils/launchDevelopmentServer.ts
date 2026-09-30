@@ -1,17 +1,19 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
-import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { isEndpointClosed } from '../runtimeSupport/utils/isEndpointClosed'
+
 import {
   REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
   REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from '../constants'
 import { repositoryEntryPathSchema } from '../repositoryConfigSchemas'
+import type { Cdp } from '../runtimeSupport/cdp'
+import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
+import { isEndpointClosed } from '../runtimeSupport/utils/isEndpointClosed'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
 import { verifyServerInspectorOwnership } from './verifyServerInspectorOwnership'
-import type { Cdp } from '../runtimeSupport/cdp'
 
 /** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @example const app = launchDevelopmentServer(target, node, record); await app.ready(signal) */
 export function launchDevelopmentServer(
@@ -68,7 +70,7 @@ export function launchDevelopmentServer(
       resolve()
     })
   })
-  const receive = (chunk: Buffer) => {
+  const receive = (chunk: Buffer): void => {
     log = Buffer.concat([log, chunk]).subarray(
       -REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
     )
@@ -109,7 +111,7 @@ export function launchDevelopmentServer(
       inspector: Pick<Cdp, 'request'>,
       signal: AbortSignal,
     ) {
-      const assertRunning = () => {
+      const assertRunning = (): void => {
         if (
           !inspectServer ||
           !child.pid ||
@@ -207,7 +209,7 @@ export function launchDevelopmentServer(
       return origin
     },
     /** Stops only the acquired process group and verifies its listener; cleanup calls this even after failed readiness. @example await app.close() */
-    async close() {
+    async close(): Promise<void> {
       const attempt = (closing ??= (async () => {
         if (child.pid) {
           try {
@@ -221,7 +223,7 @@ export function launchDevelopmentServer(
             ))
               throw cause
           }
-          const waitForExit = async () => {
+          const waitForExit = async (): Promise<void> => {
             await awaitResponse(
               exited,
               'owned Next exit',

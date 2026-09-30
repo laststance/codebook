@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { isBuiltin } from 'node:module'
+
 import { parseStringPromise } from 'xml2js'
+
 import { PACKAGE_MANIFEST_PATH } from './packageConstants.mjs'
 
 export const REQUIRED_PACKAGE_FILES = [

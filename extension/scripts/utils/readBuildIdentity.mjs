@@ -1,7 +1,8 @@
-import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { join, relative } from 'node:path'
+
 import {
   BUILD_PACKAGES,
   PACKAGE_COMMAND_OUTPUT_BYTES,

@@ -1,7 +1,7 @@
-import { createConfiguredStudy } from './utils/createConfiguredStudy'
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { test } from 'node:test'
+
 import {
   PlaybackController,
   type PlaybackBundle,
@@ -14,6 +14,8 @@ import type {
   RecordingIndex,
 } from '../recordingSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
 /** Supplies deterministic recorded identities to control-concurrency tests, without live browser/debugger effects. @example const data = playbackFixture() */
 function playbackFixture(): PlaybackData {
@@ -124,7 +126,7 @@ function playbackHarness(overrides: Partial<PlaybackDependencies> = {}) {
     saved,
     dependencies,
     studyId,
-    clock(value: number) {
+    clock(value: number): void {
       clock = value
     },
     displayed: () => displayed,
@@ -286,10 +288,10 @@ test('Pause clears a decoded but unacknowledged future image and ignores its lat
     started = new Promise<void>((resolve) => {
       entered = resolve
     })
-  player.dependencies.invalidate = () => {
+  player.dependencies.invalidate = (): void => {
     visible = undefined
   }
-  player.dependencies.present = async (bundle) => {
+  player.dependencies.present = async (bundle): Promise<void> => {
     visible = bundle.projection.positionMs
     if (visible === 100) {
       entered()
@@ -361,7 +363,7 @@ test('playback stops at an observation boundary and excludes the source-loading 
       entered = resolve
     })
   const present = player.dependencies.present
-  player.dependencies.present = async (bundle, signal) => {
+  player.dependencies.present = async (bundle, signal): Promise<void> => {
     if (bundle.projection.positionMs === 100) {
       entered()
       await waiting
@@ -430,7 +432,7 @@ test('the first seek after hiding Application reaches the requested moment when 
   player.controller.hide()
   const present = player.dependencies.present
   let didReveal = false
-  player.dependencies.present = async (bundle, signal) => {
+  player.dependencies.present = async (bundle, signal): Promise<void> => {
     // A native hidden-to-visible notification occurs inside the requested presentation.
     if (!didReveal) {
       didReveal = true
@@ -567,7 +569,7 @@ test('switching studies discards an older load without borrowing its source or r
     return other
   }
   const observed: PlaybackBundle[] = []
-  player.dependencies.present = async (bundle) => {
+  player.dependencies.present = async (bundle): Promise<void> => {
     observed.push(bundle)
   }
   // Act

@@ -1,6 +1,6 @@
 import { lstat, mkdir, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { sha256 } from './runtimeSupport/utils/sha256'
+
 import {
   BOOK_FILE_LIMIT_BYTES,
   BOOK_INPUT_LIMIT_BYTES,
@@ -13,8 +13,8 @@ import {
   PRIVATE_DIRECTORY_MODE,
 } from './constants'
 import { StudyError } from './errors'
-import { LearningLibrary } from './learningLibrary'
-import { RepositorySourceService } from './repositorySource'
+import type { LearningLibrary } from './learningLibrary'
+import { RecordingStore } from './recordingStore'
 import {
   bookIdSchema,
   bookPublishIntentSchema,
@@ -24,14 +24,15 @@ import {
   type BookRevision,
   type RepositoryBook,
 } from './repositorySchemas'
+import type { RepositorySourceService } from './repositorySource'
+import { sha256 } from './runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
-import { readBoundedFile } from './utils/readBoundedFile'
-import { withStorageLock } from './utils/withStorageLock'
-import { validateRepositoryBook } from './utils/validateRepositoryBook'
 import { bookIntentDigest } from './utils/bookIntentDigest'
 import { bookObservationHash } from './utils/bookObservationHash'
-import { RecordingStore } from './recordingStore'
 import { projectRecording } from './utils/projectRecording'
+import { readBoundedFile } from './utils/readBoundedFile'
+import { validateRepositoryBook } from './utils/validateRepositoryBook'
+import { withStorageLock } from './utils/withStorageLock'
 
 /** Owns bounded immutable book history beside {@link LearningLibrary}; agents publish text without navigation or understanding authority. @example await books.publish(intent) */
 export class RepositoryBookStore {

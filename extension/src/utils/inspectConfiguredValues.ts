@@ -1,14 +1,15 @@
 import type { Protocol } from 'devtools-protocol'
+
 import {
   configuredFactValueSchema,
   type ConfiguredObservation,
 } from '../configuredStudySchemas'
-import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import {
   REPOSITORY_CAPTURED_TYPES,
   REPOSITORY_INSPECTION_TIMEOUT_MS,
   REPOSITORY_LITERAL_LIMIT_CHARS,
 } from '../constants'
+import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 
 /** Captures declared bounded facts for {@link ConfiguredBrowserRun}; explicit unavailability preserves other facts while the caller gates continuation. @example await inspectConfiguredValues(evaluate, callFrameId, configuration.inspections, assertCurrent) */
 export async function inspectConfiguredValues(

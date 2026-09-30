@@ -1,17 +1,22 @@
 import { join, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
+
 import type { DebugSession } from 'vscode'
-import { sha256 } from '../../runtimeSupport/utils/sha256'
-import { crossRuntimeRepositoryConfigSchema } from '../../repositoryConfigSchemas'
-import { configuredDefinitionSchema } from '../../configuredStudySchemas'
+
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
-import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
+import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
+import { configuredDefinitionSchema } from '../../configuredStudySchemas'
+import type * as OwnedRepositoryBreakpointModule from '../../ownedRepositoryBreakpoint'
+import { crossRuntimeRepositoryConfigSchema } from '../../repositoryConfigSchemas'
 import type { Participant } from '../../runtime'
-import { configuredStops } from '../../utils/configuredStops'
+import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
+import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
+import { configuredStops } from '../../utils/configuredStops'
+
 import { createCrossRuntimeStudy } from './createCrossRuntimeStudy'
-import { repositoryHarness } from './repositoryHarness'
 import { loadModule } from './loadModule'
+import { repositoryHarness } from './repositoryHarness'
 
 /** Exercises the real coordinator using two controlled native transports and inert source records; never native product proof. @example const harness = await nativeParticipantsHarness(context); await harness.run.prepare() */
 export async function nativeParticipantsHarness(
@@ -64,7 +69,7 @@ export async function nativeParticipantsHarness(
     breakpointNumber = 0,
     currentIndex = 0
   let pausedLine = 1
-  let inputResolve = () => {},
+  let inputResolve = (): void => {},
     heldResponse: (() => void) | undefined,
     holdResponse = false
   let revokeDuringDom = false,
@@ -72,8 +77,7 @@ export async function nativeParticipantsHarness(
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
   )
-  let badWorker = false,
-    failedRegistration = false,
+  let failedRegistration = false,
     badSource = false,
     unboundPause = false,
     foreignBinding = false
@@ -216,7 +220,7 @@ export async function nativeParticipantsHarness(
       url: bundle(name).scriptUrl,
       executionContextId: 1,
     })
-  const emitPause = (name: Participant) => {
+  const emitPause = (name: Participant): void => {
     // Server code is first loaded by application input, never imported during preparation.
     emitScript(name)
     listeners[name].get('Debugger.paused')?.({
@@ -240,12 +244,12 @@ export async function nativeParticipantsHarness(
     name,
     closed: false,
     onClose: undefined as (() => void) | undefined,
-    on(event: string, listener: (event: unknown) => void) {
+    on(event: string, listener: (event: unknown) => void): void {
       listeners[name].set(event, listener)
     },
-    async subscribe() {},
-    aggregateScreencastTelemetry() {},
-    close() {
+    async subscribe(): Promise<void> {},
+    aggregateScreencastTelemetry(): void {},
+    close(): void {
       if (this.closed) return
       this.closed = true
       released.push(`${name} proxy`)
@@ -327,7 +331,7 @@ export async function nativeParticipantsHarness(
   const proxies = { browser: proxy('browser'), server: proxy('server') }
   const parentServerProxy = proxy('server')
   let serverProxyConnections = 0
-  const acknowledge = (sourcePath: string) => {
+  const acknowledge = (sourcePath: string): void => {
     for (const name of ['browser', 'server'] as const) {
       const selected = breakpoints.filter(
           (breakpoint) => breakpoint.location.uri.fsPath === sourcePath,
@@ -384,14 +388,14 @@ export async function nativeParticipantsHarness(
     },
     debug: {
       breakpoints,
-      addBreakpoints(added: Breakpoint[]) {
+      addBreakpoints(added: Breakpoint[]): void {
         breakpoints.push(...added)
         queueMicrotask(() => {
           for (const breakpoint of added)
             acknowledge(breakpoint.location.uri.fsPath)
         })
       },
-      removeBreakpoints(removed: Breakpoint[]) {
+      removeBreakpoints(removed: Breakpoint[]): void {
         for (const breakpoint of removed) {
           const index = breakpoints.findIndex(
             (candidate) => candidate.id === breakpoint.id,
@@ -413,7 +417,7 @@ export async function nativeParticipantsHarness(
         if (serverChild) run.addSession(serverChild)
         return true
       },
-      async stopDebugging(selected: DebugSession) {
+      async stopDebugging(selected: DebugSession): Promise<void> {
         released.push(selected.id)
         run.terminated(selected)
         if (selected === root) run.terminated(sessions.browser)
@@ -423,9 +427,9 @@ export async function nativeParticipantsHarness(
     },
   }
   const ownedBreakpoint = await loadModule<
-    typeof import('../../ownedRepositoryBreakpoint')
+    typeof OwnedRepositoryBreakpointModule
   >(resolve(__dirname, '../../ownedRepositoryBreakpoint.js'), { vscode })
-  const module = await loadModule<typeof import('../../configuredBrowserRun')>(
+  const module = await loadModule<typeof ConfiguredBrowserRunModule>(
     resolve(__dirname, '../../configuredBrowserRun.js'),
     {
       vscode,
@@ -444,15 +448,15 @@ export async function nativeParticipantsHarness(
       },
       './runtimeSupport/hostBrowser': {
         HostBrowser: class {
-          async launch(config: DebugSession['configuration']) {
+          async launch(config: DebugSession['configuration']): Promise<void> {
             Object.assign(root.configuration, config)
             run.addSession(root)
             run.addSession(sessions.browser)
           }
-          async attachViewport() {}
-          async reveal() {}
-          resumeViewport() {}
-          recordCapture(data: string, phase: string) {
+          async attachViewport(): Promise<void> {}
+          async reveal(): Promise<void> {}
+          resumeViewport(): void {}
+          recordCapture(data: string, phase: string): void {
             const observer = recordingObserver()
             observer?.frame({
               data,
@@ -461,7 +465,7 @@ export async function nativeParticipantsHarness(
               elapsedMs: observer.elapsedMs(),
             })
           }
-          async drainAcquisitions() {}
+          async drainAcquisitions(): Promise<void> {}
           async presentCapture(data: string) {
             return {
               epoch: 'test',
@@ -469,7 +473,7 @@ export async function nativeParticipantsHarness(
               hash: sha256(Buffer.from(data, 'base64')),
             }
           }
-          async close() {
+          async close(): Promise<void> {
             released.push('browser')
           }
         },
@@ -502,8 +506,7 @@ export async function nativeParticipantsHarness(
             inspectorEndpoint: async () => 'ws://127.0.0.1:1235/worker',
             verifyInspector: async (candidate: typeof proxies.server) => {
               identities.push(candidate.name)
-              if (badWorker || candidate.name !== 'server')
-                throw new Error('Foreign worker')
+              if (candidate.name !== 'server') throw new Error('Foreign worker')
               return {
                 pid:
                   options.distinctServerWorker &&
@@ -514,7 +517,7 @@ export async function nativeParticipantsHarness(
                 workspace: repository.directory,
               }
             },
-            close: async () => {
+            close: async (): Promise<void> => {
               released.push('application')
             },
           }
@@ -549,46 +552,48 @@ export async function nativeParticipantsHarness(
     proxies,
     parentServerProxy,
     emitPause,
-    observeRecording(observer: () => ViewportRecordingObserver | undefined) {
+    observeRecording(
+      observer: () => ViewportRecordingObserver | undefined,
+    ): void {
       recordingObserver = observer
     },
-    revokeDuringDomCheck() {
+    revokeDuringDomCheck(): void {
       revokeDuringDom = true
     },
-    satisfyAfterBeforeInput() {
+    satisfyAfterBeforeInput(): void {
       afterReadyBeforeInput = true
     },
-    failRegistration() {
+    failRegistration(): void {
       failedRegistration = true
     },
-    changeExecutedSource() {
+    changeExecutedSource(): void {
       badSource = true
     },
-    leavePauseUnbound() {
+    leavePauseUnbound(): void {
       unboundPause = true
     },
-    bindForeignSource() {
+    bindForeignSource(): void {
       foreignBinding = true
     },
-    revokeServerRegistration() {
+    revokeServerRegistration(): void {
       failedRegistration = true
       acknowledge(bundle('server').sourcePath)
     },
-    holdContinueResponse() {
+    holdContinueResponse(): void {
       holdResponse = true
     },
-    releaseContinueResponse() {
+    releaseContinueResponse(): void {
       holdResponse = false
       heldResponse?.()
     },
-    emitResume(name: Participant) {
+    emitResume(name: Participant): void {
       listeners[name].get('Debugger.resumed')?.({})
     },
     // A changed native frame must not inherit a previously captured source pause.
-    movePausedFrame(line: number) {
+    movePausedFrame(line: number): void {
       pausedLine = line
     },
-    emitBrowserAdapterPause() {
+    emitBrowserAdapterPause(): void {
       listeners.browser.get('Debugger.paused')?.({
         reason: 'other',
         hitBreakpoints: ['adapter-internal'],

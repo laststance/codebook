@@ -1,13 +1,15 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import { test } from 'node:test'
+
 import { RecordingStore } from '../recordingStore'
-import { bookObservationHash } from '../utils/bookObservationHash'
 import type { BookObservationBinding } from '../repositorySchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { bookObservationHash } from '../utils/bookObservationHash'
+
 import {
   workspaceHarness,
   recordedReaderHarness,
@@ -258,7 +260,7 @@ test('Restore beside a separate editor part preserves a learner tab chosen durin
   const chat = harness.addSeparateEditorPart()
   harness.constrainStudyGrid()
   harness.hideGridWhileMaximized()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     await harness.reader.action('read-context')
@@ -298,7 +300,7 @@ test('Restore stops after the learner leaves the work window during its primary 
   const chat = harness.addSeparateEditorPart()
   harness.constrainStudyGrid()
   harness.hideGridWhileMaximized()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     await harness.reader.action('read-context')
@@ -383,7 +385,7 @@ test('reading a Study pane does not claim focus after the learner selects a draf
   // Arrange
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     const held = harness.holdNextCommand(
@@ -468,7 +470,7 @@ test('Read captured source preserves a newer draft choice while its existing doc
   // Arrange
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     await harness.reader.action('read-app')
@@ -502,7 +504,7 @@ test('Restore does not rearrange Study after the learner selects a draft during 
   // Arrange
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     await harness.reader.action('read-app')
@@ -545,8 +547,8 @@ test('constrained Restore keeps a later learner draft active while the native la
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.constrainStudyGrid()
   harness.hideGridWhileMaximized()
-  let releaseLayout = () => {},
-    releaseReceipt = () => {}
+  let releaseLayout = (): void => {},
+    releaseReceipt = (): void => {}
   try {
     await harness.reader.open()
     await harness.reader.action('read-app')
@@ -765,7 +767,7 @@ test('one bottom playback seek from a hidden Application commits the requested r
     assert.ok(applicationGroup)
     const reveal = viewport.reveal.bind(viewport)
     // Model the native visibility notification that the existing renderer port omits.
-    viewport.reveal = async () => {
+    viewport.reveal = async (): Promise<void> => {
       await reveal()
       application.reveal(undefined, true)
     }
@@ -818,7 +820,7 @@ test('saved replay survives one recorded viewport paint loss without rerunning t
     ).length
     const targetActionsBefore = harness.runtimes[0]!.dispatches
     let presentations = 0
-    viewport.present = async (image) => {
+    viewport.present = async (image): Promise<void> => {
       presentations++
       if (presentations === 1)
         throw new Error('Viewport frame acknowledgement timed out')
@@ -936,7 +938,7 @@ test('a repeated recorded paint loss names each attempt’s renderer progress in
     )
     assert.ok(viewport)
     const originalReveal = viewport.reveal.bind(viewport)
-    viewport.reveal = async () => {
+    viewport.reveal = async (): Promise<void> => {
       await originalReveal()
       viewport.record('viewport.ready', {
         epoch: '22222222-2222-2222-2222-222222222222',

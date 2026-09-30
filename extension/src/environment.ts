@@ -1,14 +1,16 @@
-import { configuredStops } from './utils/configuredStops'
-import * as vscode from 'vscode'
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { access, readFile } from 'node:fs/promises'
 import { constants as filesystemConstants } from 'node:fs'
+import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import { promisify } from 'node:util'
+
+import * as vscode from 'vscode'
 import { z } from 'zod'
+
+import { ConfiguredBrowserRun } from './configuredBrowserRun'
 import { PREREQUISITE_TIMEOUT_MS } from './constants'
 import { StudyError } from './errors'
+import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type {
   RuntimeControl,
   RuntimeDefinition,
@@ -16,13 +18,13 @@ import type {
   StudyEnvironment,
   StudyRuntime,
 } from './runtime'
-import { ConfiguredBrowserRun } from './configuredBrowserRun'
-import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
+import type { HostConfiguration } from './runtimeSupport/hostBrowser'
 import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
+import { configuredStops } from './utils/configuredStops'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 
 export interface StudyPresentation {
@@ -92,15 +94,16 @@ export async function createEnvironment(
       if (!run) return
       run.addSession(session)
       return {
-        onWillReceiveMessage: (message) => {
+        onWillReceiveMessage: (message): void => {
           if (message.type === 'request') run.onRequest(session, message)
         },
-        onDidSendMessage: (message) => {
+        onDidSendMessage: (message): void => {
           if (message.type === 'event') run.onEvent(session, message)
           if (message.type === 'response' && 'onResponse' in run)
             run.onResponse(session, message)
         },
-        onError: (error) => run.fail(`Debug adapter error: ${error.message}`),
+        onError: (error): void =>
+          run.fail(`Debug adapter error: ${error.message}`),
       }
     },
   })
@@ -169,7 +172,7 @@ export async function createEnvironment(
     workspace,
     host,
     build,
-    assertWorkspace() {
+    assertWorkspace(): void {
       if (requireWorkspace() !== workspace)
         throw new StudyError(
           'STALE_INSTANCE',
@@ -314,7 +317,7 @@ export async function createEnvironment(
         record,
       )
     },
-    dispose() {
+    dispose(): void {
       tracker.dispose()
       termination.dispose()
       focus.dispose()

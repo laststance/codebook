@@ -1,14 +1,15 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import {
   REPOSITORY_CHUNK_LIMIT_BYTES,
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
 } from '../constants'
+import type { BundleSource } from '../repositoryBundle'
 import { createBundleVerifier } from '../utils/createBundleVerifier'
 import { extractDevelopmentModule } from '../utils/extractDevelopmentModule'
 import { sameScriptUrl } from '../utils/sameScriptUrl'
 import { sourceMapMappedPositions } from '../utils/sourceMapMappedPositions'
-import type { BundleSource } from '../repositoryBundle'
 
 const source = 'setTheme(otherTheme);\n'
 const javascript = 'setTheme(otherTheme);'

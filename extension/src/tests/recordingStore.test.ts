@@ -1,7 +1,5 @@
-import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { crc32 } from 'node:zlib'
 import {
   appendFile,
   mkdtemp,
@@ -14,16 +12,19 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import { test, type TestContext } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
+import { crc32 } from 'node:zlib'
+
+import { LearningLibrary } from '../learningLibrary'
+import type { RecordingBinding } from '../recordingSchemas'
 import {
   RecordingStore,
   recordingDiskIo,
   type RecordingIo,
   type RecordingLimits,
 } from '../recordingStore'
-import type { RecordingBinding } from '../recordingSchemas'
-import { LearningLibrary } from '../learningLibrary'
-import { setTimeout as delay } from 'node:timers/promises'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
@@ -65,8 +66,8 @@ test('recording starts after concurrent learner storage finishes instead of losi
   // Arrange
   const { directory, store, binding } = await recordingHarness(context),
     library = new LearningLibrary(directory, workspaceKey)
-  let release = () => {},
-    entered = () => {}
+  let release = (): void => {},
+    entered = (): void => {}
   const held = new Promise<void>((resolve) => {
       release = resolve
     }),
@@ -171,7 +172,7 @@ test('sampling preserves explicit phase frames and never upgrades stream pixels 
   // Assert
   assert.deepEqual(admitted, [true, false, true])
   assert.equal(recording.entries[0]?.type, 'frame')
-  assert.equal('phase' in recording.entries[0]!, false)
+  assert.equal('phase' in recording.entries[0], false)
   assert.equal(
     recording.entries[1]?.type === 'frame'
       ? recording.entries[1].phase
@@ -221,7 +222,7 @@ test('journal capacity reserves terminal records even when frame metadata fills 
   assert.equal(recording.status, 'partial')
   assert.equal(recording.seal?.frameCount, 1)
   assert.equal(recording.entries.at(-1)?.type, 'end')
-  assert.ok(recording.seal!.journalBytes < 16_634)
+  assert.ok(recording.seal.journalBytes < 16_634)
 })
 
 test('pending binary capacity rejects excess work synchronously while the first write is delayed', async (context) => {

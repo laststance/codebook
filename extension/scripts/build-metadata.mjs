@@ -1,7 +1,9 @@
 import { writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { readBuildIdentity } from './utils/readBuildIdentity.mjs'
+
 import { API_VERSION, EXTENSION_VERSION } from '../dist/constants.js'
+
+import { readBuildIdentity } from './utils/readBuildIdentity.mjs'
 
 const repository = fileURLToPath(new URL('../../', import.meta.url))
 await writeFile(

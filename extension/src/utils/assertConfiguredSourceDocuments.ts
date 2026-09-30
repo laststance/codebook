@@ -1,7 +1,10 @@
 import { resolve } from 'node:path'
+
 import type { TextDocument } from 'vscode'
+
 import type { ConfiguredDefinition } from '../configuredStudySchemas'
 import { StudyError } from '../errors'
+
 import { normalizeNativeSourceText } from './normalizeNativeSourceText'
 
 /** Rejects mismatched open source buffers before runtime effects/pause/continue, without opening, saving, reverting or closing learner tabs. @example assertConfiguredSourceDocuments(root, definition, workspace.textDocuments) */

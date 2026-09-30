@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process'
 import { isAbsolute } from 'node:path'
 import { promisify } from 'node:util'
+
 import { z } from 'zod'
+
 import { MIN_NODE_MAJOR_VERSION, PREREQUISITE_TIMEOUT_MS } from '../constants'
 
 const executeFile = promisify(execFile)

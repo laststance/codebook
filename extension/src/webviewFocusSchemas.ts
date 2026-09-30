@@ -1,4 +1,5 @@
 import { z } from 'zod'
+
 import type { WebviewFocusReceipt } from './runtimeSupport/utils/installWebviewFocus'
 
 export const webviewFocusReceiptSchema = z.strictObject({

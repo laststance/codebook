@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
-import { Evidence } from '../../runtimeSupport/evidence'
-import { PauseGate } from '../../runtimeSupport/pauseGate'
+
+import type { ConfiguredDefinition } from '../../configuredStudySchemas'
 import { LearningLibrary } from '../../learningLibrary'
 import { RepositoryBookStore } from '../../repositoryBook'
-import { StudyService } from '../../service'
-import type { ConfiguredDefinition } from '../../configuredStudySchemas'
 import type {
   ConfiguredRuntimeSnapshot,
   ConfiguredRuntimeView,
@@ -14,6 +12,10 @@ import type {
   StudyEnvironment,
   StudyRuntime,
 } from '../../runtime'
+import { Evidence } from '../../runtimeSupport/evidence'
+import { PauseGate } from '../../runtimeSupport/pauseGate'
+import { StudyService } from '../../service'
+
 import { createConfiguredStudy } from './createConfiguredStudy'
 import { repositoryHarness } from './repositoryHarness'
 

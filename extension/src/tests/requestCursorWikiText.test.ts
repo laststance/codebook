@@ -1,12 +1,15 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import {
   parseCursorWikiCliResult,
   requestCursorWikiText,
 } from '../utils/requestCursorWikiText'
+import type * as RequestCursorWikiTextModule from '../utils/requestCursorWikiText'
+
 import { loadModule } from './utils/loadModule'
 
 test('Cursor Wiki provider accepts only a successful bounded CLI response', () => {
@@ -48,7 +51,7 @@ test('a cancelled or oversized Cursor Wiki question starts no model request', as
   // Arrange
   const cancelled = {
     isCancellationRequested: true,
-    onCancellationRequested: () => ({ dispose() {} }),
+    onCancellationRequested: () => ({ dispose(): void {} }),
   }
   const oversizedPrompt = 'x'.repeat(131_073)
   // Act / Assert
@@ -134,7 +137,7 @@ test('cancelling an active Cursor Agent request removes its temporary workspace'
     onCancellationRequested(listener: (event: unknown) => unknown) {
       listeners.add(listener)
       return {
-        dispose() {
+        dispose(): void {
           listeners.delete(listener)
         },
       }
@@ -200,17 +203,18 @@ test('a stalled Cursor Agent request times out and leaves no Wiki workspace', as
       .filter((name) => name.startsWith('codebook-wiki-question-'))
       .sort()
   const before = await questionWorkspaces()
-  const boundary = await loadModule<
-    typeof import('../utils/requestCursorWikiText')
-  >(join(__dirname, '../utils/requestCursorWikiText.js'), {
-    '../constants': {
-      WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES: 65_536,
-      WIKI_CURSOR_PROMPT_LIMIT_BYTES: 131_072,
-      WIKI_CURSOR_REQUEST_TIMEOUT_MS: 100,
-      WIKI_CURSOR_TERMINATION_GRACE_MS: 100,
-      WIKI_ANSWER_LIMIT_CHARS: 12_000,
+  const boundary = await loadModule<typeof RequestCursorWikiTextModule>(
+    join(__dirname, '../utils/requestCursorWikiText.js'),
+    {
+      '../constants': {
+        WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES: 65_536,
+        WIKI_CURSOR_PROMPT_LIMIT_BYTES: 131_072,
+        WIKI_CURSOR_REQUEST_TIMEOUT_MS: 100,
+        WIKI_CURSOR_TERMINATION_GRACE_MS: 100,
+        WIKI_ANSWER_LIMIT_CHARS: 12_000,
+      },
     },
-  })
+  )
   try {
     // Act / Assert
     await assert.rejects(

@@ -1,13 +1,16 @@
-import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { LearningLibrary } from '../learningLibrary'
+import { test, type TestContext } from 'node:test'
+
 import { progressV3Schema } from '../learnerSchemas'
+import { LearningLibrary } from '../learningLibrary'
+import type * as LearningLibraryModule from '../learningLibrary'
 import { retainedStudySelectionSchema } from '../retainedStudySchemas'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 import { citationLearningState } from '../utils/citationLearningState'
+
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { loadModule } from './utils/loadModule'
 
@@ -447,7 +450,7 @@ test('an interrupted first version 4 decision preserves old choices and retry ap
   const { directory, study, legacy, legacyPath, legacyBytes, path } =
     await progressHarness(context)
   let rejectWrite = true
-  const module = await loadModule<typeof import('../learningLibrary')>(
+  const module = await loadModule<typeof LearningLibraryModule>(
     resolve(__dirname, '../learningLibrary.js'),
     {
       './utils/atomicPrivateWrite': {

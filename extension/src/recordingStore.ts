@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, open, opendir } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import { isDeepStrictEqual } from 'node:util'
 import { join } from 'node:path'
-import { sha256 } from './runtimeSupport/utils/sha256'
+import { isDeepStrictEqual } from 'node:util'
+
+import type { CROSS_RUNTIME_RECORDING_VERSION } from './constants'
 import {
   CONFIGURED_RECORDING_VERSION,
-  CROSS_RUNTIME_RECORDING_VERSION,
   IMAGE_LIMIT_BYTES,
   MAX_SAVED_STUDIES,
   DEFAULT_SAVED_STUDY_LIMIT,
@@ -30,8 +30,15 @@ import {
   RECORDING_SEAL_FILE,
   RECORDING_STORAGE_FORMATS,
   RECORDING_TERMINAL_RESERVE_BYTES,
+  PLAYBACK_PREFERENCE_FILE,
+  PLAYBACK_PREFERENCE_LIMIT_BYTES,
 } from './constants'
+import { LearningLibrary } from './learningLibrary'
 import { studyIdSchema } from './legacyStudySchemas'
+import {
+  playbackPreferenceSchema,
+  type PlaybackPreference,
+} from './playbackSchemas'
 import {
   retainedRecordingBindingSchema,
   recordingEntrySchema,
@@ -48,23 +55,15 @@ import {
   type RecordingIndex,
   type RecordingSeal,
 } from './recordingSchemas'
+import { sha256 } from './runtimeSupport/utils/sha256'
+import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
-import { withStorageLock } from './utils/withStorageLock'
-import { validateRecordingContext } from './utils/validateRecordingContext'
-import { LearningLibrary } from './learningLibrary'
-import {
-  PLAYBACK_PREFERENCE_FILE,
-  PLAYBACK_PREFERENCE_LIMIT_BYTES,
-} from './constants'
-import {
-  playbackPreferenceSchema,
-  type PlaybackPreference,
-} from './playbackSchemas'
 import { recordingPhases } from './utils/recordingPhases'
 import { savedStudyLimit } from './utils/savedStudyLimit'
-import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
+import { validateRecordingContext } from './utils/validateRecordingContext'
+import { withStorageLock } from './utils/withStorageLock'
 
 const defaultLimits = {
   slots: MAX_SAVED_STUDIES,

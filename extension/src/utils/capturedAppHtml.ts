@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import type { StudyViewMessage } from '../ui/studyHtml'
-import { STUDY_STYLES, STUDY_UI_OPTIONS } from '../ui/constants'
+
 import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus'
+import { STUDY_STYLES, STUDY_UI_OPTIONS } from '../ui/constants'
+import type { StudyViewMessage } from '../ui/studyHtml'
 
 /** Renders a labeled historical PNG or explicit absence without granting a runtime paint receipt. @example capturedAppHtml(message) */
 export function capturedAppHtml(message: StudyViewMessage): string {

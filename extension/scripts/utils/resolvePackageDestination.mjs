@@ -1,5 +1,6 @@
 import { lstat, realpath } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+
 import { BUILD_PACKAGES, COMPILED_DIRECTORIES } from './packageConstants.mjs'
 
 /** Rejects package destinations that cleaning could erase or source snapshots could consume, including directory aliases. @example await resolvePackageDestination(repository, '/tmp/Codebook build.vsix') */

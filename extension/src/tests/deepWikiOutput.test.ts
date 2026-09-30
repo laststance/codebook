@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+
 import { resolveDeepWikiDirectory } from '../utils/resolveDeepWikiDirectory'
 
 test('relative Wiki output stays in the opened project', () => {

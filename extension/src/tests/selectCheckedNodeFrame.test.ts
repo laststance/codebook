@@ -1,6 +1,8 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import type { DebugProtocol } from '@vscode/debugprotocol'
+
 import { selectCheckedNodeFrame } from '../utils/selectCheckedNodeFrame'
 
 test('a breakpoint at the declared source position remains eligible for Node history capture', () => {

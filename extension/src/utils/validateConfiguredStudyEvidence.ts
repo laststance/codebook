@@ -1,12 +1,13 @@
-import { configuredStops } from './configuredStops'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import type { ConfiguredStudy } from '../configuredStudySchemas'
 import {
   CONFIGURED_STUDY_VERSION,
   CROSS_RUNTIME_STUDY_VERSION,
   REPOSITORY_CAPTURED_TYPES,
 } from '../constants'
-import type { ConfiguredStudy } from '../configuredStudySchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
+import { configuredStops } from './configuredStops'
 
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
 export function validateConfiguredStudyEvidence(

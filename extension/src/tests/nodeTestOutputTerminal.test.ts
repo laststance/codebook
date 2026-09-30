@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+
 import type * as vscode from 'vscode'
+
 import { NodeTestOutputTerminal } from '../nodeTestOutputTerminal'
 
 function terminalHarness(openOnShow = true) {
@@ -15,10 +17,10 @@ function terminalHarness(openOnShow = true) {
         this.listeners.add(listener)
         return { dispose: () => this.listeners.delete(listener) }
       }
-      fire(value: string) {
+      fire(value: string): void {
         for (const listener of this.listeners) listener(value)
       }
-      dispose() {
+      dispose(): void {
         this.listeners.clear()
       }
     },
@@ -28,11 +30,11 @@ function terminalHarness(openOnShow = true) {
         pty.onDidWrite((value) => writes.push(value))
         return {
           name: options.name,
-          show() {
+          show(): void {
             shown++
             if (openOnShow) pty?.open(undefined)
           },
-          dispose() {
+          dispose(): void {
             disposed++
             pty?.close()
           },

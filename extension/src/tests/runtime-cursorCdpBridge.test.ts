@@ -1,7 +1,9 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
+import { test } from 'node:test'
+
 import { WebSocket, WebSocketServer } from 'ws'
+
 import { CursorCdpBridge } from '../runtimeSupport/cursorCdpBridge'
 
 test('Cursor compatibility exposes only the owned target and preserves real runtime payloads', async (context) => {

@@ -1,4 +1,3 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import {
@@ -11,6 +10,8 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { resolveDeepWikiSource } from '../utils/resolveDeepWikiSource'
 
 test('browser citations open only a source in the selected checkout and flag changed content', async () => {

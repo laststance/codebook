@@ -1,16 +1,19 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { z } from 'zod'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+
 import { StudyClient } from '../client'
+import { PlaybackController } from '../playbackController'
+import { RecordingStore } from '../recordingStore'
+import { readResource } from '../resources'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { startServer } from '../server'
 import { StudyService } from '../service'
-import { RecordingStore } from '../recordingStore'
-import { PlaybackController } from '../playbackController'
-import { readResource } from '../resources'
+
 import { createHarness } from './helpers'
 
 const png = Buffer.from(

@@ -1,7 +1,8 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
+
 import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus'
 import { focusWebview } from '../utils/focusWebview'
 
@@ -47,18 +48,18 @@ function focusRenderer(emit: (message: unknown) => void = () => {}) {
     send: (message: unknown) =>
       windowEvents.get('message')?.({ data: message }),
     calls: () => focusCalls,
-    hide() {
+    hide(): void {
       visible = false
       documentEvents.get('visibilitychange')?.()
     },
-    advance(milliseconds: number) {
+    advance(milliseconds: number): void {
       clock += milliseconds
     },
-    focusLater() {
+    focusLater(): void {
       focused = true
       windowEvents.get('focus')?.({})
     },
-    blur() {
+    blur(): void {
       focused = false
       windowEvents.get('blur')?.({})
     },
@@ -69,15 +70,15 @@ function focusRenderer(emit: (message: unknown) => void = () => {}) {
 function focusHarness() {
   const listeners = new Set<(value: unknown) => void>(),
     disposals = new Set<() => void>()
-  const emit = (value: unknown) => {
+  const emit = (value: unknown): void => {
     for (const listener of listeners) listener(value)
   }
   let renderer = focusRenderer(emit),
     nativeActive = true,
     rejectNativeActivation = false,
     nativeDocumentFocus = true,
-    guard = () => {},
-    beforeCommit = () => {}
+    guard = (): void => {},
+    beforeCommit = (): void => {}
   let onPost = (
     _message: Record<string, unknown>,
   ): Promise<boolean> | undefined => undefined
@@ -86,7 +87,7 @@ function focusHarness() {
     reveals: boolean[] = []
   const panel = {
     visible: true,
-    reveal(_column?: number, preserveFocus?: boolean) {
+    reveal(_column?: number, preserveFocus?: boolean): void {
       reveals.push(Boolean(preserveFocus))
       if (!preserveFocus && !rejectNativeActivation) nativeActive = true
       if (!preserveFocus && nativeDocumentFocus) renderer.focusLater()
@@ -94,7 +95,7 @@ function focusHarness() {
     onDidDispose(listener: () => void) {
       disposals.add(listener)
       return {
-        dispose() {
+        dispose(): void {
           disposals.delete(listener)
         },
       }
@@ -103,7 +104,7 @@ function focusHarness() {
       onDidReceiveMessage(listener: (value: unknown) => void) {
         listeners.add(listener)
         return {
-          dispose() {
+          dispose(): void {
             listeners.delete(listener)
           },
         }
@@ -124,7 +125,7 @@ function focusHarness() {
     emit,
     controller,
     renderer: () => renderer,
-    run: (timeoutMs = 1_000) =>
+    run: (timeoutMs = 1_000): Promise<void> =>
       focusWebview(panel, {
         timeoutMs,
         signal: controller.signal,
@@ -132,30 +133,30 @@ function focusHarness() {
         assertBeforeCommit: () => beforeCommit(),
         isActive: () => nativeActive,
       }),
-    intercept(value: typeof onPost) {
+    intercept(value: typeof onPost): void {
       onPost = value
     },
-    setGuard(value: typeof guard) {
+    setGuard(value: typeof guard): void {
       guard = value
     },
-    beforeCommit(value: typeof beforeCommit) {
+    beforeCommit(value: typeof beforeCommit): void {
       beforeCommit = value
     },
-    replaceRenderer() {
+    replaceRenderer(): void {
       renderer = focusRenderer(emit)
     },
-    nativeInactive() {
+    nativeInactive(): void {
       nativeActive = false
       rejectNativeActivation = true
     },
-    requireNativeActivation() {
+    requireNativeActivation(): void {
       nativeActive = false
     },
     nativeIsActive: () => nativeActive,
-    suppressDocumentActivation() {
+    suppressDocumentActivation(): void {
       nativeDocumentFocus = false
     },
-    disposePanel() {
+    disposePanel(): void {
       for (const listener of disposals) listener()
     },
     listenerCount: () => listeners.size + disposals.size,

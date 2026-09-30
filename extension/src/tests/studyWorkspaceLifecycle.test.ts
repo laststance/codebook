@@ -1,12 +1,15 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import type { PresentationPoseCapture } from '../presentationSchemas'
+import { test } from 'node:test'
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
+
+import type { PresentationPoseCapture } from '../presentationSchemas'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
+
 import {
   workspaceHarness,
   openRetainedStudy,
@@ -20,7 +23,7 @@ for (const stage of [
     // Arrange: delivery itself is pending, so the later receipt deadline cannot observe cancellation.
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let releaseDelivery = (_accepted: boolean) => {},
+    let releaseDelivery = (_accepted: boolean): void => {},
       changing: Promise<unknown> | undefined,
       closing: Promise<void> | undefined
     try {
@@ -36,7 +39,7 @@ for (const stage of [
       const delivery = new Promise<boolean>((resolve) => {
         releaseDelivery = resolve
       })
-      const holdDelivery = (target: NonNullable<typeof panel>) => {
+      const holdDelivery = (target: NonNullable<typeof panel>): void => {
         const originalPost = target.webview.postMessage.bind(target.webview)
         target.webview.postMessage = (message) => {
           if (message.type !== stage) return originalPost(message)
@@ -90,7 +93,7 @@ for (const stage of [
         // Arrange
         const harness = await workspaceHarness(false)
         harness.useNativeLayout({ orientation: 0, groups: [{}] })
-        let releaseDelivery = (_accepted: boolean) => {}
+        let releaseDelivery = (_accepted: boolean): void => {}
         try {
           await harness.reader.open()
           const panel = harness
@@ -100,7 +103,7 @@ for (const stage of [
           const pending = new Promise<boolean>((resolve) => {
             releaseDelivery = resolve
           })
-          const failDelivery = (target: NonNullable<typeof panel>) => {
+          const failDelivery = (target: NonNullable<typeof panel>): void => {
             const originalPost = target.webview.postMessage.bind(target.webview)
             target.webview.postMessage = (message) =>
               message.type !== stage
@@ -150,7 +153,7 @@ test('learner input after reading capture cancels placement without saving or re
   // Arrange
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     const panel = harness.reader['contextPanel']
@@ -428,7 +431,7 @@ for (const positionMs of [0, 100])
         >
       | undefined
     try {
-      live = harness.reader.presentation.createViewport!(
+      live = harness.reader.presentation.createViewport(
         'handoff-live',
         () => {},
         (reason) => failures.push(reason),
@@ -515,9 +518,9 @@ for (const failure of ['native layout failure', 'newer learner tab'] as const)
         >
       | undefined
     let draft: ReturnType<typeof harness.focusMutableDraft> | undefined
-    let release = () => {}
+    let release = (): void => {}
     try {
-      live = harness.reader.presentation.createViewport!(
+      live = harness.reader.presentation.createViewport(
         'retained-replay-failure',
         () => {},
         () => {},
@@ -612,7 +615,7 @@ test('same-column mode changes recover native inner-focus delivery while preserv
     | undefined
   try {
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport!(
+    live = harness.reader.presentation.createViewport(
       'same-column',
       () => {},
       () => {},
@@ -674,7 +677,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
       | undefined
     try {
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport!(
+      live = harness.reader.presentation.createViewport(
         'tab-resync',
         () => {},
         () => {},
@@ -723,7 +726,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
       | undefined
     try {
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport!(
+      live = harness.reader.presentation.createViewport(
         'group-resync',
         () => {},
         () => {},
@@ -826,7 +829,7 @@ test('explicit same-mode restoration recovers inner-focus delivery without repla
     | undefined
   try {
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport!(
+    live = harness.reader.presentation.createViewport(
       'unchanged-mode',
       () => {},
       () => {},
@@ -874,7 +877,7 @@ for (const failure of ['creation throws', 'unretained tab'] as const)
       | undefined
     try {
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport!(
+      live = harness.reader.presentation.createViewport(
         'failed-handoff',
         () => {},
         (reason) => failures.push(reason),
@@ -987,7 +990,7 @@ test('closing the adopted application during native layout rejects the transitio
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   const failures: string[] = []
-  let release = () => {},
+  let release = (): void => {},
     live:
       | ReturnType<
           NonNullable<typeof harness.reader.presentation.createViewport>
@@ -995,7 +998,7 @@ test('closing the adopted application during native layout rejects the transitio
       | undefined
   try {
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport!(
+    live = harness.reader.presentation.createViewport(
       'close-current',
       () => {},
       (reason) => failures.push(reason),
@@ -1043,7 +1046,7 @@ test('restoring replay keeps the live renderer attached without requesting a pan
     | ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>>
     | undefined
   try {
-    live = harness.reader.presentation.createViewport!(
+    live = harness.reader.presentation.createViewport(
       'retained-live',
       () => {},
       () => {},
@@ -1095,7 +1098,7 @@ for (const change of ['move', 'close'] as const)
       | undefined
     try {
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport!(
+      live = harness.reader.presentation.createViewport(
         'interrupted-creation',
         () => {},
         (reason) => failures.push(reason),
@@ -1260,7 +1263,7 @@ for (const departure of ['window roundtrip', 'learner draft'] as const)
     // Arrange
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let release = () => {}
+    let release = (): void => {}
     try {
       await openRetainedStudy(harness)
       const draft = harness.focusMutableDraft()

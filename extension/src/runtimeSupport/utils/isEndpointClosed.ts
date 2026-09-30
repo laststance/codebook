@@ -1,4 +1,5 @@
 import { createConnection } from 'node:net'
+
 import { CONTROL_RESPONSE_LIMIT_MS } from '../constants'
 
 /** Proves listener closure by TCP refusal during runner teardown; unresponsive listeners remain unverified. @example await isEndpointClosed('http://127.0.0.1:9222') */

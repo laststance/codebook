@@ -1,8 +1,10 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import {
   workspaceHarness,
   openRetainedStudy,
@@ -319,8 +321,8 @@ for (const next of ['Return', 'retry', 'Close'] as const)
       chat = harness.addSeparateEditorPart(),
       draft = harness.focusMutableDraft()
     harness.useCursorGroupWrappers(true)
-    let releaseLayout = () => {},
-      releaseReceipt = () => {}
+    let releaseLayout = (): void => {},
+      releaseReceipt = (): void => {}
     try {
       await harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -459,8 +461,8 @@ for (const corrupt of [false, true])
 test('native minimum-width expansion keeps Wiki Return successful and the next observation in three visible panes', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness()
-  let releaseLayout = () => {},
-    releaseReceipt = () => {}
+  let releaseLayout = (): void => {},
+    releaseReceipt = (): void => {}
   try {
     harness.useNativeLayout({
       orientation: 0,
@@ -712,7 +714,7 @@ test('a queued actual article Return preserves a later learner draft focus witho
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -771,7 +773,7 @@ test('cancelling actual Return during its ownership read preserves Study and per
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -812,7 +814,7 @@ test('a new evidence visit drains a cancelled Return layout before restoring its
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -860,7 +862,7 @@ test('a new evidence visit drains a cancelled Return layout before restoring its
 test('Close drains an accepted article Return without retaining a layout origin or reopening owned panes', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -899,8 +901,8 @@ test('Close drains an accepted article Return without retaining a layout origin 
 test('a manual application move during the restored-layout receipt remains authoritative on the next evidence visit', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness()
-  let releaseLayout = () => {},
-    releaseReceipt = () => {}
+  let releaseLayout = (): void => {},
+    releaseReceipt = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -946,7 +948,7 @@ test('cancelling a later article evidence visit keeps the previous actual Return
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -1000,7 +1002,7 @@ test('a manual resize while the next evidence source loads is preserved after ac
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     manual = { orientation: 1, groups: [{ size: 1 }, { size: 3 }, { size: 1 }] }
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -1040,7 +1042,7 @@ for (const region of ['application', 'context', 'source'])
   test(`a manual ${region} move while a returning article observation loads preserves the learner layout`, async () => {
     // Arrange
     const harness = await articleRecordingLayoutHarness()
-    let release = () => {}
+    let release = (): void => {}
     try {
       await harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -1106,7 +1108,7 @@ test('cancelling observation reentry after actual Return preserves the original 
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -1153,7 +1155,7 @@ test('retrying a cancelled observation reentry retains the article layout from b
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -1202,7 +1204,7 @@ for (const cursor of [false, true])
     // Arrange
     const harness = await articleRecordingLayoutHarness()
     if (cursor) harness.useCursorGroupWrappers()
-    let release = () => {}
+    let release = (): void => {}
     try {
       const layout = harness.holdNextCommand('runCommands')
       release = layout.release
@@ -1247,7 +1249,7 @@ test('a normal Wiki open after cancelled reentry does not consume the previous a
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -1290,7 +1292,7 @@ test('actual Return after cancelled reentry preserves a foreign draft added to t
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -1343,8 +1345,8 @@ test('cancelling during the accepted reentry layout read still lets actual Retur
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let releaseBefore = () => {},
-    releasePrepared = () => {}
+  let releaseBefore = (): void => {},
+    releasePrepared = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -1391,8 +1393,8 @@ test('cancelling during the accepted reentry layout read still lets actual Retur
 test('observation a source move during reentry loading overrides the previously planned source restoration', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness()
-  let releaseLayout = () => {},
-    releaseSource = () => {}
+  let releaseLayout = (): void => {},
+    releaseSource = (): void => {}
   try {
     const layout = harness.holdNextCommand('runCommands')
     releaseLayout = layout.release
@@ -1448,8 +1450,8 @@ for (const cursor of [false, true])
     // Arrange
     const harness = await articleRecordingLayoutHarness()
     if (cursor) harness.useCursorGroupWrappers()
-    let releaseBefore = () => {},
-      releasePrepared = () => {}
+    let releaseBefore = (): void => {},
+      releasePrepared = (): void => {}
     try {
       await harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -1500,8 +1502,8 @@ test('a manual pane move during a cancelled reentry layout read never becomes a 
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let releaseBefore = () => {},
-    releasePrepared = () => {}
+  let releaseBefore = (): void => {},
+    releasePrepared = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -1560,8 +1562,8 @@ for (const cursor of [false, true])
         anchorIndex: 0,
       }
     if (cursor) harness.useCursorGroupWrappers()
-    let releaseBefore = () => {},
-      releasePrepared = () => {}
+    let releaseBefore = (): void => {},
+      releasePrepared = (): void => {}
     try {
       await harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -1623,8 +1625,8 @@ for (const cursor of [false, true])
 test('a manual grid change during reentry certification is never adopted as a Codebook arrangement', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness()
-  let releaseBefore = () => {},
-    releasePrepared = () => {}
+  let releaseBefore = (): void => {},
+    releasePrepared = (): void => {}
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -1679,7 +1681,7 @@ test('observation source placement accepted before cancellation survives Return 
   // Arrange
   const harness = await articleRecordingLayoutHarness(),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     const layout = harness.holdNextCommand('runCommands')
     release = layout.release
@@ -1734,7 +1736,7 @@ for (const cursor of [false, true])
     const harness = await articleRecordingLayoutHarness(),
       cancellation = new AbortController()
     if (cursor) harness.useCursorGroupWrappers()
-    let release = () => {}
+    let release = (): void => {}
     try {
       await harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -2249,7 +2251,7 @@ for (const retirement of ['cancel', 'Close'] as const)
     // Arrange
     const harness = await articleRecordingLayoutHarness(true),
       cancellation = new AbortController()
-    let release = () => {}
+    let release = (): void => {}
     try {
       await harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -2386,7 +2388,7 @@ for (const mode of [
     // Arrange
     const harness = await recordedReaderHarness(true)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let releaseSource = () => {}
+    let releaseSource = (): void => {}
     try {
       await harness.reader.openRecording(harness.studyId)
       await harness.controller.settle()
@@ -2453,7 +2455,7 @@ for (const change of ['layout', 'groups'] as const)
     // Arrange
     const harness = await recordedReaderHarness(true)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let releaseSource = () => {}
+    let releaseSource = (): void => {}
     try {
       await harness.reader.openRecording(harness.studyId)
       await harness.controller.settle()
@@ -2593,7 +2595,7 @@ test('enlarging a recorded application targets its owned pane and retains the pa
   // Arrange
   const harness = await recordedReaderHarness(true)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
@@ -2711,7 +2713,7 @@ test('Restore layout keeps the original Study panes when Cursor focuses Applicat
   // Arrange
   const harness = await recordedReaderHarness(true)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
@@ -2784,8 +2786,8 @@ test('Restore waits for an active layout transaction before confirming an enlarg
   // Arrange
   const harness = await recordedReaderHarness(true)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {},
-    entered = () => {}
+  let release = (): void => {},
+    entered = (): void => {}
   const started = new Promise<void>((resolve) => {
     entered = resolve
   })
@@ -3144,7 +3146,7 @@ for (const [pane, kind] of [
     // Arrange
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let release = () => {},
+    let release = (): void => {},
       transfer: Promise<unknown> | undefined
     try {
       await openRetainedStudy(harness)

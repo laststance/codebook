@@ -1,4 +1,5 @@
 import { configuredDescriptorSchema } from '../configuredStudySchemas'
+import { StudyError } from '../errors'
 import {
   nodeTestConfigSchema,
   type NodeTestConfiguration,
@@ -6,7 +7,7 @@ import {
 import type { RepositoryBookStore } from '../repositoryBook'
 import type { RepositorySourceService } from '../repositorySource'
 import { sha256 } from '../runtimeSupport/utils/sha256'
-import { StudyError } from '../errors'
+
 import { assertCitedSourceStops } from './assertConfiguredDescriptor'
 import { citationContext } from './citationContext'
 import { requireNodeTestTitles } from './requireNodeTestTitles'
@@ -20,7 +21,7 @@ export async function prepareNodeTestStudy(
   >,
   now = Date.now,
 ) {
-  const assertActive = () => {
+  const assertActive = (): void => {
     if (control.signal.aborted || now() >= control.deadlineAt)
       throw new StudyError(
         'RUNTIME_FAILED',

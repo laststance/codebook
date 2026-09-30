@@ -1,21 +1,24 @@
-import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import filesystem, { readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { randomUUID } from 'node:crypto'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import { repositoryHarness } from './utils/repositoryHarness'
+import { test, type TestContext } from 'node:test'
+
 import { LearningLibrary } from '../learningLibrary'
 import { RepositoryBookStore } from '../repositoryBook'
-import { RepositorySourceService } from '../repositorySource'
+import type * as RepositoryBookModule from '../repositoryBook'
 import {
   repositoryBookSchema,
   type BookDocument,
   type BookPublishIntent,
 } from '../repositorySchemas'
+import { RepositorySourceService } from '../repositorySource'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
-import { loadModule } from './utils/loadModule'
+
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { loadModule } from './utils/loadModule'
+import { repositoryHarness } from './utils/repositoryHarness'
 
 const workspaceKey = '1'.repeat(64),
   sourceHash =
@@ -178,8 +181,8 @@ test('same-key recovery survives unavailable checkpoints while public reads labe
 test('slow source preparation lets another learner writer finish before publication enters the shared queue', async (context) => {
   // Arrange
   const { books, intent, sources, library } = await bookHarness(context)
-  let enter = () => {},
-    release = () => {}
+  let enter = (): void => {},
+    release = (): void => {}
   const entered = new Promise<void>((resolve) => {
       enter = resolve
     }),
@@ -346,8 +349,8 @@ test('a failed atomic rename preserves prior book bytes and removes only its inc
 test('retirement and transport cancellation drain an in-flight successful atomic writer before releasing its lock', async (context) => {
   // Arrange
   const { sources, library, intent, path } = await bookHarness(context)
-  let enter = () => {},
-    release = () => {},
+  let enter = (): void => {},
+    release = (): void => {},
     retired = false
   const entered = new Promise<void>((resolve) => {
       enter = resolve
@@ -355,7 +358,7 @@ test('retirement and transport cancellation drain an in-flight successful atomic
     held = new Promise<void>((resolve) => {
       release = resolve
     })
-  const module = await loadModule<typeof import('../repositoryBook')>(
+  const module = await loadModule<typeof RepositoryBookModule>(
     resolve(__dirname, '../repositoryBook.js'),
     {
       './utils/atomicPrivateWrite': {

@@ -1,5 +1,7 @@
-import type * as vscode from 'vscode'
 import { randomUUID } from 'node:crypto'
+
+import type * as vscode from 'vscode'
+
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { webviewFocusReceiptSchema } from '../webviewFocusSchemas'
 
@@ -22,7 +24,7 @@ export async function focusWebview(
     focused = false,
     disposed = false,
     committed = false
-  const assertCurrent = () => {
+  const assertCurrent = (): void => {
     options.signal?.throwIfAborted()
     options.assertCurrent()
     if (disposed) throw new Error('The presentation focus target was closed.')
@@ -48,7 +50,7 @@ export async function focusWebview(
       Math.max(0, expiresAt - Date.now()),
       options.signal,
     )
-  const post = async (message: object) => {
+  const post = async (message: object): Promise<void> => {
     assertCurrent()
     if (Date.now() >= expiresAt)
       throw new Error('The presentation focus request expired before delivery.')

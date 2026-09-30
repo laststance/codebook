@@ -1,6 +1,8 @@
-import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
+
 import { WebSocket, WebSocketServer } from 'ws'
+
 import {
   ACTIVE_TIMEOUT_MS,
   CDP_BRIDGE_PAYLOAD_LIMIT_BYTES,
@@ -122,16 +124,16 @@ export class CursorCdpBridge {
     const pageSessions = new Set<string>()
     const key = (message: CdpMessage) =>
       `${message.sessionId ?? 'root'}:${message.id}`
-    const sendClient = (message: CdpMessage) => {
+    const sendClient = (message: CdpMessage): void => {
       if (client.readyState === WebSocket.OPEN)
         client.send(JSON.stringify(message))
     }
-    const close = () => {
+    const close = (): void => {
       this.upstreams.delete(upstream)
       upstream.terminate()
       client.terminate()
     }
-    const relay = (message: CdpMessage) => {
+    const relay = (message: CdpMessage): void => {
       const inPage = message.sessionId && pageSessions.has(message.sessionId)
       const inBrowser =
         !message.sessionId || browserSessions.has(message.sessionId)

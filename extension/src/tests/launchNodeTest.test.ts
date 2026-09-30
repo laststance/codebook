@@ -1,11 +1,13 @@
+import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mock, test } from 'node:test'
-import assert from 'node:assert/strict'
-import { Cdp } from '../runtimeSupport/cdp'
+
 import type * as vscode from 'vscode'
+
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import { Cdp } from '../runtimeSupport/cdp'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { bindOwnedNodeTestDebugSession } from '../utils/bindOwnedNodeTestDebugSession'
@@ -14,6 +16,7 @@ import {
   type NodeTestOutputEvent,
 } from '../utils/launchNodeTest'
 import { verifyNodeTestInspectorOwnership } from '../utils/verifyNodeTestInspectorOwnership'
+
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
 test('an owned Node test announces its own loopback debugger and releases the paused process', async () => {
@@ -476,6 +479,7 @@ test(
     let deliveredBytes = 0,
       historyWrites = Promise.resolve(),
       owned: Awaited<ReturnType<typeof launchNodeTest>> | undefined
+    // eslint-disable-next-line prefer-const -- launch callbacks may run before the launch resolves and read this binding.
     owned = await launchNodeTest(
       launch,
       process.execPath,

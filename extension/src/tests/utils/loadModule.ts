@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { runInNewContext } from 'node:vm'
 import { dirname } from 'node:path'
+import { runInNewContext } from 'node:vm'
 
 /** Injects only editor effects into compiled boundary modules while preserving actual Node/SDK code. @example await loadModule<typeof import('../../environment')>(path, {vscode: stub}) */
 export async function loadModule<Module>(

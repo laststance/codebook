@@ -1,25 +1,27 @@
-import type { projectLearningSummary } from '../utils/projectLearningSummary'
 import { randomUUID } from 'node:crypto'
-import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus'
-import type { StudyCatalogEntry } from '../studySchemas'
-import type { LiveStudy, projectStudy } from '../studyModel'
-import type { RetainedStudy } from '../retainedStudySchemas'
-import type { StudyDescriptor } from '../utils/describeStudy'
-import type { PlaybackState, PlaybackBundle } from '../playbackController'
+
 import type {
   NodeTestHistoryIndex,
   NodeTestHistoryLearningDecision,
   NodeTestLearningMaterial,
 } from '../nodeTestHistorySchemas'
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
-import { installShortcutHelp } from '../utils/installShortcutHelp'
-import { STUDY_STYLES, STUDY_UI_OPTIONS, STUDY_SHORTCUTS } from './constants'
+import type { PlaybackState, PlaybackBundle } from '../playbackController'
 import type {
   PresentationState,
   PresentationReadingPose,
   PresentationPoseCapture,
   PresentationPoseRestore,
 } from '../presentationSchemas'
+import type { RetainedStudy } from '../retainedStudySchemas'
+import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus'
+import type { LiveStudy, projectStudy } from '../studyModel'
+import type { StudyCatalogEntry } from '../studySchemas'
+import type { StudyDescriptor } from '../utils/describeStudy'
+import { installShortcutHelp } from '../utils/installShortcutHelp'
+import type { projectLearningSummary } from '../utils/projectLearningSummary'
+
+import { STUDY_STYLES, STUDY_UI_OPTIONS, STUDY_SHORTCUTS } from './constants'
 
 export interface StudyViewMessage {
   type: 'study'
@@ -176,16 +178,16 @@ function studyClient(
     if (!found) throw new Error(`Missing reader element ${id}`)
     return found
   }
-  const send = (message: object) =>
+  const send = (message: object): void =>
     api.postMessage({ ...message, revision: current?.revision })
   const button = (action: string) =>
     document.querySelector<HTMLButtonElement>(`button[data-action="${action}"]`)
-  const text = (id: string, value: string) => {
+  const text = (id: string, value: string): void => {
     const target = element(id)
     if (target.textContent !== value) target.textContent = value
   }
   const renderKeys = new Map<string, string>()
-  const replace = (id: string, data: unknown, children: () => Node[]) => {
+  const replace = (id: string, data: unknown, children: () => Node[]): void => {
     const key = JSON.stringify(data)
     if (renderKeys.get(id) !== key) {
       renderKeys.set(id, key)
@@ -194,7 +196,10 @@ function studyClient(
   }
   const seconds = (elapsed: number) =>
     `${(elapsed / options.secondMs).toFixed(2)} s`
-  const playback = (action: 'play' | 'pause' | 'seek', positionMs?: number) => {
+  const playback = (
+    action: 'play' | 'pause' | 'seek',
+    positionMs?: number,
+  ): void => {
     if (current?.recording)
       send({
         type: 'playback',
@@ -206,7 +211,7 @@ function studyClient(
   const nodeHistoryPlayback = (
     action: 'play' | 'pause' | 'seek',
     positionMs?: number,
-  ) => {
+  ): void => {
     const history = current?.nodeHistory
     if (history)
       send({
@@ -236,7 +241,7 @@ function studyClient(
   const presentation = (
     mode: string,
     action: 'select' | 'restore' | 'save-preference',
-  ) => {
+  ): void => {
     const state = current?.presentation
     if (state && state.state !== 'applying')
       send({
@@ -264,7 +269,7 @@ function studyClient(
   ).observe(transport)
   const strip = document.querySelector<HTMLElement>('.live-strip')
   // Oversized sticky controls must not hide keyboard focus at narrow widths or enlarged text.
-  const adaptStrip = () => {
+  const adaptStrip = (): void => {
     if (!strip) return
     const height = strip.getBoundingClientRect().height
     strip.classList.toggle(
@@ -622,7 +627,7 @@ function studyClient(
         request.expectedRevision,
     )
   /** Captures bounded reading data for the host only after its exact model is displayed. @example capturePose(request) */
-  const capturePose = (request: PresentationPoseCapture) => {
+  const capturePose = (request: PresentationPoseCapture): void => {
     if (!installFocus || !matchesPose(request)) return
     const anchorId = options.readingAnchors.find((id) => {
       const candidate = element(id)
@@ -671,9 +676,9 @@ function studyClient(
     api.postMessage({ ...request, type: 'presentation-pose', pose })
   }
   /** Restores a same-item pose once after replacement/layout; later learner input invalidates the queued animation frame. @example restorePose(message) */
-  const restorePose = (message: PresentationPoseRestore) => {
+  const restorePose = (message: PresentationPoseRestore): void => {
     if (!installFocus || !matchesPose(message)) return
-    const reject = () =>
+    const reject = (): void =>
       api.postMessage({
         type: 'presentation-pose-invalidated',
         captureId: message.captureId,

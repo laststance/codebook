@@ -1,6 +1,7 @@
 import type { TextEditor } from 'vscode'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import { PRESENTATION_READY_TIMEOUT_MS } from '../constants'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 /** Retains visible source context for {@link StudyWorkspace} before native relocation, then restores it after the final grid settles. @example const restore = retainEditorReadingPosition(editor); await restore(relocated, signal) */
 export function retainEditorReadingPosition(
@@ -32,7 +33,7 @@ export function retainEditorReadingPosition(
     signal?.throwIfAborted()
     if (!readingPoint) return
     // Native range clamping cannot preserve a pose captured before a document edit; reject before reveal and during its wait.
-    const assertDocument = () => {
+    const assertDocument = (): void => {
       if (
         document?.version !== documentVersion ||
         restored.document.version !== documentVersion ||

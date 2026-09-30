@@ -1,11 +1,14 @@
-import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import { test, type TestContext } from 'node:test'
+
 import { LearningLibrary } from '../learningLibrary'
+import type * as LearningLibraryModule from '../learningLibrary'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
+
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { loadModule } from './utils/loadModule'
 
@@ -55,7 +58,7 @@ test('interrupted configured metadata saving retains readable evidence and expli
   // Arrange
   const { directory, study, archivePath } = await storageHarness(context)
   let rejectMetadata = true
-  const module = await loadModule<typeof import('../learningLibrary')>(
+  const module = await loadModule<typeof LearningLibraryModule>(
     resolve(__dirname, '../learningLibrary.js'),
     {
       './utils/atomicPrivateWrite': {

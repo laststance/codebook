@@ -1,7 +1,5 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import filesystem, {
   mkdir,
   rename,
@@ -10,9 +8,13 @@ import filesystem, {
   writeFile,
 } from 'node:fs/promises'
 import { join } from 'node:path'
-import { RepositorySourceService } from '../repositorySource'
+import { test } from 'node:test'
+import { promisify } from 'node:util'
+
 import { REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants'
 import { bookDocumentSchema } from '../repositorySchemas'
+import { RepositorySourceService } from '../repositorySource'
+
 import { repositoryHarness as sourceHarness } from './utils/repositoryHarness'
 
 const executeFile = promisify(execFile)

@@ -1,15 +1,16 @@
-import { sha256 } from '../runtimeSupport/utils/sha256'
 import {
   configuredDefinitionSchema,
   type ConfiguredDefinition,
 } from '../configuredStudySchemas'
+import { StudyError } from '../errors'
+import type { RepositoryBookStore } from '../repositoryBook'
 import {
   retainedRepositoryConfigSchema,
   type RetainedRepositoryConfiguration,
 } from '../repositoryConfigSchemas'
-import type { RepositoryBookStore } from '../repositoryBook'
 import type { RepositorySourceService } from '../repositorySource'
-import { StudyError } from '../errors'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
 import { citationContext } from './citationContext'
 
@@ -22,7 +23,7 @@ export async function prepareRepositoryStudy(
   >,
   now = Date.now,
 ): Promise<ConfiguredDefinition> {
-  const assertActive = () => {
+  const assertActive = (): void => {
     if (control.signal.aborted || now() >= control.deadlineAt)
       throw new StudyError(
         'RUNTIME_FAILED',

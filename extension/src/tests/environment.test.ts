@@ -1,13 +1,17 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { lstat, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadModule } from './utils/loadModule'
+import { join, resolve } from 'node:path'
+import { test } from 'node:test'
+
 import type { DebugAdapterTrackerFactory, DebugSession } from 'vscode'
+
 import type { ConfiguredBrowserRun } from '../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../configuredStudySchemas'
+import type * as EnvironmentModule from '../environment'
+
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { loadModule } from './utils/loadModule'
 
 test('untrusted, remote and virtual workspaces reject execution before creating any runtime', async () => {
   // Arrange
@@ -16,7 +20,7 @@ test('untrusted, remote and virtual workspaces reject execution before creating 
       workspaceFolders: [{ uri: { scheme: 'file', fsPath: '/workspace' } }],
     },
     env = { remoteName: '' }
-  const boundary = await loadModule<typeof import('../environment')>(
+  const boundary = await loadModule<typeof EnvironmentModule>(
     resolve(__dirname, '../environment.js'),
     { './configuredBrowserRun': {}, vscode: { workspace, env } },
   )
@@ -52,7 +56,7 @@ test('the configured environment routes only owned DAP responses and reveals imm
   class SelectedRun {
     readonly id = 'configured-run'
     readonly activeSessions = new Set<string>()
-    readonly evidence = { record() {} }
+    readonly evidence = { record(): void {} }
     constructor(
       readonly options: ConstructorParameters<typeof ConfiguredBrowserRun>[0],
     ) {
@@ -61,16 +65,16 @@ test('the configured environment routes only owned DAP responses and reveals imm
     owner(session: DebugSession) {
       return session.id === 'selected'
     }
-    addSession(session: DebugSession) {
+    addSession(session: DebugSession): void {
       this.activeSessions.add(session.id)
     }
-    onRequest() {
+    onRequest(): void {
       messages.push('request')
     }
-    onResponse() {
+    onResponse(): void {
       messages.push('response')
     }
-    onEvent() {
+    onEvent(): void {
       messages.push('event')
     }
     view() {
@@ -80,8 +84,8 @@ test('the configured environment routes only owned DAP responses and reveals imm
         snapshots: createConfiguredStudy().observations,
       }
     }
-    terminated() {}
-    fail() {
+    terminated(): void {}
+    fail(): void {
       messages.push('failed')
     }
     ownsDevelopmentLock() {
@@ -91,8 +95,8 @@ test('the configured environment routes only owned DAP responses and reveals imm
       return cleaning
     }
   }
-  const disposable = { dispose() {} }
-  const boundary = await loadModule<typeof import('../environment')>(
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
     resolve(__dirname, '../environment.js'),
     {
       './configuredBrowserRun': { ConfiguredBrowserRun: SelectedRun },
@@ -299,8 +303,8 @@ test('missing Node Chrome and debugger prerequisites identify configuration keys
     join(directory, 'product.json'),
     JSON.stringify({ version: '1.138.0', commit: 'fixture' }),
   )
-  const disposable = { dispose() {} }
-  const boundary = await loadModule<typeof import('../environment')>(
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
     resolve(__dirname, '../environment.js'),
     {
       './configuredBrowserRun': {},

@@ -1,25 +1,28 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { request } from 'node:http'
+import { connect as connectSocket } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
-import { request } from 'node:http'
-import { connect as connectSocket } from 'node:net'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { httpStatus } from './utils/httpStatus'
-import { startServer, type ConnectionDescriptor } from '../server'
+
 import {
   REPOSITORY_BROWSER_PROFILE as PROFILE_ID,
   SESSION_IDLE_TIMEOUT_MS,
 } from '../constants'
-import { createHarness } from './helpers'
-import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
-import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { startServer, type ConnectionDescriptor } from '../server'
+import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
+
+import { createHarness } from './helpers'
+import { httpStatus } from './utils/httpStatus'
+import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
 /** Connects the actual SDK client rather than emulating JSON-RPC in tests. @example const connected = await connect(endpoint.descriptor) */
 async function connect(descriptor: ConnectionDescriptor) {
@@ -36,7 +39,7 @@ async function connect(descriptor: ConnectionDescriptor) {
   return {
     client,
     transport,
-    async close() {
+    async close(): Promise<void> {
       try {
         await transport.terminateSession()
       } finally {

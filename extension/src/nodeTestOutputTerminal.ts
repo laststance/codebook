@@ -1,4 +1,5 @@
 import type * as vscode from 'vscode'
+
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 

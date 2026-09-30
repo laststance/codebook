@@ -1,4 +1,5 @@
 import { z } from 'zod'
+
 import { EDITOR_LAYOUT_ROUNDING_FRACTION } from '../constants'
 
 const groupSchema = z.strictObject({

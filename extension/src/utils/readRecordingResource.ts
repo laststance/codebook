@@ -1,9 +1,10 @@
-import { readJsonPage } from './readJsonPage'
 import { RECORDING_FRAME_PAGE_SIZE } from '../constants'
-import { LearningLibrary } from '../learningLibrary'
 import { StudyError } from '../errors'
-import type { StudyService } from '../service'
+import { LearningLibrary } from '../learningLibrary'
 import type { ResourceContent } from '../resources'
+import type { StudyService } from '../service'
+
+import { readJsonPage } from './readJsonPage'
 
 /** Resolves only current-instance canonical library/recording resources, using bounded pages and pinned context hashes. @example await readRecordingResource(service, recordingUri) */
 export async function readRecordingResource(

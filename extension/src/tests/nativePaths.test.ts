@@ -1,8 +1,9 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createServer } from 'node:net'
 import { rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { createNativeProfile } from '../utils/createNativeProfile'
 
 test('native editor profiles can bind their actual IPC socket within the macOS pathname budget', async () => {

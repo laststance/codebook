@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import type * as vscode from 'vscode'
+
 import type { DebugProtocol } from '@vscode/debugprotocol'
+import type * as vscode from 'vscode'
+
 import { inspectNodeTestVariables } from '../utils/inspectNodeTestVariables'
 
 test('a Node pause keeps declared nested facts without retaining unrelated local values', async () => {

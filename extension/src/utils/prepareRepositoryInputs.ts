@@ -1,6 +1,7 @@
 import { z } from 'zod'
-import type { Cdp } from '../runtimeSupport/cdp'
+
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
+import type { Cdp } from '../runtimeSupport/cdp'
 
 const resultSchema = z.object({
   ready: z.boolean(),
@@ -29,7 +30,7 @@ export async function prepareRepositoryInputs(
         !objectId
       )
         throw new Error(`Input ${index + 1} has no unique owned target.`)
-      const inspect = async (phase: 'focus' | 'verify') => {
+      const inspect = async (phase: 'focus' | 'verify'): Promise<void> => {
         assertCurrent()
         const result = await cdp.request('Runtime.callFunctionOn', {
           objectId,

@@ -1,4 +1,4 @@
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
   CONFIGURED_STUDY_VERSION,
   CROSS_RUNTIME_STUDY_VERSION,
@@ -6,9 +6,10 @@ import {
   REPOSITORY_BROWSER_PROFILE,
 } from '../constants'
 import { readResource } from '../resources'
-import type { StudyRecord, StudyService } from '../service'
-import { configuredObservationSchema } from '../configuredStudySchemas'
 import type { RetainedStudy } from '../retainedStudySchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import type { StudyRecord, StudyService } from '../service'
+
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
 

@@ -1,13 +1,14 @@
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import {
+  configuredStudySchema,
+  type ConfiguredStudy,
+} from '../configuredStudySchemas'
 import {
   CONFIGURED_CAPTURE_PHASES,
   CROSS_RUNTIME_STUDY_VERSION,
   IMAGE_LIMIT_BYTES,
 } from '../constants'
-import {
-  configuredStudySchema,
-  type ConfiguredStudy,
-} from '../configuredStudySchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+
 import { validateConfiguredStudyEvidence } from './validateConfiguredStudyEvidence'
 
 /** Validates configured history for storage/replay without consulting current files or granting live pause authority. @example decodeConfiguredStudy(archive, workspaceKey).profile // 'repository-browser' */

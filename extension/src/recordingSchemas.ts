@@ -1,10 +1,10 @@
+import { z } from 'zod'
+
+import { configuredStudySchema } from './configuredStudySchemas'
 import {
   CONFIGURED_OBSERVATION_LIMIT,
   CROSS_RUNTIME_CAPTURE_PHASES,
   CROSS_RUNTIME_RECORDING_VERSION,
-} from './constants'
-import { z } from 'zod'
-import {
   CONFIGURED_CAPTURE_PHASES,
   CONFIGURED_RECORDING_VERSION,
   IMAGE_LIMIT_BYTES,
@@ -22,7 +22,6 @@ import {
 } from './constants'
 import { studyIdSchema } from './legacyStudySchemas'
 import { capturePhaseSchema, profileSchema } from './studySchemas'
-import { configuredStudySchema } from './configuredStudySchemas'
 
 export const recordingHashSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const elapsed = z.number().finite().nonnegative()

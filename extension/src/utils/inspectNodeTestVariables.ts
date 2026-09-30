@@ -1,5 +1,6 @@
-import type * as vscode from 'vscode'
 import type { DebugProtocol } from '@vscode/debugprotocol'
+import type * as vscode from 'vscode'
+
 import {
   NODE_TEST_FACT_TYPE_LIMIT_CHARS,
   REPOSITORY_LITERAL_LIMIT_CHARS,

@@ -1,11 +1,11 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { test } from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
-import { setImmediate } from 'node:timers/promises'
 
 test('repository native QA reports an editor exit that arrives during launch metadata persistence', async () => {
   // Arrange: run the actual script with controlled process and filesystem boundaries.

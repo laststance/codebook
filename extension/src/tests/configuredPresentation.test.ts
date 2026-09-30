@@ -1,22 +1,24 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import { test } from 'node:test'
+
 import type { PlaybackBundle } from '../playbackController'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import type {
   CitationSourceStates,
   LiveStudy,
   SourceBaselines,
 } from '../studyModel'
 import { projectStudy } from '../studyModel'
-import { captureStudy } from '../utils/captureStudy'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
+import { capturedAppHtml } from '../utils/capturedAppHtml'
+import { captureStudy } from '../utils/captureStudy'
 import { decodeLearnerProgress } from '../utils/decodeLearnerProgress'
 import { describeStudy } from '../utils/describeStudy'
 import { projectPlaybackStudy } from '../utils/projectPlaybackStudy'
 import { selectStudy } from '../utils/selectStudy'
-import { capturedAppHtml } from '../utils/capturedAppHtml'
-import { createConfiguredStudy } from './utils/createConfiguredStudy'
+
 import { configuredServiceHarness } from './utils/configuredServiceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
 const baseline = {
   text: 'fixture is unrelated',

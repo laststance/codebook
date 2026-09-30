@@ -1,11 +1,13 @@
-import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { test, type TestContext } from 'node:test'
+
 import { LearningLibrary } from '../learningLibrary'
 import { RepositoryBookStore } from '../repositoryBook'
 import type { BookDocument } from '../repositorySchemas'
 import { prepareRepositoryStudy } from '../utils/prepareRepositoryStudy'
+
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { repositoryHarness } from './utils/repositoryHarness'
 
@@ -215,8 +217,8 @@ test('cancellation during article acquisition prevents later source work and can
       await preparationHarness(context),
     controller = new AbortController(),
     read = books.readDefinition.bind(books)
-  let release = () => {},
-    entered = () => {},
+  let release = (): void => {},
+    entered = (): void => {},
     acquisitions = 0
   const pending = new Promise<void>((resolve) => {
       release = resolve

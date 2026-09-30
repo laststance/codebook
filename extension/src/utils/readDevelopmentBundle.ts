@@ -1,8 +1,9 @@
-import { join, resolve, sep } from 'node:path'
 import { realpath } from 'node:fs/promises'
+import { join, resolve, sep } from 'node:path'
 import { setImmediate } from 'node:timers/promises'
+
 import { z } from 'zod'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+
 import {
   REPOSITORY_CHUNK_LIMIT_BYTES,
   REPOSITORY_DISCOVERY_CANDIDATE_LIMIT,
@@ -11,13 +12,15 @@ import {
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
   REPOSITORY_SOURCE_LIMIT_BYTES,
 } from '../constants'
-import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import type { BundleSource } from '../repositoryBundle'
+import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
+import { repositoryEntryPathSchema } from '../repositoryConfigSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+
+import { createBundleVerifier } from './createBundleVerifier'
 import { extractDevelopmentModule } from './extractDevelopmentModule'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
-import { repositoryEntryPathSchema } from '../repositoryConfigSchemas'
-import { createBundleVerifier } from './createBundleVerifier'
 
 const clientManifestSchema = z.object({
   clientModules: z.record(

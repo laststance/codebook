@@ -1,8 +1,11 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { test } from 'node:test'
+
+import type * as ExtensionModule from '../extension'
+
 import { loadModule } from './utils/loadModule'
 
 type Command = () => Promise<unknown>
@@ -53,11 +56,11 @@ async function boundary(
   let deferredSkillRemoval: { entered(): void; wait: Promise<void> } | undefined
   const warnings: string[] = []
   class Emitter {
-    event = () => {}
-    fire() {
+    event = (): void => {}
+    fire(): void {
       notices += 1
     }
-    dispose() {}
+    dispose(): void {}
   }
   class HttpDefinition implements Definition {
     constructor(
@@ -81,11 +84,11 @@ async function boundary(
     commands: {
       registerCommand(name: string, action: Command) {
         commands.set(name, action)
-        return { dispose() {} }
+        return { dispose(): void {} }
       },
     },
     workspace: {
-      onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+      onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
       getConfiguration: () => ({
         get: (_name: string, fallback: string) => fallback,
       }),
@@ -107,28 +110,31 @@ async function boundary(
     lm: {
       registerMcpServerDefinitionProvider(_id: string, received: Provider) {
         provider = received
-        return { dispose() {} }
+        return { dispose(): void {} }
       },
     },
     cursor: {
       mcp: {
-        registerServer(config: (typeof registrations)[number]) {
+        registerServer(config: (typeof registrations)[number]): void {
           registrations.push(config)
         },
-        unregisterServer(name: string) {
+        unregisterServer(name: string): void {
           removals.push(name)
         },
       },
     },
   }
-  const loaded = await loadModule<typeof import('../extension')>(
+  const loaded = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode,
       './service': { StudyService: Service },
       './environment': {
         requireWorkspace: () => directory,
-        createEnvironment: async () => ({ workspace: directory, dispose() {} }),
+        createEnvironment: async () => ({
+          workspace: directory,
+          dispose(): void {},
+        }),
       },
       './server': {
         startServer: async (service: Service) => {
@@ -148,22 +154,22 @@ async function boundary(
               workspace: directory,
               apiVersion: '1.5',
             },
-            close: async () => {},
+            close: async (): Promise<void> => {},
           }
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
           presentation = undefined
-          async attach() {}
-          async retire() {}
-          async dispose() {}
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
         },
       },
       './repositoryReader': {
         RepositoryReader: class {
-          async storage() {}
-          async dispose() {}
+          async storage(): Promise<void> {}
+          async dispose(): Promise<void> {}
         },
       },
       './cursorSkillDeployment': {
@@ -348,17 +354,17 @@ async function boundary(
       deferredSkillRemoval = { entered, wait }
       return { started, release }
     },
-    removeSkillFromAnotherWindow() {
+    removeSkillFromAnotherWindow(): void {
       skillPresent = false
       catalogPresent = false
     },
-    restoreSkillInAnotherWindow() {
+    restoreSkillInAnotherWindow(): void {
       skillPresent = true
       catalogPresent = true
       catalogGeneration = 'restored-in-another-window'
     },
     catalogPresent: () => catalogPresent,
-    failNextCatalogRefresh() {
+    failNextCatalogRefresh(): void {
       failCatalogRefresh = true
     },
     warnings: () => warnings,
@@ -528,7 +534,7 @@ test('concurrent Cursor starts register one MCP bridge for the restarted server'
 test('stopping Cursor while its Node resolves never registers a retired server descriptor', async (context) => {
   // Arrange
   const editor = await boundary(context, 'Cursor')
-  let release = () => {}
+  let release = (): void => {}
   try {
     await editor.commands.get('codebook.setupAiChat')!()
     await editor.commands.get('codebook.stopAgentServer')!()
@@ -629,7 +635,7 @@ test('removing Cursor setup while its server starts cannot save a deleted skill 
 test('removing Cursor setup while reconnecting cannot restore its MCP registration', async (context) => {
   // Arrange
   const editor = await boundary(context, 'Cursor', true, true)
-  let release = () => {}
+  let release = (): void => {}
   try {
     await editor.commands.get('codebook.setupAiChat')!()
     await editor.commands.get('codebook.stopAgentServer')!()

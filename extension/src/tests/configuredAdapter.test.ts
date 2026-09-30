@@ -1,4 +1,3 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   mkdir,
@@ -11,24 +10,28 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
+
 import type { Protocol } from 'devtools-protocol'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import { readDevelopmentBundle } from '../utils/readDevelopmentBundle'
-import { readRepositoryBuildText } from '../utils/readRepositoryBuildText'
-import { createBundleVerifier } from '../utils/createBundleVerifier'
-import { sameScriptUrl } from '../utils/sameScriptUrl'
-import { inspectConfiguredValues } from '../utils/inspectConfiguredValues'
-import { configuredDomExpression } from '../utils/configuredDomExpression'
-import { assertDevelopmentWorkspace } from '../utils/assertDevelopmentWorkspace'
-import { repositoryHarness } from './utils/repositoryHarness'
-import { assertConfiguredSourceDocuments } from '../utils/assertConfiguredSourceDocuments'
+
 import { configuredDefinitionSchema } from '../configuredStudySchemas'
-import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import {
   REPOSITORY_CHUNK_LIMIT_BYTES,
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
 } from '../constants'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { assertConfiguredSourceDocuments } from '../utils/assertConfiguredSourceDocuments'
+import { assertDevelopmentWorkspace } from '../utils/assertDevelopmentWorkspace'
+import { configuredDomExpression } from '../utils/configuredDomExpression'
+import { createBundleVerifier } from '../utils/createBundleVerifier'
+import { inspectConfiguredValues } from '../utils/inspectConfiguredValues'
+import { readDevelopmentBundle } from '../utils/readDevelopmentBundle'
+import { readRepositoryBuildText } from '../utils/readRepositoryBuildText'
+import { sameScriptUrl } from '../utils/sameScriptUrl'
+
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { repositoryHarness } from './utils/repositoryHarness'
 
 test('unchanged native BOM and mixed-EOL source buffers pass identity guards while actual edits still reject', () => {
   // Arrange
@@ -296,7 +299,7 @@ test('configured inspection reads actual finite zero false null string and type 
     enabled: false,
     selection: null,
     title: 'observed',
-    handler() {},
+    handler(): void {},
   }
   const inspections = [
     { path: 'count', mode: 'value' as const, required: true },
@@ -585,7 +588,7 @@ test('required undefined remains an observed value distinct from null strings an
     fake: { type: 'undefined' },
     huge: 'x'.repeat(1025),
     invalid: NaN,
-    handler() {},
+    handler(): void {},
   }
   const paths = [
     'missing',

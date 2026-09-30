@@ -1,4 +1,3 @@
-import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
@@ -10,17 +9,20 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
+import { after, before, test } from 'node:test'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
 import { ZipFile } from 'yazl'
+
 import { buildPackage } from '../utils/buildPackage.mjs'
 import { COMPILED_DIRECTORIES } from '../utils/packageConstants.mjs'
 import { readVsixEntries } from '../utils/readVsixEntries.mjs'
-import { verifyPackageContent } from '../utils/verifyPackageContent.mjs'
 import { runPackageCommand } from '../utils/runPackageCommand.mjs'
+import { verifyPackageContent } from '../utils/verifyPackageContent.mjs'
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
 let directory, artifact, original, receipt

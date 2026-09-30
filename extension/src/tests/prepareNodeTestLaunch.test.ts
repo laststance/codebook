@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import {
   mkdtemp,
@@ -11,13 +12,13 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import assert from 'node:assert/strict'
+
 import { nodeTestConfigSchema } from '../nodeTestConfigSchemas'
-import { prepareNodeTestLaunch } from '../utils/prepareNodeTestLaunch'
 import type {
   ListVitestTestFilesRequest,
   VitestListedFile,
 } from '../utils/listVitestTestFiles'
+import { prepareNodeTestLaunch } from '../utils/prepareNodeTestLaunch'
 
 /**
  * Creates a disposable repository holding one cited source, one test file and an owned Vitest of the given version.

@@ -4,6 +4,7 @@ import { link, lstat, open, rename, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+
 import {
   CURSOR_MCP_CATALOG_LOCK_RETRIES,
   CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS,
@@ -11,6 +12,7 @@ import {
   CURSOR_MCP_CATALOG_REFRESH_STEP_MS,
   PRIVATE_FILE_MODE,
 } from '../constants'
+
 import { atomicPrivateWrite } from './atomicPrivateWrite'
 import { withStorageLock } from './withStorageLock'
 

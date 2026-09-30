@@ -1,10 +1,11 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
+
 import { repositoryEntryPathSchema } from '../repositoryConfigSchemas'
-import { resolveNextClientManifest } from '../utils/resolveNextClientManifest'
-import { prepareRepositoryInputs } from '../utils/prepareRepositoryInputs'
 import { Cdp } from '../runtimeSupport/cdp'
+import { prepareRepositoryInputs } from '../utils/prepareRepositoryInputs'
+import { resolveNextClientManifest } from '../utils/resolveNextClientManifest'
 
 for (const path of ['/login', '/invoices/42/edit?tab=details', '/'])
   test(`same-origin entry ${path} is accepted`, () => {
@@ -120,10 +121,10 @@ function inputHarness() {
     contains() {
       return false
     }
-    focus() {
+    focus(): void {
       active = this
     }
-    select() {}
+    select(): void {}
   }
   const original = new Input(),
     replacement = new Input()
@@ -214,23 +215,23 @@ function inputHarness() {
     commands,
     released,
     original,
-    close: () => cdp.close(),
-    replaceOnInsert: () => {
+    close: (): void => cdp.close(),
+    replaceOnInsert: (): void => {
       replacements = true
     },
-    foreign: () => {
+    foreign: (): void => {
       wrongOrigin = true
     },
-    obscure: () => {
+    obscure: (): void => {
       obscured = true
     },
-    duplicate: () => {
+    duplicate: (): void => {
       duplicates = true
     },
-    disconnectOnInsert: () => {
+    disconnectOnInsert: (): void => {
       disconnected = true
     },
-    prepare: (assertCurrent = () => {}) =>
+    prepare: (assertCurrent = (): void => {}): Promise<void> =>
       prepareRepositoryInputs(
         cdp,
         [{ selector: '#email', text: 'invalid@example.invalid' }],

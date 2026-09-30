@@ -1,5 +1,6 @@
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import { z } from 'zod'
+
 import { REPLAY_DEBUG_THREAD_ID, STUDY_SOURCE_SCHEME } from './constants'
 import {
   replayDebugSnapshotSchema,
@@ -192,7 +193,7 @@ export class ReplayDebugAdapter {
     const parsed = requestSchema.safeParse(message)
     if (!parsed.success) return
     const request = parsed.data
-    const respond = (body?: unknown) =>
+    const respond = (body?: unknown): void =>
       this.send({
         seq: ++this.sequence,
         type: 'response',

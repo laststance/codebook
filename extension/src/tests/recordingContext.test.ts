@@ -1,19 +1,21 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import { test } from 'node:test'
+
+import { LearningLibrary } from '../learningLibrary'
 import {
   RecordingStore,
   recordingDiskIo,
   type RecordingIo,
 } from '../recordingStore'
-import { LearningLibrary } from '../learningLibrary'
+import { readResource } from '../resources'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
 import { captureStudy } from '../utils/captureStudy'
 import { projectRecording } from '../utils/projectRecording'
-import { readResource } from '../resources'
 import { validateRecordingContext } from '../utils/validateRecordingContext'
+
 import { ControlledRuntime, createHarness } from './helpers'
 
 const png = Buffer.from(
@@ -66,7 +68,7 @@ async function contextHarness(io: RecordingIo = recordingDiskIo) {
     library,
     runtime,
     workspaceKey,
-    clock(value: number) {
+    clock(value: number): void {
       clock = value
     },
     async checkpoint() {

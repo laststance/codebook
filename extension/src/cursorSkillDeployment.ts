@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+
 import {
   CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
   EXTENSION_VERSION,

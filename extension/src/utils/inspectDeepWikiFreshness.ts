@@ -1,16 +1,18 @@
-import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
+
 import {
   WIKI_GIT_OUTPUT_LIMIT_BYTES,
   WIKI_GIT_TIMEOUT_MS,
   WIKI_SOURCE_LIMIT_BYTES,
 } from '../constants'
-import { sourceExclusion } from './sourceExclusion'
-import { matchesWikiExclusion } from './matchesWikiExclusion'
+
 import type { WikiIncludedSource } from './answerDeepWikiQuestion'
+import { matchesWikiExclusion } from './matchesWikiExclusion'
+import { sourceExclusion } from './sourceExclusion'
 
 const runGit = promisify(execFile)
 

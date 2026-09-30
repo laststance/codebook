@@ -1,5 +1,5 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   access,
   mkdir,
@@ -11,11 +11,14 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { createHash } from 'node:crypto'
-import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
+import { test } from 'node:test'
+
 import { connectionSchema } from '../client'
+import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
+import type * as ExtensionModule from '../extension'
 import { startServer } from '../server'
 import type { StudyService } from '../service'
+
 import { createHarness } from './helpers'
 import { loadModule } from './utils/loadModule'
 
@@ -32,19 +35,19 @@ test('browser Wiki opening rejects a manifest from another checkout and opens a 
   const commands = new Map<string, () => Promise<void>>(),
     opened: string[] = [],
     messages: string[] = []
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
-          onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
         },
         env: {
           openExternal: async (uri: { value: string }) => {
@@ -66,12 +69,12 @@ test('browser Wiki opening rejects a manifest from another checkout and opens a 
       './environment': { requireWorkspace: () => projectRoot },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
     },
@@ -138,19 +141,19 @@ test('shutting down releases the Study workspace before the DeepWiki reader even
   )
   const commands = new Map<string, () => Promise<void>>()
   const releases: string[] = []
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
-          onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
         },
         env: { openExternal: async () => true },
         Uri: {
@@ -172,13 +175,13 @@ test('shutting down releases the Study workspace before the DeepWiki reader even
       },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async open() {}
-          async dispose() {
+          async open(): Promise<void> {}
+          async dispose(): Promise<void> {
             releases.push('study-workspace')
           }
         },
@@ -231,14 +234,14 @@ test('a Wiki question opens a source-cited editor chat draft when VS Code expose
   const opened: string[] = []
   const chatDrafts: unknown[] = []
   let pickCount = 0
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
           executeCommand: async (name: string, options: unknown) => {
             chatDrafts.push({ name, options })
@@ -246,7 +249,7 @@ test('a Wiki question opens a source-cited editor chat draft when VS Code expose
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
-          onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
         },
         env: {
           openExternal: async (uri: { value: string }) => {
@@ -270,12 +273,12 @@ test('a Wiki question opens a source-cited editor chat draft when VS Code expose
       './environment': { requireWorkspace: () => projectRoot },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
     },
@@ -351,19 +354,19 @@ test('a Cursor Wiki question returns a source-cited browser answer when the edit
   const commands = new Map<string, () => Promise<void>>()
   const opened: string[] = []
   const prompts: string[] = []
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
-          onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
         },
         env: {
           appName: 'Cursor',
@@ -380,22 +383,22 @@ test('a Cursor Wiki question returns a source-cited browser answer when the edit
         CancellationTokenSource: class {
           token = {
             isCancellationRequested: false,
-            onCancellationRequested: () => ({ dispose() {} }),
+            onCancellationRequested: () => ({ dispose(): void {} }),
           }
-          cancel() {}
-          dispose() {}
+          cancel(): void {}
+          dispose(): void {}
         },
         window: { showErrorMessage: async () => undefined },
       },
       './environment': { requireWorkspace: () => projectRoot },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './utils/requestCursorWikiText': {
@@ -454,13 +457,13 @@ test('browser source citations activate only the matching checkout and report ch
   const opened: string[] = [],
     warnings: string[] = [],
     errors: string[] = []
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
-        commands: { registerCommand: () => ({ dispose() {} }) },
+        commands: { registerCommand: () => ({ dispose(): void {} }) },
         workspace: {
-          onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
           openTextDocument: async (uri: { fsPath: string }) => ({
             uri,
             lineCount: 2,
@@ -484,7 +487,7 @@ test('browser source citations activate only the matching checkout and report ch
             handleUri(uri: { path: string; query: string }): Promise<void>
           }) => {
             handleUri = handler.handleUri
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
           showTextDocument: async (document: { uri: { fsPath: string } }) => {
             opened.push(document.uri.fsPath)
@@ -502,12 +505,12 @@ test('browser source citations activate only the matching checkout and report ch
       './environment': { requireWorkspace: () => projectRoot },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
     },
@@ -571,14 +574,14 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
     submissions: unknown[] = [],
     errors: string[] = [],
     confirmations: string[] = []
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
           executeCommand: async (name: string, options: unknown) => {
             submissions.push({ name, options })
@@ -586,14 +589,14 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
-          onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
         },
         window: {
           registerUriHandler: (handler: {
             handleUri(uri: { path: string; query: string }): Promise<void>
           }) => {
             handleUri = handler.handleUri
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
           // The learner confirms each browser request in the editor.
           showWarningMessage: (
@@ -613,12 +616,12 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
       './environment': { requireWorkspace: () => projectRoot },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
     },
@@ -684,23 +687,25 @@ test('browser Change location opens this project’s Wiki output setting and ref
     ((uri: { path: string; query: string }) => Promise<void>) | undefined
   const settingsCommands: Array<{ name: string; query: string }> = []
   const errors: string[] = []
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         commands: {
-          registerCommand: () => ({ dispose() {} }),
+          registerCommand: () => ({ dispose(): void {} }),
           executeCommand: async (name: string, query: string) => {
             settingsCommands.push({ name, query })
           },
         },
-        workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
         window: {
           registerUriHandler: (handler: {
             handleUri(uri: { path: string; query: string }): Promise<void>
           }) => {
             handleUri = handler.handleUri
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
           showErrorMessage: (message: string) => {
             errors.push(message)
@@ -711,12 +716,12 @@ test('browser Change location opens this project’s Wiki output setting and ref
       './environment': { requireWorkspace: () => projectRoot },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
     },
@@ -783,27 +788,27 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
   const agentRuns: Array<{ root: string; prompt: string }> = [],
     chatCommands: string[] = [],
     messages: string[] = []
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         env: { appName: 'Cursor' },
         commands: {
-          registerCommand: () => ({ dispose() {} }),
+          registerCommand: () => ({ dispose(): void {} }),
           executeCommand: async (name: string) => {
             chatCommands.push(name)
           },
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
-          onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
         },
         window: {
           registerUriHandler: (handler: {
             handleUri(uri: { path: string; query: string }): Promise<void>
           }) => {
             handleUri = handler.handleUri
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
           showInformationMessage: (message: string) => {
             messages.push(message)
@@ -823,12 +828,12 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
       './environment': { requireWorkspace: () => projectRoot },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './utils/runCursorWikiUpdate': {
@@ -882,17 +887,19 @@ test(
       'Timed out waiting for identifiable primary editor focus',
     )
     let requests = 0
-    const boundary = await loadModule<typeof import('../extension')>(
+    const boundary = await loadModule<typeof ExtensionModule>(
       resolve(__dirname, '../extension.js'),
       {
         vscode: {
           commands: {
             registerCommand(name: string, action: () => Promise<void>) {
               commands.set(name, action)
-              return { dispose() {} }
+              return { dispose(): void {} }
             },
           },
-          workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+          workspace: {
+            onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          },
           window: {
             showErrorMessage(message: string) {
               messages.push(message)
@@ -903,16 +910,16 @@ test(
         './environment': {},
         './repositoryReader': {
           RepositoryReader: class {
-            async open() {
+            async open(): Promise<void> {
               requests += 1
               throw refusal
             }
-            async dispose() {}
+            async dispose(): Promise<void> {}
           },
         },
         './studyWorkspace': {
           StudyWorkspace: class {
-            async dispose() {}
+            async dispose(): Promise<void> {}
           },
         },
       },
@@ -945,17 +952,19 @@ test('a successful Wiki command opens once without displaying a failure notifica
   const commands = new Map<string, () => Promise<void>>(),
     messages: string[] = []
   let requests = 0
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
         },
-        workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
         window: {
           showErrorMessage(message: string) {
             messages.push(message)
@@ -966,15 +975,15 @@ test('a successful Wiki command opens once without displaying a failure notifica
       './environment': {},
       './repositoryReader': {
         RepositoryReader: class {
-          async open() {
+          async open(): Promise<void> {
             requests += 1
           }
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
     },
@@ -1003,32 +1012,34 @@ test('a released study with failed evidence can retire its dead connection and e
     commands = new Map<string, () => Promise<string | void>>()
   let environments = 0,
     disposed = 0
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         commands: {
           registerCommand(name: string, action: () => Promise<string | void>) {
             commands.set(name, action)
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
         },
-        workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
       },
       './repositoryReader': {
         RepositoryReader: class {
           async storage() {
             return undefined
           }
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
           presentation = undefined
-          async attach() {}
-          async retire() {}
-          async dispose() {}
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
         },
       },
       './environment': {
@@ -1037,7 +1048,7 @@ test('a released study with failed evidence can retire its dead connection and e
           environments += 1
           return {
             ...harness.service.environment,
-            dispose() {
+            dispose(): void {
               disposed += 1
             },
           }
@@ -1118,17 +1129,19 @@ test('a failed physical release keeps its owner and rejects starting or copying 
     commands = new Map<string, () => Promise<string | void>>()
   let disposed = 0,
     copied = 0
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         commands: {
           registerCommand(name: string, action: () => Promise<string | void>) {
             commands.set(name, action)
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
         },
-        workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
         env: {
           clipboard: {
             writeText: async () => {
@@ -1142,22 +1155,22 @@ test('a failed physical release keeps its owner and rejects starting or copying 
           async storage() {
             return undefined
           }
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
           presentation = undefined
-          async attach() {}
-          async retire() {}
-          async dispose() {}
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
         },
       },
       './environment': {
         requireWorkspace: () => harness.directory,
         createEnvironment: async () => ({
           ...harness.service.environment,
-          dispose() {
+          dispose(): void {
             disposed += 1
           },
         }),
@@ -1238,13 +1251,13 @@ test('a browser citation with an invalid line opens no source and explains the r
     ((uri: { path: string; query: string }) => Promise<void>) | undefined
   const opened: string[] = [],
     errors: string[] = []
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
-        commands: { registerCommand: () => ({ dispose() {} }) },
+        commands: { registerCommand: () => ({ dispose(): void {} }) },
         workspace: {
-          onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
           openTextDocument: async (uri: { fsPath: string }) => ({
             uri,
             lineCount: 2,
@@ -1268,7 +1281,7 @@ test('a browser citation with an invalid line opens no source and explains the r
             handleUri(uri: { path: string; query: string }): Promise<void>
           }) => {
             handleUri = handler.handleUri
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
           showTextDocument: async (document: { uri: { fsPath: string } }) => {
             opened.push(document.uri.fsPath)
@@ -1283,12 +1296,12 @@ test('a browser citation with an invalid line opens no source and explains the r
       './environment': { requireWorkspace: () => projectRoot },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
     },
@@ -1354,25 +1367,25 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
     ((uri: { path: string; query: string }) => Promise<void>) | undefined
   const agentRuns: string[] = [],
     messages: string[] = []
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         env: { appName: 'Cursor' },
         commands: {
-          registerCommand: () => ({ dispose() {} }),
+          registerCommand: () => ({ dispose(): void {} }),
           executeCommand: async () => undefined,
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
-          onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
         },
         window: {
           registerUriHandler: (handler: {
             handleUri(uri: { path: string; query: string }): Promise<void>
           }) => {
             handleUri = handler.handleUri
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
           showInformationMessage: (message: string) => {
             messages.push(message)
@@ -1392,12 +1405,12 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
       './environment': { requireWorkspace: () => projectRoot },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './utils/runCursorWikiUpdate': {
@@ -1471,25 +1484,25 @@ test('a browser Wiki update link starts no Cursor Agent unless the learner confi
     messages: string[] = [],
     confirmations: Array<{ message: string; modal: boolean; detail: string }> =
       []
-  const boundary = await loadModule<typeof import('../extension')>(
+  const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
         env: { appName: 'Cursor' },
         commands: {
-          registerCommand: () => ({ dispose() {} }),
+          registerCommand: () => ({ dispose(): void {} }),
           executeCommand: async () => undefined,
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
-          onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
         },
         window: {
           registerUriHandler: (handler: {
             handleUri(uri: { path: string; query: string }): Promise<void>
           }) => {
             handleUri = handler.handleUri
-            return { dispose() {} }
+            return { dispose(): void {} }
           },
           showInformationMessage: (message: string) => {
             messages.push(message)
@@ -1512,12 +1525,12 @@ test('a browser Wiki update link starts no Cursor Agent unless the learner confi
       './environment': { requireWorkspace: () => projectRoot },
       './repositoryReader': {
         RepositoryReader: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './studyWorkspace': {
         StudyWorkspace: class {
-          async dispose() {}
+          async dispose(): Promise<void> {}
         },
       },
       './utils/runCursorWikiUpdate': {

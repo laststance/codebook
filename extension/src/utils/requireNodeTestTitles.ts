@@ -1,5 +1,5 @@
-import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import { StudyError } from '../errors'
+import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 
 /**
  * Returns the cited test's title path, refusing a new Node test run that names its test with the retired `testName` or not at all.

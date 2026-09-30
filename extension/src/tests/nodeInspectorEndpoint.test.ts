@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { readNodeInspectorEndpoint } from '../utils/readNodeInspectorEndpoint'
 
 test('a split inspector announcement cannot expose a partial port or worker identity', () => {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+
 import {
   REPOSITORY_NARROW_WIDTH_PX,
   REPOSITORY_READER_DEBOUNCE_MS,
@@ -6,6 +7,7 @@ import {
 } from '../constants'
 import type { RepositorySelection } from '../learnerSchemas'
 import type { RepositoryViewMessage } from '../repositoryView'
+
 import { STUDY_STYLES } from './constants'
 
 declare function acquireVsCodeApi(): {
@@ -47,10 +49,10 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     restoring = false,
     timer: ReturnType<typeof setTimeout> | undefined
   const element = (id: string) => document.getElementById(id)!
-  const text = (id: string, value: string) => {
+  const text = (id: string, value: string): void => {
     element(id).textContent = value
   }
-  const send = (value: object) =>
+  const send = (value: object): void =>
     api.postMessage({ ...value, revision: current?.revision })
   const button = (label: string, id: string, action: () => void) => {
     const value = document.createElement('button')
@@ -63,7 +65,7 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     target: HTMLElement,
     entries: { value: string; label: string }[],
     selected: string,
-  ) => {
+  ): void => {
     if (!(target instanceof HTMLSelectElement)) return
     const signature = JSON.stringify(entries)
     if (target.dataset.options !== signature) {
@@ -117,13 +119,13 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
         : {}),
     }
   }
-  const persist = () => {
+  const persist = (): void => {
     if (restoring || !current?.selection || current.loading) return
     location = capture()
     api.setState({ key: contentKey, location, visited: [...visited] })
     send({ type: 'location', selection: { ...current.selection, location } })
   }
-  const restore = (focus: boolean) => {
+  const restore = (focus: boolean): void => {
     if (!location) return
     restoring = true
     const section = document.querySelector<HTMLElement>(
@@ -157,7 +159,7 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
       restoring = false
     })
   }
-  const select = (selection: RepositorySelection) => {
+  const select = (selection: RepositorySelection): void => {
     persist()
     send({ type: 'select', selection })
   }
@@ -171,7 +173,7 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
       send({ type: 'action', action: target.dataset.action })
     }
   })
-  element('books').onchange = (event) => {
+  element('books').onchange = (event): void => {
     const id =
         event.target instanceof HTMLSelectElement ? event.target.value : '',
       book = current?.catalog.find((value) => value.bookId === id)
@@ -183,7 +185,7 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
         anchorIndex: 0,
       })
   }
-  element('versions').onchange = (event) => {
+  element('versions').onchange = (event): void => {
     if (current?.selection && event.target instanceof HTMLSelectElement)
       select({
         ...current.selection,
@@ -192,7 +194,7 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
         location: undefined,
       })
   }
-  element('nodes').onchange = (event) => {
+  element('nodes').onchange = (event): void => {
     if (current?.selection && event.target instanceof HTMLSelectElement)
       select({
         ...current.selection,
@@ -201,7 +203,7 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
         location: undefined,
       })
   }
-  element('understand').onchange = (event) => {
+  element('understand').onchange = (event): void => {
     if (!(event.target instanceof HTMLInputElement)) return
     const understood = event.target.checked
     event.target.checked = current?.understanding?.understood ?? false
@@ -217,7 +219,7 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     event.target.setAttribute('aria-disabled', 'true')
     send({ type: 'understanding', understood })
   }
-  element('back-top').onclick = () => {
+  element('back-top').onclick = (): void => {
     window.scrollTo(0, 0)
     element('article-title').focus({ preventScroll: true })
     persist()

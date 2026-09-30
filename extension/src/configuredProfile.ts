@@ -1,4 +1,3 @@
-import { sha256 } from './runtimeSupport/utils/sha256'
 import {
   ACTIVE_TIMEOUT_MS,
   CONFIGURED_OBSERVATION_LIMIT,
@@ -16,6 +15,7 @@ import {
   REPOSITORY_SETUP_TIMEOUT_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
 } from './constants'
+import { sha256 } from './runtimeSupport/utils/sha256'
 
 // Configured items/facts are supplied by the accepted article intent, never by fixture expectations.
 const contract = {

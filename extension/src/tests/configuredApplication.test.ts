@@ -1,10 +1,11 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { createRequire } from 'node:module'
-import { runInNewContext } from 'node:vm'
 import { EventEmitter } from 'node:events'
+import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
+import { test } from 'node:test'
+import { runInNewContext } from 'node:vm'
+
 import type * as ServerModule from '../utils/launchDevelopmentServer'
 
 test('development readiness waits for a complete port across process output chunks', async () => {
@@ -108,7 +109,7 @@ test('shutdown kills surviving workers even when the process group leader alread
         if (name === 'node:child_process') return { spawn: () => child }
         if (name.endsWith('/utils/waitUntil'))
           return {
-            waitUntil: async (read: () => unknown) => {
+            waitUntil: async (read: () => unknown): Promise<void> => {
               if (!(await read())) throw new Error('Group deadline exceeded')
             },
           }

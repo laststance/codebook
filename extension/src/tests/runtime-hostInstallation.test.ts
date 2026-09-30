@@ -1,4 +1,3 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   mkdtemp,
@@ -11,6 +10,8 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { test } from 'node:test'
+
 import { readHostInstallation } from '../runtimeSupport/utils/readHostInstallation'
 
 test('an alternate editor bundle records its own version and commit, including when the binary is a symlink', async () => {

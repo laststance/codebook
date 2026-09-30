@@ -1,6 +1,8 @@
-import * as vscode from 'vscode'
 import { readFile, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
+
+import * as vscode from 'vscode'
+
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { OwnedNodeTestRun } from './ownedNodeTestRun'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'

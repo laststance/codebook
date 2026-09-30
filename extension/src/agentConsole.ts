@@ -1,6 +1,8 @@
-import { createInterface } from 'node:readline'
 import { readFile, writeFile } from 'node:fs/promises'
+import { createInterface } from 'node:readline'
+
 import { z } from 'zod'
+
 import { StudyClient, connectionSchema } from './client'
 
 const commandSchema = z.discriminatedUnion('operation', [

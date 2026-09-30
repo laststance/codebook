@@ -1,15 +1,17 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import type { DebugProtocol } from '@vscode/debugprotocol'
+
+import { REPLAY_DEBUG_MAX_VARIABLES } from '../constants'
 import { ReplayDebugAdapter } from '../replayDebugAdapter'
 import {
   replayDebugSnapshotSchema,
   type ReplayDebugSnapshot,
 } from '../replayDebugSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { captureReplayDebugSnapshot } from '../utils/captureReplayDebugSnapshot'
 import { shouldCaptureReplayScope } from '../utils/shouldCaptureReplayScope'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import { REPLAY_DEBUG_MAX_VARIABLES } from '../constants'
 
 const source = {
   name: 'app/lib/actions.ts',

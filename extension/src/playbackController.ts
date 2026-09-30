@@ -1,8 +1,8 @@
 import { PLAYBACK_TICK_INTERVAL_MS } from './constants'
 import type { PlaybackCommand } from './playbackSchemas'
 import type { RecordingContext, RecordingIndex } from './recordingSchemas'
-import { projectRecording } from './utils/projectRecording'
 import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
+import { projectRecording } from './utils/projectRecording'
 
 export interface PlaybackData {
   index: RecordingIndex

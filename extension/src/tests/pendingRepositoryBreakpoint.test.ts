@@ -1,8 +1,12 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
-import type { DebugSession } from 'vscode'
+import { test } from 'node:test'
+
 import type { DebugProtocol } from '@vscode/debugprotocol'
+import type { DebugSession } from 'vscode'
+
+import type * as OwnedRepositoryBreakpointModule from '../ownedRepositoryBreakpoint'
+
 import { loadModule } from './utils/loadModule'
 
 /** Supplies native API identities and explicit adapter messages without starting an editor or application. @example const harness = await breakpointHarness() */
@@ -28,28 +32,29 @@ async function breakpointHarness() {
     constructor(readonly location: Location) {}
   }
   const breakpoints: SourceBreakpoint[] = []
-  const module = await loadModule<
-    typeof import('../ownedRepositoryBreakpoint')
-  >(resolve(__dirname, '../ownedRepositoryBreakpoint.js'), {
-    vscode: {
-      Position,
-      Location,
-      SourceBreakpoint,
-      Uri: { file: (fsPath: string) => ({ fsPath }) },
-      debug: {
-        breakpoints,
-        addBreakpoints(values: SourceBreakpoint[]) {
-          breakpoints.push(...values)
-        },
-        removeBreakpoints(values: SourceBreakpoint[]) {
-          for (const value of values) {
-            const index = breakpoints.indexOf(value)
-            if (index >= 0) breakpoints.splice(index, 1)
-          }
+  const module = await loadModule<typeof OwnedRepositoryBreakpointModule>(
+    resolve(__dirname, '../ownedRepositoryBreakpoint.js'),
+    {
+      vscode: {
+        Position,
+        Location,
+        SourceBreakpoint,
+        Uri: { file: (fsPath: string) => ({ fsPath }) },
+        debug: {
+          breakpoints,
+          addBreakpoints(values: SourceBreakpoint[]) {
+            breakpoints.push(...values)
+          },
+          removeBreakpoints(values: SourceBreakpoint[]) {
+            for (const value of values) {
+              const index = breakpoints.indexOf(value)
+              if (index >= 0) breakpoints.splice(index, 1)
+            }
+          },
         },
       },
     },
-  })
+  )
   const session: DebugSession = {
     id: 'owned-server',
     name: 'server',

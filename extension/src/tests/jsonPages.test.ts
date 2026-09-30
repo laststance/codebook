@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { readJsonPage } from '../utils/readJsonPage'
 
 const baseUri = 'codebook://instance/evidence/inspection'

@@ -1,18 +1,18 @@
-import type { Evidence, RecordedEvent } from './runtimeSupport/evidence'
-import type { HostConfiguration } from './runtimeSupport/hostBrowser'
-import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate'
 import type {
   ConfiguredDefinition,
   ConfiguredObservation,
   ConfiguredStudy,
 } from './configuredStudySchemas'
-import {
+import type {
   NODE_TEST_PROFILE,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
 } from './constants'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type { NodeTestSourceStop } from './ownedNodeTestRun'
+import type { Evidence, RecordedEvent } from './runtimeSupport/evidence'
+import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate'
 
 export interface NodeTestRuntime {
   readonly id: string

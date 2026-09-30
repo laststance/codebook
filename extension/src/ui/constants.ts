@@ -1,4 +1,3 @@
-import type { ShortcutHelpEntry } from '../utils/installShortcutHelp'
 import {
   PLAYBACK_PAGE_STEP_MS,
   PLAYBACK_SECOND_MS,
@@ -11,6 +10,7 @@ import {
   PRESENTATION_FOCUS_IDS,
   PRESENTATION_FOCUS_ACTIONS,
 } from '../constants'
+import type { ShortcutHelpEntry } from '../utils/installShortcutHelp'
 const STUDY_FOCUS_MARGIN_PX = 4
 const STUDY_COMPACT_READER_MAX_WIDTH_PX = 759
 const STUDY_SEQUENCE_LAYOUT = {

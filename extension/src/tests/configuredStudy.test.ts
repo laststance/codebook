@@ -1,8 +1,10 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+import { test } from 'node:test'
+
 import { configuredStudySchema as studyArchiveSchema } from '../configuredStudySchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
+
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
 const workspaceKey = '0'.repeat(64)

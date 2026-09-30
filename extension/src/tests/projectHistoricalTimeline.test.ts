@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { projectHistoricalTimeline } from '../utils/projectHistoricalTimeline'
 
 test('a saved replay marks the video spans without native history and retains both recorded stops', () => {

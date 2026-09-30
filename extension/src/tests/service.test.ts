@@ -1,17 +1,19 @@
-import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { test } from 'node:test'
+
 import {
   REPOSITORY_BROWSER_PROFILE as PROFILE_ID,
   REPOSITORY_RUN_TIMEOUT_MS as RUN_TIMEOUT_MS,
 } from '../constants'
 import { StudyError } from '../errors'
 import { readResource } from '../resources'
-import { ControlledRuntime, createHarness } from './helpers'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
+
+import { ControlledRuntime, createHarness } from './helpers'
 
 test('runtime success remains pending or partial until the latest terminal reader checkpoint is saved', async () => {
   // Arrange: the runtime outcome is injected; this tests the product persistence contract, not execution success.
@@ -161,13 +163,13 @@ for (const shutdown of ['run stop', 'server shutdown'] as const) {
           .browser.snapshotUri!,
         runtime = harness.runtimes[0]!
       const stop = runtime.stop.bind(runtime)
-      runtime.reveal = async () => {
+      runtime.reveal = async (): Promise<void> => {
         entered = true
         await barrier
         editorOpen = true
         runtime.evidence.record('agent.source-revealed')
       }
-      runtime.stop = async () => {
+      runtime.stop = async (): Promise<void> => {
         editorOpen = false
         await stop()
       }
@@ -450,7 +452,7 @@ test('explanations publish captured values only after persistence and same-key c
     const barrier = new Promise<void>((resolve) => {
       release = resolve
     })
-    evidence.save = async (name, contents) => {
+    evidence.save = async (name, contents): Promise<void> => {
       entered = true
       await barrier
       await originalSave(name, contents)

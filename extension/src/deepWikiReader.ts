@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto'
+import { readFile, realpath } from 'node:fs/promises'
 import {
   createServer,
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http'
-import { readFile, realpath } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
+
 import {
   WIKI_HTTP_BODY_LIMIT_BYTES,
   WIKI_QUESTION_LIMIT_CHARS,
@@ -344,7 +345,7 @@ export async function startDeepWikiReader(
     origin = `http://127.0.0.1:${address.port}`
     return {
       url: `${origin}${prefix}index.html`,
-      close: () =>
+      close: (): Promise<void> =>
         new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),
         ),

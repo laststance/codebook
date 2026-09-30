@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { toPixelEditorLayout } from '../utils/toPixelEditorLayout'
 
 test('a minimum-size native group receives full pixels when Study replaces Guided at 200 percent', () => {

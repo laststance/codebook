@@ -1,13 +1,14 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { test } from 'node:test'
+
 import { LearningLibrary } from '../learningLibrary'
+import { learningState } from '../studyModel'
 import { citationContext } from '../utils/citationContext'
 import { citationLearningState } from '../utils/citationLearningState'
-import { learningState } from '../studyModel'
 
 const workspaceKey = '1'.repeat(64),
   sourceHash = '2'.repeat(64)

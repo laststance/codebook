@@ -1,4 +1,5 @@
 import { open } from 'node:fs/promises'
+
 import { StudyError } from '../errors'
 
 /** Limits trusted evidence reads before allocating full files; called by resource handlers. @example await readBoundedFile(path, IMAGE_LIMIT_BYTES) */

@@ -1,13 +1,17 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { StudyClient } from '../client'
-import { startServer } from '../server'
-import { createHarness } from './helpers'
+import { test } from 'node:test'
+
 import { z } from 'zod'
+
+import { StudyClient } from '../client'
+import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
+import { startServer } from '../server'
+
+import { createHarness } from './helpers'
+
 const stateSchema = z.object({
   participants: z.object({ browser: z.object({ resumable: z.boolean() }) }),
 })
-import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
 
 test('closing completed external clients releases transport slots while preserving the paused application', async () => {
   // Arrange

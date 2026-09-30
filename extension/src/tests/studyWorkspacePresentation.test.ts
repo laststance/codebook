@@ -1,15 +1,18 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
+import { test } from 'node:test'
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
+
+import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
+
 import {
   workspaceHarness,
   openRetainedStudy,
@@ -20,7 +23,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
     // Arrange
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let release = () => {},
+    let release = (): void => {},
       transfer: Promise<unknown> | undefined
     try {
       await harness.reader.open()
@@ -82,7 +85,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
     // Arrange: VS Code can keep activeTextEditor populated after native and inner webview focus succeed.
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let release = () => {}
+    let release = (): void => {}
     try {
       await openRetainedStudy(harness)
       await harness.reader.understand(true)
@@ -133,7 +136,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
     // Arrange: a late text-editor notification does not represent a new native tab or learner choice.
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let release = () => {}
+    let release = (): void => {}
     try {
       await harness.reader.open()
       const initial = harness.reader.presentationState()
@@ -197,7 +200,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
     // Arrange
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let release = () => {},
+    let release = (): void => {},
       transfer: Promise<unknown> | undefined
     try {
       await openRetainedStudy(harness)
@@ -261,7 +264,7 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
     // Arrange
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let release = () => {},
+    let release = (): void => {},
       transfer: Promise<unknown> | undefined
     try {
       await harness.reader.open()
@@ -768,7 +771,7 @@ for (const editStage of [
       harness.retainReadingRange(84, 96)
       const restoreFocus = harness.reader['capturePresentationFocus']()
       await harness.reader.action('focus-app')
-      const edit = () =>
+      const edit = (): void =>
         draft.replaceContent('New first line.\nNew last line.\n')
       if (editStage === 'before focus restoration') edit()
       else if (editStage === 'during native source display')
@@ -823,7 +826,7 @@ test('restoring replay preserves a learner draft opened over historical source d
   // Arrange
   const harness = await recordedReaderHarness(true)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
@@ -1135,7 +1138,7 @@ test('Close cancels pending focus recovery after a native layout failure without
   // Arrange: earlier owned-panel focus receipts succeed; failure recovery receives no final focus receipt.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let recoveryEntered = () => {}
+  let recoveryEntered = (): void => {}
   const recoveryStarted = new Promise<void>((resolve) => {
     recoveryEntered = resolve
   })
@@ -1649,7 +1652,7 @@ for (const boundary of ['layout read', 'layout application'] as const)
     // Arrange
     const harness = await workspaceHarness()
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let release = () => {}
+    let release = (): void => {}
     try {
       await harness.reader.open()
       harness.service.start({
@@ -1721,7 +1724,7 @@ for (const learnerChange of ['pane movement', 'focus change'] as const)
     // Arrange
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let release = () => {}
+    let release = (): void => {}
     try {
       await harness.reader.open()
       const held = harness.holdNextCommand('vscode.getEditorLayout')
@@ -1765,7 +1768,7 @@ test('a foreign preview opened during the layout read survives without relocatio
   // Arrange
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     const held = harness.holdNextCommand('vscode.getEditorLayout')
@@ -1813,7 +1816,7 @@ test('restoring layout during a late replay image retains the current frame and 
   // Arrange
   const harness = await recordedReaderHarness(true)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
@@ -2081,7 +2084,7 @@ for (const interruption of [
     // Arrange: hold the actual final Context preparation after it has selected the native editor.
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    let release = () => {},
+    let release = (): void => {},
       transfer: Promise<unknown> | undefined
     try {
       await harness.reader.open()
@@ -2105,7 +2108,7 @@ for (const interruption of [
       let originalSource: ReturnType<typeof harness.focusedSource>,
         interrupted = false,
         lateCommits = 0
-      let entered = (_source: NonNullable<typeof originalSource>) => {}
+      let entered = (_source: NonNullable<typeof originalSource>): void => {}
       const prepared = new Promise<NonNullable<typeof originalSource>>(
         (resolve) => {
           entered = resolve
@@ -2254,7 +2257,7 @@ test('leaving the native work window during presentation preserves the prior pre
   // Arrange
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     const held = harness.holdPresentationMessage()
@@ -2328,7 +2331,7 @@ test('presentation cannot save its mode from a stale reading restoration receipt
       panel.webview.postMessage = (message) => {
         if (message.type !== 'restore-presentation-pose')
           return originalPost(message)
-        releaseRestore = () => {
+        releaseRestore = (): void => {
           void originalPost(message)
         }
         observed()

@@ -1,13 +1,14 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createRequire } from 'node:module'
-import { runInNewContext } from 'node:vm'
+import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
-import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
+import { runInNewContext } from 'node:vm'
+
 import type * as HostModule from '../runtimeSupport/hostBrowser'
+import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
 /** Loads the compiled adapter with controlled non-cancellable editor calls for cleanup regressions. @example await loadHostBrowser(editorStub) */
 async function loadHostBrowser(
@@ -201,7 +202,7 @@ test('a pending debugger launch releases the already acquired Cursor tab and bri
           async listen() {
             return 9223
           }
-          async close() {
+          async close(): Promise<void> {
             bridgeClosed++
           }
         },

@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
 import { promisify } from 'node:util'
+
 import { z } from 'zod'
-import type { Cdp } from '../runtimeSupport/cdp'
+
 import { ACTIVE_TIMEOUT_MS } from '../constants'
+import type { Cdp } from '../runtimeSupport/cdp'
 
 const workerIdentitySchema = z.strictObject({
   pid: z.number().int().positive(),

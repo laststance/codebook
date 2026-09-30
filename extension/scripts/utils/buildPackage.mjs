@@ -4,21 +4,23 @@ import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+
 import { build as bundle, version as esbuildVersion } from 'esbuild'
-import { readBuildIdentity } from './readBuildIdentity.mjs'
+
 import { cleanPackageOutputs } from './cleanPackageOutputs.mjs'
-import { resolvePackageDestination } from './resolvePackageDestination.mjs'
 import { inspectBundle } from './inspectBundle.mjs'
-import { readVsixEntries } from './readVsixEntries.mjs'
+import { loadBuiltExtension } from './loadBuiltExtension.mjs'
+import { PACKAGE_MANIFEST_PATH } from './packageConstants.mjs'
+import { readBuildIdentity } from './readBuildIdentity.mjs'
 import { readVsixBytes } from './readVsixBytes.mjs'
+import { readVsixEntries } from './readVsixEntries.mjs'
+import { resolvePackageDestination } from './resolvePackageDestination.mjs'
+import { runPackageCommand } from './runPackageCommand.mjs'
 import {
   REQUIRED_PACKAGE_FILES,
   verifyPackageContent,
 } from './verifyPackageContent.mjs'
-import { loadBuiltExtension } from './loadBuiltExtension.mjs'
 import { withPackageOutput } from './withPackageOutput.mjs'
-import { runPackageCommand } from './runPackageCommand.mjs'
-import { PACKAGE_MANIFEST_PATH } from './packageConstants.mjs'
 
 /** Clean-builds and validates one self-contained private VSIX before replacing the requested output. @example await buildPackage(repository, '/tmp/codebook.vsix') */
 export async function buildPackage(

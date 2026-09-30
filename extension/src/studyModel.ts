@@ -1,18 +1,19 @@
-import { z } from 'zod'
-import type { StudyService } from './service'
-import { participantSchema, sourceSchema } from './legacyStudySchemas'
-import {
+import type { z } from 'zod'
+
+import type {
   configuredStudySchema as studyArchiveSchema,
   configuredSelectionSchema as selectionSchema,
 } from './configuredStudySchemas'
 import type { LearnerProgress, SavedLearnerDecision } from './learnerSchemas'
+import type { participantSchema, sourceSchema } from './legacyStudySchemas'
+import type { RepositorySourceService } from './repositorySource'
 import type {
   RetainedStudy,
   RetainedStudySelection,
 } from './retainedStudySchemas'
-import type { RepositorySourceService } from './repositorySource'
-import type { StudyDescriptor } from './utils/describeStudy'
+import type { StudyService } from './service'
 import type { citationContext } from './utils/citationContext'
+import type { StudyDescriptor } from './utils/describeStudy'
 import { projectConfiguredStudy } from './utils/projectConfiguredStudy'
 export {
   participantSchema,

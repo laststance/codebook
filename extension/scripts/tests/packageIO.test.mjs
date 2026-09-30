@@ -1,5 +1,5 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import {
   mkdir,
   mkdtemp,
@@ -11,21 +11,22 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { execFileSync } from 'node:child_process'
+
 import { buildPackage } from '../utils/buildPackage.mjs'
+import { cleanPackageOutputs } from '../utils/cleanPackageOutputs.mjs'
+import { inspectBundle } from '../utils/inspectBundle.mjs'
 import {
   BUILD_PACKAGES,
   COMPILED_DIRECTORIES,
 } from '../utils/packageConstants.mjs'
-import { withPackageOutput } from '../utils/withPackageOutput.mjs'
-import { resolvePackageDestination } from '../utils/resolvePackageDestination.mjs'
-import { cleanPackageOutputs } from '../utils/cleanPackageOutputs.mjs'
-import { runPackageCommand } from '../utils/runPackageCommand.mjs'
-import { inspectBundle } from '../utils/inspectBundle.mjs'
 import { readBuildIdentity } from '../utils/readBuildIdentity.mjs'
+import { resolvePackageDestination } from '../utils/resolvePackageDestination.mjs'
+import { runPackageCommand } from '../utils/runPackageCommand.mjs'
+import { withPackageOutput } from '../utils/withPackageOutput.mjs'
 
 /** Gives publication failures an owned directory and previous artifact whose bytes must survive. @example const fixture = await outputFixture(context) */
 async function outputFixture(context) {

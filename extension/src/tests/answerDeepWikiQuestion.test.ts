@@ -1,9 +1,12 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { test } from 'node:test'
+
+import type * as AnswerDeepWikiQuestionModule from '../utils/answerDeepWikiQuestion'
+
 import { loadModule } from './utils/loadModule'
 
 test('Wiki question cites only lines from unchanged repository source', async () => {
@@ -13,13 +16,14 @@ test('Wiki question cites only lines from unchanged repository source', async ()
   const source = 'export function createInvoice() {\n  return "saved";\n}\n'
   await writeFile(join(root, 'actions.ts'), source)
   const hash = createHash('sha256').update(source).digest('hex')
-  const boundary = await loadModule<
-    typeof import('../utils/answerDeepWikiQuestion')
-  >(resolve(__dirname, '../utils/answerDeepWikiQuestion.js'), {
-    vscode: {
-      LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
     },
-  })
+  )
   let prompt = ''
   const model = {
     sendRequest: async (messages: { text: string }[]) => {
@@ -49,7 +53,7 @@ test('Wiki question cites only lines from unchanged repository source', async ()
     assert.equal(answer.citations[0]?.path, 'actions.ts')
     assert.equal(answer.citations[0]?.line, 2)
     assert.match(
-      answer.citations[0]!.uri,
+      answer.citations[0].uri,
       /^vscode:\/\/laststance\.codebook\/source\?/,
     )
     assert.equal(answer.sourceChanged, false)
@@ -63,13 +67,14 @@ test('Wiki question refuses changed source rather than presenting stale model co
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-answer-stale-'))
   const root = await realpath(directory)
   await writeFile(join(root, 'actions.ts'), 'export const answer = 2;\n')
-  const boundary = await loadModule<
-    typeof import('../utils/answerDeepWikiQuestion')
-  >(resolve(__dirname, '../utils/answerDeepWikiQuestion.js'), {
-    vscode: {
-      LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
     },
-  })
+  )
   let calls = 0
   const model = {
     sendRequest: async () => {
@@ -81,7 +86,7 @@ test('Wiki question refuses changed source rather than presenting stale model co
     // Act / Assert
     await assert.rejects(
       boundary.answerDeepWikiQuestion(
-        model as never,
+        model,
         root,
         [{ path: 'actions.ts', sha256: 'a'.repeat(64) }],
         'What does it do?',
@@ -123,13 +128,14 @@ test('Japanese Wiki question routes to a relevant English source before answerin
       }
     }),
   )
-  const boundary = await loadModule<
-    typeof import('../utils/answerDeepWikiQuestion')
-  >(resolve(__dirname, '../utils/answerDeepWikiQuestion.js'), {
-    vscode: {
-      LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
     },
-  })
+  )
   const prompts: string[] = []
   const model = {
     sendRequest: async (messages: { text: string }[]) => {
@@ -186,13 +192,14 @@ test('a large Wiki index keeps the source-routing request within the Cursor prom
       }
     }),
   )
-  const boundary = await loadModule<
-    typeof import('../utils/answerDeepWikiQuestion')
-  >(resolve(__dirname, '../utils/answerDeepWikiQuestion.js'), {
-    vscode: {
-      LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
     },
-  })
+  )
   const prompts: string[] = []
   const model = {
     sendRequest: async (messages: { text: string }[]) => {
@@ -268,9 +275,10 @@ test('Wiki question still cites verified source when optional model routing is m
       }
     }),
   )
-  const boundary = await loadModule<
-    typeof import('../utils/answerDeepWikiQuestion')
-  >(resolve(__dirname, '../utils/answerDeepWikiQuestion.js'), {})
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {},
+  )
   const prompts: string[] = []
   try {
     // Act
@@ -344,9 +352,10 @@ test('application database questions include the runtime client instead of only 
       }
     }),
   )
-  const boundary = await loadModule<
-    typeof import('../utils/answerDeepWikiQuestion')
-  >(resolve(__dirname, '../utils/answerDeepWikiQuestion.js'), {})
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {},
+  )
   let answerPrompt = ''
   try {
     // Act
@@ -415,9 +424,10 @@ test('natural database question reaches the runtime driver without naming a sour
       }
     }),
   )
-  const boundary = await loadModule<
-    typeof import('../utils/answerDeepWikiQuestion')
-  >(resolve(__dirname, '../utils/answerDeepWikiQuestion.js'), {})
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {},
+  )
   const prompts: string[] = []
   try {
     // Act
@@ -473,9 +483,10 @@ test('Wiki explains a later invoice update guard after routing to a long source 
       }
     }),
   )
-  const boundary = await loadModule<
-    typeof import('../utils/answerDeepWikiQuestion')
-  >(resolve(__dirname, '../utils/answerDeepWikiQuestion.js'), {})
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {},
+  )
   const prompts: string[] = []
   try {
     // Act
@@ -520,9 +531,10 @@ test('Cursor browser question shows only answers citing unchanged excerpt lines'
     path: 'validate.ts',
     sha256: createHash('sha256').update(content).digest('hex'),
   }
-  const boundary = await loadModule<
-    typeof import('../utils/answerDeepWikiQuestion')
-  >(resolve(__dirname, '../utils/answerDeepWikiQuestion.js'), {})
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {},
+  )
   try {
     // Act / Assert
     await assert.rejects(
@@ -574,7 +586,7 @@ test('Cursor browser question shows only answers citing unchanged excerpt lines'
     assert.equal(answer.answer, 'It rejects an empty string.')
     assert.equal(answer.citations[0]?.line, 2)
     assert.match(
-      answer.citations[0]!.uri,
+      answer.citations[0].uri,
       /^cursor:\/\/laststance\.codebook\/source\?/,
     )
   } finally {

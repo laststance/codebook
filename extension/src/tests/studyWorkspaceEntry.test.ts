@@ -1,6 +1,8 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import { workspaceHarness } from './studyWorkspaceHarness'
 test('first Study entry from one editor group keeps empty Context separate from the application', async () => {
   // Arrange
@@ -80,7 +82,7 @@ for (const boundary of [
           new AbortController().signal,
         )
         void opening.catch(() => undefined)
-        let releaseMeasured = () => {}
+        let releaseMeasured = (): void => {}
         try {
           await firstRead.started
           const measured =
@@ -260,11 +262,11 @@ test('a second cold Open Study reports busy without creating Context before the 
   const refreshProgress = harness.reader['refreshProgress'].bind(harness.reader)
   try {
     await held.started
-    let prepared = () => {}
+    let prepared = (): void => {}
     const preparation = new Promise<void>((resolve) => {
       prepared = resolve
     })
-    harness.reader['refreshProgress'] = async () => {
+    harness.reader['refreshProgress'] = async (): Promise<void> => {
       await refreshProgress()
       prepared()
     }
@@ -307,12 +309,12 @@ test('a duplicate Open Study during initialization reports busy while the first 
   // Arrange
   const harness = await workspaceHarness(false),
     initialize = harness.reader['initialize'].bind(harness.reader)
-  let release = () => {},
+  let release = (): void => {},
     initializeCalls = 0
   const held = new Promise<void>((resolve) => {
     release = resolve
   })
-  harness.reader['initialize'] = async () => {
+  harness.reader['initialize'] = async (): Promise<void> => {
     initializeCalls++
     await held
     await initialize()
@@ -379,7 +381,7 @@ test('background refresh cannot open captured source into Application before col
   let refreshed = false
   harness.reader['arrange'] = async (
     ...arguments_: Parameters<typeof arrange>
-  ) => {
+  ): Promise<void> => {
     // Run the ordinary polling callback after admission but before the initial native reservation.
     if (!refreshed) {
       refreshed = true
@@ -413,7 +415,7 @@ test('first Study cannot confirm a learner source move that covers Application d
   const arrange = harness.reader['arrange'].bind(harness.reader)
   harness.reader['arrange'] = async (
     ...arguments_: Parameters<typeof arrange>
-  ) => {
+  ): Promise<void> => {
     // The source is rendered before the final grid receipt; a learner move must not become successful placement.
     harness.moveSource(1)
     return arrange(...arguments_)
@@ -464,7 +466,7 @@ test('first Study entry confirms a visible explanation in the only editor part w
   const draft = harness.focusMutableDraft()
   harness.onNextPanel('codebook.studyContext', (panel) => {
     const reveal = panel.reveal.bind(panel)
-    panel.reveal = (column, preserveFocus) => {
+    panel.reveal = (column, preserveFocus): void => {
       reveal(column, preserveFocus)
       draft.focus()
     }
@@ -490,7 +492,7 @@ test('first Study entry refuses an unfocused explanation when a second editor pa
   const draft = harness.focusMutableDraft()
   harness.onNextPanel('codebook.studyContext', (panel) => {
     const reveal = panel.reveal.bind(panel)
-    panel.reveal = (column, preserveFocus) => {
+    panel.reveal = (column, preserveFocus): void => {
       reveal(column, preserveFocus)
       draft.focus()
     }
@@ -767,8 +769,8 @@ test('presentation preserves a replacement Wiki while its prior background sourc
   // Arrange
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let releaseCapture = () => {},
-    releaseText = () => {},
+  let releaseCapture = (): void => {},
+    releaseText = (): void => {},
     changing: Promise<unknown> | undefined
   try {
     await harness.reader.open()
@@ -787,7 +789,7 @@ test('presentation preserves a replacement Wiki while its prior background sourc
     panel.webview.postMessage = (message) => {
       if (message.type !== 'capture-presentation-pose')
         return originalPost(message)
-      releaseCapture = () => {
+      releaseCapture = (): void => {
         void originalPost(message)
       }
       observed()
@@ -1331,7 +1333,7 @@ for (const primary of ['blank', 'settings'] as const)
           acquireSourceFocus: async () => {
             acquisitions++
             harness.focusMutableDraft()
-            return () => {
+            return (): void => {
               assert.equal(chat.focused(), false)
             }
           },
@@ -1339,10 +1341,10 @@ for (const primary of ['blank', 'settings'] as const)
             const focused = chat.focused()
             let disposed = false
             return {
-              dispose() {
+              dispose(): void {
                 disposed = true
               },
-              assertRetained() {
+              assertRetained(): void {
                 assert.equal(disposed, false)
                 assert.equal(chat.focused(), focused)
               },
@@ -1390,7 +1392,7 @@ test('opening Wiki after Study acquires its citation from a Settings-focused mai
         acquireSourceFocus: async () => {
           acquisitions++
           harness.focusMutableDraft()
-          return () => {
+          return (): void => {
             assert.equal(chat.focused(), false)
           }
         },
@@ -1545,7 +1547,7 @@ test('cold Wiki retains ordinary text focus without invoking the optional cited-
         begin() {},
         acquireSourceFocus: async () => {
           acquisitions++
-          return () => {}
+          return (): void => {}
         },
       },
     )

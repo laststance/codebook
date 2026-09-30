@@ -1,13 +1,13 @@
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import {
   createServer,
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http'
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
-import { createProtocol } from './protocol'
-import type { StudyService } from './service'
+
 import {
   API_VERSION,
   DYNAMIC_PORT,
@@ -21,6 +21,8 @@ import {
   SESSION_IDLE_TIMEOUT_MS,
   TOKEN_BYTES,
 } from './constants'
+import { createProtocol } from './protocol'
+import type { StudyService } from './service'
 
 interface Session {
   transport: StreamableHTTPServerTransport
@@ -60,7 +62,7 @@ async function readBody(
     const chunks: Buffer[] = []
     let size = 0,
       settled = false
-    const finish = (error?: Error, value?: unknown) => {
+    const finish = (error?: Error, value?: unknown): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -71,9 +73,9 @@ async function readBody(
       if (error) reject(error)
       else resolve(value)
     }
-    const onError = (error: Error) => finish(error)
-    const onAbort = () => finish(new Error('Request aborted'))
-    const onData = (chunk: Buffer) => {
+    const onError = (error: Error): void => finish(error)
+    const onAbort = (): void => finish(new Error('Request aborted'))
+    const onData = (chunk: Buffer): void => {
       size += chunk.length
       if (size > HTTP_BODY_LIMIT_BYTES) {
         rejectHttp(response, 413, 'Request body too large')
@@ -83,7 +85,7 @@ async function readBody(
       }
       chunks.push(chunk)
     }
-    const onEnd = () => {
+    const onEnd = (): void => {
       try {
         finish(undefined, JSON.parse(Buffer.concat(chunks).toString()))
       } catch {
@@ -217,7 +219,7 @@ export async function startServer(service: StudyService, now = Date.now) {
             }
             const ownedSession = session,
               priorClose = transport.onclose
-            transport.onclose = () => {
+            transport.onclose = (): void => {
               priorClose?.()
               pendingSessions.delete(ownedSession)
               if (transport.sessionId) sessions.delete(transport.sessionId)
@@ -271,7 +273,7 @@ export async function startServer(service: StudyService, now = Date.now) {
   if (!address || typeof address === 'string')
     throw new Error('Missing loopback address')
   origin = `http://${LOOPBACK_ADDRESS}:${address.port}`
-  const expire = async () => {
+  const expire = async (): Promise<void> => {
     await Promise.allSettled(
       [...sessions.values()]
         .filter(

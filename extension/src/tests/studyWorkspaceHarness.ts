@@ -1,32 +1,36 @@
 // Shared editor fakes stay process-local; workspace test files run in isolated Node workers.
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import { RecordingStore } from '../recordingStore'
-import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
-import type { StudyViewMessage } from '../ui/studyHtml'
+import { promisify } from 'node:util'
+
+import type { RepositorySelection } from '../learnerSchemas'
+import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import type { NodeTestSourceStop } from '../ownedNodeTestRun'
 import type {
   PresentationPoseCapture,
   PresentationPoseRestore,
 } from '../presentationSchemas'
-import { ControlledRuntime, createHarness } from './helpers'
-import { loadModule } from './utils/loadModule'
-import { bookObservationHash } from '../utils/bookObservationHash'
-import type { BookObservationBinding } from '../repositorySchemas'
-import type { RepositorySelection } from '../learnerSchemas'
-import { RepositoryBookStore } from '../repositoryBook'
-import { RepositorySourceService } from '../repositorySource'
-import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
+import { RecordingStore } from '../recordingStore'
 import type { ReplayInspection } from '../replayDebugger'
-import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
+import { RepositoryBookStore } from '../repositoryBook'
+import type * as RepositoryReaderModule from '../repositoryReader'
+import type { BookObservationBinding } from '../repositorySchemas'
+import { RepositorySourceService } from '../repositorySource'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type * as StudyWorkspaceModule from '../studyWorkspace'
+import type { StudyViewMessage } from '../ui/studyHtml'
+import { bookObservationHash } from '../utils/bookObservationHash'
+
+import { ControlledRuntime, createHarness } from './helpers'
 import { ControlledConfiguredRuntime } from './utils/configuredServiceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { loadModule } from './utils/loadModule'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
-import type { NodeTestSourceStop } from '../ownedNodeTestRun'
 
 /** Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions. @example const reader = await workspaceHarness() */
 export async function workspaceHarness(
@@ -48,25 +52,25 @@ export async function workspaceHarness(
     tooltip: '',
     command: undefined as unknown,
     visible: false,
-    show() {
+    show(): void {
       this.visible = true
     },
-    hide() {
+    hide(): void {
       this.visible = false
     },
-    dispose() {
+    dispose(): void {
       this.visible = false
     },
   }
-  let changed = () => {}
-  const disposable = () => ({ dispose() {} })
+  let changed = (): void => {}
+  const disposable = () => ({ dispose(): void {} })
   let outlineUpdates = 0
   class EventEmitter {
     event = () => disposable()
-    fire() {
+    fire(): void {
       outlineUpdates++
     }
-    dispose() {}
+    dispose(): void {}
   }
   class Uri {
     readonly fsPath: string
@@ -159,7 +163,7 @@ export async function workspaceHarness(
       (editor: SourceEditor | undefined) => void
     >(),
     selectionListeners = new Set<() => void>()
-  const activeTextEditorChanged = (editor: SourceEditor | undefined) => {
+  const activeTextEditorChanged = (editor: SourceEditor | undefined): void => {
     for (const listener of activeEditorListeners) listener(editor)
   }
   let primaryNotificationOrder: 'together' | 'editor first' | 'group first' =
@@ -176,7 +180,7 @@ export async function workspaceHarness(
     decoratedColumns: number[] = []
   let retainedReadingRange: Range | undefined
   /** Models native scrolling for display and explicit reveal without conflating their callbacks. @example scrollReadingRange(new Range(position, position)) */
-  const scrollReadingRange = (range: Range, revealType?: number) => {
+  const scrollReadingRange = (range: Range, revealType?: number): void => {
     if (!retainedReadingRange) return
     // Native AtTop includes five surrounding lines; revealing the whole old viewport repeatedly drifts upward.
     if (revealType === 3) {
@@ -203,7 +207,7 @@ export async function workspaceHarness(
     get viewColumn() {
       return reportedColumn ?? group.viewColumn
     },
-    setDecorations() {
+    setDecorations(): void {
       decoratedColumns.push(reportedColumn ?? group.viewColumn)
     },
     selections: [{ anchor: new Position(22, 0), active: new Position(22, 0) }],
@@ -213,7 +217,7 @@ export async function workspaceHarness(
           new Range(new Position(0, 0), new Position(100, 0)),
       ]
     },
-    revealRange(range, revealType) {
+    revealRange(range, revealType): void {
       const revealed = nextReadingReveal
       nextReadingReveal = undefined
       revealed?.()
@@ -233,7 +237,7 @@ export async function workspaceHarness(
     opened: typeof groups
     closed: typeof groups
     changed: typeof groups
-  }) => {
+  }): void => {
     for (const listener of groupChangeListeners) listener(event)
   }
   let sourceProvider = async (_uri: Uri) => ''
@@ -282,20 +286,20 @@ export async function workspaceHarness(
     async retire(
       _snapshot: ReplayDebugSnapshot | undefined,
       signal: AbortSignal,
-    ) {
+    ): Promise<void> {
       signal.throwIfAborted()
     }
-    invalidate() {
+    invalidate(): void {
       historicalDebugInvalidations++
     }
-    async dispose() {
+    async dispose(): Promise<void> {
       this.available = false
     }
   }
   let sourceOpenFailure = false
   let delayedPanelKind: string | undefined
   let deferredPanelRegistration = false
-  let registerDelayedPanel = () => {}
+  let registerDelayedPanel = (): void => {}
   let nextOpen: { wait: Promise<void>; entered(): void } | undefined
   let nextCommand:
     { name: string; wait: Promise<void>; entered(): void } | undefined
@@ -470,7 +474,7 @@ export async function workspaceHarness(
     let nativeTab = { input: new TabInputWebview(kind), isPreview: false }
     const epoch = randomUUID(),
       messageListeners = new Set<(message: unknown) => void>()
-    const emit = (message: unknown) => {
+    const emit = (message: unknown): void => {
       for (const listener of messageListeners) listener(message)
     }
     let registered = delayedPanelKind !== kind
@@ -605,7 +609,7 @@ export async function workspaceHarness(
             for (const listener of messageListeners) listener(message)
           })
           return {
-            dispose() {
+            dispose(): void {
               messageListeners.delete(callback)
             },
           }
@@ -619,7 +623,7 @@ export async function workspaceHarness(
       viewColumn,
       title: _title ?? '',
       /** Models a host model resync for registration tests while preserving the actual panel/tab relation. @example panel.refreshTabWrapper() */
-      refreshTabWrapper() {
+      refreshTabWrapper(): void {
         const previous = nativeTab
         nativeTab = { ...nativeTab }
         // Only the API wrapper changes; the native tab, selected group and panel lifetime remain the same.
@@ -643,7 +647,7 @@ export async function workspaceHarness(
           !registered || groups.some((group) => group.activeTab === nativeTab)
         )
       },
-      reveal(column?: number, preserveFocus?: boolean) {
+      reveal(column?: number, preserveFocus?: boolean): void {
         panelReveals.push({ kind, column, preserveFocus })
         const previousColumn = value.viewColumn,
           previousFocusedGroup = activeTabGroup
@@ -812,26 +816,26 @@ export async function workspaceHarness(
       onDidDispose(callback: () => void) {
         disposed.push(callback)
         return {
-          dispose() {
+          dispose(): void {
             const index = disposed.indexOf(callback)
             if (index >= 0) disposed.splice(index, 1)
           },
         }
       },
-      notifyViewState() {
+      notifyViewState(): void {
         for (const listener of viewChanged) listener()
       },
       viewListenerCount: () => viewChanged.length,
       onDidChangeViewState(callback: () => void) {
         viewChanged.push(callback)
         return {
-          dispose() {
+          dispose(): void {
             const index = viewChanged.indexOf(callback)
             if (index >= 0) viewChanged.splice(index, 1)
           },
         }
       },
-      dispose() {
+      dispose(): void {
         if (!panels.delete(value)) return
         for (const group of groups) {
           group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
@@ -841,7 +845,7 @@ export async function workspaceHarness(
       },
     }
     // Both hosts initialize optimistic panel flags before the native tab/view-state acknowledgement arrives.
-    const register = () => {
+    const register = (): void => {
       registered = true
       const group = nativeGroup(value.viewColumn ?? 1)
       if (!group.tabs.includes(nativeTab)) group.tabs.push(nativeTab)
@@ -866,7 +870,7 @@ export async function workspaceHarness(
     return value
   }
   const initialSelection: string[] = []
-  let outlineCheckbox = (_event: { items: [string, number][] }) => {}
+  let outlineCheckbox = (_event: { items: [string, number][] }): void => {}
   let outlineItem = (
     _itemId: string,
   ): { checkboxState?: number; description?: string; command?: unknown } => ({})
@@ -882,7 +886,7 @@ export async function workspaceHarness(
     reveal: async (
       participant: string,
       options: { select: boolean; focus: boolean },
-    ) => {
+    ): Promise<void> => {
       assert.equal(options.focus, false)
       if (options.select) outline.selection = [participant]
     },
@@ -894,7 +898,7 @@ export async function workspaceHarness(
     },
     onDidCreate: disposable,
     onDidDelete: disposable,
-    dispose() {},
+    dispose(): void {},
   }
   const viewportEvents: string[] = [],
     viewportInstances: WorkspaceViewport[] = []
@@ -923,7 +927,7 @@ export async function workspaceHarness(
       this.bind()
     }
     /** Tracks only the current simulated renderer so old disposal exposes a missing rebind. @example this.bind() */
-    private bind() {
+    private bind(): void {
       const current = this.panel
       this.listener = current.onDidDispose(() => {
         if (this.panel !== current || this.closed) return
@@ -933,23 +937,23 @@ export async function workspaceHarness(
       })
     }
     /** Refuses renderer use after genuine native closure during replay integration. @example await viewport.reveal() */
-    async reveal() {
+    async reveal(): Promise<void> {
       assert.equal(this.closed, false)
       this.rendererAttached = true
       viewportEvents.push(`reveal:${this.mode}`)
     }
     /** Marks selected live presentation without starting another runtime. @example await viewport.showLive() */
-    async showLive() {
+    async showLive(): Promise<void> {
       this.historical = false
       this.rendererAttached = true
     }
     /** Retains the hidden live lease while the workspace reads recorded evidence. @example viewport.showHistory() */
-    showHistory(html: string) {
+    showHistory(html: string): void {
       this.historical = true
       this.panel.webview.html = html
     }
     /** Ends this simulated lease during workspace cleanup, using its original release callback. @example viewport.close() */
-    close() {
+    close(): void {
       this.listener?.dispose()
       this.closed = true
       this.lease.released()
@@ -960,13 +964,13 @@ export async function workspaceHarness(
       assert.equal(this.held, false)
       this.held = true
       viewportEvents.push(`hold:${this.mode}`)
-      return () => {
+      return (): void => {
         this.held = false
         viewportEvents.push(`release:${this.mode}`)
       }
     }
     /** Exposes retirement ordering bugs by requiring the current placement hold. @example viewport.rebindPanel(replacement) */
-    rebindPanel(replacement: ReturnType<typeof panel>) {
+    rebindPanel(replacement: ReturnType<typeof panel>): void {
       assert.equal(this.held, true)
       assert.equal(this.closed, false)
       this.listener?.dispose()
@@ -976,18 +980,18 @@ export async function workspaceHarness(
       viewportEvents.push(`rebind:${this.mode}`)
     }
     /** Confirms that selected pixels restore outside the native placement hold. @example await viewport.restorePlacement() */
-    async restorePlacement() {
+    async restorePlacement(): Promise<void> {
       assert.equal(this.held, false)
       assert.equal(this.closed, false)
       this.rendererAttached = true
       viewportEvents.push(`restore:${this.mode}`)
     }
     /** Clears unavailable recorded pixels for playback readiness tests. @example viewport.clearRecorded() */
-    clearRecorded() {
+    clearRecorded(): void {
       displayedImage = undefined
     }
     /** Delays only the requested replay image so workspace tests can interrupt pending paints. @example await viewport.present(png) */
-    async present(image: string) {
+    async present(image: string): Promise<void> {
       assert.equal(this.rendererAttached, true, 'Webview is not ready')
       const held = nextImage
       nextImage = undefined
@@ -998,7 +1002,7 @@ export async function workspaceHarness(
       displayedImage = image
     }
     /** Models a confirmed missing-frame interval without retaining previous pixels. @example await viewport.presentMissing() */
-    async presentMissing() {
+    async presentMissing(): Promise<void> {
       assert.equal(
         this.rendererAttached,
         true,
@@ -1045,7 +1049,7 @@ export async function workspaceHarness(
       onDidReceiveMessage(callback: (message: unknown) => void) {
         summaryListeners.add(callback)
         return {
-          dispose() {
+          dispose(): void {
             summaryListeners.delete(callback)
           },
         }
@@ -1074,7 +1078,7 @@ export async function workspaceHarness(
     onDidChangeVisibility(callback: () => void) {
       summaryVisibilityListeners.add(callback)
       return {
-        dispose() {
+        dispose(): void {
           summaryVisibilityListeners.delete(callback)
         },
       }
@@ -1410,7 +1414,7 @@ export async function workspaceHarness(
         ) => {
           windowListeners.add(callback)
           return {
-            dispose() {
+            dispose(): void {
               windowListeners.delete(callback)
             },
           }
@@ -1446,7 +1450,7 @@ export async function workspaceHarness(
         ) => {
           activeEditorListeners.add(callback)
           return {
-            dispose() {
+            dispose(): void {
               activeEditorListeners.delete(callback)
             },
           }
@@ -1454,7 +1458,7 @@ export async function workspaceHarness(
         onDidChangeTextEditorSelection: (callback: () => void) => {
           selectionListeners.add(callback)
           return {
-            dispose() {
+            dispose(): void {
               selectionListeners.delete(callback)
             },
           }
@@ -1558,10 +1562,10 @@ export async function workspaceHarness(
           onDidChangeTabs: (callback: (event: TabChanges) => void) => {
             const notify = (
               event: TabChanges = { opened: [], closed: [], changed: [] },
-            ) => callback(event)
+            ): void => callback(event)
             tabChangeListeners.add(notify)
             return {
-              dispose() {
+              dispose(): void {
                 tabChangeListeners.delete(notify)
               },
             }
@@ -1569,7 +1573,7 @@ export async function workspaceHarness(
           onDidChangeTabGroups: (callback: typeof changedGroups) => {
             groupChangeListeners.add(callback)
             return {
-              dispose() {
+              dispose(): void {
                 groupChangeListeners.delete(callback)
               },
             }
@@ -1608,22 +1612,25 @@ export async function workspaceHarness(
     './runtimeSupport/browserViewport': { BrowserViewport: WorkspaceViewport },
     './replayDebugger': { ReplayDebugger: TestReplayDebugger },
   }
-  const boundary = await loadModule<typeof import('../studyWorkspace')>(
+  const boundary = await loadModule<typeof StudyWorkspaceModule>(
     resolve(__dirname, '../studyWorkspace.js'),
     editorDependencies,
   )
-  const repositoryBoundary = await loadModule<
-    typeof import('../repositoryReader')
-  >(resolve(__dirname, '../repositoryReader.js'), editorDependencies)
+  const repositoryBoundary = await loadModule<typeof RepositoryReaderModule>(
+    resolve(__dirname, '../repositoryReader.js'),
+    editorDependencies,
+  )
   const articleOpens: RepositorySelection[] = [],
     articleReturns: RepositorySelection[] = []
   const controls = {
     start: async () => harness.service,
-    connect: async () => {},
-    returnToRepository: async (selection: RepositorySelection) => {
+    connect: async (): Promise<void> => {},
+    returnToRepository: async (
+      selection: RepositorySelection,
+    ): Promise<void> => {
       articleReturns.push(selection)
     },
-    openArticle: async (selection: RepositorySelection) => {
+    openArticle: async (selection: RepositorySelection): Promise<void> => {
       articleOpens.push(selection)
     },
   }
@@ -1633,7 +1640,7 @@ export async function workspaceHarness(
   const workspaceState = {
     get: <Value>(key: string) =>
       presentationPreferences.get(key) as Value | undefined,
-    update: async (key: string, value: unknown) => {
+    update: async (key: string, value: unknown): Promise<void> => {
       const held = nextPreference
       nextPreference = undefined
       held?.entered()
@@ -1661,26 +1668,26 @@ export async function workspaceHarness(
     ...harness,
     playbackPanel,
     playbackPanelMessages,
-    hidePlaybackPanel() {
+    hidePlaybackPanel(): void {
       playbackPanel.visible = false
       for (const listener of playbackPanelVisibilityListeners) listener()
     },
-    disposePlaybackPanel() {
+    disposePlaybackPanel(): void {
       for (const listener of playbackPanelDisposeListeners) listener()
     },
-    receivePlaybackPanel(message: unknown) {
+    receivePlaybackPanel(message: unknown): void {
       for (const listener of playbackPanelListeners) listener(message)
     },
-    async resolveRestoredObservedMoments() {
+    async resolveRestoredObservedMoments(): Promise<void> {
       assert.ok(playbackPanelProvider)
       await playbackPanelProvider.resolveWebviewView(playbackPanel)
     },
     summary,
-    hideSummary() {
+    hideSummary(): void {
       summary.visible = false
       for (const listener of summaryVisibilityListeners) listener()
     },
-    setSavedStudyCapacity(value: unknown) {
+    setSavedStudyCapacity(value: unknown): void {
       savedStudyCapacity = value
     },
     saveStatus,
@@ -1692,23 +1699,26 @@ export async function workspaceHarness(
     commands,
     articleOpens,
     articleReturns,
-    receiveContext: (message: unknown) =>
+    receiveContext: (message: unknown): void =>
       receivers.get('codebook.studyContext')!(message),
-    receive: (message: unknown) => {
+    receive: (message: unknown): void => {
       if (reader.inspect().view?.contentTab === 'recording') {
         for (const listener of summaryListeners) listener(message)
       } else receivers.get('codebook.studyContext')!(message)
     },
     counts: () => ({ panels: panels.size, outlineUpdates }),
     peakPanels: () => peakPanels,
-    onNextPanel(kind: string, run: (value: ReturnType<typeof panel>) => void) {
+    onNextPanel(
+      kind: string,
+      run: (value: ReturnType<typeof panel>) => void,
+    ): void {
       nextPanelCreated = { kind, run }
     },
-    failNextPanelCreation(kind: string) {
+    failNextPanelCreation(kind: string): void {
       failedPanelKind = kind
     },
-    changed: () => changed(),
-    retainReadingRange(first: number, last: number) {
+    changed: (): void => changed(),
+    retainReadingRange(first: number, last: number): void {
       retainedReadingRange = new Range(
         new Position(first, 0),
         new Position(last, 0),
@@ -1735,7 +1745,7 @@ export async function workspaceHarness(
       return retainedReadingRange?.contains(new Position(line, 0))
     },
     outlineItem: (itemId: string) => outlineItem(itemId),
-    changeOutlineCheckbox: (itemId: string, checked: boolean) =>
+    changeOutlineCheckbox: (itemId: string, checked: boolean): void =>
       outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
     postedMessages: () => postedMessages,
     presentationPreferences,
@@ -1770,7 +1780,7 @@ export async function workspaceHarness(
       heldPresentationMessage = { mode, wait, entered }
       return { started, release }
     },
-    failPresentationPreference(value: boolean) {
+    failPresentationPreference(value: boolean): void {
       preferenceFailure = value
     },
     holdPresentationPreference() {
@@ -1784,14 +1794,14 @@ export async function workspaceHarness(
       nextPreference = { wait, entered }
       return { started, release }
     },
-    clock(value: number) {
+    clock(value: number): void {
       clock = value
     },
-    acknowledgeContext() {
+    acknowledgeContext(): void {
       automaticContextReceipt = true
     },
     displayedImage: () => displayedImage,
-    coverSourceWhenContextFocused() {
+    coverSourceWhenContextFocused(): void {
       contextCoversSource = true
     },
     panelColumn: (kind: string) =>
@@ -1801,7 +1811,7 @@ export async function workspaceHarness(
         .find((editor) => editor.document.uri.fsPath === path)
         ?.document.getText(),
     panelReveals: () => [...panelReveals],
-    suppressNativeInnerFocus() {
+    suppressNativeInnerFocus(): void {
       suppressNativeInnerFocus = true
       innerFocusedPanel = undefined
     },
@@ -1830,7 +1840,7 @@ export async function workspaceHarness(
       return { observed, release }
     },
     innerFocusedPanel: () => innerFocusedPanel,
-    changeWindowFocus(focused: boolean) {
+    changeWindowFocus(focused: boolean): void {
       windowState.focused = focused
       for (const listener of windowListeners) listener(windowState)
     },
@@ -1839,25 +1849,25 @@ export async function workspaceHarness(
       delayedPanelKind = kind
       deferredPanelRegistration = deferred
       asynchronousLayoutReads ||= deferred
-      return () => registerDelayedPanel()
+      return (): void => registerDelayedPanel()
     },
-    deferPanelFocus(kind: string, reveal: number) {
+    deferPanelFocus(kind: string, reveal: number): void {
       deferredPanelFocus = { kind, remaining: reveal }
       asynchronousLayoutReads = true
     },
-    deferPrimaryFocusEcho() {
+    deferPrimaryFocusEcho(): void {
       deferPrimaryFocusEcho = true
       asynchronousLayoutReads = true
     },
-    deferMovedFocusEcho() {
+    deferMovedFocusEcho(): void {
       deferMovedFocusEcho = true
       asynchronousLayoutReads = true
     },
-    deferKeptFocusEcho() {
+    deferKeptFocusEcho(): void {
       deferKeptFocusEcho = true
       asynchronousLayoutReads = true
     },
-    deferMovedPanelPlacement(kind: string) {
+    deferMovedPanelPlacement(kind: string): void {
       deferredMovedPanelPlacement = kind
       asynchronousLayoutReads = true
     },
@@ -1875,7 +1885,7 @@ export async function workspaceHarness(
       return wiki
     },
     /** Emits a tab-only learner change so registration tests cannot rely on a text-editor notification. @example harness.focusExistingWebviewTab(wiki.nativeTab); */
-    focusExistingWebviewTab(tab: Tab) {
+    focusExistingWebviewTab(tab: Tab): void {
       const group = groups.find((group) => group.tabs.includes(tab))
       assert.ok(group)
       assert.ok(tab.input instanceof TabInputWebview)
@@ -1912,11 +1922,13 @@ export async function workspaceHarness(
     retainRepositoryFocus:
       repositoryBoundary.RepositoryReader.prototype['retainNativeFocus'],
     /** Splits a native primary-focus handoff across actual event surfaces for cold Wiki integration tests. @example harness.usePrimaryFocusNotificationOrder('group first') */
-    usePrimaryFocusNotificationOrder(order: typeof primaryNotificationOrder) {
+    usePrimaryFocusNotificationOrder(
+      order: typeof primaryNotificationOrder,
+    ): void {
       primaryNotificationOrder = order
     },
     /** Models early panel notifications followed by same-group tab departure/reentry during a held response. @example harness.roundtripExistingPanelTab('codebook.studyContext', draft); */
-    roundtripExistingPanelTab(kind: string, tab: Tab) {
+    roundtripExistingPanelTab(kind: string, tab: Tab): void {
       const panel = [...panels].find((candidate) => candidate.kind === kind)
       assert.ok(panel)
       const group = groups.find((candidate) =>
@@ -1932,7 +1944,7 @@ export async function workspaceHarness(
       panel.notifyViewState()
     },
     /** Models a learner returning to an existing source during a held presentation response. @example harness.focusExistingSource(source); */
-    focusExistingSource(editor: SourceEditor) {
+    focusExistingSource(editor: SourceEditor): void {
       const group = groups.find((candidate) =>
         candidate.tabs.some(
           (tab) =>
@@ -1951,7 +1963,7 @@ export async function workspaceHarness(
       activeTextEditorChanged(editor)
       changedGroups({ opened: [], closed: [], changed: [group] })
     },
-    movePanel(kind: string, column: number) {
+    movePanel(kind: string, column: number): void {
       const panel = [...panels].find((panel) => panel.kind === kind)
       assert.ok(panel)
       panel.reveal(column)
@@ -1960,7 +1972,7 @@ export async function workspaceHarness(
     swapEditorGroups(
       first: typeof activeTabGroup,
       second: typeof activeTabGroup,
-    ) {
+    ): void {
       ;[first.viewColumn, second.viewColumn] = [
         second.viewColumn,
         first.viewColumn,
@@ -1972,31 +1984,31 @@ export async function workspaceHarness(
       changedGroups({ opened: [], closed: [], changed: [first, second] })
     },
     sourceColumn: () => sourceColumn,
-    restoreSourceFocusOnArrange() {
+    restoreSourceFocusOnArrange(): void {
       sourceFocusOnArrange = lastSourceEditor
     },
-    reportSourceEditorInColumn(column: number) {
+    reportSourceEditorInColumn(column: number): void {
       reportedSourceColumn = column
     },
-    invalidateNextSourceRender() {
-      nextSourceDisplay = () => {
+    invalidateNextSourceRender(): void {
+      nextSourceDisplay = (): void => {
         reader['revision']++
       }
     },
-    failCurrentSourceOpen() {
+    failCurrentSourceOpen(): void {
       sourceOpenFailure = true
     },
-    restoreCurrentSourceOpen() {
+    restoreCurrentSourceOpen(): void {
       sourceOpenFailure = false
     },
-    abortAfterNextSourceDisplay(cancellation: AbortController) {
-      nextSourceDisplay = () => cancellation.abort()
+    abortAfterNextSourceDisplay(cancellation: AbortController): void {
+      nextSourceDisplay = (): void => cancellation.abort()
     },
-    clearDecorations() {
+    clearDecorations(): void {
       decoratedColumns.length = 0
     },
     decoratedColumns: () => [...decoratedColumns],
-    moveSource(column: number) {
+    moveSource(column: number): void {
       const editor = lastSourceEditor
       assert.ok(editor)
       const matchesSource = (tab: Tab) =>
@@ -2025,22 +2037,22 @@ export async function workspaceHarness(
       activeTextEditorChanged(lastSourceEditor)
     },
     editorLayout: () => structuredClone(editorLayout),
-    changeEditorLayout(layout: unknown) {
+    changeEditorLayout(layout: unknown): void {
       explicitEditorLayout = true
       editorLayout = structuredClone(layout)
     },
-    flattenOnNextPanelMove(layout: unknown) {
+    flattenOnNextPanelMove(layout: unknown): void {
       nextMovedPanelLayout = structuredClone(layout)
     },
-    closeEmptyGroupsAfterPanelMove() {
+    closeEmptyGroupsAfterPanelMove(): void {
       closeEmptyGroupsOnMove = true
     },
     automaticallyClosedColumns: () => [...automaticallyClosedColumns],
-    useCursorGroupWrappers(twoEventContraction = false) {
+    useCursorGroupWrappers(twoEventContraction = false): void {
       cursorGroupWrappers = true
       cursorTwoEventContraction = twoEventContraction
     },
-    useNativeLayout(layout: unknown) {
+    useNativeLayout(layout: unknown): void {
       nativeLayout = true
       separateEditorPart = undefined
       const previous = [...groups]
@@ -2060,10 +2072,10 @@ export async function workspaceHarness(
       activeTabGroup.activeTab = activeTabGroup.tabs[0]
       changedGroups({ opened: [...groups], closed: previous, changed: [] })
     },
-    constrainStudyGrid() {
+    constrainStudyGrid(): void {
       constrainStudyGrid = true
     },
-    hideGridWhileMaximized() {
+    hideGridWhileMaximized(): void {
       hideGridWhileMaximized = true
     },
     /** Adds a real separate-part boundary without changing the main leaf count, matching the recorded Cursor probe. @example const chat = harness.addSeparateEditorPart(); chat.focus(); */
@@ -2092,12 +2104,12 @@ export async function workspaceHarness(
         tab: chatTab,
         layout: () => structuredClone(separateEditorPart?.layout),
         focused: () => separateEditorPart?.focused,
-        focus() {
+        focus(): void {
           separateEditorPart!.focused = true
           activeTextEditorChanged(undefined)
         },
         /** Refreshes only the foreign wrapper when presentation tests create a pane; lifecycle and movement remain distinct. @example chat.resync('wrapper') */
-        resync(change: 'wrapper' | 'opened' | 'unannounced' | 'move') {
+        resync(change: 'wrapper' | 'opened' | 'unannounced' | 'move'): void {
           const previous = separateEditorPart!.group,
             replacement = { ...previous, tabs: [...previous.tabs] }
           // The unchanged empty chat part is not a new native group; explicit lifecycle events cannot inherit it.
@@ -2112,13 +2124,13 @@ export async function workspaceHarness(
         },
       }
     },
-    reportSeparatePartLayout(layout: unknown) {
+    reportSeparatePartLayout(layout: unknown): void {
       separatePartLayoutReport = structuredClone(layout)
     },
-    showTransientNativeSizes() {
+    showTransientNativeSizes(): void {
       transientLayout = true
     },
-    failNextCommand(name: string) {
+    failNextCommand(name: string): void {
       failingCommand = name
     },
     /** Gives presentation/scope regressions a learner-owned document whose edits do not move its tab. @example const draft = harness.focusMutableDraft('notes.txt', 2); draft.replaceContent('new text'); */
@@ -2157,11 +2169,11 @@ export async function workspaceHarness(
         document,
         tab,
         editor,
-        replaceContent(value: string) {
+        replaceContent(value: string): void {
           text = value
           document.version++
         },
-        focus() {
+        focus(): void {
           group.activeTab = tab
           activeTabGroup = group
           if (separateEditorPart) separateEditorPart.focused = false
@@ -2184,10 +2196,10 @@ export async function workspaceHarness(
       group.activeTab = tab
       return tab
     },
-    changeAfterNextSourceDisplay(change: (editor: SourceEditor) => void) {
+    changeAfterNextSourceDisplay(change: (editor: SourceEditor) => void): void {
       nextSourceDisplay = change
     },
-    changeAfterNextReadingReveal(change: () => void) {
+    changeAfterNextReadingReveal(change: () => void): void {
       nextReadingReveal = change
     },
     addForeignDraft(column = groups[0]!.viewColumn) {
@@ -2246,7 +2258,7 @@ export async function workspaceHarness(
         | 'reorder'
         | 'empty',
       preserveEmpty = false,
-    ) {
+    ): void {
       // Give each fake group a distinct stable input, like the actual singleton panels/native source tabs.
       for (const group of groups)
         if (!group.tabs.length && change !== 'empty' && !preserveEmpty)
@@ -2297,7 +2309,7 @@ export async function workspaceHarness(
       change: 'wrapper' | 'opened' | 'unannounced',
       column = activeTabGroup.viewColumn,
       changeTabs?: (tabs: Tab[]) => void,
-    ) {
+    ): void {
       const previous = groups.find((group) => group.viewColumn === column)
       assert.ok(previous)
       const replacement = { ...previous, tabs: [...previous.tabs] }
@@ -2315,7 +2327,7 @@ export async function workspaceHarness(
     },
     seedPanelTabs(
       kind: 'known' | 'unknown' | 'duplicate' | 'ambiguous' | 'empty',
-    ) {
+    ): void {
       for (const group of groups) {
         const type =
           kind === 'ambiguous' || group.viewColumn === 1
@@ -2338,8 +2350,8 @@ export async function workspaceHarness(
       }
     },
     holdNextImage() {
-      let release = () => {},
-        entered = () => {}
+      let release = (): void => {},
+        entered = (): void => {}
       const started = new Promise<void>((resolve) => {
           entered = resolve
         }),
@@ -2350,8 +2362,8 @@ export async function workspaceHarness(
       return { started, release }
     },
     holdNextCommand(name: string) {
-      let release = () => {},
-        entered = () => {}
+      let release = (): void => {},
+        entered = (): void => {}
       const started = new Promise<void>((resolve) => {
           entered = resolve
         }),
@@ -2363,8 +2375,8 @@ export async function workspaceHarness(
     },
     /** Holds only the response after a native split so scope tests can change learner intent. @example const split = harness.holdNextLayoutResponse(); */
     holdNextLayoutResponse() {
-      let release = () => {},
-        entered = () => {}
+      let release = (): void => {},
+        entered = (): void => {}
       const started = new Promise<void>((resolve) => {
           entered = resolve
         }),
@@ -2376,8 +2388,8 @@ export async function workspaceHarness(
     },
     /** Lets scope regressions insert learner input after primary focus is applied but before its command response. @example const focus = harness.holdNextPrimaryFocusResponse(); */
     holdNextPrimaryFocusResponse() {
-      let release = () => {},
-        entered = () => {}
+      let release = (): void => {},
+        entered = (): void => {}
       const started = new Promise<void>((resolve) => {
           entered = resolve
         }),
@@ -2388,19 +2400,19 @@ export async function workspaceHarness(
       return { started, release }
     },
     /** Sets whether later historical presentations report native Run and Debug values as loaded. @example harness.setHistoricalDebugInspection('uninspected') */
-    setHistoricalDebugInspection(value: ReplayInspection) {
+    setHistoricalDebugInspection(value: ReplayInspection): void {
       historicalDebugInspection = value
     },
     /** Models the learner expanding Variables: later presentations load values and each owner notifies the workspace once, without a new seek. @example harness.loadHistoricalDebugValues() */
-    loadHistoricalDebugValues() {
+    loadHistoricalDebugValues(): void {
       historicalDebugInspection = 'inspected'
       for (const debuggerView of historicalDebuggers) debuggerView.changed()
     },
     /** Keeps the next historical presentation loading until released or rejected, as native Run and Debug does before values load. @example const held = harness.holdHistoricalDebugPresentation(); await held.started; held.reject(new Error('superseded')) */
     holdHistoricalDebugPresentation() {
-      let release = () => {},
-        reject = (_error: Error) => {},
-        entered = () => {}
+      let release = (): void => {},
+        reject = (_error: Error): void => {},
+        entered = (): void => {}
       const started = new Promise<void>((resolve) => {
         entered = resolve
       })
@@ -2412,9 +2424,9 @@ export async function workspaceHarness(
       return { started, release, reject }
     },
     holdNextSource() {
-      let release = () => {},
-        reject = (_error: Error) => {},
-        entered = () => {}
+      let release = (): void => {},
+        reject = (_error: Error): void => {},
+        entered = (): void => {}
       const started = new Promise<void>((resolve) => {
         entered = resolve
       })
@@ -2425,7 +2437,7 @@ export async function workspaceHarness(
       nextOpen = { wait, entered }
       return { started, release, reject }
     },
-    async close() {
+    async close(): Promise<void> {
       await reader.retire(harness.service)
       await reader.dispose()
       await harness.close()
@@ -2436,7 +2448,7 @@ export async function workspaceHarness(
 /** Opens synthetic retained repository evidence for layout tests that need readable source without launching a runtime. @example await openRetainedStudy(harness) */
 export async function openRetainedStudy(
   harness: Awaited<ReturnType<typeof workspaceHarness>>,
-) {
+): Promise<void> {
   const library = await harness.reader.learningStorage()
   const study = {
     ...createConfiguredStudy(),
@@ -2682,10 +2694,10 @@ export async function configuredWorkspaceHarness(sourceText?: string) {
     study,
     configuredRuntimes,
     start,
-    configuredClock(value: number) {
+    configuredClock(value: number): void {
       clock = value
     },
-    async close() {
+    async close(): Promise<void> {
       await books.dispose()
       await harness.close()
     },
@@ -2729,7 +2741,7 @@ export async function articleRecordingLayoutHarness(
       },
     }
     await library.selectRepository(origin)
-    harness.controls.returnToRepository = async (selection) => {
+    harness.controls.returnToRepository = async (selection): Promise<void> => {
       await harness.reader.arrangeRepository(
         new AbortController().signal,
         selection,

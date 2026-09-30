@@ -1,5 +1,7 @@
 import type { z } from 'zod'
+
 import { HORIZONTAL_EDITOR_ORIENTATION } from '../constants'
+
 import { editorLayoutSchema } from './isProportionalEditorLayout'
 
 type EditorLayout = z.infer<typeof editorLayoutSchema>

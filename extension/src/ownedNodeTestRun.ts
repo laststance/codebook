@@ -1,26 +1,10 @@
-import * as vscode from 'vscode'
 import { randomUUID } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
 import { basename, isAbsolute, relative } from 'node:path'
+
 import type { DebugProtocol } from '@vscode/debugprotocol'
-import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
-import type { ReplayDebugSnapshot } from './replayDebugSchemas'
-import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint'
-import { NodeTestOutputTerminal } from './nodeTestOutputTerminal'
-import { waitUntil } from './runtimeSupport/utils/waitUntil'
-import { bindOwnedNodeTestDebugSession } from './utils/bindOwnedNodeTestDebugSession'
-import { launchNodeTest } from './utils/launchNodeTest'
-import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch'
-import { listVitestTestFiles } from './utils/listVitestTestFiles'
-import { verifyVitestTestResult } from './utils/verifyVitestTestResult'
-import {
-  inspectNodeTestVariables,
-  type NodeTestFact,
-} from './utils/inspectNodeTestVariables'
-import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
-import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame'
-import { sha256 } from './runtimeSupport/utils/sha256'
-import { RESUME_COMMANDS } from './runtimeSupport/constants'
+import * as vscode from 'vscode'
+
 import {
   NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   NODE_REPLAY_DEBUG_MAX_DEPTH,
@@ -29,7 +13,25 @@ import {
   NODE_TEST_ATTACH_TIMEOUT_MS,
   NODE_TEST_EXIT_GRACE_MS,
 } from './constants'
+import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
+import { NodeTestOutputTerminal } from './nodeTestOutputTerminal'
+import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint'
+import type { ReplayDebugSnapshot } from './replayDebugSchemas'
+import { RESUME_COMMANDS } from './runtimeSupport/constants'
+import { sha256 } from './runtimeSupport/utils/sha256'
+import { waitUntil } from './runtimeSupport/utils/waitUntil'
+import { bindOwnedNodeTestDebugSession } from './utils/bindOwnedNodeTestDebugSession'
+import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
+import {
+  inspectNodeTestVariables,
+  type NodeTestFact,
+} from './utils/inspectNodeTestVariables'
+import { launchNodeTest } from './utils/launchNodeTest'
+import { listVitestTestFiles } from './utils/listVitestTestFiles'
+import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch'
+import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame'
+import { verifyVitestTestResult } from './utils/verifyVitestTestResult'
 
 /** One DAP `stopped` event observed on an owned session, in arrival order; `hitBreakpointIds` names the breakpoints the adapter says caused it. */
 type NativePause = {
@@ -95,7 +97,7 @@ export class OwnedNodeTestRun {
           parentId: session.parentSession?.id,
         })
         return {
-          onWillReceiveMessage: (message) => {
+          onWillReceiveMessage: (message): void => {
             if (message.type !== 'request') return
             const request = message as DebugProtocol.Request
             this.breakpoint?.onRequest(session, request)
@@ -105,7 +107,7 @@ export class OwnedNodeTestRun {
               this.clientResumes.add(session.id)
             }
           },
-          onDidSendMessage: (message) => {
+          onDidSendMessage: (message): void => {
             if (message.type === 'response')
               this.breakpoint?.onResponse(
                 session,
@@ -484,7 +486,7 @@ export class OwnedNodeTestRun {
     )
     signal.throwIfAborted()
     this.assertActive(bound.session.id)
-    const assertCurrent = () => {
+    const assertCurrent = (): void => {
       this.assertActive(bound.session.id)
       if (
         !this.pausedSessions.has(bound.session.id) ||

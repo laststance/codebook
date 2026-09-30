@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { savedLearningSummarySchema } from './learningSummarySchemas'
+
+import { citationContextSchema } from './citationSchemas'
 import {
   BOOK_MAX_ANCHORS,
   CONFIGURED_CAPTURE_PHASES,
@@ -16,9 +17,10 @@ import {
   REPOSITORY_INSPECTION_LIMIT,
   REPOSITORY_LITERAL_LIMIT_CHARS,
 } from './constants'
-import { citationContextSchema } from './citationSchemas'
 import { repositoryItemSchema } from './identitySchemas'
+import { savedLearningSummarySchema } from './learningSummarySchemas'
 import { sourceSchema, studyIdSchema } from './legacyStudySchemas'
+import { replayDebugSnapshotSchema } from './replayDebugSchemas'
 import {
   inspectionPathSchema,
   retainedRepositoryConfigSchema,
@@ -30,7 +32,6 @@ import {
 } from './repositorySchemas'
 import { bookAnchorSchema, repositoryHashSchema } from './sourceSchemas'
 import { capturedImageSchema, selectionSchema } from './studySchemas'
-import { replayDebugSnapshotSchema } from './replayDebugSchemas'
 
 const shortText = z.string().min(1).max(REFERENCE_LENGTH_LIMIT)
 export const configuredPauseSchema = z.strictObject({

@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
-import { promisify } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
+import { promisify } from 'node:util'
+
 import {
   PACKAGE_COMMAND_OUTPUT_BYTES,
   PACKAGE_COMMAND_TIMEOUT_MS,

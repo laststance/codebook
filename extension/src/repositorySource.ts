@@ -4,7 +4,7 @@ import { lstat, open, realpath } from 'node:fs/promises'
 import { devNull } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { sha256 } from './runtimeSupport/utils/sha256'
+
 import {
   BOOK_MAX_SOURCES,
   BOOK_PREPARE_TIMEOUT_MS,
@@ -21,6 +21,7 @@ import {
   type BookAnchor,
   type RepositorySource,
 } from './repositorySchemas'
+import { sha256 } from './runtimeSupport/utils/sha256'
 import { sourceExclusion } from './utils/sourceExclusion'
 import { unchangedSource } from './utils/unchangedSource'
 
@@ -219,7 +220,7 @@ export class RepositorySourceService {
         acquiredAt: value.checkedAt,
         checkedAt: value.checkedAt,
       })),
-      verifyIdentities: async () => {
+      verifyIdentities: async (): Promise<void> => {
         this.assertActive(control)
         await this.verifyCatalog(catalog)
         // Catch edits during checkpoint validation without repeating Git enumeration or source allocation.

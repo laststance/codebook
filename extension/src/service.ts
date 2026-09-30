@@ -1,15 +1,12 @@
-import {
-  learningSummarySchema,
-  type LearningSummary,
-} from './learningSummarySchemas'
 import { randomUUID } from 'node:crypto'
-import type { RepositoryBookStore } from './repositoryBook'
+import { join } from 'node:path'
+
+import { CONFIGURED_PROFILE } from './configuredProfile'
 import type {
-  SourceListInput,
-  SourceReadInput,
-  PublishBookInput,
-  OpenBookInput,
-} from './repositorySchemas'
+  ConfiguredDefinition,
+  ConfiguredFactValue,
+  ConfiguredDescriptor,
+} from './configuredStudySchemas'
 import {
   BOOK_INPUT_LIMIT_BYTES,
   BOOK_MAX_FILES,
@@ -19,24 +16,58 @@ import {
   MAX_EVENTS,
   MAX_RETAINED_EVENT_BYTES,
   REPOSITORY_SOURCE_LIMIT_BYTES,
-} from './constants'
-import { join } from 'node:path'
-import {
   ACTIVE_TIMEOUT_MS,
   API_VERSION,
   MAINTENANCE_INTERVAL_MS,
   MAX_EXPLANATIONS,
   MAX_RUNS,
   MAX_UI_TEXT_CHARS,
+  NODE_TEST_MINIMUM_EXTENSION_VERSION,
+  NODE_TEST_PROFILE,
+  REPOSITORY_BROWSER_ACTION,
+  REPOSITORY_BROWSER_PROFILE,
+  REPOSITORY_CONFIG_LIMIT_BYTES,
+  REPOSITORY_INSPECTION_LIMIT,
+  REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
+  REPOSITORY_RUN_TIMEOUT_MS,
+  REPOSITORY_SETUP_TIMEOUT_MS,
+  PRESENTATION_MODE_IDS,
+  STUDY_PRESENTATIONS,
 } from './constants'
-import { sha256 } from './runtimeSupport/utils/sha256'
 import { StudyError, domainError } from './errors'
+import {
+  learningSummarySchema,
+  type LearningSummary,
+} from './learningSummarySchemas'
+import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
+import type {
+  NodeTestHistoryStore,
+  NodeTestHistoryWriter,
+} from './nodeTestHistoryStore'
+import type { NodeTestSourceStop } from './ownedNodeTestRun'
+import type { PlaybackController } from './playbackController'
+import type { PlaybackCommand } from './playbackSchemas'
+import type {
+  PresentationCommand,
+  ReturnCurrentCommand,
+} from './presentationSchemas'
+import type { RecordingSeal } from './recordingSchemas'
+import type { RecordingStore, RecordingWriter } from './recordingStore'
+import type { RepositoryBookStore } from './repositoryBook'
+import type {
+  SourceListInput,
+  SourceReadInput,
+  PublishBookInput,
+  OpenBookInput,
+} from './repositorySchemas'
+import type { RetainedStudy } from './retainedStudySchemas'
 import type {
   NodeTestRuntime,
   RuntimeSnapshot,
   StudyEnvironment,
   StudyRuntime,
 } from './runtime'
+import { sha256 } from './runtimeSupport/utils/sha256'
 import {
   explainNodeHistorySchema,
   explainSchema,
@@ -50,45 +81,12 @@ import {
   type RunInput,
   type StartInput,
 } from './schemas'
-import type { RecordingStore, RecordingWriter } from './recordingStore'
-import type { RecordingSeal } from './recordingSchemas'
-import type { RetainedStudy } from './retainedStudySchemas'
-import { buildRecordingContext } from './utils/buildRecordingContext'
-import type { PlaybackController } from './playbackController'
-import type { PlaybackCommand } from './playbackSchemas'
-import {
-  NODE_TEST_MINIMUM_EXTENSION_VERSION,
-  NODE_TEST_PROFILE,
-  REPOSITORY_BROWSER_ACTION,
-  REPOSITORY_BROWSER_PROFILE,
-  REPOSITORY_CONFIG_LIMIT_BYTES,
-  REPOSITORY_INSPECTION_LIMIT,
-  REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
-  REPOSITORY_RUN_TIMEOUT_MS,
-  REPOSITORY_SETUP_TIMEOUT_MS,
-} from './constants'
-import type {
-  ConfiguredDefinition,
-  ConfiguredFactValue,
-} from './configuredStudySchemas'
-import { CONFIGURED_PROFILE } from './configuredProfile'
-import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
-import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
-import type { NodeTestSourceStop } from './ownedNodeTestRun'
-import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
-import type { ConfiguredDescriptor } from './configuredStudySchemas'
-import type {
-  NodeTestHistoryStore,
-  NodeTestHistoryWriter,
-} from './nodeTestHistoryStore'
-import type { NodeTestOutputEvent } from './utils/launchNodeTest'
-import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import type { StudyWorkspace } from './studyWorkspace'
-import type {
-  PresentationCommand,
-  ReturnCurrentCommand,
-} from './presentationSchemas'
-import { PRESENTATION_MODE_IDS, STUDY_PRESENTATIONS } from './constants'
+import { buildRecordingContext } from './utils/buildRecordingContext'
+import type { NodeTestOutputEvent } from './utils/launchNodeTest'
+import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
+import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 
 export interface Explanation {
   id: string
@@ -893,7 +891,7 @@ export class StudyService {
         parsed.expectedRevision,
         parsed.content,
       )
-      await this.presentationController?.nodeHistoryLearningMaterialSaved(
+      this.presentationController?.nodeHistoryLearningMaterialSaved(
         parsed.studyId,
         material,
       )
@@ -1399,7 +1397,7 @@ export class StudyService {
             capture?.reason),
       endMs: record.recordingSeal?.endMs,
       contextStatus: recordingCurrent
-        ? recordingReceipt!.status
+        ? recordingReceipt.status
         : recordingReceipt
           ? ('pending' as const)
           : ('unavailable' as const),

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { isBuiltin } from 'node:module'
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
+import { isBuiltin } from 'node:module'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+
 import { COMPILED_DIRECTORIES } from './packageConstants.mjs'
 
 /** Inventories actual emitted inputs, bundled dependency notices and native externals before a VSIX can be staged. @example await inspectBundle(metafile, repository, capturedInputs) */

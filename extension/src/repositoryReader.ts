@@ -1,33 +1,35 @@
-import * as vscode from 'vscode'
 import { randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { sha256 } from './runtimeSupport/utils/sha256'
-import { requireWorkspace } from './environment'
+
+import * as vscode from 'vscode'
+import type { z } from 'zod'
+
 import {
   REPOSITORY_FIXED_READING_SECTIONS,
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_SOURCE_SCHEME,
 } from './constants'
+import { requireWorkspace } from './environment'
 import {
   repositorySelectionSchema,
   type LearnerDecision,
   type LearnerProgress,
   type RepositorySelection,
 } from './learnerSchemas'
+import type { LearningLibrary } from './learningLibrary'
 import { RepositoryBookStore } from './repositoryBook'
-import { RepositorySourceService } from './repositorySource'
 import type { BookObservationBinding, OpenBookInput } from './repositorySchemas'
+import { RepositorySourceService } from './repositorySource'
 import {
   repositoryMessageSchema,
   type repositoryActionSchema,
   type RepositoryViewMessage,
 } from './repositoryView'
+import { sha256 } from './runtimeSupport/utils/sha256'
 import { repositoryHtml } from './ui/repositoryHtml'
 import { citationLearningState } from './utils/citationLearningState'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
-import type { LearningLibrary } from './learningLibrary'
-import type { z } from 'zod'
 
 /** Separates the requested text and tab receipts so native notification order cannot admit another learner target. */
 export interface RepositoryFocusTarget {
@@ -191,7 +193,7 @@ export class RepositoryReader {
     this.navigation.abort()
     this.navigation = new AbortController()
     const navigation = this.navigation,
-      cancel = () => navigation.abort(signal?.reason)
+      cancel = (): void => navigation.abort(signal?.reason)
     signal?.addEventListener('abort', cancel, { once: true })
     const generation = ++this.generation
     this.loading = true
@@ -296,7 +298,7 @@ export class RepositoryReader {
                 throw new Error(
                   'The selected citation did not acquire identifiable primary editor focus.',
                 )
-              const assertFocused = () => {
+              const assertFocused = (): void => {
                 this.assertCurrent(generation)
                 sourceFocus!.assertRetained()
               }
@@ -321,11 +323,11 @@ export class RepositoryReader {
             coldFocus?.dispose()
             const retained = this.retainNativeFocus(acquire),
               receipt = {
-                assertRetained: () => {
+                assertRetained: (): void => {
                   this.assertCurrent(generation)
                   retained.assertRetained()
                 },
-                dispose: () => {
+                dispose: (): void => {
                   retained.dispose()
                   if (coldFocus === receipt) coldFocus = undefined
                 },
@@ -762,7 +764,7 @@ export class RepositoryReader {
       missingEditorObserved = false
     const observe = (
       event?: 'active-editor' | vscode.TextEditorSelectionChangeEvent,
-    ) => {
+    ): void => {
       const current = snapshot(),
         activeEditor = vscode.window.activeTextEditor,
         selectionEvent = typeof event === 'object' ? event : undefined
@@ -827,14 +829,14 @@ export class RepositoryReader {
     ]
     observe()
     return {
-      assertRetained() {
+      assertRetained(): void {
         observe()
         if (initial === undefined || changed)
           throw new Error(
             'Native focus changed during repository navigation; the newer learner focus was preserved.',
           )
       },
-      dispose() {
+      dispose(): void {
         for (const listener of listeners) listener.dispose()
       },
     }
@@ -919,7 +921,7 @@ export class RepositoryReader {
         watcher = vscode.workspace.createFileSystemWatcher(
           new vscode.RelativePattern(dirname(target), '*'),
         )
-      const changed = (uri: vscode.Uri) => {
+      const changed = (uri: vscode.Uri): void => {
         if (uri.fsPath === target) this.scheduleRefresh()
       }
       this.watchers.push(

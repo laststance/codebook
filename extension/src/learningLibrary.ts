@@ -1,7 +1,8 @@
 import { chmod, lstat, mkdir, readdir } from 'node:fs/promises'
-import { sha256 } from './runtimeSupport/utils/sha256'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
+
+import { configuredStudyMetadataSchema } from './configuredStudySchemas'
 import {
   LEARNING_SCHEMA_VERSION_V2,
   LEARNING_SCHEMA_VERSION_V3,
@@ -18,14 +19,6 @@ import {
   STUDY_STORAGE_FORMATS,
   STUDY_METADATA_LIMIT_BYTES,
 } from './constants'
-import { type StudyCatalogEntry } from './studySchemas'
-import { configuredStudyMetadataSchema } from './configuredStudySchemas'
-import {
-  retainedStudyMetadataSchema,
-  retainedStudySelectionSchema,
-  type RetainedStudy,
-  type RetainedStudySelection,
-} from './retainedStudySchemas'
 import {
   learnerIntentSchema,
   repositorySelectionSchema,
@@ -34,13 +27,21 @@ import {
   type LearnerProgress,
   type RepositorySelection,
 } from './learnerSchemas'
-import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
-import { readBoundedFile } from './utils/readBoundedFile'
 import { studyIdSchema } from './legacyStudySchemas'
-import { decodeRetainedStudy } from './utils/decodeRetainedStudy'
+import {
+  retainedStudyMetadataSchema,
+  retainedStudySelectionSchema,
+  type RetainedStudy,
+  type RetainedStudySelection,
+} from './retainedStudySchemas'
+import { sha256 } from './runtimeSupport/utils/sha256'
+import { type StudyCatalogEntry } from './studySchemas'
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
+import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { decodeLearnerProgress } from './utils/decodeLearnerProgress'
+import { decodeRetainedStudy } from './utils/decodeRetainedStudy'
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
+import { readBoundedFile } from './utils/readBoundedFile'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { withStorageLock } from './utils/withStorageLock'
 
@@ -143,9 +144,7 @@ export class LearningLibrary {
   }
 
   /** Qualifies selected history against its exact sidecar while preserving readable partial archives for {@link StudyWorkspace}. @example (await library.readCheckpoint(id)).status // 'saved' */
-  async readCheckpoint(
-    id: string,
-  ): Promise<{
+  async readCheckpoint(id: string): Promise<{
     study: RetainedStudy
     status: 'saved' | 'failed'
     reason?: string

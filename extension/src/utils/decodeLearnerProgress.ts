@@ -1,12 +1,12 @@
 import {
+  LEARNING_SCHEMA_VERSION_V3,
+  LEARNING_SCHEMA_VERSION_V4,
+} from '../constants'
+import {
   progressV3Schema,
   progressV4Schema,
   type LearnerProgress,
 } from '../learnerSchemas'
-import {
-  LEARNING_SCHEMA_VERSION_V3,
-  LEARNING_SCHEMA_VERSION_V4,
-} from '../constants'
 
 /** Validates current repository choices on {@link LearningLibrary} reads without restoring runtime authority. @example decodeLearnerProgress(value, workspaceKey).version // 4 */
 export function decodeLearnerProgress(

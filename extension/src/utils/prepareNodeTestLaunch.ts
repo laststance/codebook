@@ -2,14 +2,17 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, realpath, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
+
 import { z } from 'zod'
-import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
+
 import {
   NODE_TEST_EXCLUDED_FILE_LIMIT,
   NODE_TEST_MINIMUM_VITEST_MAJOR,
   REPOSITORY_RUN_TIMEOUT_MS,
 } from '../constants'
 import { StudyError } from '../errors'
+import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
+
 import type {
   ListVitestTestFilesRequest,
   VitestListedFile,
@@ -113,7 +116,7 @@ export async function prepareNodeTestLaunch(
     ),
   ])
   const vitestPackageJson = vitestPackageSchema.safeParse(
-    await readFile(vitestPackage!, 'utf8')
+    await readFile(vitestPackage, 'utf8')
       .then((text): unknown => JSON.parse(text))
       .catch(() => undefined),
   )
@@ -132,10 +135,10 @@ export async function prepareNodeTestLaunch(
     )
   const stops = declaredStops.map((stop, index) => ({
     ...stop,
-    file: index === 0 ? sourceFile! : additionalSourceFiles[index - 1]!,
+    file: index === 0 ? sourceFile : additionalSourceFiles[index - 1]!,
   }))
   const [testBytes, ...sourceBytes] = await Promise.all([
-    readFile(testFile!),
+    readFile(testFile),
     ...stops.map((stop) => readFile(stop.file)),
   ])
   for (const [index, stop] of stops.entries()) {
@@ -154,9 +157,9 @@ export async function prepareNodeTestLaunch(
     )
   const excludes = await excludeOtherTestFiles(
     root,
-    testFile!,
+    testFile,
     configuration.testFile,
-    program!,
+    program,
     listTestFiles,
   )
   const separator = vitestMajor >= 5 ? ' > ' : ' '
@@ -184,11 +187,11 @@ export async function prepareNodeTestLaunch(
   ]
   return {
     workspace: root,
-    testFile: testFile!,
+    testFile: testFile,
     testTitles,
-    sourceFile: sourceFile!,
+    sourceFile: sourceFile,
     stops,
-    program: program!,
+    program: program,
     args,
     report,
   }

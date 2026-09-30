@@ -1,5 +1,7 @@
-import type * as vscode from 'vscode'
 import { randomUUID } from 'node:crypto'
+
+import type * as vscode from 'vscode'
+
 import {
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
@@ -272,7 +274,7 @@ export class ReplayDebugger {
     revision: number,
     signal: AbortSignal,
   ): Promise<ReplayInspection> {
-    const assertCurrent = () => {
+    const assertCurrent = (): void => {
       if (this.closed || this.detached || this.adapter !== adapter)
         throw new Error(HISTORICAL_DEBUGGER_CLOSED)
       if (revision !== this.revision)

@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { openSync, closeSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomUUID } from 'node:crypto'
+
 import { readHostInstallation } from '../dist/runtimeSupport/utils/readHostInstallation.js'
 import { selectHost } from '../dist/runtimeSupport/utils/selectHost.js'
 import { createNativeProfile } from '../dist/utils/createNativeProfile.js'

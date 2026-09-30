@@ -1,5 +1,5 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import {
   mkdir,
   mkdtemp,
@@ -8,9 +8,9 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { spawnSync } from 'node:child_process'
-import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { test } from 'node:test'
 
 /** Isolates the actual package CLI for argument tests; the recording builder avoids compilation and publication. @example const fixture = await commandFixture(context) */
 async function commandFixture(context) {

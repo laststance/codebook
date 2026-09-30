@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFile, realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+
 import type { HostConfiguration } from '../hostBrowser'
 
 /** Resolves metadata beside the binary the runner will spawn and rejects a mismatched CLI before launch. @example await readHostInstallation('cursor') // selected Cursor bundle and matching CLI */

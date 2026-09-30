@@ -1,14 +1,16 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { NODE_TEST_PROFILE } from '../constants'
-import type { NodeTestRuntime } from '../runtime'
-import type { NodeTestSourceStop } from '../ownedNodeTestRun'
 import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
-import { readResource } from '../resources'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import type { NodeTestSourceStop } from '../ownedNodeTestRun'
+import { readResource } from '../resources'
+import type { NodeTestRuntime } from '../runtime'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import { createHarness } from './helpers'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 

@@ -6,8 +6,9 @@ import {
   retainedRecordingContextSchema,
   type RecordingContext,
 } from '../recordingSchemas'
-import { validateConfiguredStudyEvidence } from './validateConfiguredStudyEvidence'
+
 import { describeStudy } from './describeStudy'
+import { validateConfiguredStudyEvidence } from './validateConfiguredStudyEvidence'
 
 /** Rejects mismatched identities, source hashes and impossible availability before recording context reaches playback. @example validateRecordingContext(value, key).studyId */
 export function validateRecordingContext(

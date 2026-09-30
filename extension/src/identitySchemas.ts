@@ -1,4 +1,5 @@
 import { z } from 'zod'
+
 import { BOOK_ID_LIMIT_CHARS } from './constants'
 
 // Stable repository identities are shared by authoring, runtime descriptors and learner history.

@@ -1,10 +1,11 @@
-import * as vscode from 'vscode'
 import { randomUUID } from 'node:crypto'
 // Explicit Node clock/timer bindings keep this module runnable in the viewport tests' vm context, which has no Node globals.
 import { performance } from 'node:perf_hooks'
 import { clearTimeout, setTimeout } from 'node:timers'
+
+import * as vscode from 'vscode'
+
 import type { Cdp } from './cdp'
-import { FrameDelivery, type ViewFrame } from './frameDelivery'
 import {
   ACTIVE_TIMEOUT_MS,
   CAPTURE_TIMEOUT_MS,
@@ -13,10 +14,11 @@ import {
   VIEWPORT_WIDTH_PX,
   type Scenario,
 } from './constants'
-import { sha256 } from './utils/sha256'
-import { waitUntil } from './utils/waitUntil'
-import { viewportHtml } from './utils/viewportHtml'
+import { FrameDelivery, type ViewFrame } from './frameDelivery'
 import { awaitResponse } from './utils/awaitResponse'
+import { sha256 } from './utils/sha256'
+import { viewportHtml } from './utils/viewportHtml'
+import { waitUntil } from './utils/waitUntil'
 
 export interface ViewportLease {
   panel: vscode.WebviewPanel
@@ -312,7 +314,7 @@ export class BrowserViewport {
     const placement = {
       released,
       ready: false,
-      release: () => {
+      release: (): void => {
         if (this.placement === placement) this.placement = undefined
         release()
       },
@@ -606,7 +608,7 @@ export class BrowserViewport {
   ): Promise<void> {
     return new Promise((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined
-      const wake = () => {
+      const wake = (): void => {
         clearTimeout(timer)
         signal?.removeEventListener('abort', wake)
         this.gapWakers.delete(wake)
@@ -692,14 +694,12 @@ export class BrowserViewport {
 
   /** Absorbs expected live coalescing while retaining delivery failure evidence. @example this.offerLiveOrRestored(frame) */
   private offerLiveOrRestored(frame: ViewFrame): void {
-    void this.delivery
-      .offer(frame)
-      .catch((error) =>
-        this.recordDelivery('viewport.live-frame-unconfirmed', {
-          phase: frame.phase,
-          error: String(error),
-        }),
-      )
+    void this.delivery.offer(frame).catch((error) =>
+      this.recordDelivery('viewport.live-frame-unconfirmed', {
+        phase: frame.phase,
+        error: String(error),
+      }),
+    )
   }
 
   /** Contains optional recorder exceptions so no failed observer can prevent input, rendering or cleanup. @example this.observe(() => observer.frame(frame)) */

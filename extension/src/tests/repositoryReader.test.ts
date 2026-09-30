@@ -1,15 +1,18 @@
-import { createConfiguredStudy } from './utils/createConfiguredStudy'
-import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { join, matchesGlob, relative, resolve } from 'node:path'
+import { test, type TestContext } from 'node:test'
+
+import type { RepositorySelection } from '../learnerSchemas'
+import { LearningLibrary } from '../learningLibrary'
+import type * as RepositoryReaderModule from '../repositoryReader'
+import type { BookDocument, BookObservationBinding } from '../repositorySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { LearningLibrary } from '../learningLibrary'
-import { repositoryHarness } from './utils/repositoryHarness'
+
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { loadModule } from './utils/loadModule'
-import type { RepositorySelection } from '../learnerSchemas'
-import type { BookDocument, BookObservationBinding } from '../repositorySchemas'
+import { repositoryHarness } from './utils/repositoryHarness'
 
 /** Exercises the real reader/storage while mocking only editor effects, retaining explicit source/render receipts. @example const harness = await readerHarness(context) */
 async function readerHarness(context: TestContext) {
@@ -18,11 +21,11 @@ async function readerHarness(context: TestContext) {
   await source.track('src/module.ts', 'export const price = 24;\n')
   await source.track('src/order.ts', 'export const total = 48;\n')
   const library = new LearningLibrary(join(root, '.learning'), sha256(root))
-  const disposable = () => ({ dispose() {} })
+  const disposable = () => ({ dispose(): void {} })
   class EventEmitter {
     event = () => disposable()
-    fire() {}
-    dispose() {}
+    fire(): void {}
+    dispose(): void {}
   }
   class RelativePattern {
     constructor(
@@ -125,7 +128,7 @@ async function readerHarness(context: TestContext) {
   let provider = async (_uri: Uri) => '',
     workspace = source.directory,
     connections = 0
-  let receive = (_message: unknown) => {}
+  let receive = (_message: unknown): void => {}
   const shown: { uri: Uri; text: string }[] = [],
     panels = new Set<object>(),
     linked: { binding: BookObservationBinding; recording: boolean }[] = []
@@ -134,7 +137,7 @@ async function readerHarness(context: TestContext) {
     pattern: RelativePattern
     listeners: ((uri: Uri) => void)[]
   }[] = []
-  const boundary = await loadModule<typeof import('../repositoryReader')>(
+  const boundary = await loadModule<typeof RepositoryReaderModule>(
     resolve(__dirname, '../repositoryReader.js'),
     {
       './environment': { requireWorkspace: () => workspace },
@@ -164,7 +167,7 @@ async function readerHarness(context: TestContext) {
               return disposable()
             }
             return {
-              dispose() {
+              dispose(): void {
                 watcher.listeners = []
               },
               onDidChange: listen,
@@ -217,7 +220,7 @@ async function readerHarness(context: TestContext) {
             onDidChangeTabs(callback: () => void) {
               tabListeners.add(callback)
               return {
-                dispose() {
+                dispose(): void {
                   tabListeners.delete(callback)
                 },
               }
@@ -225,7 +228,7 @@ async function readerHarness(context: TestContext) {
             onDidChangeTabGroups(callback: () => void) {
               groupListeners.add(callback)
               return {
-                dispose() {
+                dispose(): void {
                   groupListeners.delete(callback)
                 },
               }
@@ -234,7 +237,7 @@ async function readerHarness(context: TestContext) {
           onDidChangeActiveTextEditor(callback: () => void) {
             focusListeners.add(callback)
             return {
-              dispose() {
+              dispose(): void {
                 focusListeners.delete(callback)
               },
             }
@@ -244,7 +247,7 @@ async function readerHarness(context: TestContext) {
           ) {
             selectionListeners.add(callback)
             return {
-              dispose() {
+              dispose(): void {
                 selectionListeners.delete(callback)
               },
             }
@@ -274,7 +277,7 @@ async function readerHarness(context: TestContext) {
             if (!options?.preserveFocus && nativeCitationActivation) {
               const pauseAt = async (
                 stage: NonNullable<typeof citationActivationGate>['stage'],
-              ) => {
+              ): Promise<void> => {
                 const held = citationActivationGate
                 if (held?.stage === stage) {
                   citationActivationGate = undefined
@@ -323,17 +326,17 @@ async function readerHarness(context: TestContext) {
               activeEditor = undefined
               for (const listener of focusListeners) listener()
             }
-            let disposed = () => {}
+            let disposed = (): void => {}
             const panel = {
               title: '',
-              reveal(column: number) {
+              reveal(column: number): void {
                 reveals.push(column)
               },
-              dispose() {
+              dispose(): void {
                 panels.delete(panel)
                 disposed()
               },
-              onDidDispose(callback: () => void) {
+              onDidDispose(callback: () => void): void {
                 disposed = callback
               },
               webview: {
@@ -458,15 +461,15 @@ async function readerHarness(context: TestContext) {
     createReader,
     panelColumns,
     reveals,
-    receive: (message: unknown) => receive(message),
-    requireSourceFocus() {
+    receive: (message: unknown): void => receive(message),
+    requireSourceFocus(): void {
       requiresSourceFocus = true
     },
     arrangements: () => arrangements,
-    useColdLayout() {
+    useColdLayout(): void {
       coldLayout = true
     },
-    useNativeCitationActivation() {
+    useNativeCitationActivation(): void {
       nativeCitationActivation = true
     },
     holdCitationActivation(
@@ -532,7 +535,7 @@ async function readerHarness(context: TestContext) {
       selectionListeners.size +
       tabListeners.size +
       groupListeners.size,
-    selectSource(line: number, character: number, kind = 3) {
+    selectSource(line: number, character: number, kind = 3): void {
       assert.ok(activeEditor)
       activeEditor.selections = [
         {
@@ -543,11 +546,11 @@ async function readerHarness(context: TestContext) {
       for (const listener of selectionListeners)
         listener({ kind, textEditor: activeEditor })
     },
-    focusSourceEditor(editor: NativeEditor) {
+    focusSourceEditor(editor: NativeEditor): void {
       activeEditor = editor
       for (const listener of focusListeners) listener()
     },
-    roundtripCitationTab() {
+    roundtripCitationTab(): void {
       const citation = sourceGroup.activeTab,
         editor = activeEditor
       sourceGroup.activeTab = {
@@ -558,15 +561,15 @@ async function readerHarness(context: TestContext) {
       sourceGroup.activeTab = citation
       for (const listener of tabListeners) listener()
     },
-    switchTabGroup(toSource = false) {
+    switchTabGroup(toSource = false): void {
       activeGroup = toSource ? sourceGroup : otherGroup
       for (const listener of groupListeners) listener()
     },
-    focusChat() {
+    focusChat(): void {
       activeEditor = undefined
       for (const listener of focusListeners) listener()
     },
-    focusUnrelatedDraft(filename = 'unrelated-draft.txt') {
+    focusUnrelatedDraft(filename = 'unrelated-draft.txt'): void {
       const document = {
           uri: Uri.file(join(root, filename)),
           version: 1,
@@ -585,11 +588,11 @@ async function readerHarness(context: TestContext) {
       for (const listener of focusListeners) listener()
     },
     connections: () => connections,
-    changeWorkspace: () => {
+    changeWorkspace: (): void => {
       workspace = '/another/workspace'
     },
     provider: (uri: Uri) => provider(uri),
-    fileEvent: (path: string, kind: number) => {
+    fileEvent: (path: string, kind: number): void => {
       for (const watcher of watchers)
         if (
           matchesGlob(
@@ -811,7 +814,7 @@ for (const boundary of [
       boundary === 'source lookup' ? harness.holdSourceDocument() : undefined
     if (boundary === 'progress storage') {
       const save = harness.library.selectRepository.bind(harness.library)
-      harness.library.selectRepository = async (selection) => {
+      harness.library.selectRepository = async (selection): Promise<void> => {
         entered()
         await held
         await save(selection)
@@ -1007,7 +1010,7 @@ test('chat focus during Wiki progress storage prevents the old Open from reveali
     held = new Promise<void>((resolve) => {
       release = resolve
     })
-  harness.library.selectRepository = async (selection) => {
+  harness.library.selectRepository = async (selection): Promise<void> => {
     entered()
     await held
     await save(selection)
@@ -1335,8 +1338,8 @@ test('retiring an agent open before its checkpoint completes prevents source and
   await harness.reader.open()
   const shown = harness.shown.length
   const read = harness.store.read.bind(harness.store)
-  let release = () => {},
-    enter = () => {},
+  let release = (): void => {},
+    enter = (): void => {},
     held = true
   const entered = new Promise<void>((resolve) => {
       enter = resolve
@@ -1398,8 +1401,8 @@ test('late article navigation cannot replace a newer selection or reopen a close
   const harness = await readerHarness(context)
   await harness.reader.open()
   const read = harness.store.read.bind(harness.store)
-  let release = () => {},
-    enter = () => {},
+  let release = (): void => {},
+    enter = (): void => {},
     held = true
   const entered = new Promise<void>((resolve) => {
       enter = resolve
@@ -1470,8 +1473,8 @@ test('Close during pending source acquisition prevents native source reveal and 
   await harness.reader.open()
   const before = harness.shown.length
   const read = harness.store.read.bind(harness.store)
-  let enter = () => {},
-    release = () => {},
+  let enter = (): void => {},
+    release = (): void => {},
     calls = 0
   const entered = new Promise<void>((resolve) => {
       enter = resolve

@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
+
 import { z } from 'zod'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import type { RecordedEvent } from '../runtimeSupport/evidence'
+
 import {
   CONFIGURED_RECORDING_VERSION,
   CROSS_RUNTIME_RECORDING_VERSION,
@@ -14,6 +14,9 @@ import {
   type RecordingContext,
 } from '../recordingSchemas'
 import type { RetainedStudy } from '../retainedStudySchemas'
+import type { RecordedEvent } from '../runtimeSupport/evidence'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
 

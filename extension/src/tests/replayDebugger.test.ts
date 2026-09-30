@@ -1,13 +1,16 @@
-import { test } from 'node:test'
-import { createRequire } from 'node:module'
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
+import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
-import type * as vscode from 'vscode'
+import type * as TimersPromisesModule from 'node:timers/promises'
+
 import type { DebugProtocol } from '@vscode/debugprotocol'
+import type * as vscode from 'vscode'
+
+import { REPLAY_DEBUG_INSPECTION_GRACE_MS } from '../constants'
 import { ReplayDebugger } from '../replayDebugger'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 import { POLL_INTERVAL_MS } from '../runtimeSupport/constants'
-import { REPLAY_DEBUG_INSPECTION_GRACE_MS } from '../constants'
 
 const firstSnapshot: ReplayDebugSnapshot = {
   version: 1,
@@ -36,7 +39,7 @@ class TestEmitter<Value> {
     const wrapped = (value: Value) => listener.call(thisArgs, value)
     this.listeners.add(wrapped)
     const disposable = {
-      dispose: () => {
+      dispose: (): void => {
         this.listeners.delete(wrapped)
       },
     }
@@ -83,7 +86,7 @@ function harness(
     return response
   }
   /** Retrieves the selected stop as native Variables does; automatic clients invoke it after stopped. @example inspect() */
-  function inspect() {
+  function inspect(): void {
     const thread = request('threads').body.threads[0]
     const frame = request('stackTrace', { threadId: thread.id }).body
       .stackFrames[0]
@@ -93,11 +96,11 @@ function harness(
     if (scope)
       request('variables', { variablesReference: scope.variablesReference })
   }
-  let signalStarted = () => {}
+  let signalStarted = (): void => {}
   const started = new Promise<void>((resolve) => {
     signalStarted = resolve
   })
-  let signalStopRequested = () => {}
+  let signalStopRequested = (): void => {}
   const stopRequested = new Promise<void>((resolve) => {
     signalStopRequested = resolve
   })
@@ -125,7 +128,7 @@ function harness(
       registerDebugAdapterDescriptorFactory(_type, value) {
         factory = value
         return {
-          dispose() {
+          dispose(): void {
             factory = undefined
           },
         }
@@ -189,11 +192,11 @@ function harness(
     request,
     inspect,
     changes: () => changes,
-    terminate: () => {
+    terminate: (): void => {
       assert.ok(session)
       terminated.fire(session)
     },
-    disconnect: () => {
+    disconnect: (): void => {
       assert.ok(adapter)
       adapter.handleMessage({
         type: 'request',
@@ -201,7 +204,7 @@ function harness(
         command: 'disconnect',
       })
     },
-    terminateForeign: () => {
+    terminateForeign: (): void => {
       assert.ok(session)
       terminated.fire({ ...session, id: 'unrelated-live-session' })
     },
@@ -248,7 +251,7 @@ test('historical workspace closure stops only its owned native session', async (
 
 test('closing during delayed native startup retires the acquired session exactly once', async () => {
   // Arrange
-  let release = () => {}
+  let release = (): void => {}
   const gate = new Promise<void>((resolve) => {
     release = resolve
   })
@@ -271,7 +274,7 @@ test('closing during delayed native startup retires the acquired session exactly
 
 test('a superseded seek cannot publish after native debugger startup completes', async () => {
   // Arrange
-  let release = () => {}
+  let release = (): void => {}
   const gate = new Promise<void>((resolve) => {
     release = resolve
   })
@@ -388,7 +391,7 @@ test('video frames within one recorded stop preserve their native debug session'
 
 test('a new recorded stop waits for native termination before replacing historical values', async () => {
   // Arrange
-  let releaseTermination = () => {}
+  let releaseTermination = (): void => {}
   const terminationGate = new Promise<void>((resolve) => {
     releaseTermination = resolve
   })
@@ -973,9 +976,9 @@ test('several video frames of a gap shown in Call Stack do not make the next rec
 // Value: protects=a stop whose values load during the last poll interval of the grace commits as inspected, so no stale hint follows the reader notification; fails_when=the grace deadline reports 'uninspected' without reading readiness once more; why_new=waitUntil sleeps before its final deadline check; seam=node:test mocks of performance.now and the shared timers/promises setTimeout drive the grace clock
 test('values Run and Debug loads during the last grace poll commit the stop as inspected', async (context) => {
   // Arrange
-  const promiseTimers: typeof import('node:timers/promises') = createRequire(
-    __filename,
-  )('node:timers/promises')
+  const promiseTimers: typeof TimersPromisesModule = createRequire(__filename)(
+    'node:timers/promises',
+  )
   const fixture = harness(undefined, undefined, 0, false, true),
     realSleep = promiseTimers.setTimeout
   let clockMs = 0

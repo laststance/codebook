@@ -1,19 +1,24 @@
 import { join, resolve } from 'node:path'
-import { runInNewContext } from 'node:vm'
 import type { TestContext } from 'node:test'
+import { runInNewContext } from 'node:vm'
+
 import type { DebugSession } from 'vscode'
+
+import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
+import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
+import { configuredDefinitionSchema } from '../../configuredStudySchemas'
+import type * as OwnedRepositoryBreakpointModule from '../../ownedRepositoryBreakpoint'
+import type { BundleSource } from '../../repositoryBundle'
+import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
+import type { RuntimeControl } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
-import { configuredDefinitionSchema } from '../../configuredStudySchemas'
-import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
-import type { RuntimeControl } from '../../runtime'
-import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
-import type { BundleSource } from '../../repositoryBundle'
-import { createConfiguredStudy } from './createConfiguredStudy'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
-import { repositoryHarness } from './repositoryHarness'
+
+import { createConfiguredStudy } from './createConfiguredStudy'
 import { loadModule } from './loadModule'
+import { repositoryHarness } from './repositoryHarness'
 
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
 export async function configuredRuntimeHarness(
@@ -80,12 +85,12 @@ export async function configuredRuntimeHarness(
     bound = false,
     rejectBinding = false,
     ready = true,
-    inputResolve = () => {},
-    inputReject = (_error: Error) => {},
-    onClose = () => {},
+    inputResolve = (): void => {},
+    inputReject = (_error: Error): void => {},
+    onClose = (): void => {},
     heldPhase: string | undefined,
-    releaseCapture = () => {},
-    captureEntered = () => {}
+    releaseCapture = (): void => {},
+    captureEntered = (): void => {}
   let run: ConfiguredBrowserRun
   let currentColumn = 1,
     stopCount = 0,
@@ -97,9 +102,9 @@ export async function configuredRuntimeHarness(
   let hideViewportAtPause = false,
     viewportReady = true
   let controlledContinuation = false,
-    continuationEntered = () => {},
-    acknowledgeContinuation = () => {},
-    rejectContinuation = (_error: Error) => {}
+    continuationEntered = (): void => {},
+    acknowledgeContinuation = (): void => {},
+    rejectContinuation = (_error: Error): void => {}
   type TestBreakpoint = {
     id: string
     location: {
@@ -202,7 +207,7 @@ export async function configuredRuntimeHarness(
         : undefined
     },
   }
-  const emitCdpPause = () => {
+  const emitCdpPause = (): void => {
     listeners.get('Debugger.paused')?.({
       reason: 'other',
       hitBreakpoints: ['mapped-source'],
@@ -218,7 +223,7 @@ export async function configuredRuntimeHarness(
       ],
     })
   }
-  const emitPause = (column = 1) => {
+  const emitPause = (column = 1): void => {
     currentColumn = column
     stopCount++
     // A real debugger may reveal an existing source tab over the leased application panel.
@@ -241,12 +246,12 @@ export async function configuredRuntimeHarness(
     set onClose(listener: () => void) {
       onClose = listener
     },
-    on(event: string, listener: (value: unknown) => void) {
+    on(event: string, listener: (value: unknown) => void): void {
       listeners.set(event, listener)
     },
-    async subscribe() {},
-    aggregateScreencastTelemetry() {},
-    close() {
+    async subscribe(): Promise<void> {},
+    aggregateScreencastTelemetry(): void {},
+    close(): void {
       if (this.closed) return
       this.closed = true
       releases.push('cdp')
@@ -368,10 +373,10 @@ export async function configuredRuntimeHarness(
     workspace: { textDocuments: documents },
     debug: {
       breakpoints,
-      addBreakpoints(added: TestBreakpoint[]) {
+      addBreakpoints(added: TestBreakpoint[]): void {
         breakpoints.push(...added)
       },
-      removeBreakpoints(removed: TestBreakpoint[]) {
+      removeBreakpoints(removed: TestBreakpoint[]): void {
         for (const breakpoint of removed) {
           const index = breakpoints.findIndex(
             (candidate) => candidate.id === breakpoint.id,
@@ -409,7 +414,7 @@ export async function configuredRuntimeHarness(
             }),
           )
       },
-      stopDebugging: async () => {
+      stopDebugging: async (): Promise<void> => {
         releases.push('debugger')
         run.terminated(root)
         run.terminated(selected)
@@ -440,28 +445,28 @@ export async function configuredRuntimeHarness(
     },
   }
   const breakpointModule = await loadModule<
-    typeof import('../../ownedRepositoryBreakpoint')
+    typeof OwnedRepositoryBreakpointModule
   >(resolve(__dirname, '../../ownedRepositoryBreakpoint.js'), { vscode })
-  const runtimeModule = await loadModule<
-    typeof import('../../configuredBrowserRun')
-  >(
+  const runtimeModule = await loadModule<typeof ConfiguredBrowserRunModule>(
     resolve(__dirname, '../../configuredBrowserRun.js'),
     {
       vscode,
       './ownedRepositoryBreakpoint': breakpointModule,
       './runtimeSupport/hostBrowser': {
         HostBrowser: class {
-          async launch(configuration: DebugSession['configuration']) {
+          async launch(
+            configuration: DebugSession['configuration'],
+          ): Promise<void> {
             root.configuration.name = configuration.name
             run.addSession(root)
             run.addSession(selected)
           }
-          async attachViewport() {}
-          async reveal() {
+          async attachViewport(): Promise<void> {}
+          async reveal(): Promise<void> {
             viewportReady = true
           }
-          resumeViewport() {}
-          recordCapture(data: string, phase: string) {
+          resumeViewport(): void {}
+          recordCapture(data: string, phase: string): void {
             const observer = recordingObserver()
             observer?.frame({
               data,
@@ -485,10 +490,10 @@ export async function configuredRuntimeHarness(
               hash: sha256(Buffer.from(data, 'base64')),
             }
           }
-          async drainAcquisitions() {
+          async drainAcquisitions(): Promise<void> {
             releases.push('acquisitions')
           }
-          async close() {
+          async close(): Promise<void> {
             releases.push('browser')
           }
         },
@@ -506,7 +511,7 @@ export async function configuredRuntimeHarness(
             releases.push('application acquired')
             return 'http://127.0.0.1:4321'
           },
-          close: async () => {
+          close: async (): Promise<void> => {
             releases.push('application')
           },
         }),
@@ -582,37 +587,39 @@ export async function configuredRuntimeHarness(
     releases,
     emitPause,
     emitCdpPause,
-    setScreenshot(base64: string) {
+    setScreenshot(base64: string): void {
       screenshot = base64
     },
-    rejectBreakpointBinding() {
+    rejectBreakpointBinding(): void {
       rejectBinding = true
     },
-    observeRecording(observer: () => ViewportRecordingObserver | undefined) {
+    observeRecording(
+      observer: () => ViewportRecordingObserver | undefined,
+    ): void {
       recordingObserver = observer
     },
-    rejectCapture(phase: string) {
+    rejectCapture(phase: string): void {
       rejectedCapture = phase
     },
-    requireUnavailableValue() {
+    requireUnavailableValue(): void {
       requiredValueUnavailable = true
     },
-    useUndefinedValue() {
+    useUndefinedValue(): void {
       requiredValueUndefined = true
     },
-    suppressInputPause() {
+    suppressInputPause(): void {
       emitInputPause = false
     },
-    resumeDuringPreparation() {
+    resumeDuringPreparation(): void {
       emitPreparationResume = true
     },
-    stopOnStartupWhenOwnedBreakpointPresent() {
+    stopOnStartupWhenOwnedBreakpointPresent(): void {
       stopAtStartupBreakpoint = true
     },
-    hideViewportOnPause() {
+    hideViewportOnPause(): void {
       hideViewportAtPause = true
     },
-    manualResume() {
+    manualResume(): void {
       listeners.get('Debugger.resumed')?.({})
     },
     holdContinuation() {
@@ -622,9 +629,9 @@ export async function configuredRuntimeHarness(
       })
       return {
         started,
-        response: () => acknowledgeContinuation(),
-        input: () => inputResolve(),
-        dap: (threadId = 1) =>
+        response: (): void => acknowledgeContinuation(),
+        input: (): void => inputResolve(),
+        dap: (threadId = 1): void =>
           run.onEvent(selected, {
             type: 'event',
             seq: ++requestSequence,
@@ -634,10 +641,10 @@ export async function configuredRuntimeHarness(
         cdp: () => listeners.get('Debugger.resumed')?.({}),
       }
     },
-    setReady(value: boolean) {
+    setReady(value: boolean): void {
       ready = value
     },
-    suppressRetirementAck() {
+    suppressRetirementAck(): void {
       removedAck = false
     },
     holdCapture(phase: string) {
@@ -647,13 +654,13 @@ export async function configuredRuntimeHarness(
       })
       return {
         started,
-        release: () => {
+        release: (): void => {
           heldPhase = undefined
           releaseCapture()
         },
       }
     },
-    advance(milliseconds: number) {
+    advance(milliseconds: number): void {
       clock += milliseconds
       for (const [id, timer] of [...timers])
         if (timer.at <= clock) {

@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { isProportionalEditorLayout } from '../utils/isProportionalEditorLayout'
 
 test('host pixel expansion preserves the requested app/source and context split proportions', () => {

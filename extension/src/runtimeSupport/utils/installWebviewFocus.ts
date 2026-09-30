@@ -22,7 +22,7 @@ export function installWebviewFocus(api: {
       epoch,
       focused: document.visibilityState === 'visible' && document.hasFocus(),
     })
-  const observe = () => {
+  const observe = (): void => {
     if (!committed || Date.now() >= committed.expiresAt) {
       committed = undefined
       return

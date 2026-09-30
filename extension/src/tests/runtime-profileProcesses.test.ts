@@ -1,10 +1,11 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { profileProcesses } from '../runtimeSupport/utils/profileProcesses'
 
 test('a symlinked profile observes its canonical process and excludes a prefix-sharing profile', async () => {

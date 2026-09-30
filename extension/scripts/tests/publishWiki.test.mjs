@@ -1,7 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   access,
   mkdir,
@@ -15,13 +14,15 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
+
 import {
   prepareWikiStage,
   publishWiki,
   recoverWikiPublication,
 } from '../../skills/codebook/publish-wiki.mjs'
+import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
 
 for (const legacy of [false, true]) {
   test(

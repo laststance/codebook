@@ -1,7 +1,9 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bookObservationHash } from '../utils/bookObservationHash'
+import { test } from 'node:test'
+
 import type { BookObservationBinding } from '../repositorySchemas'
+import { bookObservationHash } from '../utils/bookObservationHash'
+
 import {
   workspaceHarness,
   recordedReaderHarness,
@@ -220,8 +222,8 @@ test('closing the article during a pending checkpoint prevents the later evidenc
   const harness = await recordedReaderHarness(),
     library = await harness.reader.learningStorage(),
     originalRead = library.readCheckpoint.bind(library)
-  let release = () => {},
-    enter = () => {}
+  let release = (): void => {},
+    enter = (): void => {}
   const entered = new Promise<void>((resolve) => {
       enter = resolve
     }),
@@ -505,7 +507,7 @@ test('cancelling Wiki navigation while checking native layout ownership cannot r
   // Arrange
   const harness = await workspaceHarness(false),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     const held = harness.holdNextCommand('vscode.getEditorLayout')
@@ -540,7 +542,7 @@ test('returning to Wiki during a cancelled Study layout waits for the accepted h
   // Arrange
   const harness = await workspaceHarness(false),
     cancellation = new AbortController()
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     await harness.reader.arrangeRepository(new AbortController().signal)
@@ -594,7 +596,7 @@ for (const change of ['shape', 'size'])
                 { size: 0.3 },
               ],
             }
-    let release = () => {}
+    let release = (): void => {}
     try {
       await harness.reader.open()
       const placement = harness.holdNextCommand('vscode.setEditorLayout')
@@ -604,7 +606,7 @@ for (const change of ['shape', 'size'])
       await placement.started
       // Measure the receipt after the accepted mutation, rather than the new pre-placement geometry read.
       const held = harness.holdNextCommand('vscode.getEditorLayout')
-      release = () => {
+      release = (): void => {
         placement.release()
         held.release()
       }
@@ -636,7 +638,7 @@ for (const change of ['shape', 'size'])
 test('Cursor wrapper-only tab resync preserves Wiki and Study layout switching during an in-flight ownership read', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     const held = harness.holdNextCommand('vscode.getEditorLayout')
@@ -990,7 +992,7 @@ test('returning from recording to Wiki keeps background study refresh from cover
       anchorIndex: 0,
       location: { sectionIndex: 1, fraction: 0.5, focusId: 'section-1' },
     })
-    harness.controls.returnToRepository = async () => {
+    harness.controls.returnToRepository = async (): Promise<void> => {
       harness.controller.hide()
       harness.groups[0]!.activeTab = undefined
     }
@@ -1127,7 +1129,7 @@ for (const moveImmediately of [false, true])
 test('Arrange reports interrupted source placement and a later explicit retry restores the three regions', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
-  let release = () => {}
+  let release = (): void => {}
   try {
     await harness.reader.open()
     const original = harness.groups.find((group) => group.viewColumn === 2)!,

@@ -1,7 +1,7 @@
+import { REPOSITORY_BROWSER_ACTION } from '../constants'
+import type { PlaybackBundle } from '../playbackController'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { learningState, projectStudy } from '../studyModel'
-import type { PlaybackBundle } from '../playbackController'
-import { REPOSITORY_BROWSER_ACTION } from '../constants'
 
 /** Projects the existing learner model at confirmed playback time; no future source, causal claim or live continuation is borrowed. @example projectPlaybackStudy(input, bundle).continueArguments // undefined */
 export function projectPlaybackStudy(

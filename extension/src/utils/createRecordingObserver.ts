@@ -1,7 +1,7 @@
-import type { ViewportRecordingObserver } from '../runtimeSupport/browserViewport'
 import { IMAGE_BASE64_LIMIT_CHARS } from '../constants'
-import { capturePhaseSchema } from '../studySchemas'
+import type { ViewportRecordingObserver } from '../runtimeSupport/browserViewport'
 import type { StudyRecord } from '../service'
+import { capturePhaseSchema } from '../studySchemas'
 
 /** Binds the optional viewport observer to one reserved study/runtime; no focus lookup or awaited I/O enters the frame callback. @example createRecordingObserver(record)?.elapsedMs() */
 export function createRecordingObserver(
@@ -12,7 +12,7 @@ export function createRecordingObserver(
   if (!writer || !runtime) return undefined
   return {
     elapsedMs: () => runtime.evidence.elapsedMs(),
-    frame(input) {
+    frame(input): void {
       try {
         if (input.data.length > IMAGE_BASE64_LIMIT_CHARS)
           throw new Error('Recording frame exceeds the encoded byte limit.')
@@ -34,7 +34,7 @@ export function createRecordingObserver(
         writer.stopFrames(input.elapsedMs, String(error))
       }
     },
-    closed(input) {
+    closed(input): void {
       record.recordingEndMs = input.elapsedMs
       if (!input.expected)
         writer.stopFrames(

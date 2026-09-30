@@ -1,4 +1,5 @@
 import { setTimeout } from 'node:timers/promises'
+
 import { ACTIVE_TIMEOUT_MS, POLL_INTERVAL_MS } from '../constants'
 
 /** Polls an observable condition for callers awaiting runtime state, never retrying the operation itself. @example await waitUntil(() => ready, 'page ready') */

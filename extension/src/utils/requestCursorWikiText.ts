@@ -2,7 +2,9 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
 import type * as vscode from 'vscode'
+
 import {
   WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES,
   WIKI_CURSOR_PROMPT_LIMIT_BYTES,
@@ -10,6 +12,7 @@ import {
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_ANSWER_LIMIT_CHARS,
 } from '../constants'
+
 import { resolveCursorAgentExecutable } from './resolveCursorAgentExecutable'
 
 type CursorCliResult = {

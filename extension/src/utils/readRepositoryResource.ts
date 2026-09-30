@@ -1,6 +1,6 @@
 import { StudyError } from '../errors'
-import type { StudyService } from '../service'
 import type { ResourceContent } from '../resources'
+import type { StudyService } from '../service'
 
 /** Resolves canonical instance-owned book history and copied source without substituting current or latest content. @example await readRepositoryResource(service, bookUri) */
 export async function readRepositoryResource(

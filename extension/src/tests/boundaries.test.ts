@@ -1,14 +1,16 @@
-import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { sha256 } from '../runtimeSupport/utils/sha256'
-import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { test } from 'node:test'
+
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
 import { StudyError } from '../errors'
 import { readResource } from '../resources'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { readBoundedFile } from '../utils/readBoundedFile'
+import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
+
 import { createHarness } from './helpers'
 
 test('retaining sixteen stopped runs rejects a seventeenth without evicting original history or idempotency', async () => {

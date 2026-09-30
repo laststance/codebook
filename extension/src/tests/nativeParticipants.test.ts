@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import { nativeParticipantsHarness } from './utils/nativeParticipantsHarness'
 
 const pauseReady = async (
@@ -447,7 +449,7 @@ test('closing during delayed stack refresh verification cannot revive the captur
   harness.run.action('once', 'repository-click')
   await pauseReady(harness, 'server')
   const originalRequest = harness.sessions.server.customRequest
-  let releaseStack = () => {},
+  let releaseStack = (): void => {},
     stackRequested = false
   const delayedStack = new Promise<void>((resolve) => {
     releaseStack = resolve

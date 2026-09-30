@@ -1,13 +1,16 @@
 import { spawn } from 'node:child_process'
+
 import type * as vscode from 'vscode'
+
 import {
   WIKI_CURSOR_PROMPT_LIMIT_BYTES,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
 } from '../constants'
-import { resolveCursorAgentExecutable } from './resolveCursorAgentExecutable'
+
 import { terminateCursorAgentProcess } from './requestCursorWikiText'
+import { resolveCursorAgentExecutable } from './resolveCursorAgentExecutable'
 
 type CursorCliResult = {
   type?: unknown

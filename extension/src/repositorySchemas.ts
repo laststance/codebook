@@ -1,4 +1,5 @@
 import { z } from 'zod'
+
 import {
   BOOK_MAX_ANCHORS,
   BOOK_MAX_EDGES,
@@ -14,14 +15,14 @@ import {
   KEY_LENGTH_LIMIT,
   REPOSITORY_SOURCE_LIMIT_BYTES,
 } from './constants'
-import { itemSchema } from './studySchemas'
+import { bookIdSchema, learningItemSchema } from './identitySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
 import {
   bookAnchorSchema,
   repositoryHashSchema,
   repositoryPathSchema,
 } from './sourceSchemas'
-import { bookIdSchema, learningItemSchema } from './identitySchemas'
+import { itemSchema } from './studySchemas'
 export { bookIdSchema } from './identitySchemas'
 export {
   bookAnchorSchema,

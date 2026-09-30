@@ -8,12 +8,24 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
+
 import {
   API_VERSION,
   EXTENSION_VERSION,
   REFERENCE_LENGTH_LIMIT,
 } from './constants'
 import { domainError } from './errors'
+import { playbackCommandSchema, playbackToolSchema } from './playbackSchemas'
+import {
+  presentationCommandSchema,
+  returnCurrentCommandSchema,
+} from './presentationSchemas'
+import {
+  sourceListSchema,
+  sourceReadSchema,
+  publishBookSchema,
+  openBookSchema,
+} from './repositorySchemas'
 import { readResource } from './resources'
 import {
   actionSchema,
@@ -25,17 +37,6 @@ import {
   startSchema,
 } from './schemas'
 import type { StudyService } from './service'
-import { playbackCommandSchema, playbackToolSchema } from './playbackSchemas'
-import {
-  sourceListSchema,
-  sourceReadSchema,
-  publishBookSchema,
-  openBookSchema,
-} from './repositorySchemas'
-import {
-  presentationCommandSchema,
-  returnCurrentCommandSchema,
-} from './presentationSchemas'
 
 /** Encodes domain outcomes as MCP tool results without turning a failure into successful text. @example await toolResult(() => service.status()) */
 async function toolResult(

@@ -1,16 +1,19 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { z } from 'zod'
-import { startServer } from '../server'
-import { createHarness } from './helpers'
+
 import { SESSION_IDLE_TIMEOUT_MS } from '../constants'
+import { startServer } from '../server'
+
+import { createHarness } from './helpers'
 
 test('Cursor stdio bridge exposes the current authenticated Codebook instance without a credential in its command', async (context) => {
   // Arrange

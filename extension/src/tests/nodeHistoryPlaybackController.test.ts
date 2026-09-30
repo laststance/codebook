@@ -1,7 +1,8 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { NodeHistoryPlaybackController } from '../utils/nodeHistoryPlaybackController'
+import { test } from 'node:test'
+
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { NodeHistoryPlaybackController } from '../utils/nodeHistoryPlaybackController'
 
 test('Node history playback seeks to verified events and presents every boundary in time order', async () => {
   // Arrange
@@ -345,6 +346,7 @@ test('Pause and seek become available after a played Node event finishes present
     mode: 'paused' | 'playing'
   }> = []
   let controller!: NodeHistoryPlaybackController
+  // eslint-disable-next-line prefer-const -- the change callback reads the controller it is passed to.
   controller = new NodeHistoryPlaybackController({
     present: async () => {},
     changed: () => {

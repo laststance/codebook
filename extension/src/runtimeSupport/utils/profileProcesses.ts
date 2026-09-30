@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { realpath } from 'node:fs/promises'
+import { promisify } from 'node:util'
 
 /** Observes only the exact fresh Chrome profile during owned launch/cleanup; never signals other processes. @example await profileProcesses('/tmp/codebook-browser-unique') */
 export async function profileProcesses(

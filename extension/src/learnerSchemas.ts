@@ -1,4 +1,6 @@
 import { z } from 'zod'
+
+import { citationContextSchema } from './citationSchemas'
 import {
   BOOK_MAX_ANCHORS,
   BOOK_MAX_SECTIONS,
@@ -8,13 +10,13 @@ import {
   LEARNING_SCHEMA_VERSION_V4,
   MAX_LEARNER_DECISIONS,
 } from './constants'
-import { learnerDecisionSchema as legacyDecisionSchema } from './studySchemas'
 import { bookIdSchema, learningItemSchema } from './identitySchemas'
-export { repositoryItemSchema, learningItemSchema } from './identitySchemas'
-import { repositoryHashSchema } from './sourceSchemas'
-import { citationContextSchema } from './citationSchemas'
-import { retainedStudySelectionSchema } from './retainedStudySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
+import { retainedStudySelectionSchema } from './retainedStudySchemas'
+import { repositoryHashSchema } from './sourceSchemas'
+import { learnerDecisionSchema as legacyDecisionSchema } from './studySchemas'
+
+export { repositoryItemSchema, learningItemSchema } from './identitySchemas'
 export { citationContextSchema } from './citationSchemas'
 
 const singleSourceDecisionSchema = legacyDecisionSchema.extend({

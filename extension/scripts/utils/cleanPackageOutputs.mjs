@@ -1,5 +1,6 @@
 import { lstat, realpath, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+
 import { COMPILED_DIRECTORIES } from './packageConstants.mjs'
 
 /** Removes only known compiler outputs before packaging so deleted source cannot survive as stale JavaScript or declarations. @example await cleanPackageOutputs(repository) */

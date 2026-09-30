@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { learningStepIdSchema } from './learningSummarySchemas'
+
 import {
   PRESENTATION_MODE_IDS,
   PRESENTATION_PREFERENCE_VERSION,
@@ -13,6 +13,7 @@ import {
   REFERENCE_LENGTH_LIMIT,
 } from './constants'
 import { learningItemSchema } from './identitySchemas'
+import { learningStepIdSchema } from './learningSummarySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
 
 export const presentationModeSchema = z.enum(PRESENTATION_MODE_IDS)

@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { TestContext } from 'node:test'
+import { promisify } from 'node:util'
+
 import { RepositorySourceService } from '../../repositorySource'
 
 const executeFile = promisify(execFile)
@@ -16,7 +17,7 @@ export async function repositoryHarness(context: TestContext) {
   const track = async (
     path: string,
     text: string | Buffer = 'export const price = 24;\n',
-  ) => {
+  ): Promise<void> => {
     await mkdir(dirname(join(directory, path)), { recursive: true })
     await writeFile(join(directory, path), text)
     await executeFile('git', ['add', '--force', '--', path], { cwd: directory })

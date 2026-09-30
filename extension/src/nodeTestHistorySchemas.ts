@@ -1,4 +1,6 @@
 import { z } from 'zod'
+
+import { configuredDescriptorSchema } from './configuredStudySchemas'
 import {
   LEARNING_SUMMARY_LIMITS,
   MAX_EXPLANATION_CHARS,
@@ -10,9 +12,8 @@ import {
   NODE_TEST_READER_POSITION_VERSION,
   REPOSITORY_PATH_LIMIT_CHARS,
   REPOSITORY_LITERAL_LIMIT_CHARS,
+  NODE_TEST_PROFILE,
 } from './constants'
-import { NODE_TEST_PROFILE } from './constants'
-import { configuredDescriptorSchema } from './configuredStudySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { replayDebugSnapshotSchema } from './replayDebugSchemas'

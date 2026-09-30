@@ -49,7 +49,7 @@ export function installShortcutHelp(
             !control.matches(':disabled'),
         ),
     )
-  const render = () => {
+  const render = (): void => {
     const query = search.value.trim().toLocaleLowerCase(),
       bindings = available()
     const signature = JSON.stringify([query, bindings])
@@ -88,7 +88,7 @@ export function installShortcutHelp(
     empty.hidden = list.childElementCount !== 0
     clear.hidden = !query
   }
-  const open = () => {
+  const open = (): void => {
     // Repeated ? never replaces the dialog or its original return target.
     if (
       dialog.open ||
@@ -176,7 +176,7 @@ export function installShortcutHelp(
   tooltip.hidden = true
   document.body.append(tooltip)
   let tooltipOwner: HTMLElement | undefined
-  const hideTooltip = () => {
+  const hideTooltip = (): void => {
     tooltip.hidden = true
     tooltipOwner?.removeAttribute('aria-describedby')
     tooltipOwner = undefined
@@ -203,7 +203,7 @@ export function installShortcutHelp(
             )
             .join('; ')
     control.title = text
-    const show = () => {
+    const show = (): void => {
       hideTooltip()
       tooltipOwner = control
       ;(dialog.contains(control) ? dialog : document.body).append(tooltip)

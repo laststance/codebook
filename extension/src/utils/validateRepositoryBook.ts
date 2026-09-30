@@ -1,4 +1,3 @@
-import { sha256 } from '../runtimeSupport/utils/sha256'
 import {
   BOOK_INPUT_LIMIT_BYTES,
   BOOK_REVISION_LIMIT_BYTES,
@@ -10,6 +9,8 @@ import {
   repositoryBookV2Schema,
   type RepositoryBook,
 } from '../repositorySchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+
 import { bookIntentDigest } from './bookIntentDigest'
 
 /** Verifies every retained revision before reads or replacement, preventing fallback and rebinding through edited JSON. @example validateRepositoryBook(value, workspaceKey, bookId) */

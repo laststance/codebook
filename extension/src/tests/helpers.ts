@@ -1,17 +1,19 @@
-import { sha256 } from '../runtimeSupport/utils/sha256'
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { StudyService } from '../service'
-import type { ConfiguredRuntimeView, StudyEnvironment } from '../runtime'
+import { promisify } from 'node:util'
+
 import type { ConfiguredDefinition } from '../configuredStudySchemas'
-import { RepositorySourceService } from '../repositorySource'
-import { RepositoryBookStore } from '../repositoryBook'
 import { LearningLibrary } from '../learningLibrary'
-import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { RepositoryBookStore } from '../repositoryBook'
+import { RepositorySourceService } from '../repositorySource'
+import type { ConfiguredRuntimeView, StudyEnvironment } from '../runtime'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { StudyService } from '../service'
+
 import { ControlledConfiguredRuntime } from './utils/configuredServiceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
 const executeFile = promisify(execFile)
 
@@ -139,7 +141,7 @@ export async function createHarness(
     service,
     runtimes,
     configuration: reference.configuration,
-    async close() {
+    async close(): Promise<void> {
       try {
         await service.shutdown()
         await books.dispose()
