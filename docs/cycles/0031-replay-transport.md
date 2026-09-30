@@ -1,9 +1,9 @@
 # Cycle 0031 — Preserve the first replay command
 
 Type: product-increment\
-Status: validating (bounded transport, native-inspection readiness, paint-budget and quiet-guard repairs verified; `/ship` reviews bound to `fd59c5eb` with no critical finding; 0.2.15.0 PR/CI/merge pending)\
-Result: pending\
-Delivery: local-only\
+Status: closed (reviews, local checks, PR/CI, exact-HEAD gate and separate merge complete)\
+Result: demonstrated (first-command ownership, visible-time paint budget and the soft inspection gate at mechanism level, plus bounded both-host development video on the f95562ba cut; native behavior of the soft gate and final product acceptance remain open)\
+Delivery: merged (PR #54 squash-merged as `58f2fa6`; private 0.2.15 VSIX checked; not published or final-installed)\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/53\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -738,3 +738,53 @@ Tests:
   - the panel-dispose gap wake;
   - the replay close reset.
 - `test:package` concurrency 4 may be flaky on small CI runners.
+
+## Delivery closure, 2026-10-01
+
+**Final checks.** Final commits `de92f0c`, `68a1a25`, `af14b84` and `369884e` preserve the Step 16 content tree `3f0c858d`. Against the reviewed tree `fd59c5eb`, only authored docs and version strings changed. Results:
+- Build passed.
+- Full suite:
+  - First run: 1,426/1,427. The one intermittent failure is the pre-existing race described below.
+  - Rerun: 1,427/1,427.
+- Package: 175/175, run after every extension reader exited.
+- Hook: 4/4.
+- Chromium DOM harness: 54/55. The one failure is the wide-sequence case, which also fails on `ce89dbd`.
+
+**Intermittent failure.** `a missing explicit replay-focus receipt rejects once…` threw `EVIDENCE_UNAVAILABLE` from a background refresh checkpoint once, under full parallel load. Its test body and harness path match `main`, and the failing code path (`captureStudy`, `resources.ts`) is unchanged. It passed:
+- 6/6 isolated runs;
+- 16 parallel single-test runs;
+- 18 parallel whole-partition runs.
+
+A fix needs a production change, and the owner's direction excludes a fourth fix cycle for a non-critical item. It is the next cycle's P0: a background checkpoint racing live runtime release.
+
+**Documentation.** The ship-owned documentation audit returned `updated` and its hashes held through the final commits.
+
+**PR #54.** The PR was opened Ready and its body carries the DOM-harness screenshot of the hint. An `@codex review` on exact HEAD `369884e1a1` returned 2 [P2] and 1 [P3], and no P1. All three duplicate backlog items above; each thread was answered and resolved. Required checks passed on `369884e`: package, plus both Socket checks.
+
+**Merge.** The read-only exact-HEAD gate passed on:
+- OPEN, MERGEABLE, CLEAN;
+- the same HEAD locally, remotely and in the PR;
+- an unchanged base `ce89dbd`;
+- zero unresolved threads.
+
+A separate call then squash-merged PR #54 at 20:45:49 UTC as `58f2fa6065a9dcaa277cef5a6537d85703030381`. The merged tree is byte-identical to the verified candidate. Post-merge main CI run 36774901521 succeeded on that SHA.
+
+**Package.** The checked private VSIX is `artifacts/packages/codebook-0.2.15.vsix`:
+- SHA `367723e22149d7066cf9b18ecb97ea76319ce58c285294d1acc3c8d3303a7486`;
+- clean revision `58f2fa6`;
+- sourceHash `3b2749e2a03b8de05c95bb1bfc6ea23ce2f40c23d7cc2d4b0a6aa515eef35342`;
+- 29 entries;
+- independent checker exit 0.
+
+It is not installed, published or natively verified.
+
+**Open items.** Issue #53 closes with this record; Goal #1 stays open. All thirteen integrated and final AC rows remain open.
+
+**Next.** Plan Cycle 0032 through `/spec` from the updated gap ledger. Its candidates:
+- the deferred review backlog above;
+- the intermittent checkpoint race (P0);
+- native verification of the soft gate;
+- Cursor automatic summary placement and density;
+- reader recovery and accessibility.
+
+After that come the owner's queued lint, format and CI tooling PR, and final acceptance.
