@@ -1,9 +1,9 @@
 # Cycle 0030 — Trustworthy Node test runs
 
 Type: product-increment (hardening)\
-Status: validating (late Codex review remediation; earlier mechanism/native proof preserved; follow-up delivery pending)\
-Result: pending (late-review remediation; earlier bounded observations preserved)\
-Delivery: original PR #51 merged prematurely; follow-up PR/checks pending\
+Status: closed (corrective review, local checks, PR/CI and separate root merge complete)\
+Result: demonstrated (mechanism and bounded original VS Code development; final product acceptance remains open)\
+Delivery: merged (PR #51 incident preserved; corrective PR #52 merged as `ce89dbd`, private 0.2.14 VSIX checked; not published or final-installed)\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/50\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -437,17 +437,18 @@ The gstack version helper selected unclaimed patch 0.2.13.0 / manifest 0.2.13; r
 
 ## Result and decision
 
-- Result: demonstrated at mechanism and bounded VS Code development level. Keep all final product, Cursor, replay and installed-final-candidate acceptance gaps open.
+- Result: demonstrated at mechanism and bounded original VS Code development level. All four functional increments and the two late review repairs are delivered. Keep all final product, Cursor, replay and final-installed acceptance gaps open.
+- Delivery: original PR #51 merged prematurely with two supported unresolved threads; corrective PR #52 passed current-HEAD reviews/CI and a separate driving-agent merge. The original incident and source-cut evidence remain preserved.
 
 ## Handoff
 
-Cycle 0029 delivered through PR #48 (`ad476d3`); Issue #46 is closed with its result. This cycle starts on branch `codex/cycle-0030-node-run-integrity` from `ad476d3`.
+Cycle 0030 delivered 0.2.13 through PR #51 (`d2b96fb`) and its required corrective 0.2.14 through PR #52 (`ce89dbd`). Cycle Issue #50 closed through PR #52 at 2026-09-29 23:40:55 UTC. Goal #1 remains open. The original branch, private recordings and both candidate identities remain preserved.
 
 ## Next action
 
-- **Exact next action:** freeze the 0.2.14 corrective candidate, run full/package suites sequentially, complete fresh OCR/local CodeRabbit/native and documentation audits, then open a Draft follow-up PR and explicitly request Codex review on its exact pushed SHA. Wait for terminal latest-HEAD cloud review and inspect required CI, bodies and threads. Hand the driving agent a concrete gate snapshot for its separate merge call; this worker must not merge or close #50. See the corrective follow-up below. Cycle 0031 starts only after remediation lands and Cycle 0030 closes.
-- **Branch / processes:** `codex/cycle-0030-review-followup` from merged `d2b96fb`; the two fixes and focused tests are committed as `dc8bd92`, with 0.2.14 release metadata and current delivery records awaiting the frozen commit. The original branch and evidence remain preserved. No owned runtime or suite process is active at this checkpoint. The owned isolated QA window was closed; the preserved original window retains the installed 0.2.12 `a4cf0ed2…` candidate. Dashboard DB is restored to its initially stopped state. No final 0.2.14 installed/native verification is claimed.
-- **State:** PROJECT_STATE names this cycle as active; all thirteen acceptance rows, Cycle #50 and Goal #1 stay open.
+- **Exact next action:** plan [Cycle 0031](0031-replay-transport.md) from the hidden-Application first-command/focus gap, perform its full entry/all-row audit and prove or falsify the visibility-replacement hypothesis before any production fix. Keep ordinary installed VS Code and Cursor motion/source/native-debugger checks separate.
+- **Branch / processes:** the new planning branch is `codex/cycle-0031-replay-transport` from merged `ce89dbd`. All Cycle 0030 worker/test/review sessions ended. The isolated QA window was closed; the original window and unsent draft remain preserved. VS Code still has the original 0.2.12 `a4cf0ed2…` candidate; 0.2.14 is not installed/native-verified. Dashboard DB returned to its initially stopped state.
+- **State:** PROJECT_STATE points to Cycle 0031. All thirteen acceptance rows remain open; no Stage 1/Stage 2 or owner acceptance.
 
 ## GSTACK REVIEW REPORT
 
@@ -455,12 +456,12 @@ Cycle 0029 delivered through PR #48 (`ad476d3`); Issue #46 is closed with its re
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
 | Outside Review | Codex via `/plan-eng-review` | Independent 2nd opinion | 1 | completed | 4 findings, all accepted into the reviewed plan |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | ISSUES OPEN (PLAN) | 23 issues (incl. 17 planned test gaps), 0 critical gaps; all dispositions decided |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | COMPLETE (bounded cycle) | 23 original plan findings, all dispositions recorded; 20/20 original deliverables and 6/6 corrective deliverables done; broader product proof remains open |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | no UI change |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
 - **OUTSIDE COVERAGE:** Codex, plan-review phase, completed; 4 findings (3 P1, 1 P2), all accepted.
-- **VERDICT:** Eng review has mapped work, not open decisions; implementation may start. eng review required (issues_open status until the mapped work lands).
+- **VERDICT:** Bounded implementation and corrective delivery are complete; this does not verify the final product. Original coverage assessment retains its two small untested branches separately from the complete corrective-path assessment.
 
 NO UNRESOLVED DECISIONS
 
@@ -477,4 +478,14 @@ Fresh branch `codex/cycle-0030-review-followup` starts at `origin/main` `d2b96fb
 
 Patch 0.2.14.0/manifest/runtime 0.2.14 and package assertion/build-example synchronization are release metadata; first-supported Node 0.2.12 and API 1.5 remain. Original `fb7f472`/.2.12 native passed canonical reports have unchanged semantics; configured runtime source is unchanged. Carry only those bounded original observations with their identities. No native injected failure/alias or final 0.2.14 installed proof is claimed.
 
-**Next gate:** frozen full/package sequentially; fresh OCR/local CodeRabbit/native adversarial; Draft PR plus explicit `@codex review`; wait for terminal latest-HEAD cloud review/body and audit every latest thread. Every dependent mutation must check its own tool exit and gate snapshot; no shell continuation after assertions or unattended auto-merge. The worker must not merge or close #50. The driving agent independently checks the concrete exact-HEAD handoff and performs any authorized final merge separately. Only then close this cycle and plan Cycle 0031.
+**Corrective gates:** completed as recorded below. The worker handed off without merging; the driving agent independently checked latest-HEAD review/CI/thread state and made a separate match-head merge call. No next-cycle implementation was performed before corrective delivery.
+
+## Corrective delivery closure, 2026-09-30
+
+Frozen source `53563ab03d6722f5aeab0183ac5c03f2dc2dcc9c`, tree `c567d6d62cb1105ae3a51df4277448f1e5532bec`: focused 29/29, full extension 1,365/1,365, sequential package 175/175 and compaction 4/4 PASS, every owned tool exit 0, zero failures/cancelled. OCR reviewed 6/6 eligible files and all seven material default exclusions. Local CodeRabbit completed on that exact HEAD: 13 files, zero findings, exit 0. In-host adversarial and parent review bindings match the frozen content tree. Corrective coverage 9/9 and plan 6/6 are scoped assessments; documentation audit is CURRENT. Private handoff: `artifacts/cycle-0030/reviews/followup-delivery-handoff.json`.
+
+PR #52 was made Ready after local gates, then the explicit `@codex review` named the exact final SHA. Its latest Manual-request summary completed at 23:35:50 UTC and [the clean commit-specific response](https://github.com/laststance/codebook/pull/52#issuecomment-5901102375) names `53563ab03d`. Formal `reviewDecision` is empty, not APPROVED; hosted CodeRabbit/Claude CLI remain owner-skipped. Both original PR #51 threads received concrete published repair/regression proof and were resolved; PR #52 has zero threads. Required package and both Socket checks passed on `53563ab`, run 36645611961. The root read-only gate exited 0 on OPEN/Ready/MERGEABLE/CLEAN, unchanged completed cloud summary, exact local/remote HEAD and no unresolved current/original threads. Only after inspecting that result did a separate `gh pr merge --squash --match-head-commit` call exit 0.
+
+[PR #52](https://github.com/laststance/codebook/pull/52) merged at 23:40:53 UTC as `ce89dbdc21250d8085391f0d83eae5fb0c762789`. Its tree is byte-identical to the frozen candidate. Post-merge main CI run 36646491256 completed SUCCESS on that exact merge SHA. Cycle #50 closed through PR #52; Goal #1 stays open. Private gate, thread and merge receipts remain under `artifacts/cycle-0030/reviews/root-*`; the premature PR #51 receipt is never relabeled clean.
+
+The checked 29-entry private VSIX `artifacts/packages/codebook-0.2.14-c30-followup-20260930.vsix` has SHA `463f10acbbfb2fdea71e719ffdd94fb1ae3740c802409a0eeefaa46de0e3915f`, runtime `d6b4f9cd62b8761835f6225dc3e7492ef3025b8f94d05a75a498738ccaec350d`, sourceHash `3d56b7da88f88bda0aebecc491c9dfe74e5f0e89ed9c31afaacf3a1c5f46ae2a`, clean source `53563ab` and isolated-module-load PASS. Publication and final installed/native verification are NOT RUN. Original native receipts retain `fb7f472`/.2.12 `a4cf0ed2…`/runtime `744707e3…` and their narrow carry-forward rationale. All thirteen integrated/final AC rows remain open.

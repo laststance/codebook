@@ -149,3 +149,69 @@ test('a queued evidence frame survives newer live updates', async () => {
   await first;
   delivery.dispose();
 });
+
+test('a suspended recording clock retains the same remaining paint budget across visibility changes', async () => {
+  // Arrange
+  let paintTimeMs = 100, outcome = 'pending';
+  const delivery = new FrameDelivery(() => Promise.resolve(true), () => undefined, 30, () => paintTimeMs);
+  delivery.begin('recorded-view');
+  const capture = delivery.offer(pause).then(() => { outcome = 'painted'; }, error => { outcome = error.message; });
+  try {
+    // Act: wall time alone cannot consume a stopped recording clock.
+    await delay(60); const hiddenOutcome = outcome;
+    paintTimeMs = 110; delivery.refreshDeadlines(); await delay(0); const partlyVisibleOutcome = outcome;
+    paintTimeMs = 131; delivery.refreshDeadlines(); await capture;
+    // Assert: returning to visibility never grants a new thirty-millisecond budget.
+    assert.equal(hiddenOutcome, 'pending'); assert.equal(partlyVisibleOutcome, 'pending');
+    assert.equal(outcome, 'Viewport frame acknowledgement timed out');
+    assert.equal(delivery.acknowledge('recorded-view', 1), false);
+  } finally { delivery.dispose(); await capture; }
+});
+
+test('visibility restoration expires both overdue recording slots without sending the queued image', async () => {
+  // Arrange
+  const sent: FrameMessage[] = []; let paintTimeMs = 0;
+  const delivery = new FrameDelivery(message => { sent.push(message); return Promise.resolve(true); }, () => undefined, 20, () => paintTimeMs);
+  delivery.begin('recorded-view');
+  const first = delivery.offer(live), firstRejected = assert.rejects(first, /acknowledgement timed out/);
+  const queued = delivery.offer(pause), queuedRejected = assert.rejects(queued, /acknowledgement timed out/);
+  try {
+    // Act
+    await delay(0); paintTimeMs = 21; delivery.refreshDeadlines();
+    await Promise.all([firstRejected, queuedRejected]);
+    // Assert
+    assert.deepEqual(sent.map(message => message.id), [1]);
+    assert.equal(delivery.acknowledge('recorded-view', 2), false);
+  } finally { delivery.dispose(); }
+});
+
+test('closing a suspended recording releases pending ownership without waiting for visibility', async () => {
+  // Arrange
+  const delivery = new FrameDelivery(() => Promise.resolve(true), () => undefined, 20, () => 0);
+  delivery.begin('recorded-view');
+  const first = delivery.offer(live), firstRejected = assert.rejects(first, /disposed/);
+  const queued = delivery.offer(pause), queuedRejected = assert.rejects(queued, /disposed/);
+  // Act
+  delivery.dispose(); delivery.refreshDeadlines(); await Promise.all([firstRejected, queuedRejected]);
+  // Assert
+  assert.equal(delivery.acknowledge('recorded-view', 1), false);
+  assert.equal(delivery.acknowledge('recorded-view', 2), false);
+});
+
+test('a nearly exhausted hidden paint budget waits quietly and still expires on visibility restoration', async () => {
+  // Arrange: the recording becomes hidden with less than one millisecond left to paint.
+  let paintTimeMs = 0, clockReads = 0, outcome = 'pending';
+  const delivery = new FrameDelivery(() => Promise.resolve(true), () => undefined, 40, () => { clockReads++; return paintTimeMs; });
+  delivery.begin('recorded-view');
+  const capture = delivery.offer(pause).then(() => { outcome = 'painted'; }, error => { outcome = error.message; });
+  try {
+    // Act: a suspended clock cannot consume the remaining budget or justify millisecond polling.
+    paintTimeMs = 39.9; delivery.refreshDeadlines(); const initialClockReads = clockReads;
+    await delay(120); const hiddenClockReads = clockReads - initialClockReads;
+    // Assert: tolerate scheduler variance while rejecting the reproduced 95 polls in this interval.
+    assert.equal(outcome, 'pending'); assert.equal(hiddenClockReads < 20, true);
+    paintTimeMs = 40.1; delivery.refreshDeadlines(); await capture;
+    assert.equal(outcome, 'Viewport frame acknowledgement timed out');
+    assert.equal(delivery.acknowledge('recorded-view', 1), false);
+  } finally { delivery.dispose(); await capture; }
+});

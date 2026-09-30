@@ -367,3 +367,45 @@ Decision: restore only `SessionStart` for `source: compact`. Supply the current 
 Source: Raphtalia's Goal direction during Cycle 0029: “Codebookを完成させてください。現在のCycleの作業が終わったら/open-code-review-delegate でレビュー後 /shipでPRを作成し、CIが通ったらマージして次のCycleを計画してください。VSCodeの実機試験では料金が安いCopilotのAutoモデルを使用してください。クレジットがなくなった場合はClaude CodeのExtensionを使用してください。”
 
 Decision: continue toward the complete product. When the current cycle's authorized work is finished, review it with `open-code-review-delegate`, create or update its PR through `/ship`, merge once required CI passes, then plan the next cycle from the updated gap ledger. This authorizes the merge step for completed cycles; it does not waive D028's local CodeRabbit CLI review, D027's hosted-review skip, recorded findings, native evidence or any final acceptance gate. VS Code practical trials keep D025's order: Copilot Chat **Auto** first and the installed Claude Code extension only after observed Copilot credit exhaustion. Cursor evidence stays separate. Goal Issue #1 stays open until final acceptance and owner approval.
+
+## D040 — Use Codex Extension after Copilot credit exhaustion, 2026-09-30
+
+Source: Raphtalia's updated completion Goal explicitly says: “VSCodeの実機試験では料金が安いCopilotのAutoモデルを使用してください。クレジットがなくなった場合はCodexのExtensionを使用してください。” The owner subsequently selected “A：残りの作業を再開（推奨）” after the context restore.
+
+Decision: resume the saved Cycle 0031 checkout and preserve its four uncommitted documents. For VS Code practical development trials use Copilot Chat **Auto**, then the installed **Codex Extension** after observed credit exhaustion. This supersedes the Claude Extension fallback in D025/D039 for this continuation. Do not purchase credits or change subscriptions; label evidence with the actual chat and fallback reason. Historical Claude observations remain attributed to their original host/source. Both-host separation, review/CI/merge gates and all final acceptance requirements remain unchanged.
+
+## D041 — Use OBS Window Capture for native QA recording, 2026-09-30
+
+Source: the owner requested actual trials of the three researched recording methods and the best method in AGENTS.md/workflow documents. During the trials the owner explicitly stated: “quick time、mac標準の録画ツールは操作が一切できなくなるからむりですね”.
+
+Decision: use OBS **macOS Screen Capture → Window Capture** for native macOS editor QA, with the [tested procedure](docs/qa/native-recording.md). Select the exact owned window; verify silent audio setup, actual dimensions, reset transform/crop, changing-content preflight, saved-video metadata and inspected frames. Preserve unrelated work and record both hosts separately. Do not use QuickTime/Screenshot for this workflow or ask for an exclusive foreground hold. The window-ID CLI video's two black-output trials do not qualify it as a fallback without fresh successful proof.
+
+Evidence and boundary: Cycle 0031's corrected OBS take captured the full dedicated VS Code dashboard window at 2880 × 1800/30 fps, including an inactive-window sample and subsequent visible panel/source changes without an exclusive foreground hold. Initial cropped OBS takes, CLI black files and standard-recorder automation failures remain preserved. This selects an evidence-acquisition tool; it changes no product outcome, recording/replay implementation, public package dependency or final acceptance gate. A working recorder does not establish reliable native input, current-candidate replay synchronization or Cursor/final proof.
+
+Provenance: [Cycle 0031 recorder results](docs/cycles/0031-replay-transport.md#recorder-workflow-result-2026-09-30) and its recorder-entry baseline identify the private video/frames and receipt, VS Code 1.139.1 host, ce89dbd with declared dirty controller/tests, inspected artifacts, failed attempts and cleanup limitations. The receipt remains in ignored artifacts/cycle-0031/recorder-comparison/comparison.json; these are original recorder observations, not the later test-partition source cut or product/native acceptance.
+
+## D042 — Stop after the current viewport acknowledgement repair, 2026-09-30
+
+Superseded by the owner's subsequent explicit continuation under D043 before this stopping condition was reached.
+
+Source: Raphtalia's explicit steering: “調査している不具合の修正が終わったら、一旦作業を止めて連絡して。” At that point the selected investigation is the recurring recorded-viewport paint acknowledgement timeout in Cycle 0031.
+
+Decision: continue only the current bug investigation, repair and necessary verification. Once that repair is actually verified, stop work and notify the owner; pause the active completion goal without claiming the entire product is complete. Do not create its PR, merge or start another increment/cycle before an explicit resume. This stopping boundary supersedes D026/D039's automatic continuation/delivery for the current handoff; accepted product outcomes, existing dirty work and remaining evidence gates are preserved.
+
+Boundary: the request is conditional, not an immediate pause or permission to call an unverified remedy complete. Preserve the failed recording and exact candidate/host/renderer-stage evidence. Recorder acquisition, native inspection readiness and viewport paint remain separate outcomes.
+
+## D043 — Resume completion and authorize protected Mac use, 2026-09-30
+
+Source: Raphtalia's explicit follow-up: “先ほど中断してと言いましたが、事情が変わりまして、コードブックの完成まで作業を継続していただけますでしょうか。私は寝ますので、おやすみなさい。Macはご自由に使っていただいて構いません。”
+
+Decision: revoke D042's conditional stop and continue toward the complete Codebook product. Finish the current ACK repair and required proof, then continue the existing bounded-cycle workflow under D026/D039, including reviews, PR, required CI, merge and subsequent gap-driven cycles. Routine protected Mac operations are authorized while the owner sleeps; no new screen-time confirmation is needed. Preserve existing work, profiles, skills, settings, drafts, learner decisions, source and credentials.
+
+Boundary: continuation does not waive current-source/native evidence, either editor, final nine-project stages, review/delivery gates or owner acceptance. Purchases, subscriptions and unrelated destructive changes remain outside authorization. Historical D042 receipts retain their original stopping instruction but no longer govern the current next action.
+
+## D044 — Plan each next cycle through /spec and its issue, 2026-09-30
+
+Source: Raphtalia's updated completion goal after the Cycle 0031 context restore: “Codebookを完成させてください。一つのCycleが終わったら 最終スペックと現在の完成状況から導出した次のCycleのIssueを /spec で作成し、必要に応じて /plan-design-review /plan-eng-review, /plan-devex-review でspecを補強し実装。… coderabbit-cli, /open-code-review-delegate でレビュー後 /shipでPRを作成し、CIが通ったらマージして次のCycleを計画してください。VSCodeの実機試験では料金が安いCopilotのAutoモデルを使用してください。クレジットがなくなった場合はCodexのExtensionを使用してください。”
+
+Decision: continue D039/D043 delivery. After each cycle merges, derive the next bounded cycle from PRODUCT_GOAL, its contracts and the PROJECT_STATE gap ledger, and create its cycle Issue through `/spec`. Strengthen that spec with `/plan-design-review`, `/plan-eng-review` or `/plan-devex-review` when its scope touches UI, architecture or public API/setup, then implement. Review each completed cycle with local CodeRabbit CLI and `open-code-review-delegate`, create the PR through `/ship`, and merge after required CI passes. D040's VS Code chat order is unchanged: Copilot Chat **Auto**, then the installed Codex Extension after observed credit exhaustion.
+
+Boundary: `/spec` output and its Issue mirror the local cycle document; they do not replace AGENTS.md's entry gate, the local cycle record or gap audit. This changes planning workflow only. D027's hosted-review skip, both hosts, native evidence, the nine-project stages and owner acceptance remain unchanged. Goal Issue #1 stays open.

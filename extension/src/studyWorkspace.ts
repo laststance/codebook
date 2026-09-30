@@ -15,7 +15,8 @@ import type { NodeTestHistoryIndex, NodeTestHistoryLearningDecision, NodeTestLea
 import { RecordingStore } from './recordingStore';
 import { PlaybackController, type PlaybackBundle, type PlaybackData } from './playbackController';
 import { projectLearningSummary } from './utils/projectLearningSummary';
-import { ReplayDebugger } from './replayDebugger';
+import { ReplayDebugger, type ReplayInspection } from './replayDebugger';
+import type { ReplayDebugSnapshot } from './replayDebugSchemas';
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy';
 import { waitUntil } from './runtimeSupport/utils/waitUntil';
 import { CAPTURE_TIMEOUT_MS, VIEWPORT_ACK_TIMEOUT_REASON } from './runtimeSupport/constants';
@@ -95,6 +96,8 @@ export class StudyWorkspace {
   private selectedNodeHistoryPage = 0;
   private selectedNodeHistorySequence?: number;
   private selectedNodeHistoryDebugAvailable = false;
+  /** The selected Node stop reached native Run and Debug without its values loading; the reader shows how to load them. */
+  private selectedNodeHistoryValuesUninspected = false;
   private selectedNodeHistoryRequest = 0;
   private nodeHistoryPlaybackController?: NodeHistoryPlaybackController;
   private playback?: PlaybackController;
@@ -105,6 +108,8 @@ export class StudyWorkspace {
   private replayDelivery: ViewportDeliveryLog = { receipts: [], omitted: 0 };
   private playbackPending?: PlaybackBundle;
   private playbackPresentingReady = false;
+  /** The recorded stop committed before native Run and Debug loaded its values; every frame of that stop shows how to load them. */
+  private replayUninspectedSnapshot?: ReplayDebugSnapshot;
   private initializing?: Promise<void>;
   private baselines?: SourceBaselines;
   private currentSourceAvailable = true;
@@ -1615,6 +1620,8 @@ export class StudyWorkspace {
     this.presentationTransition?.cancellation.abort(new Error('Presentation reader closed.'));
     this.presentationId = randomUUID(); this.presentationControlRevision = 0; this.presentationConfirmed = false; this.requestedPresentation = undefined;
     this.repositoryRecordingOpen = undefined;
+    // Closing disposes the native session: a Node stop still loading its values is abandoned, and no Run and Debug hint may survive a reopen.
+    this.selectedNodeHistoryRequest++; this.replayUninspectedSnapshot = undefined; this.selectedNodeHistoryValuesUninspected = false;
     this.playback?.hide(); this.clearLearningSummary();
     const pending = this.closingPromise = (async () => {
       await this.refreshing;
@@ -1889,11 +1896,12 @@ export class StudyWorkspace {
 
   /** Opens a validated local recording through the same revisioned controller used by MCP; no application operation is dispatched. @example await workspace.openRecording(studyId) */
   async openRecording(studyId: string, signal?: AbortSignal, origin: 'study' | 'repository' = 'study'): Promise<void> {
-    this.nodeHistoryPlaybackController?.pause();
     this.assertPresentationIdle();
     signal?.throwIfAborted(); const lifetime = this.lifetime;
     await this.initialize(); this.assertLifetime(lifetime); signal?.throwIfAborted();
     const id = studyIdSchema.parse(studyId);
+    // Once admitted, browser replay takes over the shared historical debugger; a Node stop still loading its values no longer owns it.
+    this.selectedNodeHistoryRequest++; this.nodeHistoryPlaybackController?.pause();
     // A closed reader has no native panes; reload its saved position instead of accepting a loaded-controller no-op.
     if (!this.opened) this.playback!.leave();
     const revision = this.playback!.state().revision;
@@ -1964,13 +1972,16 @@ export class StudyWorkspace {
     // Opening the workspace may focus context over a manually moved source group; restore only when its native tab is inactive.
     await this.renderSelection(true, !this.sourceReady(), signal); signal.throwIfAborted();
     if (!this.sourceReady()) throw new Error('Recorded source has not reached the matching native reader.');
-    // Keep Application in its explicit loading state until historical native values are ready.
+    // Keep Application loading until native Run and Debug loads the historical values or its short grace elapses.
+    let inspection: ReplayInspection | undefined;
     if (bundle.context?.study.observations.some(observation => observation.debugger) || this.replayDebugger) {
-      this.replayDebugger ??= new ReplayDebugger(vscode);
-      await this.replayDebugger.present(bundle.projection.debugger,
+      this.replayDebugger ??= new ReplayDebugger(vscode, () => this.replayDebuggerChanged());
+      inspection = await this.replayDebugger.present(bundle.projection.debugger,
         bundle.projection.debugger ? `Recorded pause · ${((bundle.projection.observation?.elapsedMs ?? bundle.projection.positionMs) / PLAYBACK_SECOND_MS).toFixed(2)} s` : 'Not recorded at this moment', signal,
         this.sourceUri && bundle.projection.observation ? { uri: this.sourceUri.toString(), hash: this.message().model.source.hash } : undefined);
     }
+    // Committing without native values stays truthful only with a visible way to load them in Run and Debug; later ticks of this stop keep it.
+    this.replayUninspectedSnapshot = inspection === 'uninspected' ? bundle.projection.debugger : undefined;
     if (bundle.image) {
       const image = bundle.image.toString('base64'), label = `Recorded · ${(bundle.projection.positionMs / PLAYBACK_SECOND_MS).toFixed(2)} s`;
       // Earlier reveal/seek receipts must not be attributed to this frame's first attempt.
@@ -2048,7 +2059,7 @@ export class StudyWorkspace {
     this.repositoryRecordingOpen = undefined;
     if (!this.recordingActive) return;
     this.playback?.leave(); this.clearLearningSummary(); this.replayViewport?.close(); this.replayViewport = undefined; this.recordingActive = false;
-    this.playbackPending = undefined; this.playbackPresentingReady = false; this.lastApplicationKey = undefined; this.lastSelectionKey = undefined;
+    this.playbackPending = undefined; this.playbackPresentingReady = false; this.replayUninspectedSnapshot = undefined; this.lastApplicationKey = undefined; this.lastSelectionKey = undefined;
   }
 
   /**
@@ -2064,7 +2075,7 @@ export class StudyWorkspace {
     const previousNodeHistoryId = this.selectedNodeHistory?.header.studyId;
     this.selectedNodeHistoryRequest++; this.nodeHistoryPlaybackController?.dispose(); this.nodeHistoryPlaybackController = undefined;
     this.selectedNodeHistory = undefined; this.selectedNodeHistoryLearningDecision = undefined; this.selectedNodeHistoryLearningMaterial = undefined;
-    this.selectedNodeHistorySequence = undefined; this.selectedNodeHistoryDebugAvailable = false; this.replayDebugger?.invalidate();
+    this.selectedNodeHistorySequence = undefined; this.selectedNodeHistoryDebugAvailable = false; this.selectedNodeHistoryValuesUninspected = false; this.replayDebugger?.invalidate();
     if (!previousNodeHistoryId) return false;
     const previousHistoryPath = `/node-history/${previousNodeHistoryId}/`;
     const previews = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.isPreview && !tab.isDirty && !tab.isPinned
@@ -2171,7 +2182,8 @@ export class StudyWorkspace {
     return { type: 'study', revision: this.revision, model: this.recordingActive ? projectPlaybackStudy(projectionInput, bundle) : projectStudy(projectionInput),
       presentation: this.presentationState(), contentTab: this.recordingActive ? 'recording' : this.selection.tab, repositoryReturnAvailable: Boolean(this.controls.returnToRepository && this.repositoryOrigin?.studyId === this.selection.studyId && this.repositoryOrigin),
       repositoryArticleAvailable: Boolean(study !== undefined && this.controls.openArticle),
-      recording: playbackState && { ...playbackState, pauseConfirmed: bundle?.projection.pauseConfirmed ?? false, rendererConfirmed: bundle?.projection.rendererConfirmed ?? false, laterInterpretations: bundle?.projection.laterInterpretations ?? [], learningSummary: projectLearningSummary(bundle?.context?.study, bundle?.context?.phases) },
+      recording: playbackState && { ...playbackState, pauseConfirmed: bundle?.projection.pauseConfirmed ?? false, rendererConfirmed: bundle?.projection.rendererConfirmed ?? false, laterInterpretations: bundle?.projection.laterInterpretations ?? [], learningSummary: projectLearningSummary(bundle?.context?.study, bundle?.context?.phases),
+        nativeValuesUninspected: bundle?.projection.debugger !== undefined && bundle.projection.debugger === this.replayUninspectedSnapshot },
       nodeHistoryCatalog: this.nodeHistoryCatalog,
       nodeHistory: this.selectedNodeHistory && { ...this.selectedNodeHistory, entries: this.selectedNodeHistory.entries.slice(this.selectedNodeHistoryPage * NODE_HISTORY_READER_PAGE_SIZE, (this.selectedNodeHistoryPage + 1) * NODE_HISTORY_READER_PAGE_SIZE) },
       nodeHistoryLearningDecision: this.selectedNodeHistoryLearningDecision,
@@ -2179,7 +2191,7 @@ export class StudyWorkspace {
       nodeHistoryPlayback: this.nodeHistoryPlaybackController?.state(),
       nodeHistoryPosition: selectedNodeHistoryEvent && { sequence: selectedNodeHistoryEvent.sequence, type: selectedNodeHistoryEvent.type,
         eventIndex: selectedNodeHistory?.entries.findIndex(entry => entry.sequence === selectedNodeHistoryEvent.sequence) ?? -1,
-        ...(selectedNodeHistoryStop ? { index: selectedNodeHistoryStop.index, debuggerAvailable: this.selectedNodeHistoryDebugAvailable } : {}), elapsedMs: selectedNodeHistoryEvent.elapsedMs },
+        ...(selectedNodeHistoryStop ? { index: selectedNodeHistoryStop.index, debuggerAvailable: this.selectedNodeHistoryDebugAvailable, nativeValuesUninspected: this.selectedNodeHistoryValuesUninspected } : {}), elapsedMs: selectedNodeHistoryEvent.elapsedMs },
       nodeHistoryOutput: selectedNodeHistoryOutput,
       nodeHistoryPage: this.selectedNodeHistoryPage, nodeHistoryPageCount: this.selectedNodeHistory ? Math.max(1, Math.ceil(this.selectedNodeHistory.entries.length / NODE_HISTORY_READER_PAGE_SIZE)) : 0,
       nodeHistoryEventCount: this.selectedNodeHistory?.entries.length ?? 0,
@@ -3124,7 +3136,7 @@ export class StudyWorkspace {
         if (request !== this.historyRequest || message.revision !== this.revision || this.closing) return;
         this.nodeHistoryPlaybackController?.dispose();
         this.replayDebugger?.invalidate();
-        this.selectedNodeHistoryRequest++; this.selectedNodeHistory = history; this.selectedNodeHistoryLearningDecision = learningDecision; this.selectedNodeHistoryLearningMaterial = learningMaterial; this.selectedNodeHistoryPage = 0; this.selectedNodeHistorySequence = undefined; this.selectedNodeHistoryDebugAvailable = false;
+        this.selectedNodeHistoryRequest++; this.selectedNodeHistory = history; this.selectedNodeHistoryLearningDecision = learningDecision; this.selectedNodeHistoryLearningMaterial = learningMaterial; this.selectedNodeHistoryPage = 0; this.selectedNodeHistorySequence = undefined; this.selectedNodeHistoryDebugAvailable = false; this.selectedNodeHistoryValuesUninspected = false;
         // A Node history has no application frames; replace pixels from the prior browser study immediately.
         this.presentApplication(this.message());
         // Each opened history gets its own controller; the present callback is bound to this study.
@@ -3227,6 +3239,16 @@ export class StudyWorkspace {
     }
   }
 
+  /**
+   * Drops a stale Run and Debug hint when {@link ReplayDebugger} reports loaded values or an ended session; the next presentation re-evaluates it.
+   * @example new ReplayDebugger(vscode, () => this.replayDebuggerChanged())
+   */
+  private replayDebuggerChanged(): void {
+    if (this.closing || !this.replayUninspectedSnapshot && !this.selectedNodeHistoryValuesUninspected) return;
+    this.replayUninspectedSnapshot = undefined; this.selectedNodeHistoryValuesUninspected = false;
+    this.publish();
+  }
+
   /** Selects one verified Node journal moment and clears stale debugger state across unrecorded intervals. @example await this.selectNodeHistoryEvent(history, 24) */
   private async selectNodeHistoryEvent(history: NodeTestHistoryIndex, sequence: number, requireDebugger = false, publish = true, alignPlayback = true): Promise<void> {
     const request = ++this.selectedNodeHistoryRequest;
@@ -3251,19 +3273,26 @@ export class StudyWorkspace {
           await this.replaceUnavailableReplayDebugger();
           if (request !== this.selectedNodeHistoryRequest) return;
         }
-        this.replayDebugger ??= new ReplayDebugger(vscode);
-        await this.replayDebugger.present(entry.debuggerSnapshot, `Recorded Node test stop ${entry.index + 1} · ${entry.source.path}:${entry.frame.line}`, new AbortController().signal,
-          { uri: sourceUri.toString(), hash: verifiedSource.hash });
+        this.replayDebugger ??= new ReplayDebugger(vscode, () => this.replayDebuggerChanged());
+        let inspection: ReplayInspection;
+        try {
+          inspection = await this.replayDebugger.present(entry.debuggerSnapshot, `Recorded Node test stop ${entry.index + 1} · ${entry.source.path}:${entry.frame.line}`, new AbortController().signal,
+            { uri: sourceUri.toString(), hash: verifiedSource.hash });
+        } catch (error) {
+          // A newer learner selection supersedes this stop's native presentation; only the current request reports failures.
+          if (request !== this.selectedNodeHistoryRequest) return;
+          throw error;
+        }
         if (request !== this.selectedNodeHistoryRequest) return;
-        this.selectedNodeHistoryDebugAvailable = true;
+        this.selectedNodeHistoryDebugAvailable = true; this.selectedNodeHistoryValuesUninspected = inspection === 'uninspected';
       } else {
         this.replayDebugger?.invalidate();
-        this.selectedNodeHistoryDebugAvailable = false;
+        this.selectedNodeHistoryDebugAvailable = false; this.selectedNodeHistoryValuesUninspected = false;
       }
     } else {
       // Output and result events have no source/debugger snapshot; never carry an earlier stop forward.
       this.replayDebugger?.invalidate();
-      this.selectedNodeHistoryDebugAvailable = false;
+      this.selectedNodeHistoryDebugAvailable = false; this.selectedNodeHistoryValuesUninspected = false;
     }
     try { await this.nodeHistoryStore!.saveReaderPosition(history.header.studyId, entry.sequence, history); }
     catch (error) { this.report('history-position', error); }

@@ -217,6 +217,27 @@ async function check(page, options) {
         passed: await page.locator('#previous-moment').isDisabled() && await page.locator('#next-moment').isDisabled()
           && await page.getByRole('button', { name: 'Pause playback', exact: true }).isEnabled()
           && (await page.locator('#playback-pending').textContent()).includes('Waiting for a matching presentation') });
+      await publish({ ...replay, recording: { ...replay.recording, nativeValuesUninspected: true } });
+      cases.push({ name: 'a moment committed without native values names where Run and Debug loads them in a polite status',
+        passed: await page.locator('#playback-hint').isVisible() && (await page.locator('#playback-hint').getAttribute('role')) === 'status'
+          && (await page.locator('#playback-hint').textContent()).includes('open it and expand Variables')
+          && (await page.locator('#playback-hint').textContent()).includes('Codebook · Recorded learning') });
+      await page.screenshot({ path: `${options.output}/replay-native-values-hint.png` });
+      await publish({ ...replay, recording: { ...replay.recording, nativeValuesUninspected: false } });
+      cases.push({ name: 'the Run and Debug hint leaves once native values load', passed: await page.locator('#playback-hint').isHidden() });
+      await publish({ ...replay, recording: { ...replay.recording, readiness: 'failed', reason: 'Recorded source unavailable', nativeValuesUninspected: true } });
+      cases.push({ name: 'a failed replay shows its recovery reason instead of the Run and Debug hint',
+        passed: await page.locator('#playback-hint').isHidden() && await page.locator('#playback-reason').isVisible() });
+      const nodeStop = { sequence: 2, type: 'stop', index: 0, eventIndex: 1, elapsedMs: 1200, debuggerAvailable: true };
+      await publish({ ...replay, nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: true } });
+      const nodeWithoutValues = { position: await page.locator('#node-history-position').textContent(), hint: await page.locator('#node-history-hint').textContent(),
+        role: await page.locator('#node-history-hint').getAttribute('role'), muted: await page.locator('#node-history-hint').evaluate(element => element.classList.contains('muted')) };
+      await publish({ ...replay, nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: false } });
+      const nodeWithValues = { position: await page.locator('#node-history-position').textContent(), hint: await page.locator('#node-history-hint').textContent() };
+      cases.push({ name: 'a saved Node stop without native values shows the Run and Debug hint in its own muted status until values load', actual: { nodeWithoutValues, nodeWithValues },
+        passed: nodeWithoutValues.position === 'Debugger stop 1 · 1.20 s · output shown through this event.'
+          && nodeWithoutValues.hint.startsWith('Recorded values for this moment load in Run and Debug') && nodeWithoutValues.role === 'status' && nodeWithoutValues.muted
+          && nodeWithValues.position === 'Debugger stop 1 · 1.20 s · output shown through this event.' && nodeWithValues.hint === '' });
       await publish({ ...replay, recording: { ...replay.recording, readiness: 'failed', reason: 'Recorded source unavailable' } });
       await page.locator('#playback-options > summary').click();
       cases.push({ name: 'failed replay retains reload and visible recovery guidance in the bottom strip',

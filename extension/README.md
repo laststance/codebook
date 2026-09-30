@@ -82,7 +82,7 @@ Package builds require a POSIX host (macOS or Linux); Windows builds are rejecte
 ```sh
 pnpm --dir extension install --frozen-lockfile
 pnpm --dir extension package
-pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.14.vsix"
+pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.15.vsix"
 ```
 
 The package command checks pnpm, clears only the extension compiler output, rebuilds, bundles production modules and stages an explicit file allowlist. Test/application fixtures and experimental dependencies are rejected. The independent checker validates archive entries, hashes, manifests and dependency notices before accepting the VSIX.
@@ -236,7 +236,7 @@ Learner understanding is an explicit saved choice. Running, recording, replaying
 
 Recording starts before a configured repository run acquires its application. Saved films open independently of live execution and retain original source/interpretation timing. Missing frames or source context remain explicit. Historical files in retired formats are preserved on disk and listed as unavailable; they cannot start an application or be silently converted into repository evidence.
 
-Opening saved learning starts a read-only **Codebook · Recorded learning** debug session: the editor's own debugger shows the recorded source, scopes and call stack of the selected moment. This bounded development reader is not completion of the approved synchronized native-debugger time-travel replay. That remains an explicit implementation gap in the product state.
+Opening saved learning starts a read-only **Codebook · Recorded learning** debug session: the editor's own debugger shows the recorded source, scopes and call stack of the selected moment. A recorded moment waits up to one second for Run and Debug to load its values. If Variables is collapsed or hidden, or another stopped session is selected, the moment still appears and Study shows a hint: open Run and Debug, select **Codebook · Recorded learning** in Call Stack when several sessions are listed, and expand Variables. Later moments do not wait again until values load; the hint then clears. Saved Node test stops show the same hint beside their position. This hint is covered by mechanism and browser-harness tests only; installed-editor behavior is not yet verified. This bounded development reader is not completion of the approved synchronized native-debugger time-travel replay. That remains an explicit implementation gap in the product state.
 
 ## Recovery and resource semantics
 

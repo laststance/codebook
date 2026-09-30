@@ -15,10 +15,10 @@ function recorded(): ReplayDebugSnapshot {
   return { version: 1, frames: [{ name: 'createInvoice', line: 1, column: 1, source: { ...source }, scopes: [{ name: 'Locals', variables: [0] }] }],
     variables: [{ name: 'amount', value: '120', type: 'number', children: [] }], limitations: [] };
 }
-/** Drives protocol messages without VS Code or any live debug connection. @example harness().request('threads').success */
-function harness() {
+/** Drives protocol messages without VS Code or any live debug connection; `inspected` observes loaded-values reports. @example harness().request('threads').success */
+function harness(inspected: () => void = () => {}) {
   const messages: (DebugProtocol.Response | DebugProtocol.Event)[] = [];
-  const adapter = new ReplayDebugAdapter(message => messages.push(message));
+  const adapter = new ReplayDebugAdapter(message => messages.push(message), () => {}, inspected);
   let sequence = 0;
   return { adapter, messages, request(command: string, arguments_?: unknown): DebugProtocol.Response {
     const requestSequence = ++sequence;
@@ -27,6 +27,159 @@ function harness() {
     assert.ok(response && 'request_seq' in response); return response;
   } };
 }
+
+test('native replay inspection becomes ready only after current top-frame values are retrieved from the first page', () => {
+  // Arrange
+  const { adapter, request } = harness(), snapshot = recorded();
+  snapshot.frames[0]!.scopes[0]!.variables.push(1);
+  snapshot.variables.push({ name: 'invoice', value: 'Object', children: [2] }, { name: 'quantity', value: '2', children: [] }, { name: 'callerValue', value: '9', children: [] });
+  snapshot.frames.push({ name: 'handleSubmit', line: 2, column: 1, scopes: [{ name: 'Caller', variables: [3] }] });
+  adapter.select(snapshot, 'Recorded'); request('configurationDone');
+  assert.equal(adapter.inspectionReady, false);
+
+  // Act
+  const caller = request('stackTrace', { threadId: 1, startFrame: 1 }).body.stackFrames[0];
+  const callerScope = request('scopes', { frameId: caller.id }).body.scopes[0];
+  request('variables', { variablesReference: callerScope.variablesReference });
+  assert.equal(adapter.inspectionReady, false);
+  const frame = request('stackTrace', { threadId: 1 }).body.stackFrames[0];
+  const scope = request('scopes', { frameId: frame.id }).body.scopes[0];
+  assert.equal(adapter.inspectionReady, false);
+  const laterPage = request('variables', { variablesReference: scope.variablesReference, start: 1 }).body.variables;
+  request('variables', { variablesReference: laterPage[0].variablesReference });
+  assert.equal(adapter.inspectionReady, false);
+  assert.equal(request('variables', { variablesReference: 999_999 }).success, false);
+  request('variables', { variablesReference: scope.variablesReference, start: 0 });
+
+  // Assert
+  assert.equal(adapter.inspectionReady, true);
+});
+
+test('a new recorded moment cannot reuse native inspection receipts or retired variable handles', () => {
+  // Arrange
+  const { adapter, request } = harness(); adapter.select(recorded(), 'First stop'); request('configurationDone');
+  const frame = request('stackTrace', { threadId: 1 }).body.stackFrames[0];
+  const scope = request('scopes', { frameId: frame.id }).body.scopes[0];
+  request('variables', { variablesReference: scope.variablesReference });
+  assert.equal(adapter.inspectionReady, true);
+
+  // Act
+  adapter.select(recorded(), 'Second stop');
+  request('scopes', { frameId: frame.id });
+  request('variables', { variablesReference: scope.variablesReference });
+  request('stackTrace', { threadId: 1 });
+
+  // Assert
+  assert.equal(adapter.inspectionReady, false);
+});
+
+test('empty scopes of a retired frame cannot confirm native inspection of the next recorded moment', () => {
+  // Arrange
+  const { adapter, request } = harness(); adapter.select(recorded(), 'First stop'); request('configurationDone');
+  const retiredFrame = request('stackTrace', { threadId: 1 }).body.stackFrames[0];
+  const withoutScopes = recorded(); withoutScopes.frames[0]!.scopes = [];
+  adapter.select(withoutScopes, 'Second stop');
+  const currentFrame = request('stackTrace', { threadId: 2 }).body.stackFrames[0];
+
+  // Act
+  const retiredScopes = request('scopes', { frameId: retiredFrame.id }).body.scopes;
+  const readyAfterRetiredScopes = adapter.inspectionReady;
+  request('scopes', { frameId: currentFrame.id });
+
+  // Assert
+  assert.deepEqual(retiredScopes, []);
+  assert.equal(readyAfterRetiredScopes, false);
+  assert.equal(adapter.inspectionReady, true);
+});
+
+// Value: protects=the reader's Run and Debug hint clearing once native Variables loads a moment's values; fails_when=the adapter never reports loaded values, reports them repeatedly, or treats an empty gap stack as loaded values; why_new=ReplayDebugger needs this signal to drop the hint without a new seek; seam=none
+test('native Variables loading a recorded moment reports it once, while an empty gap stack reports nothing', () => {
+  // Arrange
+  let reports = 0;
+  const { adapter, request } = harness(() => { reports++; });
+  adapter.select(undefined, 'Not recorded at this moment'); request('configurationDone');
+  request('stackTrace', { threadId: 1 });
+  const afterGap = reports;
+  adapter.select(recorded(), 'Recorded stop');
+
+  // Act
+  const frame = request('stackTrace', { threadId: 2 }).body.stackFrames[0];
+  const scope = request('scopes', { frameId: frame.id }).body.scopes[0];
+  request('variables', { variablesReference: scope.variablesReference });
+  request('variables', { variablesReference: scope.variablesReference });
+  request('stackTrace', { threadId: 2 });
+
+  // Assert
+  assert.equal(afterGap, 0);
+  assert.equal(reports, 1);
+});
+
+// Value: protects=a stop without captured scopes never clears the reader's Run and Debug hint; fails_when=the adapter reports loaded values for a frame that has no Variables page; why_new=the scope-less readiness test checks inspectionReady only; seam=none
+test('a recorded frame without captured scopes never tells the reader that values loaded', () => {
+  // Arrange
+  let reports = 0;
+  const { adapter, request } = harness(() => { reports++; });
+  adapter.select({ version: 1, frames: [{ name: 'createInvoice', line: 1, column: 1, scopes: [] }], variables: [], limitations: [] }, 'Recorded');
+  request('configurationDone');
+
+  // Act
+  const frame = request('stackTrace', { threadId: 1 }).body.stackFrames[0];
+  request('scopes', { frameId: frame.id });
+
+  // Assert
+  assert.equal(adapter.inspectionReady, true);
+  assert.equal(reports, 0);
+});
+
+test('a missing-history interval needs its empty current stack rather than a variable request', () => {
+  // Arrange
+  const { adapter, request } = harness(); adapter.select(undefined, 'Not recorded at this moment'); request('configurationDone');
+  assert.equal(adapter.inspectionReady, false);
+
+  // Act
+  const result = request('stackTrace', { threadId: 1 });
+
+  // Assert
+  assert.deepEqual(result.body.stackFrames, []);
+  assert.equal(adapter.inspectionReady, true);
+});
+
+test('a recorded frame with no captured scopes becomes inspectable without inventing variables', () => {
+  // Arrange
+  const { adapter, request } = harness();
+  adapter.select({ version: 1, frames: [{ name: 'createInvoice', line: 1, column: 1, scopes: [] }], variables: [], limitations: [] }, 'Recorded');
+  request('configurationDone');
+  const frame = request('stackTrace', { threadId: 1 }).body.stackFrames[0];
+  assert.equal(adapter.inspectionReady, false);
+
+  // Act
+  const result = request('scopes', { frameId: frame.id });
+
+  // Assert
+  assert.deepEqual(result.body.scopes, []);
+  assert.equal(adapter.inspectionReady, true);
+});
+
+test('tampered history and disposed sessions cannot keep a confirmed native inspection', () => {
+  // Arrange
+  const { adapter, request } = harness(); adapter.select(recorded(), 'Recorded'); request('configurationDone');
+  const frame = request('stackTrace', { threadId: 1 }).body.stackFrames[0];
+  const scope = request('scopes', { frameId: frame.id }).body.scopes[0];
+  request('variables', { variablesReference: scope.variablesReference });
+  assert.equal(adapter.inspectionReady, true);
+  const tampered = recorded(); tampered.frames[0]!.source!.text = 'tampered';
+
+  // Act
+  assert.throws(() => adapter.select(tampered, 'Tampered'), /hash mismatch/);
+  // Value: protects=a rejected moment never reads as inspected missing history; fails_when=readiness ignores selection validity; why_new=the empty-stack retrieval after rejection was never issued; seam=none
+  const clearedStack = request('stackTrace', { threadId: request('threads').body.threads[0].id });
+  assert.deepEqual(clearedStack.body.stackFrames, []);
+  assert.equal(adapter.inspectionReady, false);
+  adapter.dispose();
+
+  // Assert
+  assert.equal(adapter.inspectionReady, false);
+});
 
 test('historical stack, source and values remain inspectable without a live debugger', () => {
   // Arrange

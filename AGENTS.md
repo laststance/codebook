@@ -21,6 +21,8 @@ Reading is preparation. Reconcile every acceptance row with current source and e
 | Shared skill or onboarding | [Bundled skill contract](docs/plans/bundled-codebook-skill.md) |
 | Wiki generation/update | [Generation skill contract](docs/plans/deepwiki-generation-skill.md) |
 | UI implementation or visual verification | [GStack state/interaction review](docs/plans/cycle-0029-product-design.md) |
+| Native editor video / motion evidence | [OBS window-recording procedure](docs/qa/native-recording.md) |
+| Test execution / performance | [Parallel test and package ordering](docs/qa/test-execution.md) |
 | Final acceptance | Full [protocol](docs/acceptance/FINAL_REVIEW.md) and [fixed nine-project matrix](docs/acceptance/ACCEPTANCE_MATRIX.md) |
 
 Historical cycles, generation prompts and external references are evidence consulted when needed, not recursive mandatory reads. Local requirements and the next action must be recoverable without Issues or this chat.
@@ -45,3 +47,5 @@ Never embed a demonstration or validation application in the extension, its runt
 - Before TypeScript work, read `/Users/ryotamurakami/.claude/rules/ts-rules.md`; for React also read `/Users/ryotamurakami/.claude/rules/react-rules.md`.
 - Check for existing utilities, hooks, components and types before adding them. Reusable functions/classes need concise purpose/trigger/caller documentation and an example; reference workspace symbols with JSDoc links. Explain non-obvious branches/loops briefly.
 - Prefer DAMP behavior tests, hard-coded expectations, Arrange/Act/Assert and `test`; use `toBeVisible` for displayed UI. Verify motion through recorded interaction and inspected frames.
+- Follow [test execution boundaries](docs/qa/test-execution.md): independent files run in isolated parallel processes; build before readers and wait for every extension test/shard before package cleanup. Focused workspace runs include all `studyWorkspace*.test.js` partitions.
+- For native macOS QA, follow the [tested OBS Window Capture procedure](docs/qa/native-recording.md): exact owned window, silent audio setup, full-frame transform check, changing-content preflight, video and inspected frames. Do not use QuickTime/Screenshot for this workflow or require an exclusive foreground hold. A working recorder does not prove that native input reached its target.
