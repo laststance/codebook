@@ -38,6 +38,8 @@ Before final acceptance, actual-editor development trials use **`/Users/ryotamur
 
 For UI changes, view the approved PNG again and compare real screenshots with its relevant region at the normal desktop baseline. Record differences and interaction. Verify motion with video and inspected frames; generated pixels or renderer assertions cannot establish native behavior.
 
+Acquire native macOS editor video through [the OBS Window Capture procedure](docs/qa/native-recording.md). Its window-identity, full-frame and changing-content preflight are prerequisites to using a clip as evidence. Recorder success and native-input/product success retain separate outcomes.
+
 **Gate:** expected/actual evidence supports the outcome at its declared level. Use NOT RUN / PARTIAL / FAIL / PASS for observations. Failed/inconclusive experiments record a changed next hypothesis without verifying the missing capability. Build success alone cannot complete a live/replay/Wiki outcome.
 
 ## 4. Reassess before closure

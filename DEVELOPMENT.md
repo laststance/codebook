@@ -84,11 +84,15 @@ D031 fixes actual-editor behavior trials to **`/Users/ryotamurakami/repository/n
 
 Development results earn no D029 matrix credit. Final acceptance freezes its own targets/candidate and begins Stage 1 only when prerequisites hold. Use actual opened repositories; isolated test inputs may verify mechanisms but cannot become bundled demo applications or substitutes for practical trials. Do not add or bundle validation applications. Retired local trial resources are removed; historical text records remain in Git and do not substitute for current proof.
 
-D025 governs VS Code **development** chat fallback: Copilot Chat **Auto** first; on exhausted/unavailable credits, installed Claude Code extension with existing MAX20; on its exhausted/unavailable quota, installed Codex extension. Record the actual chat and fallback reason, do not buy credits or label fallback evidence Copilot. Cursor stays separate; final acceptance uses its own standard-chat requirements.
+D040 supersedes D025's VS Code **development** chat fallback: Copilot Chat **Auto** first; after observed credit exhaustion, use the installed **Codex Extension**. Record the actual chat and fallback reason, do not buy credits or label fallback evidence Copilot. Cursor stays separate; final acceptance uses its own standard-chat requirements. Historical Claude extension observations retain their original identities.
 
 Before changing code, inspect existing source-project implementations and freeze expected observations. Changed assumptions create a new expectation version; preserve earlier attempts. Use IMPLEMENTATION.md's evidence fields. Record source/dirty/environment identities, exact actions, expected/actual outcomes, artifact locations and proof limits.
 
+Follow [the test execution guide](docs/qa/test-execution.md): reuse one current build for focused iterations, parallelize independent test files through process isolation, include every workspace partition, and finish all extension readers before package cleanup. Keep real timeout coverage and public-result waits; measure sharding before adding workers. The existing CI test glob includes every partition automatically.
+
 Keep recordings/sensitive data in ignored or other durable private storage with sanitized manifests. Before team handoff or checkout deletion, make required evidence accessible and update its location/hash. Missing artifacts invalidate the affected proof until revalidated.
+
+For native macOS editor video, use [the tested OBS Window Capture procedure](docs/qa/native-recording.md) under D041. Confirm the exact owned window, silent audio setup, source/canvas/output dimensions, reset transform/crop, and a short changing-content capture before the product take. Inspect saved frames and retain failed attempts. QuickTime/Screenshot is owner-rejected for QA because it prevents interaction; window-ID CLI video produced black output in the tested background scenario. Recording needs no exclusive foreground hold; native input must independently prove correct targeting and painted results.
 
 ## 5. Close, integrate, select again
 
