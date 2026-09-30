@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.15.0] - 2026-10-01 (development candidate)
+
+Cycle 0031 keeps the learner's first replay command when it reveals a hidden Application tab, lets replay continue when native Run and Debug has not loaded a moment's values, and counts recording paint time only while the recording is visible. Mechanism tests and bounded installed VS Code/Cursor development evidence cover the recorded cut; the new Run and Debug hint is not yet verified natively. Cursor summary placement, reader recovery/accessibility and final acceptance remain open. No registry publication.
+
+### Changed
+
+- A replay moment no longer fails when the native debugger never asks for its values (Variables collapsed or hidden, or another stopped session in focus). It waits up to 1 s, then shows the recorded moment with a Study hint that points to Run and Debug, the **Codebook · Recorded learning** session in Call Stack and Variables. Once values load, the hint clears and later moments wait for their values again. Saved Node test stops show the same hint beside their position.
+- Recording paint deadlines count only time the recording is visible. A hidden or covered recording stays loading instead of timing out, and a hidden recorded gap waits for the recording to become visible instead of polling.
+- Node Play keeps the recorded spacing between events when a stop waits for the native debugger.
+- Development test runs are faster: the Study workspace suite runs as nine parallel partitions, and package checks run four files at a time.
+
+### Fixed
+
+- The first Next, Previous or seek after hiding the Application tab reaches the requested moment instead of restoring the previous one.
+- A stopped recording clock no longer re-arms a tiny paint-deadline timer continuously.
+- Opening a browser recording while a saved Node stop is loading, or closing the reader, abandons that stop without reporting an error.
+- After the learner ends the historical debugger session, the next replay moment selects its stop again in the restarted session.
+- Cancelling a presentation placement reports the learner's reason.
+
 ## [0.2.14.0] - 2026-09-30 (development candidate)
 
 ### Fixed
