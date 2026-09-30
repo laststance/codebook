@@ -30,6 +30,10 @@ jobs:
       - name: Prepare environment
         uses: ./.github/actions/prepare
 
+      # Package and native-QA scripts import the compiled extension from dist; build it so those imports resolve.
+      - name: Build
+        run: pnpm --dir extension build
+
       - name: Run fallow ${{ matrix.check }}
         run: pnpm --dir extension "$FALLOW_CHECK"
         env:

@@ -301,7 +301,8 @@
     "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test && pnpm test:package && pnpm dupes && pnpm dead-code && pnpm health"
   },
   "lint-staged": {
-    "*": "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore"
+    "*": "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore",
+    "../**/*": "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
