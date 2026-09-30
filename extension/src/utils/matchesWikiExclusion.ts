@@ -1,4 +1,4 @@
-import { matchesGlob } from 'node:path';
+import { matchesGlob } from 'node:path'
 
 /**
  * Decides whether a repository path falls under one Wiki manifest exclusion, read either as a glob or as a directory.
@@ -15,9 +15,13 @@ import { matchesGlob } from 'node:path';
  * matchesWikiExclusion('packages/web/dist/bundle.js', 'packages/*\/dist') // true
  */
 export function matchesWikiExclusion(path: string, exclusion: string): boolean {
-  const directory = exclusion.replace(/\/+$/, '');
-  if (matchesGlob(path, exclusion)) return true;
+  const directory = exclusion.replace(/\/+$/, '')
+  if (matchesGlob(path, exclusion)) return true
   // An empty entry would otherwise exclude every path.
-  if (directory.length === 0) return false;
-  return path === directory || path.startsWith(`${directory}/`) || matchesGlob(path, `${directory}/**`);
+  if (directory.length === 0) return false
+  return (
+    path === directory ||
+    path.startsWith(`${directory}/`) ||
+    matchesGlob(path, `${directory}/**`)
+  )
 }

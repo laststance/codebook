@@ -1,10 +1,16 @@
-import { z } from 'zod';
+import { z } from 'zod'
 
 /** One receipt forwarded through {@link BrowserViewport}'s record callback, such as `viewport.sent` or `viewport.frame-stage`. */
-export interface ViewportDeliveryReceipt { type: string; detail?: unknown }
+export interface ViewportDeliveryReceipt {
+  type: string
+  detail?: unknown
+}
 
 /** Newest receipts from one recorded-frame attempt; `omitted` counts older receipts dropped by the caller's bound. */
-export interface ViewportDeliveryLog { receipts: ViewportDeliveryReceipt[]; omitted: number }
+export interface ViewportDeliveryLog {
+  receipts: ViewportDeliveryReceipt[]
+  omitted: number
+}
 
 const receiptDetailSchema = z.object({
   epoch: z.string().optional(),
@@ -14,7 +20,7 @@ const receiptDetailSchema = z.object({
   hasArea: z.boolean().optional(),
   reason: z.string().optional(),
   error: z.string().optional(),
-});
+})
 
 /**
  * Summarizes one recorded-frame attempt's renderer progress for playback Recording error details.
@@ -37,26 +43,35 @@ const receiptDetailSchema = z.object({
  * ```
  */
 export function describeViewportDelivery(log: ViewportDeliveryLog): string {
-  const parts: string[] = [];
-  if (log.omitted > 0) parts.push(`${log.omitted} earlier receipts omitted`);
-  let previousSurface: string | undefined;
+  const parts: string[] = []
+  if (log.omitted > 0) parts.push(`${log.omitted} earlier receipts omitted`)
+  let previousSurface: string | undefined
   for (const receipt of log.receipts) {
-    const parsed = receiptDetailSchema.safeParse(receipt.detail ?? {});
+    const parsed = receiptDetailSchema.safeParse(receipt.detail ?? {})
     // Malformed detail cannot come from the owned viewport; skip it rather than guess its meaning.
-    if (!parsed.success) continue;
-    const detail = parsed.data;
+    if (!parsed.success) continue
+    const detail = parsed.data
     if (receipt.type === 'viewport.frame-stage' && detail.stage) {
-      const surface = `${detail.visibility ?? 'unknown visibility'}, ${detail.hasArea ? 'area' : 'no area'}`;
+      const surface = `${detail.visibility ?? 'unknown visibility'}, ${detail.hasArea ? 'area' : 'no area'}`
       // Repeat renderer visibility/area only when it changed since the previous stage.
-      parts.push(surface === previousSurface ? detail.stage : `${detail.stage} (${surface})`);
-      previousSurface = surface;
-    } else if (receipt.type === 'viewport.ready' && detail.epoch) parts.push(`ready ${detail.epoch.slice(0, 8)}`);
-    else if (receipt.type === 'viewport.sent') parts.push(`sent #${detail.id}`);
-    else if (receipt.type === 'viewport.acknowledged') parts.push(`painted #${detail.id}`);
-    else if (receipt.type === 'viewport.delivery-rejected') parts.push(`rejected #${detail.id}: ${detail.reason}`);
-    else if (receipt.type === 'viewport.stale-ack-ignored') parts.push(`stale receipt #${detail.id}`);
-    else if (receipt.type === 'viewport.ready-request-failed') parts.push(`ready request failed: ${detail.error}`);
-    else if (receipt.type === 'viewport.disposed') parts.push('disposed');
+      parts.push(
+        surface === previousSurface
+          ? detail.stage
+          : `${detail.stage} (${surface})`,
+      )
+      previousSurface = surface
+    } else if (receipt.type === 'viewport.ready' && detail.epoch)
+      parts.push(`ready ${detail.epoch.slice(0, 8)}`)
+    else if (receipt.type === 'viewport.sent') parts.push(`sent #${detail.id}`)
+    else if (receipt.type === 'viewport.acknowledged')
+      parts.push(`painted #${detail.id}`)
+    else if (receipt.type === 'viewport.delivery-rejected')
+      parts.push(`rejected #${detail.id}: ${detail.reason}`)
+    else if (receipt.type === 'viewport.stale-ack-ignored')
+      parts.push(`stale receipt #${detail.id}`)
+    else if (receipt.type === 'viewport.ready-request-failed')
+      parts.push(`ready request failed: ${detail.error}`)
+    else if (receipt.type === 'viewport.disposed') parts.push('disposed')
   }
-  return parts.length ? parts.join('; ') : 'no renderer receipts';
+  return parts.length ? parts.join('; ') : 'no renderer receipts'
 }

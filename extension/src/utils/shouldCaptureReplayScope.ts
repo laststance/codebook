@@ -13,9 +13,13 @@
  * shouldCaptureReplayScope(0, 'Local: fetchInvoiceById') // true
  * shouldCaptureReplayScope(0, 'Global') // false
  */
-export function shouldCaptureReplayScope(frameIndex: number, scopeName: string, presentationHint?: string): boolean {
-  if (frameIndex !== 0) return false;
-  if (presentationHint !== undefined) return presentationHint === 'locals';
+export function shouldCaptureReplayScope(
+  frameIndex: number,
+  scopeName: string,
+  presentationHint?: string,
+): boolean {
+  if (frameIndex !== 0) return false
+  if (presentationHint !== undefined) return presentationHint === 'locals'
   // Adapters without hints still name lexical scopes in English.
-  return /^(?:block|locals?)(?::|$)/i.test(scopeName);
+  return /^(?:block|locals?)(?::|$)/i.test(scopeName)
 }

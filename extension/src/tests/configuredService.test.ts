@@ -1,273 +1,740 @@
-import { actionSchema } from '../schemas';
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { z } from 'zod';
-import { startServer } from '../server';
-import { readResource } from '../resources';
-import { configuredServiceHarness } from './utils/configuredServiceHarness';
+import { actionSchema } from '../schemas'
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { z } from 'zod'
+import { startServer } from '../server'
+import { readResource } from '../resources'
+import { configuredServiceHarness } from './utils/configuredServiceHarness'
 
-const receiptSchema = z.object({ instanceId: z.string(), runId: z.string(), runUri: z.string() });
+const receiptSchema = z.object({
+  instanceId: z.string(),
+  runId: z.string(),
+  runUri: z.string(),
+})
 
-test('dispatch and acknowledgement each invalidate a saved configured checkpoint without changing the acting runtime state', async context => {
+test('dispatch and acknowledgement each invalidate a saved configured checkpoint without changing the acting runtime state', async (context) => {
   // Arrange
-  const { service, configuration, runtimes } = await configuredServiceHarness(context);
-  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'progress', configuration }), record = service.record(receipt);
-  await record.preparation; service.action({ ...receipt, action: 'repository-click', key: 'one' });
-  const runtime = runtimes[0]!; runtime.status = 'acting'; runtime.operation!.inputDispatched = false; runtime.operation!.inputAcknowledged = false;
-  const accepted = service.state(record), revision = service.beginHistory(record, accepted.materialSignature)!;
-  service.reportHistory(record, accepted.materialSignature, revision, 'saved');
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'progress',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!
+  runtime.status = 'acting'
+  runtime.operation!.inputDispatched = false
+  runtime.operation!.inputAcknowledged = false
+  const accepted = service.state(record),
+    revision = service.beginHistory(record, accepted.materialSignature)!
+  service.reportHistory(record, accepted.materialSignature, revision, 'saved')
   // Act
-  runtime.operation!.inputDispatched = true; const dispatched = service.state(record);
-  const dispatchedRevision = service.beginHistory(record, dispatched.materialSignature)!; service.reportHistory(record, dispatched.materialSignature, dispatchedRevision, 'saved');
-  runtime.operation!.inputAcknowledged = true; const acknowledged = service.state(record);
+  runtime.operation!.inputDispatched = true
+  const dispatched = service.state(record)
+  const dispatchedRevision = service.beginHistory(
+    record,
+    dispatched.materialSignature,
+  )!
+  service.reportHistory(
+    record,
+    dispatched.materialSignature,
+    dispatchedRevision,
+    'saved',
+  )
+  runtime.operation!.inputAcknowledged = true
+  const acknowledged = service.state(record)
   // Assert
-  assert.equal(dispatched.state, 'acting'); assert.equal(acknowledged.state, 'acting');
-  assert.notEqual(accepted.materialSignature, dispatched.materialSignature); assert.notEqual(dispatched.materialSignature, acknowledged.materialSignature);
-  assert.equal(dispatched.historyOutcome.status, 'pending'); assert.equal(acknowledged.historyOutcome.status, 'pending');
-  assert.equal(acknowledged.operation?.operationId, runtime.operation!.id);
-  assert.equal(acknowledged.operationProgress?.inputDispatched, true); assert.equal(acknowledged.operationProgress?.inputAcknowledged, true);
-});
+  assert.equal(dispatched.state, 'acting')
+  assert.equal(acknowledged.state, 'acting')
+  assert.notEqual(accepted.materialSignature, dispatched.materialSignature)
+  assert.notEqual(dispatched.materialSignature, acknowledged.materialSignature)
+  assert.equal(dispatched.historyOutcome.status, 'pending')
+  assert.equal(acknowledged.historyOutcome.status, 'pending')
+  assert.equal(acknowledged.operation?.operationId, runtime.operation!.id)
+  assert.equal(acknowledged.operationProgress?.inputDispatched, true)
+  assert.equal(acknowledged.operationProgress?.inputAcknowledged, true)
+})
 
-test('missing repository runtime support prevents acquisition while source authoring remains available', async context => {
+test('missing repository runtime support prevents acquisition while source authoring remains available', async (context) => {
   // Arrange
-  const { service, configuration, environment, runtimes, books } = await configuredServiceHarness(context);
-  environment.prerequisites = async () => ({ ready: true, missing: [], profiles: { 'repository-browser': { ready: false, missing: ['Install the supported Next development runtime.'] } } });
+  const { service, configuration, environment, runtimes, books } =
+    await configuredServiceHarness(context)
+  environment.prerequisites = async () => ({
+    ready: true,
+    missing: [],
+    profiles: {
+      'repository-browser': {
+        ready: false,
+        missing: ['Install the supported Next development runtime.'],
+      },
+    },
+  })
   // Act
-  const status = await service.status(), receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'unsupported-workspace', configuration });
-  const record = service.record(receipt); await record.preparation; await service.stop(receipt);
-  const source = await service.source({ instanceId: service.instanceId, path: configuration.source.path });
-  const article = await books.readDefinition(configuration.book.bookId, configuration.book.revision);
-  const published = await service.publishBook({ instanceId: service.instanceId, bookId: 'source-only', expectedRevision: 0, key: 'still-available', document: article.revision.document });
+  const status = await service.status(),
+    receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'unsupported-workspace',
+      configuration,
+    })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.stop(receipt)
+  const source = await service.source({
+    instanceId: service.instanceId,
+    path: configuration.source.path,
+  })
+  const article = await books.readDefinition(
+    configuration.book.bookId,
+    configuration.book.revision,
+  )
+  const published = await service.publishBook({
+    instanceId: service.instanceId,
+    bookId: 'source-only',
+    expectedRevision: 0,
+    key: 'still-available',
+    document: article.revision.document,
+  })
   // Assert
-  assert.equal(status.prerequisites.ready, true); assert.equal(status.profiles.find(profile => profile.id === 'repository-browser')?.prerequisites.ready, false);
-  assert.equal(status.repository.ready, true); assert.equal(record.error?.code, 'PREREQUISITE_MISSING');
-  assert.equal(record.error?.message, 'Install the supported Next development runtime.'); assert.equal(runtimes.length, 0);
-  assert.equal(source.hash, configuration.source.hash); assert.equal(published.bookId, 'source-only'); assert.equal(published.revision, 1);
-});
+  assert.equal(status.prerequisites.ready, true)
+  assert.equal(
+    status.profiles.find((profile) => profile.id === 'repository-browser')
+      ?.prerequisites.ready,
+    false,
+  )
+  assert.equal(status.repository.ready, true)
+  assert.equal(record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(
+    record.error?.message,
+    'Install the supported Next development runtime.',
+  )
+  assert.equal(runtimes.length, 0)
+  assert.equal(source.hash, configuration.source.hash)
+  assert.equal(published.bookId, 'source-only')
+  assert.equal(published.revision, 1)
+})
 
-test('duplicate configured starts reserve one immutable intent before article I/O and reject any changed configuration', async context => {
+test('duplicate configured starts reserve one immutable intent before article I/O and reject any changed configuration', async (context) => {
   // Arrange
-  const { service, books, configuration, runtimes } = await configuredServiceHarness(context), read = books.readDefinition.bind(books);
-  let release = () => {}, entered = () => {}, reads = 0;
-  const barrier = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
-  books.readDefinition = async (...arguments_) => { reads++; entered(); await barrier; return read(...arguments_); };
-  const input = { instanceId: service.instanceId, profile: 'repository-browser', key: 'same', configuration }, original = structuredClone(input);
+  const { service, books, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    read = books.readDefinition.bind(books)
+  let release = () => {},
+    entered = () => {},
+    reads = 0
+  const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    }),
+    started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+  books.readDefinition = async (...arguments_) => {
+    reads++
+    entered()
+    await barrier
+    return read(...arguments_)
+  }
+  const input = {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'same',
+      configuration,
+    },
+    original = structuredClone(input)
   // Act
-  const first = service.start(input); await started;
-  const repeated = service.start({ ...original, configuration: { action: original.configuration.action, source: original.configuration.source, version: 1, adapter: 'next-dev-webpack', inspections: original.configuration.inspections, book: original.configuration.book } });
-  configuration.action.title = 'Caller changed this after acceptance';
+  const first = service.start(input)
+  await started
+  const repeated = service.start({
+    ...original,
+    configuration: {
+      action: original.configuration.action,
+      source: original.configuration.source,
+      version: 1,
+      adapter: 'next-dev-webpack',
+      inspections: original.configuration.inspections,
+      book: original.configuration.book,
+    },
+  })
+  configuration.action.title = 'Caller changed this after acceptance'
   // Assert
-  assert.deepEqual(repeated, first); assert.equal(reads, 1); assert.equal(runtimes.length, 0);
-  assert.throws(() => service.start(input), { code: 'IDEMPOTENCY_CONFLICT' });
-  assert.throws(() => service.start({ ...original, key: 'another' }), { code: 'BUSY' });
+  assert.deepEqual(repeated, first)
+  assert.equal(reads, 1)
+  assert.equal(runtimes.length, 0)
+  assert.throws(() => service.start(input), { code: 'IDEMPOTENCY_CONFLICT' })
+  assert.throws(() => service.start({ ...original, key: 'another' }), {
+    code: 'BUSY',
+  })
   for (const changed of [
-    { ...original.configuration, book: { ...original.configuration.book, anchorIndex: 1 } },
-    { ...original.configuration, source: { ...original.configuration.source, column: 2 } },
-    { ...original.configuration, inspections: [...original.configuration.inspections].reverse() },
-    { ...original.configuration, initialStorage: [{ key: 'theme', value: 'dark' }] },
-  ]) assert.throws(() => service.start({ ...original, configuration: changed }), { code: 'IDEMPOTENCY_CONFLICT' });
-  release(); await service.record(first).preparation;
-  assert.equal(runtimes.length, 1); assert.equal(runtimes[0]?.definition.configuration.action.title, 'Change theme');
-  assert.equal(service.state(service.record(first)).deadlineAt, new Date(service.record(first).createdAt + 600000).toISOString());
-});
+    {
+      ...original.configuration,
+      book: { ...original.configuration.book, anchorIndex: 1 },
+    },
+    {
+      ...original.configuration,
+      source: { ...original.configuration.source, column: 2 },
+    },
+    {
+      ...original.configuration,
+      inspections: [...original.configuration.inspections].reverse(),
+    },
+    {
+      ...original.configuration,
+      initialStorage: [{ key: 'theme', value: 'dark' }],
+    },
+  ])
+    assert.throws(
+      () => service.start({ ...original, configuration: changed }),
+      { code: 'IDEMPOTENCY_CONFLICT' },
+    )
+  release()
+  await service.record(first).preparation
+  assert.equal(runtimes.length, 1)
+  assert.equal(
+    runtimes[0]?.definition.configuration.action.title,
+    'Change theme',
+  )
+  assert.equal(
+    service.state(service.record(first)).deadlineAt,
+    new Date(service.record(first).createdAt + 600000).toISOString(),
+  )
+})
 
-test('a failed configured start keeps its original receipt after source drift without silently trying the application again', async context => {
+test('a failed configured start keeps its original receipt after source drift without silently trying the application again', async (context) => {
   // Arrange
-  const { service, books, configuration, directory, runtimes } = await configuredServiceHarness(context);
-  await writeFile(join(directory, 'src/mode.ts'), 'changed secondary citation');
-  const input = { instanceId: service.instanceId, profile: 'repository-browser', key: 'failed', configuration };
+  const { service, books, configuration, directory, runtimes } =
+    await configuredServiceHarness(context)
+  await writeFile(join(directory, 'src/mode.ts'), 'changed secondary citation')
+  const input = {
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'failed',
+    configuration,
+  }
   // Act
-  const receipt = service.start(input), record = service.record(receipt); await record.preparation; await service.stop(receipt);
-  books.readDefinition = async () => { throw new Error('Identical retry must not read mutable files.'); };
-  const repeated = service.start(structuredClone(input));
+  const receipt = service.start(input),
+    record = service.record(receipt)
+  await record.preparation
+  await service.stop(receipt)
+  books.readDefinition = async () => {
+    throw new Error('Identical retry must not read mutable files.')
+  }
+  const repeated = service.start(structuredClone(input))
   // Assert
-  assert.deepEqual(repeated, receipt); assert.equal(record.error?.code, 'SOURCE_CHANGED'); assert.equal(runtimes.length, 0);
-  assert.equal(service.state(record).state, 'stopped'); assert.equal(service.state(record).finalOutcome, 'not-demonstrated');
-});
+  assert.deepEqual(repeated, receipt)
+  assert.equal(record.error?.code, 'SOURCE_CHANGED')
+  assert.equal(runtimes.length, 0)
+  assert.equal(service.state(record).state, 'stopped')
+  assert.equal(service.state(record).finalOutcome, 'not-demonstrated')
+})
 
-test('stopping a configured start during article I/O drains its read and starts neither prerequisites nor a runtime', async context => {
+test('stopping a configured start during article I/O drains its read and starts neither prerequisites nor a runtime', async (context) => {
   // Arrange
-  const { service, books, configuration, environment, runtimes } = await configuredServiceHarness(context), read = books.readDefinition.bind(books);
-  let release = () => {}, entered = () => {}, prerequisites = 0;
-  const barrier = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
-  books.readDefinition = async (...arguments_) => { const article = await read(...arguments_); entered(); await barrier; return article; };
-  environment.prerequisites = async () => { prerequisites++; return { ready: true, missing: [] }; };
-  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'cancel', configuration }); await started;
+  const { service, books, configuration, environment, runtimes } =
+      await configuredServiceHarness(context),
+    read = books.readDefinition.bind(books)
+  let release = () => {},
+    entered = () => {},
+    prerequisites = 0
+  const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    }),
+    started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+  books.readDefinition = async (...arguments_) => {
+    const article = await read(...arguments_)
+    entered()
+    await barrier
+    return article
+  }
+  environment.prerequisites = async () => {
+    prerequisites++
+    return { ready: true, missing: [] }
+  }
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'cancel',
+    configuration,
+  })
+  await started
   // Act
-  let settled = false; const stopping = service.stop(receipt).then(result => { settled = true; return result; });
-  await Promise.resolve(); assert.equal(settled, false); release(); const state = await stopping;
+  let settled = false
+  const stopping = service.stop(receipt).then((result) => {
+    settled = true
+    return result
+  })
+  await Promise.resolve()
+  assert.equal(settled, false)
+  release()
+  const state = await stopping
   // Assert
-  assert.equal(state.cleaned, true); assert.equal(prerequisites, 0); assert.equal(runtimes.length, 0); assert.equal(service.record(receipt).cancellation.signal.aborted, true);
-});
+  assert.equal(state.cleaned, true)
+  assert.equal(prerequisites, 0)
+  assert.equal(runtimes.length, 0)
+  assert.equal(service.record(receipt).cancellation.signal.aborted, true)
+})
 
-test('a configured runtime returned after cancellation is still owned and released exactly once', async context => {
+test('a configured runtime returned after cancellation is still owned and released exactly once', async (context) => {
   // Arrange
-  const { service, configuration, environment, runtimes } = await configuredServiceHarness(context), create = environment.createRuntime;
-  let release = () => {}, entered = () => {};
-  const barrier = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
-  environment.createRuntime = async (...arguments_) => { const runtime = await create(...arguments_); entered(); await barrier; return runtime; };
-  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'late-acquisition', configuration }); await started;
-  // Act
-  const stopped = service.stop(receipt); release(); await stopped;
-  // Assert
-  assert.equal(runtimes.length, 1); assert.equal(runtimes[0]?.releases, 1); assert.equal(runtimes[0]?.dispatches, 0); assert.equal(service.record(receipt).prepared, false);
-});
-
-test('stopping a held runtime preparation delivers cancellation before waiting for its completion', async context => {
-  // Arrange
-  const { service, configuration, environment, runtimes } = await configuredServiceHarness(context), create = environment.createRuntime;
-  let entered = () => {};
-  const started = new Promise<void>(resolve => { entered = resolve; });
+  const { service, configuration, environment, runtimes } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime
+  let release = () => {},
+    entered = () => {}
+  const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    }),
+    started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
   environment.createRuntime = async (...arguments_) => {
-    const runtime = await create(...arguments_), stop = runtime.stop.bind(runtime), prepare = runtime.prepare.bind(runtime);
-    let release = () => {}; const barrier = new Promise<void>(resolve => { release = resolve; });
-    runtime.prepare = async () => { await prepare(); entered(); await barrier; throw new Error('Preparation cancelled'); };
-    runtime.stop = async () => { release(); await stop(); }; return runtime;
-  };
-  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'held-setup', configuration }); await started;
+    const runtime = await create(...arguments_)
+    entered()
+    await barrier
+    return runtime
+  }
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'late-acquisition',
+    configuration,
+  })
+  await started
   // Act
-  const preparing = service.state(service.record(receipt));
-  await service.stop(receipt);
+  const stopped = service.stop(receipt)
+  release()
+  await stopped
   // Assert
-  assert.equal(preparing.state, 'preparing'); assert.equal(new Date(preparing.preparationDeadlineAt!).getTime() - new Date(preparing.createdAt).getTime(), 90_000);
-  assert.equal(runtimes[0]?.releases, 1); assert.equal(runtimes[0]?.dispatches, 0); assert.equal(service.state(service.record(receipt)).cleaned, true);
-});
+  assert.equal(runtimes.length, 1)
+  assert.equal(runtimes[0]?.releases, 1)
+  assert.equal(runtimes[0]?.dispatches, 0)
+  assert.equal(service.record(receipt).prepared, false)
+})
 
-test('repository preparation reports its remaining time without changing evidence identity', async context => {
+test('stopping a held runtime preparation delivers cancellation before waiting for its completion', async (context) => {
   // Arrange
-  let currentTimeMs = Date.now();
-  const { service, configuration, environment } = await configuredServiceHarness(context, () => currentTimeMs);
-  const createRuntime = environment.createRuntime;
-  let enteredPreparation = () => {};
-  const preparationStarted = new Promise<void>(resolve => { enteredPreparation = resolve; });
+  const { service, configuration, environment, runtimes } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime
+  let entered = () => {}
+  const started = new Promise<void>((resolve) => {
+    entered = resolve
+  })
   environment.createRuntime = async (...arguments_) => {
-    const runtime = await createRuntime(...arguments_), prepare = runtime.prepare.bind(runtime), stop = runtime.stop.bind(runtime);
-    let releasePreparation = () => {};
-    const barrier = new Promise<void>(resolve => { releasePreparation = resolve; });
-    runtime.prepare = async () => { await prepare(); enteredPreparation(); await barrier; };
-    runtime.stop = async () => { releasePreparation(); await stop(); };
-    return runtime;
-  };
-  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'remaining-preparation-time', configuration });
-  await preparationStarted;
-  const record = service.record(receipt), initialState = service.state(record);
+    const runtime = await create(...arguments_),
+      stop = runtime.stop.bind(runtime),
+      prepare = runtime.prepare.bind(runtime)
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    runtime.prepare = async () => {
+      await prepare()
+      entered()
+      await barrier
+      throw new Error('Preparation cancelled')
+    }
+    runtime.stop = async () => {
+      release()
+      await stop()
+    }
+    return runtime
+  }
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'held-setup',
+    configuration,
+  })
+  await started
+  // Act
+  const preparing = service.state(service.record(receipt))
+  await service.stop(receipt)
+  // Assert
+  assert.equal(preparing.state, 'preparing')
+  assert.equal(
+    new Date(preparing.preparationDeadlineAt!).getTime() -
+      new Date(preparing.createdAt).getTime(),
+    90_000,
+  )
+  assert.equal(runtimes[0]?.releases, 1)
+  assert.equal(runtimes[0]?.dispatches, 0)
+  assert.equal(service.state(service.record(receipt)).cleaned, true)
+})
+
+test('repository preparation reports its remaining time without changing evidence identity', async (context) => {
+  // Arrange
+  let currentTimeMs = Date.now()
+  const { service, configuration, environment } =
+    await configuredServiceHarness(context, () => currentTimeMs)
+  const createRuntime = environment.createRuntime
+  let enteredPreparation = () => {}
+  const preparationStarted = new Promise<void>((resolve) => {
+    enteredPreparation = resolve
+  })
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await createRuntime(...arguments_),
+      prepare = runtime.prepare.bind(runtime),
+      stop = runtime.stop.bind(runtime)
+    let releasePreparation = () => {}
+    const barrier = new Promise<void>((resolve) => {
+      releasePreparation = resolve
+    })
+    runtime.prepare = async () => {
+      await prepare()
+      enteredPreparation()
+      await barrier
+    }
+    runtime.stop = async () => {
+      releasePreparation()
+      await stop()
+    }
+    return runtime
+  }
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'remaining-preparation-time',
+    configuration,
+  })
+  await preparationStarted
+  const record = service.record(receipt),
+    initialState = service.state(record)
 
   // Act
-  currentTimeMs += 11_000;
-  const laterState = service.state(record);
-  await service.stop(receipt);
+  currentTimeMs += 11_000
+  const laterState = service.state(record)
+  await service.stop(receipt)
 
   // Assert
-  assert.equal(initialState.state, 'preparing'); assert.equal(laterState.state, 'preparing');
-  assert.equal(initialState.preparationRemainingMs, 90_000); assert.equal(laterState.preparationRemainingMs, 79_000);
-  assert.equal(Date.parse(laterState.observedAt!) + laterState.preparationRemainingMs!, Date.parse(laterState.preparationDeadlineAt!));
-  assert.equal(initialState.materialSignature, laterState.materialSignature);
-  assert.equal(service.state(record).preparationRemainingMs, undefined);
-});
+  assert.equal(initialState.state, 'preparing')
+  assert.equal(laterState.state, 'preparing')
+  assert.equal(initialState.preparationRemainingMs, 90_000)
+  assert.equal(laterState.preparationRemainingMs, 79_000)
+  assert.equal(
+    Date.parse(laterState.observedAt!) + laterState.preparationRemainingMs!,
+    Date.parse(laterState.preparationDeadlineAt!),
+  )
+  assert.equal(initialState.materialSignature, laterState.materialSignature)
+  assert.equal(service.state(record).preparationRemainingMs, undefined)
+})
 
-test('repository entry rejects missing configuration and unknown profiles without input', async context => {
+test('repository entry rejects missing configuration and unknown profiles without input', async (context) => {
   // Arrange
-  const { service, configuration, runtimes } = await configuredServiceHarness(context);
-  const input = { instanceId: service.instanceId, profile: 'repository-browser', key: 'valid', configuration };
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const input = {
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'valid',
+    configuration,
+  }
   // Act / Assert
-  assert.throws(() => service.start({ ...input, configuration: undefined }), { code: 'INVALID_CONFIGURATION' });
-  assert.throws(() => service.start({ ...input, profile: 'unknown' }), { code: 'UNSUPPORTED_PROFILE' });
-  assert.equal(service.records.size, 0);
-  const receipt = service.start(input), record = service.record(receipt); await record.preparation;
-  assert.equal(actionSchema.safeParse({ ...receipt, key: 'wrong', action: 'unavailable-action' }).success, false);
-  await assert.rejects(service.continue({ ...receipt, participant: 'server', sessionId: 'browser-session', threadId: 1, generation: 1 }), { code: 'STALE_PAUSE' });
-  assert.equal(runtimes[0]?.dispatches, 0); assert.deepEqual(Object.keys(service.state(record).participants), ['browser']);
-});
+  assert.throws(() => service.start({ ...input, configuration: undefined }), {
+    code: 'INVALID_CONFIGURATION',
+  })
+  assert.throws(() => service.start({ ...input, profile: 'unknown' }), {
+    code: 'UNSUPPORTED_PROFILE',
+  })
+  assert.equal(service.records.size, 0)
+  const receipt = service.start(input),
+    record = service.record(receipt)
+  await record.preparation
+  assert.equal(
+    actionSchema.safeParse({
+      ...receipt,
+      key: 'wrong',
+      action: 'unavailable-action',
+    }).success,
+    false,
+  )
+  await assert.rejects(
+    service.continue({
+      ...receipt,
+      participant: 'server',
+      sessionId: 'browser-session',
+      threadId: 1,
+      generation: 1,
+    }),
+    { code: 'STALE_PAUSE' },
+  )
+  assert.equal(runtimes[0]?.dispatches, 0)
+  assert.deepEqual(Object.keys(service.state(record).participants), ['browser'])
+})
 
-test('configured explanations retain actual false and null facts while unavailable or foreign facts grant no interpretation or continuation', async context => {
+test('configured explanations retain actual false and null facts while unavailable or foreign facts grant no interpretation or continuation', async (context) => {
   // Arrange
-  const { service, configuration, runtimes } = await configuredServiceHarness(context);
-  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'facts', configuration }), record = service.record(receipt); await record.preparation;
-  const action = { ...receipt, key: 'click', action: 'repository-click' as const }, accepted = service.action(action), state = service.state(record), snapshotUri = state.participants.browser.snapshotUri!;
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'facts',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const action = {
+      ...receipt,
+      key: 'click',
+      action: 'repository-click' as const,
+    },
+    accepted = service.action(action),
+    state = service.state(record),
+    snapshotUri = state.participants.browser.snapshotUri!
   // Act
-  const explained = await service.explain({ ...receipt, key: 'explain', snapshotUri, sourceHash: configuration.source.hash, valuePaths: ['value:enabled', 'value:selection'], interpretation: 'The actual captured flag is false and selection is null.' });
-  const explanation = await readResource(service, explained.explanationUri);
-  const source = await readResource(service, `${snapshotUri}/source/typescript`);
+  const explained = await service.explain({
+    ...receipt,
+    key: 'explain',
+    snapshotUri,
+    sourceHash: configuration.source.hash,
+    valuePaths: ['value:enabled', 'value:selection'],
+    interpretation: 'The actual captured flag is false and selection is null.',
+  })
+  const explanation = await readResource(service, explained.explanationUri)
+  const source = await readResource(service, `${snapshotUri}/source/typescript`)
   // Assert
-  assert.equal('text' in explanation && JSON.parse(explanation.text).capturedFacts[0].value, false);
-  assert.equal('text' in explanation && JSON.parse(explanation.text).capturedFacts[1].value, null);
-  assert.equal('text' in source && source.text, 'const nextTheme = "dark";\n');
-  for (const path of ['value:renderLocal', 'value:missing', 'price']) assert.throws(() => service.explain({ ...receipt, key: path, snapshotUri, sourceHash: configuration.source.hash, valuePaths: [path], interpretation: 'Not captured.' }), { code: 'INVALID_REFERENCE' });
-  await service.continue(state.participants.browser.continueArguments!);
-  await assert.rejects(service.continue(state.participants.browser.continueArguments!), { code: 'STALE_PAUSE' });
-  await service.stop(receipt);
-  assert.deepEqual(service.action(action), accepted); assert.equal(runtimes[0]?.dispatches, 1);
-  assert.deepEqual(await readResource(service, `${snapshotUri}/source/typescript`), source); assert.equal(service.state(record).participants.browser.resumable, false);
-});
+  assert.equal(
+    'text' in explanation &&
+      JSON.parse(explanation.text).capturedFacts[0].value,
+    false,
+  )
+  assert.equal(
+    'text' in explanation &&
+      JSON.parse(explanation.text).capturedFacts[1].value,
+    null,
+  )
+  assert.equal('text' in source && source.text, 'const nextTheme = "dark";\n')
+  for (const path of ['value:renderLocal', 'value:missing', 'price'])
+    assert.throws(
+      () =>
+        service.explain({
+          ...receipt,
+          key: path,
+          snapshotUri,
+          sourceHash: configuration.source.hash,
+          valuePaths: [path],
+          interpretation: 'Not captured.',
+        }),
+      { code: 'INVALID_REFERENCE' },
+    )
+  await service.continue(state.participants.browser.continueArguments!)
+  await assert.rejects(
+    service.continue(state.participants.browser.continueArguments!),
+    { code: 'STALE_PAUSE' },
+  )
+  await service.stop(receipt)
+  assert.deepEqual(service.action(action), accepted)
+  assert.equal(runtimes[0]?.dispatches, 1)
+  assert.deepEqual(
+    await readResource(service, `${snapshotUri}/source/typescript`),
+    source,
+  )
+  assert.equal(service.state(record).participants.browser.resumable, false)
+})
 
-test('a repository run exposes the Study link identity separately from its debugger session identity', async context => {
+test('a repository run exposes the Study link identity separately from its debugger session identity', async (context) => {
   // Arrange
-  const { service, configuration } = await configuredServiceHarness(context);
-  const receipt = service.start({ instanceId: service.instanceId, profile: 'repository-browser', key: 'saved-study-link', configuration }), record = service.record(receipt);
-  await record.preparation;
-  service.action({ ...receipt, key: 'click', action: 'repository-click' });
-  await service.continue(service.state(record).participants.browser.continueArguments!);
-  await service.stop(receipt);
+  const { service, configuration } = await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'saved-study-link',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, key: 'click', action: 'repository-click' })
+  await service.continue(
+    service.state(record).participants.browser.continueArguments!,
+  )
+  await service.stop(receipt)
 
   // Act
-  const resource = await readResource(service, receipt.runUri);
-  assert.ok('text' in resource);
-  const state = z.object({ instanceId: z.string(), runId: z.string(), studyId: z.string(), runtimeRunId: z.string(), observations: z.array(z.object({ id: z.string() })) }).parse(JSON.parse(resource.text));
+  const resource = await readResource(service, receipt.runUri)
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      instanceId: z.string(),
+      runId: z.string(),
+      studyId: z.string(),
+      runtimeRunId: z.string(),
+      observations: z.array(z.object({ id: z.string() })),
+    })
+    .parse(JSON.parse(resource.text))
 
   // Assert
-  assert.equal(state.studyId, `${state.instanceId}_${state.runId}`);
-  assert.notEqual(state.studyId, `${state.instanceId}_${state.runtimeRunId}`);
-  assert.equal(state.observations.length, 1);
-});
+  assert.equal(state.studyId, `${state.instanceId}_${state.runId}`)
+  assert.notEqual(state.studyId, `${state.instanceId}_${state.runtimeRunId}`)
+  assert.equal(state.observations.length, 1)
+})
 
-for (const version of [1, 2]) test(`real SDK accepts configuration version ${version} and reconnects without a second dispatch`, async context => {
-  // Arrange: HTTP/SDK/storage are real, editor effects remain the explicitly synthetic harness.
-  const { service, configuration, runtimes } = await configuredServiceHarness(context), endpoint = await startServer(service);
-  const connect = async () => {
-    const client = new Client({ name: 'configured-contract-test', version: '1.0' });
-    await client.connect(new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.descriptor.token}` } } })); return client;
-  };
-  const first = await connect(); let second: Client | undefined;
-  try {
-    // Act
-    const tools = await first.listTools(), start = { instanceId: service.instanceId, profile: 'repository-browser', key: 'sdk', configuration: version === 2 ? { ...configuration, version: 2, participant: 'browser' } : configuration };
-    const result = await first.callTool({ name: 'codebook_start', arguments: start }), receipt = z.object({ data: receiptSchema }).parse(result.structuredContent).data;
-    await service.record(receipt).preparation;
-    const input = { instanceId: receipt.instanceId, runId: receipt.runId, action: 'repository-click', key: 'one-click' };
-    const accepted = await first.callTool({ name: 'codebook_action', arguments: input }); await first.close(); second = await connect();
-    const repeated = await second.callTool({ name: 'codebook_action', arguments: input });
-    const invalid = await second.callTool({ name: 'codebook_start', arguments: { ...start, key: 'bad', configuration: { ...configuration, shell: 'unexpected' } } });
-    // Assert
-    assert.equal(tools.tools.find(tool => tool.name === 'codebook_start')?.inputSchema.type, 'object');
-    assert.equal(accepted.isError, undefined); assert.deepEqual(repeated.structuredContent, accepted.structuredContent); assert.equal(runtimes[0]?.dispatches, 1);
-    assert.equal(invalid.isError, true); assert.equal(service.records.size, 1);
-    assert.deepEqual((await second.callTool({ name: 'codebook_start', arguments: start })).structuredContent, result.structuredContent);
-  } finally { await first.close(); await second?.close(); await endpoint.close(); }
-});
+for (const version of [1, 2])
+  test(`real SDK accepts configuration version ${version} and reconnects without a second dispatch`, async (context) => {
+    // Arrange: HTTP/SDK/storage are real, editor effects remain the explicitly synthetic harness.
+    const { service, configuration, runtimes } =
+        await configuredServiceHarness(context),
+      endpoint = await startServer(service)
+    const connect = async () => {
+      const client = new Client({
+        name: 'configured-contract-test',
+        version: '1.0',
+      })
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), {
+          requestInit: {
+            headers: { Authorization: `Bearer ${endpoint.descriptor.token}` },
+          },
+        }),
+      )
+      return client
+    }
+    const first = await connect()
+    let second: Client | undefined
+    try {
+      // Act
+      const tools = await first.listTools(),
+        start = {
+          instanceId: service.instanceId,
+          profile: 'repository-browser',
+          key: 'sdk',
+          configuration:
+            version === 2
+              ? { ...configuration, version: 2, participant: 'browser' }
+              : configuration,
+        }
+      const result = await first.callTool({
+          name: 'codebook_start',
+          arguments: start,
+        }),
+        receipt = z
+          .object({ data: receiptSchema })
+          .parse(result.structuredContent).data
+      await service.record(receipt).preparation
+      const input = {
+        instanceId: receipt.instanceId,
+        runId: receipt.runId,
+        action: 'repository-click',
+        key: 'one-click',
+      }
+      const accepted = await first.callTool({
+        name: 'codebook_action',
+        arguments: input,
+      })
+      await first.close()
+      second = await connect()
+      const repeated = await second.callTool({
+        name: 'codebook_action',
+        arguments: input,
+      })
+      const invalid = await second.callTool({
+        name: 'codebook_start',
+        arguments: {
+          ...start,
+          key: 'bad',
+          configuration: { ...configuration, shell: 'unexpected' },
+        },
+      })
+      // Assert
+      assert.equal(
+        tools.tools.find((tool) => tool.name === 'codebook_start')?.inputSchema
+          .type,
+        'object',
+      )
+      assert.equal(accepted.isError, undefined)
+      assert.deepEqual(repeated.structuredContent, accepted.structuredContent)
+      assert.equal(runtimes[0]?.dispatches, 1)
+      assert.equal(invalid.isError, true)
+      assert.equal(service.records.size, 1)
+      assert.deepEqual(
+        (await second.callTool({ name: 'codebook_start', arguments: start }))
+          .structuredContent,
+        result.structuredContent,
+      )
+    } finally {
+      await first.close()
+      await second?.close()
+      await endpoint.close()
+    }
+  })
 
-test('API 1.5 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async context => {
+test('API 1.5 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {
   // Arrange
-  const { service, runtimes } = await configuredServiceHarness(context);
+  const { service, runtimes } = await configuredServiceHarness(context)
   // Act
-  const status = await service.status(), profile = status.profiles.find(profile => profile.id === 'repository-browser'), help = await readResource(service, 'codebook://help/repository-browser');
+  const status = await service.status(),
+    profile = status.profiles.find(
+      (profile) => profile.id === 'repository-browser',
+    ),
+    help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
-  assert.equal(status.apiVersion, '1.5'); assert.ok(profile && 'requiresConfiguration' in profile);
-  assert.equal(profile.requiresConfiguration, true); assert.equal(profile.minimumExtensionVersion, '0.2.0');
-  assert.equal(profile.helpUri, 'codebook://help/repository-browser'); assert.equal(profile.limits.runTimeoutMs, 600000); assert.equal(profile.limits.pauseHoldTimeoutMs, 300000);
-  assert.deepEqual(JSON.parse(JSON.stringify(profile.limits)).sourceBytes, { typescript: 262144, javascript: 8388608, map: 16777216 });
-  assert.deepEqual(profile.items, []); assert.deepEqual(profile.requiredLinks, []); assert.equal(profile.actions[0]?.id, 'repository-click');
-  assert.ok('text' in help);
-  assert.match(help.text, /checks action\.before on the fresh managed page before applying optional initialInputs/);
-  assert.match(help.text, /Do not require an initialInputs value in action\.before/);
-  const contract = z.object({ configurationSchema: z.object({ anyOf: z.array(z.object({ type: z.literal('object'), additionalProperties: z.literal(false), required: z.array(z.string()), properties: z.record(z.string(), z.unknown()) })) }), sequence: z.array(z.string()), recovery: z.string() }).parse(JSON.parse(help.text));
-  assert.deepEqual(profile.configurationVersions, [1, 2]);
-  assert.deepEqual(contract.configurationSchema.anyOf.map(variant => variant.required), [
-    ['version', 'adapter', 'book', 'source', 'action', 'inspections'], ['version', 'adapter', 'book', 'source', 'action', 'inspections', 'participant'],
-  ]);
-  assert.match(contract.sequence.join('\n'), /afterVerified/); assert.match(contract.sequence.join('\n'), /saved studyId/);
-  assert.equal(service.records.size, 0); assert.equal(runtimes.length, 0);
-});
+  assert.equal(status.apiVersion, '1.5')
+  assert.ok(profile && 'requiresConfiguration' in profile)
+  assert.equal(profile.requiresConfiguration, true)
+  assert.equal(profile.minimumExtensionVersion, '0.2.0')
+  assert.equal(profile.helpUri, 'codebook://help/repository-browser')
+  assert.equal(profile.limits.runTimeoutMs, 600000)
+  assert.equal(profile.limits.pauseHoldTimeoutMs, 300000)
+  assert.deepEqual(JSON.parse(JSON.stringify(profile.limits)).sourceBytes, {
+    typescript: 262144,
+    javascript: 8388608,
+    map: 16777216,
+  })
+  assert.deepEqual(profile.items, [])
+  assert.deepEqual(profile.requiredLinks, [])
+  assert.equal(profile.actions[0]?.id, 'repository-click')
+  assert.ok('text' in help)
+  assert.match(
+    help.text,
+    /checks action\.before on the fresh managed page before applying optional initialInputs/,
+  )
+  assert.match(
+    help.text,
+    /Do not require an initialInputs value in action\.before/,
+  )
+  const contract = z
+    .object({
+      configurationSchema: z.object({
+        anyOf: z.array(
+          z.object({
+            type: z.literal('object'),
+            additionalProperties: z.literal(false),
+            required: z.array(z.string()),
+            properties: z.record(z.string(), z.unknown()),
+          }),
+        ),
+      }),
+      sequence: z.array(z.string()),
+      recovery: z.string(),
+    })
+    .parse(JSON.parse(help.text))
+  assert.deepEqual(profile.configurationVersions, [1, 2])
+  assert.deepEqual(
+    contract.configurationSchema.anyOf.map((variant) => variant.required),
+    [
+      ['version', 'adapter', 'book', 'source', 'action', 'inspections'],
+      [
+        'version',
+        'adapter',
+        'book',
+        'source',
+        'action',
+        'inspections',
+        'participant',
+      ],
+    ],
+  )
+  assert.match(contract.sequence.join('\n'), /afterVerified/)
+  assert.match(contract.sequence.join('\n'), /saved studyId/)
+  assert.equal(service.records.size, 0)
+  assert.equal(runtimes.length, 0)
+})

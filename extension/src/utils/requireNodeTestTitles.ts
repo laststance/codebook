@@ -1,5 +1,5 @@
-import type { NodeTestConfiguration } from '../nodeTestConfigSchemas';
-import { StudyError } from '../errors';
+import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
+import { StudyError } from '../errors'
 
 /**
  * Returns the cited test's title path, refusing a new Node test run that names its test with the retired `testName` or not at all.
@@ -16,10 +16,18 @@ import { StudyError } from '../errors';
  * requireNodeTestTitles({ ...configuration, testTitles: ['invoice data queries', 'returns undefined'] }) // => ['invoice data queries', 'returns undefined']
  * ```
  */
-export function requireNodeTestTitles(configuration: NodeTestConfiguration): string[] {
-  if (configuration.testName !== undefined) throw new StudyError('INVALID_CONFIGURATION',
-    'testName is retired for new Node test runs: cite the test with testTitles (every enclosing describe title, then the test title). See codebook://help/node-test.');
-  if (!configuration.testTitles) throw new StudyError('INVALID_CONFIGURATION',
-    'A Node test run needs testTitles naming exactly one test: every enclosing describe title, then the test title. See codebook://help/node-test.');
-  return configuration.testTitles;
+export function requireNodeTestTitles(
+  configuration: NodeTestConfiguration,
+): string[] {
+  if (configuration.testName !== undefined)
+    throw new StudyError(
+      'INVALID_CONFIGURATION',
+      'testName is retired for new Node test runs: cite the test with testTitles (every enclosing describe title, then the test title). See codebook://help/node-test.',
+    )
+  if (!configuration.testTitles)
+    throw new StudyError(
+      'INVALID_CONFIGURATION',
+      'A Node test run needs testTitles naming exactly one test: every enclosing describe title, then the test title. See codebook://help/node-test.',
+    )
+  return configuration.testTitles
 }

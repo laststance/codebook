@@ -1,10 +1,10 @@
-import { randomUUID } from 'node:crypto';
-import { INJECTED_DELAY_MS } from '../constants';
-import { installWebviewFocus } from './installWebviewFocus';
+import { randomUUID } from 'node:crypto'
+import { INJECTED_DELAY_MS } from '../constants'
+import { installWebviewFocus } from './installWebviewFocus'
 
 /** Creates {@link BrowserViewport}'s isolated image renderer; app data enters only through messages, never HTML. @example viewportHtml() */
 export function viewportHtml(mode: 'live' | 'recording' = 'live'): string {
-  const nonce = randomUUID();
+  const nonce = randomUUID()
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -51,5 +51,5 @@ window.addEventListener('message', async event => {
   }); });
 });
 api.postMessage({type:'ready',epoch});
-</script></body></html>`;
+</script></body></html>`
 }

@@ -1,181 +1,665 @@
-import { join, resolve } from 'node:path';
-import { runInNewContext } from 'node:vm';
-import type { TestContext } from 'node:test';
-import type { DebugSession } from 'vscode';
-import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport';
-import { sha256 } from '../../runtimeSupport/utils/sha256';
-import { waitUntil } from '../../runtimeSupport/utils/waitUntil';
-import { configuredDefinitionSchema } from '../../configuredStudySchemas';
-import type { ConfiguredBrowserRun } from '../../configuredBrowserRun';
-import type { RuntimeControl } from '../../runtime';
-import type { RepositoryConfiguration } from '../../repositoryConfigSchemas';
-import type { BundleSource } from '../../repositoryBundle';
-import { createConfiguredStudy } from './createConfiguredStudy';
-import { configuredDomExpression } from '../../utils/configuredDomExpression';
-import { repositoryHarness } from './repositoryHarness';
-import { loadModule } from './loadModule';
+import { join, resolve } from 'node:path'
+import { runInNewContext } from 'node:vm'
+import type { TestContext } from 'node:test'
+import type { DebugSession } from 'vscode'
+import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
+import { sha256 } from '../../runtimeSupport/utils/sha256'
+import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
+import { configuredDefinitionSchema } from '../../configuredStudySchemas'
+import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
+import type { RuntimeControl } from '../../runtime'
+import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
+import type { BundleSource } from '../../repositoryBundle'
+import { createConfiguredStudy } from './createConfiguredStudy'
+import { configuredDomExpression } from '../../utils/configuredDomExpression'
+import { repositoryHarness } from './repositoryHarness'
+import { loadModule } from './loadModule'
 
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
-export async function configuredRuntimeHarness(context: TestContext, control?: RuntimeControl, additionalStops: RepositoryConfiguration['additionalStops'] = []) {
-  let owned: ConfiguredBrowserRun | undefined;
-  context.after(async () => { await owned?.stop(); });
-  const repository = await repositoryHarness(context), reference = createConfiguredStudy();
-  if (additionalStops.length) { reference.configuration.additionalStops = additionalStops; reference.configurationHash = sha256(JSON.stringify(reference.configuration)); }
-  for (const source of reference.descriptor!.sources) await repository.track(source.path, source.text);
-  const definition = configuredDefinitionSchema.parse({ configuration: reference.configuration, configurationHash: reference.configurationHash, descriptor: reference.descriptor });
-  const afterExpression = configuredDomExpression(definition.configuration.action.after);
-  const sourcePath = join(repository.directory, definition.configuration.source.path), source = reference.descriptor!.sources[0]!.text, javascript = 'const nextTheme = "dark";';
-  const bundle: BundleSource = { sourcePath, source, javascript, sourceMap: JSON.stringify({ version: 3, sources: [sourcePath], sourcesContent: [source], names: [], mappings: additionalStops.length ? 'AAAA,MAAM' : 'AAAA' }), mapSource: sourcePath, scriptUrl: 'webpack-internal:///(app-pages-browser)/./src/theme.ts', chunkPath: join(repository.directory, '.next/dev/chunk.js'), chunkHash: '0'.repeat(64) };
-  const releases: string[] = [], mouse: { type?: string; timeout?: number }[] = [], commands: string[] = [], listeners = new Map<string, (event: unknown) => void>();
-  const timers = new Map<number, { at: number; callback: () => void }>(); let clock = 0, timerId = 0, requestSequence = 0;
-  let emitInputPause = true, emitPreparationResume = false, stopAtStartupBreakpoint = false, removedAck = true, bound = false, rejectBinding = false, ready = true, inputResolve = () => {}, inputReject = (_error: Error) => {}, onClose = () => {}, heldPhase: string | undefined, releaseCapture = () => {}, captureEntered = () => {};
-  let run: ConfiguredBrowserRun;
-  let currentColumn = 1, stopCount = 0, breakpointCount = 0;
-  let recordingObserver = (): ViewportRecordingObserver | undefined => undefined;
-  let rejectedCapture: string | undefined, requiredValueUnavailable = false, requiredValueUndefined = false;
-  let hideViewportAtPause = false, viewportReady = true;
-  let controlledContinuation = false, continuationEntered = () => {}, acknowledgeContinuation = () => {}, rejectContinuation = (_error: Error) => {};
-  type TestBreakpoint = { id: string; location: { uri: { fsPath: string }; range: { start: { line: number; character: number } } } };
-  const userBreakpoint: TestBreakpoint = { id: 'learner-owned', location: { uri: { fsPath: sourcePath }, range: { start: { line: 10, character: 0 } } } };
-  const breakpoints: TestBreakpoint[] = [userBreakpoint];
-  const root: DebugSession = { id: 'owned-root', type: 'pwa-chrome', name: 'owned', workspaceFolder: undefined, configuration: { type: 'pwa-chrome', name: 'owned', request: 'launch' }, customRequest: async () => undefined, getDebugProtocolBreakpoint: async () => undefined };
-  const selected: DebugSession = { ...root, id: 'browser-session', parentSession: root,
+export async function configuredRuntimeHarness(
+  context: TestContext,
+  control?: RuntimeControl,
+  additionalStops: RepositoryConfiguration['additionalStops'] = [],
+) {
+  let owned: ConfiguredBrowserRun | undefined
+  context.after(async () => {
+    await owned?.stop()
+  })
+  const repository = await repositoryHarness(context),
+    reference = createConfiguredStudy()
+  if (additionalStops.length) {
+    reference.configuration.additionalStops = additionalStops
+    reference.configurationHash = sha256(
+      JSON.stringify(reference.configuration),
+    )
+  }
+  for (const source of reference.descriptor!.sources)
+    await repository.track(source.path, source.text)
+  const definition = configuredDefinitionSchema.parse({
+    configuration: reference.configuration,
+    configurationHash: reference.configurationHash,
+    descriptor: reference.descriptor,
+  })
+  const afterExpression = configuredDomExpression(
+    definition.configuration.action.after,
+  )
+  const sourcePath = join(
+      repository.directory,
+      definition.configuration.source.path,
+    ),
+    source = reference.descriptor!.sources[0]!.text,
+    javascript = 'const nextTheme = "dark";'
+  const bundle: BundleSource = {
+    sourcePath,
+    source,
+    javascript,
+    sourceMap: JSON.stringify({
+      version: 3,
+      sources: [sourcePath],
+      sourcesContent: [source],
+      names: [],
+      mappings: additionalStops.length ? 'AAAA,MAAM' : 'AAAA',
+    }),
+    mapSource: sourcePath,
+    scriptUrl: 'webpack-internal:///(app-pages-browser)/./src/theme.ts',
+    chunkPath: join(repository.directory, '.next/dev/chunk.js'),
+    chunkHash: '0'.repeat(64),
+  }
+  const releases: string[] = [],
+    mouse: { type?: string; timeout?: number }[] = [],
+    commands: string[] = [],
+    listeners = new Map<string, (event: unknown) => void>()
+  const timers = new Map<number, { at: number; callback: () => void }>()
+  let clock = 0,
+    timerId = 0,
+    requestSequence = 0
+  let emitInputPause = true,
+    emitPreparationResume = false,
+    stopAtStartupBreakpoint = false,
+    removedAck = true,
+    bound = false,
+    rejectBinding = false,
+    ready = true,
+    inputResolve = () => {},
+    inputReject = (_error: Error) => {},
+    onClose = () => {},
+    heldPhase: string | undefined,
+    releaseCapture = () => {},
+    captureEntered = () => {}
+  let run: ConfiguredBrowserRun
+  let currentColumn = 1,
+    stopCount = 0,
+    breakpointCount = 0
+  let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
+  let rejectedCapture: string | undefined,
+    requiredValueUnavailable = false,
+    requiredValueUndefined = false
+  let hideViewportAtPause = false,
+    viewportReady = true
+  let controlledContinuation = false,
+    continuationEntered = () => {},
+    acknowledgeContinuation = () => {},
+    rejectContinuation = (_error: Error) => {}
+  type TestBreakpoint = {
+    id: string
+    location: {
+      uri: { fsPath: string }
+      range: { start: { line: number; character: number } }
+    }
+  }
+  const userBreakpoint: TestBreakpoint = {
+    id: 'learner-owned',
+    location: {
+      uri: { fsPath: sourcePath },
+      range: { start: { line: 10, character: 0 } },
+    },
+  }
+  const breakpoints: TestBreakpoint[] = [userBreakpoint]
+  const root: DebugSession = {
+    id: 'owned-root',
+    type: 'pwa-chrome',
+    name: 'owned',
+    workspaceFolder: undefined,
+    configuration: { type: 'pwa-chrome', name: 'owned', request: 'launch' },
+    customRequest: async () => undefined,
+    getDebugProtocolBreakpoint: async () => undefined,
+  }
+  const selected: DebugSession = {
+    ...root,
+    id: 'browser-session',
+    parentSession: root,
     customRequest: async (command, arguments_) => {
-      commands.push(command);
-      if (command === 'requestCDPProxy') return { host: 'localhost', port: 1234, path: '/owned' };
-      if (command === 'stackTrace') return { stackFrames: [{ id: 1, name: 'configured', source: { path: sourcePath }, line: 1, column: currentColumn }] };
-      if (command === 'scopes') return { scopes: [{ name: 'Local', variablesReference: 501 }] };
-      if (command === 'variables') return { variables: [{ name: 'nextTheme', value: requiredValueUndefined ? 'undefined' : 'dark', type: requiredValueUndefined ? 'undefined' : 'string', variablesReference: 0 }] };
+      commands.push(command)
+      if (command === 'requestCDPProxy')
+        return { host: 'localhost', port: 1234, path: '/owned' }
+      if (command === 'stackTrace')
+        return {
+          stackFrames: [
+            {
+              id: 1,
+              name: 'configured',
+              source: { path: sourcePath },
+              line: 1,
+              column: currentColumn,
+            },
+          ],
+        }
+      if (command === 'scopes')
+        return { scopes: [{ name: 'Local', variablesReference: 501 }] }
+      if (command === 'variables')
+        return {
+          variables: [
+            {
+              name: 'nextTheme',
+              value: requiredValueUndefined ? 'undefined' : 'dark',
+              type: requiredValueUndefined ? 'undefined' : 'string',
+              variablesReference: 0,
+            },
+          ],
+        }
       if (command === 'continue') {
-        run.onRequest(selected, { type: 'request', seq: ++requestSequence, command, arguments: arguments_ });
+        run.onRequest(selected, {
+          type: 'request',
+          seq: ++requestSequence,
+          command,
+          arguments: arguments_,
+        })
         // Controlled cases deliver response, DAP, CDP and input receipts independently.
         if (controlledContinuation) {
-          const response = new Promise<void>((resolve, reject) => { acknowledgeContinuation = resolve; rejectContinuation = reject; });
-          continuationEntered(); await response; return {};
+          const response = new Promise<void>((resolve, reject) => {
+            acknowledgeContinuation = resolve
+            rejectContinuation = reject
+          })
+          continuationEntered()
+          await response
+          return {}
         }
-        run.onEvent(selected, { type: 'event', seq: ++requestSequence, event: 'continued', body: { threadId: 1 } });
-        listeners.get('Debugger.resumed')?.({});
-        const next = additionalStops[stopCount - 1];
-        if (next) emitPause(next.column); else inputResolve();
-        return {};
+        run.onEvent(selected, {
+          type: 'event',
+          seq: ++requestSequence,
+          event: 'continued',
+          body: { threadId: 1 },
+        })
+        listeners.get('Debugger.resumed')?.({})
+        const next = additionalStops[stopCount - 1]
+        if (next) emitPause(next.column)
+        else inputResolve()
+        return {}
       }
-      throw new Error(`Unexpected DAP command: ${command}`);
-    }, getDebugProtocolBreakpoint: async breakpoint => { const owned = breakpoints.find(candidate => candidate.id === breakpoint.id); return bound && !rejectBinding && owned ? { id: 1, verified: true, line: owned.location.range.start.line + 1, column: owned.location.range.start.character + 1 } : undefined; } };
+      throw new Error(`Unexpected DAP command: ${command}`)
+    },
+    getDebugProtocolBreakpoint: async (breakpoint) => {
+      const owned = breakpoints.find(
+        (candidate) => candidate.id === breakpoint.id,
+      )
+      return bound && !rejectBinding && owned
+        ? {
+            id: 1,
+            verified: true,
+            line: owned.location.range.start.line + 1,
+            column: owned.location.range.start.character + 1,
+          }
+        : undefined
+    },
+  }
   const emitCdpPause = () => {
-    listeners.get('Debugger.paused')?.({ reason: 'other', hitBreakpoints: ['mapped-source'], callFrames: [{ callFrameId: 'selected-frame', location: { scriptId: 'actual', lineNumber: 0, columnNumber: currentColumn - 1 } }] });
-  };
+    listeners.get('Debugger.paused')?.({
+      reason: 'other',
+      hitBreakpoints: ['mapped-source'],
+      callFrames: [
+        {
+          callFrameId: 'selected-frame',
+          location: {
+            scriptId: 'actual',
+            lineNumber: 0,
+            columnNumber: currentColumn - 1,
+          },
+        },
+      ],
+    })
+  }
   const emitPause = (column = 1) => {
-    currentColumn = column; stopCount++;
+    currentColumn = column
+    stopCount++
     // A real debugger may reveal an existing source tab over the leased application panel.
-    if (hideViewportAtPause) viewportReady = false;
-    emitCdpPause();
-    run.onEvent(selected, { seq: ++requestSequence, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
-  };
-  let screenshot = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=';
+    if (hideViewportAtPause) viewportReady = false
+    emitCdpPause()
+    run.onEvent(selected, {
+      seq: ++requestSequence,
+      type: 'event',
+      event: 'stopped',
+      body: { threadId: 1, reason: 'breakpoint' },
+    })
+  }
+  let screenshot =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII='
   const proxy = {
-    closed: false, get onClose() { return onClose; }, set onClose(listener: () => void) { onClose = listener; },
-    on(event: string, listener: (value: unknown) => void) { listeners.set(event, listener); }, async subscribe() {}, aggregateScreencastTelemetry() {},
-    close() { if (this.closed) return; this.closed = true; releases.push('cdp'); inputReject(new Error('CDP disconnected')); rejectContinuation(new Error('DAP disconnected')); onClose(); },
-    async request(method: string, parameters?: { expression?: string; type?: string }, timeout?: number) {
-      if (method === 'Runtime.evaluate') return { result: { value: parameters?.expression === 'location.href' ? 'about:blank' : parameters?.expression === 'location.origin' ? 'http://127.0.0.1:4321'
-        : parameters?.expression === afterExpression && !run.view().operation?.inputDispatched ? { ready: false, failure: { conditionIndex: 0, reason: 'not-visible' } }
-          : ready ? { ready: true, x: 12, y: 18 } : { ready: false, failure: { conditionIndex: 0, reason: 'not-visible' } } } };
+    closed: false,
+    get onClose() {
+      return onClose
+    },
+    set onClose(listener: () => void) {
+      onClose = listener
+    },
+    on(event: string, listener: (value: unknown) => void) {
+      listeners.set(event, listener)
+    },
+    async subscribe() {},
+    aggregateScreencastTelemetry() {},
+    close() {
+      if (this.closed) return
+      this.closed = true
+      releases.push('cdp')
+      inputReject(new Error('CDP disconnected'))
+      rejectContinuation(new Error('DAP disconnected'))
+      onClose()
+    },
+    async request(
+      method: string,
+      parameters?: { expression?: string; type?: string },
+      timeout?: number,
+    ) {
+      if (method === 'Runtime.evaluate')
+        return {
+          result: {
+            value:
+              parameters?.expression === 'location.href'
+                ? 'about:blank'
+                : parameters?.expression === 'location.origin'
+                  ? 'http://127.0.0.1:4321'
+                  : parameters?.expression === afterExpression &&
+                      !run.view().operation?.inputDispatched
+                    ? {
+                        ready: false,
+                        failure: { conditionIndex: 0, reason: 'not-visible' },
+                      }
+                    : ready
+                      ? { ready: true, x: 12, y: 18 }
+                      : {
+                          ready: false,
+                          failure: { conditionIndex: 0, reason: 'not-visible' },
+                        },
+          },
+        }
       if (method === 'Page.navigate') {
-        bound = !rejectBinding;
+        bound = !rejectBinding
         // VS Code can surface a bound source stop during hydration when Codebook arms its breakpoint too early.
-        if (stopAtStartupBreakpoint && breakpoints.some(breakpoint => breakpoint.id === 'owned-breakpoint')) {
-          run.onEvent(selected, { seq: ++requestSequence, type: 'event', event: 'stopped', body: { threadId: 1, reason: 'breakpoint' } });
+        if (
+          stopAtStartupBreakpoint &&
+          breakpoints.some((breakpoint) => breakpoint.id === 'owned-breakpoint')
+        ) {
+          run.onEvent(selected, {
+            seq: ++requestSequence,
+            type: 'event',
+            event: 'stopped',
+            body: { threadId: 1, reason: 'breakpoint' },
+          })
         }
         // js-debug can resume internal source-map stops without exposing a DAP stop.
-        if (emitPreparationResume) emitCdpPause();
-        listeners.get('Debugger.scriptParsed')?.({ scriptId: 'actual', url: bundle.scriptUrl, executionContextId: 1 });
-        if (emitPreparationResume) { listeners.get('Debugger.resumed')?.({}); emitCdpPause(); listeners.get('Debugger.resumed')?.({}); }
-        return {};
+        if (emitPreparationResume) emitCdpPause()
+        listeners.get('Debugger.scriptParsed')?.({
+          scriptId: 'actual',
+          url: bundle.scriptUrl,
+          executionContextId: 1,
+        })
+        if (emitPreparationResume) {
+          listeners.get('Debugger.resumed')?.({})
+          emitCdpPause()
+          listeners.get('Debugger.resumed')?.({})
+        }
+        return {}
       }
-      if (method === 'Debugger.getScriptSource') return { scriptSource: javascript };
+      if (method === 'Debugger.getScriptSource')
+        return { scriptSource: javascript }
       if (method === 'Debugger.evaluateOnCallFrame') {
-        try { return { result: { value: runInNewContext(parameters?.expression ?? '', { nextTheme: requiredValueUnavailable ? { rejected: true } : requiredValueUndefined ? undefined : 'dark', setTheme() {}, enabled: false, selection: null }) } }; }
-        catch { return { result: { type: 'undefined' }, exceptionDetails: { exceptionId: 1, text: 'Unavailable test local', lineNumber: 0, columnNumber: currentColumn - 1 } }; }
+        try {
+          return {
+            result: {
+              value: runInNewContext(parameters?.expression ?? '', {
+                nextTheme: requiredValueUnavailable
+                  ? { rejected: true }
+                  : requiredValueUndefined
+                    ? undefined
+                    : 'dark',
+                setTheme() {},
+                enabled: false,
+                selection: null,
+              }),
+            },
+          }
+        } catch {
+          return {
+            result: { type: 'undefined' },
+            exceptionDetails: {
+              exceptionId: 1,
+              text: 'Unavailable test local',
+              lineNumber: 0,
+              columnNumber: currentColumn - 1,
+            },
+          }
+        }
       }
-      if (method === 'Page.captureScreenshot') return { data: screenshot };
+      if (method === 'Page.captureScreenshot') return { data: screenshot }
       if (method === 'Input.dispatchMouseEvent') {
-        mouse.push({ type: parameters?.type, timeout });
-        if (parameters?.type === 'mousePressed') return {};
-        const pending = new Promise<void>((resolve, reject) => { inputResolve = resolve; inputReject = reject; }); if (emitInputPause) emitPause(); return pending;
+        mouse.push({ type: parameters?.type, timeout })
+        if (parameters?.type === 'mousePressed') return {}
+        const pending = new Promise<void>((resolve, reject) => {
+          inputResolve = resolve
+          inputReject = reject
+        })
+        if (emitInputPause) emitPause()
+        return pending
       }
-      if (method === 'Page.addScriptToEvaluateOnNewDocument') return {};
-      throw new Error(`Unexpected CDP request: ${method}`);
+      if (method === 'Page.addScriptToEvaluateOnNewDocument') return {}
+      throw new Error(`Unexpected CDP request: ${method}`)
     },
-  };
-  const documents = [{ uri: { scheme: 'file', fsPath: sourcePath }, isDirty: false, text: source, getText() { return this.text; } }];
+  }
+  const documents = [
+    {
+      uri: { scheme: 'file', fsPath: sourcePath },
+      isDirty: false,
+      text: source,
+      getText() {
+        return this.text
+      },
+    },
+  ]
   const vscode = {
     workspace: { textDocuments: documents },
-    debug: { breakpoints, addBreakpoints(added: TestBreakpoint[]) { breakpoints.push(...added); },
-      removeBreakpoints(removed: TestBreakpoint[]) {
-        for (const breakpoint of removed) { const index = breakpoints.findIndex(candidate => candidate.id === breakpoint.id); if (index >= 0) breakpoints.splice(index, 1); }
-        releases.push('owned breakpoint');
-        const sequence = ++requestSequence;
-        run.onRequest(selected, { seq: sequence, type: 'request', command: 'setBreakpoints', arguments: { source: { path: sourcePath }, breakpoints: breakpoints.map(breakpoint => ({ line: breakpoint.location.range.start.line + 1, column: breakpoint.location.range.start.character + 1 })) } });
-        if (removedAck) queueMicrotask(() => run.onResponse(selected, { seq: ++requestSequence, type: 'response', command: 'setBreakpoints', request_seq: sequence, success: true, body: { breakpoints: breakpoints.map(breakpoint => ({ line: breakpoint.location.range.start.line + 1, column: breakpoint.location.range.start.character + 1 })) } }));
+    debug: {
+      breakpoints,
+      addBreakpoints(added: TestBreakpoint[]) {
+        breakpoints.push(...added)
       },
-      stopDebugging: async () => { releases.push('debugger'); run.terminated(root); run.terminated(selected); } },
-    Uri: { file: (path: string) => ({ scheme: 'file', fsPath: path }) },
-    Position: class { constructor(readonly line: number, readonly character: number) {} },
-    Location: class { readonly range; constructor(readonly uri: unknown, position: unknown) { this.range = { start: position }; } },
-    SourceBreakpoint: class { readonly id = ++breakpointCount === 1 ? 'owned-breakpoint' : `owned-breakpoint-${breakpointCount}`; constructor(readonly location: unknown) {} },
-  };
-  const breakpointModule = await loadModule<typeof import('../../ownedRepositoryBreakpoint')>(resolve(__dirname, '../../ownedRepositoryBreakpoint.js'), { vscode });
-  const runtimeModule = await loadModule<typeof import('../../configuredBrowserRun')>(resolve(__dirname, '../../configuredBrowserRun.js'), {
-    vscode, './ownedRepositoryBreakpoint': breakpointModule,
-    './runtimeSupport/hostBrowser': { HostBrowser: class {
-      async launch(configuration: DebugSession['configuration']) { root.configuration.name = configuration.name; run.addSession(root); run.addSession(selected); }
-      async attachViewport() {} async reveal() { viewportReady = true; } resumeViewport() {}
-      recordCapture(data: string, phase: string) { const observer = recordingObserver(); observer?.frame({ data, phase, kind: 'phase', elapsedMs: observer.elapsedMs() }); }
-      async presentCapture(data: string, phase: string) { if (!viewportReady) throw new Error('Webview is not ready'); if (phase === heldPhase) { captureEntered(); await new Promise<void>(resolve => { releaseCapture = resolve; }); } if (phase === rejectedCapture) return undefined; return { epoch: 'test', id: 1, hash: sha256(Buffer.from(data, 'base64')) }; }
-      async drainAcquisitions() { releases.push('acquisitions'); } async close() { releases.push('browser'); }
-    } },
-    './runtimeSupport/cdp': { Cdp: { connect: async () => proxy } },
-    './utils/readDevelopmentBundle': { readDevelopmentBundle: async () => ({ bundle, discovery: {} }) },
-    './utils/assertDevelopmentWorkspace': { assertDevelopmentWorkspace: async () => undefined },
-    './utils/launchDevelopmentServer': { launchDevelopmentServer: () => ({ ready: async () => { releases.push('application acquired'); return 'http://127.0.0.1:4321'; }, close: async () => { releases.push('application'); } }) },
-    './runtimeSupport/utils/waitUntil': { waitUntil: async <Value>(read: () => Value | Promise<Value>, description: string, timeoutMs?: number, signal?: AbortSignal) => {
-      // A deliberately disabled readiness condition is stable; inspect it once, then use the real timeout contract.
-      if (!ready && description.startsWith('configured before conditions')) {
-        signal?.throwIfAborted();
-        const value = await read();
-        signal?.throwIfAborted();
-        if (value) return value;
-        return waitUntil(read, description, 0, signal);
-      }
-      if (rejectBinding && description.startsWith('exact repository breakpoint binding')) {
-        signal?.throwIfAborted();
-        await read();
-        signal?.throwIfAborted();
-        return waitUntil(read, description, 0, signal);
-      }
-      return waitUntil(read, description, timeoutMs, signal);
-    } },
-  }, { setTimeout: (callback: () => void, delay: number) => { const id = ++timerId; timers.set(id, { at: clock + delay, callback }); return id; }, clearTimeout: (id: number) => { timers.delete(id); } });
-  run = owned = new runtimeModule.ConfiguredBrowserRun({ directory: join(repository.directory, '.runtime'), workspace: repository.directory, node: process.execPath, host: { id: 'vscode', productVersion: 'test', apiVersion: 'test', commit: 'test' }, definition, control, assertWorkspace() {}, revealSource: async () => { releases.push('captured source'); } });
-  return { ...repository, run, definition: { ...definition, configuration: reference.configuration }, documents, breakpoints, userBreakpoint, mouse, commands, releases, emitPause, emitCdpPause,
-    setScreenshot(base64: string) { screenshot = base64; },
-    rejectBreakpointBinding() { rejectBinding = true; },
-    observeRecording(observer: () => ViewportRecordingObserver | undefined) { recordingObserver = observer; },
-    rejectCapture(phase: string) { rejectedCapture = phase; }, requireUnavailableValue() { requiredValueUnavailable = true; }, useUndefinedValue() { requiredValueUndefined = true; },
-    suppressInputPause() { emitInputPause = false; },
-    resumeDuringPreparation() { emitPreparationResume = true; },
-    stopOnStartupWhenOwnedBreakpointPresent() { stopAtStartupBreakpoint = true; },
-    hideViewportOnPause() { hideViewportAtPause = true; },
-    manualResume() { listeners.get('Debugger.resumed')?.({}); },
-    holdContinuation() {
-      controlledContinuation = true;
-      const started = new Promise<void>(resolve => { continuationEntered = resolve; });
-      return { started, response: () => acknowledgeContinuation(), input: () => inputResolve(),
-        dap: (threadId = 1) => run.onEvent(selected, { type: 'event', seq: ++requestSequence, event: 'continued', body: { threadId } }),
-        cdp: () => listeners.get('Debugger.resumed')?.({}) };
+      removeBreakpoints(removed: TestBreakpoint[]) {
+        for (const breakpoint of removed) {
+          const index = breakpoints.findIndex(
+            (candidate) => candidate.id === breakpoint.id,
+          )
+          if (index >= 0) breakpoints.splice(index, 1)
+        }
+        releases.push('owned breakpoint')
+        const sequence = ++requestSequence
+        run.onRequest(selected, {
+          seq: sequence,
+          type: 'request',
+          command: 'setBreakpoints',
+          arguments: {
+            source: { path: sourcePath },
+            breakpoints: breakpoints.map((breakpoint) => ({
+              line: breakpoint.location.range.start.line + 1,
+              column: breakpoint.location.range.start.character + 1,
+            })),
+          },
+        })
+        if (removedAck)
+          queueMicrotask(() =>
+            run.onResponse(selected, {
+              seq: ++requestSequence,
+              type: 'response',
+              command: 'setBreakpoints',
+              request_seq: sequence,
+              success: true,
+              body: {
+                breakpoints: breakpoints.map((breakpoint) => ({
+                  line: breakpoint.location.range.start.line + 1,
+                  column: breakpoint.location.range.start.character + 1,
+                })),
+              },
+            }),
+          )
+      },
+      stopDebugging: async () => {
+        releases.push('debugger')
+        run.terminated(root)
+        run.terminated(selected)
+      },
     },
-    setReady(value: boolean) { ready = value; }, suppressRetirementAck() { removedAck = false; },
-    holdCapture(phase: string) { heldPhase = phase; const started = new Promise<void>(resolve => { captureEntered = resolve; }); return { started, release: () => { heldPhase = undefined; releaseCapture(); } }; },
-    advance(milliseconds: number) { clock += milliseconds; for (const [id, timer] of [...timers]) if (timer.at <= clock) { timers.delete(id); timer.callback(); } },
-  };
+    Uri: { file: (path: string) => ({ scheme: 'file', fsPath: path }) },
+    Position: class {
+      constructor(
+        readonly line: number,
+        readonly character: number,
+      ) {}
+    },
+    Location: class {
+      readonly range
+      constructor(
+        readonly uri: unknown,
+        position: unknown,
+      ) {
+        this.range = { start: position }
+      }
+    },
+    SourceBreakpoint: class {
+      readonly id =
+        ++breakpointCount === 1
+          ? 'owned-breakpoint'
+          : `owned-breakpoint-${breakpointCount}`
+      constructor(readonly location: unknown) {}
+    },
+  }
+  const breakpointModule = await loadModule<
+    typeof import('../../ownedRepositoryBreakpoint')
+  >(resolve(__dirname, '../../ownedRepositoryBreakpoint.js'), { vscode })
+  const runtimeModule = await loadModule<
+    typeof import('../../configuredBrowserRun')
+  >(
+    resolve(__dirname, '../../configuredBrowserRun.js'),
+    {
+      vscode,
+      './ownedRepositoryBreakpoint': breakpointModule,
+      './runtimeSupport/hostBrowser': {
+        HostBrowser: class {
+          async launch(configuration: DebugSession['configuration']) {
+            root.configuration.name = configuration.name
+            run.addSession(root)
+            run.addSession(selected)
+          }
+          async attachViewport() {}
+          async reveal() {
+            viewportReady = true
+          }
+          resumeViewport() {}
+          recordCapture(data: string, phase: string) {
+            const observer = recordingObserver()
+            observer?.frame({
+              data,
+              phase,
+              kind: 'phase',
+              elapsedMs: observer.elapsedMs(),
+            })
+          }
+          async presentCapture(data: string, phase: string) {
+            if (!viewportReady) throw new Error('Webview is not ready')
+            if (phase === heldPhase) {
+              captureEntered()
+              await new Promise<void>((resolve) => {
+                releaseCapture = resolve
+              })
+            }
+            if (phase === rejectedCapture) return undefined
+            return {
+              epoch: 'test',
+              id: 1,
+              hash: sha256(Buffer.from(data, 'base64')),
+            }
+          }
+          async drainAcquisitions() {
+            releases.push('acquisitions')
+          }
+          async close() {
+            releases.push('browser')
+          }
+        },
+      },
+      './runtimeSupport/cdp': { Cdp: { connect: async () => proxy } },
+      './utils/readDevelopmentBundle': {
+        readDevelopmentBundle: async () => ({ bundle, discovery: {} }),
+      },
+      './utils/assertDevelopmentWorkspace': {
+        assertDevelopmentWorkspace: async () => undefined,
+      },
+      './utils/launchDevelopmentServer': {
+        launchDevelopmentServer: () => ({
+          ready: async () => {
+            releases.push('application acquired')
+            return 'http://127.0.0.1:4321'
+          },
+          close: async () => {
+            releases.push('application')
+          },
+        }),
+      },
+      './runtimeSupport/utils/waitUntil': {
+        waitUntil: async <Value>(
+          read: () => Value | Promise<Value>,
+          description: string,
+          timeoutMs?: number,
+          signal?: AbortSignal,
+        ) => {
+          // A deliberately disabled readiness condition is stable; inspect it once, then use the real timeout contract.
+          if (
+            !ready &&
+            description.startsWith('configured before conditions')
+          ) {
+            signal?.throwIfAborted()
+            const value = await read()
+            signal?.throwIfAborted()
+            if (value) return value
+            return waitUntil(read, description, 0, signal)
+          }
+          if (
+            rejectBinding &&
+            description.startsWith('exact repository breakpoint binding')
+          ) {
+            signal?.throwIfAborted()
+            await read()
+            signal?.throwIfAborted()
+            return waitUntil(read, description, 0, signal)
+          }
+          return waitUntil(read, description, timeoutMs, signal)
+        },
+      },
+    },
+    {
+      setTimeout: (callback: () => void, delay: number) => {
+        const id = ++timerId
+        timers.set(id, { at: clock + delay, callback })
+        return id
+      },
+      clearTimeout: (id: number) => {
+        timers.delete(id)
+      },
+    },
+  )
+  run = owned = new runtimeModule.ConfiguredBrowserRun({
+    directory: join(repository.directory, '.runtime'),
+    workspace: repository.directory,
+    node: process.execPath,
+    host: {
+      id: 'vscode',
+      productVersion: 'test',
+      apiVersion: 'test',
+      commit: 'test',
+    },
+    definition,
+    control,
+    assertWorkspace() {},
+    revealSource: async () => {
+      releases.push('captured source')
+    },
+  })
+  return {
+    ...repository,
+    run,
+    definition: { ...definition, configuration: reference.configuration },
+    documents,
+    breakpoints,
+    userBreakpoint,
+    mouse,
+    commands,
+    releases,
+    emitPause,
+    emitCdpPause,
+    setScreenshot(base64: string) {
+      screenshot = base64
+    },
+    rejectBreakpointBinding() {
+      rejectBinding = true
+    },
+    observeRecording(observer: () => ViewportRecordingObserver | undefined) {
+      recordingObserver = observer
+    },
+    rejectCapture(phase: string) {
+      rejectedCapture = phase
+    },
+    requireUnavailableValue() {
+      requiredValueUnavailable = true
+    },
+    useUndefinedValue() {
+      requiredValueUndefined = true
+    },
+    suppressInputPause() {
+      emitInputPause = false
+    },
+    resumeDuringPreparation() {
+      emitPreparationResume = true
+    },
+    stopOnStartupWhenOwnedBreakpointPresent() {
+      stopAtStartupBreakpoint = true
+    },
+    hideViewportOnPause() {
+      hideViewportAtPause = true
+    },
+    manualResume() {
+      listeners.get('Debugger.resumed')?.({})
+    },
+    holdContinuation() {
+      controlledContinuation = true
+      const started = new Promise<void>((resolve) => {
+        continuationEntered = resolve
+      })
+      return {
+        started,
+        response: () => acknowledgeContinuation(),
+        input: () => inputResolve(),
+        dap: (threadId = 1) =>
+          run.onEvent(selected, {
+            type: 'event',
+            seq: ++requestSequence,
+            event: 'continued',
+            body: { threadId },
+          }),
+        cdp: () => listeners.get('Debugger.resumed')?.({}),
+      }
+    },
+    setReady(value: boolean) {
+      ready = value
+    },
+    suppressRetirementAck() {
+      removedAck = false
+    },
+    holdCapture(phase: string) {
+      heldPhase = phase
+      const started = new Promise<void>((resolve) => {
+        captureEntered = resolve
+      })
+      return {
+        started,
+        release: () => {
+          heldPhase = undefined
+          releaseCapture()
+        },
+      }
+    },
+    advance(milliseconds: number) {
+      clock += milliseconds
+      for (const [id, timer] of [...timers])
+        if (timer.at <= clock) {
+          timers.delete(id)
+          timer.callback()
+        }
+    },
+  }
 }

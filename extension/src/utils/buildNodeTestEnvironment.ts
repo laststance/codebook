@@ -1,5 +1,15 @@
 /** Process settings an owned Node test may inherit; account credentials and unrelated variables stay out. */
-const INHERITED_VARIABLES = ['PATH', 'HOME', 'TMPDIR', 'SHELL', 'LANG', 'LC_ALL', 'PNPM_HOME', 'USER', 'LOGNAME'] as const;
+const INHERITED_VARIABLES = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'PNPM_HOME',
+  'USER',
+  'LOGNAME',
+] as const
 
 /**
  * Builds the one restricted environment shared by an owned Vitest run and its file-listing preflight.
@@ -14,8 +24,11 @@ const INHERITED_VARIABLES = ['PATH', 'HOME', 'TMPDIR', 'SHELL', 'LANG', 'LC_ALL'
  * buildNodeTestEnvironment({ PATH: '/usr/bin', GITHUB_TOKEN: 'x' }) // => { CI: 'true', NODE_ENV: 'test', PATH: '/usr/bin' }
  * ```
  */
-export function buildNodeTestEnvironment(inherited: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { CI: 'true', NODE_ENV: 'test' };
-  for (const name of INHERITED_VARIABLES) if (inherited[name]) environment[name] = inherited[name];
-  return environment;
+export function buildNodeTestEnvironment(
+  inherited: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { CI: 'true', NODE_ENV: 'test' }
+  for (const name of INHERITED_VARIABLES)
+    if (inherited[name]) environment[name] = inherited[name]
+  return environment
 }
