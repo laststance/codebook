@@ -30,7 +30,20 @@ jobs:
       - name: Run tests with coverage
         run: pnpm --dir extension test:coverage
 
+      # GitHub Free does not expose organization secrets to private repositories, so the token may be absent.
+      - name: Check Codecov token
+        id: codecov
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          if [ -n "$CODECOV_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Codecov upload skipped::CODECOV_TOKEN is not available to this repository. Add it as a repository secret to upload coverage."
+          fi
+
       - name: Upload coverage to Codecov
+        if: steps.codecov.outputs.available == 'true'
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
