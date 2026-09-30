@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/fallow/schema.json",
+  "entry": [
+    "src/extension.ts",
+    "src/cursorMcpBridgeEntry.ts",
+    "src/tests/**/*.test.ts",
+    "scripts/*.mjs",
+    "scripts/tests/*.test.mjs"
+  ],
+  "ignorePatterns": ["dist/**", "artifacts/**", "examples/**"],
+  "health": {
+    "ignore": ["src/tests/**", "scripts/tests/**"]
+  },
+  "duplicates": {
+    "ignore": ["src/tests/**", "scripts/tests/**"]
+  }
+}

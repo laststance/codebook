@@ -292,21 +292,25 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "zod": "4.6.5",
-    "ws": "8.21.3"
+    "ws": "8.21.3",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "24.13.5",
     "@types/vscode": "1.120.0",
+    "@types/ws": "8.18.1",
     "@vscode/debugprotocol": "1.68.0",
     "@vscode/vsce": "4.0.0",
     "devtools-protocol": "0.0.1698617",
     "esbuild": "0.28.2",
+    "eslint": "10.11.0",
+    "eslint-config-ts-prefixer": "5.1.0",
+    "fallow": "3.27.0",
+    "prettier": "3.9.8",
     "typescript": "5.9.3",
     "xml2js": "0.6.2",
     "yauzl": "3.4.0",
-    "yazl": "3.3.1",
-    "@types/ws": "8.18.1"
+    "yazl": "3.3.1"
   },
   "license": "UNLICENSED",
   "repository": {
