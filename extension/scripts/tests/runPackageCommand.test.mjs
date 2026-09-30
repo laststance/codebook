@@ -44,8 +44,8 @@ async function commandFixture(context, scenario, cleanupTimeoutMs = 5000) {
   await writeFile(join(directory, 'utils/runPackageCommand.mjs'), await readFile(new URL('runPackageCommand.mjs', utilitySource)));
   await writeFile(join(directory, 'utils/withPackageOutput.mjs'), await readFile(new URL('withPackageOutput.mjs', utilitySource)));
   const constants = (await readFile(new URL('packageConstants.mjs', utilitySource), 'utf8'))
-    .replace(/(export const PACKAGE_COMMAND_TIMEOUT_MS = )[\d_]+;/, '$15000;')
-    .replace(/(export const PACKAGE_COMMAND_EXIT_TIMEOUT_MS = )[\d_]+;/, (_, declaration) => `${declaration}${cleanupTimeoutMs};`);
+    .replace(/(export const PACKAGE_COMMAND_TIMEOUT_MS = )[\d_]+;?/, '$15000;')
+    .replace(/(export const PACKAGE_COMMAND_EXIT_TIMEOUT_MS = )[\d_]+;?/, (_, declaration) => `${declaration}${cleanupTimeoutMs};`);
   assert.match(constants, /PACKAGE_COMMAND_TIMEOUT_MS = 5000;/);
   await writeFile(join(directory, 'utils/packageConstants.mjs'), constants);
   await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'codebook-command-fixture', private: true, scripts: { build: 'node parent.mjs' } }));

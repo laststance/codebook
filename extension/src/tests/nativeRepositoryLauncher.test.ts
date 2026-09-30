@@ -10,7 +10,7 @@ import { setImmediate } from 'node:timers/promises';
 test('repository native QA reports an editor exit that arrives during launch metadata persistence', async () => {
   // Arrange: run the actual script with controlled process and filesystem boundaries.
   const filename = resolve(__dirname, '../../scripts/native-repository-session.mjs');
-  const source = (await readFile(filename, 'utf8')).replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', 'moduleUrl');
+  const source = (await readFile(filename, 'utf8')).replace(/^import\b[\s\S]*?from '[^']+';?\n/gm, '').replaceAll('import.meta.url', 'moduleUrl');
   const child = Object.assign(new EventEmitter(), { pid: 42 });
   const processBoundary = { env: { CODEBOOK_WORKSPACE: '/external/repository' }, argv: ['/node', filename], execPath: '/node', exitCode: undefined };
   const messages: string[] = [];
@@ -41,7 +41,7 @@ for (const target of [
   test(`${target.title} native QA drains its owned editor when ${target.failure} fails`, async () => {
     // Arrange: run the actual launcher and keep its child alive until termination is observed.
     const filename = resolve(__dirname, target.relativePath);
-    const source = (await readFile(filename, 'utf8')).replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', 'moduleUrl');
+    const source = (await readFile(filename, 'utf8')).replace(/^import\b[\s\S]*?from '[^']+';?\n/gm, '').replaceAll('import.meta.url', 'moduleUrl');
     const signals: string[] = [];
     const child = Object.assign(new EventEmitter(), {
       pid: 42,
