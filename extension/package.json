@@ -297,7 +297,7 @@
     "format:check": "cd .. && prettier --check .",
     "health": "fallow health --fail-on-issues --baseline fallow-health-baseline.json",
     "dupes": "fallow dupes --fail-on-issues",
-    "dead-code": "fallow dead-code --fail-on-issues",
+    "dead-code": "fallow dead-code --fail-on-issues --baseline fallow-dead-code-baseline.json",
     "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test && pnpm test:package && pnpm dupes && pnpm dead-code && pnpm health"
   },
   "lint-staged": {

@@ -10,6 +10,8 @@ extension/skills
 **/node_modules
 extension/pnpm-lock.yaml
 extension/.fallow
+# fallow writes and rewrites its baselines itself.
+extension/fallow-*-baseline.json
 artifacts
 extension/artifacts
 .gstack
