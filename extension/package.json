@@ -288,7 +288,7 @@
     "test": "pnpm build && node --test dist/tests/*.test.js",
     "package": "node scripts/package.mjs",
     "package:check": "node scripts/check-package.mjs",
-    "test:package": "node --test --test-concurrency=1 scripts/tests/*.test.mjs"
+    "test:package": "node --test --test-concurrency=4 scripts/tests/*.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
