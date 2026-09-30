@@ -1,0 +1,23 @@
+# Governance documents and evidence records keep their authored layout (owner decision, 2026-10-01).
+*.md
+docs
+
+# Bundled skill bytes are identity-tracked by content hash and version.
+extension/skills
+
+# Generated, installed or private outputs.
+**/dist
+**/node_modules
+extension/pnpm-lock.yaml
+extension/.fallow
+# fallow writes and rewrites its baselines itself.
+extension/fallow-*-baseline.json
+artifacts
+extension/artifacts
+.gstack
+.serena
+.idea
+.playwright-cli
+
+# Agent worktrees are full checkouts, formatted from inside each one.
+.claude

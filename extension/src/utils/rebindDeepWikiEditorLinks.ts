@@ -8,7 +8,13 @@
  * rebindDeepWikiEditorLinks('<a href="vscode://laststance.codebook/settings?root=%2Frepo">Settings</a>', 'cursor')
  * // => '<a href="cursor://laststance.codebook/settings?root=%2Frepo">Settings</a>'
  */
-export function rebindDeepWikiEditorLinks(html: string, editorScheme: 'vscode' | 'cursor'): string {
-  return html.replace(/(\s)href=(["'])(?:vscode|cursor):\/\/laststance\.codebook\/(source|update|settings)\?/g,
-    (_match, whitespace: string, quote: string, route: string) => `${whitespace}href=${quote}${editorScheme}://laststance.codebook/${route}?`);
+export function rebindDeepWikiEditorLinks(
+  html: string,
+  editorScheme: 'vscode' | 'cursor',
+): string {
+  return html.replace(
+    /(\s)href=(["'])(?:vscode|cursor):\/\/laststance\.codebook\/(source|update|settings)\?/g,
+    (_match, whitespace: string, quote: string, route: string) =>
+      `${whitespace}href=${quote}${editorScheme}://laststance.codebook/${route}?`,
+  )
 }

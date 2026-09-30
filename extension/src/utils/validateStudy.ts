@@ -1,1 +1,1 @@
-export { decodeConfiguredStudy as validateStudy } from './decodeConfiguredStudy';
+export { decodeConfiguredStudy as validateStudy } from './decodeConfiguredStudy'

@@ -1,26 +1,117 @@
-import type { ShortcutHelpEntry } from '../utils/installShortcutHelp';
-import { PLAYBACK_PAGE_STEP_MS, PLAYBACK_SECOND_MS, REPLAY_DEBUG_SESSION_NAME, PRESENTATION_MODE_IDS, STUDY_PRESENTATIONS, PRESENTATION_READING_ANCHORS, PRESENTATION_READING_DETAILS, PRESENTATION_READING_VISITED, PRESENTATION_FOCUS_IDS, PRESENTATION_FOCUS_ACTIONS } from '../constants';
-const STUDY_FOCUS_MARGIN_PX = 4;
-const STUDY_COMPACT_READER_MAX_WIDTH_PX = 759;
-const STUDY_SEQUENCE_LAYOUT = { minWidthPx: 320, columnWidthPx: 160, topPaddingPx: 72, rowHeightPx: 64, nameYpx: 24, nameChunkChars: 20, nameLineHeightPx: 14, lifelineYpx: 66, firstArrowYpx: 92, loopWidthPx: 36, loopHeightPx: 20, arrowWidthPx: 7, arrowHeightPx: 5, numberGapPx: 8 };
+import {
+  PLAYBACK_PAGE_STEP_MS,
+  PLAYBACK_SECOND_MS,
+  REPLAY_DEBUG_SESSION_NAME,
+  PRESENTATION_MODE_IDS,
+  STUDY_PRESENTATIONS,
+  PRESENTATION_READING_ANCHORS,
+  PRESENTATION_READING_DETAILS,
+  PRESENTATION_READING_VISITED,
+  PRESENTATION_FOCUS_IDS,
+  PRESENTATION_FOCUS_ACTIONS,
+} from '../constants'
+import type { ShortcutHelpEntry } from '../utils/installShortcutHelp'
+const STUDY_FOCUS_MARGIN_PX = 4
+const STUDY_COMPACT_READER_MAX_WIDTH_PX = 759
+const STUDY_SEQUENCE_LAYOUT = {
+  minWidthPx: 320,
+  columnWidthPx: 160,
+  topPaddingPx: 72,
+  rowHeightPx: 64,
+  nameYpx: 24,
+  nameChunkChars: 20,
+  nameLineHeightPx: 14,
+  lifelineYpx: 66,
+  firstArrowYpx: 92,
+  loopWidthPx: 36,
+  loopHeightPx: 20,
+  arrowWidthPx: 7,
+  arrowHeightPx: 5,
+  numberGapPx: 8,
+}
 export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
-  { action: 'Keyboard shortcuts', keys: '?', context: 'Codebook, outside text inputs', selector: '[data-shortcut-help]' },
-  { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' },
-  { action: 'Seek backward one second', keys: '← / ↓', context: 'Focused recording timeline', selector: '#playhead' },
-  { action: 'Seek forward one second', keys: '→ / ↑', context: 'Focused recording timeline', selector: '#playhead' },
-  { action: `Seek backward ${PLAYBACK_PAGE_STEP_MS / PLAYBACK_SECOND_MS} seconds`, keys: 'Page Down', context: 'Focused recording timeline', selector: '#playhead' },
-  { action: `Seek forward ${PLAYBACK_PAGE_STEP_MS / PLAYBACK_SECOND_MS} seconds`, keys: 'Page Up', context: 'Focused recording timeline', selector: '#playhead' },
-  { action: 'Seek recording start', keys: 'Home', context: 'Focused recording timeline', selector: '#playhead' },
-  { action: 'Seek recording end', keys: 'End', context: 'Focused recording timeline', selector: '#playhead' },
-  { action: 'Previous / next content tab', keys: '← / →', context: 'Focused content tabs', selector: '[role="tab"]' },
-  { action: 'First / last content tab', keys: 'Home / End', context: 'Focused content tabs', selector: '[role="tab"]' },
-];
-const TIMELINE_FULL_WIDTH_PERCENT = 100;
-export const STUDY_UI_OPTIONS = { sequence: STUDY_SEQUENCE_LAYOUT, maxStickyFraction: 0.35, compactReaderMaxWidthPx: STUDY_COMPACT_READER_MAX_WIDTH_PX, secondMs: PLAYBACK_SECOND_MS, pageStepMs: PLAYBACK_PAGE_STEP_MS, timelineFullWidthPercent: TIMELINE_FULL_WIDTH_PERCENT,
-  readingAnchors: PRESENTATION_READING_ANCHORS, readingDetails: PRESENTATION_READING_DETAILS, readingVisited: PRESENTATION_READING_VISITED, focusIds: PRESENTATION_FOCUS_IDS, focusActions: PRESENTATION_FOCUS_ACTIONS,
-  presentations: PRESENTATION_MODE_IDS.map(mode => ({ mode, title: STUDY_PRESENTATIONS[mode].title, description: STUDY_PRESENTATIONS[mode].description })),
-  playbackFailureRecovery: 'Reload the saved recording to try again. If it still fails, ask your agent for a new recording.',
-  nativeValuesHint: `Recorded values for this moment load in Run and Debug: open it and expand Variables. If Call Stack lists several sessions, select “${REPLAY_DEBUG_SESSION_NAME}” first.` };
+  {
+    action: 'Keyboard shortcuts',
+    keys: '?',
+    context: 'Codebook, outside text inputs',
+    selector: '[data-shortcut-help]',
+  },
+  {
+    action: 'Close keyboard shortcuts',
+    keys: 'Esc',
+    context: 'Keyboard shortcuts dialog',
+  },
+  {
+    action: 'Seek backward one second',
+    keys: '← / ↓',
+    context: 'Focused recording timeline',
+    selector: '#playhead',
+  },
+  {
+    action: 'Seek forward one second',
+    keys: '→ / ↑',
+    context: 'Focused recording timeline',
+    selector: '#playhead',
+  },
+  {
+    action: `Seek backward ${PLAYBACK_PAGE_STEP_MS / PLAYBACK_SECOND_MS} seconds`,
+    keys: 'Page Down',
+    context: 'Focused recording timeline',
+    selector: '#playhead',
+  },
+  {
+    action: `Seek forward ${PLAYBACK_PAGE_STEP_MS / PLAYBACK_SECOND_MS} seconds`,
+    keys: 'Page Up',
+    context: 'Focused recording timeline',
+    selector: '#playhead',
+  },
+  {
+    action: 'Seek recording start',
+    keys: 'Home',
+    context: 'Focused recording timeline',
+    selector: '#playhead',
+  },
+  {
+    action: 'Seek recording end',
+    keys: 'End',
+    context: 'Focused recording timeline',
+    selector: '#playhead',
+  },
+  {
+    action: 'Previous / next content tab',
+    keys: '← / →',
+    context: 'Focused content tabs',
+    selector: '[role="tab"]',
+  },
+  {
+    action: 'First / last content tab',
+    keys: 'Home / End',
+    context: 'Focused content tabs',
+    selector: '[role="tab"]',
+  },
+]
+const TIMELINE_FULL_WIDTH_PERCENT = 100
+export const STUDY_UI_OPTIONS = {
+  sequence: STUDY_SEQUENCE_LAYOUT,
+  maxStickyFraction: 0.35,
+  compactReaderMaxWidthPx: STUDY_COMPACT_READER_MAX_WIDTH_PX,
+  secondMs: PLAYBACK_SECOND_MS,
+  pageStepMs: PLAYBACK_PAGE_STEP_MS,
+  timelineFullWidthPercent: TIMELINE_FULL_WIDTH_PERCENT,
+  readingAnchors: PRESENTATION_READING_ANCHORS,
+  readingDetails: PRESENTATION_READING_DETAILS,
+  readingVisited: PRESENTATION_READING_VISITED,
+  focusIds: PRESENTATION_FOCUS_IDS,
+  focusActions: PRESENTATION_FOCUS_ACTIONS,
+  presentations: PRESENTATION_MODE_IDS.map((mode) => ({
+    mode,
+    title: STUDY_PRESENTATIONS[mode].title,
+    description: STUDY_PRESENTATIONS[mode].description,
+  })),
+  playbackFailureRecovery:
+    'Reload the saved recording to try again. If it still fails, ask your agent for a new recording.',
+  nativeValuesHint: `Recorded values for this moment load in Run and Debug: open it and expand Variables. If Call Stack lists several sessions, select “${REPLAY_DEBUG_SESSION_NAME}” first.`,
+}
 export const STUDY_STYLES = `
 .shortcut-dialog{width:min(640px,90vw);max-height:85vh;overflow:auto;background:var(--vscode-editor-background,#181818);color:var(--vscode-foreground,#ddd);border:1px solid var(--vscode-panel-border,#777);border-radius:8px;padding:20px}.shortcut-dialog::backdrop{background:rgb(0 0 0 / .5)}.shortcut-dialog input{display:block;width:100%;padding:10px;margin:16px 0;background:var(--vscode-input-background,#333);color:var(--vscode-input-foreground,#fff);border:1px solid var(--vscode-input-border,#777)}.shortcut-row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--vscode-panel-border,#444)}.shortcut-list section{padding:12px 0;border:0}.shortcut-list h3{font-size:13px;color:var(--vscode-descriptionForeground,#aaa);margin:0 0 8px}kbd{font:inherit;white-space:nowrap;border:1px solid var(--vscode-panel-border,#777);border-radius:4px;padding:2px 6px}.shortcut-tooltip{position:fixed;z-index:10;left:16px;right:16px;bottom:12px;max-height:40vh;overflow:auto;padding:8px 12px;background:var(--vscode-editorHoverWidget-background,#333);color:var(--vscode-editorHoverWidget-foreground,#fff);border:1px solid var(--vscode-editorHoverWidget-border,#777);pointer-events:none}
 
@@ -43,4 +134,4 @@ body.moments-only[data-replay=true] #recording-transport{order:-1;position:stick
 .playback-status-row{display:flex;justify-content:space-between;gap:12px;align-items:start;font-size:12px}.playback-status-row summary{min-height:0;padding:0}.playback-status-row p{margin:8px 0}#playback-pending:empty,#playback-reason:empty,#playback-hint:empty,#node-history-hint:empty{display:none}#playback-pending,#playback-reason,#playback-hint,#node-history-hint{margin:6px 0 0;font-size:12px}
 
 #learning-summary,.sequence-steps p{white-space:pre-wrap}.sequence-diagram{overflow:auto;max-height:420px;border:1px solid var(--vscode-panel-border,#444);padding:8px}.sequence-diagram svg{display:block;max-width:none;font-size:12px}.sequence-diagram text{fill:var(--vscode-foreground,#ddd)}.sequence-lifeline{stroke:var(--vscode-descriptionForeground,#aaa);stroke-dasharray:4 4}.sequence-arrow{fill:none;stroke:var(--vscode-textLink-foreground,#4daafc);stroke-width:2}.sequence-arrow.source-derived{stroke-dasharray:6 4}.sequence-arrow.unknown{stroke-dasharray:2 5;stroke:var(--vscode-descriptionForeground,#aaa)}.sequence-steps{padding-left:24px}.sequence-steps li{padding:10px 0}.sequence-steps p{margin:6px 0}.sequence-steps [aria-current=true]{font-weight:bold}
-`;
+`

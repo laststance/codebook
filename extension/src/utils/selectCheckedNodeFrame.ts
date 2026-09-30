@@ -1,9 +1,13 @@
-import type { DebugProtocol } from '@vscode/debugprotocol';
+import type { DebugProtocol } from '@vscode/debugprotocol'
 
 type CheckedNodeFrame =
-  | { status: 'matched'; frame: DebugProtocol.StackFrame; observedFrame: DebugProtocol.StackFrame }
+  | {
+      status: 'matched'
+      frame: DebugProtocol.StackFrame
+      observedFrame: DebugProtocol.StackFrame
+    }
   | { status: 'wrong-position'; observedFrame: DebugProtocol.StackFrame }
-  | { status: 'unrelated'; observedFrame?: DebugProtocol.StackFrame };
+  | { status: 'unrelated'; observedFrame?: DebugProtocol.StackFrame }
 
 /**
  * Classifies each DAP stack trace for the owned Node run so a moved breakpoint fails promptly.
@@ -20,11 +24,25 @@ type CheckedNodeFrame =
  * @example selectCheckedNodeFrame([frame], '/project/data.ts', 224, 17, 'breakpoint').status // 'matched'
  */
 export function selectCheckedNodeFrame(
-  frames: DebugProtocol.StackFrame[], sourcePath: string, line: number, column: number, reason: string,
+  frames: DebugProtocol.StackFrame[],
+  sourcePath: string,
+  line: number,
+  column: number,
+  reason: string,
 ): CheckedNodeFrame {
-  const pausedFrame = frames[0];
-  const pausedInDeclaredSource = pausedFrame?.source?.path === sourcePath;
-  if (pausedFrame && pausedInDeclaredSource && pausedFrame.line === line && pausedFrame.column === column) return { status: 'matched', frame: pausedFrame, observedFrame: pausedFrame };
-  if (pausedFrame && pausedInDeclaredSource && reason === 'breakpoint') return { status: 'wrong-position', observedFrame: pausedFrame };
-  return { status: 'unrelated', observedFrame: frames.find(frame => frame.source?.path === sourcePath) };
+  const pausedFrame = frames[0]
+  const pausedInDeclaredSource = pausedFrame?.source?.path === sourcePath
+  if (
+    pausedFrame &&
+    pausedInDeclaredSource &&
+    pausedFrame.line === line &&
+    pausedFrame.column === column
+  )
+    return { status: 'matched', frame: pausedFrame, observedFrame: pausedFrame }
+  if (pausedFrame && pausedInDeclaredSource && reason === 'breakpoint')
+    return { status: 'wrong-position', observedFrame: pausedFrame }
+  return {
+    status: 'unrelated',
+    observedFrame: frames.find((frame) => frame.source?.path === sourcePath),
+  }
 }
