@@ -9,6 +9,8 @@
 artifacts/
 node_modules/
 extension/dist/
+extension/coverage/
+extension/.fallow/
 
 # Share this project's agent entry points despite user-global ignore rules
 !/AGENTS.md

@@ -5,7 +5,13 @@ export default defineConfig([
   {
     // Generated/private outputs and the standalone example are not extension source;
     // bundled skill files are identity-tracked by content hash and version.
-    ignores: ['dist/**', 'artifacts/**', 'examples/**', '.fallow/**', 'skills/**'],
+    ignores: [
+      'dist/**',
+      'artifacts/**',
+      'examples/**',
+      '.fallow/**',
+      'skills/**',
+    ],
   },
   ...tsPrefixer,
   {

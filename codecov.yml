@@ -1,0 +1,17 @@
+# c8 reports paths relative to extension/; map them onto the repository tree.
+fixes:
+  - '^src/::extension/src/'
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
+
+comment:
+  layout: 'reach,diff,flags,files'
+  behavior: default
