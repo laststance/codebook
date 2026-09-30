@@ -32,8 +32,20 @@ export default defineConfig([
       '@typescript-eslint/promise-function-async': 'off',
       // Cleanup hooks (for example `context.after`) deliberately close over a binding assigned later.
       'prefer-const': ['error', { ignoreReadBeforeAssign: true }],
-      // Shared editor/server state is guarded by explicit generation, lifetime and stopping checks; the rule
-      // reports every plain post-await assignment of such state, not only read-modify-write races.
+    },
+  },
+  {
+    // Shared editor/server state here is guarded by explicit generation, lifetime and stopping checks; the rule
+    // reports every plain post-await assignment of such state, not only read-modify-write races.
+    files: [
+      'src/extension.ts',
+      'src/nativeRepositoryBootstrap.ts',
+      'src/ownedNodeTestRun.ts',
+      'src/server.ts',
+      'src/studyWorkspace.ts',
+      'src/tests/studyWorkspaceHarness.ts',
+    ],
+    rules: {
       'require-atomic-updates': 'off',
     },
   },
