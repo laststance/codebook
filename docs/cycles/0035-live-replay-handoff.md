@@ -46,7 +46,7 @@ Order: harness model → H1 → H2 → H3 → H4 → H5 → H6 → gates → pac
 
 - `/plan-eng-review` on the spec, because it changes renderer ownership and the position a reload presents.
 - `/plan-design-review` is skipped (recommended option): no control, layout or state is added or removed.
-- `/plan-devex-review` is skipped (recommended option): no MCP tool shape, capability or error code changes. H4 makes `seek`, `play` and `pause` after `close()` answer with the existing `PLAYBACK_UNAVAILABLE` error.
+- `/plan-devex-review` is skipped (recommended option): no MCP tool shape, capability or error code changes. H4 makes `seek` and `play` after `close()` answer with the existing `PLAYBACK_UNAVAILABLE` error; under R1 `pause` stays a no-op.
 - Local CodeRabbit CLI (never `--use-credits`) and `open-code-review-delegate`.
 - Then `/ship`, CI, a separate exact-HEAD gate and the merge (D039/D044).
 - Native: OBS Window Capture per `docs/qa/native-recording.md`. The VS Code chat request goes through the editor's public `code chat` command, because input to the editors is limited to clicks.
@@ -164,7 +164,7 @@ Red runs use a separate worktree on `e3fa161` with this branch's tests and harne
 
 Deviations from the frozen contract:
 
-- AC3 asked for a harness self-test. No separate test was written: the model's rejection is exercised by AC1's red run on the base source and by `H1-reload-live-attached`, which fails for exactly that reason. A self-test would assert the test double against itself.
+- AC3 asked for a harness self-test. None was written during implementation, on the reasoning that AC1's red run on the base source and `H1-reload-live-attached` already exercise the model's rejection. The delivery audit did not accept that: both are private one-off runs, and no committed test failed if the rejection was removed. The self-test was added during `/ship` (see "Delivery through `/ship`"), so this deviation is closed.
 - AC8's "a `seek` during the close is refused" holds through the service's existing idle check with `PRESENTATION_UNAVAILABLE`, not `PLAYBACK_UNAVAILABLE`. The observable result (refused, nothing opens) is the one the criterion wants.
 
 Observed failure shape on the base source, from the model and the real constants: the reloaded frame waits out the 3 s paint budget, the same-frame retry then waits for a re-handshake of up to 20 s, and only then the recording reports `failed`. A second Recording press afterwards works, because the failure handler already dropped the renderer. N4-c measures the fixed path against 2.0 s.
@@ -203,7 +203,7 @@ Expectations were frozen at 19:47 JST in `artifacts/cycle-0035/native/n4-expecta
 
 AC17 holds: every check has a recorded outcome, and the two delivery conditions (N4-c, N4-d) passed. The failure itself was not reproduced natively on 0.2.18.0; it is established by the mechanism red run on `e3fa161` only, so N4-c shows that the fixed build recovers, not a native before-and-after.
 
-Evidence (private, ignored): `artifacts/cycle-0035/native/n4-vscode-receipt.json` and `n4-cursor-receipt.json` hold the video hashes, the action logs, the frame measurements and the limits. Videos: `n4-vscode-main-01.mov` (2,670.87 s, 80,126 frames; N4-a to N4-c) and `n4-cursor-main-01.mov` (113.47 s; N4-d). Host storage: the VS Code library is `~/Library/Application Support/Code/User/globalStorage/laststance.codebook/learning/dd749a97…263f8e`, saved study `0fb20e6d-60f3-408c-9b07-d464e779bdb7`; Cursor's study is `57bbb9ae`.
+Evidence (private, ignored): `artifacts/cycle-0035/native/n4-vscode-receipt.json` and `n4-cursor-receipt.json` hold the video hashes, the action logs, the frame measurements and the limits. Videos: `n4-vscode-main-01.mov` (2,670.87 s, 80,126 frames; N4-a to N4-c) and `n4-cursor-main-01.mov` (113.47 s; N4-d). Host storage: the VS Code library is `~/Library/Application Support/Code/User/globalStorage/laststance.codebook/learning/dd749a97…263f8e`, saved study `0fb20e6d-60f3-408c-9b07-d464e779bdb7`. The Cursor library is `~/Library/Application Support/Cursor/User/globalStorage/laststance.codebook/learning/dd749a97…263f8e` (the same workspace hash, because both hosts open the same dashboard path), study `bc3b5c93-708a-4be2-98d8-9f5857bbb9ae`. These two locations are what a rollback of the trial data would touch (O3); nothing was removed, and the new VS Code study stays in the library.
 
 N4-a in detail (AC-LIVE gaps, none of them in this cycle's source):
 
@@ -236,12 +236,56 @@ Other observations:
 
 The context was compacted again after the reviews and before `/ship`. The mandatory entry was repeated from the files on disk: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure and the local TS rules. The PNG (SHA-256 `f189ee82…caf2aa`, unchanged) was opened with the image viewer; the four regions match the description under "Accepted product and design". Branch `codex/cycle-0035-live-replay-handoff` at `29d3975`, clean, six commits ahead of `origin/main` `e3fa161`; no PR open. No product source moved since the gap audit after the cycle, so it stands. The remaining phase is delivery only.
 
+### Delivery through `/ship`, 2026-10-01
+
+Every decision took the recommended option under the owner's standing direction; non-critical findings are recorded, not fixed.
+
+**Audits and what they changed**
+
+- Coverage audit (Step 7): 30 changed paths (20 code paths, 10 user flows), all tested; no path is left without a test. It added two tests, and an independent rating counted both, so the value-weighted coverage is 30/30:
+  - another recording opened after the learner confirmed a moment in the first one opens at its own stored position (`playbackController.test.ts`);
+  - a learner seeking or playing from the Learning replay panel after the reader closed is refused, told why, and nothing opens (`studyWorkspaceReplay.test.ts`). It fails on `e3fa161` in its own wait for the refusal.
+- Plan audit (Step 8): 31 items, 24 done, 5 changed by the plan review's amendments, 1 partial, 1 not done.
+  - Not done: AC3's harness self-test. Recommended option taken: implement it. The test "the workspace harness answers a recording viewport only while its own renderer is the document in the shared Application panel" asserts the acknowledged paint and the three refusals (frame, gap, handshake).
+  - Partial: O3 named only the VS Code storage path. The Cursor path and study ID are added under N4.
+  - Two inaccuracies in this record were corrected: AC4b passes on the base (it is a guard with a control), and under R1 `pause` stays a no-op.
+- Controls for the three added tests, each run against the compiled output and restored byte-identically (`artifacts/cycle-0035/controls/ac3-self-test-control.log`): the model answering whatever document the panel holds, the study match removed from the remembered position, and the reader-open guard disabled. Each made its test fail.
+
+**Checks on the tree with the added tests**
+
+| Check | Result |
+| --- | --- |
+| `pnpm --dir extension test` | 1,525/1,525, 0 fail, 0 cancelled, 0 skipped |
+| Disabled-fix controls (`controls.mjs`) | 13/13 held, `dist` restored |
+| `typecheck`, `lint`, `format:check`, `dead-code`, `dupes`, `health` | each exit 0 |
+| `pnpm --dir extension test:package` | 183/183 |
+| Hook test | 4/4 |
+| AC16 protected state | four hashes unchanged, dashboard at `1936e41` with only `.codebook/`, nothing on port 3000 |
+| AC17 native evidence | receipts and videos present; product source equal to the candidate commit `10781a6` when checked |
+| `coderabbit config validate .coderabbit.yaml` | valid |
+
+The exploratory QA report with its checkpoints is private under `.gstack/qa-reports/ship-c35-20261001-210919/`.
+
+**Pre-landing review, pass 1** (core checklist, five specialists, red team): no critical finding. Sixteen informational findings and one advisory.
+
+- Fixed, comments only (AC13 is about these comments):
+  - The corrected settle-ceiling comment said the frame "still completes" when the settle gives up. The settle retires the pending frame it still owns and reports `PRESENTATION_UNAVAILABLE`; the comment now says so.
+  - The docs of `remember()`, `rememberedPosition` and `leave()` now state that the confirmed position outranks storage and survives `leave()`.
+- Fixed, records: the suite count in README and PROJECT_STATE, and this section, which an earlier line already cited.
+- Recorded for a later cycle, not fixed:
+  - **Learner-visible.** The closed-reader refusal reaches the Learning replay panel under the `control` error key, which nothing on the replay path clears; the line stays after the learner reopens the recording, until a live-run action succeeds. Same class as the refusal message already listed among the Cycle 0031 UI items.
+  - **Agent contract.** After the reader closes, the playback resource still reports `ready` while `seek` and `play` answer `PLAYBACK_UNAVAILABLE` with a hint to read that resource; only the message text names the remedy (send `open`). A reader-open field and a matching hint belong to a `/plan-devex-review`.
+  - **Position memory.** `rememberedPosition` is one slot: recording A, then B, then A again before A's save lands reopens A at its older stored position.
+  - **Latency.** With a live run attached every load rebuilds the recording renderer; its handshake sits on the recovery path measured against 2.0 s (the performance view of the low OCR finding).
+  - **Renderer flag.** Two sites clear the recording renderer by hand without resetting `replayNeedsReveal` (the Application panel's dispose handler, the non-abort arm of `ensureReplayViewport`); advisory. No test pins the reset in `dropReplayViewport()`.
+  - **Test quality.** The startup-bound double-fault test hangs in its cleanup when the fix regresses; the cancelled-waiter test uses a 250 ms wall-clock ceiling (the frozen AC10 bound); the H5c test's pattern accepts two different errors; the H5d test cannot fail when its named arm alone regresses; a held-save test reaches into a private field; the harness `showLive()` and `reveal()` differ from the real viewport in two unreached paths; no test drives the real `BrowserViewport` through the replaced-document sequence.
+
 ## Result and decision
 
-**Demonstrated.** Issue #63's acceptance criteria hold, with two recorded deviations:
+**Demonstrated.** Issue #63's acceptance criteria hold, with one recorded deviation (AC8) and one that delivery closed (AC3):
 
-- AC1, AC4, AC4b, AC5, AC7, AC8: each behavior change fails on `e3fa161`, passes on the branch and has a disabled-fix control that held. AC2, AC6 (first half), AC9–AC12 are guards and coverage tests that pass on both, as planned, each with a control.
-- AC3: no separate harness self-test; AC1's red run and its control exercise the model (deviation recorded above).
+- AC1, AC4, AC5, AC7, AC8: each behavior change fails on `e3fa161`, passes on the branch and has a disabled-fix control that held. AC2, AC4b, AC6 (first half), AC9–AC12 are guards and coverage tests that pass on both, as planned, each with a control (AC4b passes on the base because nothing is remembered there; its control removes the clamp).
+- AC3: the harness self-test was added during `/ship` after the plan audit reported it missing; the full suite passes with the model.
 - AC8: a seek during the close is refused by the existing idle check with `PRESENTATION_UNAVAILABLE` (deviation recorded above).
 - AC13–AC16 and AC18: comments, red runs, controls, gates, protected state and the unchanged contracts as recorded above.
 - AC17: N4-b, N4-c and N4-d pass; N4-a is PARTIAL and stays an AC-LIVE gap.
