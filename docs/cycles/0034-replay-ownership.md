@@ -1,9 +1,9 @@
 # Cycle 0034 — Replay request ownership across abandoned and expired operations
 
 Type: hardening\
-Status: validating\
+Status: closed\
 Result: demonstrated\
-Delivery: committed\
+Delivery: merged\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/61\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -275,6 +275,17 @@ A separate read-only rating ran seven mutations against the full suite in a scra
 
 Private receipts: `~/.gstack/projects/codebook/ship-records/` (invocation record, coverage and plan audits, Codex outputs) and `.gstack/qa-reports/cycle-0034-ship-20261001/` (ignored).
 
+### Delivery closure, 2026-10-01
+
+- PR #62 (head `49deeda`) passed all 13 PR checks.
+- Codex cloud reviewed that HEAD and left two P2 findings, the same two on the same-recording reload that the delivery review above records (a live run's viewport still on the shared Application panel; a position save still pending). Both were answered as deferred under the owner's CRITICAL-only direction, and the review thread was resolved.
+- The separate exact-HEAD gate then passed: OPEN, MERGEABLE and CLEAN, the same HEAD locally, on the remote and on the PR, 13 of 13 check runs successful, no unresolved thread, and Codex having reviewed that HEAD. Its first run reported a false failure: GitHub's legacy combined-status endpoint answers `pending` when a commit has no legacy status at all. The gate now asserts on the check runs plus "no legacy status that is not successful".
+- The merge ran as its own step, squash-merging as `e3fa161` at 09:51:42 UTC. The merged tree is identical to the gated head.
+- Every post-merge `main` CI run on `e3fa161` passed: TypeCheck 36845448906, Format 36845448918, Build 36845449072, Fallow 36845448943, Lint 36845448969, Test 36845448889, and Build, test and package 36845448968.
+- Issue #61: the plan was to close it by hand after the merge. GitHub closed it at the merge instead, because the PR body's sentence "Close #61 manually after the merge" matched a closing keyword. The end state is the intended one. The hand-written closure comment names T5 and every carried finding ([comment](https://github.com/laststance/codebook/issues/61#issuecomment-5929126071)). A later PR body must not put a closing keyword next to an issue number it does not mean to close. Goal #1 stays open.
+- Released as 0.2.18.0. The installed candidate in both QA profiles is still the tested 0.2.17 build with runtime `f786da84`; the shipped build differs from it by version metadata only and has no installed trial.
+- The two reload findings, the smaller review findings and the test gaps are specified in [Cycle 0035](0035-live-replay-handoff.md). T5 and the Cycle 0031 UI items stay candidates for the cycle after it.
+
 ## Result and decision
 
 **Demonstrated.** Issue #61's acceptance criteria hold, with one recorded exception:
@@ -286,7 +297,7 @@ Private receipts: `~/.gstack/projects/codebook/ship-records/` (invocation record
 
 The hypothesis held: every item closed with a shared awaited cleanup, a currency check before creation, or an unconditional give-up. No saved recording, schema, MCP tool shape or timeout changed. The falsifier did not occur.
 
-Decision: keep. Deliver through `/ship` (0.2.18.0), CI, a separate exact-HEAD gate and a merge in its own step.
+Decision: keep. Delivered as 0.2.18.0 through PR #62 (`e3fa161`); see the delivery closure above.
 
 Affected gaps after this cycle:
 
@@ -309,8 +320,7 @@ The other eight rows carry forward: this cycle did not touch their source paths.
 
 ## Next action
 
-- Exact next action: finish `/ship` for 0.2.18.0 (Draft PR starting with `@coderabbitai ignore`, linked to Issue #61 without an auto-close), wait for CI and the Codex cloud review, run the read-only exact-HEAD gate, then merge in a separate step, close Issue #61 by hand with T5 named as carried, and record the closure here and in PROJECT_STATE.
-- After the merge: plan the next cycle through `/spec`. Candidates in order: the delivery-review findings on the same-recording reload, then the Cycle 0031 UI items (one-click Show Variables, automatic summary placement in Cursor, summary density, cold first-click focus, the reader recovery message, the AX range value, the retired presentation commands with the unreachable settle arm, the transient layout text), then layout restore and "Open article" during replay, the wide-sequence overflow, the natural multi-stop live path and a saved two-host Node replay.
-- Changed files / branch / active processes: `codex/cycle-0034-replay-ownership`; no active processes. The private worktrees `/tmp/c34-base`, `/tmp/c34-head` and `/tmp/c33-base` can be removed after delivery.
-- State updated in PROJECT_STATE.md: active cycle row, AC-REPLAY, AC-ENTRY and AC-SAVE rows, next action.
+- Exact next action: done. The cycle is delivered and closed. Continue with [Cycle 0035](0035-live-replay-handoff.md).
+- Changed files / branch / active processes: merged as `e3fa161`; no active processes. The private worktrees `/tmp/c34-base`, `/tmp/c34-head` and `/tmp/c33-base` are unused and were left in place; `git worktree remove <path>` removes each.
+- State updated in PROJECT_STATE.md: product row, active cycle, tracking, AC-REPLAY next action, one next action.
 - Durable decisions updated: none.

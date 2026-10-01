@@ -21,6 +21,7 @@ import type * as RepositoryReaderModule from '../repositoryReader'
 import type { BookObservationBinding } from '../repositorySchemas'
 import { RepositorySourceService } from '../repositorySource'
 import type { ConfiguredRuntimeView } from '../runtime'
+import { VIEWPORT_ACK_TIMEOUT_REASON } from '../runtimeSupport/constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type * as StudyWorkspaceModule from '../studyWorkspace'
@@ -941,6 +942,9 @@ export async function workspaceHarness(
     private closed = false
     private rendererAttached = true
     private listener?: { dispose(): void }
+    /** Stands for the renderer document the real viewport writes into its panel; any other writer of the shared panel replaces it. */
+    private readonly rendererDocument: string
+    private historicalHtml = ''
     constructor(
       _runId: string,
       readonly record: (type: string, detail?: unknown) => unknown,
@@ -954,8 +958,15 @@ export async function workspaceHarness(
       readonly mode = 'live',
     ) {
       this.panel = lease.panel
+      this.rendererDocument = `<codebook-viewport ${mode} ${randomUUID()}>`
+      // Like the real constructor, a new viewport replaces whatever document the leased panel held.
+      this.panel.webview.html = this.rendererDocument
       viewportInstances.push(this)
       this.bind()
+    }
+    /** Tells whether this viewport's own renderer document is still the one in its panel, so only then can a paint or a handshake be answered. @example this.rendererInPlace() */
+    private rendererInPlace(): boolean {
+      return this.panel.webview.html === this.rendererDocument
     }
     /** Tracks only the current simulated renderer so old disposal exposes a missing rebind. @example this.bind() */
     private bind(): void {
@@ -984,17 +995,27 @@ export async function workspaceHarness(
         await held.wait
         signal?.throwIfAborted()
       }
+      // Like the real viewport, a pinned live lease returns without touching the panel, and only a renderer detached by a handoff writes its document again.
+      if (!this.historical) {
+        if (!this.rendererAttached)
+          this.panel.webview.html = this.rendererDocument
+        // A document another writer put into the panel never answers the readiness request.
+        if (this.mode === 'recording' && !this.rendererInPlace())
+          throw new Error('Timed out waiting for owned viewport ready')
+      }
       this.rendererAttached = true
       viewportEvents.push(`reveal:${this.mode}`)
     }
     /** Marks selected live presentation without starting another runtime. @example await viewport.showLive() */
     async showLive(): Promise<void> {
       this.historical = false
+      this.panel.webview.html = this.rendererDocument
       this.rendererAttached = true
     }
     /** Retains the hidden live lease while the workspace reads recorded evidence. @example viewport.showHistory() */
     showHistory(html: string): void {
       this.historical = true
+      this.historicalHtml = html
       this.panel.webview.html = html
     }
     /** Ends this simulated lease during workspace cleanup, using its original release callback. @example viewport.close() */
@@ -1030,6 +1051,11 @@ export async function workspaceHarness(
     async restorePlacement(): Promise<void> {
       assert.equal(this.held, false)
       assert.equal(this.closed, false)
+      // Like the real viewport, a renderer detached by the handoff writes its document into the replacement panel: the pinned history page for a historical lease, its own renderer otherwise.
+      if (!this.rendererAttached)
+        this.panel.webview.html = this.historical
+          ? this.historicalHtml
+          : this.rendererDocument
       this.rendererAttached = true
       viewportEvents.push(`restore:${this.mode}`)
     }
@@ -1044,6 +1070,9 @@ export async function workspaceHarness(
       // The real viewport refuses renderer work once its lease is released.
       if (this.closed) throw new Error('Owned viewport is closed')
       assert.equal(this.rendererAttached, true, 'Webview is not ready')
+      // No renderer acknowledges a frame once another writer replaced this viewport's document; the real delivery then runs out of its paint budget.
+      if (this.mode === 'recording' && !this.rendererInPlace())
+        throw new Error(VIEWPORT_ACK_TIMEOUT_REASON)
       const held = nextImage
       nextImage = undefined
       if (held) {
@@ -1064,6 +1093,9 @@ export async function workspaceHarness(
         true,
         'Recorded viewport is not ready',
       )
+      // A replaced document never reports the gap as painted either.
+      if (!this.rendererInPlace())
+        throw new Error('Timed out waiting for recorded gap presentation')
       displayedImage = undefined
     }
   }
@@ -2492,18 +2524,20 @@ export async function workspaceHarness(
       nextHistoricalDebugPresentation = { wait, entered, recordedStopOnly }
       return { started, release, reject }
     },
-    /** Keeps the next recorded-application reveal queued until released, as the real viewport does behind a native placement hold; the queued reveal ignores its caller's cancellation until then. @example const held = harness.holdNextRecordingReveal(); await held.started; held.release() */
+    /** Keeps the next recorded-application reveal queued until released, as the real viewport does behind a native placement hold; the queued reveal ignores its caller's cancellation until then. `fail` ends it as a renderer that never became ready. @example const held = harness.holdNextRecordingReveal(); await held.started; held.release() */
     holdNextRecordingReveal() {
       let release = (): void => {},
+        fail = (_error: Error): void => {},
         entered = (): void => {}
       const started = new Promise<void>((resolve) => {
         entered = resolve
       })
-      const wait = new Promise<void>((resolve) => {
+      const wait = new Promise<void>((resolve, reject) => {
         release = resolve
+        fail = reject
       })
       nextRecordingReveal = { wait, entered }
-      return { started, release }
+      return { started, release, fail }
     },
     /** Keeps the next historical debugger disposal pending until released, as an editor that is slow to stop the owned session does; its registration stays live meanwhile. @example const held = harness.holdHistoricalDebugDisposal(); await held.started; held.release() */
     holdHistoricalDebugDisposal() {

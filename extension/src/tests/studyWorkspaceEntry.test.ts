@@ -365,11 +365,15 @@ test('an Open Study cancelled while it waits for an abandoned first entry leaves
     await new Promise<void>((resolve) => setImmediate(resolve))
 
     // Act
+    const cancelledAtMs = performance.now()
     waitingEntry.abort(new Error('Second entry cancelled'))
     const outcome = await second
+    const leftAfterMs = performance.now() - cancelledAtMs
 
     // Assert
     assert.equal(String(outcome), 'Error: Second entry cancelled')
+    // The waiter leaves on its own cancellation, not when the five-second wait for the abandoned entry runs out.
+    assert.equal(leftAfterMs < 250, true, `left after ${leftAfterMs} ms`)
   } finally {
     entry.release()
     await Promise.allSettled([first, second])

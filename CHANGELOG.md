@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.19.0] - 2026-10-01 (development candidate)
+
+Cycle 0035 makes a learning replay recover while the live run it came from is still attached, and keeps the moment you confirmed last. Mechanism tests cover each fix with a red-before-green regression and a disabled-fix control. Bounded installed trials: in VS Code 1.140.0 a natural `/codebook` request through Copilot Chat Auto reached three server stops and the observed result on its second submission, the saved study reopened with two recorded stops, and the replay recovered in about 1.5 seconds with a live run paused beside it; in Cursor 3.23.10 the recovery with no application running took about one second. The failure itself was not reproduced in an installed editor; the mechanism tests show it on 0.2.18.0. Delivery review found nothing critical, and its other findings wait for later cycles; one automated review pass answered in a form its checker could not read and counts as missing coverage, not as a pass. Known limits: a natural request is not yet reliable on its first run; a recording that is still being captured recovers in about 2.1 seconds; after a refused control the reader keeps showing the refusal until a live-run action succeeds; a seek or play sent while a recording is still loading is told that the reader is closed instead of that the recording is not ready; switching to another recording and back before a position save lands can return to the older saved position. Final acceptance remains open. No registry publication.
+
+### Changed
+
+- A seek or play on a recording whose reader you closed is refused and tells you to open the recording first, for an agent and for the Learning replay panel. Before, it brought back the Application panel alone. Pause still answers, and opening the recording brings the reader back at the saved moment.
+
+### Fixed
+
+- With a live run still attached, pressing **Recording** after the **Codebook · Recorded learning** session ended presents the saved moment again. Before, the live run's loading page replaced the recording's renderer in the shared Application panel, the frame was never acknowledged, and the replay failed after its waits.
+- Reopening a recording returns to the moment you confirmed last even while that position is still being saved, or after the save failed. If the recording became shorter, it opens at its end.
+- When the historical debugger gives up and both the reader update and the reader's error channel fail, the replay still ends with the reopen message instead of waiting.
+
 ## [0.2.18.0] - 2026-10-01 (development candidate)
 
 Cycle 0034 makes a learning replay recover when you reopen it, and keeps one replay request from colliding with the cleanup of the request it replaced. Mechanism tests cover each fix with a red-before-green regression and a disabled-fix control, and bounded installed trials ran in VS Code 1.140.0 and Cursor 3.23.10 with no application running. One planned test for a settle path that the reader cannot reach was not written. Delivery review found nothing critical. It reported, from reading the code, that the recovery below may fail while a live run's application panel is still attached, and that it may return to an earlier saved position while a position save is still pending; neither was reproduced, and both go to the next cycle. The paused foreign-session case and the Node stop in Cursor were not run. Final acceptance remains open. No registry publication.

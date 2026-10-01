@@ -59,7 +59,7 @@ export class ReplayDebugger {
    * Registers the owned historical debug adapter for {@link StudyWorkspace}.
    * @param editor - VS Code API surface used to start, observe and stop the owned session.
    * @param changed - Runs when native Run and Debug loads the selected stop's values or the learner ends the owned session, so the reader can drop a stale hint and re-enable Node Inspect.
-   * @param failed - Receives an error thrown while handling a values-loaded notification, which the native session never sees.
+   * @param failed - Receives an error the `changed` listener throws, while handling a values-loaded notification or while this owner gives up; the native session never sees it.
    * @example new ReplayDebugger(vscode, (reason) => this.replayDebuggerChanged(reason), (error) => this.report('replay-debugger', error))
    */
   constructor(
@@ -257,6 +257,7 @@ export class ReplayDebugger {
    * Gives up ownership through {@link expire} on behalf of {@link bounded} and {@link present}, keeping a reader listener that throws away from their waiters.
    *
    * The listener's error goes to the reader's error channel instead, so the expired operation still rejects with the closed-debugger error.
+   * This method never throws: its callers reject or throw that closed-debugger error right after it.
    *
    * @example this.giveUp()
    */
@@ -264,7 +265,11 @@ export class ReplayDebugger {
     try {
       this.expire()
     } catch (error) {
-      this.failed(error)
+      try {
+        this.failed(error)
+      } catch {
+        // The reader's error channel failed as well; the closed-debugger error the caller raises next is the signal that remains.
+      }
     }
   }
 

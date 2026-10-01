@@ -29,6 +29,8 @@ export interface PlaybackDependencies {
   save(bundle: PlaybackBundle): Promise<void>
   /** Whether the committed moment can be shown again as it is: the reader is open and its historical debugger is usable. Defaults to true. */
   presentable?(): boolean
+  /** Whether the replay reader's panes exist (open and not closing); without them only `open` and `pause` are accepted. Defaults to true. */
+  readerOpen?(): boolean
   now?(): number
   manualTicks?: boolean
 }
@@ -62,6 +64,8 @@ export class PlaybackController {
   private readonly clock: () => number
   private disposed = false
   private saves: Promise<void> = Promise.resolve()
+  /** The position of the bundle {@link remember} last queued for saving; an open of the same study prefers it to a stored preference that the queued save may not have written yet. It deliberately survives {@link leave}. */
+  private rememberedPosition?: { studyId: string; positionMs: number }
 
   constructor(private readonly dependencies: PlaybackDependencies) {
     this.clock = dependencies.now ?? (() => performance.now())
@@ -133,6 +137,11 @@ export class PlaybackController {
       }
       return this.state()
     }
+    // A closed reader has no panes to present in, so a seek or play would recreate the Application panel alone; only an explicit open brings the reader back.
+    if (!(this.dependencies.readerOpen?.() ?? true))
+      throw new Error(
+        'The replay reader is closed; open the recording before another control.',
+      )
     const range = this.range()
     if (!range || !this.data)
       throw new Error(
@@ -266,7 +275,7 @@ export class PlaybackController {
     })
   }
 
-  /** Clears historical selection on explicit exit, enabling a subsequent same-study open to reload repaired files. @example controller.leave() */
+  /** Clears historical selection on explicit exit, enabling a subsequent same-study open to reload repaired files; that open still starts at the last confirmed position, clamped to the reloaded range. @example controller.leave() */
   leave(): void {
     this.hide()
     this.studyId = undefined
@@ -386,14 +395,16 @@ export class PlaybackController {
             ].sort((left, right) => left - right)
           }
           const range = this.range()!
+          // The moment this controller last confirmed for the study outranks storage: its save may still be queued, and a failed save must not move the learner back.
+          const preferredPositionMs =
+            this.rememberedPosition?.studyId === request.studyId
+              ? this.rememberedPosition.positionMs
+              : data.preferredPositionMs
           const positionMs =
             request.positionMs ??
             Math.min(
               range.endMs,
-              Math.max(
-                range.startMs,
-                data.preferredPositionMs ?? range.startMs,
-              ),
+              Math.max(range.startMs, preferredPositionMs ?? range.startMs),
             )
           this.requestedMs = positionMs
           const projection =
@@ -509,10 +520,14 @@ export class PlaybackController {
     this.dependencies.invalidate()
   }
 
-  /** Serializes explicit navigation saves; callbacks receive the confirmed bundle, never requested position B. @example this.remember() */
+  /** Serializes explicit navigation saves and records the confirmed position that the next open of the same study prefers over the stored preference, also when its save fails; callbacks receive the confirmed bundle, never requested position B. @example this.remember() */
   private remember(): void {
     const bundle = this.presented
     if (!bundle) return
+    this.rememberedPosition = {
+      studyId: bundle.studyId,
+      positionMs: bundle.projection.positionMs,
+    }
     this.saves = this.saves
       .then(() => this.dependencies.save(bundle))
       .catch((error) => {
