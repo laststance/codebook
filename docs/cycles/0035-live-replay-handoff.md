@@ -1,9 +1,9 @@
 # Cycle 0035 — Live-to-replay handoff: a displayed replay recovers while a live run is attached
 
 Type: product-increment\
-Status: implementing\
-Result: pending\
-Delivery: not-applicable\
+Status: validating\
+Result: demonstrated\
+Delivery: committed\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/63\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -185,17 +185,93 @@ The first `health` run failed: the added `if` raised `loadPlayback()` over the c
 
 AC18: the diff changes no storage format, schema, MCP tool shape or timeout value.
 
+### Package and installation, 2026-10-01
+
+- Candidate: `artifacts/packages/codebook-0.2.18-c35-live-replay-handoff-20261001.vsix`, built from `10781a6` in a clean worktree. SHA-256 `00ab457f…30a22f`, runtime `dist/extension.js` `742a147d…7dfcb8`, sourceHash `d1f8aeea…755701`, 29 entries, `package:check` passed, isolated load passed. It carries version 0.2.18 like the delivered build; the runtime hash tells them apart.
+- Installed with `--install-extension … --force` in VS Code (shared by the QA profile `Codebook QA 0029 Clean`) and in Cursor's QA profile `Codebook QA 0029 Settings`. Both installed runtimes match `742a147d`. Each host loaded it through **Restart Extensions**; the only debug session that restart ended was Codebook's own recorded session.
+
+### N4 — installed native trials, 2026-10-01
+
+Expectations were frozen at 19:47 JST in `artifacts/cycle-0035/native/n4-expectations.json` before the first take. Recorder: OBS 32.2.2, **macOS Screen Capture** with **Method: Window Capture** on the exact QA window (checked in Properties for each host), transform reset (3456 × 2168, no crop), both audio sources muted, a short changing-content preflight per host, 30 fps. The evidence copies are video-only remuxes. Chat prompts went through `code chat -m agent -r`; everything else was clicks. Nothing was typed into an editor and the Cursor Agent input was not used. The dashboard's existing database container was started for the trial and stopped afterwards.
+
+| Check | Result | Observation |
+| --- | --- | --- |
+| N4-a: natural `/codebook` request, VS Code 1.140.0, Copilot Chat Auto | **PARTIAL** | The second submission of the frozen prompt reached three server stops (`auth.ts` 41:24, `auth.ts` 23:5, `actions.ts` 36:7), saved an explanation from captured values after each, continued each time and ended on the observed red "Invalid credentials"; the run record says completed / demonstrated / complete and its cleanup released everything (98 steps, 15 min 14 s). Not PASS, because the first submission stopped on `PRESENTATION_UNAVAILABLE`, the second needed four runs, and no client-side stop was reached. Details below. |
+| N4-b: Save, library, reopen | **PASS** | **Save learning replay** answered "Learning replay saved with its summary, source and debugger history." Saved studies lists the new study `e779bdb7` as demonstrated. Recording presented 33.85 s (recorded frame, captured `auth.ts` line 41, `email = 'no-such-…'`) and 60.41 s (captured `auth.ts` line 23, `result = (0) []`), and Previous returned to 33.85 s. Understanding stayed unmarked. The third stop (84.85 s) was not visited. |
+| N4-c: recovery with a live run attached, VS Code | **PASS** | Saved study `e779bdb7` displayed at 33.85 s while live run `cd6a6547` was paused at `auth.ts` 41:24. After stopping **Codebook · Recorded learning**, one Recording press brought back "Paused · finalized" at 33.85 s / 102.92 s in 1.47–1.63 s (press at video frame 41–46, finalized at frame 90). No timeout and no closed-debugger message. The live session stayed paused with its own values in every frame and continued only when its own five-minute hold ended. |
+| N4-d: no application, Cursor 3.23.10 | **PASS** | The first Recording press after a fresh host committed 74.59 s / 99.32 s. After Run > Stop Debugging, one Recording press brought back Call Stack "Recorded pause · 74.59 s" (`LoginForm` 77:15) and `state = 'CredentialsSignin'`; "Paused · finalized" 0.93 s after the press. No failure message. |
+
+AC17 holds: every check has a recorded outcome, and the two delivery conditions (N4-c, N4-d) passed. The failure itself was not reproduced natively on 0.2.18.0; it is established by the mechanism red run on `e3fa161` only, so N4-c shows that the fixed build recovers, not a native before-and-after.
+
+Evidence (private, ignored): `artifacts/cycle-0035/native/n4-vscode-receipt.json` and `n4-cursor-receipt.json` hold the video hashes, the action logs, the frame measurements and the limits. Videos: `n4-vscode-main-01.mov` (2,670.87 s, 80,126 frames; N4-a to N4-c) and `n4-cursor-main-01.mov` (113.47 s; N4-d). Host storage: the VS Code library is `~/Library/Application Support/Code/User/globalStorage/laststance.codebook/learning/dd749a97…263f8e`, saved study `0fb20e6d-60f3-408c-9b07-d464e779bdb7`; Cursor's study is `57bbb9ae`.
+
+N4-a in detail (AC-LIVE gaps, none of them in this cycle's source):
+
+- **Stale captured tab.** The first submission ended after 35 steps with `PRESENTATION_UNAVAILABLE` ("Focus a Codebook pane or text editor before selecting a presentation; the current foreign editor cannot be restored safely"). The active tab was a `Captured-login-form.tsx` tab the host had left open before its restart.
+- **No way to continue a chat from the CLI.** `code chat -r` always starts a new session, so a follow-up ("続けて") landed without context and was stopped after 16 s.
+- **Three failed runs before the good one.** A client stop at `login-form.tsx` 22:3 never bound (44 s). A client stop at 23:5 was hit again after the click and the run ended with "Unexpected or additional browser stop invalidated the declared operation". A server stop requested at `auth.ts` 41:11 bound at 41:24 and the run ended with "Pending server breakpoint did not bind to the captured source". The agent read the run's event log, dropped the client stop and used the bound column.
+- **Driver actions.** The stale tab was closed and `login-form.tsx` focused before the second submission, and Copilot's "Continue to iterate?" prompt was answered once.
+- **No client-side observation.** The agent itself reports the re-render that shows the message as not observed.
+
+Other observations:
+
+- **A recording still being captured recovers more slowly.** A first take pressed Recording on the attached run's own in-progress recording (`95c57697`, "Paused · recording"). It recovered at 42.11 s with no failure message, 2.10 s after the press (1.97 s after the first visible response): 0.1 s over the bound. Its load phase took 0.87 s against 0.33 s for the saved study, while the range grew from 127.97 s to 190.70 s. This is not the frozen scenario, which names a saved recording; it is carried as an open AC-REPLAY observation.
+- **The first open with a live run attached commits.** Opening the saved study's Recording while the live run was paused presented 33.85 s (the AC2a path, natively).
+- **The reader's run control cannot start a run.** Study controls show "No action available", so the chat request was the only way to attach a live run (R9's second route does not exist in the installed host).
+- **A paused live run ends itself after five minutes** ("Repository pause hold deadline exceeded"), with a clean release. A learner who studies a replay for longer loses the live pause.
+- **Captured-source tabs pile up.** Six `Captured-auth.ts` tabs were open after the runs.
+- **Cursor, first Learning Outline click after the host restart** opened only a "codebook · Application" tab with the toast "Native pane, group or focus changed while present…"; the second click opened the Study pane. A stale "Recorded application" tab from the previous host stayed beside the new one.
+- Limits: 30 fps; one saved study per host; the recorded session's Call Stack row sits below the fold while the live session is expanded, so its return is read from the debug badge, the Call Stack scroll range and a later scroll. No Stage 1 or Stage 2 credit.
+- After the trials (AC16): OBS was quit through its menu, the database container is stopped again, the protected hashes (`0ac38ba2`, `8d6e64c2`, `80ba41bd`, `d578b9e3`) are unchanged, the dashboard is at `1936e41` with only the untracked `.codebook/`, and no development server or managed browser is running. Both editors were left open on their QA windows.
+
+### Reviews before `/ship`, 2026-10-01
+
+- Local CodeRabbit CLI 0.8.2 (`--agent --committed --base-commit e3fa161`, no paid credits): completed on `10781a6`, 13 files, 3 minor findings, all in documents (README, PROJECT_STATE and this record's Next action still described the cycle as not implemented). They are corrected in the records commit.
+- `open-code-review-delegate` on `e3fa161..10781a6`: 6 of 6 eligible files reviewed, 0 skipped; 8 default exclusions (4 documents, 4 test files) reported separately. No critical, high or medium finding; 2 low:
+  - `rememberedPosition` outlives `leave()` and nothing clears it. It is keyed by study and equals what the queued save writes, so nothing is wrong today; a later "reset position" feature would have to clear it.
+  - `showRecordingLoadingOnLiveViewport()` constructs a new recording renderer on every load made with a live viewport, also for a first open or another recording. The cost is one webview document write.
+- Hosted CodeRabbit stays owner-skipped (D027). Private receipts: `artifacts/cycle-0035/reviews/`.
+
 ## Result and decision
 
-Pending.
+**Demonstrated.** Issue #63's acceptance criteria hold, with two recorded deviations:
+
+- AC1, AC4, AC4b, AC5, AC7, AC8: each behavior change fails on `e3fa161`, passes on the branch and has a disabled-fix control that held. AC2, AC6 (first half), AC9–AC12 are guards and coverage tests that pass on both, as planned, each with a control.
+- AC3: no separate harness self-test; AC1's red run and its control exercise the model (deviation recorded above).
+- AC8: a seek during the close is refused by the existing idle check with `PRESENTATION_UNAVAILABLE` (deviation recorded above).
+- AC13–AC16 and AC18: comments, red runs, controls, gates, protected state and the unchanged contracts as recorded above.
+- AC17: N4-b, N4-c and N4-d pass; N4-a is PARTIAL and stays an AC-LIVE gap.
+
+The hypothesis held: the reload failed because the live viewport's loading document replaced a reused recording renderer, and it lost the position because the open read storage before the pending save. Dropping the renderer first and carrying the confirmed position in memory closed both without a storage, schema or timeout change. The falsifier did not occur: the installed VS Code recovers with a live run attached.
+
+Decision: keep. Delivery through `/ship` follows.
+
+## Gap audit after the cycle
+
+| AC | Before | After |
+| --- | --- | --- |
+| AC-REPLAY | Two unreproduced review findings on the same-recording reload; the recovery was observed only with no application running. | Both are reproduced in tests on `e3fa161` and fixed with controls. The recovery is observed in installed VS Code with a live run paused beside the replay (1.47–1.63 s) and again in Cursor with no application (0.93 s). Still open: a recording that is still being captured recovers in about 2.1 s; the failure was not reproduced natively on 0.2.18.0; a live pause ends itself after five minutes; N2-d; the Cycle 0031 UI items; a startup slower than 5 s; unbounded storage writes in `close()`; final acceptance. |
+| AC-LIVE | No natural multi-stop request without a prepared stop recipe on the current candidate. | One natural request in VS Code Copilot Auto reached three server stops and the observed result, on its second submission and fourth run (PARTIAL). Open: a stale captured tab blocks the presentation; client stops in a re-rendering component invalidate the run; a breakpoint that binds at another column fails the run; no client-side observation; Cursor not run. |
+| AC-SAVE | The saved result of a natural live explanation had not been reopened on the current candidate. | Saved from the status bar, listed as demonstrated, reopened through Recording with two recorded stops and their native values, understanding unmarked (VS Code). Open: Cursor; a saved Node replay in both hosts. |
+| AC-ENTRY | A seek or play after the reader closed created an Application panel. | Refused with the existing playback error; pause stays a no-op; a reader reopen still re-presents the retained moment (mechanism). Open: captured-source tabs pile up; in Cursor the first Learning Outline click after a host restart opened only an Application tab; the reader's run control offers no action. |
+| AC-GAPS, AC-LEARNING | Regression only. | The full suite passes; natively the 0.00 s gap showed "Not recorded at this moment" with no frame, and understanding stayed unmarked. |
+| Other seven rows | Carried forward. | Unchanged: this cycle did not touch their source paths. |
 
 ## Handoff
 
-Pending.
+- Evidence: `artifacts/cycle-0035/` (private, ignored) holds the red runs, controls, verification logs, review receipts and the native videos, frames and receipts.
+- Not done in this cycle, by scope: every item under "Out of scope".
+- New candidates found here, in the order they block the defining path:
+  1. A client stop in a re-rendering component invalidates the run, and a server stop that binds at another column fails it. Both cost the natural request three runs.
+  2. A stale captured tab from an earlier host leaves the next presentation `PRESENTATION_UNAVAILABLE`.
+  3. A paused live run ends itself after five minutes while the learner reads a replay.
+  4. A recording that is still being captured recovers in about 2.1 s.
+  5. Captured-source tabs pile up; the reader's run control offers no action; Cursor's first Learning Outline click after a host restart.
+- Carried from the reviews, none critical: the two low OCR findings above.
 
 ## Next action
 
-- Exact next action: implement in the recorded order (harness model, H1, H2, H3, H4 as amended by R1, H5, H6), test-first, with a red run on `e3fa161` and a disabled-fix control per behavior change; then the gates, the candidate package and native N4.
-- Changed files / branch / active processes: `codex/cycle-0035-live-replay-handoff`; no active processes.
-- State updated in PROJECT_STATE.md: active cycle, tracking, next action.
+- Exact next action: `/ship` (version, CHANGELOG, PR with `@coderabbitai ignore` and no closing keyword next to an issue it does not close), CI, the Codex cloud review, a separate exact-HEAD gate and the merge in its own step; then the closure records and the next cycle through `/spec`.
+- Changed files / branch / active processes: `codex/cycle-0035-live-replay-handoff`; no active processes. The private worktrees `/tmp/c35-base` and `/tmp/c35-head` hold the red run and the candidate build.
+- State updated in PROJECT_STATE.md: active cycle, AC-REPLAY, AC-LIVE, AC-SAVE and AC-ENTRY rows, next action.
 - Durable decisions updated: none.
