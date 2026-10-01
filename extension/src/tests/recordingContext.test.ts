@@ -627,6 +627,29 @@ test('a checkpoint that loses a confirmed phase image while copying it is discar
   }
 })
 
+// Value: protects=tampered sealed evidence surfacing even when a newer checkpoint changes state during the same read; fails_when=every EVIDENCE_UNAVAILABLE after a signature change is discarded as withdrawn; why_new=Cycle 0033 M1 (b); seam=none
+test('a checkpoint still fails on a tampered phase image when the run state also changes during the read', async () => {
+  // Arrange: the saved before image bytes were altered on disk, and the runtime will withdraw another image mid-read.
+  const harness = await contextHarness(),
+    { runtime, record, service, workspaceKey } = harness
+  try {
+    await writeFile(
+      join(runtime.evidence.directory, 'before.png'),
+      Buffer.from('tampered'),
+    )
+    // Act
+    const checkpoint = captureStudy(service, record, workspaceKey)
+    delete runtime.captures.after
+    // Assert: a concurrent state change must not turn an integrity failure into a silently discarded copy.
+    await assert.rejects(checkpoint, {
+      code: 'EVIDENCE_UNAVAILABLE',
+      message: 'Captured image no longer matches its sealed hash.',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 test('a checkpoint still fails when a confirmed phase image no longer matches its sealed hash', async () => {
   // Arrange: the runtime state is unchanged, but the saved before image bytes were altered on disk.
   const harness = await contextHarness(),
