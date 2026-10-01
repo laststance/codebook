@@ -82,7 +82,7 @@ Package builds require a POSIX host (macOS or Linux); Windows builds are rejecte
 ```sh
 pnpm --dir extension install --frozen-lockfile
 pnpm --dir extension package
-pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.20.vsix"
+pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.21.vsix"
 ```
 
 The package command checks pnpm, clears only the extension compiler output, rebuilds, bundles production modules and stages an explicit file allowlist. Test/application fixtures and experimental dependencies are rejected. The independent checker validates archive entries, hashes, manifests and dependency notices before accepting the VSIX.
@@ -280,7 +280,7 @@ Unit doubles cover transport, ownership, source integrity and persistence withou
 
 ### Saved learning capacity
 
-**Codebook: Saved Study Limit** (`codebook.savedStudyLimit`) controls new study and recording admission for the opened workspace: 64 by default, configurable from 1 to 256 in ordinary editor Settings. Changes apply without restarting. When full, raise this setting before starting a new recording; use **Retry storage / refresh** to retry an existing study checkpoint. A recording that never started cannot reconstruct missing video afterward.
+**Codebook: Saved Study Limit** (`codebook.savedStudyLimit`) controls new study and recording admission for the opened workspace: 64 by default, configurable from 1 to 256 in ordinary editor Settings. Changes apply without restarting. When full, raise this setting before starting a new recording; use **Retry storage / refresh** to retry an existing study checkpoint. From 0.2.21, a configured run started while the study library is already full is refused before the application receives any input: the run ends with `PREREQUISITE_MISSING` and a message that names this setting. A recording that never started cannot reconstruct missing video afterward.
 
 Existing studies, recordings and learner decisions are never evicted. Lowering the limit does not hide existing history or prevent updates to a previously admitted study. Invalid values reject new admission with an actionable error. The fixed catalog ceiling is 256; per-recording frame/byte limits remain unchanged. Raising a count limit permits more disk use, not larger individual recordings.
 
