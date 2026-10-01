@@ -820,6 +820,53 @@ test('a declared line the sealed map is too large to scan completely does not re
   await run.stop()
 })
 
+// Value: protects=a binding failure telling the agent its mapped-position hints come from an incomplete map scan; fails_when=the failure builder drops the partial-scan qualifier, so "none" reads as "no line of the citation is mapped"; why_new=the partial flag is asserted on the verifier only and preparation's exemption has no failure text, so no test reads the qualifier in a run failure; seam=none
+test('a binding failure on a sealed map too large to scan completely says its mapped positions come from a partial scan', async (context) => {
+  // Arrange: the scan stops at its generated-line limit before the only mapped segment, and the debugger binds the stop on line 2.
+  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { mappings: `${';'.repeat(100_000)}AAAA` },
+  )
+  bindFirstStopAt(2, 1)
+  // Act
+  await assert.rejects(run.prepare(), (error: unknown) => {
+    assert.equal(
+      String(error),
+      'Error: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation (partial map scan): none. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+    )
+    return true
+  })
+  await run.stop()
+  // Assert
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=an adapter failure while a stop is armed reaching the agent as that failure, not as a binding problem with mapped-position hints; fails_when=every failed arming wait becomes a binding failure, so hints about choosing another line are attached to an adapter error; why_new=the arming tests end in a timeout or a binding on another line, and none makes the adapter's binding lookup itself fail; seam=none
+test('an adapter failure while the first stop is being armed is reported as that failure, without mapped-position hints and without clicking the application', async (context) => {
+  // Arrange: the debug session answers the binding lookup with its own failure.
+  const { run, failBindingLookup, mouse } =
+    await configuredRuntimeHarness(context)
+  failBindingLookup('Debug adapter lost the session')
+  // Act
+  await assert.rejects(run.prepare(), (error: unknown) => {
+    assert.equal(String(error), 'Error: Debug adapter lost the session')
+    return true
+  })
+  await run.stop()
+  // Assert
+  assert.equal(
+    run
+      .view()
+      .events.some((event) => event.type === 'breakpoint.mapping-hints'),
+    false,
+  )
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
 test('a later stop whose line never runs after the preceding continuation ends the run naming that stop and the order rule', async (context) => {
   // Arrange
   const { run, suppressNextPause, advance, commands } =

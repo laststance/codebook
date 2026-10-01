@@ -103,6 +103,8 @@ export async function configuredRuntimeHarness(
   // Where the adapter reports the first stop's verified binding when it differs from the requested position.
   let firstStopBinding: { line: number; column: number } | undefined,
     emitNextPause = true
+  // The failure the adapter answers a binding lookup with, as a session that ended does.
+  let bindingLookupFailure: string | undefined
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
   let rejectedCapture: string | undefined,
     requiredValueUnavailable = false,
@@ -207,6 +209,7 @@ export async function configuredRuntimeHarness(
       const owned = breakpoints.find(
         (candidate) => candidate.id === breakpoint.id,
       )
+      if (owned && bindingLookupFailure) throw new Error(bindingLookupFailure)
       return bound && !rejectBinding && owned
         ? {
             id: 1,
@@ -614,6 +617,10 @@ export async function configuredRuntimeHarness(
     /** Lets a continuation run on without the next declared stop ever pausing. */
     suppressNextPause(): void {
       emitNextPause = false
+    },
+    /** Makes the adapter answer every binding lookup of an owned breakpoint with this failure instead of a binding. */
+    failBindingLookup(message: string): void {
+      bindingLookupFailure = message
     },
     observeRecording(
       observer: () => ViewportRecordingObserver | undefined,
