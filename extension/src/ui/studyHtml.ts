@@ -1682,7 +1682,13 @@ function studyClient(
         !nodeHistory || eventCount === 0 || selectedIndex === eventCount - 1
       replace(
         'node-history-events',
-        [nodeHistory?.entries ?? [], Boolean(recording), selectedSequence],
+        // The selected stop's Inspect follows the native session, so an ended session must render the list again.
+        [
+          nodeHistory?.entries ?? [],
+          Boolean(recording),
+          selectedSequence,
+          Boolean(position?.debuggerAvailable),
+        ],
         () =>
           (nodeHistory?.entries ?? []).map((entry) => {
             const article = document.createElement('article')
