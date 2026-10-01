@@ -18,10 +18,11 @@ export function untilAborted<Value>(
   operation: Promise<Value> | undefined,
   signal: AbortSignal,
 ): Promise<Value | undefined> {
-  if (!operation) {
-    signal.throwIfAborted()
-    return Promise.resolve(undefined)
-  }
+  // Callers chain on the returned promise, so an aborted waiter is a rejection rather than a synchronous throw.
+  if (!operation)
+    return signal.aborted
+      ? Promise.reject(signal.reason)
+      : Promise.resolve(undefined)
   return new Promise((resolve, reject) => {
     const aborted = (): void => reject(signal.reason)
     signal.addEventListener('abort', aborted, { once: true })

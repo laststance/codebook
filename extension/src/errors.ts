@@ -68,6 +68,20 @@ export class StudyError extends Error {
   }
 }
 
+/**
+ * Marks sealed evidence whose bytes no longer match their recorded hash, as distinct from evidence a newer checkpoint withdrew.
+ *
+ * {@link readResource} raises it for tampered or edited images and sources; {@link captureStudy} keeps discarding a read that
+ * a concurrent state change withdrew, but never this integrity failure. Clients still see `EVIDENCE_UNAVAILABLE`.
+ *
+ * @example throw new EvidenceIntegrityError('Captured image no longer matches its sealed hash.')
+ */
+export class EvidenceIntegrityError extends StudyError {
+  constructor(message: string) {
+    super('EVIDENCE_UNAVAILABLE', message)
+  }
+}
+
 /** Normalizes unexpected boundary failures without pretending they succeeded; called by protocol handlers. @example domainError(new Error('disk')).code */
 export function domainError(error: unknown): StudyError {
   return error instanceof StudyError

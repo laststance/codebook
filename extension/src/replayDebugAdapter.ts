@@ -74,8 +74,8 @@ export class ReplayDebugAdapter {
   ) {}
 
   /**
-   * Lets {@link ReplayDebugger.present} await the current native-client retrieval after a selected moment changes.
-   * @returns Whether current stack, scopes and initial values were retrieved; this is not a native paint acknowledgement.
+   * Tells {@link ReplayDebugger} whether native Run and Debug retrieved the current selection; its inspection wait re-reads this on every `inspected` callback, `stopped` event and ownership change instead of polling.
+   * @returns Whether current stack, scopes and the first scope's initial values were retrieved; this is not a native paint acknowledgement.
    * @example adapter.select(undefined, 'Not recorded at this moment'); adapter.inspectionReady // false until the native client retrieves the empty stack
    */
   get inspectionReady(): boolean {
@@ -97,8 +97,11 @@ export class ReplayDebugAdapter {
   }
 
   /**
-   * Lets {@link ReplayDebugger.present} commit gaps and scope-less stops at once: only a selection whose inspection frame has scopes can load values in native Variables.
-   * @returns Whether the current selection has a frame with at least one scope for Variables to load.
+   * Lets {@link ReplayDebugger.present} commit gaps and scope-less stops at once: only a selection whose inspection frame has recorded scopes can load values in native Variables.
+   *
+   * The synthetic "Recording limitations" scope explains missing capture; it holds no recorded values, so it does not count.
+   *
+   * @returns Whether the current selection's inspection frame has at least one recorded scope for Variables to load.
    * @example adapter.select(undefined, 'Not recorded at this moment'); adapter.hasLoadableValues // => false
    */
   get hasLoadableValues(): boolean {
@@ -107,8 +110,17 @@ export class ReplayDebugAdapter {
       !this.closed &&
       this.selectionValid &&
       inspectionFrameId !== undefined &&
-      this.frameScopes.get(inspectionFrameId)?.length,
+      this.frames.get(inspectionFrameId)?.scopes.length,
     )
+  }
+
+  /**
+   * Lets {@link ReplayDebugger.present} fail closed when the editor disposed this adapter before reporting termination.
+   * @returns Whether the editor ended this adapter; a disposed adapter ignores selections and requests.
+   * @example adapter.dispose(); adapter.disposed // => true
+   */
+  get disposed(): boolean {
+    return this.closed
   }
 
   /**

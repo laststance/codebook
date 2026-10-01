@@ -19,7 +19,7 @@ import {
   SOURCE_LIMIT_BYTES,
   NODE_TEST_PROFILE,
 } from './constants'
-import { ERROR_RECOVERY, StudyError } from './errors'
+import { ERROR_RECOVERY, EvidenceIntegrityError, StudyError } from './errors'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
@@ -351,8 +351,7 @@ export async function readResource(
         source.hash !== stop.source.hash ||
         sha256(source.text) !== stop.source.hash
       )
-        throw new StudyError(
-          'EVIDENCE_UNAVAILABLE',
+        throw new EvidenceIntegrityError(
           'The cited Node source no longer matches its retained hash.',
         )
       return { uri, mimeType: 'text/typescript', text: source.text }
@@ -415,8 +414,7 @@ export async function readResource(
       IMAGE_LIMIT_BYTES,
     )
     if (sha256(bytes) !== capture.renderer.hash)
-      throw new StudyError(
-        'EVIDENCE_UNAVAILABLE',
+      throw new EvidenceIntegrityError(
         'Captured image no longer matches its sealed hash.',
       )
     return { uri, mimeType: 'image/png', blob: bytes.toString('base64') }
@@ -443,8 +441,7 @@ export async function readResource(
       IMAGE_LIMIT_BYTES,
     )
     if (sha256(bytes) !== capture.renderer.hash)
-      throw new StudyError(
-        'EVIDENCE_UNAVAILABLE',
+      throw new EvidenceIntegrityError(
         'Snapshot image no longer matches its sealed hash.',
       )
     return { uri, mimeType: 'image/png', blob: bytes.toString('base64') }
@@ -526,8 +523,7 @@ export async function readResource(
       Buffer.byteLength(selection.text) > limit ||
       sha256(selection.text) !== selection.hash
     )
-      throw new StudyError(
-        'EVIDENCE_UNAVAILABLE',
+      throw new EvidenceIntegrityError(
         'Captured source exceeds limits or its sealed hash changed.',
       )
     return { uri, mimeType: selection.mimeType, text: selection.text }

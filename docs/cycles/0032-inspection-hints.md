@@ -1,9 +1,9 @@
 # Cycle 0032 — Truthful, bounded native-inspection hints
 
 Type: hardening\
-Status: validated (delivery pending: /ship, CI, exact-HEAD gate, merge)\
+Status: closed\
 Result: demonstrated (mechanism: all Issue #56 items red/green with disabled-fix controls; bounded installed native N1 in VS Code and Cursor; open: N1-c paused-foreign variant, N1-d, Cursor first-scope expansion O2, deferred minor B1 test bound)\
-Delivery: local-only\
+Delivery: merged (PR #58, `b9c846b`, 0.2.16.0)\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/56\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -281,6 +281,14 @@ Every finding is deferred to the next cycle, as the owner directed: fix only CRI
   2. Cursor's first-scope behavior (O2).
   3. The Cycle 0031 items that remain deferred.
 
+### Delivery closure, 2026-10-01
+
+- PR #58 (head `d46b07e`) passed every PR check. The separate exact-HEAD gate then passed: OPEN, MERGEABLE and CLEAN, with the same HEAD locally, on the remote and on the PR, base `d526695`, 11 of 11 checks passing, no unresolved thread, and Codex having reviewed that HEAD.
+- The merge ran as its own step, squash-merging as `b9c846b` at 00:40:24 UTC. The merged tree is identical to the reviewed candidate.
+- Every post-merge `main` CI job on `b9c846b` passed: Format, Build, Fallow, TypeCheck, Lint, Test, and Build, test and package (runs `36797344*`).
+- The merge closed Issue #56, and the closure comment links its successor. Goal #1 stays open.
+- Every open item (the delivery-review deferrals, O2, N1-c, the DOM-harness cases and the upper bound of the B1 test) is specified in [Cycle 0033](0033-presentation-liveness.md) (Issue #59). N1-d is still out of scope, because it needs a UI route change.
+
 ## Handoff
 
 - Evidence: `artifacts/cycle-0032/native/` holds the receipts, action logs, contact sheets and hashes listed above. `artifacts/cycle-0032/reviews/` holds the review outputs.
@@ -288,7 +296,7 @@ Every finding is deferred to the next cycle, as the owner directed: fix only CRI
 
 ## Next action
 
-- Exact next action: `/ship` this branch (the PR body starts with `@coderabbitai ignore`), wait for CI, run a separate exact-HEAD gate, then merge in its own step. After that, record the delivery and plan Cycle 0033 through `/spec` (D044).
-- Changed files / branch / active processes: `codex/cycle-0032-inspection-hints`; no active processes.
+- Exact next action: done. The cycle is delivered and closed. Continue with [Cycle 0033](0033-presentation-liveness.md).
+- Changed files / branch / active processes: merged as `b9c846b`; no active processes.
 - State updated in PROJECT_STATE.md: active cycle, AC-REPLAY, AC-GAPS and AC-ENTRY native receipts, next action.
 - Durable decisions updated: none.

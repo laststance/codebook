@@ -24,6 +24,7 @@ import {
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
+  PRESENTATION_SETTLE_CEILING_MS,
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
   STUDY_PRESENTATIONS,
 } from './constants'
@@ -115,6 +116,7 @@ import {
   isProportionalEditorLayout,
 } from './utils/isProportionalEditorLayout'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
+import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { projectLearningSummary } from './utils/projectLearningSummary'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
@@ -295,6 +297,10 @@ export class StudyWorkspace {
   private replayViewport?: BrowserViewport
   private replayNeedsReveal = false
   private replayDelivery: ViewportDeliveryLog = { receipts: [], omitted: 0 }
+  /** The replay paint phase in progress, from {@link beginReplayPaint} until its {@link endReplayPaint}. */
+  private replayPaint?: { token: object; startedAt: number }
+  /** {@link settleOwnedPlayback} waits that re-arm their paint bound whenever a paint phase begins or ends. */
+  private readonly replayPaintWatchers = new Set<() => void>()
   private playbackPending?: PlaybackBundle
   private playbackPresentingReady = false
   /** The recorded stop committed before native Run and Debug loaded its values; every frame of that stop shows how to load them. */
@@ -4052,7 +4058,11 @@ export class StudyWorkspace {
         this.presentationOperation,
         this.presentationWrite,
       ])
-      await this.playback?.settle()
+      // The pending frame was hidden above; one that never answers must not hold closing, but the learner's saved position still finishes.
+      await this.playback
+        ?.settle(undefined, PRESENTATION_READY_TIMEOUT_MS)
+        .catch(() => {})
+      await this.playback?.saved()
       this.replayViewport?.close()
       this.replayViewport = undefined
       this.nodeHistoryPlaybackController?.dispose()
@@ -4896,65 +4906,97 @@ export class StudyWorkspace {
     // Committing without native values stays truthful only with a visible way to load them in Run and Debug; later ticks of this stop keep it.
     this.replayUninspectedSnapshot =
       inspection === 'uninspected' ? bundle.projection.debugger : undefined
-    if (bundle.image) {
-      const image = bundle.image.toString('base64'),
-        label = `Recorded · ${(bundle.projection.positionMs / PLAYBACK_SECOND_MS).toFixed(2)} s`
-      // Earlier reveal/seek receipts must not be attributed to this frame's first attempt.
-      this.replayDelivery = { receipts: [], omitted: 0 }
-      try {
-        await viewport.present(image, label)
-      } catch (error) {
-        if (String(error) !== `Error: ${VIEWPORT_ACK_TIMEOUT_REASON}`)
-          throw error
-        signal.throwIfAborted()
-        const firstAttempt = this.drainReplayDelivery()
-        // A native pane handoff can lose one paint receipt; re-handshake this read-only renderer before retrying the same frame.
-        try {
-          await viewport.reveal(signal)
-        } catch (revealError) {
-          if (signal.aborted) throw revealError
-          throw new Error(
-            `${VIEWPORT_ACK_TIMEOUT_REASON}; the same-frame retry could not re-handshake the renderer: ${String(revealError)}. First attempt: ${firstAttempt}. Re-handshake: ${this.drainReplayDelivery()}.`,
-          )
-        }
-        signal.throwIfAborted()
+    // From here the moment is painting; settleOwnedPlayback bounds only this phase by PRESENTATION_READY_TIMEOUT_MS.
+    const paint = this.beginReplayPaint()
+    try {
+      if (bundle.image) {
+        const image = bundle.image.toString('base64'),
+          label = `Recorded · ${(bundle.projection.positionMs / PLAYBACK_SECOND_MS).toFixed(2)} s`
+        // Earlier reveal/seek receipts must not be attributed to this frame's first attempt.
+        this.replayDelivery = { receipts: [], omitted: 0 }
         try {
           await viewport.present(image, label)
-        } catch (retryError) {
-          if (signal.aborted) throw retryError
-          const retry = this.drainReplayDelivery()
-          // Name both attempts so Recording error details separate a second lost receipt from another retry failure.
-          throw new Error(
-            String(retryError) === `Error: ${VIEWPORT_ACK_TIMEOUT_REASON}`
-              ? `${VIEWPORT_ACK_TIMEOUT_REASON} again after one same-frame retry. First attempt: ${firstAttempt}. Retry: ${retry}.`
-              : `${VIEWPORT_ACK_TIMEOUT_REASON}; the same-frame retry then failed: ${String(retryError)}. First attempt: ${firstAttempt}. Retry: ${retry}.`,
-          )
+        } catch (error) {
+          if (String(error) !== `Error: ${VIEWPORT_ACK_TIMEOUT_REASON}`)
+            throw error
+          signal.throwIfAborted()
+          const firstAttempt = this.drainReplayDelivery()
+          // A native pane handoff can lose one paint receipt; re-handshake this read-only renderer before retrying the same frame.
+          try {
+            await viewport.reveal(signal)
+          } catch (revealError) {
+            if (signal.aborted) throw revealError
+            throw new Error(
+              `${VIEWPORT_ACK_TIMEOUT_REASON}; the same-frame retry could not re-handshake the renderer: ${String(revealError)}. First attempt: ${firstAttempt}. Re-handshake: ${this.drainReplayDelivery()}.`,
+            )
+          }
+          signal.throwIfAborted()
+          try {
+            await viewport.present(image, label)
+          } catch (retryError) {
+            if (signal.aborted) throw retryError
+            const retry = this.drainReplayDelivery()
+            // Name both attempts so Recording error details separate a second lost receipt from another retry failure.
+            throw new Error(
+              String(retryError) === `Error: ${VIEWPORT_ACK_TIMEOUT_REASON}`
+                ? `${VIEWPORT_ACK_TIMEOUT_REASON} again after one same-frame retry. First attempt: ${firstAttempt}. Retry: ${retry}.`
+                : `${VIEWPORT_ACK_TIMEOUT_REASON}; the same-frame retry then failed: ${String(retryError)}. First attempt: ${firstAttempt}. Retry: ${retry}.`,
+            )
+          }
         }
-      }
-    } else
-      await viewport.presentMissing(
-        bundle.projection.missing ?? 'No recorded application image.',
+      } else
+        await viewport.presentMissing(
+          bundle.projection.missing ?? 'No recorded application image.',
+          signal,
+        )
+      signal.throwIfAborted()
+      this.playbackPresentingReady = true
+      this.lastRendered = undefined
+      this.lastPublished = undefined
+      this.publish()
+      const revision = this.revision,
+        presentationRevision = this.playback!.state().presentationRevision
+      await waitUntil(
+        () =>
+          (this.summaryComposition && !this.summaryView?.visible) ||
+          (this.lastRendered?.revision === revision &&
+            this.lastRendered.presentationRevision === presentationRevision &&
+            this.lastRendered.snapshotUri ===
+              bundle.projection.observation?.snapshotUri),
+        'matching recorded context presentation',
+        CAPTURE_TIMEOUT_MS,
         signal,
       )
-    signal.throwIfAborted()
-    this.playbackPresentingReady = true
-    this.lastRendered = undefined
-    this.lastPublished = undefined
-    this.publish()
-    const revision = this.revision,
-      presentationRevision = this.playback!.state().presentationRevision
-    await waitUntil(
-      () =>
-        (this.summaryComposition && !this.summaryView?.visible) ||
-        (this.lastRendered?.revision === revision &&
-          this.lastRendered.presentationRevision === presentationRevision &&
-          this.lastRendered.snapshotUri ===
-            bundle.projection.observation?.snapshotUri),
-      'matching recorded context presentation',
-      CAPTURE_TIMEOUT_MS,
-      signal,
-    )
-    signal.throwIfAborted()
+      signal.throwIfAborted()
+    } finally {
+      this.endReplayPaint(paint)
+    }
+  }
+
+  /**
+   * Marks the start of a replay frame's paint phase for {@link settleOwnedPlayback}'s paint bound.
+   *
+   * {@link presentPlayback} calls it after native debugger presentation resolved, just before the viewport delivery.
+   *
+   * @returns This phase's token; only {@link endReplayPaint} with the same token ends it, so a superseded presentation that finishes late cannot end a newer phase.
+   * @example const paint = this.beginReplayPaint()
+   */
+  private beginReplayPaint(): object {
+    const paint = {}
+    this.replayPaint = { token: paint, startedAt: performance.now() }
+    for (const watch of [...this.replayPaintWatchers]) watch()
+    return paint
+  }
+
+  /**
+   * Ends the paint phase that {@link beginReplayPaint} started, on every exit of {@link presentPlayback}.
+   * @param paint - Token returned when this phase began.
+   * @example this.endReplayPaint(paint)
+   */
+  private endReplayPaint(paint: object): void {
+    if (this.replayPaint?.token !== paint) return
+    this.replayPaint = undefined
+    for (const watch of [...this.replayPaintWatchers]) watch()
   }
 
   /**
@@ -5000,12 +5042,15 @@ export class StudyWorkspace {
   /**
    * Waits for the replay frame a presentation change or repository navigation just requested, without holding its lock forever.
    *
-   * A frame revealed while the replay panel is hidden may never paint, so the wait ends at `signal` or after
-   * {@link PRESENTATION_READY_TIMEOUT_MS}. The pending frame is then hidden only while this caller's playback revision is
-   * still current, so an expired older wait never cancels a newer navigation's frame.
+   * A frame revealed while the replay panel is hidden may never paint, so each paint phase gets
+   * {@link PRESENTATION_READY_TIMEOUT_MS}: the bound arms when a phase begins (counting one already in progress from its start),
+   * clears when it ends and re-arms for the next one. Loading, native debugger retirement/startup and preference saves do not
+   * count against it; {@link PRESENTATION_SETTLE_CEILING_MS} still ends a wait that never reaches painting. On expiry or abort
+   * the pending frame is hidden only while this caller's playback revision is still current, so an expired older wait never
+   * cancels a newer navigation's frame.
    *
    * @param signal - The presentation transition's or navigation's cancellation.
-   * @throws The signal's reason when it aborted, otherwise a `PRESENTATION_UNAVAILABLE` {@link StudyError} after the bound.
+   * @throws The signal's reason when it aborted, otherwise a `PRESENTATION_UNAVAILABLE` {@link StudyError} after a bound.
    * @example
    * ```ts
    * this.playback!.reveal()
@@ -5014,9 +5059,31 @@ export class StudyWorkspace {
    */
   private async settleOwnedPlayback(signal?: AbortSignal): Promise<void> {
     const playback = this.playback!,
-      ownedRevision = playback.state().revision
+      ownedRevision = playback.state().revision,
+      paintExpired = new AbortController()
+    let paintTimer: ReturnType<typeof setTimeout> | undefined
+    const watchPaint = (): void => {
+      clearTimeout(paintTimer)
+      paintTimer = undefined
+      const startedAt = this.replayPaint?.startedAt
+      if (startedAt === undefined) return
+      paintTimer = setTimeout(
+        () => paintExpired.abort(),
+        Math.max(
+          0,
+          startedAt + PRESENTATION_READY_TIMEOUT_MS - performance.now(),
+        ),
+      )
+    }
+    this.replayPaintWatchers.add(watchPaint)
+    watchPaint()
     try {
-      await playback.settle(signal, PRESENTATION_READY_TIMEOUT_MS)
+      await playback.settle(
+        signal
+          ? AbortSignal.any([signal, paintExpired.signal])
+          : paintExpired.signal,
+        PRESENTATION_SETTLE_CEILING_MS,
+      )
     } catch {
       // Only the owner of the pending frame retires it; its confirmed moment stays for the next reveal.
       if (playback.state().revision === ownedRevision) playback.hide()
@@ -5025,6 +5092,9 @@ export class StudyWorkspace {
         'PRESENTATION_UNAVAILABLE',
         'The recorded replay frame did not finish presenting. Show the replay, then try again.',
       )
+    } finally {
+      clearTimeout(paintTimer)
+      this.replayPaintWatchers.delete(watchPaint)
     }
   }
 
@@ -5386,6 +5456,8 @@ export class StudyWorkspace {
         ...(selectedNodeHistoryStop
           ? {
               index: selectedNodeHistoryStop.index,
+              // A verified source match stays true after the session ends; only debuggerAvailable tracks the native session.
+              sourceAvailable: nodeStopSourceMatches(selectedNodeHistoryStop),
               debuggerAvailable: this.selectedNodeHistoryDebugAvailable,
               nativeValuesUninspected:
                 this.selectedNodeHistoryValuesUninspected,
@@ -8415,6 +8487,8 @@ export class StudyWorkspace {
    */
   private replayDebuggerChanged(reason: ReplayDebuggerChange): void {
     if (this.closing) return
+    // Handling this notification succeeded, so an earlier failure to handle one no longer describes the debugger.
+    const failureCleared = this.errors.delete('replay-debugger')
     // The ended session no longer shows the Node stop, whether or not a hint was showing.
     const availabilityChanged =
       reason === 'session-ended' && this.selectedNodeHistoryDebugAvailable
@@ -8424,7 +8498,7 @@ export class StudyWorkspace {
       this.selectedNodeHistoryValuesUninspected
     this.replayUninspectedSnapshot = undefined
     this.selectedNodeHistoryValuesUninspected = false
-    if (availabilityChanged || hintShown) this.publish()
+    if (availabilityChanged || hintShown || failureCleared) this.publish()
   }
 
   /** Selects one verified Node journal moment and clears stale debugger state across unrecorded intervals. @example await this.selectNodeHistoryEvent(history, 24) */
@@ -8442,17 +8516,7 @@ export class StudyWorkspace {
       throw new Error('The requested Node history event is unavailable.')
     if (entry.type === 'stop') {
       const source = entry.debuggerSnapshot.frames[0]?.source
-      const sourceMatchesStop = Boolean(
-        source &&
-        source.name === entry.source.path &&
-        source.hash === entry.source.hash &&
-        source.line === entry.source.line &&
-        sha256(source.text) === source.hash &&
-        entry.frame.line === entry.source.line &&
-        entry.frame.column === entry.source.column &&
-        entry.debuggerSnapshot.frames[0]?.line === entry.frame.line &&
-        entry.debuggerSnapshot.frames[0]?.column === entry.frame.column,
-      )
+      const sourceMatchesStop = nodeStopSourceMatches(entry)
       if (!sourceMatchesStop && requireDebugger) {
         throw new Error(
           'The selected Node stop has no matching verified captured source for native debugging.',

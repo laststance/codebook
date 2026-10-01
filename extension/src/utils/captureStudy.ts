@@ -5,7 +5,7 @@ import {
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
 } from '../constants'
-import { StudyError } from '../errors'
+import { EvidenceIntegrityError, StudyError } from '../errors'
 import { readResource } from '../resources'
 import type { RetainedStudy } from '../retainedStudySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -32,8 +32,10 @@ export async function captureStudy(
     try {
       return await readResource(service, uri)
     } catch (error) {
+      // Altered sealed bytes stay an integrity failure even when the state also changed meanwhile.
       if (
         error instanceof StudyError &&
+        !(error instanceof EvidenceIntegrityError) &&
         error.code === 'EVIDENCE_UNAVAILABLE' &&
         service.state(record).materialSignature !== signature
       )

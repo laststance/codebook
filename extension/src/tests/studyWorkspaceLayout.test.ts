@@ -3,7 +3,10 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { PRESENTATION_READY_TIMEOUT_MS } from '../constants'
+import {
+  PRESENTATION_READY_TIMEOUT_MS,
+  PRESENTATION_SETTLE_CEILING_MS,
+} from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
@@ -3251,10 +3254,9 @@ test('repository evidence whose recorded frame never paints fails within its bou
   try {
     const neverPainted = harness.holdNextImage()
     release = neverPainted.release
-    const startedAt = performance.now()
 
     // Act
-    const outcome = await settleWithin(
+    const navigation = settleWithin(
       harness.reader.openRepositoryEvidence(
         harness.binding,
         true,
@@ -3263,17 +3265,20 @@ test('repository evidence whose recorded frame never paints fails within its bou
       ),
       PRESENTATION_READY_TIMEOUT_MS + 1_500,
     )
-    const elapsedMs = performance.now() - startedAt
+    await neverPainted.started
+    const paintStartedAt = performance.now()
+    const outcome = await navigation
+    const elapsedMs = performance.now() - paintStartedAt
     // A navigation that still waits leaves playback busy; stop here instead of hanging the recovery open.
     assert.equal(outcome, 'PRESENTATION_UNAVAILABLE')
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
 
-    // Assert
+    // Assert: the bound is measured from the paint phase, with both a lower and an upper limit (Cycle 0033 AC4).
     assert.ok(
       elapsedMs >= PRESENTATION_READY_TIMEOUT_MS - 250 &&
-        elapsedMs < PRESENTATION_READY_TIMEOUT_MS + 1_000,
-      `bounded evidence navigation took ${Math.round(elapsedMs)} ms`,
+        elapsedMs <= PRESENTATION_READY_TIMEOUT_MS + 250,
+      `bounded evidence navigation took ${Math.round(elapsedMs)} ms after its paint started`,
     )
     assert.equal(harness.controller.state().readiness, 'ready')
     assert.equal(harness.controller.bundle()?.studyId, harness.studyId)
@@ -3326,6 +3331,166 @@ test('an evidence navigation that gives up never cancels a newer learner seek', 
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
     for (const release of releases) release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a healthy cold presentation whose native debugger needs 4 s before a 2 s paint; fails_when=the 5 s bound again covers the native debugger wait instead of painting only; why_new=Cycle 0033 B2 (Red Team/Claude adversarial in Cycle 0032); seam=none
+test('a cold evidence navigation whose native debugger takes 4 s and whose frame paints in 2 s still presents', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true)
+  const releases: Array<() => void> = []
+  try {
+    // The opening gap frame has no image; hold the recorded stop so its debugger wait and its paint share one settle.
+    const slowDebugger = harness.holdHistoricalDebugPresentation(true)
+    releases.push(slowDebugger.release)
+    const slowPaint = harness.holdNextImage()
+    releases.push(slowPaint.release)
+
+    // Act
+    const navigation = settleWithin(
+      harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      ),
+      PRESENTATION_SETTLE_CEILING_MS + 1_500,
+    )
+    await slowDebugger.started
+    await new Promise<void>((resolve) => setTimeout(resolve, 4_000))
+    slowDebugger.release()
+    await slowPaint.started
+    await new Promise<void>((resolve) => setTimeout(resolve, 2_000))
+    slowPaint.release()
+    const outcome = await navigation
+
+    // Assert
+    assert.equal(outcome, 'completed')
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(
+      harness.controller.state().presentedMs,
+      harness.binding.elapsedMs,
+    )
+  } finally {
+    for (const release of releases) release()
+    await harness.close()
+  }
+})
+
+// Value: protects=an evidence navigation whose presentation never reaches painting still ending; fails_when=the settle has no ceiling once the paint bound covers painting only; why_new=Cycle 0033 B2 ceiling; seam=none
+test('an evidence navigation stuck before painting fails at the settle ceiling and the next recording open presents', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true)
+  const stuckDebugger = harness.holdHistoricalDebugPresentation()
+  try {
+    const startedAt = performance.now()
+
+    // Act
+    const outcome = await settleWithin(
+      harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      ),
+      PRESENTATION_SETTLE_CEILING_MS + 1_500,
+    )
+    const elapsedMs = performance.now() - startedAt
+    stuckDebugger.reject(new Error('Playback presentation superseded'))
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(outcome, 'PRESENTATION_UNAVAILABLE')
+    assert.ok(
+      elapsedMs >= PRESENTATION_SETTLE_CEILING_MS - 250 &&
+        elapsedMs <= PRESENTATION_SETTLE_CEILING_MS + 1_000,
+      `stuck evidence navigation took ${Math.round(elapsedMs)} ms`,
+    )
+    assert.equal(harness.controller.state().readiness, 'ready')
+  } finally {
+    stuckDebugger.release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a navigation whose first frame is superseded by a learner seek giving the newer frame its own full paint bound; fails_when=the paint bound is armed once per settle instead of per paint phase; why_new=Cycle 0033 A3 (eng review); seam=none
+test('a newer frame painted during an evidence navigation gets its own paint bound', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true)
+  const releases: Array<() => void> = []
+  try {
+    const firstPaint = harness.holdNextImage()
+    releases.push(firstPaint.release)
+    const navigation = settleWithin(
+      harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      ),
+      PRESENTATION_SETTLE_CEILING_MS + 1_500,
+    )
+    await firstPaint.started
+    await new Promise<void>((resolve) => setTimeout(resolve, 3_000))
+    const seekPaint = harness.holdNextImage()
+    releases.push(seekPaint.release)
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 150,
+    })
+    await seekPaint.started
+    await new Promise<void>((resolve) => setTimeout(resolve, 3_000))
+    seekPaint.release()
+    const outcome = await navigation
+    await harness.controller.settle()
+
+    // Assert: 6 s after the first paint began, the newer frame had painted for only 3 s, so no bound expired.
+    assert.notEqual(outcome, 'PRESENTATION_UNAVAILABLE')
+    assert.equal(harness.controller.state().presentedMs, 150)
+    assert.equal(harness.controller.state().readiness, 'ready')
+  } finally {
+    for (const release of releases) release()
+    await harness.close()
+  }
+})
+
+// Value: protects=leaving an evidence navigation the learner cancelled while its frame paints, without reporting an unavailable presentation; fails_when=settleOwnedPlayback converts the caller's abort into PRESENTATION_UNAVAILABLE or keeps waiting; why_new=Cycle 0033 S7 (abort branch untested); seam=none
+test('an evidence navigation cancelled while its frame paints ends with the cancellation, and the next recording open presents', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true)
+  const neverPainted = harness.holdNextImage()
+  const cancellation = new AbortController()
+  try {
+    const navigation = settleWithin(
+      harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        cancellation.signal,
+        harness.origin,
+      ),
+      PRESENTATION_READY_TIMEOUT_MS,
+    )
+    await neverPainted.started
+
+    // Act
+    cancellation.abort(new Error('The learner left this evidence'))
+    const outcome = await navigation
+    neverPainted.release()
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.notEqual(outcome, 'PRESENTATION_UNAVAILABLE')
+    assert.notEqual(outcome, 'still waiting')
+    assert.equal(harness.controller.state().readiness, 'ready')
+  } finally {
+    neverPainted.release()
     await harness.close()
   }
 })

@@ -704,3 +704,177 @@ test('a settle with a signal ends as soon as its caller aborts', async () => {
   release()
   await player.controller.dispose()
 })
+
+// Value: protects=presentation changes while a preference save waits behind the storage lock; fails_when=a bounded settle waits for saves again; why_new=Cycle 0033 B2 (the bounded settle tests never hold a save); seam=none
+test('a bounded settle does not wait for a preference save that is still held by storage', async () => {
+  // Arrange
+  const player = playbackHarness()
+  player.open()
+  await player.controller.settle()
+  let releaseSave: () => void = () => undefined
+  const storageHeld = new Promise<void>((resolve) => {
+    releaseSave = resolve
+  })
+  player.dependencies.save = async (bundle): Promise<void> => {
+    await storageHeld
+    player.saved.push(bundle.projection.positionMs)
+  }
+  player.seek(100)
+
+  // Act
+  const outcome = await player.controller
+    .settle(new AbortController().signal, 50)
+    .then(
+      () => 'settled',
+      (error: unknown) => String(error),
+    )
+
+  // Assert
+  assert.equal(outcome, 'settled')
+  assert.equal(player.controller.state().presentedMs, 100)
+  releaseSave()
+  await player.controller.saved()
+  assert.deepEqual(player.saved.at(-1), 100)
+  await player.controller.dispose()
+})
+
+// Value: protects=recovering a recording whose frame was retired by a presentation timeout; fails_when=opening the same recording returns early while its confirmed moment is unpainted; why_new=Cycle 0033 O1 (Codex outside voice); seam=none
+test('opening the same recording after its frame was hidden paints the confirmed moment again', async () => {
+  // Arrange
+  const player = playbackHarness()
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  player.controller.hide()
+  const paintsBefore = player.presented.length
+
+  // Act
+  player.open()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.displayed(), 100)
+  assert.equal(player.presented.length, paintsBefore + 1)
+  assert.equal(player.controller.state().readiness, 'ready')
+  await player.controller.dispose()
+})
+
+// Value: protects=later seeks when an earlier frame read never answers and ignores its abort; fails_when=pump awaits a dependency read without leaving on the request's abort; why_new=Cycle 0033 O2 (Codex outside voice); seam=none
+test(
+  'a newer seek presents while an earlier frame read never answers',
+  { timeout: 10_000 },
+  async () => {
+    // Arrange
+    const player = playbackHarness()
+    player.open()
+    await player.controller.settle()
+    const answeredFrame = player.dependencies.frame
+    player.dependencies.frame = async (studyId, hash, signal) =>
+      hash === sha256('frame-100')
+        ? new Promise<Buffer>(() => {})
+        : answeredFrame(studyId, hash, signal)
+    player.seek(100)
+
+    // Act
+    player.seek(200)
+    const outcome = await player.controller
+      .settle(new AbortController().signal, 1_000)
+      .then(
+        () => 'settled',
+        (error: unknown) => String(error),
+      )
+
+    // Assert
+    assert.equal(outcome, 'settled')
+    assert.equal(player.controller.state().presentedMs, 200)
+    assert.equal(player.displayed(), 200)
+    await player.controller.dispose()
+  },
+)
+
+// Value: protects=opening another recording while an earlier recording's load never answers and ignores its abort; fails_when=pump awaits the recording load without leaving on the request's abort; why_new=Cycle 0033 O2 guards three dependency waits and only the frame read had a test; seam=none
+test(
+  'another recording opens while an earlier recording load never answers',
+  { timeout: 10_000 },
+  async () => {
+    // Arrange
+    const player = playbackHarness(),
+      other = playbackFixture()
+    let entered: () => void = () => undefined
+    const stalledLoadStarted = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    player.dependencies.load = async (studyId) => {
+      if (studyId !== player.studyId) return other
+      entered()
+      return new Promise<PlaybackData>(() => {})
+    }
+    player.open()
+    await stalledLoadStarted
+
+    // Act
+    player.controller.command({
+      studyId: other.index.header.studyId,
+      action: 'open',
+      expectedRevision: player.controller.state().revision,
+    })
+    const outcome = await player.controller
+      .settle(new AbortController().signal, 1_000)
+      .then(
+        () => 'settled',
+        (error: unknown) => String(error),
+      )
+
+    // Assert
+    assert.equal(outcome, 'settled')
+    assert.equal(player.controller.state().readiness, 'ready')
+    assert.equal(player.controller.state().presentedMs, 0)
+    assert.equal(
+      player.controller.bundle()?.studyId,
+      other.index.header.studyId,
+    )
+    await player.controller.dispose()
+  },
+)
+
+// Value: protects=later seeks when an earlier frame's paint never answers and ignores its abort; fails_when=pump awaits the presentation without leaving on the request's abort; why_new=Cycle 0033 O2 guards three dependency waits, and the reader close test still passes with the close bound alone; seam=none
+test(
+  'a newer seek presents while an earlier frame paint never answers',
+  { timeout: 10_000 },
+  async () => {
+    // Arrange
+    const player = playbackHarness()
+    player.open()
+    await player.controller.settle()
+    const answeredPaint = player.dependencies.present
+    let entered: () => void = () => undefined
+    const stalledPaintStarted = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    player.dependencies.present = async (bundle, signal): Promise<void> => {
+      if (bundle.projection.positionMs !== 100)
+        return answeredPaint(bundle, signal)
+      entered()
+      return new Promise<void>(() => {})
+    }
+    player.seek(100)
+    await stalledPaintStarted
+
+    // Act
+    player.seek(200)
+    const outcome = await player.controller
+      .settle(new AbortController().signal, 1_000)
+      .then(
+        () => 'settled',
+        (error: unknown) => String(error),
+      )
+
+    // Assert
+    assert.equal(outcome, 'settled')
+    assert.equal(player.controller.state().readiness, 'ready')
+    assert.equal(player.controller.state().presentedMs, 200)
+    assert.equal(player.displayed(), 200)
+    await player.controller.dispose()
+  },
+)

@@ -61,7 +61,7 @@ async function flushNative(): Promise<void> {
   for (let turn = 0; turn < 5; turn++)
     await new Promise<void>((resolve) => setImmediate(resolve))
 }
-/** Exposes owned native lifecycle operations and counts reader notifications; `manualInspection` lets readiness tests withhold client requests, `disconnectBeforeTermination` models native Stop ordering and `configurationGate` delays the editor's configurationDone (and so the first stopped event). @example harness().changes() */
+/** Exposes owned native lifecycle operations and counts reader notifications; `manualInspection` lets readiness tests withhold client requests, `disconnectBeforeTermination` models native Stop ordering, `configurationGate` delays the editor's configurationDone (and so the first stopped event) and `refusalGate` delays each refused start's answer. @example harness().changes() */
 function harness(
   startGate?: Promise<void>,
   terminationGate?: Promise<void>,
@@ -69,14 +69,17 @@ function harness(
   disconnectBeforeTermination = false,
   manualInspection = false,
   configurationGate?: Promise<void>,
+  refusalGate?: Promise<void>,
 ) {
   const terminated = new TestEmitter<vscode.DebugSession>(),
     stopped: string[] = [],
     messages: Array<DebugProtocol.Response | DebugProtocol.Event> = []
   let factory: vscode.DebugAdapterDescriptorFactory | undefined,
     adapter: vscode.DebugAdapter | undefined,
+    inline: { implementation: vscode.DebugAdapter } | undefined,
     session: vscode.DebugSession | undefined
   let sessionCount = 0
+  let startCalls = 0
   let requestSequence = 100
   /** Models a real native-client request against the current adapter for lifecycle tests. @example request('threads').body.threads */
   function request(command: string, arguments_?: unknown) {
@@ -116,6 +119,7 @@ function harness(
   class Inline {
     constructor(public implementation: vscode.DebugAdapter) {
       adapter = implementation
+      inline = this
       implementation.onDidSendMessage((message) => {
         // VS Code intentionally types its wire message as opaque; this inline adapter emits only DAP events and responses.
         const protocolMessage = message as
@@ -148,8 +152,12 @@ function harness(
           throw new Error('Expected an owned inline configuration')
         if (refusedStarts > 0) {
           refusedStarts--
+          startCalls++
+          signalStarted()
+          await refusalGate
           return false
         }
+        startCalls++
         session = {
           id:
             ++sessionCount === 1
@@ -205,6 +213,12 @@ function harness(
     request,
     inspect,
     changes: () => changes,
+    startCalls: () => startCalls,
+    /** Models the editor disposing the inline adapter before it reports the session's termination. */
+    disposeAdapter: (): void => {
+      assert.ok(inline)
+      inline.implementation.dispose()
+    },
     terminate: (): void => {
       assert.ok(session)
       terminated.fire(session)
@@ -1466,6 +1480,465 @@ test('an abandoned presentation leaves a native startup that never answers, and 
     )
   } finally {
     releaseStart()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=retrying a startup the editor refused after its only presentation was abandoned; fails_when=the refusal stays cached because cleanup runs only for a waiter that was not aborted; why_new=Cycle 0033 L1 (Codex probe: 1 start call instead of 2); seam=none
+test('a startup the editor refuses after its only presentation was abandoned is retried by the next presentation', async () => {
+  // Arrange
+  let answerRefusal = (): void => {}
+  const refusalGate = new Promise<void>((resolve) => {
+    answerRefusal = resolve
+  })
+  const fixture = harness(
+    undefined,
+    undefined,
+    1,
+    false,
+    false,
+    undefined,
+    refusalGate,
+  )
+  const abandoned = new AbortController()
+  const first = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', abandoned.signal)
+    .catch((error: unknown) => String(error))
+  await fixture.started
+  abandoned.abort(new Error('Playback presentation superseded'))
+  await first
+  try {
+    // Act
+    answerRefusal()
+    await flushNative()
+    const next = await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause',
+      new AbortController().signal,
+    )
+
+    // Assert
+    assert.equal(next, 'inspected')
+    assert.equal(fixture.startCalls(), 2)
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=a saved Node stop selection, whose signal never aborts, when the editor never answers startDebugging; fails_when=the shared startup has no bound; why_new=Cycle 0033 A2; seam=none
+test('a startup the editor never answers makes the historical debugger unavailable after the capture timeout instead of waiting forever', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const fixture = harness(
+    undefined,
+    undefined,
+    1,
+    false,
+    false,
+    undefined,
+    new Promise<void>(() => {}),
+  )
+  let outcome = 'pending'
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then(
+      (result) => {
+        outcome = result
+      },
+      (error: unknown) => {
+        outcome = String(error)
+      },
+    )
+  try {
+    await fixture.started
+    await flushNative()
+
+    // Act
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS - 1)
+    await flushNative()
+    const beforeDeadline = outcome
+    context.mock.timers.tick(1)
+    await showing
+
+    // Assert
+    assert.equal(beforeDeadline, 'pending')
+    assert.match(outcome, /Historical debugger closed/)
+    assert.equal(fixture.owner.available, false)
+    assert.equal(fixture.changes(), 1)
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=no unowned "Codebook · Recorded learning" session after a startup outlived its bound; fails_when=a late session of an expired owner keeps running; why_new=Cycle 0033 A2; seam=none
+test('a session the editor starts after the startup bound expired is stopped once its startup completes', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let releaseStart = (): void => {}
+  const startGate = new Promise<void>((resolve) => {
+    releaseStart = resolve
+  })
+  const fixture = harness(startGate)
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .catch((error: unknown) => String(error))
+  try {
+    await fixture.started
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
+    const outcome = await showing
+
+    // Act
+    releaseStart()
+    await flushNative()
+
+    // Assert
+    assert.match(outcome, /Historical debugger closed/)
+    assert.deepEqual(fixture.stopped, ['historical-owned'])
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=the playback queue when the editor never finishes stopping the old stop's session; fails_when=retire() awaits the shared retirement without the presentation signal; why_new=Cycle 0033 L2; seam=none
+test('a presentation cancelled while the old stop is still retiring leaves at once with its own reason', async () => {
+  // Arrange
+  let releaseTermination = (): void => {}
+  const fixture = harness(
+    undefined,
+    new Promise<void>((resolve) => {
+      releaseTermination = resolve
+    }),
+  )
+  await fixture.owner.present(
+    firstSnapshot,
+    'First recorded stop',
+    new AbortController().signal,
+  )
+  const cancelled = new AbortController()
+  try {
+    fixture.owner.invalidate()
+    const retiring = fixture.owner
+      .retire(undefined, cancelled.signal)
+      .catch((error: unknown) => String(error))
+    await fixture.stopRequested
+
+    // Act
+    cancelled.abort(new Error('Playback presentation superseded'))
+    const outcome = await Promise.race([
+      retiring,
+      delay(POLL_INTERVAL_MS * 4, 'still waiting for native termination'),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'Error: Playback presentation superseded')
+  } finally {
+    releaseTermination()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=later presentations when the editor never finishes stopping the old stop's session; fails_when=the shared retirement has no bound; why_new=Cycle 0033 L2; seam=none
+test('a retirement the editor never finishes makes later presentations fail with the closed-debugger error after the capture timeout', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let releaseTermination = (): void => {}
+  const fixture = harness(
+    undefined,
+    new Promise<void>((resolve) => {
+      releaseTermination = resolve
+    }),
+  )
+  await fixture.owner.present(
+    firstSnapshot,
+    'First recorded stop',
+    new AbortController().signal,
+  )
+  fixture.owner.invalidate()
+  let outcome = 'pending'
+  const retiring = fixture.owner
+    .retire(undefined, new AbortController().signal)
+    .then(
+      () => {
+        outcome = 'retired'
+      },
+      (error: unknown) => {
+        outcome = String(error)
+      },
+    )
+  try {
+    await fixture.stopRequested
+    await flushNative()
+
+    // Act
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS - 1)
+    await flushNative()
+    const beforeDeadline = outcome
+    context.mock.timers.tick(1)
+    await retiring
+
+    // Assert
+    assert.equal(beforeDeadline, 'pending')
+    assert.match(outcome, /Historical debugger closed/)
+    assert.equal(fixture.owner.available, false)
+    await assert.rejects(
+      fixture.owner.present(
+        undefined,
+        'Second recorded stop',
+        new AbortController().signal,
+      ),
+      /Historical debugger closed/,
+    )
+  } finally {
+    context.mock.timers.reset()
+    releaseTermination()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=an expired retirement staying unavailable when the editor finally reports termination; fails_when=the termination handler re-attaches the owner because the retiring session id survived expiry; why_new=Cycle 0033 O3 (Codex outside voice); seam=none
+test('a termination that arrives after the retirement bound expired leaves the historical debugger unavailable', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let releaseTermination = (): void => {}
+  const terminationGate = new Promise<void>((resolve) => {
+    releaseTermination = resolve
+  })
+  const fixture = harness(undefined, terminationGate)
+  await fixture.owner.present(
+    firstSnapshot,
+    'First recorded stop',
+    new AbortController().signal,
+  )
+  fixture.owner.invalidate()
+  const retiring = fixture.owner
+    .retire(undefined, new AbortController().signal)
+    .catch((error: unknown) => String(error))
+  try {
+    await fixture.stopRequested
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
+    await retiring
+
+    // Act
+    releaseTermination()
+    await flushNative()
+
+    // Assert
+    assert.equal(fixture.owner.available, false)
+    await assert.rejects(
+      fixture.owner.present(
+        undefined,
+        'Second recorded stop',
+        new AbortController().signal,
+      ),
+      /Historical debugger closed/,
+    )
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=closing the reader and replacing an unavailable debugger when the editor never acknowledges the stop; fails_when=dispose() awaits stopDebugging without a bound; why_new=Cycle 0033 A1; seam=none
+test('closing the historical debugger completes after the capture timeout when the editor never acknowledges the stop', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const fixture = harness(undefined, new Promise<void>(() => {}))
+  await fixture.owner.present(
+    undefined,
+    'Not recorded at this moment',
+    new AbortController().signal,
+  )
+  let closed = false
+  // Act
+  const closing = fixture.owner.dispose().then(() => {
+    closed = true
+  })
+  await fixture.stopRequested
+  await flushNative()
+  context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS - 1)
+  await flushNative()
+  const beforeDeadline = closed
+  context.mock.timers.tick(1)
+  await closing
+  context.mock.timers.reset()
+
+  // Assert
+  assert.equal(beforeDeadline, false)
+  assert.equal(closed, true)
+  assert.deepEqual(fixture.stopped, ['historical-owned'])
+})
+
+// Value: protects=the 1 s grace when the wall clock jumps backward before a later presentation waits on the same stop; fails_when=the grace delay is computed from Date without a nominal cap; why_new=Cycle 0033 M1 (e); seam=node:test Date mock
+test('a backward wall-clock jump cannot stretch the grace for a stop whose values Run and Debug never loads', async (context) => {
+  // Arrange
+  context.mock.timers.enable({
+    apis: ['setTimeout', 'Date'],
+    now: 10_000_000,
+  })
+  const fixture = harness(undefined, undefined, 0, false, true),
+    abandoned = new AbortController()
+  const first = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', abandoned.signal)
+    .catch((error: unknown) => String(error))
+  let outcome = 'pending'
+  try {
+    await fixture.started
+    await flushNative()
+    abandoned.abort(new Error('Playback presentation superseded'))
+    await first
+
+    // Act
+    context.mock.timers.setTime(10_000_000 - 3_600_000)
+    const again = fixture.owner
+      .present(
+        inspectedSnapshot,
+        'Recorded pause',
+        new AbortController().signal,
+      )
+      .then(
+        (result) => {
+          outcome = result
+        },
+        (error: unknown) => {
+          outcome = String(error)
+        },
+      )
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+    await flushNative()
+
+    // Assert
+    assert.equal(outcome, 'uninspected')
+    await again
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=a stop whose only Variables group is the synthetic Recording limitations note committing at once; fails_when=hasLoadableValues counts the synthetic scope and the stop waits for a grace that cannot load recorded values; why_new=Cycle 0033 M1 (a); seam=none
+test('a stop whose only Variables group is the recording limitations note commits at once without waiting for Run and Debug', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const limitedSnapshot: ReplayDebugSnapshot = {
+    version: 1,
+    frames: [
+      {
+        name: 'LoginButton',
+        line: 90,
+        column: 5,
+        scopes: [],
+        unavailable: 'Scopes were not captured at this stop.',
+      },
+    ],
+    variables: [],
+    limitations: [],
+  }
+  try {
+    // Act
+    const outcome = await Promise.race([
+      fixture.owner.present(
+        limitedSnapshot,
+        'Recorded pause',
+        new AbortController().signal,
+      ),
+      delay(POLL_INTERVAL_MS * 4, 'still waiting for Run and Debug'),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'no-values')
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=a stop presented into an adapter the editor already disposed failing closed instead of committing as "no values"; fails_when=present() treats a disposed adapter's empty state as a gap; why_new=Cycle 0033 M1 (g); seam=none
+test('a stop presented after the editor disposed the historical adapter fails closed instead of committing without values', async () => {
+  // Arrange
+  const fixture = harness()
+  await fixture.owner.present(
+    firstSnapshot,
+    'First recorded stop',
+    new AbortController().signal,
+  )
+  try {
+    fixture.disposeAdapter()
+
+    // Act
+    const outcome = await fixture.owner
+      .present(
+        inspectedSnapshot,
+        'Second recorded stop',
+        new AbortController().signal,
+      )
+      .catch((error: unknown) => String(error))
+
+    // Assert
+    assert.match(outcome, /Historical debugger closed/)
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=the 5 s capture deadline when the wall clock jumps backward before a later presentation waits on a stop Run and Debug was never told about; fails_when=the stopped-event deadline is computed from Date without its nominal cap; why_new=Cycle 0033 C2 clamps two delays and only the 1 s grace had a test; seam=none
+test('a backward wall-clock jump cannot stretch the capture deadline for a stop Run and Debug is never told about', async (context) => {
+  // Arrange
+  context.mock.timers.enable({
+    apis: ['setTimeout', 'Date'],
+    now: 10_000_000,
+  })
+  const fixture = harness(
+      undefined,
+      undefined,
+      0,
+      false,
+      true,
+      new Promise<void>(() => {}),
+    ),
+    abandoned = new AbortController()
+  const first = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', abandoned.signal)
+    .catch((error: unknown) => String(error))
+  let outcome = 'pending'
+  try {
+    await fixture.started
+    await flushNative()
+    abandoned.abort(new Error('Playback presentation superseded'))
+    await first
+
+    // Act
+    context.mock.timers.setTime(10_000_000 - 3_600_000)
+    const again = fixture.owner
+      .present(
+        inspectedSnapshot,
+        'Recorded pause',
+        new AbortController().signal,
+      )
+      .then(
+        (result) => {
+          outcome = result
+        },
+        (error: unknown) => {
+          outcome = String(error)
+        },
+      )
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS - 1)
+    await flushNative()
+    const beforeDeadline = outcome
+    context.mock.timers.tick(1)
+    await flushNative()
+
+    // Assert
+    assert.equal(beforeDeadline, 'pending')
+    assert.equal(outcome, 'uninspected')
+    await again
+  } finally {
+    context.mock.timers.reset()
     await fixture.owner.dispose()
   }
 })

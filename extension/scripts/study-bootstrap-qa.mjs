@@ -688,7 +688,7 @@ async function check(page, options) {
           (await page.locator('#playback-hint').getAttribute('role')) ===
             'status' &&
           (await page.locator('#playback-hint').textContent()).includes(
-            'open it and expand Variables',
+            'expand Variables, then expand its first scope if it stays closed',
           ) &&
           (await page.locator('#playback-hint').textContent()).includes(
             'Codebook · Recorded learning',
@@ -726,6 +726,7 @@ async function check(page, options) {
         index: 0,
         eventIndex: 1,
         elapsedMs: 1200,
+        sourceAvailable: true,
         debuggerAvailable: true,
       }
       await publish({
@@ -762,6 +763,97 @@ async function check(page, options) {
           nodeWithValues.position ===
             'Debugger stop 1 · 1.20 s · output shown through this event.' &&
           nodeWithValues.hint === '',
+      })
+      await publish({
+        ...replay,
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      const nodeSessionEnded = await page
+        .locator('#node-history-position')
+        .textContent()
+      await publish({
+        ...replay,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          sourceAvailable: false,
+          debuggerAvailable: false,
+        },
+      })
+      const nodeSourceMismatch = await page
+        .locator('#node-history-position')
+        .textContent()
+      cases.push({
+        name: 'a saved Node stop whose native session ended keeps its source label, and only a real source mismatch says captured source unavailable',
+        actual: { nodeSessionEnded, nodeSourceMismatch },
+        passed:
+          nodeSessionEnded ===
+            'Debugger stop 1 · 1.20 s · output shown through this event.' &&
+          nodeSourceMismatch ===
+            'Debugger stop 1 · captured source unavailable · 1.20 s · output shown through this event.',
+      })
+      // Arrange: the Node history reader alone, with its selected stop shown by the native session.
+      const nodeReader = {
+        ...options.message,
+        revision: 6,
+        nodeHistoryEventCount: 1,
+        nodeHistory: {
+          header: { studyId: 'node-study' },
+          status: 'complete',
+          entries: [
+            {
+              type: 'stop',
+              sequence: 2,
+              index: 0,
+              elapsedMs: 1200,
+              source: {
+                path: 'app/lib/data.ts',
+                hash: 'a'.repeat(64),
+                line: 217,
+                column: 21,
+              },
+              frame: { name: 'fetchInvoiceById', line: 217, column: 21 },
+              facts: [],
+              debuggerSnapshot: {
+                frames: [
+                  {
+                    line: 217,
+                    column: 21,
+                    source: {
+                      name: 'app/lib/data.ts',
+                      hash: 'a'.repeat(64),
+                      line: 217,
+                    },
+                  },
+                ],
+                variables: [],
+              },
+            },
+          ],
+        },
+      }
+      const nodeInspect = page.locator('[data-inspect-node-history-stop]')
+      await publish({ ...nodeReader, nodeHistoryPosition: nodeStop })
+      const inspectWhileShown = {
+        label: await nodeInspect.textContent(),
+        disabled: await nodeInspect.isDisabled(),
+      }
+      // Act: the learner ends the native session while the same stop stays selected.
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      const inspectAfterSessionEnd = {
+        label: await nodeInspect.textContent(),
+        disabled: await nodeInspect.isDisabled(),
+      }
+      cases.push({
+        name: 'ending the native session of the selected Node stop offers Inspect in native debugger again',
+        actual: { inspectWhileShown, inspectAfterSessionEnd },
+        passed:
+          inspectWhileShown.label === 'Debugger stop selected' &&
+          inspectWhileShown.disabled === true &&
+          inspectAfterSessionEnd.label === 'Inspect in native debugger' &&
+          inspectAfterSessionEnd.disabled === false,
       })
       await publish({
         ...replay,

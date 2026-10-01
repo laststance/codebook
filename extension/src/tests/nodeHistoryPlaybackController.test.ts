@@ -414,3 +414,49 @@ test('a Node history seek outside the recorded time range is refused and keeps t
   assert.equal(controller.state().positionMs, 1_000)
   controller.dispose()
 })
+
+// Value: protects=the Node reader's loading state after a browser recording takes the shared debugger; fails_when=an abandoned presentation that settles later never publishes that loading ended; why_new=Cycle 0033 M1 (c); seam=none
+test('abandoning a Node stop that is still loading publishes the pause, and its late settlement publishes that loading ended', async () => {
+  // Arrange
+  let finishPresentation = (): void => {}
+  const presentationGate = new Promise<void>((resolve) => {
+    finishPresentation = resolve
+  })
+  const published: Array<{ mode: string; loading: boolean }> = []
+  const controller: NodeHistoryPlaybackController =
+    new NodeHistoryPlaybackController({
+      present: async () => presentationGate,
+      changed() {
+        const { mode, loading } = controller.state()
+        published.push({ mode, loading })
+      },
+      manualTicks: true,
+    })
+  controller.open(
+    [
+      { sequence: 1, elapsedMs: 0 },
+      { sequence: 2, elapsedMs: 100 },
+    ],
+    1,
+  )
+  const seeking = controller.seek(100)
+  await waitUntil(
+    () => controller.state().loading,
+    'pending Node stop presentation',
+    1_000,
+    new AbortController().signal,
+  )
+  published.length = 0
+
+  // Act
+  controller.abandon()
+  const afterAbandon = [...published]
+  finishPresentation()
+  await seeking
+
+  // Assert
+  assert.deepEqual(afterAbandon, [{ mode: 'paused', loading: true }])
+  assert.deepEqual(published.at(-1), { mode: 'paused', loading: false })
+  assert.equal(controller.state().sequence, 1)
+  controller.dispose()
+})

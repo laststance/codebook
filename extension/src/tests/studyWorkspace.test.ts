@@ -2754,6 +2754,101 @@ test('inspecting a Node stop whose captured source differs from its recorded pos
   }
 })
 
+// Value: protects=the reader still saying "captured source unavailable" for a Node stop whose captured source really differs; fails_when=the reader payload reports every selected stop's source as available, for example once it stops using the verified match; why_new=Cycle 0033 T1 workspace tests assert only matching stops, and the mismatch is covered only in the helper and the renderer; seam=none
+test('a Node stop selected on the timeline whose captured source differs from its recorded position is reported with unavailable captured source', async () => {
+  // Arrange: a sealed one-stop history whose debugger snapshot carries another source text.
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = nodeTestHistoryHeader(store.workspaceKey),
+      unrelatedText = 'const nextTheme = "light";\n'
+    const writer = await store.start(history)
+    await writer.appendOutput({
+      sequence: 1,
+      elapsedMs: 100,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts\n',
+    })
+    await writer.appendStop({
+      index: 0,
+      runId: 'test-run',
+      sessionId: 'test-session',
+      threadId: 1,
+      elapsedMs: 200,
+      worker: { pid: 1, processGroup: 1, workspace: '/private/test' },
+      source: history.configuration.source,
+      frame: { id: 1, name: 'notifyManager', line: 1, column: 1 },
+      variables: [{ name: 'nextTheme', value: 'dark', variablesReference: 0 }],
+      facts: [
+        { path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' },
+      ],
+      debuggerSnapshot: {
+        version: 1,
+        frames: [
+          {
+            name: 'notifyManager',
+            line: 1,
+            column: 1,
+            source: {
+              name: history.configuration.source.path,
+              text: unrelatedText,
+              hash: sha256(unrelatedText),
+              line: 1,
+            },
+            scopes: [{ name: 'Local', variables: [0] }],
+          },
+        ],
+        variables: [
+          { name: 'nextTheme', value: 'dark', type: 'string', children: [] },
+        ],
+        limitations: [],
+      },
+    } satisfies NodeTestSourceStop)
+    await writer.appendResult(
+      { exitCode: 0, signal: null, output: 'Tests 1 passed' },
+      300,
+    )
+    await writer.finish('complete')
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+
+    // Act: the learner selects the stop on the timeline, which needs no native debugger.
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+        2,
+      'the mismatched Node stop is selected',
+      1_000,
+    )
+    const selectedStop = harness.postedMessages().slice(-1)[0]!
+
+    // Assert
+    assert.equal(selectedStop.nodeHistoryPosition?.type, 'stop')
+    assert.equal(selectedStop.nodeHistoryPosition?.sourceAvailable, false)
+    assert.equal(selectedStop.nodeHistoryPosition?.debuggerAvailable, false)
+    assert.equal(harness.historicalDebugPresentations.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a truthful Run and Debug hint once browser replay takes the shared historical debugger; fails_when=opening a recording keeps the Node stop's hint and disabled Inspect although the stop no longer owns Run and Debug; why_new=Cycle 0032 H1; seam=none
 test('opening a recording drops the Run and Debug hint of a saved Node stop and re-enables its Inspect', async () => {
   // Arrange
@@ -2799,6 +2894,8 @@ test('opening a recording drops the Run and Debug hint of a saved Node stop and 
     assert.equal(view.nodeHistoryPosition?.sequence, 2)
     assert.equal(view.nodeHistoryPosition?.nativeValuesUninspected, false)
     assert.equal(view.nodeHistoryPosition?.debuggerAvailable, false)
+    // The stop no longer owns Run and Debug, but its captured source is still verified (Cycle 0033 T1).
+    assert.equal(view.nodeHistoryPosition?.sourceAvailable, true)
   } finally {
     await harness.close()
   }
@@ -2989,6 +3086,8 @@ test('ending the historical session re-enables Inspect for the selected Node sto
       afterSessionEnded.nodeHistoryPosition?.debuggerAvailable,
       false,
     )
+    // Ending the session never makes the label claim the captured source is unavailable (Cycle 0033 T1).
+    assert.equal(afterSessionEnded.nodeHistoryPosition?.sourceAvailable, true)
     assert.equal(harness.historicalDebuggers.length, 2)
     assert.equal(harness.historicalDebuggers[1]!.available, true)
   } finally {

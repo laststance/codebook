@@ -1800,3 +1800,177 @@ test('a reader reopened after closing never shows the Run and Debug hint of the 
     await harness.close()
   }
 })
+
+// Value: protects=the reader showing why native values did not update, then dropping that stale error once a notification is handled; fails_when=the failed callback stops reaching report, or the 'replay-debugger' error is never cleared; why_new=Cycle 0033 M1 (d) and S7 failed→report wiring; seam=none
+test('a native values notification the reader failed to handle is shown, and the next handled notification clears it', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Act
+    harness.failHistoricalDebugNotification(new Error('Reader update failed'))
+    const afterFailure = harness.postedMessages().slice(-1)[0]!
+    harness.loadHistoricalDebugValues()
+    const afterValuesLoaded = harness.postedMessages().slice(-1)[0]!
+
+    // Assert
+    assert.ok(afterFailure.errors.includes('Error: Reader update failed'))
+    assert.equal(
+      afterValuesLoaded.errors.includes('Error: Reader update failed'),
+      false,
+    )
+    assert.equal(afterValuesLoaded.recording?.nativeValuesUninspected, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=closing the reader while a recorded frame never paints, for example behind a hidden replay panel; fails_when=close() waits on the presentation loop without a bound, or the loop waits on a frame whose presentation was retired; why_new=Cycle 0033 L2/O2/O4 (the close settle had no bound); seam=none
+test(
+  'closing the reader while a recorded frame never paints still finishes',
+  { timeout: 30_000 },
+  async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    let release = (): void => {}
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      const neverPainted = harness.holdNextImage()
+      release = neverPainted.release
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 100,
+      })
+      await neverPainted.started
+
+      // Act
+      const outcome = await Promise.race([
+        harness.reader.close().then(
+          () => 'closed',
+          (error: unknown) => String(error),
+        ),
+        new Promise<string>((resolve) =>
+          setTimeout(() => resolve('still closing'), 7_000),
+        ),
+      ])
+
+      // Assert
+      assert.equal(outcome, 'closed')
+    } finally {
+      release()
+      await harness.close()
+    }
+  },
+)
+
+// Value: protects=closing the reader while native Run and Debug never answers a recorded stop; fails_when=close() waits on the presentation loop without a bound while that loop waits on a debugger presentation that ignores its cancellation; why_new=Cycle 0033 O4 (the never-painting close test passes on b9c846b, so the close bound had no failing-first test); seam=none
+test(
+  'closing the reader while the native debugger never answers a recorded stop still finishes',
+  { timeout: 30_000 },
+  async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true, true)
+    const stuckDebugger = harness.holdHistoricalDebugPresentation(true)
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 100,
+      })
+      await stuckDebugger.started
+
+      // Act
+      const outcome = await Promise.race([
+        harness.reader.close().then(
+          () => 'closed',
+          (error: unknown) => String(error),
+        ),
+        new Promise<string>((resolve) =>
+          setTimeout(() => resolve('still closing'), 7_000),
+        ),
+      ])
+
+      // Assert
+      assert.equal(outcome, 'closed')
+    } finally {
+      stuckDebugger.release()
+      await harness.close()
+    }
+  },
+)
+
+// Value: protects=the learner's replay position being stored before the reader finishes closing; fails_when=close() bounds the presentation wait and no longer waits for queued position saves; why_new=Cycle 0033 O4 split the close wait into a bounded frame wait plus saved(), and no close test holds a save; seam=none
+test(
+  'closing the reader waits for a replay position save that storage still holds',
+  { timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    let releaseSave = (): void => {},
+      saveEntered = (): void => {}
+    const storageHeld = new Promise<void>((resolve) => {
+        releaseSave = resolve
+      }),
+      saveStarted = new Promise<void>((resolve) => {
+        saveEntered = resolve
+      })
+    const order: string[] = []
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      const storePreference = RecordingStore.prototype.savePreference
+      context.mock.method(
+        RecordingStore.prototype,
+        'savePreference',
+        async function heldSave(
+          this: RecordingStore,
+          preference: Parameters<RecordingStore['savePreference']>[0],
+        ): Promise<void> {
+          saveEntered()
+          await storageHeld
+          await storePreference.call(this, preference)
+          order.push(`saved ${preference.positionMs}`)
+        },
+      )
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 100,
+      })
+      await saveStarted
+
+      // Act
+      const closing = harness.reader.close().then(() => {
+        order.push('closed')
+      })
+      await new Promise<void>((resolve) => setTimeout(resolve, 2_000))
+      const whileStorageHeld = [...order]
+      releaseSave()
+      await closing
+
+      // Assert: the seek's save and the one close() queues when it hides the frame both finish before the reader is closed.
+      assert.deepEqual(whileStorageHeld, [])
+      assert.deepEqual(order, ['saved 100', 'saved 100', 'closed'])
+    } finally {
+      releaseSave()
+      await harness.close()
+    }
+  },
+)
