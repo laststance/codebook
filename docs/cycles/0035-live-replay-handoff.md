@@ -1,7 +1,7 @@
 # Cycle 0035 — Live-to-replay handoff: a displayed replay recovers while a live run is attached
 
 Type: product-increment\
-Status: planning\
+Status: implementing\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -93,14 +93,15 @@ Frozen before implementation. These are Issue #63's acceptance criteria in short
 
 | Check | Expected observable result | Procedure | Evidence |
 | --- | --- | --- | --- |
-| AC1 / H1 | Live viewport attached, recording at `ready`, historical session ended: `openRecording` for the same study ends `ready` at the same `presentedMs` with the saved frame displayed. | Workspace test with the harness model | Red on `e3fa161`, green, control |
+| AC1 / H1 | Live viewport attached, recording at `ready`, historical session ended: `openRecording` for the same study ends `ready` at the same `presentedMs` with the saved frame displayed. | Workspace test with the harness model | Red on `e3fa161` through the same-frame retry path (R8), green, control |
 | AC2 / H1 | A first Recording open with a live viewport attached still commits; with no live viewport the reload constructs no new recording viewport. | Workspace tests | Pass on base; control or reason |
 | AC3 | The harness rejects a recording paint when the panel document is not that viewport's renderer; the full suite passes with the model. | Harness self-test; full suite | Output |
 | AC4 / H2 | Stored A, presented B, B's save held: a same-study reload presents B; after release the last saved position is B. | `playbackController.test.ts` | Red/green and control |
+| AC4b / R2 | A remembered position beyond a shorter range presents the range end. | `playbackController.test.ts` | Control |
 | AC5 / H2 | The same through `StudyWorkspace` after the historical session ended. | Workspace test | Red/green and control |
 | AC6 / H2 | A first open of a never-remembered study presents the stored preference; after B's save fails, the state reports it and a same-study open still presents B. | Controller test | Pass on base (first half); control |
 | AC7 / H3 | Reader listener and `failed` both throw: a bounded startup waiter and a presentation on a disposed adapter still reject with the closed-debugger error (within 5,000 + 250 ms). | `replayDebugger.test.ts` | Red/green and control |
-| AC8 / H4 | After `close()`: `seek`, `play`, `pause` reject with `PLAYBACK_UNAVAILABLE`, no panel and no session is created; `open` opens the reader at the saved position. | Service or workspace tests | Red/green and control |
+| AC8 / H4 (amended by R1) | After `close()`: `seek` and `play` reject with `PLAYBACK_UNAVAILABLE`; `pause` returns the paused state; none creates a panel or a session; a `seek` during the close is refused; `open` opens the reader at the saved position; a reader reopen re-presents the retained moment. | Service or workspace tests | Red/green and control |
 | AC9 / H5a | Recording pressed with a live, available historical session: no load, no registration, `presentationRevision` unchanged. | Workspace test | Pass on base; control fails |
 | AC10 / H5b | A cancelled cold-entry waiter leaves within 250 ms of its abort. | `studyWorkspaceEntry.test.ts` | Pass on base; control fails |
 | AC11 / H5c | `retire()` on an owner disposed during a pending startup rejects closed and registers no retirement. | `replayDebugger.test.ts` | Pass on base; control |
@@ -109,12 +110,35 @@ Frozen before implementation. These are Issue #63's acceptance criteria in short
 | AC14 | Each behavior change (AC1, 4, 5, 7, 8) has its red run on `e3fa161` and a disabled-fix control with `dist` restored. | Private control script | Table in this record |
 | AC15 | Full suite, package suite, hook, typecheck, lint, `format:check`, `dead-code`, `dupes` and `health` pass. | Commands per `docs/qa/test-execution.md` | Command output |
 | AC16 | Protected hashes and the dashboard are unchanged; nothing started for the trial is left running. | `shasum -a 256`, `git status`, port and process checks | Output |
-| AC17 / N4 | N4-a to N4-d each have a recorded outcome per the issue's outcome policy. | OBS video, `code chat` for the request, clicks otherwise | Private video, frames and hashes |
+| AC17 / N4 | N4-a to N4-d each have a recorded outcome per the issue's outcome policy. N4-c is a delivery condition and needs only an attached live run, from chat or from the reader's run control (R9). The prompt's landing window is verified before anything else (R6). | OBS video, `code chat` for the request, clicks otherwise | Private video, frames, hashes, host storage path and study ID |
 | AC18 | No storage format, schema, MCP tool shape or timeout changes. | Diff review | Diff |
 
 ## Attempts and evidence
 
-No observations yet.
+### Plan review (`/plan-eng-review`), 2026-10-01
+
+The full report, decision ledger and the Codex outside voice are appended to the archived spec (private). The Test Plan is `~/.gstack/projects/codebook/ryotamurakami-codex-cycle-0035-live-replay-handoff-eng-review-test-plan-20261001-191835.md`.
+
+Every choice took the recommended option under the owner's standing direction. Results:
+
+- Scope accepted as-is.
+- In-host: 6 architecture and 2 code-quality findings, 15 test gaps (all mapped to criteria), 0 performance findings, 0 critical gaps.
+- Codex (outside voice): 3 P2, each confirmed in the source and accepted.
+
+Amendments to Issue #63 (also posted on the issue):
+
+| ID | Amendment |
+| --- | --- |
+| R1 (H4) | `close()` keeps hiding playback, because a reader reopen re-presents the retained moment (`studyWorkspace.ts:3580`; the plan's `leave()` would break that). `PlaybackController` gets an optional reader-open dependency and rejects `seek` and `play` synchronously when it is false; `pause` stays a no-op; `presentable` is defined through it. |
+| R2 (H2) | The remembered position is the preferred position inside the existing range clamp, so a recording repaired to a shorter range cannot present out of range. |
+| R3 (H1) | Drop and recreate stays. Skipping the loading document was rejected: it assumes the live viewport is already pinned as historical. |
+| R4 (harness) | A recording viewport's `reveal()` writes its renderer marker after `rebindPanel()`, like `restorePanelContents()`. |
+| R5 (H3) | `giveUp()` catches an error thrown by the `failed` receiver itself. |
+| R6 (N4-a) | The QA window must be the only or last active VS Code window before `code chat -r`; the landing window is verified first; tool confirmations are approved one at a time, never "always allow". |
+| R7 | One helper `dropReplayViewport()` replaces the four close-and-drop sites and serves the new one; it also resets `replayNeedsReveal`. |
+| R8 (harness, Codex) | The model uses the real reason `Viewport frame acknowledgement timed out` and fails the re-handshake too, so the red run goes through `presentPlayback()`'s same-frame retry. |
+| R9 (N4-c, Codex) | N4-c needs only an attached live run, from chat or from the reader's run control for a saved study, and is a delivery condition. Only if neither route can start a run is it NOT RUN, recorded as an open AC-REPLAY proof gap. |
+| O3 (Codex, correction) | The learning library is under the host's `globalStorageUri/learning/<workspace hash>`, not the dashboard's `.codebook/` (that is the Wiki output). The N4 record names that path and the study ID per host. |
 
 ## Result and decision
 
@@ -126,7 +150,7 @@ Pending.
 
 ## Next action
 
-- Exact next action: run `/plan-eng-review` on Issue #63, record its amendments here and in the issue, then implement in the recorded order, test-first, with a red run on `e3fa161` and a disabled-fix control per behavior change.
+- Exact next action: implement in the recorded order (harness model, H1, H2, H3, H4 as amended by R1, H5, H6), test-first, with a red run on `e3fa161` and a disabled-fix control per behavior change; then the gates, the candidate package and native N4.
 - Changed files / branch / active processes: `codex/cycle-0035-live-replay-handoff`; no active processes.
 - State updated in PROJECT_STATE.md: active cycle, tracking, next action.
 - Durable decisions updated: none.
