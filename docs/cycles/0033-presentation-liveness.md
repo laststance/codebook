@@ -1,7 +1,7 @@
 # Cycle 0033 — Replay presentation liveness and truthful Node stop state
 
 Type: hardening\
-Status: implementing\
+Status: validating\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -14,6 +14,7 @@ Owner authority:
 - D043: continue to completion; protected Mac use is allowed while the owner sleeps.
 - D044: plan each cycle through `/spec`.
 - On 2026-10-01 the owner said: "CRITICAL が出た場合だけ直して。止まらないで最後まで進めて。" and "全部選択肢はレコメンドでええで". This cycle therefore takes the recommended option at every decision point and records each one below.
+- Later on 2026-10-01, after the pause, the owner chose "残タスクを続行" at context restore and issued the completion goal again (deliver each cycle through `/spec`, plan reviews, local CodeRabbit CLI and OCR, `/ship`, CI and merge; Copilot Auto first in VS Code, then the Codex Extension). They added: "返事ができないので、選択肢はReccomendをpickしてください". The pause is therefore lifted, and D039/D040/D043/D044 apply unchanged.
 
 ## Question and authorized scope
 
@@ -139,6 +140,101 @@ Validation contract additions, frozen with the amendments:
 - AC2 adds four cases: startup never answers; expiry followed by a late termination; a hung `stopDebugging` in `dispose()`; and a same-study reopen after a timeout.
 - AC4 adds a stalled `load` that does not block a newer open, and the paint bound restarting after a superseded presentation.
 
+### Implementation checkpoint, paused 2026-10-01 at the owner's request
+
+- Re-entry after compaction: re-read PRODUCT_GOAL (v9), the three feature contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, `docs/designs/codebook.md`, `docs/qa/test-execution.md` and the TS rules in full. Opened the v9 PNG again and observed the same four regions as above. Branch `codex/cycle-0033-presentation-liveness` at `dc5766f`, product changes uncommitted.
+- Implemented (uncommitted): L1+A2, L2+A1+O3, T1+C1 (`utils/nodeStopSourceMatches.ts`, payload `sourceAvailable`), B2+A3 (paint watchdog, `PRESENTATION_SETTLE_CEILING_MS`), O1, O2, O4, C2, the C1 hint text and M1 (a)–(e), (g)–(i). M1 (f) stays deferred under D1.
+- Focused green on this branch: replayDebugger + replayDebug 97/97, playbackController + untilAborted 23/23, nodeHistoryPlaybackController 11/11, recordingContext 12/12, nodeStopSourceMatches 4/4, filtered layout 26/26, the two new replay workspace tests 2/2. The new DOM harness cases pass; its "wide saved sequence remains reachable by keyboard" case fails on `b9c846b` too, so it is pre-existing.
+- Red-before-green on `b9c846b` (private worktree `/tmp/c33-base`, new tests copied, plus the constant only; logs in `artifacts/cycle-0033/red-base/`):
+
+| Test | On `b9c846b` |
+| --- | --- |
+| All 10 new `replayDebugger` cases (L1, A2 ×2, L2 ×2, O3, A1, C2, M1 (a), M1 (g)) | FAIL (5 by the 60 s hang guard) |
+| `untilAborted` cancelled waiter (M1 (h)) | FAIL; its "current waiter" companion passes, as expected |
+| `nodeStopSourceMatches` (T1/C1) | FAIL: the helper does not exist |
+| `nodeHistoryPlaybackController` abandon publishes (M1 (c)) | FAIL |
+| `playbackController`: bounded settle ignores saves, same-study reopen repaints (O1), newer seek while a read never answers (O2) | FAIL ×3 |
+| `recordingContext` tampered image during a state change (M1 (b)) | FAIL |
+| Layout: stuck before paint fails at the ceiling; newer frame gets its own bound (B2/A3) | FAIL ×2 |
+| Replay workspace: failed native notification shown, then cleared (M1 (d)) | FAIL |
+| Layout: cold 4 s debugger + 2 s paint presents | PASS at this checkpoint: the test did not reproduce the failure yet. Corrected in the resume section below, where it fails on `b9c846b`. |
+| Layout: cancelled navigation keeps its cancellation; replay workspace: close while a frame never paints | PASS: regression guards, not red tests |
+
+- Open at this checkpoint, all closed in the resume section below: (1) make the cold-path test fail on `b9c846b`; (2) run the H1/H3 `sourceAvailable` workspace tests and the T1 DOM case on the base; (3) disabled-fix controls for each fix on compiled `dist`; (4) full suite, then the package suite, hooks, lint, format, typecheck, `dead-code`, `dupes` and `health`; (5) README, extension README hint paragraph, CHANGELOG and PROJECT_STATE.
+
+### Resume and mechanism verification, 2026-10-01
+
+Entry after `/context-restore` (new session):
+
+- Read in full: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, `docs/designs/codebook.md`, `docs/qa/test-execution.md` and the local TS rules.
+- Opened the v9 PNG with the image viewer and observed the same four regions as in the entry above. SHA-256 `f189ee82…caf2aa` matches.
+- Checkout: `codex/cycle-0033-presentation-liveness` at `dc5766f` with the uncommitted work listed in the paused checkpoint. `origin/main` is `b9c846b`. No PR is open.
+- Tools: Node 24.21.0. pnpm 12.4.2, run from the local corepack cache because the shell default is 12.6.0, which the manifest rejects.
+- Protected state unchanged: Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`. The dashboard is at `1936e41` with only the untracked `.codebook/`.
+- The base worktree `/tmp/c33-base` did not survive the restart. It was recreated at `b9c846b` with the branch's tests, the shared harness, `study-bootstrap-qa.mjs` and only the `PRESENTATION_SETTLE_CEILING_MS` constant.
+
+Red-before-green, completed on `b9c846b` (logs in `artifacts/cycle-0033/red-base/`, branch results in `artifacts/cycle-0033/green-branch/`):
+
+| Test | On `b9c846b` | On the branch |
+| --- | --- | --- |
+| Layout: cold 4 s debugger + 2 s paint presents (B2) | FAIL: `PRESENTATION_UNAVAILABLE` | PASS |
+| Workspace: opening a recording keeps `sourceAvailable` true for a matching Node stop (H1) | FAIL: `undefined` | PASS |
+| Workspace: ending the historical session keeps `sourceAvailable` true (H3) | FAIL: `undefined` | PASS |
+| DOM harness: a session-ended Node stop keeps its source label; only a mismatch says "captured source unavailable" (T1) | FAIL: both states show the label | PASS |
+| DOM harness: the hint names the first scope (C1) | FAIL | PASS |
+| Unit: the reader HTML carries the hint that names the first scope (C1 / AC5, new `studyHtml.test.ts`) | FAIL | PASS |
+| Replay workspace: closing the reader while the native debugger never answers a recorded stop (O4, new) | FAIL: still closing after 7 s | PASS |
+
+Why the cold-path test passed on the base before: its 4 s debugger hold landed on the opening gap frame, which has no image, so the 4 s wait and the 2 s paint fell into two separate 5 s settle windows. `holdHistoricalDebugPresentation(true)` now skips gap presentations, so the hold lands on the recorded stop and both waits share one settle.
+
+Two tests were added beyond the paused checkpoint:
+
+- AC5 asks for a unit assertion on the hint text, and only the DOM harness had one. `studyHtml.test.ts` now asserts the exact hint in the reader HTML.
+- The existing close test (a frame that never paints) passes on `b9c846b`, so the close bound had no failing-first test. The new close test holds the native debugger presentation, which ignores its cancellation, and fails on `b9c846b`.
+
+Disabled-fix controls (`artifacts/cycle-0033/controls/run-controls.mjs`, private). Each control patches one fix out of the compiled `dist`, runs the matching test, expects it to fail and restores the original bytes. The whole `dist` tree hashed identically before and after each run.
+
+| Control | Fix disabled | Result |
+| --- | --- | --- |
+| L1 | A refused startup is forgotten even after every waiter left | Test fails |
+| A2 (bound), A2 (late session) | Startup bound; stopping a session that starts after expiry | Tests fail (the bound one by the 30 s hang guard) |
+| L2 (abort), L2 (bound) | Retirement waiter leaves on abort; retirement bound | Tests fail |
+| O3 | Expiry gives up the retiring session | Test fails |
+| A1 | `dispose()` bounds its own stop | Test fails |
+| C2 / M1 (e) | Clamped grace and stopped deadline | Test fails |
+| M1 (a), (b), (c), (d), (g), (h) | One control each | Tests fail |
+| T1 (payload), T1 (renderer) | `sourceAvailable` in the payload; the label reading it | Workspace tests and the DOM case fail |
+| C1 | Hint text | Unit test and DOM case fail |
+| B2 (ceiling), B2 (saves), A3 | 15 s ceiling; bounded settle ignores saves; paint bound per phase | Tests fail |
+| O1, O2 | Same-study reopen repaints; the queue leaves stalled reads | Tests fail |
+| O2 + O4 | Both close defenses | The new close test fails |
+| O4 alone, O2 alone (informational) | One close defense | The close tests still pass: either defense alone lets `close()` finish, so no single-fix control exists for O4 |
+
+M1 (f) stays deferred under D1. Every other Q1 item now has a failing-first test and a control, except O4 as noted.
+
+Mechanism verification on the final source (Node 24.21.0, pnpm 12.4.2; logs in `artifacts/cycle-0033/verification/`):
+
+| Check | Result |
+| --- | --- |
+| Full suite, run 1 (`pnpm --dir extension test`, includes build) | 1,478/1,478 PASS, 0 fail, 107.2 s |
+| Full suite, run 2 (consecutive) | 1,478/1,478 PASS, 0 fail, 107.2 s |
+| Disabled-fix controls on that build | 23 held, 2 informational, `dist` restored byte-identical |
+| Package suite, after all extension readers exited | 183/183 PASS |
+| Compaction hook (`node --test .codex/restore-product-context.test.mjs`) | 4/4 PASS |
+| Typecheck, lint, `format:check`, `dead-code`, `dupes`, `health` | PASS |
+
+`health` and lint failed on the first pass and were fixed without a behavior change:
+
+- `nodeStopSourceMatches` lists its eight identity checks and requires every one, instead of one nine-term `&&` chain.
+- `ReplayDebugger.launchSession` hands the late-session stop to `stopSessionStartedAfterExpiry`.
+- Two lint errors in `nodeStopSourceMatches.test.ts` (an explicit return type and an unnecessary assertion).
+
+The full suite, the controls and the package suite above ran after these changes.
+
+Found but out of scope: the DOM harness case "wide saved sequence remains reachable by keyboard inside its own scroll area" fails on `b9c846b` and on the branch with `pageOverflow: true` at the 600 px harness width. It passed on 2026-09-27 (`docs/cycles/evidence/0029/sequence-access.json`). A change between Cycle 0029 and 0.2.16.0 made the reader page overflow horizontally in that state. It joins the Cycle 0034 candidate list (AC-DESKTOP / AC-LEARNING).
+
+Native N2 is NOT RUN at this point.
+
 ## Result and decision
 
 Pending.
@@ -149,7 +245,7 @@ Pending.
 
 ## Next action
 
-- Exact next action: implement the tasks in order (T1 L1+A2, T2 L2+A1+O3, T3 T1+C1, T4 B2+A3, T8 O1+O2, T5 C1 text, T6 M1), each with a test that fails before the fix and a disabled-fix control.
-- Changed files / branch / active processes: `codex/cycle-0033-presentation-liveness`; no active processes.
+- Exact next action: commit the implementation in logical commits, run the local CodeRabbit CLI (never `--use-credits`) and `open-code-review-delegate`, package and install the VSIX in both QA profiles, run native N2 with OBS, then `/ship` as 0.2.17.0.
+- Changed files / branch / active processes: `codex/cycle-0033-presentation-liveness`; base worktree `/tmp/c33-base` (`b9c846b` plus the copied tests) is a private control and can be removed after delivery; no active processes.
 - State updated in PROJECT_STATE.md: active cycle, tracking and next action.
 - Durable decisions updated: none.
