@@ -64,7 +64,7 @@ export class PlaybackController {
   private readonly clock: () => number
   private disposed = false
   private saves: Promise<void> = Promise.resolve()
-  /** The last position handed to {@link remember}; an open of the same study prefers it to a stored preference that its own queued save may not have written yet. */
+  /** The position of the bundle {@link remember} last queued for saving; an open of the same study prefers it to a stored preference that the queued save may not have written yet. It deliberately survives {@link leave}. */
   private rememberedPosition?: { studyId: string; positionMs: number }
 
   constructor(private readonly dependencies: PlaybackDependencies) {
@@ -275,7 +275,7 @@ export class PlaybackController {
     })
   }
 
-  /** Clears historical selection on explicit exit, enabling a subsequent same-study open to reload repaired files. @example controller.leave() */
+  /** Clears historical selection on explicit exit, enabling a subsequent same-study open to reload repaired files; that open still starts at the last confirmed position, clamped to the reloaded range. @example controller.leave() */
   leave(): void {
     this.hide()
     this.studyId = undefined
@@ -520,7 +520,7 @@ export class PlaybackController {
     this.dependencies.invalidate()
   }
 
-  /** Serializes explicit navigation saves; callbacks receive the confirmed bundle, never requested position B. @example this.remember() */
+  /** Serializes explicit navigation saves and records the confirmed position that the next open of the same study prefers over the stored preference, also when its save fails; callbacks receive the confirmed bundle, never requested position B. @example this.remember() */
   private remember(): void {
     const bundle = this.presented
     if (!bundle) return
