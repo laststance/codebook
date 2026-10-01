@@ -140,6 +140,51 @@ Amendments to Issue #63 (also posted on the issue):
 | R9 (N4-c, Codex) | N4-c needs only an attached live run, from chat or from the reader's run control for a saved study, and is a delivery condition. Only if neither route can start a run is it NOT RUN, recorded as an open AC-REPLAY proof gap. |
 | O3 (Codex, correction) | The learning library is under the host's `globalStorageUri/learning/<workspace hash>`, not the dashboard's `.codebook/` (that is the Wiki output). The N4 record names that path and the study ID per host. |
 
+### Entry after compaction, 2026-10-01
+
+The context was compacted during implementation. Before continuing, the mandatory entry was repeated from the files on disk: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure and the local TS rules. The PNG (SHA-256 `f189ee82…caf2aa`, unchanged) was opened with the image viewer again; the four regions match the description under "Accepted product and design". Branch `codex/cycle-0035-live-replay-handoff` at `c73499f` with the implementation uncommitted in nine files under `extension/src`; no PR open. The gap audit above is unchanged: no source outside this cycle's scope moved.
+
+### Implementation, 2026-10-01
+
+Commits: `a5bf161` (harness model) and `e626dae` (H1–H6 with their tests). 13 tests were added; the suite is 1,522.
+
+Red runs use a separate worktree on `e3fa161` with this branch's tests and harness copied onto the base source (`artifacts/cycle-0035/red-base/final-tests-on-e3fa161.log`: 215 tests in the four affected files, 208 pass, 6 fail, 1 timed out). Controls patch the compiled output, expect the named tests to fail and restore the bytes (`artifacts/cycle-0035/controls/`; `dist` restored byte-identical).
+
+| Item | Change | Red on `e3fa161` | Control |
+| --- | --- | --- | --- |
+| Harness | A recording viewport owns a renderer document on the leased panel. A frame or a gap is acknowledged only while that document is in place; `reveal()` re-attaches it after a rebind (R4) and fails the re-handshake when another writer holds the panel; a missing acknowledgement uses the real reason `Viewport frame acknowledgement timed out` (R8). | The full suite passes with the model on the fixed source; on the base it turns the H1 reload red. | Every H1 control below fails only through this model. |
+| H1 | `loadPlayback()` drops the recording renderer before the live viewport's loading page replaces the panel document (`showRecordingLoadingOnLiveViewport()`), through one helper `dropReplayViewport()` that also serves the four older sites and resets `replayNeedsReveal` (R7). | Red: the reload with a live run attached ends `failed` through the same-frame retry. | `H1-reload-live-attached` held. |
+| H1 guards | A first open with a live run attached commits and constructs one recording viewport; with no live run the reload constructs none. | Pass on base (the defect needs a reused renderer). | `H1-first-open-live-attached` and `H1-no-live-run-keeps-renderer` held. The first control did not hold at first: the test asserted only after a seek, which recovered through the failure handler. It now asserts the open's own state. |
+| H2 | `PlaybackController` keeps the last confirmed position per study in memory and prefers it over the stored preference inside the existing range clamp (R2). | Red in the controller (presents 100 instead of 200, with the save held and with the save failed) and in the workspace (0 instead of 100). | `H2-remembered-position-controller`, `H2-remembered-position-workspace` and `R2-remembered-position-clamped` held. |
+| H3 | `giveUp()` catches an error thrown by the `failed` receiver itself (R5), so the waiter still gets the closed-debugger error. | Red: the bounded waiter times out; the disposed-adapter presentation fails with the receiver's own error. | `H3-give-up-double-fault` held. |
+| H4 (R1) | `PlaybackController.command()` refuses `seek` and `play` when the reader is not open (`readerOpen`); `pause` stays a no-op; `presentable` is defined through the same getter `replayReaderOpen`. `close()` still only hides playback. | Red: a seek after close returned `paused` and created an Application panel. | `H4-closed-reader-refuses-controls` held. |
+| H4 guard | A seek that arrives during the close is refused. On base and here the refusal comes from the existing `assertPresentationIdle()` (`PRESENTATION_UNAVAILABLE`), not the new guard; the test pins that. | Pass on base. | `R1-closing-reader-refuses-seek` held. |
+| H5a–d | Tests only: no reload for a live historical session; a cancelled cold-entry waiter leaves within 250 ms; a retirement on an owner closed during startup fails closed and stops the session once; a renderer that never became ready is replaced at the next open. | Pass on base (coverage gaps, not defects). | `H5a-live-session-no-reload`, `H5b-cancelled-waiter-leaves-at-once`, `H5c-closed-during-startup` and `H5d-renderer-never-ready` held. |
+| H6 | Two comments corrected: the settle ceiling in `constants.ts` and the `failed` parameter of `ReplayDebugger`. | exempt | exempt |
+
+Deviations from the frozen contract:
+
+- AC3 asked for a harness self-test. No separate test was written: the model's rejection is exercised by AC1's red run on the base source and by `H1-reload-live-attached`, which fails for exactly that reason. A self-test would assert the test double against itself.
+- AC8's "a `seek` during the close is refused" holds through the service's existing idle check with `PRESENTATION_UNAVAILABLE`, not `PLAYBACK_UNAVAILABLE`. The observable result (refused, nothing opens) is the one the criterion wants.
+
+Observed failure shape on the base source, from the model and the real constants: the reloaded frame waits out the 3 s paint budget, the same-frame retry then waits for a re-handshake of up to 20 s, and only then the recording reports `failed`. A second Recording press afterwards works, because the failure handler already dropped the renderer. N4-c measures the fixed path against 2.0 s.
+
+### Verification gates, 2026-10-01
+
+On `e626dae` (logs in `artifacts/cycle-0035/verification/`):
+
+| Gate | Result |
+| --- | --- |
+| `pnpm --dir extension test` | 1,522/1,522, 0 fail, 0 cancelled, 0 skipped |
+| Disabled-fix controls | 13/13 held, `dist` restored |
+| `pnpm --dir extension test:package` (after every reader exited) | 183/183 |
+| `node --test .codex/restore-product-context.test.mjs` | 4/4 |
+| `typecheck`, `lint`, `format:check`, `dead-code`, `dupes`, `health` | each exit 0 |
+
+The first `health` run failed: the added `if` raised `loadPlayback()` over the complexity baseline. The branch moved into `showRecordingLoadingOnLiveViewport()`; the baseline file is unchanged.
+
+AC18: the diff changes no storage format, schema, MCP tool shape or timeout value.
+
 ## Result and decision
 
 Pending.
