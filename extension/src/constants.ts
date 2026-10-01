@@ -1,5 +1,5 @@
 export const API_VERSION = '1.5'
-export const EXTENSION_VERSION = '0.2.20'
+export const EXTENSION_VERSION = '0.2.21'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -207,6 +207,13 @@ export const STUDY_PRESENTATIONS = {
 export const EDITOR_LAYOUT_ROUNDING_FRACTION = 0.005
 export const MAX_UI_TEXT_CHARS = 8_192
 export const STUDY_SOURCE_SCHEME = 'codebook-source'
+/** View types of Codebook's Application and Study panes as the tab model reports them: the registered name and the form the editor's main thread prefixes. */
+export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
+  'codebook.scopedBrowser',
+  'mainThreadWebview-codebook.scopedBrowser',
+  'codebook.studyContext',
+  'mainThreadWebview-codebook.studyContext',
+]
 export const REPOSITORY_SOURCE_SCHEME = 'codebook-repository-source'
 export const REPOSITORY_READER_DEBOUNCE_MS = 150
 export const REPOSITORY_VISITED_CITATIONS_LIMIT = 512

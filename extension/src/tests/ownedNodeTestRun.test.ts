@@ -33,6 +33,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.firstPause - A pause that is not Codebook's (a learner breakpoint, for example) reached before the first declared stop; `file` is relative to the test repository.
  * @param options.neverReachStop - The test keeps running after the entry pause without reaching a declared stop.
  * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
+ * @param options.acknowledgements - Uses the real breakpoint tracker instead of the stand-in: the adapter's registration reply for each owned breakpoint in the order they are armed, passed through the run's own tracker as the editor would send it.
  *
  * @example
  * ```ts
@@ -50,6 +51,7 @@ async function nodeRunHarness({
   firstPause,
   neverReachStop,
   budgetMs,
+  acknowledgements,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -66,6 +68,11 @@ async function nodeRunHarness({
   }
   neverReachStop?: boolean
   budgetMs?: number
+  acknowledgements?: Array<{
+    verified: boolean
+    line?: number
+    column?: number
+  }>
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -198,6 +205,58 @@ async function nodeRunHarness({
     onRequest(): void {}
     onResponse(): void {}
   }
+  class Position {
+    constructor(
+      readonly line: number,
+      readonly character: number,
+    ) {}
+  }
+  class Location {
+    readonly range
+    constructor(
+      readonly uri: { fsPath: string },
+      start: Position,
+    ) {
+      this.range = { start }
+    }
+  }
+  let nextEditorBreakpointId = 0
+  class SourceBreakpoint {
+    readonly id = String(++nextEditorBreakpointId)
+    constructor(readonly location: Location) {}
+  }
+  const editorBreakpoints: SourceBreakpoint[] = [],
+    adapterReplies = new Map<SourceBreakpoint, DebugProtocol.Breakpoint>()
+  let setBreakpointsSequence = 100,
+    armedBreakpoints = 0
+  /** Passes the editor's replacement of this source's breakpoints, and the adapter's reply to it, through the run's tracker. */
+  const replaceSourceBreakpoints = (): void => {
+    const sequence = ++setBreakpointsSequence
+    tracker?.onWillReceiveMessage?.({
+      type: 'request',
+      seq: sequence,
+      command: 'setBreakpoints',
+      arguments: {
+        source: { path: sourceFile },
+        breakpoints: editorBreakpoints.map((breakpoint) => ({
+          line: breakpoint.location.range.start.line + 1,
+          column: breakpoint.location.range.start.character + 1,
+        })),
+      },
+    })
+    tracker?.onDidSendMessage?.({
+      type: 'response',
+      seq: sequence + 1_000,
+      request_seq: sequence,
+      command: 'setBreakpoints',
+      success: true,
+      body: {
+        breakpoints: editorBreakpoints.map((breakpoint) =>
+          adapterReplies.get(breakpoint)!,
+        ),
+      },
+    })
+  }
   class OutputTerminal {
     readonly terminal = { name: 'Codebook · Test output' }
     async ready(): Promise<void> {}
@@ -207,8 +266,34 @@ async function nodeRunHarness({
   }
   const editor = {
     Uri: { file: (fsPath: string) => ({ fsPath }) },
+    Position,
+    Location,
+    SourceBreakpoint,
     workspace: { getWorkspaceFolder: () => undefined },
     debug: {
+      breakpoints: editorBreakpoints,
+      addBreakpoints(added: SourceBreakpoint[]): void {
+        calls.push('arm')
+        for (const breakpoint of added) {
+          const acknowledgement = acknowledgements![armedBreakpoints++]!
+          adapterReplies.set(breakpoint, {
+            id: OWNED_BREAKPOINT_ID,
+            ...acknowledgement,
+            ...(acknowledgement.verified ? {} : { reason: 'pending' }),
+          })
+          editorBreakpoints.push(breakpoint)
+        }
+        // Before the session exists the editor only keeps the breakpoint; it is sent when the adapter starts. Afterwards the editor sends the replacement once the caller has returned.
+        if (tracker) queueMicrotask(replaceSourceBreakpoints)
+      },
+      removeBreakpoints(removed: SourceBreakpoint[]): void {
+        calls.push('retire')
+        for (const breakpoint of removed) {
+          const index = editorBreakpoints.indexOf(breakpoint)
+          if (index >= 0) editorBreakpoints.splice(index, 1)
+        }
+        if (tracker) queueMicrotask(replaceSourceBreakpoints)
+      },
       registerDebugAdapterTrackerFactory(
         _type: string,
         factory: vscode.DebugAdapterTrackerFactory,
@@ -234,6 +319,8 @@ async function nodeRunHarness({
         }
         const created = await trackerFactory?.createDebugAdapterTracker(session)
         tracker = created ?? undefined
+        // The starting adapter receives the breakpoints the editor already holds.
+        if (editorBreakpoints.length) replaceSourceBreakpoints()
         queueMicrotask(() => stopped('entry'))
         return true
       },
@@ -242,6 +329,12 @@ async function nodeRunHarness({
       },
     },
   }
+  const trackerModule = acknowledgements
+    ? await loadModule<{ OwnedRepositoryBreakpoint: unknown }>(
+        resolve(__dirname, '../ownedRepositoryBreakpoint.js'),
+        { vscode: editor },
+      )
+    : { OwnedRepositoryBreakpoint: Breakpoint }
   const module = await loadModule<typeof OwnedNodeTestRunModule>(
     resolve(__dirname, '../ownedNodeTestRun.js'),
     {
@@ -251,7 +344,7 @@ async function nodeRunHarness({
         NODE_TEST_ATTACH_TIMEOUT_MS:
           budgetMs ?? constants.NODE_TEST_ATTACH_TIMEOUT_MS,
       },
-      './ownedRepositoryBreakpoint': { OwnedRepositoryBreakpoint: Breakpoint },
+      './ownedRepositoryBreakpoint': trackerModule,
       './nodeTestOutputTerminal': { NodeTestOutputTerminal: OutputTerminal },
       './utils/prepareNodeTestLaunch': {
         prepareNodeTestLaunch: async () => launch,
@@ -936,6 +1029,72 @@ test("Codebook's own breakpoint reported hit elsewhere in the declared source st
 
     // Assert
     await assert.rejects(preparing, /stopped at 5:14 instead of declared 1:14/)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+for (const acknowledged of ['verified', 'pending'] as const)
+  test(`a Node test stop whose registration the debugger acknowledges as ${acknowledged} at another column is refused before the test continues`, async () => {
+    // Arrange: the stop is declared at 1:14 and the adapter answers 1:1.
+    const harness = await nodeRunHarness({
+      acknowledgements: [
+        { verified: acknowledged === 'verified', line: 1, column: 1 },
+      ],
+    })
+    try {
+      // Act / Assert
+      await assert.rejects(
+        harness.run.prepare(),
+        /Selected adapter did not acknowledge the exact breakpoint registration/,
+      )
+      assert.equal(
+        harness.calls.filter((call) => call === 'continue').length,
+        0,
+      )
+    } finally {
+      await harness.run.stop()
+      await harness.cleanup()
+    }
+  })
+
+test('a Node test stop whose pending registration names no column yet is accepted and reaches its declared stop', async () => {
+  // Arrange: a lazily loaded module: the adapter acknowledges the breakpoint as pending without a position.
+  const harness = await nodeRunHarness({
+    acknowledgements: [{ verified: false }],
+  })
+  try {
+    // Act
+    const stop = await harness.run.prepare()
+    // Assert
+    assert.equal(stop.source.line, 1)
+    assert.equal(stop.source.column, 14)
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+test('a second Node test stop acknowledged at another column is refused before the test continues past the first stop', async () => {
+  // Arrange: the first stop is acknowledged at its declared 1:14; the next one, armed while the test is paused, is answered at 1:1.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    acknowledgements: [
+      { verified: true, line: 1, column: 14 },
+      { verified: true, line: 1, column: 1 },
+    ],
+  })
+  try {
+    await harness.run.prepare()
+    // Act / Assert
+    await assert.rejects(
+      harness.run.advance(),
+      /Selected adapter did not acknowledge the exact breakpoint registration/,
+    )
+    // Only the continuation from the entry pause to the first stop was sent.
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
   } finally {
     await harness.run.stop()
     await harness.cleanup()

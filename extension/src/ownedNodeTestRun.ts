@@ -201,10 +201,12 @@ export class OwnedNodeTestRun {
     )
     const endpoint = await this.owned.inspectorEndpoint(signal)
     signal.throwIfAborted()
+    // The pause is captured at the declared column, so a registration acknowledged at another column fails here, before the test continues.
     this.breakpoint = new OwnedRepositoryBreakpoint(
       launch.stops[0]!.file,
       launch.stops[0]!.source.line,
       launch.stops[0]!.source.column,
+      'declared-column',
     )
     const started = await vscode.debug.startDebugging(
       vscode.workspace.getWorkspaceFolder(vscode.Uri.file(launch.workspace)),
@@ -314,6 +316,7 @@ export class OwnedNodeTestRun {
         next.file,
         next.source.line,
         next.source.column,
+        'declared-column',
       )
       this.ownedBreakpointId = (
         await this.breakpoint.registered(bound.session, signal)

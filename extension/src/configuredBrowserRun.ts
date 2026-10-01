@@ -67,6 +67,7 @@ import { configuredStops } from './utils/configuredStops'
 import { createBundleVerifier } from './utils/createBundleVerifier'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
+import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
@@ -1277,8 +1278,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     current()
     const frame = stack.stackFrames[0]
-    // New source mappings or a different location cannot certify the prior captured source; the bound position is the captured one.
-    if (!isFrameAtPosition(frame, stop.bundle.sourcePath, stop.bound))
+    // New source mappings or a different location cannot certify the prior captured source.
+    if (
+      !isRefreshedFrameAtStop(frame, {
+        sourcePath: stop.bundle.sourcePath,
+        declaredLine: stop.source.line,
+        bound: stop.bound,
+      })
+    )
       throw new Error(
         'Native stack refresh changed the captured source location',
       )

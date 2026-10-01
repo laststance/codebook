@@ -1,9 +1,9 @@
 # Cycle 0036 — Live first run: a natural `/codebook` request reaches its declared stops on the first run
 
 Type: product-increment\
-Status: validating\
-Result: pending\
-Delivery: not-applicable\
+Status: closed\
+Result: demonstrated\
+Delivery: merged\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/65\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -397,10 +397,22 @@ Owner direction for every review below: fix only critical findings and record th
   7. **Tests.** The open-reader guard test never reaches the guard; the registration failure text is asserted at one of three sites; one assertion runs after cleanup and cannot fail; three assertions bound wall-clock time; no test cancels a run during arming, closes the reader during the prelude or feeds a map the scanner rejects; a harness option is unused.
   8. **Small.** `MILLISECONDS_PER_SECOND` repeats `PLAYBACK_SECOND_MS`; the help hard-codes "20 seconds"; two failure texts still say "exact"; the continuation failure embeds "Error:" in its reason; the declared-line check scans the map once per stop.
 
+### Delivery closure, 2026-10-02
+
+- `/ship` committed the delivery fix with its tests (`8a66ed6`), the three other coverage tests with their harness hook (`a73e524`), the records (`6613f79`) and the release metadata (`7e18381`, 0.2.20.0). Its documentation audit added one sentence to `README.md` (the two closed-reader refusal changes) and recorded the rest as current. On that final tree the full suite passed 1,574/1,574, the package suite 183/183, the hook test 4/4, and `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` each exited 0. Against the reviewed tree `17f7fe34` it differs in documents and version literals only.
+- PR #66 (head `7e18381`) passed all 13 PR checks. Its body links Issue #65 without a closing keyword, and GitHub reported no closing reference.
+- Codex cloud reviewed that head and left two P2 findings, both already in the delivery review above: the stack refresh that arrives before a server stop's bound position is known (carried finding 1), and the tracker's column tolerance reaching Node test stops, whose pause still requires the declared column (carried finding 3). Each was answered as recorded and deferred under the owner's CRITICAL-only direction, and both threads were resolved.
+- The separate read-only exact-HEAD gate passed: open, not a draft, mergeable and clean, the same head locally, on the remote and on the PR, `main` unmoved, 13 of 13 check runs successful, no legacy status that is not successful, no unresolved thread, no closing reference.
+- The merge ran as its own step, squash-merging as `9885f7f` at 19:09:35 UTC on 2026-10-01, pinned to the gated head. Its tree equals the gated head's tree.
+- Every post-merge `main` CI run on `9885f7f` passed: Lint 36912226749, TypeCheck 36912226777, Build, test and package 36912226780, Fallow 36912226968, Test 36912226974, Build 36912227076 and Format 36912227883.
+- Issue #65 stayed open through the merge and was closed by hand with a comment that names N5-b's PARTIAL outcome, the failed native check of L4 and every carried finding. Goal #1 stays open.
+- Released as 0.2.20.0. The installed candidate in both QA profiles is still candidate 2 (runtime `a99c9228`, version 0.2.19, built from `0fecc57`); the shipped build differs from it in the two-line delivery fix and version metadata and has no installed trial of its own.
+- The first presentation selection after an extension update, the full-library report, the stack-refresh window, the Node test column and the agent contract items are specified in [Cycle 0037](0037-live-run-entry.md).
+
 ## Result and decision
 
 - Result: demonstrated for L1 to L3, R1 and R2. L4 is demonstrated at mechanism level only; its native check failed on candidate 2 and is carried.
-- Decision: keep. The prepared declaration reaches its four stops on the first run on both candidates (R7), a natural request reaches the observed result in one submission (two runs, PARTIAL), and both hosts recover a stopped replay. Keep `0fecc57`: it moves the first-selection failure from admission to placement and is covered by a test and a control. The delivery review's one regression (a refused replay control that stayed through a later live run) is fixed; the native trials ran on the source before that two-line fix.
+- Decision: keep. Delivered as 0.2.20.0 through PR #66 (`9885f7f`); see the delivery closure above. The prepared declaration reaches its four stops on the first run on both candidates (R7), a natural request reaches the observed result in one submission (two runs, PARTIAL), and both hosts recover a stopped replay. Keep `0fecc57`: it moves the first-selection failure from admission to placement and is covered by a test and a control. The delivery review's one regression (a refused replay control that stayed through a later live run) is fixed; the native trials ran on the source before that two-line fix.
 - Not claimed: a first selection that succeeds after an extension update with the reader open; a natural request that passes on its first run; the live path in Cursor.
 
 ## Handoff
@@ -410,12 +422,11 @@ Owner direction for every review below: fix only critical findings and record th
   - AC-SAVE: a saved stop whose column moved reopens (N5-c on the study of N5-a). New gap: a full library is reported only after the run.
   - AC-ENTRY: the first selection with a leftover captured-source tab is admitted; after an extension update with the reader open it still fails at placement (carried).
   - AC-REPLAY: the two closed-reader refusal defects are fixed at mechanism level; N5-c passes in both hosts on candidate 2.
-- Review: recorded under "Delivery review" above (no critical finding; one regression of this cycle fixed with its test and control; the rest carried). CI, merge, package and installed status are recorded at closure, after the merge.
+- Review: recorded under "Delivery review" above (no critical finding; one regression of this cycle fixed with its test and control; the rest carried). CI, the Codex cloud review, the gate and the merge are recorded under "Delivery closure". No package was installed after the merge.
 
 ## Next action
 
-- Exact next action: finish `/ship` (version 0.2.20.0, CHANGELOG, documentation audit, pull request), then CI, the Codex cloud review, a separate exact-HEAD gate and the merge in its own step.
-- Next cycle candidate: the first presentation selection after an extension update with the reader open (the old host's dead Codebook webview tabs, a preview tab in a destination group, the placement guard), together with the full-library report before a run and the first two groups of the delivery review's carried findings (the stack-refresh window and the agent contract); then the Cycle 0031 UI items.
-- Changed files / branch / active processes: `codex/cycle-0036-live-first-run`; implementation, follow-up, the delivery fix with its tests and records; no active processes. Scratch worktrees `/tmp/c36-base` and `/tmp/c36-head` are left in place.
-- State updated in PROJECT_STATE.md: product row, active cycle, AC-LIVE, AC-SAVE, AC-REPLAY and AC-ENTRY rows, one next action.
+- Exact next action: done. The cycle is delivered and closed. Continue with [Cycle 0037](0037-live-run-entry.md).
+- Changed files / branch / active processes: merged as `9885f7f`; no active processes. The private worktrees `/tmp/c36-base` and `/tmp/c36-head` are unused and were left in place; `git worktree remove <path>` removes each.
+- State updated in PROJECT_STATE.md: product row, active cycle, checkout, tracking, AC-LIVE, AC-SAVE and AC-ENTRY next actions, one next action.
 - Durable decisions updated: none.

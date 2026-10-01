@@ -9,8 +9,10 @@ import type * as OwnedRepositoryBreakpointModule from '../ownedRepositoryBreakpo
 
 import { loadModule } from './utils/loadModule'
 
-/** Supplies native API identities and explicit adapter messages without starting an editor or application. @example const harness = await breakpointHarness() */
-async function breakpointHarness() {
+/** Supplies native API identities and explicit adapter messages without starting an editor or application; `acknowledgedAt` selects the registration rule of the owner under test. @example const harness = await breakpointHarness(); const nodeTestStop = await breakpointHarness('declared-column') */
+async function breakpointHarness(
+  acknowledgedAt?: 'declared-line' | 'declared-column',
+) {
   class Position {
     constructor(
       readonly line: number,
@@ -68,6 +70,7 @@ async function breakpointHarness() {
     '/repo/actions.ts',
     20,
     5,
+    acknowledgedAt,
   )
   const request = (
     sequence = 1,
@@ -504,4 +507,83 @@ test('without breakpoint ids in the adapter reply, a breakpoint left on the owne
     /did not confirm retirement of the owned breakpoint/,
   )
   assert.equal(breakpoint.retired, false)
+})
+
+for (const verified of [true, false])
+  test(`an owner that captures at the declared column refuses a ${verified ? 'verified' : 'pending'} registration at another column of the declared line`, async () => {
+    // Arrange: a Node test stop declared at 20:5.
+    const { breakpoint, session, request, response, signal } =
+      await breakpointHarness('declared-column')
+    // Act
+    breakpoint.onRequest(session, request())
+    breakpoint.onResponse(
+      session,
+      response(
+        1,
+        verified
+          ? { id: 8, verified: true, line: 20, column: 12 }
+          : { id: 8, verified: false, reason: 'pending', line: 20, column: 12 },
+      ),
+    )
+    // Assert
+    await assert.rejects(
+      breakpoint.registered(session, signal),
+      verified
+        ? {
+            message:
+              'Selected adapter did not acknowledge the exact breakpoint registration: {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":true,"selectedReason":null,"selectedLine":20,"selectedColumn":12,"selectedSourceMatches":null}',
+          }
+        : {
+            message:
+              'Selected adapter did not acknowledge the exact breakpoint registration: {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":false,"selectedReason":"pending","selectedLine":20,"selectedColumn":12,"selectedSourceMatches":null}',
+          },
+    )
+  })
+
+test('an owner that captures at the declared column still accepts a pending registration that names no column yet', async () => {
+  // Arrange
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-column')
+  // Act
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: false, reason: 'pending' }),
+  )
+  const receipt = await breakpoint.registered(session, signal)
+  // Assert
+  assert.equal(receipt.status, 'pending')
+  assert.equal(receipt.breakpointId, 8)
+})
+
+test('an owner that captures at the declared column accepts a registration verified at exactly that position and refuses a verified one that names no column', async () => {
+  // Arrange
+  const exact = await breakpointHarness('declared-column'),
+    withoutColumn = await breakpointHarness('declared-column')
+  // Act
+  exact.breakpoint.onRequest(exact.session, exact.request())
+  exact.breakpoint.onResponse(
+    exact.session,
+    exact.response(1, { id: 8, verified: true, line: 20, column: 5 }),
+  )
+  withoutColumn.breakpoint.onRequest(
+    withoutColumn.session,
+    withoutColumn.request(),
+  )
+  withoutColumn.breakpoint.onResponse(
+    withoutColumn.session,
+    withoutColumn.response(1, { id: 8, verified: true, line: 20 }),
+  )
+  // Assert
+  assert.equal(
+    (await exact.breakpoint.registered(exact.session, exact.signal)).status,
+    'bound',
+  )
+  await assert.rejects(
+    withoutColumn.breakpoint.registered(
+      withoutColumn.session,
+      withoutColumn.signal,
+    ),
+    /Selected adapter did not acknowledge the exact breakpoint registration/,
+  )
 })

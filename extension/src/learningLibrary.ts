@@ -304,15 +304,33 @@ export class LearningLibrary {
     })
   }
 
+  /**
+   * Tells whether a study with this id may be saved under the current limit, read without the storage lock; called by {@link RecordingStore.admitsStudy} before a run prepares, so a run on a library that is already full is refused before any input.
+   * The answer can be overtaken by another window: {@link saveStudy} applies the same rule again under the lock at save time.
+   * @param studyId - The id the study is, or will be, saved under.
+   * @returns `true` when the library already holds that study or has room for one more.
+   * @throws When the limit setting is invalid for a new study, or the library directory cannot be read.
+   * @example
+   * await library.admitsStudy('instance_run') // => false on a full library that does not hold it
+   */
+  async admitsStudy(studyId: string): Promise<boolean> {
+    return this.admits(await this.entries(), studyId)
+  }
+
+  /** Holds the one admission rule for {@link admitsStudy} and {@link saveStudy}: a study already kept is always admitted, a new one only below the limit. @example this.admits(existing, study.id) */
+  private admits(existing: { id: string }[], studyId: string): boolean {
+    return (
+      existing.some((value) => value.id === studyId) ||
+      existing.length < savedStudyLimit(this.capacity())
+    )
+  }
+
   /** Replaces one committed projection atomically, retaining bounded partial observations on later failure. @example await library.saveStudy(study) */
   saveStudy(input: RetainedStudy): Promise<void> {
     const study = decodeRetainedStudy(input, this.workspaceKey)
     return this.locked(async () => {
       const existing = await this.entries()
-      if (
-        !existing.some((value) => value.id === study.id) &&
-        existing.length >= savedStudyLimit(this.capacity())
-      )
+      if (!this.admits(existing, study.id))
         throw new Error(
           'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, then retry storage. Existing learning was kept.',
         )

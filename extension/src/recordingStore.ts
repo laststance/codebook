@@ -154,6 +154,23 @@ export class RecordingStore {
     }
   }
 
+  /**
+   * Tells whether the study library that shares this store's directory can keep a study with this id; called by {@link StudyService} before a run acquires its runtime, so a run whose explanation could not be saved sends no input.
+   * It takes no storage lock: the library applies the same rule again under the lock when the study is saved.
+   * @param studyId - The id the run's study will be saved under.
+   * @returns `true` when the library already holds that study or has room for one more.
+   * @throws When the limit setting is invalid or the library directory cannot be read.
+   * @example
+   * await store.admitsStudy(`${instanceId}_${runId}`) // => false on a full study library
+   */
+  admitsStudy(studyId: string): Promise<boolean> {
+    return new LearningLibrary(
+      this.learningDirectory,
+      this.workspaceKey,
+      this.capacity,
+    ).admitsStudy(studyId)
+  }
+
   /** Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted. @example await store.start(binding, runtime.evidence.elapsedMs()) */
   start(
     input: RecordingBinding,

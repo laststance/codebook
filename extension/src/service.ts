@@ -1793,6 +1793,14 @@ export class StudyService {
             'RUNTIME_FAILED',
             'Configured source binding is absent.',
           )
+        const studyId = `${this.instanceId}_${record.id}`
+        // A run whose explanation the study library could not keep ends here, before a runtime exists or any input can be sent.
+        if (this.recordings && !(await this.recordings.admitsStudy(studyId)))
+          throw new StudyError(
+            'PREREQUISITE_MISSING',
+            'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run. Existing learning was kept.',
+          )
+        if (this.stopping || record.stopping) return
         record.runtime = await this.environment.createRuntime(
           join(this.storageRoot, this.instanceId, record.id),
           definition,
@@ -1819,7 +1827,7 @@ export class StudyService {
             record.recording = await this.recordings.start(
               {
                 workspaceKey: this.recordings.workspaceKey,
-                studyId: `${this.instanceId}_${record.id}`,
+                studyId,
                 instanceId: this.instanceId,
                 runId: record.id,
                 runtimeId: record.runtime.id,
