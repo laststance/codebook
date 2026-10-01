@@ -1,9 +1,9 @@
 # Cycle 0037 — Live run entry: the first presentation after an extension update, a full library told before the run, and two binding regressions
 
 Type: product-increment\
-Status: validating\
+Status: closed\
 Result: demonstrated\
-Delivery: committed\
+Delivery: merged\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/67\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -362,25 +362,38 @@ D1 and D2 are the first items for the next cycle: three passes reported them ind
 
 Release metadata: VERSION 0.2.21.0, manifest and runtime version 0.2.21, the package regression expectation and the README's package path. The CHANGELOG entry names the three new texts (E2's message, E1's refusal message and its cause), E5's sentence, the two restored behaviors, the bounded guarantee (R5) and the limits above.
 
+### Delivery closure, 2026-10-02
+
+- `/ship` committed the four coverage tests with their harness hook (`d6b82c4`), the records (`6f2d632`) and the release metadata (`a35bed5`, 0.2.21.0). On that final tree the full suite passed 1,610/1,610, the package suite 183/183, the hook test 4/4, the 22 disabled-fix controls held with the compiled output identical before and after, and `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` each exited 0. Against the reviewed tree `fb2d9d13` it differs in documents and four version literals only.
+- The documentation audit ran twice. The first pass made the two README edits named above. The second pass audited the corrected CHANGELOG sentence, the fourth entry note and the audit bullet, read 17 documents, edited nothing and ended as current. It could not confirm the 22-of-22 control run from the saved log, which held the earlier 18-control run; the controls were run again on the final tree and that log is saved privately.
+- PR #68 (head `a35bed5`) passed all 13 PR checks. Its body links Issue #67 without a closing keyword, and GitHub reported no closing reference.
+- Codex cloud answered that head with a thumbs-up reaction 4 min 57 s after the PR was marked ready, and left no review, comment or thread. That is its answer when it has no finding.
+- The separate read-only exact-HEAD gate passed: open, not a draft, mergeable and clean, the same head locally, on the remote and on the PR, `main` unmoved, 13 of 13 check runs successful, no legacy status, no review thread, no closing reference.
+- The merge ran as its own step, squash-merging as `97f18d4` at 23:19:31 UTC on 2026-10-01, pinned to the gated head.
+- Every post-merge `main` CI run on `97f18d4` passed: TypeCheck 36940187055, Fallow 36940187063, Test 36940187080, Build, test and package 36940187082, Lint 36940187086, Build 36940187135 and Format 36940187185.
+- Issue #67 stayed open through the merge and was closed by hand with a comment that names N6-a's PARTIAL outcome and the carried findings D1 to D8. Goal #1 stays open.
+- Released as 0.2.21.0. No 0.2.21 package was built or installed: both QA profiles still run the native candidate (runtime `4a06d630`, 0.2.20 metadata), whose product source equals the delivered one except the version literal.
+- Owner direction during the closure, 2026-10-02: Codex automatic review is switched off for this repository. Later deliveries have no Codex cloud step; CI and the separate exact-HEAD gate remain. The owner also asked for the Test job to finish in under one minute before the next cycle starts; that work is a tooling change of its own and is recorded in [the test execution guide](../qa/test-execution.md).
+
 ## Result and decision
 
 - Result: demonstrated, with one partial native check.
   - E1 to E5 hold at mechanism level: 13 behavior tests red on `9885f7f`, green on the branch, 22 of 22 disabled-fix controls.
   - Native (VS Code 1.140.0 with Copilot Chat Auto, Cursor 3.23.10, candidate `4a06d630`): N6-b PASS, N6-c PASS, N6-e PASS in both hosts, N6-d PASS with a disclosed limit, N6-a PARTIAL. The cycle's falsifier did not occur: the first selection after an update needed no driver click in a window without a foreign preview tab.
   - Not shown: `layoutConfirmed: true` on that first selection (it answered unconfirmed once, as `9885f7f` does without a dead pane when a learner's text tab is in the source column); E4 in an editor; the live path in Cursor.
-- Decision: keep E1 to E5 and deliver them as 0.2.21.0. The findings D1 to D8, the limits recorded under the implementation and the native observations go to the next cycles; D1 and D2 first.
+- Decision: keep E1 to E5. Delivered as 0.2.21.0 through PR #68 (`97f18d4`); see the delivery closure above. The findings D1 to D8, the limits recorded under the implementation and the native observations go to the next cycles; D1 and D2 first.
 - Acceptance rows after this cycle: AC-ENTRY, AC-SAVE and AC-LIVE advance at mechanism and bounded development-native level and stay open; AC-REPLAY held as a regression (N6-e); the other rows carry forward untouched. No Stage 1 or Stage 2 credit.
 
 ## Handoff
 
 - Before: the first presentation selection after an extension update failed and needed driver clicks (Cycle 0036 N5, FAIL); a full library was reported after the run; a stack refresh before the binding failed the run; a Node stop at another column was refused only at its pause.
 - After: the dead Application and Study panes are closed at a cold open and the selection is admitted (PARTIAL natively, see above); a run on a full library is refused before any input; the refresh window and the Node column rule are back to 0.2.19.0's behavior.
-- Review, CI, merge, package, publication and installed verification are separate: reviews are complete for the delivered tree; CI, the Codex cloud review, the exact-HEAD gate and the merge are recorded in the delivery closure of this record once they have happened; the private candidate package is for 0.2.20 metadata (`b5b7bf22…`), no 0.2.21 package is built or installed, and nothing is published.
+- Review, CI, merge, package, publication and installed verification are separate: reviews are complete for the delivered tree; CI, the Codex cloud answer, the exact-HEAD gate and the merge are recorded under "Delivery closure"; the private candidate package is for 0.2.20 metadata (`b5b7bf22…`), no 0.2.21 package is built or installed, and nothing is published.
 - State left on this machine: both QA profiles run the Cycle 0037 candidate (runtime `4a06d630`); the QA workspace file sets `codebook.savedStudyLimit` to 128; the QA library holds 67 studies, one of them the refused run of N6-b.
 
 ## Next action
 
-- Exact next action: push this branch, open the pull request (body starting with `@coderabbitai ignore`, "Linked to #67", no closing keyword), wait for CI, mark it ready, read the Codex cloud review, run the read-only exact-HEAD gate and merge in a separate step; then record the delivery closure, close Issue #67 by hand and create the next cycle's issue through `/spec` from D1 and D2.
-- Changed files / branch / active processes: `codex/cycle-0037-live-run-entry`; no active processes; no desktop use is needed.
-- State updated in PROJECT_STATE.md: product row, active cycle, AC-LIVE, AC-SAVE and AC-ENTRY next actions, one next action.
+- Exact next action: done. The cycle is delivered and closed. The next cycle is specified through `/spec` from D1 and D2 after the owner-requested test-speed change.
+- Changed files / branch / active processes: merged as `97f18d4`; no active processes. The private worktree `/tmp/c37-base` is unused and was left in place; `git worktree remove /tmp/c37-base` removes it.
+- State updated in PROJECT_STATE.md: product row, active cycle, checkout, tracking, one next action.
 - Durable decisions updated: none.
