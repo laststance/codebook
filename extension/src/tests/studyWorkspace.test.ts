@@ -3094,3 +3094,127 @@ test('ending the historical session re-enables Inspect for the selected Node sto
     await harness.close()
   }
 })
+
+// Value: protects=no historical session starting on a closed reader; fails_when=a Node stop selection that waited for the old debugger's disposal creates a new owner without checking that it is still current; why_new=Cycle 0034 O1 adds a wait before creation (plan review P2); seam=TestReplayDebugger models a held disposal
+test('a Node stop selection that was waiting for the stopped historical debugger when the reader closed starts no new session', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let releaseDisposal = (): void => {}
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition
+          ?.debuggerAvailable === true,
+      'the Node stop shows its values in Run and Debug',
+      1_000,
+    )
+    harness.endHistoricalDebugSession()
+    const disposal = harness.holdHistoricalDebugDisposal()
+    releaseDisposal = disposal.release
+    const presentationsBeforeClose = harness.historicalDebugPresentations.length
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await disposal.started
+
+    // Act
+    const closing = harness.reader.close()
+    disposal.release()
+    await closing
+
+    // Assert
+    assert.equal(harness.historicalDebuggers.length, 1)
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBeforeClose,
+    )
+  } finally {
+    releaseDisposal()
+    await harness.close()
+  }
+})
+
+// Value: protects=the selected Node stop's label after the reader was closed and opened again; fails_when=the reopened reader forgets that the stop's captured source matches and labels it "captured source unavailable"; why_new=Cycle 0034 T4 (Cycle 0033 plan partial T1); seam=none
+test('a Node stop selected before the reader closed keeps its matching captured source when its history is selected again', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition
+          ?.debuggerAvailable === true,
+      'the Node stop shows its values in Run and Debug',
+      1_000,
+    )
+
+    // Act
+    await harness.reader.close()
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          2 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the reopened reader restores the selected Node stop',
+      1_000,
+    )
+
+    // Assert
+    const reopened = harness.postedMessages().slice(-1)[0]!
+    assert.equal(reopened.nodeHistoryPosition?.type, 'stop')
+    assert.equal(reopened.nodeHistoryPosition?.sourceAvailable, true)
+  } finally {
+    await harness.close()
+  }
+})

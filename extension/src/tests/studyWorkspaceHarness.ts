@@ -253,9 +253,18 @@ export async function workspaceHarness(
   let nextHistoricalDebugPresentation:
     | { wait: Promise<void>; entered(): void; recordedStopOnly: boolean }
     | undefined
+  let nextHistoricalDebugDisposal:
+    { wait: Promise<void>; entered(): void } | undefined
+  let nextRecordingReveal: { wait: Promise<void>; entered(): void } | undefined
+  let registeredHistoricalDebuggers = 0
   class TestReplayDebugger {
     available = true
-    /** Registers the fake owner so {@link loadHistoricalDebugValues} and {@link endHistoricalDebugSession} can notify the workspace, as the real owner does. @example new TestReplayDebugger(vscode, (reason) => workspace.replayDebuggerChanged(reason)) */
+    private closed = false
+    /**
+     * Registers the fake owner so {@link loadHistoricalDebugValues} and {@link endHistoricalDebugSession} can notify the workspace, as the real owner does.
+     * @throws When an earlier owner is still registered: the editor accepts one descriptor factory per debug type.
+     * @example new TestReplayDebugger(vscode, (reason) => workspace.replayDebuggerChanged(reason))
+     */
     constructor(
       _editor: unknown,
       readonly changed: (
@@ -263,6 +272,11 @@ export async function workspaceHarness(
       ) => void = () => {},
       readonly failed: (error: unknown) => void = () => {},
     ) {
+      if (registeredHistoricalDebuggers > 0)
+        throw new Error(
+          'a DebugAdapterDescriptorFactory can only be registered once per a type.',
+        )
+      registeredHistoricalDebuggers++
       historicalDebuggers.push(this)
     }
     async present(
@@ -298,8 +312,19 @@ export async function workspaceHarness(
     invalidate(): void {
       historicalDebugInvalidations++
     }
+    /** Mirrors the real owner: a second call returns at once, and the registration ends only when the first call finishes stopping the session. @example await debuggerView.dispose() */
     async dispose(): Promise<void> {
       this.available = false
+      if (this.closed) return
+      this.closed = true
+      // A held disposal models an editor that has not yet acknowledged the stop of the owned session.
+      const held = nextHistoricalDebugDisposal
+      if (held) {
+        nextHistoricalDebugDisposal = undefined
+        held.entered()
+        await held.wait
+      }
+      registeredHistoricalDebuggers--
     }
   }
   let sourceOpenFailure = false
@@ -942,9 +967,23 @@ export async function workspaceHarness(
         this.fail('Owned viewport closed before cleanup')
       })
     }
-    /** Refuses renderer use after genuine native closure during replay integration. @example await viewport.reveal() */
-    async reveal(): Promise<void> {
+    /**
+     * Refuses renderer use after genuine native closure during replay integration.
+     *
+     * A held recording reveal models the real viewport queueing behind a native placement hold: that wait does not observe
+     * the caller's cancellation, and the reveal checks it only once the hold is released.
+     *
+     * @example await viewport.reveal(signal)
+     */
+    async reveal(signal?: AbortSignal): Promise<void> {
       assert.equal(this.closed, false)
+      const held = this.mode === 'recording' ? nextRecordingReveal : undefined
+      if (held) {
+        nextRecordingReveal = undefined
+        held.entered()
+        await held.wait
+        signal?.throwIfAborted()
+      }
       this.rendererAttached = true
       viewportEvents.push(`reveal:${this.mode}`)
     }
@@ -962,6 +1001,8 @@ export async function workspaceHarness(
     close(): void {
       this.listener?.dispose()
       this.closed = true
+      // Like the real frame delivery, closing rejects a paint that is still in flight.
+      this.abandonPaint?.(new Error('Viewport disposed'))
       this.lease.released()
     }
     /** Reserves the simulated renderer so workspace tests enforce drain before adoption. @example const release = await viewport.holdPlacement() */
@@ -1000,6 +1041,8 @@ export async function workspaceHarness(
     private abandonPaint?: (error: Error) => void
     /** Delays only the requested replay image so workspace tests can interrupt pending paints. @example await viewport.present(png) */
     async present(image: string): Promise<void> {
+      // The real viewport refuses renderer work once its lease is released.
+      if (this.closed) throw new Error('Owned viewport is closed')
       assert.equal(this.rendererAttached, true, 'Webview is not ready')
       const held = nextImage
       nextImage = undefined
@@ -2448,6 +2491,32 @@ export async function workspaceHarness(
       })
       nextHistoricalDebugPresentation = { wait, entered, recordedStopOnly }
       return { started, release, reject }
+    },
+    /** Keeps the next recorded-application reveal queued until released, as the real viewport does behind a native placement hold; the queued reveal ignores its caller's cancellation until then. @example const held = harness.holdNextRecordingReveal(); await held.started; held.release() */
+    holdNextRecordingReveal() {
+      let release = (): void => {},
+        entered = (): void => {}
+      const started = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const wait = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      nextRecordingReveal = { wait, entered }
+      return { started, release }
+    },
+    /** Keeps the next historical debugger disposal pending until released, as an editor that is slow to stop the owned session does; its registration stays live meanwhile. @example const held = harness.holdHistoricalDebugDisposal(); await held.started; held.release() */
+    holdHistoricalDebugDisposal() {
+      let release = (): void => {},
+        entered = (): void => {}
+      const started = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const wait = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      nextHistoricalDebugDisposal = { wait, entered }
+      return { started, release }
     },
     holdNextSource() {
       let release = (): void => {},

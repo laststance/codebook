@@ -878,3 +878,70 @@ test(
     await player.controller.dispose()
   },
 )
+
+// Value: protects=an explicit reopen recovering a recording whose committed moment can no longer be shown as it is; fails_when=a same-study open at ready returns state although the reader closed or the historical debugger ended; why_new=Cycle 0034 O4/O5 (the same-study branch never reloaded); seam=none
+test('opening the same recording again reloads it when its committed moment can no longer be shown as it is', async () => {
+  // Arrange
+  let presentable = true,
+    loads = 0
+  const player = playbackHarness({ presentable: () => presentable })
+  const loadRecording = player.dependencies.load
+  player.dependencies.load = async (studyId, signal) => {
+    loads++
+    // The workspace restores the position its last save stored.
+    return {
+      ...(await loadRecording(studyId, signal)),
+      preferredPositionMs: player.saved.at(-1),
+    }
+  }
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  player.open()
+  await player.controller.settle()
+  const loadsWhilePresentable = loads,
+    paintsWhilePresentable = player.presented.length
+
+  // Act
+  presentable = false
+  player.open()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(loadsWhilePresentable, 1)
+  assert.equal(loads, 2)
+  assert.equal(player.presented.length, paintsWhilePresentable + 1)
+  assert.equal(player.displayed(), 100)
+  assert.equal(player.controller.state().readiness, 'ready')
+  await player.controller.dispose()
+})
+
+// Value: protects=a cold recording load from being restarted by a repeated open; fails_when=the reload for a moment that cannot be shown also applies while the first load is still running; why_new=Cycle 0034 O4 (plan review P3); seam=none
+test('opening the same recording again while its first load is still running does not restart that load', async () => {
+  // Arrange
+  let loads = 0,
+    releaseLoad = (): void => {}
+  const player = playbackHarness({ presentable: () => false })
+  const loadRecording = player.dependencies.load
+  const loadHeld = new Promise<void>((resolve) => {
+    releaseLoad = resolve
+  })
+  player.dependencies.load = async (studyId, signal) => {
+    loads++
+    await loadHeld
+    return loadRecording(studyId, signal)
+  }
+  player.open()
+
+  // Act
+  const repeated = player.open()
+  releaseLoad()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(repeated.readiness, 'loading')
+  assert.equal(loads, 1)
+  assert.equal(player.controller.state().readiness, 'ready')
+  await player.controller.dispose()
+})

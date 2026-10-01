@@ -1,8 +1,9 @@
 /**
  * Lets one waiter leave a shared, non-cancellable operation when its own signal aborts; the operation itself keeps running for other waiters.
  *
- * {@link ReplayDebugger.present} uses it for the owned session's startup and retirement, so an abandoned presentation releases
- * {@link PlaybackController}'s queue even when the editor never answers.
+ * {@link ReplayDebugger.present} uses it for the owned session's startup and retirement, {@link PlaybackController} for its
+ * presentation queue and {@link StudyWorkspace} for a replaced historical debugger's disposal, so an abandoned request
+ * leaves even when the editor never answers.
  *
  * @param operation - Shared promise to wait for; `undefined` resolves at once.
  * @param signal - This waiter's cancellation.

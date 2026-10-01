@@ -1835,6 +1835,41 @@ test('a native values notification the reader failed to handle is shown, and the
   }
 })
 
+// Value: protects=a stale "native values did not update" error leaving the reader once the debugger notifies again, even with no Run and Debug hint showing; fails_when=the reader is published only when a hint or a Node stop changes, so the cleared error stays on screen; why_new=Cycle 0034 T3 (the failureCleared publish had no test without a hint); seam=none
+test('a handled native values notification clears an earlier notification failure while no Run and Debug hint is showing', async () => {
+  // Arrange: native values are loaded, so no hint is showing, and one notification failed to be handled.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    harness.failHistoricalDebugNotification(new Error('Reader update failed'))
+    const afterFailure = harness.postedMessages().slice(-1)[0]!
+    const publishedBefore = harness.postedMessages().length
+
+    // Act
+    harness.loadHistoricalDebugValues()
+
+    // Assert
+    const afterHandled = harness.postedMessages().slice(-1)[0]!
+    assert.equal(afterFailure.recording?.nativeValuesUninspected, false)
+    assert.ok(afterFailure.errors.includes('Error: Reader update failed'))
+    assert.equal(harness.postedMessages().length, publishedBefore + 1)
+    assert.equal(
+      afterHandled.errors.includes('Error: Reader update failed'),
+      false,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=closing the reader while a recorded frame never paints, for example behind a hidden replay panel; fails_when=close() waits on the presentation loop without a bound, or the loop waits on a frame whose presentation was retired; why_new=Cycle 0033 L2/O2/O4 (the close settle had no bound); seam=none
 test(
   'closing the reader while a recorded frame never paints still finishes',
@@ -1970,6 +2005,314 @@ test(
       assert.deepEqual(order, ['saved 100', 'saved 100', 'closed'])
     } finally {
       releaseSave()
+      await harness.close()
+    }
+  },
+)
+
+// Value: protects=the explicit reopen the reader asks for after the historical session ended; fails_when=pressing Recording on a displayed replay returns the loaded state and leaves the stopped debugger in place; why_new=Cycle 0034 O5 (no test opened a recording after its session ended); seam=TestReplayDebugger models the ended session
+test('pressing Recording after the historical session ended presents the saved moment again through a new session', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const presentationsWhileSessionLives =
+      harness.historicalDebugPresentations.length
+    harness.endHistoricalDebugSession()
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    const view = harness.postedMessages().slice(-1)[0]!
+    assert.equal(harness.historicalDebuggers.length, 2)
+    assert.equal(harness.historicalDebuggers[1]!.available, true)
+    assert.equal(view.recording?.presentedMs, 100)
+    assert.equal(view.recording?.readiness, 'ready')
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsWhileSessionLives + 1,
+    )
+    assert.equal(
+      view.errors.some((error) => error.includes('Historical debugger closed')),
+      false,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a second explicit open while the editor is still stopping the replaced historical debugger; fails_when=the replacement clears its owner before the disposal ends, so the newer open registers a second descriptor factory for the debug type; why_new=Cycle 0034 O1 (the harness never rejected a second live registration); seam=TestReplayDebugger models the one-factory rule and a held disposal
+test('another explicit open while the editor is still stopping the replaced historical debugger waits for it and then presents', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  let releaseDisposal = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.endHistoricalDebugSession()
+    // A seek on the stopped debugger fails, so the next explicit open reloads the recording.
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const disposal = harness.holdHistoricalDebugDisposal()
+    releaseDisposal = disposal.release
+    await harness.reader.openRecording(harness.studyId)
+    await disposal.started
+
+    // Act: the learner pauses the stuck open and opens the recording again.
+    harness.controller.command({
+      action: 'pause',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.reader.openRecording(harness.studyId)
+    await new Promise<void>((resolve) => setTimeout(resolve, 200))
+    const whileStopping = harness.controller.state()
+    disposal.release()
+    await harness.controller.settle()
+
+    // Assert
+    const view = harness.postedMessages().slice(-1)[0]!
+    assert.equal(whileStopping.readiness, 'loading')
+    assert.equal(view.recording?.readiness, 'ready')
+    assert.equal(harness.historicalDebuggers.length, 2)
+    assert.equal(harness.historicalDebuggers[1]!.available, true)
+    assert.equal(
+      view.errors.some((error) => error.includes('registered once')),
+      false,
+    )
+  } finally {
+    releaseDisposal()
+    await harness.close()
+  }
+})
+
+// Value: protects=the reader closing only after a replaced historical debugger has been stopped; fails_when=close() awaits only the owner still held in its field, so a reopen registers a second descriptor factory during that disposal; why_new=Cycle 0034 O1 (plan review P5); seam=TestReplayDebugger models the one-factory rule and a held disposal
+test('closing the reader waits for a replaced historical debugger that the editor is still stopping, and the next open presents', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  let releaseDisposal = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.endHistoricalDebugSession()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const disposal = harness.holdHistoricalDebugDisposal()
+    releaseDisposal = disposal.release
+    await harness.reader.openRecording(harness.studyId)
+    await disposal.started
+
+    // Act
+    let closed = false
+    const closing = harness.reader.close().then(() => {
+      closed = true
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 500))
+    const closedWhileStopping = closed
+    disposal.release()
+    await closing
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    const view = harness.postedMessages().slice(-1)[0]!
+    assert.equal(closedWhileStopping, false)
+    assert.equal(view.recording?.readiness, 'ready')
+    assert.equal(harness.historicalDebuggers.length, 2)
+    assert.equal(
+      view.errors.some((error) => error.includes('registered once')),
+      false,
+    )
+  } finally {
+    releaseDisposal()
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent's open of a recording whose reader the learner closed; fails_when=the same-study open re-reveals the committed frame without opening the reader; why_new=Cycle 0034 O4 (the playback route skips openRecording's closed-reader guard); seam=none
+test('an agent opening the same recording after the reader closed opens the reader and presents the saved moment', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    await harness.reader.close()
+    const openedAfterClose = harness.reader.inspect().opened
+
+    // Act
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    const state = harness.controller.state()
+    assert.equal(openedAfterClose, false)
+    assert.equal(harness.reader.inspect().opened, true)
+    assert.equal(state.readiness, 'ready')
+    assert.equal(state.presentedMs, 100)
+    assert.equal(state.reason, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a newer recording open while the reader's first entry, already abandoned, is still inside a native layout call; fails_when=the newer open meets the abandoned entry's reservation and reports busy; why_new=Cycle 0034 O2 (a load that leaves on abort lets its successor reach the cold entry); seam=none
+test('a recording opened again after its first reader entry was abandoned waits for that entry instead of reporting busy', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  let releaseEntry = (): void => {}
+  try {
+    await harness.reader.close()
+    const entry = harness.holdNextCommand('vscode.getEditorLayout')
+    releaseEntry = entry.release
+    await harness.reader.openRecording(harness.studyId)
+    await entry.started
+
+    // Act: the learner pauses the stuck open and opens the recording again.
+    harness.controller.command({
+      action: 'pause',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.reader.openRecording(harness.studyId)
+    await new Promise<void>((resolve) => setTimeout(resolve, 300))
+    const whileEntryHeld = harness.controller.state()
+    entry.release()
+    await harness.controller.settle()
+
+    // Assert
+    const state = harness.controller.state()
+    assert.equal(whileEntryHeld.reason, undefined)
+    assert.equal(whileEntryHeld.readiness, 'loading')
+    assert.equal(state.readiness, 'ready')
+    assert.equal(state.reason, undefined)
+  } finally {
+    releaseEntry()
+    await harness.close()
+  }
+})
+
+// Value: protects=a newer presentation that adopted the recorded-application viewport while its abandoned creator was still queued behind a native placement hold; fails_when=the creator closes the viewport once its queued reveal notices the cancellation; why_new=Cycle 0034 O3 (a load that leaves on abort lets its successor adopt the viewport); seam=WorkspaceViewport models the queued reveal and the paint rejected by a close
+test('a recording opened again while its first recorded-application reveal is still queued keeps that viewport and paints the next frame', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let releaseReveal = (): void => {},
+    releasePaint = (): void => {}
+  try {
+    await harness.reader.close()
+    const reveal = harness.holdNextRecordingReveal()
+    releaseReveal = reveal.release
+    await harness.reader.openRecording(harness.studyId)
+    await reveal.started
+    harness.controller.command({
+      action: 'pause',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const paint = harness.holdNextImage()
+    releasePaint = paint.release
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await paint.started
+
+    // Act: the abandoned first open's reveal leaves its queue while the newer frame is painting.
+    reveal.release()
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    paint.release()
+    await harness.controller.settle()
+
+    // Assert
+    const state = harness.controller.state()
+    assert.equal(state.reason, undefined)
+    assert.equal(state.readiness, 'ready')
+    assert.equal(state.presentedMs, 100)
+  } finally {
+    releaseReveal()
+    releasePaint()
+    await harness.close()
+  }
+})
+
+// Value: protects=a successor of an abandoned first entry that never returns still getting an answer; fails_when=the successor waits for the abandoned entry without a bound, or stops waiting at once; why_new=Cycle 0034 O2 adds that wait (plan review P4); seam=none
+test(
+  'a recording opened again after an abandoned first reader entry that never returns reports busy after the presentation bound',
+  { timeout: 30_000 },
+  async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true, true)
+    let releaseEntry = (): void => {}
+    try {
+      await harness.reader.close()
+      const entry = harness.holdNextCommand('vscode.getEditorLayout')
+      releaseEntry = entry.release
+      await harness.reader.openRecording(harness.studyId)
+      await entry.started
+      harness.controller.command({
+        action: 'pause',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+      })
+
+      // Act
+      const reopenedAt = performance.now()
+      await harness.reader.openRecording(harness.studyId)
+      await waitUntil(
+        () => harness.controller.state().readiness === 'failed',
+        'the successor gives up on the abandoned entry',
+        10_000,
+      )
+      const waitedMs = performance.now() - reopenedAt
+
+      // Assert
+      assert.match(
+        harness.controller.state().reason ?? '',
+        /Study workspace is opening/,
+      )
+      assert.ok(
+        waitedMs >= 4_750 && waitedMs <= 6_000,
+        `waited ${Math.round(waitedMs)} ms`,
+      )
+    } finally {
+      releaseEntry()
       await harness.close()
     }
   },
