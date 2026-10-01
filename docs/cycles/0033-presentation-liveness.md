@@ -1,9 +1,9 @@
 # Cycle 0033 — Replay presentation liveness and truthful Node stop state
 
 Type: hardening\
-Status: validating\
+Status: closed\
 Result: demonstrated (mechanism: every Issue #59 item red/green with disabled-fix controls; bounded installed native N2-a and N2-b in VS Code and Cursor, N2-c in VS Code; open: N2-d, N2-c in Cursor, M1 (f) and the non-critical review findings listed under the delivery review)\
-Delivery: committed as 0.2.17.0 (the Draft PR from `/ship`, CI, a separate exact-HEAD gate and the merge follow as separate steps)\
+Delivery: merged (PR #60, `54add83`, 0.2.17.0)\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/59\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -451,6 +451,16 @@ Findings, grouped (all deferred to the Cycle 0034 backlog):
   2. Layout restore and "Open article" during replay, and the wide-sequence page overflow.
   3. The OCR findings above.
 
+### Delivery closure, 2026-10-01
+
+- PR #60 (head `0c98fbf`) passed every PR check. The Test job needed three attempts, for a reason outside the code: the first ran without a `CODECOV_TOKEN` and skipped the upload; the second had the token, and the upload failed with "Repository not found" because the Codecov app had no access to this private repository; the third passed after the owner granted that access (1,483/1,483 tests, upload accepted).
+- Codex cloud reviewed that HEAD and left two P2 threads: a second debugger factory registered while the old owner is still being disposed, and the retirement bound counting a pending startup. Both were already in the delivery review above. They were answered as deferred under the owner's CRITICAL-only direction and resolved.
+- The separate exact-HEAD gate then passed: OPEN, MERGEABLE and CLEAN, with the same HEAD locally, on the remote and on the PR, base `b9c846b`, 11 of 11 checks passing, no unresolved thread, and Codex having reviewed that HEAD.
+- The merge ran as its own step, squash-merging as `54add83` at 06:50:21 UTC. The merged tree (`81e869bc`) is identical to the reviewed candidate.
+- Every post-merge `main` CI job on `54add83` passed: Format, Build, Fallow, TypeCheck, Lint, Test, and Build, test and package (runs `368269380*` and `368269381*`).
+- Issue #59 is closed with a comment that links its successor. Goal #1 stays open.
+- The overlap and ownership findings, both Codex threads, the reader Inspect check, the Node history seek and the M1 (b) remainder are specified in [Cycle 0034](0034-replay-ownership.md) (Issue #61). The other open items are listed there as out of scope and stay candidates for later cycles.
+
 ## Handoff
 
 - Evidence: `artifacts/cycle-0033/native/` holds the receipts, action logs, frames and hashes listed above. `artifacts/cycle-0033/{red-base,green-branch,controls,verification,reviews}` hold the test, control and review outputs.
@@ -458,7 +468,7 @@ Findings, grouped (all deferred to the Cycle 0034 backlog):
 
 ## Next action
 
-- Exact next action: finish the delivery of 0.2.17.0: the Draft PR from `/ship`, CI, a separate exact-HEAD gate and the merge in its own step. Then record the delivery, close Issue #59 and create the Cycle 0034 Issue through `/spec`.
-- Changed files / branch / active processes: `codex/cycle-0033-presentation-liveness`; base worktree `/tmp/c33-base` (`b9c846b` plus the copied tests) is a private control and can be removed after delivery; no active processes.
+- Exact next action: done. The cycle is delivered and closed. Continue with [Cycle 0034](0034-replay-ownership.md).
+- Changed files / branch / active processes: merged as `54add83`; no active processes.
 - State updated in PROJECT_STATE.md: active cycle, AC-REPLAY, AC-ENTRY and AC-SAVE receipts, next action.
 - Durable decisions updated: none.

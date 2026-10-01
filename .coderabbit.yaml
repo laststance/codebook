@@ -142,7 +142,7 @@ knowledge_base:
       - 'DECISIONS.md'
       - 'DESIGN.md'
       # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
-      - files: 'docs/cycles/0033-presentation-liveness.md'
+      - files: 'docs/cycles/0034-replay-ownership.md'
         applyTo: '**/*'
       - files: 'docs/designs/codebook.md'
         applyTo: 'extension/src/**'
