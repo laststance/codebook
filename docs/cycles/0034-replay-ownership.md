@@ -135,6 +135,42 @@ Amendments to Issue #61 (also appended to the issue):
 | P5 (O1) | `openRecording` refuses while closing, so "reopen during the close" cannot be driven. The close gap is a replacement's disposal still running when `close()` starts; AC6 states that order. |
 | P6 (E5) | Recorded, no change: the worst healthy sequence now exceeds the 15 s settle ceiling by more. The ceiling stays. |
 
+### Entry after compaction, 2026-10-01
+
+The mandatory entry was repeated in full before the R and T items: PRODUCT_GOAL (v9), the replay, DeepWiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide and the local TS rules. The PNG (SHA-256 `f189ee82…caf2aa`, unchanged) was opened with the image viewer again; the four regions are as recorded above. Branch `codex/cycle-0034-replay-ownership` at `e559de8` with the product and test changes of this cycle uncommitted; no PR open.
+
+### Implementation, 2026-10-01
+
+Each behavior change was written test-first. "Red" is the new test run against `54add83` in a separate worktree (the branch's tests and harness copied onto the base source). "Control" is the fix disabled in the compiled output of the branch, with the bytes restored afterwards.
+
+| Item | Change | Red on `54add83` | Control |
+| --- | --- | --- | --- |
+| E1 | `ReplayDebugger.expire()` gives up for every owner that is not closed, also one the editor had already disconnected, and always notifies the reader. | 2 tests fail (the late termination revived the owner; no notification without a termination) | HELD |
+| E2 | `retireAfterStartup()` refuses an owner that closed or gave up during the startup it waited for. | 1 test fails | HELD |
+| E3 | `giveUp()` keeps a throwing reader listener away from the waiters and sends its error to `failed`. | 1 test fails by timeout (the waiter was stranded) | HELD |
+| E4 | A presentation on a disposed adapter gives up, so the owner becomes unavailable. | 1 test fails | HELD |
+| E5 | The retirement bound starts after a pending startup settled (`retireAfterStartup`); `retireSession()` no longer waits for the startup. | 2 tests fail | HELD |
+| O1 | One shared retirement: `retireReplayDebugger()` chains disposals, `replayDebuggerRetired(signal?)` only waits, and each call site checks that it is current before it creates the next owner synchronously. `close()` waits for the retirement. | 2 tests fail (a second factory registration fails the newer open; `close()` returned while the old owner was stopping). The stale Node selection guard passes on the base, as planned. | HELD (3 controls) |
+| O4, O5 | `PlaybackDependencies.presentable?()`; a same-recording open at `ready` reloads when the reader is closed or the historical debugger is unusable. | 3 tests fail (controller reload; Recording after the session ended; an agent open after `close()`). The "still loading" guard passes on the base. | HELD (3 controls) |
+| O2 | A cold entry keeps its flag and adds a deferred plus its signal. A successor of an aborted entry waits for the release, at most 5 s, then reports `BUSY`. | 2 tests fail (`BUSY` at once; the bound case returned after 52 ms) | HELD (2 controls) |
+| O3 | An aborted reveal leaves the replay viewport to the newer request and marks it for a reveal. | 1 test fails ("Viewport disposed"); the harness now models a reveal queued behind a placement hold | HELD |
+| R1 | The reader offers no Inspect for a selected stop with `sourceAvailable: false`; `sourceAvailable` joins the list's render key. | DOM case fails (1 Inspect button) | HELD (2 controls) |
+| R2 | A Node history `seek()` waits for the earlier presentation without inheriting its failure. | 1 test fails with the played stop's error | HELD |
+| R3 | `readBoundedFile` raises `EvidenceIntegrityError` for a file over its limit or changed during the read. Same code and message; the other callers do not look at the class. | 2 tests fail ("Missing expected rejection": the checkpoint was discarded) | HELD (2 controls) |
+| T1 | Comments in `abandon()` and `untilAborted` corrected. | exempt | exempt |
+| T2 | Never-painting bound: at least 4,950 ms, at most 6,000 ms after the paint started. | exempt | exempt |
+| T3 | New test: a handled notification clears an earlier notification failure with no hint showing (one publish). | passes on the base, as planned | HELD |
+| T4 | New test: a selected Node stop keeps `sourceAvailable: true` after the reader was closed and opened again. | passes on the base, as planned | HELD |
+| T5 | **NOT REACHABLE, no test added.** See below. | — | — |
+
+T5 asked for a settle that starts while a paint phase is already in progress. Two attempts through `changePresentation` (`restore` after Enlarge, and a plain `restore` held in its native layout change while a learner seek painted) completed without waiting: with the one app/source layout, Restore takes the branch at `studyWorkspace.ts:716-797`, which never calls `settleOwnedPlayback`. The only callers left under that layout are in `openRepositoryEvidence`, and both start their wait in the same synchronous step as the command that starts the frame. The remaining callers sit in the retired multi-layout transition. The "phase already in progress" arm of `settleOwnedPlayback` therefore has no test; it goes to the retired presentation cleanup listed under the later UI items.
+
+Other notes:
+
+- `presentable` was first written with four operators and raised the health count by one function; `this.replayDebugger?.available !== false` keeps the count at the baseline.
+- The DOM harness (`extension/scripts/study-bootstrap-qa.mjs`, not in CI) has two new cases for R1. Its only failing case is still the wide-sequence overflow, which is out of scope.
+- Red logs: `artifacts/cycle-0034/red-base/`. Controls: `artifacts/cycle-0034/controls/` (script, per-control logs, `summary.json`; the compiled output was byte-identical before and after).
+
 ## Result and decision
 
 Pending.
