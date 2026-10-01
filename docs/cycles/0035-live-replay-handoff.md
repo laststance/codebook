@@ -1,9 +1,9 @@
 # Cycle 0035 — Live-to-replay handoff: a displayed replay recovers while a live run is attached
 
 Type: product-increment\
-Status: validating\
+Status: closed\
 Result: demonstrated\
-Delivery: committed\
+Delivery: merged\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/63\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -289,7 +289,7 @@ The exploratory QA report with its checkpoints is private under `.gstack/qa-repo
 **Adversarial review** on the same tree (`8cf13c7`):
 
 - Claude subagent: no blocker, "ship as-is". Besides the items above it adds that `showRecordingLoadingOnLiveViewport()` treats a live lease the editor already closed as attached: `showHistory` then throws and the load fails, as it did before this cycle, but now after the recording renderer was dropped. It also notes that the settle-ceiling comment still omits the renderer handshake (up to 20 s) among the waits that can outlast 15 s.
-- Codex adversarial challenge: one P2, the single-slot position memory. Its reproduction: recording A opened at 100 ms and moved to 200 ms, then B, then A again while A's save is held, reopens A at 100 ms, and once the saves are released the older 100 ms is the one saved last. The same sequence loses the position on 0.2.18.0 as well; this cycle fixed only the reload of the same recording.
+- Codex adversarial challenge: one P2, the single-slot position memory, with the recommendation "request changes" (judged not critical and not fixed; see the last sentence of this item). Its reproduction: recording A opened at 100 ms and moved to 200 ms, then B, then A again while A's save is held, reopens A at 100 ms, and once the saves are released the older 100 ms is the one saved last. The same sequence loses the position on 0.2.18.0 as well; this cycle fixed only the reload of the same recording.
 - Codex structured review: it answered, in Japanese, that it found no concrete defect newly introduced by the change. The review tool's marker check did not recognize that answer, so the pass is recorded as missing coverage, not as a pass.
 
 Review records are bound to the reviewed tree `b12ef8ac` (private review log). Version 0.2.19.0 and its CHANGELOG entry follow as release metadata.
@@ -303,6 +303,18 @@ Review records are bound to the reviewed tree `b12ef8ac` (private review log). V
 
 **Entry after compaction during delivery.** The context was compacted while the first documentation audit ran. The mandatory entry was repeated from the files on disk before any further repository write: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure and the local TS rules. The PNG (SHA-256 `f189ee82…caf2aa`, unchanged) was opened with the image viewer; the four regions match the description under "Accepted product and design". Branch `codex/cycle-0035-live-replay-handoff` at `8cf13c7` with the release metadata uncommitted; no PR open. No product source moved, so the gap audit after the cycle stands. The remaining phase is delivery only.
 
+### Delivery closure, 2026-10-01
+
+- `/ship` committed the records (`dfe96a1`) and the release metadata (`38ed348`, 0.2.19.0). On that final tree the full suite passed 1,525/1,525, the package suite 183/183, the hook test 4/4, and `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` each exited 0. Against the reviewed tree `b12ef8ac` it differs in documents and version literals only.
+- PR #64 (head `38ed348`) passed all 13 PR checks. Its body links Issue #63 without a closing keyword, and GitHub reported no closing reference.
+- Codex cloud reviewed that head and left one P2: after a refused control the Learning replay panel keeps showing the refusal, because nothing on the replay path clears the `control` error key. It is the first recorded finding of the pre-landing review above and a known limit in the CHANGELOG. It was answered as recorded and deferred under the owner's CRITICAL-only direction, and the thread was resolved.
+- The separate read-only exact-HEAD gate passed: open, not a draft, mergeable and clean, the same head locally, on the remote and on the PR, `main` unmoved, 13 of 13 check runs successful, no legacy status that is not successful, no unresolved thread, no closing reference.
+- The merge ran as its own step, squash-merging as `dceea3f` at 13:33:54 UTC, pinned to the gated head.
+- Every post-merge `main` CI run on `dceea3f` passed: Build 36869616034, Test 36869616070, Lint 36869616076, TypeCheck 36869616079, Format 36869616085, Fallow 36869616126, and Build, test and package 36869616200.
+- Issue #63 stayed open through the merge and was closed by hand with a comment that names N4-a's PARTIAL outcome and every carried finding. Goal #1 stays open.
+- Released as 0.2.19.0. The installed candidate in both QA profiles is still the tested build with runtime `742a147d` (version 0.2.18, built from `10781a6`); the shipped build differs from it in comment lines and version metadata and has no installed trial of its own.
+- The three failures of the natural request, the sticky refusal and the cold-open refusal are specified in [Cycle 0036](0036-live-first-run.md). The single-slot position memory, the agent contract of a closed reader and the Cycle 0031 UI items stay candidates for the cycles after it.
+
 ## Result and decision
 
 **Demonstrated.** Issue #63's acceptance criteria hold, with one recorded deviation (AC8) and one that delivery closed (AC3):
@@ -315,7 +327,7 @@ Review records are bound to the reviewed tree `b12ef8ac` (private review log). V
 
 The hypothesis held: the reload failed because the live viewport's loading document replaced a reused recording renderer, and it lost the position because the open read storage before the pending save. Dropping the renderer first and carrying the confirmed position in memory closed both without a storage, schema or timeout change. The falsifier did not occur: the installed VS Code recovers with a live run attached.
 
-Decision: keep. Delivery through `/ship` follows.
+Decision: keep. Delivered as 0.2.19.0 through PR #64 (`dceea3f`); see the delivery closure above.
 
 ## Gap audit after the cycle
 
@@ -342,7 +354,7 @@ Decision: keep. Delivery through `/ship` follows.
 
 ## Next action
 
-- Exact next action: `/ship` (version, CHANGELOG, PR with `@coderabbitai ignore` and no closing keyword next to an issue it does not close), CI, the Codex cloud review, a separate exact-HEAD gate and the merge in its own step; then the closure records and the next cycle through `/spec`.
-- Changed files / branch / active processes: `codex/cycle-0035-live-replay-handoff`; no active processes. The private worktrees `/tmp/c35-base` and `/tmp/c35-head` hold the red run and the candidate build.
-- State updated in PROJECT_STATE.md: active cycle, AC-REPLAY, AC-LIVE, AC-SAVE and AC-ENTRY rows, next action.
+- Exact next action: done. The cycle is delivered and closed. Continue with [Cycle 0036](0036-live-first-run.md).
+- Changed files / branch / active processes: merged as `dceea3f`; no active processes. The private worktrees `/tmp/c35-base` and `/tmp/c35-head` are unused and were left in place; `git worktree remove <path>` removes each.
+- State updated in PROJECT_STATE.md: product row, active cycle, checkout, tracking, AC-LIVE and AC-REPLAY next actions, one next action.
 - Durable decisions updated: none.
