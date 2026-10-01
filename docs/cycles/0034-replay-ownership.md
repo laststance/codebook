@@ -1,9 +1,9 @@
 # Cycle 0034 — Replay request ownership across abandoned and expired operations
 
 Type: hardening\
-Status: implementing\
-Result: pending\
-Delivery: local-only\
+Status: validating\
+Result: demonstrated\
+Delivery: committed\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/61\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -171,17 +171,102 @@ Other notes:
 - The DOM harness (`extension/scripts/study-bootstrap-qa.mjs`, not in CI) has two new cases for R1. Its only failing case is still the wide-sequence overflow, which is out of scope.
 - Red logs: `artifacts/cycle-0034/red-base/`. Controls: `artifacts/cycle-0034/controls/` (script, per-control logs, `summary.json`; the compiled output was byte-identical before and after).
 
+### Second entry after compaction, 2026-10-01
+
+The context was compacted again during the native trial, between Run > Stop Debugging and the Recording press of the VS Code N3-a take. That take was finished and stopped first, because its action was already frozen. The mandatory entry was then repeated in full before the Cursor trial: PRODUCT_GOAL (v9), the replay, DeepWiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure and the local TS rules. The PNG (SHA-256 `f189ee82…caf2aa`, unchanged) was opened with the image viewer; the four regions (Live explanation, Learning replay, DeepWiki reproduction, Shortcut discovery) are as recorded above. Branch `codex/cycle-0034-replay-ownership` at `dd7aa0f`, clean apart from private artifacts; no PR open.
+
+### Verification gates, 2026-10-01
+
+All on the main checkout at `dd7aa0f` (the later commits change documents only), Node 24.21.0, pnpm 12.4.2. Logs: `artifacts/cycle-0034/verification/`.
+
+| Gate | Result |
+| --- | --- |
+| Full suite (`pnpm --dir extension test`) | 1,505/1,505 pass, 0 fail, 0 cancelled, 0 skipped; 106.9 s. The same source also passed 1,505/1,505 in a separate clean worktree. |
+| Package suite (`test:package`, after every reader exited) | 183/183 pass; 7.6 s |
+| Compaction hook (`.codex/restore-product-context.test.mjs`) | 4/4 pass |
+| `typecheck`, `lint`, `format:check`, `dead-code`, `dupes`, `health` | all exit 0; health stays at its baseline |
+| T2 stability | the layout partition ran 20 times in a row: 109/109 each time. The never-painting case took 5,346–5,448 ms, inside its 4,950–6,000 ms bound. |
+| Disabled-fix controls | 21 controls, all HELD; the compiled output was byte-identical before and after |
+| DOM harness (`study-bootstrap-qa.mjs`, not in CI) | 58/59 on the branch. The one failure is the wide-sequence overflow, which is older than this cycle and out of scope. The base has 57/59 (R1 red). |
+
+AC14, AC15 and AC16 hold. AC13 holds except T5, which is NOT REACHABLE (above).
+
+### Package and installation, 2026-10-01
+
+- Candidate: `artifacts/packages/codebook-0.2.17-c34-replay-ownership-20261001.vsix`, built from `dd7aa0f` in a clean worktree. SHA-256 `192ca15d…e81541`, runtime `dist/extension.js` `f786da84…3e6377`, sourceHash `a22f7d86…34e08`, 29 entries, `package:check` passed.
+- Installed with `--install-extension … --force` in VS Code (shared by the QA profile `Codebook QA 0029 Clean`) and in Cursor's QA profile `Codebook QA 0029 Settings`. Both installed runtimes match `f786da84`.
+- The version is still 0.2.17 in this candidate; `/ship` bumps it. The shipped build then differs from the tested one by version metadata only.
+
+### Reviews of `dd7aa0f`, 2026-10-01
+
+- Local CodeRabbit CLI 0.8.2 (`--agent --committed --base-commit 54add83`, no paid credits): completed, 2 minor findings, both in documents. README's Tracking section still listed Issue #59 as open, and this record's Next action was stale. Both are corrected in the records commit.
+- `open-code-review-delegate`, range `54add83..dd7aa0f`: 22 files. 11 eligible, 11 reviewed, 0 skipped. 11 default exclusions reported separately (4 Markdown records and 7 test files; the host read the tests while writing them and they run in the full suite). 0 critical, 0 high, 0 medium, 2 low, both recorded without a change:
+  - `replayDebuggerRetired()` waits for the retirement that was current when it was called. Every creator waits first and creates synchronously, so no second registration follows today; a future creator that skips the wait would break that.
+  - The "phase already in progress" arm of `settleOwnedPlayback` has no test (T5).
+- Hosted CodeRabbit stays owner-skipped (D027). Private receipts: `artifacts/cycle-0034/reviews/`.
+
+### N3 — installed native trials, 2026-10-01
+
+Expectations were frozen at 16:47 JST in `artifacts/cycle-0034/native/n3-expectations.json` before the first take. Input was clicks and scrolls only; nothing was typed, no chat was used and no application or development server ran. Recorder: OBS 32.2.2, **macOS Screen Capture** source with **Method: Window Capture** on the exact QA window, transform reset (3456 × 2168, no crop), both audio sources muted, a short changing-content preflight per host, 30 fps. The evidence copies are video-only remuxes.
+
+| Check | VS Code 1.140.0, study `e4906307` | Cursor 3.23.10, study `57bbb9ae` |
+| --- | --- | --- |
+| Preflight | PASS: 34.43 s, 1,033 frames; the tab change is visible | PASS: 31.10 s, 933 frames; the panel change is visible |
+| N3-b: first Recording press after a fresh host | **PASS.** Committed about 1.6 s after the press: "Paused · finalized", Presented 17.29 s / 120.54 s, recorded frame, captured `login-form.tsx` line 90. No failure. | **PASS.** Committed about 0.7 s after the press: "Paused · finalized", Presented 74.59 s / 99.32 s, recorded frame, captured `login-form.tsx` line 77, Call Stack "Recorded pause · 74.59 s", `state = 'CredentialsSignin'`. No failure. |
+| N3-a: Run > Stop Debugging, then Recording once | **PASS.** Stop emptied Variables and Call Stack. Recording brought back Call Stack `LoginButton 90:5` and `pending = true` about 0.9 s later at the same 17.29 s. No failure, no seek needed. | **PASS.** Stop emptied Variables and Call Stack. Recording brought back Call Stack `LoginForm 77:15` and `state = 'CredentialsSignin'` about 1.0 s later at the same 74.59 s. No failure, no seek needed. |
+
+AC17 holds in both hosts at bounded development level. This is the behavior O5 adds: on 0.2.17.0 the Recording press did nothing after the session was stopped.
+
+Evidence (private, ignored): `artifacts/cycle-0034/native/n3-vscode-receipt.json` and `n3-cursor-receipt.json` hold the videos' hashes, the action logs, the inspected frame times and the limits. Videos: `n3-vscode-main-01.mov` (251.03 s, N3-b), `n3-vscode-reopen-01.mov` (177.53 s, N3-a), `n3-cursor-main-01.mov` (101.03 s, both checks).
+
+Notes:
+
+- **Correction.** During the first VS Code take the log says the replay composition has no Recording control. That was wrong: the Overview / Live / Recording tabs sit below the long learning summary in the sidebar. The second take used that tab. The first take's recovery through "Playback details → Reload saved recording" also worked, but that control worked on 0.2.17.0 too, so it is not evidence for O5.
+- **Observation, VS Code.** For about 0.4 s between the Recording press and the replay layout, the reader shows "The current captured source is not ready in its native pane…". The text is older than this cycle and goes to the UI items.
+- **Observation, Cursor.** The first Variables scope showed its values at once in this take. The Learning summary sits in the right sidebar only because of the owner's earlier manual move; the host log still rejects that container (known placement gap).
+- One click meant for OBS landed on the desktop when another application came to the front. Nothing started or changed; the take was started again.
+- Limits: 30 fps, one recorded stop per host, scene detection plus the listed frames instead of every frame. No Stage 1 or Stage 2 credit.
+- After the trials: OBS was quit through its menu, the protected hashes (`0ac38ba2`, `8d6e64c2`, `80ba41bd`, `d578b9e3`) are unchanged, the dashboard is at `1936e41` with only the untracked `.codebook/`, and no development server is running. Cursor was left open on its QA window.
+
+### Owner-directed documentation, 2026-10-01
+
+During the trial the owner asked whether OBS can capture the editor window instead of the screen, so that their own window switching stays out of a take, and then: "一応、Agents.mdやそこから参照されているファイルにOBSのWindow Captureモードガイドがなかったら追加してください。" The guide exists (`docs/qa/native-recording.md`, linked from AGENTS.md, DEVELOPMENT.md and IMPLEMENTATION.md). It lacked the explicit mode check, because the source keeps the name "macOS Screen Capture" whichever method it uses. Step 5 now tells the agent to confirm **Method: Window Capture** and the exact window in the source's Properties before every take, and how to change hosts.
+
 ## Result and decision
 
-Pending.
+**Demonstrated.** Issue #61's acceptance criteria hold, with one recorded exception:
+
+- AC1–AC12 and AC18: each behavior change fails on `54add83`, passes on the branch and has a disabled-fix control that HELD.
+- AC13: T1–T4 done; **T5 NOT REACHABLE** with no test added and no source change.
+- AC14–AC16: red runs, controls, full gates and protected state as recorded above.
+- AC17: N3-a and N3-b pass in VS Code 1.140.0 and Cursor 3.23.10.
+
+The hypothesis held: every item closed with a shared awaited cleanup, a currency check before creation, or an unconditional give-up. No saved recording, schema, MCP tool shape or timeout changed. The falsifier did not occur.
+
+Decision: keep. Deliver through `/ship` (0.2.18.0), CI, a separate exact-HEAD gate and a merge in its own step.
+
+Affected gaps after this cycle:
+
+| AC | Before | After |
+| --- | --- | --- |
+| AC-REPLAY | A second debugger factory and an expired owner revived by a late termination were reproduced on 0.2.17.0. Recording did nothing after the learner stopped the session. | Fixed with red/green tests and controls; the recovery after Stop Debugging is observed in both installed hosts. Still open: N2-d, the Cycle 0031 UI items, a startup slower than 5 s, unbounded storage writes in `close()`, and final acceptance. |
+| AC-ENTRY | Inspect was offered for a stop whose captured source does not match; a Node seek inherited a failing step's error; an agent open of the same study after `close()` presented without the reader. | Fixed at mechanism level (DOM cases for Inspect). No native Node trial in this cycle. |
+| AC-GAPS | Dependency. | Unchanged; gap frames still commit at once through the changed retirement path (full suite). |
+| AC-SAVE | An oversized or changing sealed file was discarded after a concurrent state change. | The checkpoint now fails with an integrity error (mechanism only). |
+| AC-LEARNING | Regression check. | Unchanged; no learner decision or archive was touched. |
+
+The other eight rows carry forward: this cycle did not touch their source paths. All thirteen rows stay short of integrated acceptance.
 
 ## Handoff
 
-- Evidence will be kept in `artifacts/cycle-0034/` (private, ignored).
+- Evidence: `artifacts/cycle-0034/` (private, ignored) holds the red runs, controls, verification logs, review receipts and the native videos, frames and receipts.
+- Not done in this cycle, by scope: N2-d, the Node stop in Cursor, M1 (f), and every item listed under "Out of scope".
+- New candidates found here: the transient "captured source is not ready" text on the first Recording open; the unreachable `settleOwnedPlayback` arm (part of retiring the presentation commands).
 
 ## Next action
 
-- Exact next action: implement Issue #61 in the order above, starting with a red test for E1 on `54add83`.
-- Changed files / branch / active processes: `codex/cycle-0034-replay-ownership`; no active processes. The private control worktree `/tmp/c33-base` from Cycle 0033 is no longer needed.
-- State updated in PROJECT_STATE.md: active cycle, tracking, checkout, next action.
+- Exact next action: deliver this branch through `/ship` (version 0.2.18.0, Draft PR starting with `@coderabbitai ignore`), wait for CI and the Codex cloud review, run the read-only exact-HEAD gate, then merge in a separate step and record the closure here and in PROJECT_STATE.
+- After the merge: plan the next cycle through `/spec`. Candidates in order: the Cycle 0031 UI items (one-click Show Variables, automatic summary placement in Cursor, summary density, cold first-click focus, the reader recovery message, the AX range value, the retired presentation commands with the unreachable settle arm, the transient layout text), then layout restore and "Open article" during replay, the wide-sequence overflow, the natural multi-stop live path and a saved two-host Node replay.
+- Changed files / branch / active processes: `codex/cycle-0034-replay-ownership`; no active processes. The private worktrees `/tmp/c34-base`, `/tmp/c34-head` and `/tmp/c33-base` can be removed after delivery.
+- State updated in PROJECT_STATE.md: active cycle row, AC-REPLAY, AC-ENTRY and AC-SAVE rows, next action.
 - Durable decisions updated: none.
