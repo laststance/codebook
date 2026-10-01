@@ -1,0 +1,974 @@
+{
+  "files": {
+    "answerDeepWikiQuestion.test.js": {
+      "totalMs": 522
+    },
+    "boundaries.test.js": {
+      "totalMs": 589
+    },
+    "citationProgress.test.js": {
+      "totalMs": 54
+    },
+    "client.test.js": {
+      "totalMs": 357
+    },
+    "configuredAdapter.test.js": {
+      "totalMs": 606
+    },
+    "configuredApplication.test.js": {
+      "totalMs": 70
+    },
+    "configuredBundle.test.js": {
+      "totalMs": 436
+    },
+    "configuredPreparation.test.js": {
+      "totalMs": 370
+    },
+    "configuredPresentation.test.js": {
+      "totalMs": 104
+    },
+    "configuredProgress.test.js": {
+      "totalMs": 221
+    },
+    "configuredRecording.test.js": {
+      "totalMs": 230
+    },
+    "configuredRuntime.test.js": {
+      "totalMs": 6815
+    },
+    "configuredRuntimeRecording.test.js": {
+      "totalMs": 1837
+    },
+    "configuredService.test.js": {
+      "totalMs": 852
+    },
+    "configuredStorage.test.js": {
+      "totalMs": 130
+    },
+    "configuredStudy.test.js": {
+      "totalMs": 48
+    },
+    "crossRuntimeHistory.test.js": {
+      "totalMs": 122
+    },
+    "cursorMcpBridge.test.js": {
+      "totalMs": 3301
+    },
+    "cursorSkillDeployment.test.js": {
+      "totalMs": 162
+    },
+    "deepWikiOutput.test.js": {
+      "totalMs": 2
+    },
+    "deepWikiReader.test.js": {
+      "totalMs": 129
+    },
+    "deepWikiSource.test.js": {
+      "totalMs": 8
+    },
+    "describeViewportDelivery.test.js": {
+      "totalMs": 2
+    },
+    "editorChatOnboarding.test.js": {
+      "totalMs": 130
+    },
+    "editorLayout.test.js": {
+      "totalMs": 4
+    },
+    "editorLayoutGroupCount.test.js": {
+      "totalMs": 4
+    },
+    "environment.test.js": {
+      "totalMs": 39
+    },
+    "extension.test.js": {
+      "totalMs": 270
+    },
+    "inspectDeepWikiFreshness.test.js": {
+      "totalMs": 160
+    },
+    "inspectNodeTestVariables.test.js": {
+      "totalMs": 3
+    },
+    "isCodebookPaneViewType.test.js": {
+      "totalMs": 1
+    },
+    "isFrameAtPosition.test.js": {
+      "totalMs": 2
+    },
+    "isRefreshedFrameAtStop.test.js": {
+      "totalMs": 2
+    },
+    "jsonPages.test.js": {
+      "totalMs": 4
+    },
+    "launchNodeTest.test.js": {
+      "totalMs": 1557
+    },
+    "learning.test.js": {
+      "totalMs": 142
+    },
+    "learningSummary.test.js": {
+      "totalMs": 298
+    },
+    "legacyMigration.test.js": {
+      "totalMs": 29
+    },
+    "listVitestTestFiles.test.js": {
+      "totalMs": 1656
+    },
+    "nativeParticipants.test.js": {
+      "totalMs": 10123,
+      "tests": {
+        "CDP runtime resume during stack refresh invalidates the original captured pause": 181,
+        "Codebook refuses continuation during an unconfirmed native stack refresh without revoking the actual pause": 182,
+        "a browser DAP stop during a server-only result remains a competing pause": 231,
+        "a browser stop declared after a server stop does not pause when its line runs before its turn, and both stops commit in declared order": 335,
+        "a browser stop declared before a server stop is armed before input and the server stop only inside the browser continuation": 335,
+        "a browser stop that binds on another line while the server is paused ends the run at once without resuming the server": 182,
+        "a changed native source location after stack refresh cannot reuse the captured pause": 230,
+        "a competing browser resume request while the server is paused invalidates the run": 179,
+        "a different native thread cannot re-adopt the captured generation during stack refresh": 186,
+        "a failed server registration rejects the operation before any browser input": 83,
+        "a failed server replacement rejects the operation before any browser input": 135,
+        "a fast browser stop waits for the prior server continuation response before gaining authority": 332,
+        "a held browser CDP pause during a server-only result cannot claim completion": 563,
+        "a later server stop whose registration is acknowledged on another line ends the run naming that stop, without resuming": 232,
+        "a later stop on a line the sealed map never reaches is refused at preparation, before any application input": 30,
+        "a paused frame at another column than the paused binding on the same line never publishes captured facts": 173,
+        "a paused server binding under another adapter id than its registration never publishes captured facts": 130,
+        "a result already visible before input cannot establish completion": 170,
+        "a server stop armed in an already loaded module and acknowledged at another column of its line commits at the bound column": 389,
+        "a server stop the debugger binds at another column of its declared line commits at the bound column": 230,
+        "a server stop the debugger binds on another line fails naming the declared stop, where it landed and the mapped positions": 125,
+        "a server stop with changed binding never publishes captured facts": 128,
+        "a server stop with changed binding-source never publishes captured facts": 133,
+        "a server stop with changed source never publishes captured facts": 130,
+        "a stack refresh before the binding at another column of the declared line does not move the stop from the position the debugger then binds": 233,
+        "a stack refresh before the binding that reports another file cannot reuse the pause": 128,
+        "a stack refresh before the binding that reports another line cannot reuse the pause": 140,
+        "a stack refresh that arrives before a server stop’s bound position is known keeps the pause and the stop commits at the bound position": 232,
+        "a stack refresh that reports the bound position keeps the captured pause of a stop whose column moved": 228,
+        "a stack refresh that reports the requested column instead of the bound one cannot reuse the captured pause": 226,
+        "an extra native stop without a refresh cannot claim an already captured pause": 180,
+        "an idle browser continuation while a server stop is current preserves the next owned pause": 492,
+        "an internal browser CDP pause that auto resumes cannot invalidate a server-only result": 280,
+        "an unrelated debugger stop cannot claim the configured server pause": 248,
+        "browser stack refresh preserves its captured pause and allows the declared path to complete": 548,
+        "closing during delayed stack refresh verification cannot revive the captured pause": 186,
+        "manually resuming a queued browser stop cannot reuse the previous server continuation": 229,
+        "native client resume during stack refresh invalidates the original captured pause": 182,
+        "one input retains server/browser/server sources and independent native generations while video stays on the browser": 495,
+        "one owned Next worker with nested debugger sessions still reaches its first server stop": 181,
+        "preparation installs only the first declared stop, so a later stop cannot pause before its turn": 92,
+        "server registration revoked during the final DOM check prevents the mouse input": 153,
+        "server stack refresh preserves its captured pause and allows the declared path to complete": 540,
+        "server worker exit invalidates the whole operation and releases both owned transports": 80,
+        "two distinct owned server workers reject before application input": 26
+      }
+    },
+    "nativeParticipantsRecording.test.js": {
+      "totalMs": 2116
+    },
+    "nativePaths.test.js": {
+      "totalMs": 7
+    },
+    "nativeRepositoryLauncher.test.js": {
+      "totalMs": 10
+    },
+    "nodeHistoryPlaybackController.test.js": {
+      "totalMs": 357
+    },
+    "nodeInspectorEndpoint.test.js": {
+      "totalMs": 2
+    },
+    "nodeStopSourceMatches.test.js": {
+      "totalMs": 57
+    },
+    "nodeTestConfigSchemas.test.js": {
+      "totalMs": 12
+    },
+    "nodeTestHistoryStore.test.js": {
+      "totalMs": 116
+    },
+    "nodeTestOutputTerminal.test.js": {
+      "totalMs": 3
+    },
+    "nodeTestService.test.js": {
+      "totalMs": 352
+    },
+    "ownedNodeTestRun.test.js": {
+      "totalMs": 1607
+    },
+    "pendingRepositoryBreakpoint.test.js": {
+      "totalMs": 570
+    },
+    "playbackController.test.js": {
+      "totalMs": 84
+    },
+    "prepareNodeTestLaunch.test.js": {
+      "totalMs": 42
+    },
+    "prepareNodeTestStudy.test.js": {
+      "totalMs": 318
+    },
+    "presentationPixelLayout.test.js": {
+      "totalMs": 5
+    },
+    "presentationReadingPose.test.js": {
+      "totalMs": 8
+    },
+    "projectHistoricalTimeline.test.js": {
+      "totalMs": 2
+    },
+    "protocol.test.js": {
+      "totalMs": 16993,
+      "tests": {
+        "MCP discovery declares application execution effects without broadening source reader or storage annotations": 139,
+        "Node learning material is exposed through MCP with exact workspace history identity and revisions": 60,
+        "a stalled authenticated body reaches its read deadline without dispatching a tool": 5386,
+        "an incomplete HTTP header is rejected near the five-second read deadline before authentication": 5035,
+        "authentication and Host Origin body boundaries reject requests even with a valid transport session": 48,
+        "cancelled MCP calls release HTTP capacity without closing their shared session": 2079,
+        "deleting an in-flight MCP session settles its HTTP response and preserves capacity and the paused study": 3844,
+        "eight idle MCP clients exhaust capacity but expiry releases their slots without stopping a paused run": 86,
+        "foreign instance and run errors are structured domain failures and invalid tool arguments dispatch nothing": 37,
+        "real MCP discovery, action and reconnect retain one runtime and one click after GET 405": 74,
+        "standard MCP explanation calls persist learning material and reject foreign sequence references": 53,
+        "status identifies extension build changes without claiming that the target workspace changed": 86,
+        "tool-only editor chats receive public help and current run data in structured results": 66
+      }
+    },
+    "recordingContext.test.js": {
+      "totalMs": 881
+    },
+    "recordingProtocol.test.js": {
+      "totalMs": 465
+    },
+    "recordingStore.test.js": {
+      "totalMs": 895
+    },
+    "refreshCursorMcpCatalog.test.js": {
+      "totalMs": 546
+    },
+    "replayDebug.test.js": {
+      "totalMs": 47
+    },
+    "replayDebugger.test.js": {
+      "totalMs": 8570,
+      "tests": {
+        "a backward wall-clock jump cannot stretch the capture deadline for a stop Run and Debug is never told about": 1,
+        "a backward wall-clock jump cannot stretch the grace for a stop whose values Run and Debug never loads": 1,
+        "a duplicate replay presentation cannot skip pending native inspection": 101,
+        "a launch configuration cannot borrow another learning session owner": 0,
+        "a learner-stopped historical session reports itself unavailable so an explicit replay reopen can replace it": 2,
+        "a missing-history interval commits at once without waiting for native Call Stack": 1,
+        "a new recorded stop waits for native termination before replacing historical values": 1,
+        "a newer replay stop cannot be confirmed by inspection of the superseded frame": 101,
+        "a presentation cancelled while the old stop is still retiring leaves at once with its own reason": 1,
+        "a reader listener that throws when the startup bound expires still lets the waiting presentation fail with the closed-debugger error": 1,
+        "a recorded moment commits without native values when Run and Debug does not load them, and later inspection loads them": 1000,
+        "a recorded stop without scopes commits at once and later stops keep committing without waiting while Variables stays hidden": 1001,
+        "a refused native startup is retried by the next historical presentation": 0,
+        "a retirement bound that expires after the editor disconnected the adapter notifies the reader even when no termination follows": 1,
+        "a retirement requested during a 4 s startup whose stop then takes 2 s keeps the historical debugger available": 4,
+        "a retirement that was waiting for a startup during which the reader closed fails closed and stops the session only once": 0,
+        "a retirement that was waiting for a startup which then expired leaves the historical debugger unavailable": 1,
+        "a retirement the editor never finishes makes later presentations fail with the closed-debugger error after the capture timeout": 4,
+        "a session the editor starts after the startup bound expired is stopped once its startup completes": 1,
+        "a startup the editor never answers makes the historical debugger unavailable after the capture timeout instead of waiting forever": 1,
+        "a startup the editor refuses after its only presentation was abandoned is retried by the next presentation": 1,
+        "a stop is selected again in Run and Debug after a failed selection of another stop": 2,
+        "a stop presented after the editor disposed the historical adapter fails closed instead of committing without values": 0,
+        "a stop presented after the editor disposed the historical adapter makes the historical debugger unavailable and notifies the reader": 0,
+        "a stop presented after the editor disposed the historical adapter still fails with the closed-debugger error when the reader listener and its error channel both throw": 1,
+        "a stop shown again after Codebook restarts its native session is selected in the new session": 1,
+        "a stop that Run and Debug is never told about commits without values at the capture deadline": 1,
+        "a stop that Run and Debug learns about late still gets the whole grace from that moment": 1,
+        "a stop the editor never answers after a 4 s startup fails the retirement 5 s after that startup settled": 2,
+        "a stop whose only Variables group is the recording limitations note commits at once without waiting for Run and Debug": 0,
+        "a superseded seek cannot publish after native debugger startup completes": 0,
+        "a termination that arrives after the retirement bound expired leaves the historical debugger unavailable": 1,
+        "a termination that arrives after the retirement bound expired leaves the historical debugger unavailable when the editor had disconnected the adapter first": 1,
+        "a waiting presentation still fails with the closed-debugger error when the reader listener and its error channel both throw as the startup bound expires": 1,
+        "an abandoned presentation leaves a native startup that never answers, and the next presentation shows its stop once startup completes": 1,
+        "an editor relaunch of a learner-stopped historical session is refused instead of adopted without history": 0,
+        "an empty gap stack shown in Call Stack does not make the next recorded stop wait for Variables again": 1003,
+        "an unrelated debugger ending does not detach or stop the selected historical session": 1,
+        "canceling a replay during native inspection cannot confirm that recorded moment": 1,
+        "closing during delayed native startup retires the acquired session exactly once": 1,
+        "closing the historical debugger completes after the capture timeout when the editor never acknowledges the stop": 1,
+        "historical workspace closure stops only its owned native session": 6,
+        "later video frames of a stop committed without native values do not wait for Run and Debug again": 1002,
+        "manual native termination does not silently relaunch a session during playback": 0,
+        "native disconnect during replay inspection refuses confirmation and requires explicit reopening": 1,
+        "native terminate during replay inspection refuses confirmation and requires explicit reopening": 1,
+        "recorded stops that Codebook restarts the session for keep committing at once while Run and Debug loads no values": 1001,
+        "replacing a recorded stop keeps history available when the editor disconnects the old adapter before termination": 1,
+        "replay remains loading until the native debugger retrieves the current recorded Local values": 202,
+        "retrying a stop whose presentation was interrupted keeps the native session showing it instead of restarting": 1,
+        "seeking another recorded stop retires the old owned session before opening new native values": 2,
+        "several video frames of a gap shown in Call Stack do not make the next recorded stop wait for Variables again": 1002,
+        "stopping the recorded session from the native debugger marks history unavailable before the editor reports termination": 0,
+        "stopping the recorded session from the native debugger notifies the reader": 1002,
+        "values Run and Debug loads just before the grace deadline commit the stop as inspected": 2,
+        "video frames at an already inspected stop reuse recorded values without asking the native client again": 1,
+        "video frames within one recorded stop preserve their native debug session": 0,
+        "while Run and Debug loads no values, later recorded stops commit at once until it loads them again": 1102,
+        "with Variables hidden a stop commits without values exactly one grace after Run and Debug is told about it, without polling": 1,
+        "workspace closure during pending native inspection rejects the moment and stops only its owned session": 1
+      }
+    },
+    "repositoryBook.test.js": {
+      "totalMs": 2264
+    },
+    "repositoryConfig.test.js": {
+      "totalMs": 19
+    },
+    "repositoryEntry.test.js": {
+      "totalMs": 33
+    },
+    "repositoryEvidenceFeedback.test.js": {
+      "totalMs": 322
+    },
+    "repositoryProtocol.test.js": {
+      "totalMs": 881
+    },
+    "repositoryReader.test.js": {
+      "totalMs": 3667
+    },
+    "repositorySource.test.js": {
+      "totalMs": 522
+    },
+    "requestCursorWikiText.test.js": {
+      "totalMs": 227
+    },
+    "resolveExternalNodeExecutable.test.js": {
+      "totalMs": 48
+    },
+    "runCursorWikiUpdate.test.js": {
+      "totalMs": 36
+    },
+    "runtime-awaitResponse.test.js": {
+      "totalMs": 17
+    },
+    "runtime-browserViewport.test.js": {
+      "totalMs": 43878,
+      "tests": {
+        "a held viewport transfers its paused pixels without letting the retired panel close or acknowledge the session": 52,
+        "a hidden recorded gap waits without polling until Application becomes visible": 304,
+        "a rebound live viewport keeps one CDP stream and records later frames without closing the recorder": 106,
+        "a recorded gap receipt sent while the recording is hidden cannot confirm the placeholder": 204,
+        "a recorded gap requires its own current renderer receipt and never certifies a PNG": 4,
+        "a recorded image already hidden waits for real painting instead of exhausting its deadline in the background": 3117,
+        "a recorded image hidden after decode waits for real painting instead of exhausting its deadline in the background": 3106,
+        "a recorded seek clears pending pixels and rejects their late acknowledgement before a replacement image": 5,
+        "a stalled recorded gap keeps the paint time it used before Application was hidden": 4503,
+        "a visible unresponsive recorded gap still fails within its paint budget": 3005,
+        "an explicit recorded gap waits through background suspension and confirms only its own painted placeholder": 3104,
+        "cancelling a hidden recorded gap releases its wait without a fabricated placeholder receipt": 3,
+        "cancelling placement while a recorded image is hidden releases only the placement reservation": 3,
+        "close retires hidden recorded pixels without waiting for a foreground window": 4,
+        "closing a shared application panel ends both live and replay leases unless each lease has transferred": 7,
+        "closing a viewport releases held placement without delivering a queued historical image": 1,
+        "closing the current panel releases a reserved placement and rejects waiting capture without later cleanup": 2,
+        "continuation during renderer reload prevents the retired pause from being displayed or acknowledged": 52,
+        "disposing the recording panel promptly rejects a hidden recorded gap without fabricated paint confirmation": 4,
+        "historical reading rejects hidden current captures and releases the runtime without closing its reader panel": 2,
+        "invalidating a displayed pause rejects its late acknowledgement before any newer image can be certified": 3,
+        "live painting without a valid current hidden receipt retains a bounded timeout": 3003,
+        "live-follow refresh restores an adopted renderer after placement fails without revealing a newer learner tab": 4,
+        "manual continuation while placement drains invalidates the old paint and releases waiting work": 3,
+        "native placement drains the current required image and holds newer image delivery until release": 6,
+        "new recorded selection promptly rejects a hidden recorded gap without an AbortSignal or fabricated paint confirmation": 3,
+        "new seek retires hidden recorded pixels without waiting for a foreground window": 4,
+        "pane handoff refuses unleased, unreserved, aborted and already closed viewport ownership": 4,
+        "pane handoff waits for the accepted required paint before detaching its old acknowledgement listener": 3,
+        "placement behind a hidden recorded image times out, releases its reservation and leaves the image to paint later": 20006,
+        "rebinding both live-history and replay leases preserves the independent recorder and paints only the chosen presentation": 54,
+        "recorded phase receipt precedes presentation and hidden history never earns a renderer confirmation": 2,
+        "recording painting without a valid current hidden receipt retains a bounded timeout": 3004,
+        "recording receives a stream frame only after its CDP acknowledgement is sent and observer failure cannot stop rendering": 69,
+        "refreshing a visible recorded application does not reveal its native pane over Study focus": 52,
+        "replacement renderer promptly rejects a hidden recorded gap without an AbortSignal or fabricated paint confirmation": 4,
+        "required frame progress remains private diagnostic evidence until the matching paint acknowledgement": 5,
+        "revealing a destroyed renderer cannot confirm an image using its old readiness response": 54,
+        "stale or malformed visibility cannot confirm hidden recorded pixels or change the current renderer clock": 5,
+        "viewport closure promptly rejects a hidden recorded gap without an AbortSignal or fabricated paint confirmation": 3
+      }
+    },
+    "runtime-cdp.test.js": {
+      "totalMs": 27
+    },
+    "runtime-cursorCdpBridge.test.js": {
+      "totalMs": 65
+    },
+    "runtime-evidence.test.js": {
+      "totalMs": 17
+    },
+    "runtime-frameDelivery.test.js": {
+      "totalMs": 218
+    },
+    "runtime-host.test.js": {
+      "totalMs": 5
+    },
+    "runtime-hostCleanup.test.js": {
+      "totalMs": 149
+    },
+    "runtime-hostInstallation.test.js": {
+      "totalMs": 66
+    },
+    "runtime-isEndpointClosed.test.js": {
+      "totalMs": 11
+    },
+    "runtime-pauseGate.test.js": {
+      "totalMs": 2
+    },
+    "runtime-profileProcesses.test.js": {
+      "totalMs": 40
+    },
+    "selectCheckedNodeFrame.test.js": {
+      "totalMs": 2
+    },
+    "serverBundle.test.js": {
+      "totalMs": 45
+    },
+    "serverInspectorOwnership.test.js": {
+      "totalMs": 62
+    },
+    "service.test.js": {
+      "totalMs": 791
+    },
+    "storageCapacity.test.js": {
+      "totalMs": 273
+    },
+    "studyAdmission.test.js": {
+      "totalMs": 350
+    },
+    "studyHtml.test.js": {
+      "totalMs": 1
+    },
+    "studyWorkspace.test.js": {
+      "totalMs": 8635,
+      "tests": {
+        "Node journal time seeking restores exact stops and clears debugger across output and result events": 240,
+        "a Node history stop whose native presentation fails while still selected reports the failure and keeps the previous event": 136,
+        "a Node stop selected before the reader closed keeps its matching captured source when its history is selected again": 142,
+        "a Node stop selected on the timeline whose captured source differs from its recorded position is reported with unavailable captured source": 137,
+        "a Node stop selection that was waiting for the stopped historical debugger when the reader closed starts no new session": 141,
+        "a Node stop still loading when a recording opens never becomes the Node timeline position": 203,
+        "a later explanation invalidates the earlier save label until its new content is explicitly saved": 92,
+        "a normal chat run retires the explanation pane without reopening the reader": 112,
+        "a refused recording open lets a loading Node history stop finish its selection": 139,
+        "a saved Node stop whose values Run and Debug has not loaded tells the learner where to load them until they load": 137,
+        "a stale save button cannot finalize a different recorded session": 70,
+        "a window round trip during summary opening cannot confirm an obsolete focus request": 145,
+        "an agent returning the reader to the current run leaves a selected Node history even while the reader still follows the run": 101,
+        "an unreadable Node history folder is reported while the saved-study reader still opens": 38,
+        "bottom playback remains available with the summary collapsed and restores fallback when hidden": 141,
+        "closing replay rejects late summary controls and leaves saved learning unchanged": 151,
+        "closing the reader drops the Run and Debug hint of a saved Node stop": 145,
+        "closing the reader stops Node Play at once, so no Node stop starts while closing drains": 739,
+        "disposed bottom playback documents cannot move the selected recorded moment": 153,
+        "editor Settings changes recover full study and recording storage without recreating the workspace": 67,
+        "ending the historical session re-enables Inspect for the selected Node stop, and Inspect restarts the session": 197,
+        "explicit learning save verifies durable context and labels missing summary and debugger history as partial": 96,
+        "failed explicit learning context save stays retryable without replacing durable history with success": 135,
+        "inspecting a Node stop whose captured source differs from its recorded position refuses native debugging": 137,
+        "live Restore refuses a late native receipt loss instead of claiming recovery": 61,
+        "live entry preserves a learner document sharing the former explanation group": 61,
+        "live explanation reserves app and source without a custom explanation pane": 74,
+        "live explanation reserves app and source without a custom explanation pane while preserving a separate chat": 64,
+        "moving to another Node history event while a stop still loads its native values reports no failure for the abandoned stop": 142,
+        "opening a recording drops the Run and Debug hint of a saved Node stop and re-enables its Inspect": 254,
+        "opening a recording while a Node history stop still loads its native values reports no failure for the abandoned stop": 234,
+        "pressing Inspect again while the editor is still stopping the ended historical session shows the Node stop through one new session": 288,
+        "reading the replay summary leaves an unfocused work window and historical position untouched": 161,
+        "reopening a Node history after the learner stops its historical debugger restores native values": 189,
+        "repeated save clicks share finalization and keep the pending status non-actionable": 91,
+        "replay Restore preserves newer draft intent during native unmaximize": 151,
+        "replay Restore preserves newer window round trip intent during native unmaximize": 141,
+        "restored Observed moments leaves its loading state after workspace initialization": 263,
+        "restoring the live layout cannot recreate a custom explanation pane or select a retired variant": 58,
+        "returning to the current run leaves a selected Node history so its missing-video notice no longer masks the live application": 144,
+        "saved Node history is selectable in the reader without entering browser playback": 895,
+        "saved replay restores its summary after a native-chat-only live explanation": 196,
+        "saving an active explanation stops only its owned capture and retains the recorded learning": 95,
+        "saving without a captured session leaves the learning status hidden": 34,
+        "sealed repository source remains restorable before the first debugger observation": 89,
+        "seeking a Node history onto a stop after the learner stops its historical debugger explains how to restart it": 236,
+        "selecting a Node stop after the learner stops its historical debugger restarts it instead of freezing the reader": 240,
+        "starting live explanation retires only its previous empty explanation group": 82,
+        "time seeking in a second opened Node history presents its own stop instead of reporting a changed history": 599
+      }
+    },
+    "studyWorkspaceEntry.test.js": {
+      "totalMs": 10011,
+      "tests": {
+        "Close during application registration cannot reserve panes after the late native tab appears": 89,
+        "Wiki entry from a retained Study keeps Context focus when the native primary webview emits a late focus event": 36,
+        "Wiki entry from focused chat preserves its separate pane when its layout read reports a stale matching main grid": 32,
+        "a Learning Outline click after an extension-host restart closes the old host’s dead panes and opens one Application and one Study pane": 82,
+        "a dead Codebook pane the editor refuses to close does not stop the Study workspace from opening": 29,
+        "a duplicate Open Study during initialization reports busy while the first entry remains usable": 36,
+        "a failed cold initialization allows the next explicit Open Study to retry": 28,
+        "a foreign tab during application registration prevents first Study from adopting the changed layout": 81,
+        "a learner tab selected while borrowing application primary focus prevents a late Wiki arrangement or focus restoration": 32,
+        "a learner tab selected while borrowing text primary focus prevents a late Wiki arrangement or focus restoration": 30,
+        "a queued Wiki after Study preserves later learner focus before measuring an owned layout": 29,
+        "a real fourth main pane remains learner-owned even when its tab list is empty and a separate chat part exists": 30,
+        "a replacement group during application registration prevents first Study from adopting the changed layout": 81,
+        "a second cold Open Study reports busy without creating Context before the first native reservation completes": 30,
+        "an Open Study cancelled while it waits for an abandoned first entry leaves with its own cancellation instead of reporting busy": 32,
+        "an existing three-pane Study can restore its presentation while preserving a separate chat part": 339,
+        "background refresh cannot open captured source into Application before cold Study reserves its panes": 32,
+        "cancel during application registration cannot reserve panes after the late native tab appears": 79,
+        "chat focus acquired during application registration prevents first Study from arranging either editor part": 83,
+        "cold Study accepts a verified Wiki group and tab wrapper refresh during layout": 130,
+        "cold Study accepts a verified Wiki group and tab wrapper refresh during registration": 159,
+        "cold Study opens from Wiki when the covered background text receipt is cleared": 80,
+        "cold Study opens from Wiki when the covered background text receipt is cleared before registration": 130,
+        "cold Study opens from Wiki when the covered background text receipt is cleared during layout": 132,
+        "cold Study opens from Wiki when the covered background text receipt is retained": 115,
+        "cold Study rejects closing Wiki and opening a lookalike during layout": 130,
+        "cold Study rejects closing Wiki and opening a lookalike during registration": 131,
+        "cold Wiki entry from the focused chat measures and reserves only the main editor grid": 29,
+        "cold Wiki entry reserves a second main pane without treating the separate chat part as its destination": 33,
+        "cold Wiki focus restoration keeps the unchanged learner reading position": 28,
+        "cold Wiki focus restoration preserves newer other focus before its response arrives": 34,
+        "cold Wiki focus restoration preserves newer selection before its response arrives": 30,
+        "cold Wiki resolves blank primary focus through its real citation while retaining the draft and chat part": 27,
+        "cold Wiki resolves settings primary focus through its real citation while retaining the draft and chat part": 27,
+        "cold Wiki retains ordinary text focus without invoking the optional cited-source acquisition": 26,
+        "cold Wiki scope preserves a newer primary edit during layout measurement": 32,
+        "cold Wiki scope preserves a newer primary edit during primary focus response": 29,
+        "cold Wiki scope preserves a newer primary selection during layout measurement": 29,
+        "cold Wiki scope preserves a newer primary selection during primary focus response": 28,
+        "cold Wiki scope restores prior text focus after unchanged layout measurement": 31,
+        "cold Wiki scope restores prior text focus after unchanged primary focus response": 31,
+        "cold Wiki-to-Study layout preserves different text when background text clears before registration": 128,
+        "cold Wiki-to-Study layout preserves different text when background text clears during layout": 141,
+        "cold Wiki-to-Study layout preserves different webview when background text clears before registration": 144,
+        "cold Wiki-to-Study layout preserves different webview when background text clears during layout": 130,
+        "cold Wiki-to-Study layout preserves text roundtrip when background text clears before registration": 131,
+        "cold Wiki-to-Study layout preserves text roundtrip when background text clears during layout": 129,
+        "cold Wiki-to-Study layout preserves webview roundtrip when background text clears before registration": 135,
+        "cold Wiki-to-Study layout preserves webview roundtrip when background text clears during layout": 130,
+        "cold Wiki-to-Study registration rejects clearing text in a group the new application does not cover": 78,
+        "different text during cold Wiki-to-Study registration preserves the newer learner choice": 80,
+        "different webview during cold Wiki-to-Study registration preserves the newer learner choice": 79,
+        "failed cold application creation releases temporary native listeners and preserves learner panes": 27,
+        "first Study cannot confirm a learner source move that covers Application during final arrangement": 29,
+        "first Study entry accepts its application tab registering during the initial native layout read": 81,
+        "first Study entry confirms a visible explanation in the only editor part without a Context focus acknowledgement": 31,
+        "first Study entry does not resize chat while a new application panel only reports optimistic focus": 81,
+        "first Study entry from one editor group keeps empty Context separate from the application": 92,
+        "first Study entry refuses an unfocused explanation when a second editor part makes scope ambiguous": 5048,
+        "first Study entry reserves all three main panes when a separate chat part already occupies a global column": 34,
+        "first Study entry waits for its explanation focus before confirming the final native layout": 85,
+        "opening Wiki after Study acquires its citation from a Settings-focused main pane without changing chat or drafts": 44,
+        "opening a recording after an extension-host restart closes the old host’s dead Application pane and presents the recording in one Application pane": 231,
+        "presentation preserves a replacement Wiki while its prior background source receipt remains visible": 135,
+        "text roundtrip during cold Wiki-to-Study registration preserves the newer learner choice": 77,
+        "webview roundtrip during cold Wiki-to-Study registration preserves the newer learner choice": 77
+      }
+    },
+    "studyWorkspaceFocus.test.js": {
+      "totalMs": 6692
+    },
+    "studyWorkspaceLayout.test.js": {
+      "totalMs": 70458,
+      "tests": {
+        "Close after interrupted main-part reservation preserves the original article, chat and draft": 207,
+        "Close drains an accepted article Return without retaining a layout origin or reopening owned panes": 191,
+        "Close during observation source loading prevents a late application reveal over the article": 109,
+        "Close during the accepted reentry layout read cannot acquire a new receipt or reopen owned panes": 231,
+        "Cursor Wiki and recording round trips preserve the separate chat part and original two-row article with ordered API groups": 325,
+        "Cursor Wiki and recording round trips preserve the separate chat part and original two-row article with reordered API groups": 320,
+        "Cursor explicit observation reentry reveals its captured application over the retained article tab": 216,
+        "Cursor group contraction preserves pre-merge identities so the next evidence visit restores all three pane columns": 109,
+        "Cursor group creation cannot make a fourth learner group eligible for article Return contraction": 120,
+        "Cursor group creation preserves the article origin so actual Return restores its two stacked rows": 104,
+        "Cursor preserves a uniquely added learner text tab while returning to the saved article grid": 211,
+        "Cursor two-event contraction preserves error-free Return and correct main panes and summary on observation reentry": 134,
+        "Cursor two-event contraction preserves error-free Return and correct main panes and summary on recording reentry": 223,
+        "Cursor: Close during the accepted reentry layout read cannot acquire a new receipt or reopen owned panes": 212,
+        "Cursor: a newer article visit drains accepted reentry effects without adopting the temporary grid as its return origin": 289,
+        "Cursor: cancelling an accepted known Study grid restoration retains the original pane locations for Return and retry": 243,
+        "Cursor: observation reentry can restore the source column accepted by Study before the article Return contracted its group": 145,
+        "Living book to Guided walkthrough retains evidence and focus when native moves emit a late focus echo": 716,
+        "Restore layout after enlarging the app waits for Study focus without losing recorded evidence": 310,
+        "Restore layout keeps the original Study panes when Cursor focuses Application during its layout read": 306,
+        "Restore layout repairs changed native proportions instead of certifying the enlarged receipt": 256,
+        "Restore waits for an active layout transaction before confirming an enlarged Study": 252,
+        "Return after interrupted main-part reservation preserves the original article, chat and draft": 337,
+        "VS Code Wiki and recording round trips preserve the separate chat part and original two-row article with ordered API groups": 359,
+        "VS Code Wiki and recording round trips preserve the separate chat part and original two-row article with reordered API groups": 315,
+        "VS Code explicit observation reentry reveals its captured application over the retained article tab": 220,
+        "Wiki observation reentry restores Study after an empty chat wrapper refresh following actual Return": 202,
+        "Wiki recording reentry preserves the reading grid after an empty other-part ambiguous following actual Return": 209,
+        "Wiki recording reentry preserves the reading grid after an empty other-part move following actual Return": 105,
+        "Wiki recording reentry preserves the reading grid after an empty other-part replace following actual Return": 214,
+        "Wiki recording reentry preserves the reading grid after an empty other-part unannounced following actual Return": 223,
+        "Wiki recording reentry restores Study after an empty chat wrapper refresh following actual Return": 233,
+        "a cold evidence navigation whose native debugger takes 4 s and whose frame paints in 2 s still presents": 6228,
+        "a manual application move during the restored-layout receipt remains authoritative on the next evidence visit": 317,
+        "a manual application move while a returning article observation loads preserves the learner layout": 200,
+        "a manual context move while a returning article observation loads preserves the learner layout": 202,
+        "a manual grid change during reentry certification is never adopted as a Codebook arrangement": 205,
+        "a manual pane move during a cancelled reentry layout read never becomes a Codebook-owned effect": 206,
+        "a manual resize while the next evidence source loads is preserved after actual article Return": 305,
+        "a manual source move while a returning article observation loads preserves the learner layout": 257,
+        "a new evidence visit drains a cancelled Return layout before restoring its two main replay panes": 331,
+        "a newer article visit drains accepted reentry effects without adopting the temporary grid as its return origin": 267,
+        "a newer frame painted during an evidence navigation gets its own paint bound": 6229,
+        "a normal Wiki open after cancelled reentry does not consume the previous article Return layout": 231,
+        "a proportional learner resize after Wiki Return remains authoritative on the next observation": 99,
+        "a queued actual article Return preserves a later learner draft focus without changing the Study layout": 92,
+        "actual Return after cancelled reentry preserves a foreign draft added to the expanded group": 220,
+        "actual Return cannot consume another article origin when its native layout is still owned": 200,
+        "actual article Return preserves a learner's application move after opening recording evidence": 192,
+        "actual article Return preserves a learner's foreign group after opening recording evidence": 196,
+        "actual article Return preserves a learner's foreign tab after opening recording evidence": 207,
+        "actual article Return preserves a learner's replaced group after opening recording evidence": 208,
+        "actual article Return preserves a learner's resize after opening recording evidence": 284,
+        "actual article Return preserves a learner's source move after opening recording evidence": 205,
+        "all three presentation modes preserve source, learning item and learner decisions across pane handoffs": 1010,
+        "an evidence navigation cancelled while its frame paints ends with the cancellation, and the next recording open presents": 255,
+        "an evidence navigation stuck before painting fails at the settle ceiling and the next recording open presents": 15173,
+        "an evidence navigation that gives up never cancels a newer learner seek": 5219,
+        "application-focused mode transfers keep the scrolled context visible without repeated upward drift": 950,
+        "application-focused mode transfers keep the selected statement visible without repeated upward drift": 1280,
+        "cancel during observation source loading prevents a late application reveal over the article": 100,
+        "cancelling a later article evidence visit keeps the previous actual Return layout and reading origin": 261,
+        "cancelling actual Return during its ownership read preserves Study and permits a later explicit Return": 208,
+        "cancelling an accepted known Study grid restoration retains the original pane locations for Return and retry": 227,
+        "cancelling during the accepted reentry layout read still lets actual Return restore the article groups": 208,
+        "cancelling observation reentry after actual Return preserves the original article layout for another Return": 203,
+        "enlarging a recorded application targets its owned pane and retains the paused evidence": 330,
+        "explicit Study after actual Wiki Return preserves a learner's shape edit to the reading grid": 203,
+        "explicit Study after actual Wiki Return preserves a learner's size edit to the reading grid": 201,
+        "explicit Study after actual Wiki Return restores its verified 2-group origin following observation entry": 92,
+        "explicit Study after actual Wiki Return restores its verified 2-group origin following recording entry": 201,
+        "explicit Study after actual Wiki Return restores its verified 3-group origin following observation entry": 88,
+        "explicit Study after actual Wiki Return restores its verified 3-group origin following recording entry": 606,
+        "explicit observation entry preserves a manually moved application in its current column": 110,
+        "explicit observation entry preserves a manually moved application sharing the context group with Return visible": 130,
+        "mode transfer waits for delayed app activity after its own native tab and document receive focus": 710,
+        "mode transfer waits for delayed contextPanel activity after its own native tab and document receive focus": 708,
+        "mode transfers retain native destination groups with application only and a separate chat part": 1315,
+        "mode transfers retain native destination groups with application only and one editor part": 1335,
+        "mode transfers retain native destination groups with unrelated draft and a separate chat part": 1318,
+        "mode transfers retain native destination groups with unrelated draft and one editor part": 1345,
+        "native minimum-width expansion keeps Wiki Return successful and the next observation in three visible panes": 94,
+        "observation a source move during reentry loading overrides the previously planned source restoration": 139,
+        "observation reentry can restore the source column accepted by Study before the article Return contracted its group": 171,
+        "observation source placement accepted before cancellation survives Return and the next evidence visit": 112,
+        "paused replay preserves manually scrolled source context through repeated application-focused layout restoration": 270,
+        "paused replay preserves manually scrolled source context through repeated source-focused layout restoration": 206,
+        "paused replay preserves manually scrolled source context through repeated summary-focused layout restoration": 205,
+        "periodic study refresh preserves a learner text tab selected over the captured application": 94,
+        "reading the sidebar beside an enlarged application preserves replay and restores the same source": 410,
+        "reentry restores the verified Study grid once without evening its saved split sizes": 215,
+        "reopening an enlarged Study does not claim its three-pane layout was confirmed": 137,
+        "replay readiness after explicit reentry cannot confirm later learner groups": 203,
+        "replay readiness after explicit reentry cannot confirm later learner layout": 213,
+        "replay reentry after guided-walkthrough request confirms only the current layout when its source becomes ready": 226,
+        "replay reentry after living-book request confirms only the current layout when its source becomes ready": 227,
+        "replay reentry after study-workspace request confirms only the current layout when its source becomes ready": 211,
+        "replay refuses retired explanation enlargement without changing native layout or evidence": 150,
+        "repository evidence whose recorded frame never paints fails within its bound and the next recording open presents its frame": 5216,
+        "restoring a settled recording retains its application pane and confirmed playhead": 172,
+        "retry after interrupted main-part reservation preserves the original article, chat and draft": 325,
+        "retrying a cancelled observation reentry retains the article layout from before Codebook expanded its groups": 264,
+        "returning from a failed recording restores the article's two stacked groups and permits another evidence visit": 326,
+        "returning from a healthy recording restores the article's two stacked groups and permits another evidence visit": 343,
+        "source-focused mode transfers keep the scrolled context visible without repeated upward drift": 646,
+        "source-focused mode transfers keep the selected statement visible without repeated upward drift": 649,
+        "the Study header Restore exits a maximized pane while keeping the settled recording in its original panes": 302,
+        "the next evidence visit preserves a manual application move made after actual article Return": 304,
+        "the next evidence visit preserves a manual source move made after actual article Return": 317
+      }
+    },
+    "studyWorkspaceLifecycle.test.js": {
+      "totalMs": 26676,
+      "tests": {
+        "Close cancels stalled capture-presentation-pose delivery without waiting for the renderer transport": 157,
+        "Close cancels stalled restore-presentation-pose delivery without waiting for the renderer transport": 295,
+        "a application pane replacement retains a native group containing an unchanged settings tab": 333,
+        "a changed settings tab during pane replacement cannot inherit native group ownership": 235,
+        "a context pane replacement retains a native group containing an unchanged settings tab": 360,
+        "a learner close of the first replacement before the second registers prevents lease adoption": 232,
+        "a learner move of the first replacement before the second registers prevents lease adoption": 163,
+        "a replacement settings tab with the same title cannot inherit native group ownership": 235,
+        "a second replacement that creation throws preserves the prior panes and live lease without saving the mode": 235,
+        "a second replacement that unretained tab preserves the prior panes and live lease without saving the mode": 5253,
+        "an empty chat move during pane replacement cannot inherit presentation ownership": 242,
+        "an empty chat opened during pane replacement cannot inherit presentation ownership": 238,
+        "an empty chat unannounced during pane replacement cannot inherit presentation ownership": 244,
+        "an unchanged empty chat wrapper during application replacement preserves all three presentation destinations": 339,
+        "an unchanged empty chat wrapper during context replacement preserves all three presentation destinations": 339,
+        "closing the adopted application during native layout rejects the transition and fails its live lease exactly once": 136,
+        "explicit presentation focus returns from Wiki without changing layout, learning or execution": 189,
+        "explicit same-mode restoration recovers inner-focus delivery without replacing the current viewport lease": 351,
+        "learner input after reading capture cancels placement without saving or restoring the obsolete pose": 134,
+        "not delivered capture-presentation-pose delivery refuses the presentation within its existing deadline": 135,
+        "not delivered restore-presentation-pose delivery refuses the presentation within its existing deadline": 365,
+        "ordinary chat can recover Study focus from Wiki through the public MCP presentation tool": 225,
+        "presentation focus preserves newer intent after learner draft during native handoff": 583,
+        "presentation focus preserves newer intent after window roundtrip during native handoff": 138,
+        "presentation focus rejects closed without revealing a pane": 28,
+        "presentation focus rejects different mode without revealing a pane": 85,
+        "presentation focus rejects unfocused window without revealing a pane": 82,
+        "rejected capture-presentation-pose delivery refuses the presentation within its existing deadline": 133,
+        "rejected restore-presentation-pose delivery refuses the presentation within its existing deadline": 341,
+        "replay retains its renderer after native layout failure and restores layout only on explicit retry": 212,
+        "replay retains its renderer after newer learner tab and restores layout only on explicit retry": 199,
+        "restoring replay keeps the live renderer attached without requesting a pane handoff": 161,
+        "restoring replay preserves both live history and replay leases at the confirmed captured-frame position": 218,
+        "restoring replay preserves both live history and replay leases at the confirmed missing-frame position": 246,
+        "retired application notifications after reopening cannot change the current replay or learner understanding": 329,
+        "same-column codebook.scopedBrowser handoff survives a group-wrapper refresh while both owned tabs coexist": 339,
+        "same-column codebook.studyContext handoff survives a group-wrapper refresh while both owned tabs coexist": 346,
+        "same-column handoff preserves its current lease when the host refreshes the previous codebook.scopedBrowser tab wrapper": 338,
+        "same-column handoff preserves its current lease when the host refreshes the previous codebook.studyContext tab wrapper": 345,
+        "same-column handoff refuses a moved-group during owned tab overlap": 239,
+        "same-column handoff refuses a opened during owned tab overlap": 241,
+        "same-column handoff refuses a third-tab during owned tab overlap": 236,
+        "same-column handoff refuses a unannounced during owned tab overlap": 251,
+        "same-column mode changes recover native inner-focus delivery while preserving the current viewport lease": 641,
+        "same-layout selection repairs proportions while preserving an unchanged source preview": 36,
+        "same-layout selection repairs proportions while preserving an unsaved source preview": 34,
+        "stalled capture-presentation-pose delivery refuses the presentation within its existing deadline": 5101,
+        "stalled restore-presentation-pose delivery refuses the presentation within its existing deadline": 5341
+      }
+    },
+    "studyWorkspaceNavigation.test.js": {
+      "totalMs": 16496,
+      "tests": {
+        "Arrange reports interrupted source placement and a later explicit retry restores the three regions": 639,
+        "Arrange retains its source region after replay visibility cancels rendering and respects a later manual move": 441,
+        "Arrange retains its source region after replay visibility cancels rendering and respects an immediate manual move": 433,
+        "Cursor ambiguous webview inputs cannot acquire Codebook layout ownership during resync": 27,
+        "Cursor duplicate webview inputs cannot acquire Codebook layout ownership during resync": 30,
+        "Cursor empty webview inputs cannot acquire Codebook layout ownership during resync": 36,
+        "Cursor known webview inputs retain layout ownership across application title changes": 28,
+        "Cursor unknown webview inputs cannot acquire Codebook layout ownership during resync": 65,
+        "Cursor wrapper-only tab resync preserves Wiki and Study layout switching during an in-flight ownership read": 34,
+        "Restore separates a Study explanation from source after its third native group closes": 618,
+        "Source follows a learner move after Arrange while preserving the earlier duplicate and dirty draft": 436,
+        "Study reports why a captured source prevents layout confirmation after failed execution": 29,
+        "Wiki observation and explicit Study entry keep hidden navigation panes hidden until requested": 86,
+        "Wiki reading layout cannot report the selected Study presentation as confirmed": 30,
+        "Wiki recording and explicit Study entry keep hidden navigation panes hidden until requested": 207,
+        "a host tab resync cannot disguise a learner group move as Codebook ownership": 28,
+        "a host tab resync cannot disguise a learner group remove as Codebook ownership": 29,
+        "a host tab resync cannot disguise a learner group reorder as Codebook ownership": 27,
+        "a host tab resync cannot disguise a learner group replace as Codebook ownership": 28,
+        "a host tab resync cannot disguise a learner group unannounced as Codebook ownership": 30,
+        "a manual shape change during the host layout receipt never becomes Codebook-owned on the next Wiki return": 5352,
+        "a manual size change during the host layout receipt never becomes Codebook-owned on the next Wiki return": 5346,
+        "a retired renderer cannot select another layout while replay opens its summary sidebar": 140,
+        "an MCP mode request before replay readiness clears its warning when the first position becomes ready": 141,
+        "an empty other-part ambiguous cannot authorize Study to replace the reading layout": 31,
+        "an empty other-part move cannot authorize Study to replace the reading layout": 31,
+        "an empty other-part replace cannot authorize Study to replace the reading layout": 30,
+        "an empty other-part unannounced cannot authorize Study to replace the reading layout": 59,
+        "an unchanged empty chat part cannot block Study reentry after Wiki tab resync": 32,
+        "book evidence opens the exact historical observation and retains a restart-safe Return to Wiki target": 180,
+        "book evidence rejects a changed captured observation before selecting history or opening replay": 72,
+        "book recording links seek the exact captured observation time while playback stays paused and runtime input stays unchanged": 209,
+        "cancelling Wiki navigation while checking native layout ownership cannot rearrange the editor later": 66,
+        "cancelling a first reader entry drains its accepted workbench layout batch without dispatching another mutation": 33,
+        "cancelling observation navigation during native source acquisition prevents its later source reveal and focus commands": 81,
+        "cancelling recording navigation during native source acquisition prevents its later source reveal and focus commands": 87,
+        "closing the article during a pending checkpoint prevents the later evidence read from opening study panes": 71,
+        "evidence entry preserves a learner resize made while reading the Wiki": 31,
+        "explicit Arrange separates moved application, source and context while preserving unrelated tabs": 435,
+        "explicit Open Study preserves hidden navigation while a Wiki observation entry waits for source": 100,
+        "explicit Open Study preserves hidden navigation while a Wiki recording entry waits for source": 224,
+        "explicit Study reentry reveals its application and captured source over retained reading tabs": 30,
+        "returning from recording to Wiki keeps background study refresh from covering the article with captured source": 250,
+        "returning to Wiki during a cancelled Study layout waits for the accepted host effect then restores side-by-side reading": 31,
+        "returning to Wiki places source beside article without merging tabs and the next evidence entry restores Study panes": 31,
+        "returning to Wiki preserves a learner's extra-group change to the native editor layout": 29,
+        "returning to Wiki preserves a learner's identity change to the native editor layout": 28,
+        "returning to Wiki preserves a learner's shape change to the native editor layout": 38,
+        "returning to Wiki preserves a learner's size change to the native editor layout": 27
+      }
+    },
+    "studyWorkspacePresentation.test.js": {
+      "totalMs": 33813,
+      "tests": {
+        "Close cancels pending focus recovery after a native layout failure without losing the draft or original failure": 234,
+        "Close retires the reader identity immediately and waits for an already accepted presentation preference write": 337,
+        "Guided walkthrough returns to Study without an unnecessary kept-tab focus handoff": 639,
+        "Study restoration preserves the prior source until delayed text focus clear follows codebook.scopedBrowser activation": 695,
+        "Study restoration preserves the prior source until delayed text focus clear follows codebook.studyContext activation": 694,
+        "a background work window refuses a mode change before native effects": 33,
+        "a closed reader behind a foreign non-text editor refuses the selection and closes no leftover captured-source tab": 42,
+        "a closed reader behind a foreign non-text editor still refuses the selection and opens no pane when an earlier extension session left a dead Study pane in another group": 33,
+        "a closed reader opens when closing its focused leftover captured-source tab leaves a non-text page of the editor active": 236,
+        "a dead Codebook pane left in a group is a tab without a panel of this host": 33,
+        "a dead Codebook pane the editor refuses to close leaves every tab in place and tells why the selection could not start": 33,
+        "a draft edited before focus restoration rejects its obsolete reading pose without overwriting the new text": 32,
+        "a draft edited during native source display rejects its obsolete reading pose without overwriting the new text": 78,
+        "a draft edited during reading reveal rejects its obsolete reading pose without overwriting the new text": 30,
+        "a failed mode preference keeps the applied layout and save-only recovery does not move any editor": 572,
+        "a foreign preview is preserved without Keep Editor or relocation when selecting another presentation": 135,
+        "a foreign preview opened during the layout read survives without relocation or a saved presentation": 140,
+        "a learner draft chosen before text focus clear for codebook.scopedBrowser survives the refused Study restoration": 557,
+        "a learner draft chosen before text focus clear for codebook.studyContext survives the refused Study restoration": 540,
+        "a learner draft focus during app placement stops later layout work and preserves that focus": 433,
+        "a learner draft focus during contextPanel placement stops later layout work and preserves that focus": 432,
+        "a learner draft focus while codebook.scopedBrowser activity is delayed stops the transfer and preserves the prior preference": 601,
+        "a learner draft focus while codebook.studyContext activity is delayed stops the transfer and preserves the prior preference": 537,
+        "a learner source selection during delayed placement is preserved without later movement or preference changes": 440,
+        "a learner source selection during final reading restoration survives without a later focus restore": 133,
+        "a leftover captured-source tab the editor refuses to close leaves every tab in place and reports why the selection could not start": 32,
+        "a missing explicit replay-focus receipt rejects once without retrying focus or losing retained evidence": 5241,
+        "a presentation selection on a closed reader that already owns a live Application panel closes no Codebook pane": 362,
+        "a presentation selection refused over a dead Codebook pane is confirmed when it is repeated once the editor lets the pane close": 237,
+        "a second presentation control sent while the leftover captured-source tabs are closing is refused": 259,
+        "a selection still succeeds when the editor reports the next text editor a moment after the leftover tab closed": 338,
+        "an unchanged learner draft restores its reading pose and remains dirty": 31,
+        "an unknown presentation preference survives opening and a cancelled picker until an explicit replacement": 735,
+        "clearing the last text editor during codebook.scopedBrowser reading restoration preserves confirmed native focus": 636,
+        "clearing the last text editor during codebook.studyContext reading restoration preserves confirmed native focus": 634,
+        "editor AI can return a saved recording to its current run without repeating application input or losing history": 225,
+        "leaving the native work window during presentation preserves the prior preference without recovering focus": 39,
+        "manual resume during presentation layout application cannot certify or save a different live state": 66,
+        "manual resume during presentation layout read cannot certify or save a different live state": 66,
+        "mode selection rejects missing inner focus instead of treating native tab activation as success": 5150,
+        "mode transfer confirms codebook.scopedBrowser focus while VS Code retains its most recent text editor": 403,
+        "mode transfer confirms codebook.studyContext focus while VS Code retains its most recent text editor": 414,
+        "mode transfer waits for replacement-pane registration before treating the new grid as a stable learner arrangement": 440,
+        "moving a presentation retains both measured axes when native pane creation flattens the grid": 335,
+        "native activation preparation completes while ownership remains held": 643,
+        "native activation preparation preserves learner departure and reentry without a late focus commit": 491,
+        "native activation preparation preserves learner original source without a late focus commit": 490,
+        "native activation preparation preserves learner same-group tab roundtrip without a late focus commit": 493,
+        "ordinary chat opens a closed guided-walkthrough through MCP without starting execution or changing learner work": 259,
+        "ordinary chat opens a closed living-book through MCP without starting execution or changing learner work": 269,
+        "ordinary chat opens a closed study-workspace through MCP without starting execution or changing learner work": 361,
+        "presentation cannot save its mode from a stale reading restoration receipt": 338,
+        "presentation layout read preserves a later learner focus change without saving the mode": 131,
+        "presentation layout read preserves a later learner pane movement without saving the mode": 141,
+        "presentation post-move layout response completes the unchanged reading pose": 337,
+        "presentation post-move layout response preserves a newer source selection and viewport before further effects": 140,
+        "presentation source acquisition continues after unchanged native display": 234,
+        "presentation source acquisition preserves a newer selection before the display response": 133,
+        "presentation source acquisition restores every original selection after the owned native response": 235,
+        "presentation source acquisition with a closed source tab continues after unchanged native display": 335,
+        "presentation source acquisition with a closed source tab preserves a newer selection before the display response": 148,
+        "real MCP presentation discovery and control preserve identities across response loss and reject stale clients": 379,
+        "reselecting a confirmed presentation clears a stale control warning and keeps the selector usable": 393,
+        "restoring layout during a late replay image retains the current frame and lets the requested seek finish": 301,
+        "restoring replay preserves a learner draft opened over historical source during layout measurement": 199,
+        "same-mode selection keeps its revision only while the actual native layout is still confirmed": 639,
+        "selecting a presentation on a closed reader closes a leftover captured-source tab that has no text editor and keeps the learner’s own tab": 237,
+        "selecting a presentation on an open reader closes none of its captured-source tabs": 38,
+        "source-group opened replacement during pane movement invalidates presentation ownership": 525,
+        "source-group unannounced replacement during pane movement invalidates presentation ownership": 492,
+        "source-group wrapper replacement during pane movement retains presentation ownership": 723,
+        "switching presentation waits for restored application focus before confirming the new mode": 333,
+        "the first presentation selection after an extension-host restart closes the old host’s dead Application and Study panes and is confirmed": 289,
+        "the first presentation selection closes a dead Application pane together with the focused leftover captured-source tab": 296,
+        "the first presentation selection is confirmed when the old host’s dead Study pane had focus and no text editor was active": 240,
+        "the leftover captured-source tab is closed on a reader that has not loaded its library yet": 238
+      }
+    },
+    "studyWorkspaceReplay.test.js": {
+      "totalMs": 45353,
+      "tests": {
+        "Pause during a late recorded image restores the previous source and preserves only the confirmed position": 185,
+        "Read captured source accepts an unchanged settings tab before focusing its owned source": 31,
+        "Read captured source keeps the learner cursor when the selected source is already displayed": 28,
+        "Read captured source preserves a newer draft choice while its existing document opens": 27,
+        "Restore after focused reading recovers the confirmed Study layout when native space is available": 133,
+        "Restore beside a separate editor part keeps the selected explanation after borrowing primary focus": 2663,
+        "Restore beside a separate editor part preserves a learner tab chosen during its focus borrow": 1657,
+        "Restore does not rearrange Study after the learner selects a draft during native unmaximize": 127,
+        "Restore stops after the learner leaves the work window during its primary focus borrow": 1641,
+        "a configured article decision survives reader restart and secondary-file drift without changing its saved citation context": 128,
+        "a configured outline cannot write historical understanding after a secondary citation changes": 224,
+        "a corrupt configured recording keeps the real article return pose, learner ledger and input count intact": 108,
+        "a failed panel message that is not a replay control stays reported after the recording is opened again, and a refused seek is listed once": 329,
+        "a failed renderer re-handshake after a recorded paint loss keeps the first attempt in Recording error details": 138,
+        "a fresh reader restores the saved recording position paused and a live-runtime retirement does not exit playback": 272,
+        "a future configured recording keeps the real article return pose, learner ledger and input count intact": 109,
+        "a handled native values notification clears an earlier notification failure while no Run and Debug hint is showing": 194,
+        "a learner seeking or playing from the Learning replay panel after the reader closed is refused, told why, and nothing opens": 248,
+        "a missing configured recording keeps the real article return pose, learner ledger and input count intact": 112,
+        "a native values notification the reader failed to handle is shown, and the next handled notification clears it": 199,
+        "a play sent from the Learning replay panel while the reader is closing is listed once and is gone after the recording is opened again": 256,
+        "a reader reopened after closing never shows the Run and Debug hint of the replay moment it showed before": 255,
+        "a recording opened again after an abandoned first reader entry that never returns reports busy after the presentation bound": 5146,
+        "a recording opened again after its first reader entry was abandoned waits for that entry instead of reporting busy": 444,
+        "a recording opened again while its first recorded-application reveal is still queued keeps that viewport and paints the next frame": 292,
+        "a recording whose recorded-application renderer never became ready opens again through a new renderer": 148,
+        "a repeated recorded paint loss names each attempt’s renderer progress in Recording error details": 172,
+        "a replay control refused for an outdated panel view is listed once and is gone after the next accepted replay control": 291,
+        "a replay control refused on a closed reader is no longer shown in the Learning replay panel once a later live-run action succeeds": 231,
+        "a replay control refused on a closed reader is no longer shown in the Learning replay panel once an agent opens the recording again": 260,
+        "a replay control refused on a closed reader is no longer shown in the Learning replay panel once the recording is opened again": 256,
+        "a replay moment whose recorded values Run and Debug has not loaded tells the learner where to load them until they load": 299,
+        "agent-configured input uses the shared reader and complete article understanding without opening or closing a raw target tab": 103,
+        "an agent opening the same recording after the reader closed opens the reader and presents the saved moment": 266,
+        "an agent seek that arrives while the reader is closing is refused": 195,
+        "an agent seeking or playing a recording after the reader closed is refused and nothing opens": 193,
+        "another explicit open while the editor is still stopping the replaced historical debugger waits for it and then presents": 395,
+        "closing the reader waits for a replaced historical debugger that the editor is still stopping, and the next open presents": 708,
+        "closing the reader waits for a replay position save that storage still holds": 2199,
+        "closing the reader while a recorded frame never paints still finishes": 144,
+        "closing the reader while the native debugger never answers a recorded stop still finishes": 140,
+        "configured captured and current native readers accept unchanged BOM and mixed line endings without changing retained bytes": 106,
+        "configured history rejects learner Run and only a fresh agent request creates another run without dispatching input": 141,
+        "configured recording seeks actual facts through the shared reader after runtime exit with no future source or execution authority": 227,
+        "configured recording-context failure remains visible beside independently saved observation history": 119,
+        "constrained Restore keeps a later learner draft active while the native layout receipt settles": 2433,
+        "constrained Restore leaves the learner draft active when a later topology check completes": 2391,
+        "direct configured entry opens its article at the beginning while actual article origins restore their exact pose after restart": 117,
+        "failed evidence navigation preserves the previous exact article return pose in memory and after restart": 126,
+        "failed initial pane reservation with 1 main panes and a separate part cannot create Context before an explicit retry": 5049,
+        "failed initial pane reservation with 1 main panes and one part cannot create Context before an explicit retry": 5043,
+        "failed initial pane reservation with 2 main panes and a separate part cannot create Context before an explicit retry": 5051,
+        "one bottom playback seek from a hidden Application commits the requested recorded moment without another target action": 219,
+        "opening a recording restores its captured source after context focus covers the manually moved source group": 139,
+        "opening a recording while a live run is attached presents its saved frame": 192,
+        "ordinary Study entry retains manually shared pane columns until the learner explicitly arranges them": 35,
+        "pressing Recording after the historical session ended keeps the moment whose position save is still held by storage": 248,
+        "pressing Recording after the historical session ended presents the saved moment again through a new session": 247,
+        "pressing Recording after the historical session ended presents the saved moment again while a live run is still attached": 254,
+        "pressing Recording after the historical session ended still presents the saved moment when the editor fails to release the old debugger": 257,
+        "pressing Recording again on a displayed replay whose historical session is still running keeps its moment and its session": 190,
+        "pressing Recording again on a displayed replay without recorded debugger state keeps its moment without reloading it": 193,
+        "reading a Study pane does not claim focus after the learner selects a draft during native maximization": 28,
+        "replay reads app, source and sidebar summary then restores their shared layout without changing history": 203,
+        "saved Study sends captured facts without copying retained source bodies into its webviews": 142,
+        "saved replay does not retry a non-paint viewport failure": 139,
+        "saved replay reports a second viewport paint loss without advancing the saved position": 145,
+        "saved replay survives one recorded viewport paint loss without rerunning the target": 187,
+        "seeking from a stop without loaded values into missing history drops the Run and Debug hint": 251,
+        "successful Study reading clears an earlier background-window reading error": 82,
+        "the Run and Debug hint stays while Play advances through the same recorded stop": 306,
+        "the workspace harness answers a recording viewport only while its own renderer is the document in the shared Application panel": 142
+      }
+    },
+    "studyWorkspaceStorage.test.js": {
+      "totalMs": 3454
+    },
+    "thrownMessage.test.js": {
+      "totalMs": 2
+    },
+    "untilAborted.test.js": {
+      "totalMs": 1
+    },
+    "verifyVitestTestResult.test.js": {
+      "totalMs": 20
+    },
+    "webviewFocus.test.js": {
+      "totalMs": 2377
+    }
+  }
+}
