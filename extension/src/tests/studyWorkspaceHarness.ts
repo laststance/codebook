@@ -176,6 +176,9 @@ export async function workspaceHarness(
   const leftoverCapturedTabs = new Set<Tab>()
   let refuseLeftoverClose = false,
     lateEditorAfterLeftoverClose = false
+  const deadPaneTabs = new Set<Tab>()
+  let refuseDeadPaneClose = false
+  const tabCloseRequests: Tab[][] = []
   let lastSourceEditor: SourceEditor | undefined
   let sourceFocusOnArrange: SourceEditor | undefined
   let reportedSourceColumn: number | undefined
@@ -1672,24 +1675,61 @@ export async function workspaceHarness(
             }
           },
           close: async (tabs: Tab[]) => {
+            tabCloseRequests.push([...tabs])
             if (
-              refuseLeftoverClose &&
-              tabs.some((tab) => leftoverCapturedTabs.has(tab))
+              (refuseLeftoverClose &&
+                tabs.some((tab) => leftoverCapturedTabs.has(tab))) ||
+              (refuseDeadPaneClose && tabs.some((tab) => deadPaneTabs.has(tab)))
             )
               return false
             let closedActiveLeftover = false
+            const emptiedByDeadPane: typeof groups = []
             for (const group of groups) {
-              const active = group.activeTab
+              const active = group.activeTab,
+                heldDeadPane = group.tabs.some(
+                  (tab) => tabs.includes(tab) && deadPaneTabs.has(tab),
+                )
               group.tabs = group.tabs.filter((tab) => !tabs.includes(tab))
               // The editor activates the neighbouring tab when the active one closes.
               if (
                 active &&
                 tabs.includes(active) &&
-                leftoverCapturedTabs.has(active)
+                (leftoverCapturedTabs.has(active) || deadPaneTabs.has(active))
               ) {
                 group.activeTab = group.tabs.at(-1)
                 closedActiveLeftover = true
               }
+              if (heldDeadPane && !group.tabs.length)
+                emptiedByDeadPane.push(group)
+            }
+            // The editor removes a group whose last tab closed and renumbers the later columns; its last main group stays, empty.
+            for (const emptied of emptiedByDeadPane) {
+              const mainGroups = groups.filter(
+                (candidate) => candidate !== separateEditorPart?.group,
+              )
+              if (!nativeLayout || mainGroups.length === 1) break
+              const index = groups.indexOf(emptied)
+              groups.splice(index, 1)
+              for (const remaining of groups)
+                if (remaining.viewColumn > emptied.viewColumn)
+                  remaining.viewColumn--
+              if (activeTabGroup === emptied) {
+                activeTabGroup = groups[Math.max(0, index - 1)]!
+                closedActiveLeftover = true
+              }
+              editorLayout = {
+                orientation: 0,
+                groups: groups
+                  .filter(
+                    (candidate) => candidate !== separateEditorPart?.group,
+                  )
+                  .map(() => ({})),
+              }
+              changedGroups({
+                opened: [],
+                closed: [emptied],
+                changed: [...groups],
+              })
             }
             if (closedActiveLeftover) {
               if (lateEditorAfterLeftoverClose) {
@@ -1828,6 +1868,8 @@ export async function workspaceHarness(
     },
     counts: () => ({ panels: panels.size, outlineUpdates }),
     peakPanels: () => peakPanels,
+    /** Lists the tabs of every close request the reader sent to the editor, accepted or refused, so a test can assert which tabs it asked to close. @example harness.tabCloseRequests().flat().includes(deadApplication) */
+    tabCloseRequests: () => tabCloseRequests.map((tabs) => [...tabs]),
     onNextPanel(
       kind: string,
       run: (value: ReturnType<typeof panel>) => void,
@@ -2334,6 +2376,35 @@ export async function workspaceHarness(
       if (options.active ?? true) {
         group.activeTab = tab
         activeTabGroup = group
+        activeTextEditorChanged(focusedSourceEditor())
+      }
+      return tab
+    },
+    /** Leaves a Codebook pane tab without a panel in a group, as an extension-host restart leaves the old host's panes: the tab model lists it under the main-thread view type and this host owns no panel for it. @example const deadApplication = harness.leaveDeadCodebookPane('codebook.scopedBrowser', 1); harness.leaveDeadCodebookPane('codebook.studyContext', 3, { focused: true, refuseClose: true }) */
+    leaveDeadCodebookPane(
+      kind: 'codebook.scopedBrowser' | 'codebook.studyContext',
+      column: number,
+      options: { focused?: boolean; refuseClose?: boolean } = {},
+    ) {
+      const group = groups.find((group) => group.viewColumn === column)
+      assert.ok(group)
+      const tab: Tab = {
+        input: new TabInputWebview(`mainThreadWebview-${kind}`),
+        label:
+          kind === 'codebook.scopedBrowser'
+            ? 'codebook · Application'
+            : 'codebook · Study',
+        isPreview: false,
+        isDirty: false,
+      }
+      deadPaneTabs.add(tab)
+      refuseDeadPaneClose ||= Boolean(options.refuseClose)
+      group.tabs.push(tab)
+      // The pane was the visible tab of its group when its host ended.
+      group.activeTab = tab
+      if (options.focused) {
+        activeTabGroup = group
+        if (separateEditorPart) separateEditorPart.focused = false
         activeTextEditorChanged(focusedSourceEditor())
       }
       return tab

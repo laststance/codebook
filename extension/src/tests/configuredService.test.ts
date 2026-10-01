@@ -693,10 +693,6 @@ test('configured help tells an agent that only the next stop is armed and that a
     /the run fails with 'Repository continuation reached no next declared pause' and names that stop\./,
   )
   assert.match(
-    contract.additionalStops,
-    /that codebook_continue fails with 'Next declared stop was not armed and no resume was sent', the run ends and earlier observations stay\./,
-  )
-  assert.match(
     contract.sourceBinding,
     /The line is the declaration and the column is a request: Codebook accepts the debugger's verified binding anywhere on the declared line in the sealed executed module/,
   )
@@ -718,6 +714,27 @@ test('configured help tells an agent that only the next stop is armed and that a
   )
   assert.doesNotMatch(help.text, /exact position/)
   assert.doesNotMatch(help.text, /first stop of each participant/)
+})
+
+test('configured help tells an agent that a continuation whose next stop cannot be armed answers "Continue was not confirmed." and where the run’s reason is read', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ additionalStops: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.match(
+    contract.additionalStops,
+    /If a later stop cannot be armed, that codebook_continue answers 'Continue was not confirmed\.' with the arming error as its cause and sends no resume; the run ends with the reason 'Next declared stop was not armed and no resume was sent' \(read the run resource\), and earlier observations stay\./,
+  )
+  // The tool never answered with the run's terminal reason; the help no longer says it does.
+  assert.doesNotMatch(
+    contract.additionalStops,
+    /that codebook_continue fails with 'Next declared stop was not armed/,
+  )
 })
 
 // Value: protects=each observation of a multi-stop run reporting the position its own stop declared as requestedSource; fails_when=the inspection resource pairs a later observation with the first declared stop, or with a stop at another index; why_new=the only requestedSource test reads a single-stop run, where every index resolves to the same declared stop; seam=none

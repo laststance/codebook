@@ -192,3 +192,59 @@ test('two editor windows cannot admit two new studies into the last configured s
   )
   assert.equal((await left.list()).length, 1)
 })
+
+test('a full study library tells before a run that it can keep a study it already holds and no new one', async (context) => {
+  // Arrange: one saved study under a limit of one.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-admit-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  let capacity: unknown = 1
+  const first = capacityStudy(),
+    second = capacityStudy()
+  const library = new LearningLibrary(
+      directory,
+      first.study.workspaceKey,
+      () => capacity,
+    ),
+    recordings = new RecordingStore(
+      directory,
+      first.study.workspaceKey,
+      {},
+      undefined,
+      () => capacity,
+    )
+  await library.saveStudy(first.study)
+  // Act
+  const admitsKeptStudy = await library.admitsStudy(first.study.id),
+    admitsNewStudy = await library.admitsStudy(second.study.id),
+    storeAdmitsNewStudy = await recordings.admitsStudy(second.study.id)
+  capacity = 2
+  const admitsNewStudyBelowLimit = await recordings.admitsStudy(second.study.id)
+  // Assert
+  assert.equal(admitsKeptStudy, true)
+  assert.equal(admitsNewStudy, false)
+  assert.equal(storeAdmitsNewStudy, false)
+  assert.equal(admitsNewStudyBelowLimit, true)
+  // Asking reserved nothing: no recording exists and the library still holds its one study.
+  assert.equal((await recordings.list()).length, 0)
+  assert.equal((await library.list()).length, 1)
+})
+
+test('saving a new study into a full library still reports the limit setting and keeps the saved study', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-save-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const first = capacityStudy(),
+    second = capacityStudy()
+  const library = new LearningLibrary(
+    directory,
+    first.study.workspaceKey,
+    () => 1,
+  )
+  await library.saveStudy(first.study)
+  // Act / Assert
+  await assert.rejects(library.saveStudy(second.study), {
+    message:
+      'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, then retry storage. Existing learning was kept.',
+  })
+  assert.deepEqual(await library.readStudy(first.study.id), first.study)
+})

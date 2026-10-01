@@ -1162,3 +1162,98 @@ test('a later server stop whose registration is acknowledged on another line end
   )
   assert.equal(harness.run.view().snapshots.length, 1)
 })
+
+/** Sends the two events js-debug emits when it refreshes a paused stack without resuming the runtime. @example refreshServerStack(harness, 940) */
+const refreshServerStack = (
+  harness: Awaited<ReturnType<typeof nativeParticipantsHarness>>,
+  sequence: number,
+): void => {
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: sequence,
+    event: 'continued',
+    body: { threadId: 1 },
+  })
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: sequence + 1,
+    event: 'stopped',
+    body: { reason: 'breakpoint', threadId: 1 },
+  })
+}
+
+test('a stack refresh that arrives before a server stop’s bound position is known keeps the pause and the stop commits at the bound position', async (context) => {
+  // Arrange: the server stop has paused and the adapter has not yet answered where its breakpoint bound.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  const lookup = harness.holdBindingLookup()
+  harness.run.action('once', 'repository-click')
+  await lookup.started
+  // Act: js-debug refreshes its presentation of the same pause, then the binding arrives.
+  refreshServerStack(harness, 940)
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.events.some((event) => event.type === 'dap.pause-refreshed')
+  }, 'refresh before the binding accepted')
+  lookup.release()
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(harness.run.view().status, 'paused-server')
+  assert.equal(harness.run.view().participants.server?.pause?.generation, 1)
+  assert.equal(server.source.line, 1)
+  assert.equal(server.source.column, 1)
+  assert.equal(harness.run.view().snapshots.length, 1)
+})
+
+test('a stack refresh before the binding at another column of the declared line does not move the stop from the position the debugger then binds', async (context) => {
+  // Arrange: declared 1:7; the refreshed frame names 1:7 while the binding is pending, and the debugger then binds and pauses at 1:1.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    declaredColumn: { server: 7 },
+    mappings: { server: 'AAAA,MAAM' },
+  })
+  await harness.run.prepare()
+  const lookup = harness.holdBindingLookup()
+  harness.run.action('once', 'repository-click')
+  await lookup.started
+  harness.movePausedFrame(1, 7)
+  // Act
+  refreshServerStack(harness, 942)
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.events.some((event) => event.type === 'dap.pause-refreshed')
+  }, 'refresh on the declared line accepted')
+  harness.movePausedFrame(1, 1)
+  lookup.release()
+  const server = await pauseReady(harness, 'server')
+  // Assert: the saved observation names the bound position, not the column the refresh reported.
+  assert.equal(server.source.line, 1)
+  assert.equal(server.source.column, 1)
+  assert.equal(harness.run.view().participants.server?.pause?.generation, 1)
+})
+
+for (const moved of ['another line', 'another file'] as const)
+  test(`a stack refresh before the binding that reports ${moved} cannot reuse the pause`, async (context) => {
+    // Arrange
+    const harness = await nativeParticipantsHarness(context, ['server'])
+    await harness.run.prepare()
+    const lookup = harness.holdBindingLookup()
+    harness.run.action('once', 'repository-click')
+    await lookup.started
+    if (moved === 'another line') harness.movePausedFrame(2)
+    else harness.movePausedFrameToFile('/elsewhere/server.ts')
+    // Act
+    refreshServerStack(harness, 944)
+    await waitUntil(
+      () => harness.run.view().status === 'failed',
+      'refresh away from the declared line rejected',
+    )
+    lookup.release()
+    // Assert
+    assert.equal(
+      harness.run.view().failures[0],
+      'Error: Native stack refresh changed the captured source location',
+    )
+    assert.equal(harness.run.view().snapshots.length, 0)
+  })

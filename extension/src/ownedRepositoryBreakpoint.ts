@@ -71,10 +71,22 @@ export class OwnedRepositoryBreakpoint {
     failure?: string
   }
   retired = false
+  /**
+   * Adds the owned breakpoint to the editor at the declared position.
+   * @param path - Absolute path of the source file the stop belongs to.
+   * @param line - One-based declared line.
+   * @param column - One-based declared column.
+   * @param acknowledgedAt - What the adapter's registration reply must name. `'declared-line'` (configured runs) accepts any column of the declared line, because that caller commits the stop at the position the debugger bound. `'declared-column'` (Node test runs) also refuses another column, because that caller captures its pause at the declared column; a pending reply that names no column yet is still accepted.
+   * @example
+   * new OwnedRepositoryBreakpoint('/repo/actions.ts', 20, 5)
+   * new OwnedRepositoryBreakpoint('/repo/theme.ts', 1, 14, 'declared-column')
+   */
   constructor(
     readonly path: string,
     readonly line: number,
     readonly column: number,
+    private readonly acknowledgedAt:
+      'declared-line' | 'declared-column' = 'declared-line',
   ) {
     this.breakpoint = new vscode.SourceBreakpoint(
       new vscode.Location(
@@ -155,7 +167,32 @@ export class OwnedRepositoryBreakpoint {
     retirement.confirmed = false
   }
 
-  /** Accepts only a successful matching setBreakpoints response on the declared line, at whichever column the adapter bound; a retirement response must exclude the owned stop. @example owned.onResponse(session, response) */
+  /**
+   * Tells whether an adapter reply names a position this owner accepts; called by {@link onResponse} for the owned breakpoint's entry.
+   * A reply may leave a position out while it is pending; a verified one must name the declared line, and for an owner that captures at the declared column also that column.
+   * @param binding - The owned breakpoint's entry of the setBreakpoints reply.
+   * @returns `false` when the reply names another line, or, under `'declared-column'`, another column.
+   * @example
+   * this.acknowledgesPosition({ verified: true, line: 20, column: 12 }) // => true for 'declared-line', false for 'declared-column' declared at 20:5
+   */
+  private acknowledgesPosition(binding: {
+    verified: boolean
+    line?: number
+    column?: number
+  }): boolean {
+    const names = (declared: number, replied?: number): boolean =>
+      binding.verified
+        ? replied === declared
+        : (replied ?? declared) === declared
+    // The adapter chooses the column unless the owner captures at the declared one.
+    return (
+      names(this.line, binding.line) &&
+      (this.acknowledgedAt === 'declared-line' ||
+        names(this.column, binding.column))
+    )
+  }
+
+  /** Accepts only a successful matching setBreakpoints response on the declared line, at whichever column the adapter bound unless the owner asked for the declared column; a retirement response must exclude the owned stop. @example owned.onResponse(session, response) */
   onResponse(
     session: vscode.DebugSession,
     response: DebugProtocol.Response,
@@ -184,9 +221,7 @@ export class OwnedRepositoryBreakpoint {
         ).length !== 1 ||
         (binding.source?.path &&
           resolve(binding.source.path) !== resolve(this.path)) ||
-        (binding.line !== undefined && binding.line !== this.line) ||
-        // The adapter chooses the column; a verified acknowledgement must still name the declared line.
-        (binding.verified && binding.line !== this.line)
+        !this.acknowledgesPosition(binding)
       ) {
         registration.failure = `Selected adapter did not acknowledge the exact breakpoint registration: ${JSON.stringify(
           {

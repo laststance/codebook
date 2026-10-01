@@ -82,6 +82,8 @@ export async function nativeParticipantsHarness(
     currentIndex = 0
   let pausedLine = 1,
     pausedColumn = 1
+  let pausedPath: string | undefined
+  let heldBindingLookup: { wait: Promise<void>; entered(): void } | undefined
   // What the adapter reports as each participant's verified binding; the declaration may ask for another column.
   const boundAt: Record<Participant, { line: number; column: number }> = {
     browser: { line: 1, column: 1 },
@@ -164,7 +166,7 @@ export async function nativeParticipantsHarness(
             {
               id: 1,
               name: `${name}Step`,
-              source: { path: bundle(name).sourcePath },
+              source: { path: pausedPath ?? bundle(name).sourcePath },
               line: pausedLine,
               column: pausedColumn,
             },
@@ -207,8 +209,14 @@ export async function nativeParticipantsHarness(
       }
       throw new Error(`Unexpected native command: ${command}`)
     },
-    getDebugProtocolBreakpoint: async (breakpoint) =>
-      breakpoints.some((current) => current.id === breakpoint.id)
+    getDebugProtocolBreakpoint: async (breakpoint) => {
+      const held = heldBindingLookup
+      if (held) {
+        heldBindingLookup = undefined
+        held.entered()
+        await held.wait
+      }
+      return breakpoints.some((current) => current.id === breakpoint.id)
         ? {
             id: breakpoint.id.length + (reboundPauseId ? 1 : 0),
             verified: !unboundPause,
@@ -220,7 +228,8 @@ export async function nativeParticipantsHarness(
                 : bundle(name).sourcePath,
             },
           }
-        : undefined,
+        : undefined
+    },
   })
   const serverParent = session('server')
   const serverChild: DebugSession | undefined = options.duplicateServerSession
@@ -648,6 +657,23 @@ export async function nativeParticipantsHarness(
     movePausedFrame(line: number, column = 1): void {
       pausedLine = line
       pausedColumn = column
+    },
+    /** Reports the paused top frame in this file instead of the stop's own source. */
+    movePausedFrameToFile(path: string): void {
+      pausedPath = path
+    },
+    /** Keeps the adapter's next binding lookup unanswered until released, so a test can act while a paused stop's bound position is still unknown. @example const lookup = harness.holdBindingLookup(); await lookup.started; lookup.release() */
+    holdBindingLookup() {
+      let release = (): void => {},
+        entered = (): void => {}
+      const started = new Promise<void>((resolve) => {
+          entered = resolve
+        }),
+        wait = new Promise<void>((resolve) => {
+          release = resolve
+        })
+      heldBindingLookup = { wait, entered }
+      return { started, release }
     },
     /** Reports a participant's verified binding at this position instead of 1:1. */
     bindAt(name: Participant, line: number, column: number): void {

@@ -207,6 +207,13 @@ export const STUDY_PRESENTATIONS = {
 export const EDITOR_LAYOUT_ROUNDING_FRACTION = 0.005
 export const MAX_UI_TEXT_CHARS = 8_192
 export const STUDY_SOURCE_SCHEME = 'codebook-source'
+/** View types of Codebook's Application and Study panes as the tab model reports them: the registered name and the form the editor's main thread prefixes. */
+export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
+  'codebook.scopedBrowser',
+  'mainThreadWebview-codebook.scopedBrowser',
+  'codebook.studyContext',
+  'mainThreadWebview-codebook.studyContext',
+]
 export const REPOSITORY_SOURCE_SCHEME = 'codebook-repository-source'
 export const REPOSITORY_READER_DEBOUNCE_MS = 150
 export const REPOSITORY_VISITED_CITATIONS_LIMIT = 512

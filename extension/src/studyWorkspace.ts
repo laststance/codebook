@@ -112,6 +112,7 @@ import {
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
 import { focusWebview } from './utils/focusWebview'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
+import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import {
   editorLayoutSchema,
   isProportionalEditorLayout,
@@ -713,40 +714,86 @@ export class StudyWorkspace {
   }
 
   /**
-   * Closes every captured-source tab of this workspace that an earlier host session left behind; called by {@link selectAfterClosingLeftoverSources} once the library key is known.
-   * @returns
-   * - `'kept'` when the editor refused to close them
-   * - `'closed-focused-tab'` when the tab that had focus was one of the closed ones
-   * - `'done'` otherwise, including when there was nothing to close
+   * Lists the Codebook panes an earlier extension host left in this window; called by {@link closeLeftoverTabs}, {@link closeDeadPanes} and {@link admitPresentation}.
+   * A view type cannot tell a live pane from a dead one, so the answer is every pane tab only while this host has created neither pane, and nothing once it owns one.
+   * @returns The dead pane tabs; empty when this host owns an Application or Study panel.
    * @example
    * ```ts
-   * const leftoverSources = await this.closeLeftoverSources() // 'closed-focused-tab'
+   * const deadPanes = this.deadPaneTabs() // [] while this.app or this.contextPanel exists
    * ```
    */
-  private async closeLeftoverSources(): Promise<
-    Exclude<LeftoverSourcePrelude, 'pending'>
-  > {
+  private deadPaneTabs(): vscode.Tab[] {
+    if (this.app || this.contextPanel) return []
+    return vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .filter(
+        (tab) =>
+          tab.input instanceof vscode.TabInputWebview &&
+          isCodebookPaneViewType(tab.input.viewType),
+      )
+  }
+
+  /**
+   * Closes the dead panes of an earlier extension host before a cold entry creates this host's own; called by {@link open} for every entry that is not a selection (a selection closes them in {@link selectAfterClosingLeftoverSources}).
+   * A close the editor refuses changes nothing: the entry continues as it did before this step existed.
+   * @example
+   * ```ts
+   * if (firstOpen) await this.closeDeadPanes()
+   * ```
+   */
+  private async closeDeadPanes(): Promise<void> {
+    const deadPanes = this.deadPaneTabs()
+    if (!deadPanes.length) return
+    await vscode.window.tabGroups.close(deadPanes, true).then(
+      () => undefined,
+      () => undefined,
+    )
+  }
+
+  /**
+   * Closes, in one request, every captured-source tab of this workspace and every dead Codebook pane that an earlier host session left behind; called by {@link selectAfterClosingLeftoverSources} once the library key is known.
+   * @returns
+   * - `leftoverSources`: `'kept'` when the editor refused the request, `'closed-focused-tab'` when the tab that had focus was one of the closed ones, `'done'` otherwise, including when there was nothing to close
+   * - `deadPaneKept`: `true` when a dead pane is still in the window after the request
+   * @example
+   * ```ts
+   * const { leftoverSources, deadPaneKept } = await this.closeLeftoverTabs() // { leftoverSources: 'closed-focused-tab', deadPaneKept: false }
+   * ```
+   */
+  private async closeLeftoverTabs(): Promise<{
+    leftoverSources: Exclude<LeftoverSourcePrelude, 'pending'>
+    deadPaneKept: boolean
+  }> {
     const focusedTab = vscode.window.tabGroups.activeTabGroup.activeTab,
-      leftover = vscode.window.tabGroups.all
-        .flatMap((group) => group.tabs)
-        .filter((tab) => this.ownsCapturedSourceTab(tab))
-    if (!leftover.length) return 'done'
+      leftover = [
+        ...vscode.window.tabGroups.all
+          .flatMap((group) => group.tabs)
+          .filter((tab) => this.ownsCapturedSourceTab(tab)),
+        ...this.deadPaneTabs(),
+      ]
+    if (!leftover.length)
+      return { leftoverSources: 'done', deadPaneKept: false }
     const closed = await vscode.window.tabGroups.close(leftover, true).then(
       (accepted) => accepted,
       () => false,
     )
-    if (!closed) return 'kept'
-    return leftover.some((tab) => tab === focusedTab)
-      ? 'closed-focused-tab'
-      : 'done'
+    // The editor answers once for the whole request; the tab model tells whether a dead pane stayed.
+    const deadPaneKept = this.deadPaneTabs().length > 0
+    if (!closed) return { leftoverSources: 'kept', deadPaneKept }
+    return {
+      leftoverSources: leftover.some((tab) => tab === focusedTab)
+        ? 'closed-focused-tab'
+        : 'done',
+      deadPaneKept,
+    }
   }
 
   /**
-   * Closes the captured-source tabs an earlier host session left behind, then admits the selection once on what remains; called by {@link admitPresentation} for a closed reader.
-   * The pending transition refuses other presentation controls while the tabs close. When a tab stays, the ordinary admission reports that the active editor cannot be restored, with this reason as its cause.
+   * Closes the captured-source tabs and dead Codebook panes an earlier host session left behind, then admits the selection once on what remains; called by {@link admitPresentation} for a closed reader.
+   * The pending transition refuses other presentation controls while the tabs close. When a captured-source tab stays, the ordinary admission reports that the active editor cannot be restored, with this reason as its cause.
    * @param input - The `select` request that met the leftover tab.
    * @returns The state of the admitted selection.
-   * @throws The admission's own errors; `PRESENTATION_UNAVAILABLE` when the leftover tab is still active.
+   * @throws The admission's own errors; `PRESENTATION_UNAVAILABLE` when the leftover tab is still active, or when a dead pane could not be closed (no panel is created then).
    * @example
    * ```ts
    * const state = await this.selectAfterClosingLeftoverSources(input) // state.layoutConfirmed === true
@@ -760,15 +807,16 @@ export class StudyWorkspace {
         id: this.presentationId,
         cancellation: new AbortController(),
       }
-    let leftoverSources: Exclude<LeftoverSourcePrelude, 'pending'> = 'kept'
+    let leftoverSources: Exclude<LeftoverSourcePrelude, 'pending'> = 'kept',
+      deadPaneKept = false
     this.presentationTransition = transition
     try {
       // The library key exists only after initialization, so ownership is decided here and not by the caller's synchronous check.
       await this.initialize()
       this.assertLifetime(lifetime)
-      leftoverSources = await this.closeLeftoverSources()
+      ;({ leftoverSources, deadPaneKept } = await this.closeLeftoverTabs())
       // The editor reports its tabs and its active text editor separately; wait until they agree. A wait that expires leaves the decision to the admission below.
-      if (leftoverSources !== 'kept')
+      if (leftoverSources !== 'kept' && !deadPaneKept)
         await waitUntil(
           () => {
             const activeInput =
@@ -788,6 +836,13 @@ export class StudyWorkspace {
         this.presentationTransition = undefined
     }
     this.assertLifetime(lifetime)
+    // A dead pane that stays would pass for this reader's own Application or Study tab, so the selection ends here, before any panel exists.
+    if (deadPaneKept)
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        'A Codebook pane left by an earlier extension session is still open. Close the leftover Application and Study tabs, then select the presentation again.',
+        'A leftover Codebook pane could not be closed.',
+      )
     // The transition is released in this same turn, so no other control is admitted between it and this second, final admission.
     try {
       return this.admitPresentation(input, leftoverSources)
@@ -810,7 +865,7 @@ export class StudyWorkspace {
   /**
    * Admits one presentation change for {@link changePresentation}; every refusal is thrown before any native effect.
    * @param input - The requested change with the reader lifetime and control revision it was made for.
-   * @param leftoverSources - `'pending'` on the first entry; on the single re-entry after {@link selectAfterClosingLeftoverSources} what {@link closeLeftoverSources} reported. Only `'closed-focused-tab'` changes the admission: no focus is left to keep.
+   * @param leftoverSources - `'pending'` on the first entry; on the single re-entry after {@link selectAfterClosingLeftoverSources} what {@link closeLeftoverTabs} reported. Only `'closed-focused-tab'` changes the admission: no focus is left to keep.
    * @returns The state after the admitted change.
    * @throws When the request is stale, competes with a pending change, comes from a background window, or cannot keep the learner's focus.
    * @example
@@ -840,13 +895,14 @@ export class StudyWorkspace {
         'Focus this Codebook work window before changing its presentation.',
       )
     const activeInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input
-    // A captured-source tab the host restored from an earlier session has no text editor whose focus could be kept, so a closed reader closes such tabs before its selection is admitted.
+    // A captured-source tab the host restored from an earlier session has no text editor whose focus could be kept, and a pane an earlier extension host left behind would pass for this reader's own; a closed reader closes both before its selection is admitted.
     if (
       leftoverSources === 'pending' &&
       input.action === 'select' &&
       !this.opened &&
-      activeInput instanceof vscode.TabInputText &&
-      activeInput.uri.scheme === STUDY_SOURCE_SCHEME
+      ((activeInput instanceof vscode.TabInputText &&
+        activeInput.uri.scheme === STUDY_SOURCE_SCHEME) ||
+        this.deadPaneTabs().length > 0)
     )
       return this.selectAfterClosingLeftoverSources(input)
     if (input.action === 'focus') return this.focusCurrentPresentation(input)
@@ -3488,6 +3544,12 @@ export class StudyWorkspace {
       await this.initialize()
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
+      // Panes an earlier extension host left behind would pass for this reader's own in the view-type checks below, so a cold entry closes them before it creates any.
+      if (firstOpen) {
+        await this.closeDeadPanes()
+        this.assertLifetime(lifetime)
+        signal?.throwIfAborted()
+      }
       await this.refreshProgress()
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()

@@ -2619,3 +2619,226 @@ test('selecting a presentation on an open reader closes none of its captured-sou
     await harness.close()
   }
 })
+
+/** Counts the tabs of one Codebook pane kind, in the registered or the main-thread form, for the dead-pane tests. @example codebookPaneTabs(harness, 'codebook.scopedBrowser') // 1 */
+const codebookPaneTabs = (
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  kind: 'codebook.scopedBrowser' | 'codebook.studyContext',
+): number =>
+  harness.groups
+    .flatMap((group) => group.tabs)
+    .filter(
+      (tab) =>
+        'viewType' in tab.input &&
+        [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType),
+    ).length
+
+test('a dead Codebook pane left in a group is a tab without a panel of this host', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    // Act
+    const deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+    // Assert
+    assert.equal(harness.groups[2]!.activeTab, deadStudy)
+    assert.equal(codebookPaneTabs(harness, 'codebook.studyContext'), 1)
+    assert.equal(harness.counts().panels, 0)
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
+
+test('the first presentation selection after an extension-host restart closes the old host’s dead Application and Study panes and is confirmed', async () => {
+  // Arrange: the old host's Application pane is still the visible tab of column 1, its Study pane sits in column 3 behind the learner draft that has focus, and the new Application panel registers a moment after it is created.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const articleSource = harness.groups[0]!.tabs[0]!,
+      wiki = harness.groups[1]!.tabs[0]!
+    const deadApplication = harness.leaveDeadCodebookPane(
+        'codebook.scopedBrowser',
+        1,
+      ),
+      deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+    const draft = harness.focusMutableDraft('mutable-notes.txt', 3)
+    harness.delayPanelRegistration('codebook.scopedBrowser', true)
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(deadApplication), false)
+    assert.equal(tabs.includes(deadStudy), false)
+    assert.equal(codebookPaneTabs(harness, 'codebook.scopedBrowser'), 1)
+    assert.equal(codebookPaneTabs(harness, 'codebook.studyContext'), 1)
+    // The learner's draft, a second workspace file and another extension's webview are untouched.
+    assert.equal(tabs.includes(draft.tab), true)
+    assert.equal(tabs.includes(articleSource), true)
+    assert.equal(tabs.includes(wiki), true)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+  } finally {
+    await harness.close()
+  }
+})
+
+test('the first presentation selection is confirmed when the old host’s dead Study pane had focus and no text editor was active', async () => {
+  // Arrange: focus sits on the dead Study pane, the only tab of column 3; the learner draft of column 1 is open behind the dead Application pane.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const articleSource = harness.groups[0]!.tabs[0]!,
+      wiki = harness.groups[1]!.tabs[0]!
+    const draft = harness.focusMutableDraft('mutable-notes.txt', 1)
+    const deadApplication = harness.leaveDeadCodebookPane(
+        'codebook.scopedBrowser',
+        1,
+      ),
+      deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3, {
+        focused: true,
+      })
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(deadApplication), false)
+    assert.equal(tabs.includes(deadStudy), false)
+    assert.equal(codebookPaneTabs(harness, 'codebook.scopedBrowser'), 1)
+    assert.equal(codebookPaneTabs(harness, 'codebook.studyContext'), 1)
+    assert.equal(tabs.includes(draft.tab), true)
+    assert.equal(tabs.includes(articleSource), true)
+    assert.equal(tabs.includes(wiki), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('the first presentation selection closes a dead Application pane together with the focused leftover captured-source tab', async () => {
+  // Arrange: the state the installed trial met: the old host's Application pane as the visible tab of column 1 and, with focus in column 2, a captured source of this workspace; the new Application panel registers a moment after it is created.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    const articleSource = harness.groups[0]!.tabs[0]!,
+      wiki = harness.groups[1]!.tabs[0]!
+    const deadApplication = harness.leaveDeadCodebookPane(
+        'codebook.scopedBrowser',
+        1,
+      ),
+      leftover = harness.restoreLeftoverCapturedSource({ column: 2 })
+    harness.delayPanelRegistration('codebook.scopedBrowser', true)
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(deadApplication), false)
+    assert.equal(tabs.includes(leftover), false)
+    assert.equal(codebookPaneTabs(harness, 'codebook.scopedBrowser'), 1)
+    assert.equal(tabs.includes(articleSource), true)
+    assert.equal(tabs.includes(wiki), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('a presentation selection on a closed reader that already owns a live Application panel closes no Codebook pane', async () => {
+  // Arrange: a run created the Application panel before the reader was opened.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const draft = harness.focusMutableDraft()
+  const viewport = harness.reader.presentation.createViewport(
+    'run-before-reader',
+    () => {},
+    () => {},
+    'normal',
+  )
+  try {
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(
+      harness
+        .tabCloseRequests()
+        .flat()
+        .some((tab) => 'viewType' in tab.input),
+      false,
+    )
+    assert.equal(codebookPaneTabs(harness, 'codebook.scopedBrowser'), 1)
+    assert.equal(tabs.includes(draft.tab), true)
+  } finally {
+    viewport.close()
+    await harness.close()
+  }
+})
+
+test('a dead Codebook pane the editor refuses to close leaves every tab in place and tells why the selection could not start', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const draft = harness.focusMutableDraft('mutable-notes.txt', 2)
+    const deadApplication = harness.leaveDeadCodebookPane(
+        'codebook.scopedBrowser',
+        1,
+        { refuseClose: true },
+      ),
+      deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+    const state = harness.reader.presentationState(),
+      tabsBefore = harness.groups.flatMap((group) => group.tabs)
+    // Act
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'select',
+      }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message:
+          'A Codebook pane left by an earlier extension session is still open. Close the leftover Application and Study tabs, then select the presentation again.',
+        causeDetail: 'A leftover Codebook pane could not be closed.',
+      },
+    )
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.deepEqual(tabs, tabsBefore)
+    assert.equal(tabs.includes(deadApplication), true)
+    assert.equal(tabs.includes(deadStudy), true)
+    assert.equal(tabs.includes(draft.tab), true)
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.equal(harness.counts().panels, 0)
+  } finally {
+    await harness.close()
+  }
+})
