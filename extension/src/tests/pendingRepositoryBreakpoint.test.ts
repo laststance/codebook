@@ -124,7 +124,7 @@ test('an acknowledged lazy server breakpoint remains pending rather than claimin
   assert.equal(breakpoint.retired, false)
 })
 
-test('a verified registration must resolve the exact requested source coordinates', async () => {
+test('a registration verified at the requested position of the declared line is bound', async () => {
   // Arrange
   const { breakpoint, session, request, response, signal } =
     await breakpointHarness()
@@ -144,7 +144,7 @@ test('a verified registration must resolve the exact requested source coordinate
   assert.equal((await breakpoint.registered(session, signal)).status, 'bound')
 })
 
-test('a mismatched adapter coordinate blocks continuation and identifies the rejected position', async () => {
+test('a registration the adapter verifies at another column of the declared line keeps its receipt as bound', async () => {
   // Arrange
   const { breakpoint, session, request, response, signal } =
     await breakpointHarness()
@@ -154,14 +154,47 @@ test('a mismatched adapter coordinate blocks continuation and identifies the rej
     session,
     response(1, { id: 8, verified: true, line: 20, column: 9 }),
   )
+  const receipt = await breakpoint.registered(session, signal)
+  // Assert
+  assert.equal(
+    JSON.stringify(receipt),
+    '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"bound"}',
+  )
+})
+
+test('a pending registration that reports another column of the declared line stays pending', async () => {
+  // Arrange
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness()
+  // Act
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: false, line: 20, column: 6 }),
+  )
+  // Assert
+  assert.equal((await breakpoint.registered(session, signal)).status, 'pending')
+})
+
+test('a registration the adapter verifies on another line blocks continuation and identifies the rejected position', async () => {
+  // Arrange
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness()
+  // Act
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 21, column: 5 }),
+  )
   // Assert
   await assert.rejects(breakpoint.registered(session, signal), (error) => {
     assert.match(
       String(error),
       /Selected adapter did not acknowledge the exact breakpoint registration/,
     )
-    assert.match(String(error), /"expectedColumn":5/)
-    assert.match(String(error), /"selectedColumn":9/)
+    assert.match(String(error), /"expectedLine":20/)
+    assert.match(String(error), /"selectedLine":21/)
+    assert.match(String(error), /"selectedColumn":5/)
     return true
   })
 })
@@ -173,7 +206,7 @@ test('failed missing duplicate and rebound adapter registrations cannot authoriz
     { id: 7, verified: false },
     { id: 8, verified: true },
     { id: 8, verified: true, line: 21, column: 5 },
-    { id: 8, verified: false, line: 20, column: 6 },
+    { id: 8, verified: false, line: 21, column: 5 },
     { id: 8, verified: false, source: { path: '/repo/other.ts' } },
   ] satisfies DebugProtocol.Breakpoint[]) {
     // Arrange

@@ -155,7 +155,7 @@ export class OwnedRepositoryBreakpoint {
     retirement.confirmed = false
   }
 
-  /** Accepts only a successful matching setBreakpoints response whose resolved positions also exclude the owned stop. @example owned.onResponse(session, response) */
+  /** Accepts only a successful matching setBreakpoints response on the declared line, at whichever column the adapter bound; a retirement response must exclude the owned stop. @example owned.onResponse(session, response) */
   onResponse(
     session: vscode.DebugSession,
     response: DebugProtocol.Response,
@@ -185,9 +185,8 @@ export class OwnedRepositoryBreakpoint {
         (binding.source?.path &&
           resolve(binding.source.path) !== resolve(this.path)) ||
         (binding.line !== undefined && binding.line !== this.line) ||
-        (binding.column !== undefined && binding.column !== this.column) ||
-        (binding.verified &&
-          (binding.line !== this.line || binding.column !== this.column))
+        // The adapter chooses the column; a verified acknowledgement must still name the declared line.
+        (binding.verified && binding.line !== this.line)
       ) {
         registration.failure = `Selected adapter did not acknowledge the exact breakpoint registration: ${JSON.stringify(
           {

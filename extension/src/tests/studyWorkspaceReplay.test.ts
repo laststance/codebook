@@ -2851,3 +2851,200 @@ test('a recording whose recorded-application renderer never became ready opens a
     await harness.close()
   }
 })
+
+const CLOSED_READER_REFUSAL =
+  'Error: The replay reader is closed; open the recording before another control.'
+const STALE_VIEW_REFUSAL =
+  'Error: The displayed study changed. Inspect the current view before acting.'
+const PENDING_CHANGE_REFUSAL =
+  'Error: A presentation change or reader close is pending. Read its state before another control.'
+
+const panelErrors = (
+  harness: Awaited<ReturnType<typeof recordedReaderHarness>>,
+): string[] => harness.playbackPanelMessages.at(-1)!.errors
+
+// Value: protects=the Learning replay panel no longer showing a refusal after replay works again; fails_when=a refused panel control is reported under the key only a live-run action clears, so it stays after the recording reopens; why_new=Cycle 0036 R1 (the Codex cloud review's P2 on PR #64); seam=none
+test('a replay control refused on a closed reader is no longer shown in the Learning replay panel once the recording is opened again', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.close()
+    harness.receivePlaybackPanel({
+      type: 'playback',
+      action: 'seek',
+      positionMs: 0,
+      revision: harness.playbackPanelMessages.at(-1)!.revision,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await waitUntil(
+      () => panelErrors(harness).includes(CLOSED_READER_REFUSAL),
+      'the refused seek reaching the Learning replay panel',
+      1_000,
+    )
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the reopened recording',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(panelErrors(harness).includes(CLOSED_READER_REFUSAL), false)
+    assert.equal(harness.reader.inspect().opened, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=other panel failures keeping their status line, and one line per refused replay control; fails_when=every panel failure moves to the replay key, or the refusal is reported under both keys; why_new=Cycle 0036 R6; seam=none
+test('a failed panel message that is not a replay control stays reported after the recording is opened again, and a refused seek is listed once', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.receivePlaybackPanel({
+      type: 'understanding',
+      understood: true,
+      revision: harness.playbackPanelMessages.at(-1)!.revision + 100,
+    })
+    await waitUntil(
+      () => panelErrors(harness).includes(STALE_VIEW_REFUSAL),
+      'the stale understanding message reaching the panel',
+      1_000,
+    )
+    await harness.reader.close()
+    harness.receivePlaybackPanel({
+      type: 'playback',
+      action: 'seek',
+      positionMs: 0,
+      revision: harness.playbackPanelMessages.at(-1)!.revision,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await waitUntil(
+      () => panelErrors(harness).includes(CLOSED_READER_REFUSAL),
+      'the refused seek reaching the panel',
+      1_000,
+    )
+    const refusalsWhileClosed = panelErrors(harness).filter(
+      (error) => error === CLOSED_READER_REFUSAL,
+    ).length
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the reopened recording',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(refusalsWhileClosed, 1)
+    assert.equal(panelErrors(harness).includes(CLOSED_READER_REFUSAL), false)
+    assert.equal(panelErrors(harness).includes(STALE_VIEW_REFUSAL), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a replay control sent from an outdated panel view being reported once and retired by the next accepted control; fails_when=the revision check, which runs before the playback branch, reports under the key a replay never clears; why_new=Cycle 0036 R6 (outside voice O2); seam=none
+test('a replay control refused for an outdated panel view is listed once and is gone after the next accepted replay control', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.receivePlaybackPanel({
+      type: 'playback',
+      action: 'seek',
+      positionMs: 100,
+      revision: harness.playbackPanelMessages.at(-1)!.revision + 100,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await waitUntil(
+      () => panelErrors(harness).includes(STALE_VIEW_REFUSAL),
+      'the outdated seek reaching the panel',
+      1_000,
+    )
+    const refusals = panelErrors(harness).filter(
+      (error) => error === STALE_VIEW_REFUSAL,
+    ).length
+    const presentedAfterRefusal = harness.controller.state().presentedMs
+
+    // Act
+    harness.receivePlaybackPanel({
+      type: 'playback',
+      action: 'seek',
+      positionMs: 100,
+      revision: harness.playbackPanelMessages.at(-1)!.revision,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await waitUntil(
+      () => harness.controller.state().presentedMs === 100,
+      'the accepted seek presenting its moment',
+      2_000,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(refusals, 1)
+    assert.equal(presentedAfterRefusal, 0)
+    assert.equal(panelErrors(harness).includes(STALE_VIEW_REFUSAL), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a replay control refused during a pending reader change being reported once and retired when replay works again; fails_when=the idle check, which runs before the playback branch, reports under the key a replay never clears; why_new=Cycle 0036 R6 (outside voice O2); seam=none
+test('a play sent from the Learning replay panel while the reader is closing is listed once and is gone after the recording is opened again', async () => {
+  // Arrange: Close is waiting for the editor to stop the historical session.
+  const harness = await recordedReaderHarness(true, true)
+  let releaseDisposal = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const disposal = harness.holdHistoricalDebugDisposal()
+    releaseDisposal = disposal.release
+    const closing = harness.reader.close()
+    await disposal.started
+    harness.receivePlaybackPanel({
+      type: 'playback',
+      action: 'play',
+      revision: harness.playbackPanelMessages.at(-1)!.revision,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await waitUntil(
+      () => panelErrors(harness).includes(PENDING_CHANGE_REFUSAL),
+      'the refused play reaching the panel',
+      1_000,
+    )
+    const refusals = panelErrors(harness).filter(
+      (error) => error === PENDING_CHANGE_REFUSAL,
+    ).length
+    disposal.release()
+    await closing
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the reopened recording',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(refusals, 1)
+    assert.equal(panelErrors(harness).includes(PENDING_CHANGE_REFUSAL), false)
+    assert.equal(harness.controller.state().mode, 'paused')
+  } finally {
+    releaseDisposal()
+    await harness.close()
+  }
+})

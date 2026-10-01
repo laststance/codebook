@@ -494,6 +494,32 @@ test('rediscovery rejects valid JSON recorded values that differ from the saved 
   }
 })
 
+test('an observation the debugger bound at another column reports the bound position as source beside the declared one as requestedSource', async () => {
+  // Arrange: the stop was declared at 1:1 and the committed snapshot sits at 1:7.
+  const harness = await contextHarness(),
+    { service, record } = harness
+  try {
+    service.action({
+      ...harness.receipt,
+      key: 'moved-column',
+      action: 'repository-click',
+    })
+    const committed = harness.runtime.snapshots[0]!
+    committed.source = { ...committed.source, column: 7 }
+    const observed = service.state(record).observations[0]!
+    // Act
+    const inspection = await readResource(service, observed.inspectionUri)
+    // Assert
+    assert.ok('text' in inspection)
+    const facts = JSON.parse(JSON.parse(inspection.text).content)
+    assert.equal(facts.source.line, 1)
+    assert.equal(facts.source.column, 7)
+    assert.equal(JSON.stringify(facts.requestedSource), '{"line":1,"column":1}')
+  } finally {
+    await harness.close()
+  }
+})
+
 test('ordinary readers discover bounded actual facts and saved explanations without opening debugger graphs', async () => {
   // Arrange
   const harness = await contextHarness(),

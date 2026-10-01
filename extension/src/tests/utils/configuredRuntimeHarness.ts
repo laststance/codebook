@@ -25,6 +25,10 @@ export async function configuredRuntimeHarness(
   context: TestContext,
   control?: RuntimeControl,
   additionalStops: RepositoryConfiguration['additionalStops'] = [],
+  options: {
+    /** Replaces the sealed map; by default generated 0:0 maps to source 1:1, and with additional stops generated 0:6 maps to 1:7 as well. */
+    mappings?: string
+  } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
   context.after(async () => {
@@ -63,7 +67,8 @@ export async function configuredRuntimeHarness(
       sources: [sourcePath],
       sourcesContent: [source],
       names: [],
-      mappings: additionalStops.length ? 'AAAA,MAAM' : 'AAAA',
+      mappings:
+        options.mappings ?? (additionalStops.length ? 'AAAA,MAAM' : 'AAAA'),
     }),
     mapSource: sourcePath,
     scriptUrl: 'webpack-internal:///(app-pages-browser)/./src/theme.ts',
@@ -95,6 +100,9 @@ export async function configuredRuntimeHarness(
   let currentColumn = 1,
     stopCount = 0,
     breakpointCount = 0
+  // Where the adapter reports the first stop's verified binding when it differs from the requested position.
+  let firstStopBinding: { line: number; column: number } | undefined,
+    emitNextPause = true
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
   let rejectedCapture: string | undefined,
     requiredValueUnavailable = false,
@@ -187,8 +195,10 @@ export async function configuredRuntimeHarness(
         })
         listeners.get('Debugger.resumed')?.({})
         const next = additionalStops[stopCount - 1]
-        if (next) emitPause(next.column)
-        else inputResolve()
+        if (next) {
+          // A line that ran only before its breakpoint existed never pauses again.
+          if (emitNextPause) emitPause(next.column)
+        } else inputResolve()
         return {}
       }
       throw new Error(`Unexpected DAP command: ${command}`)
@@ -201,8 +211,12 @@ export async function configuredRuntimeHarness(
         ? {
             id: 1,
             verified: true,
-            line: owned.location.range.start.line + 1,
-            column: owned.location.range.start.character + 1,
+            line:
+              (owned.id === 'owned-breakpoint' && firstStopBinding?.line) ||
+              owned.location.range.start.line + 1,
+            column:
+              (owned.id === 'owned-breakpoint' && firstStopBinding?.column) ||
+              owned.location.range.start.character + 1,
           }
         : undefined
     },
@@ -352,7 +366,7 @@ export async function configuredRuntimeHarness(
           inputResolve = resolve
           inputReject = reject
         })
-        if (emitInputPause) emitPause()
+        if (emitInputPause) emitPause(firstStopBinding?.column)
         return pending
       }
       if (method === 'Page.addScriptToEvaluateOnNewDocument') return {}
@@ -536,7 +550,7 @@ export async function configuredRuntimeHarness(
           }
           if (
             rejectBinding &&
-            description.startsWith('exact repository breakpoint binding')
+            description.startsWith('a verified binding of declared stop')
           ) {
             signal?.throwIfAborted()
             await read()
@@ -592,6 +606,14 @@ export async function configuredRuntimeHarness(
     },
     rejectBreakpointBinding(): void {
       rejectBinding = true
+    },
+    /** Reports the first stop's verified binding, and its pause, at this position instead of the requested one. */
+    bindFirstStopAt(line: number, column: number): void {
+      firstStopBinding = { line, column }
+    },
+    /** Lets a continuation run on without the next declared stop ever pausing. */
+    suppressNextPause(): void {
+      emitNextPause = false
     },
     observeRecording(
       observer: () => ViewportRecordingObserver | undefined,

@@ -670,6 +670,56 @@ for (const version of [1, 2])
     }
   })
 
+test('configured help tells an agent that only the next stop is armed and that a stop binds anywhere on its declared line', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({
+      additionalStops: z.string(),
+      sourceBinding: z.string(),
+      sequence: z.array(z.string()),
+    })
+    .parse(JSON.parse(help.text))
+  assert.match(
+    contract.additionalStops,
+    /Codebook arms only the next expected stop: the first stop before input, and each later stop inside the codebook_continue that follows the stop before it\. A later stop's line can therefore execute earlier without pausing; declare stops in the order the action executes them\./,
+  )
+  assert.match(
+    contract.additionalStops,
+    /the run fails with 'Repository continuation reached no next declared pause' and names that stop\./,
+  )
+  assert.match(
+    contract.additionalStops,
+    /that codebook_continue fails with 'Next declared stop was not armed and no resume was sent', the run ends and earlier observations stay\./,
+  )
+  assert.match(
+    contract.sourceBinding,
+    /The line is the declaration and the column is a request: Codebook accepts the debugger's verified binding anywhere on the declared line in the sealed executed module/,
+  )
+  assert.match(
+    contract.sourceBinding,
+    /Each observation's inspection resource reports it as source \{line,column\} beside requestedSource \{line,column\}; cite source\./,
+  )
+  assert.match(
+    contract.sourceBinding,
+    /A verified binding on another line fails at once\./,
+  )
+  assert.match(
+    contract.sequence[2] ?? '',
+    /The inspection's source is the bound position to cite; requestedSource is the position you declared\./,
+  )
+  assert.match(
+    contract.sequence[3] ?? '',
+    /That continue arms the next declared stop before it resumes\./,
+  )
+  assert.doesNotMatch(help.text, /exact position/)
+  assert.doesNotMatch(help.text, /first stop of each participant/)
+})
+
 test('API 1.5 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {
   // Arrange
   const { service, runtimes } = await configuredServiceHarness(context)

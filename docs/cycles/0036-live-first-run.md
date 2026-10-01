@@ -1,7 +1,7 @@
 # Cycle 0036 — Live first run: a natural `/codebook` request reaches its declared stops on the first run
 
 Type: product-increment\
-Status: planning\
+Status: validating\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -127,7 +127,7 @@ Frozen before implementation, as amended by the plan reviews of 2026-10-01 ("Pla
 
 ## Attempts and evidence
 
-No implementation yet. The plan reviews are recorded here before any source change.
+The plan reviews were recorded before any source change. The implementation and its mechanism proof follow them; the native trials (N5) are not run yet.
 
 ### Plan reviews, 2026-10-01 (before any source change)
 
@@ -229,7 +229,93 @@ The CHANGELOG entry names the moved-column limit for 0.2.19.0 and older, and the
 The working context was compacted twice during the plan reviews, and each time the hook required the mandatory entry again.
 
 - First compaction (during `/plan-eng-review`): PRODUCT_GOAL (v9), the replay, DeepWiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md` were read again in full. The PNG was opened with the image viewer, its SHA-256 `f189ee82…caf2aa` was verified, and the same four regions were observed (live explanation, learning replay, DeepWiki reproduction, shortcut discovery). Branch `codex/cycle-0036-live-first-run` at `165ccc8`, clean. This note is written from the session's own summary of that entry, because a second compaction followed before it was recorded.
-- Second compaction (during `/plan-devex-review`): the review continued as independent preparation, with only read-only source inspection. The full entry is repeated before the first source change and recorded with the implementation notes.
+- Second compaction (during `/plan-devex-review`): the review continued as independent preparation, with only read-only source inspection. After the review records were committed (`abb4a4a`) and before the first source change, the full entry was repeated: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md` were read in full, and this record as amended. The PNG was opened with the image viewer (SHA-256 `f189ee82…caf2aa`, unchanged). Observed again: region 1 with native Run and Debug, the application above `actions.ts` with one highlighted line, standard chat with a `/codebook` request and "Recording explanation · Save learning replay"; region 2 with "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", the Learning summary with its sequence diagram and "I understand this step", and the timeline's "Unrecorded interval"; region 3, the DeepWiki reproduction with Update LLM Wiki and Open in VS Code; and the shortcut strip with the searchable list. Checkout: `codex/cycle-0036-live-first-run` at `abb4a4a`, clean; Node 24.21.0. No acceptance row changed between the gap audit above and this entry: the only commits since are records.
+
+- Third compaction (during the implementation, 2026-10-02): the harness changes and the runtime changes for L1 to L3 were already in the working tree, uncommitted. Before any further edit the full entry was repeated: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md` were read in full. The PNG was opened with the image viewer (SHA-256 `f189ee82…caf2aa`, unchanged) and the same four regions were observed: live explanation (native Run and Debug, the application above `actions.ts` with one highlighted line, standard chat, "Recording explanation · Save learning replay"), learning replay ("(recorded state)", "Recorded application · 00:42", Learning summary with the sequence diagram, "Unrecorded interval"), the DeepWiki reproduction and the shortcut strip. Checkout: `codex/cycle-0036-live-first-run` at `abb4a4a` with the uncommitted implementation; Node 24.21.0. One command ran before the hook's reminder was read: it added the already designed browser tests to `configuredRuntime.test.ts`, built, and ran three test files. No product source was edited before the entry was complete.
+
+### Implementation, 2026-10-02
+
+Order followed: harness support, L1, L2 and L3 with the tracker change, the failure texts, saved-evidence validation, the requested position, the contract text, plan R2, L4, R1 with R6. Every behavior test was written against the plan before its result was looked at; the red run on `dceea3f` was taken afterwards in a separate worktree (below).
+
+What changed, by rule:
+
+| Rule | Source | What it does now |
+| --- | --- | --- |
+| L1 | `extension/src/configuredBrowserRun.ts` (`prepareOwned`, `continue`, `beginAfter`) | Preparation arms `stops[0]` only. For every declared stop it first asks the sealed map for the declared line; a complete scan with no position fails preparation with `Declared stop <path>:<line> has no mapped position on that line in the sealed module` and the hints (R3: an incomplete scan refuses nothing). `continue()` arms the next stop as before; when that arming fails the run ends with `Next declared stop was not armed and no resume was sent: <error>` (X9). The deadline after a continuation names the stop and the order rule (X10). |
+| L2 | same file (`inspect`, `verifyStackRefresh`), `extension/src/utils/isFrameAtPosition.ts`, `extension/src/ownedRepositoryBreakpoint.ts` | A paused server binding must have the registered id, be verified, be in the cited file and be on the declared line; its column becomes `stop.bound`. Another line fails with X7's message and the hints. The top frame and a refreshed stack are compared with `stop.bound`. The tracker's acknowledgement check no longer compares the column (plan review R2); the request match and the retirement logic are unchanged. A failed registration is reported as `Declared stop <path>:<line> was not registered: <tracker message>` with the hints (X13) at all three call sites. |
+| L3 | same file (`armStop`) | The browser poll accepts the first verified binding on the declared line and records `breakpoint.bound` with `requested`. A verified binding on another line ends the poll at once with X7's message. A binding that never verifies times out after 20 s with X8's text. One private builder (`bindingFailure`) writes the hints for every binding failure; the message-prefix test is gone. |
+| R5 | `extension/src/utils/validateConfiguredStudyEvidence.ts` | The saved line must equal the declared line. The column may differ only when the observation has a debugger snapshot, whose top frame the existing check compares with the saved position. |
+| X6 | `extension/src/resources.ts` (inspection resource) | `requestedSource {line, column}` is published beside `source`, derived at read time from the retained configuration by the snapshot's index. Nothing is added to a saved snapshot, the run resource or `service.ts`. |
+| Plan R2 | `extension/src/playbackController.ts` | The not-ready check runs before the reader-open guard. |
+| L4 | `extension/src/studyWorkspace.ts` (`changePresentation`, `admitPresentation`, `selectAfterClosingLeftoverSources`, `ownsCapturedSourceTab`) | A `select` on a closed reader whose active tab is a captured-source text tab first closes this workspace's captured-source tabs, waits at most `PRESENTATION_READY_TIMEOUT_MS` until the active tab and the active text editor agree (R4), and then runs the ordinary admission once more. While the tabs close, the existing presentation transition is pending, so every other presentation control is refused and a reader close cancels the wait (A3). Ownership is decided after `initialize()` (A5). If a tab stays, the ordinary refusal is returned with the cause `A leftover captured source tab could not be closed.` |
+| R1, R6 | `extension/src/studyWorkspace.ts` (`panelFailureKind`, the three panel listeners, `openRecording`, `loadPlayback`, the playback `changed` callback) | A failure of a valid panel `playback` message is reported once under `replay-control`, whichever check refused it. It is deleted when a panel replay control is accepted, when a recording open is accepted, and when a recording load reaches its first ready position. Every other panel failure keeps `control`. |
+| Contract text | `extension/src/resources.ts`, `extension/README.md` | The wording recorded under "Plan reviews", unshortened. |
+
+Departures from the plan's implementation notes, each with its reason:
+
+- The owned-tab predicate is the private method `ownsCapturedSourceTab` of `StudyWorkspace`, used at all four sites, and not a file in `extension/src/utils/`. Every file in `utils/` imports the editor API as types only, because the boundary tests load those files outside the editor; the predicate needs the `TabInputText` class at run time. A learner's tab is still protected by one definition, and the workspace tests cover its three inputs (this workspace's tab, another workspace's tab, a non-text tab).
+- R6 is decided by the three panel listeners through `panelFailureKind`, which parses the message again, and not by a split inside `receive()`. `receive()` stays one function, and every failure of a parsed playback message gets the key, including the two checks that run before the playback branch.
+- The marker of L4's prelude is the existing `presentationTransition`, not a new field. The reader's state reads `applying` while the leftover tabs close.
+- N14 is in `configuredRuntime.test.ts`: that harness has the controllable clock the 20 s deadline needs.
+- Two utilities were added that the plan did not name: `extension/src/utils/thrownMessage.ts` (the message of a caught value by shape; the boundary tests load the runtime in its own context, where `instanceof Error` is false for an error thrown by a shared module) and `extension/src/utils/isFrameAtPosition.ts` (the frame check that `inspect` and the stack refresh share). Each has a unit test.
+- `hasMappedPosition` and the `requiredColumn` parameter of `sourceMapMappedPositions` are removed, as planned.
+
+Tests against the validation contract (all in `extension/src/tests/`):
+
+| Check | Test |
+| --- | --- |
+| AC1 | `nativeParticipants`: "a browser stop declared after a server stop does not pause when its line runs before its turn, and both stops commit in declared order" |
+| AC2 | `nativeParticipants`: "preparation installs only the first declared stop, so a later stop cannot pause before its turn" |
+| AC3 | `nativeParticipants`: "a browser stop declared before a server stop is armed before input and the server stop only inside the browser continuation" |
+| AC4 | `nativeParticipants`: "a later stop on a line the sealed map never reaches is refused at preparation, before any application input" |
+| AC5 | `nativeParticipants`: "a server stop the debugger binds at another column of its declared line commits at the bound column"; `recordingContext`: "an observation the debugger bound at another column reports the bound position as source beside the declared one as requestedSource" |
+| AC6 | `nativeParticipants`: "a server stop the debugger binds on another line fails naming the declared stop, where it landed and the mapped positions", "a paused server binding under another adapter id than its registration never publishes captured facts", and the existing unverified and other-path cases |
+| AC7 | `nativeParticipants`: the two "a stack refresh that reports ..." tests |
+| AC8 | `configuredRuntime`: "a browser stop the debugger binds at another column of its declared line is armed at once and commits at the bound column" (the same `recordingContext` test covers the inspection resource) |
+| AC9 | `configuredRuntime`: "a browser stop the debugger binds on another line fails at once and names the declared stop and where it landed"; the existing "an unbound configured stop ..." test with X8's text |
+| AC10 | `crossRuntimeHistory`: "a saved stop the debugger bound at another column of its declared line reopens when its native top frame names that column", "a saved stop whose column moved is rejected when its native top frame names another column or it sits on another line"; `configuredStudy` (N11); every existing saved-study test passes unchanged |
+| AC11, AC12 | `studyWorkspacePresentation`: "selecting a presentation on a closed reader closes a leftover captured-source tab ...", "a closed reader behind a foreign non-text editor refuses the selection and closes no leftover captured-source tab", "selecting a presentation on an open reader closes none of its captured-source tabs" |
+| AC13 | `studyWorkspaceReplay`: "a replay control refused on a closed reader is no longer shown in the Learning replay panel once the recording is opened again", and N10, N12 |
+| AC14 | `playbackController`: "a seek or play sent before the load has delivered the recording is told the recording is not ready ...", "a seek or play on a loaded recording whose reader closed is told the reader is closed", and N13 |
+| AC15 | `configuredService` (N15); `shasum -a 256 extension/skills/codebook/SKILL.md` is `39f03be0…`, unchanged; the package suite passes with no edit to its skill expectations |
+| N1 to N16 | N1 `pendingRepositoryBreakpoint` (with a pending companion); N2, N4, N5, N16 `nativeParticipants`; N3, N14 `configuredRuntime`; N6 to N9 `studyWorkspacePresentation`; N10, N12 (two tests: an outdated panel view, and a play while the reader is closing) `studyWorkspaceReplay`; N11 `configuredStudy`; N13 `playbackController`; N15 `configuredService` |
+
+AC17, edits to existing tests beyond the list frozen in the contract, each forced by an approved decision:
+
+- `pendingRepositoryBreakpoint.test.ts`: in the list of failing acknowledgements, the case `{verified: false, line: 20, column: 6}` became `{verified: false, line: 21, column: 5}`. A pending acknowledgement at another column of the declared line is accepted under plan review R2 and has its own test.
+- `configuredRuntime.test.ts`: the "unbound second position" test also asserts X9's reason; one Arrange comment that said "exact binding" was reworded.
+- `configuredBundle.test.ts`: the `hasMappedPosition` test is replaced by a line-level `mappedPositions` test, as listed.
+
+Red on `dceea3f` (a separate worktree with this branch's tests and harnesses and the base product source; private log `artifacts/cycle-0036/tests/red-on-dceea3f.log`): of 347 tests in the eleven affected files, 33 fail. They are AC1 to AC5, AC6's first case, AC7 (both), AC8, AC9's first half, AC10 (both), AC11, AC13, AC14's first half, N1 and its pending companion, N2, N4, N5, N6 to N10, N12 (both), N14, N15, N16, the inspection-resource test, and the two existing tests whose expected text changed (X8, X9). The remaining new tests pass on the base, as the contract expects where the case already existed: AC6's other-id case, AC12 (both), AC14's closed-reader half, N3, N11, N13, the line-level map test and the rewritten other-line acknowledgement test.
+
+AC16, disabled-fix controls. Each control removes one fix from the compiled output, runs its test by exact name, expects that one test to fail, and restores the file; the compiled directory's hash is identical before and after (`151389376581…`). Private script and log: `artifacts/cycle-0036/controls/`.
+
+| Control | Removed | Test fails |
+| --- | --- | --- |
+| AC1 | arm only `stops[0]` (each participant's first stop is armed again) | yes |
+| AC5 | the server binding's column is free on the declared line | yes |
+| AC8 | the browser binding's column is free on the declared line | yes |
+| AC9a | a browser binding on another line ends the poll | yes |
+| AC11 | the leftover-tab prelude | yes |
+| AC13 | the `replay-control` key | yes |
+| AC14a | not-ready before closed | yes |
+| N1 | the tracker's column tolerance (plan review R2) | yes |
+| N3 | the incomplete-scan exemption (R3) | yes |
+| N8 | the wait for the active text editor (R4) | yes |
+| AC10 | the debugger-confirmed column in saved evidence (R5) | yes |
+| X6 | `requestedSource` in the inspection resource | yes |
+
+12 of 12 held.
+
+AC18, gates on the working tree (Node 24.21.0, pnpm 12.4.2):
+
+- Full extension suite: 1,568/1,568, no failure, cancellation or skip, in two consecutive runs (107.7 s and 111.7 s; the 20 s binding and deadline cases run in real time). One earlier full run of the same product source ended 1,565/1,568: one test whose expected cause text I had just changed, and two recording-restart tests in `configuredRuntimeRecording` ("two declared stops checkpoint each pause ..." and "all 8 public cross-runtime stops ..."). Those two were not reproduced in the two later full runs or in three repeated runs of five heavy files together; their output was not kept, so the cause is unknown and the observation is recorded as it is.
+- Package suite 183/183 after every extension reader had exited; hook test 4/4.
+- `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` exit 0. `health` first failed against its baseline (new functions over the per-file counts); the prelude, the frame check and the message helper were reshaped until it passed with the baseline file unchanged.
+
+AC19: no stored format version, tool name, required argument or timeout value changed. The only added constant is `MILLISECONDS_PER_SECOND`, used to print the existing 20 s budget.
+
+Limits of this proof: everything above is mechanism level with controlled transports. No editor, debugger or application ran. The native observations (N5-a to N5-c) and the protected-state check (AC23) are not run yet. `replay-control` is not cleared by an agent's accepted seek or play through the service, only by a panel control, a recording open or a load.
 
 ## Result and decision
 
@@ -241,7 +327,7 @@ Nothing to hand off yet.
 
 ## Next action
 
-- Exact next action: repeat the mandatory entry, then implement test-first in the plan's order (harness support, L1, L2 and L3 with the tracker change, saved-evidence validation, L4, R1, R2, the failure texts and the contract text), each behavior red on `dceea3f` first.
-- Changed files / branch / active processes: `codex/cycle-0036-live-first-run`; no active processes.
+- Exact next action: build the package candidate from the committed implementation, install it in both QA profiles, and run N5-a, N5-b and N5-c with OBS Window Capture (request Computer Use access first and notify before occupying the desktop); then the protected-state check, the local reviews and `/ship`.
+- Changed files / branch / active processes: `codex/cycle-0036-live-first-run`; the implementation and its tests are committed; no active processes. Scratch worktree `/tmp/c36-base` holds the base product source with this branch's tests.
 - State updated in PROJECT_STATE.md: product row, active cycle, checkout, tracking, AC-LIVE and AC-REPLAY next actions, one next action.
 - Durable decisions updated: none.

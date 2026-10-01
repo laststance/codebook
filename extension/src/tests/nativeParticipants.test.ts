@@ -758,3 +758,407 @@ test('server registration revoked during the final DOM check prevents the mouse 
   )
   assert.equal(harness.run.view().snapshots.length, 0)
 })
+
+const MAPPING_HINTS =
+  'These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.'
+
+const armingEvents = (
+  harness: Awaited<ReturnType<typeof nativeParticipantsHarness>>,
+) =>
+  harness.run
+    .view()
+    .events.filter(
+      (event) =>
+        event.type === 'breakpoint.bound' ||
+        event.type === 'breakpoint.registered',
+    )
+    .map((event) => event.type)
+
+test('a browser stop declared after a server stop does not pause when its line runs before its turn, and both stops commit in declared order', async (context) => {
+  // Arrange: the click re-renders the browser component before the server action pauses.
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'browser',
+  ])
+  harness.runBrowserLineOnInput()
+  await harness.run.prepare()
+  // Act
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  await harness.run.continue('server', server.pause)
+  const browser = await pauseReady(harness, 'browser')
+  await harness.run.continue('browser', browser.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after an early browser line',
+  )
+  await harness.run.stop()
+  // Assert
+  const view = harness.run.view()
+  assert.equal(
+    JSON.stringify(view.snapshots.map((snapshot) => snapshot.participant)),
+    '["server","browser"]',
+  )
+  assert.equal(view.failures.length, 0)
+  assert.equal(view.operation?.afterVerified, true)
+  assert.equal(view.finalOutcome, 'demonstrated')
+})
+
+test('preparation installs only the first declared stop, so a later stop cannot pause before its turn', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'browser',
+  ])
+  // Act
+  await harness.run.prepare()
+  // Assert
+  assert.equal(harness.breakpoints.length, 1)
+  assert.match(
+    harness.breakpoints[0]?.location.uri.fsPath ?? '',
+    /\/src\/mode\.ts$/,
+  )
+  assert.equal(
+    JSON.stringify(armingEvents(harness)),
+    '["breakpoint.registered"]',
+  )
+})
+
+test('a browser stop declared before a server stop is armed before input and the server stop only inside the browser continuation', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, [
+    'browser',
+    'server',
+  ])
+  await harness.run.prepare()
+  const armedBeforeInput = JSON.stringify(armingEvents(harness))
+  const installedBeforeInput = harness.breakpoints.map(
+    (breakpoint) => breakpoint.location.uri.fsPath,
+  )
+  // Act
+  harness.run.action('once', 'repository-click')
+  const browser = await pauseReady(harness, 'browser')
+  const armedAtBrowserStop = JSON.stringify(armingEvents(harness))
+  await harness.run.continue('browser', browser.pause)
+  const server = await pauseReady(harness, 'server')
+  await harness.run.continue('server', server.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed browser-then-server action',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(armedBeforeInput, '["breakpoint.bound"]')
+  assert.equal(installedBeforeInput.length, 1)
+  assert.match(installedBeforeInput[0] ?? '', /\/src\/theme\.ts$/)
+  assert.equal(armedAtBrowserStop, '["breakpoint.bound"]')
+  assert.equal(
+    JSON.stringify(armingEvents(harness)),
+    '["breakpoint.bound","breakpoint.registered"]',
+  )
+  const view = harness.run.view()
+  assert.equal(
+    JSON.stringify(view.snapshots.map((snapshot) => snapshot.participant)),
+    '["browser","server"]',
+  )
+  assert.equal(view.finalOutcome, 'demonstrated')
+})
+
+test('a later stop on a line the sealed map never reaches is refused at preparation, before any application input', async (context) => {
+  // Arrange: the browser module's only mapping points at line 2, and the stop is declared on line 1.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser'],
+    { mappings: { browser: 'AACA' } },
+  )
+  // Act
+  await assert.rejects(harness.run.prepare(), (error: unknown) => {
+    assert.equal(
+      String(error),
+      `Error: Declared stop src/theme.ts:1 has no mapped position on that line in the sealed module. Frozen source map positions in the selected citation: none. ${MAPPING_HINTS}`,
+    )
+    return true
+  })
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.commands.some((command) => command.method.startsWith('Input.')),
+    false,
+  )
+  assert.equal(harness.breakpoints.length, 0)
+  assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+test('a server stop the debugger binds at another column of its declared line commits at the bound column', async (context) => {
+  // Arrange: the stop asks for 1:7 and the adapter binds the paused breakpoint at 1:1.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    declaredColumn: { server: 7 },
+    mappings: { server: 'AAAA,MAAM' },
+  })
+  await harness.run.prepare()
+  // Act
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  await harness.run.continue('server', server.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed at the bound column',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(server.source.line, 1)
+  assert.equal(server.source.column, 1)
+  assert.equal(server.values['value:mode'], 'display')
+  const receipt = harness.run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.pause-binding')
+  const detail = JSON.parse(JSON.stringify(receipt?.detail))
+  assert.equal(detail.expected.column, 7)
+  assert.equal(detail.observed.column, 1)
+  assert.equal(harness.run.view().finalOutcome, 'demonstrated')
+})
+
+test('a server stop the debugger binds on another line fails naming the declared stop, where it landed and the mapped positions', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.bindAt('server', 2, 1)
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'binding on another line rejected',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    `Error: Declared stop src/mode.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+test('a paused server binding under another adapter id than its registration never publishes captured facts', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.rebindPauseId()
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'foreign binding id rejected',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: Pending server breakpoint did not bind to the captured source',
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+test('a stack refresh that reports the bound position keeps the captured pause of a stop whose column moved', async (context) => {
+  // Arrange: declared 1:7, bound and paused at 1:1.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    declaredColumn: { server: 7 },
+    mappings: { server: 'AAAA,MAAM' },
+  })
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  // Act
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: 930,
+    event: 'continued',
+    body: { threadId: 1 },
+  })
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: 931,
+    event: 'stopped',
+    body: { reason: 'breakpoint', threadId: 1 },
+  })
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.events.find((event) => event.type === 'dap.pause-refreshed')
+  }, 'refresh at the bound position accepted')
+  // Assert
+  const refreshed = harness.run
+    .view()
+    .events.find((event) => event.type === 'dap.pause-refreshed')
+  const detail = JSON.parse(JSON.stringify(refreshed?.detail))
+  assert.equal(detail.line, 1)
+  assert.equal(detail.column, 1)
+  assert.equal(harness.run.view().status, 'paused-server')
+  assert.equal(harness.run.view().participants.server?.snapshot?.id, server.id)
+})
+
+test('a stack refresh that reports the requested column instead of the bound one cannot reuse the captured pause', async (context) => {
+  // Arrange: declared 1:7, bound and paused at 1:1; the refreshed frame then names 1:7.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    declaredColumn: { server: 7 },
+    mappings: { server: 'AAAA,MAAM' },
+  })
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  await pauseReady(harness, 'server')
+  harness.movePausedFrame(1, 7)
+  // Act
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: 932,
+    event: 'continued',
+    body: { threadId: 1 },
+  })
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: 933,
+    event: 'stopped',
+    body: { reason: 'breakpoint', threadId: 1 },
+  })
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'refresh at another column rejected',
+  )
+  // Assert
+  assert.match(
+    harness.run.view().failures[0] ?? '',
+    /Native stack refresh changed the captured source location/,
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+})
+
+test('a paused frame at another column than the paused binding on the same line never publishes captured facts', async (context) => {
+  // Arrange: declared 1:7 and bound at 1:1, while the top frame reports 1:7.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    declaredColumn: { server: 7 },
+    mappings: { server: 'AAAA,MAAM' },
+  })
+  await harness.run.prepare()
+  harness.movePausedFrame(1, 7)
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'frame beside the binding rejected',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: DAP frame differs from exact configured source',
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+test('a server stop armed in an already loaded module and acknowledged at another column of its line commits at the bound column', async (context) => {
+  // Arrange: both stops ask for 1:7; the second is registered after the module loaded, so the adapter verifies it at once at 1:1.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    {
+      declaredColumn: { server: 7 },
+      mappings: { server: 'AAAA,MAAM' },
+    },
+  )
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.acknowledgeRegistrationsAt(1, 1)
+  // Act
+  await harness.run.continue('server', first.pause)
+  const second = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[1]
+  }, 'second server stop committed')
+  await harness.run.continue('server', second.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after a loaded-module registration',
+  )
+  await harness.run.stop()
+  // Assert
+  const registrations = harness.run
+    .view()
+    .events.filter((event) => event.type === 'breakpoint.registered')
+    .map((event) => JSON.parse(JSON.stringify(event.detail)).status)
+  assert.equal(JSON.stringify(registrations), '["pending","bound"]')
+  assert.equal(second.source.line, 1)
+  assert.equal(second.source.column, 1)
+  assert.equal(harness.run.view().finalOutcome, 'demonstrated')
+})
+
+test('a browser stop that binds on another line while the server is paused ends the run at once without resuming the server', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'browser',
+  ])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  harness.bindAt('browser', 2, 1)
+  const startedMs = performance.now()
+  // Act
+  await assert.rejects(
+    harness.run.continue('server', server.pause),
+    (error: unknown) => {
+      assert.equal(
+        String(error),
+        `Error: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,
+      )
+      return true
+    },
+  )
+  const failedWithinMs = performance.now() - startedMs
+  await harness.run.stop()
+  // Assert
+  assert.ok(failedWithinMs < 1_000, `failed after ${failedWithinMs} ms`)
+  assert.equal(
+    harness.run.view().failures[0],
+    `Next declared stop was not armed and no resume was sent: Error: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method === 'continue'),
+    false,
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+test('a later server stop whose registration is acknowledged on another line ends the run naming that stop, without resuming', async (context) => {
+  // Arrange: the second stop is registered after the module loaded and the adapter verifies it on line 2.
+  const harness = await nativeParticipantsHarness(context, ['server', 'server'])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.acknowledgeRegistrationsAt(2, 1)
+  // Act
+  let cause = ''
+  await assert.rejects(
+    harness.run.continue('server', first.pause),
+    (error: unknown) => {
+      cause = String(error)
+      return true
+    },
+  )
+  await harness.run.stop()
+  // Assert
+  assert.match(
+    cause,
+    /^Error: Declared stop src\/mode\.ts:1 was not registered: Selected adapter did not acknowledge the exact breakpoint registration: \{.*"expectedLine":1,.*"selectedLine":2,"selectedColumn":1,.*\}\. Frozen source map positions in the selected citation: 1:1\. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them\.$/,
+  )
+  assert.match(
+    harness.run.view().failures[0] ?? '',
+    /^Next declared stop was not armed and no resume was sent: Error: Declared stop src\/mode\.ts:1 was not registered: Selected adapter did not acknowledge the exact breakpoint registration: /,
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method === 'continue'),
+    false,
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+})

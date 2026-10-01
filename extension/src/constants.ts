@@ -406,6 +406,8 @@ export const REPOSITORY_ATTRIBUTE_LIMIT_CHARS = 64
 export const REPOSITORY_LITERAL_LIMIT_CHARS = 1_024
 export const REPOSITORY_INSPECTION_LIMIT = 10
 export const REPOSITORY_INSPECTION_TIMEOUT_MS = 1_000
+/** Converts the active-progress budget to the whole seconds a run failure names. */
+export const MILLISECONDS_PER_SECOND = 1_000
 export const REPOSITORY_INSPECTION_PATH_LIMIT_CHARS = 128
 export const REPOSITORY_INSPECTION_SEGMENT_LIMIT = 4
 export const REPOSITORY_STORAGE_ENTRY_LIMIT = 16

@@ -17,6 +17,7 @@ import {
   MAX_EVENTS,
   MAX_QUEUED_EVIDENCE_BYTES,
   MAX_RETAINED_EVENT_BYTES,
+  MILLISECONDS_PER_SECOND,
   REPOSITORY_BINDING_HINT_EDGE_LINES,
   REPOSITORY_BINDING_HINT_NEAR_LINES,
   REPOSITORY_BROWSER_ACTION,
@@ -65,10 +66,12 @@ import { configuredDomExpression } from './utils/configuredDomExpression'
 import { configuredStops } from './utils/configuredStops'
 import { createBundleVerifier } from './utils/createBundleVerifier'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
+import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
 import { sameScriptUrl } from './utils/sameScriptUrl'
+import { thrownMessage } from './utils/thrownMessage'
 
 interface ConfiguredBrowserOptions {
   directory: string
@@ -86,6 +89,8 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   verifier: ReturnType<typeof createBundleVerifier>
   script?: Protocol.Debugger.ScriptParsedEvent
   breakpoint?: OwnedRepositoryBreakpoint
+  /** The debugger's verified binding on the declared line; every later check, the saved observation and the display use it instead of the requested column. */
+  bound?: { line: number; column: number }
 }
 type DebugParticipant = {
   gate: PauseGate
@@ -382,6 +387,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       mapHash: first.verifier.hashes.sourceMap,
     }
     this.manifest = { ...bound, hash: sha256(JSON.stringify(bound)) }
+    // Later stops are armed only in their turn, so a line that can never bind is refused here, before any application effect.
+    for (const stop of this.stops) {
+      const mapped = stop.verifier.mappedPositions(
+        stop.source.line,
+        stop.source.line,
+      )
+      // A scan that stopped at its size limit proves nothing about the line; arming decides instead.
+      if (mapped.complete && !mapped.positions.length)
+        throw this.bindingFailure(
+          stop,
+          `Declared stop ${this.declaredAt(stop)} has no mapped position on that line in the sealed module`,
+        )
+    }
     if (needsServer) await this.selectServer()
     this.alive()
     await this.browser.launch(
@@ -426,13 +444,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     if (inputs.length)
       this.evidence.record('inputs.prepared', { count: inputs.length })
-    // Register each participant's first declared stop before input; do not import lazy action modules to bind them.
-    for (const participant of ['server', 'browser'] as const) {
-      const stop = this.stops.find(
-        (candidate) => candidate.participant === participant,
-      )
-      if (stop) await this.armStop(stop)
-    }
+    // Only the next expected stop is armed: a later stop's line may run before its turn and must not pause then. {@link continue} arms each later stop.
+    await this.armStop(this.stops[0]!)
     await this.browser.reveal(this.abort.signal)
     this.alive()
     await this.capture('before')
@@ -442,7 +455,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.persist()
   }
 
-  /** Binds the next declared position before any input/resume can reach it; {@link continue} reuses preparation's exact binding barrier. @example await this.armStop(configuredStops(this.definition.configuration)[0]!.source) */
+  /**
+   * Arms the next expected stop before any input or resume can reach it, called by {@link prepareOwned} for the first stop and by {@link continue} for each later one.
+   * The declared line decides; the column is a request, and a browser stop records the debugger's verified binding on that line as its position.
+   * @param stop - The declared stop that is next in order.
+   * @throws When a browser binding lands on another line or never verifies, or a server registration is refused; each failure names the declared stop.
+   * @example
+   * ```ts
+   * await this.armStop(this.stops[0]!)
+   * ```
+   */
   private async armStop(stop: PreparedStop): Promise<void> {
     const position = stop.source,
       participant = this.participants[stop.participant]
@@ -463,23 +485,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (sha256(executed.scriptSource) !== stop.verifier.hashes.javascript)
         throw new Error('Pre-input executed module differs from sealed bundle')
     }
-    if (
-      stop.participant === 'server' &&
-      !stop.verifier.hasMappedPosition(position.line, position.column)
-    )
-      throw new Error(
-        'Pending server breakpoint has no exact sealed source-map position',
-      )
     stop.breakpoint ??= new OwnedRepositoryBreakpoint(
       stop.bundle.sourcePath,
       position.line,
       position.column,
     )
     if (stop.participant === 'server') {
-      const receipt = await stop.breakpoint.registered(
-        participant.selected,
-        this.abort.signal,
-      )
+      const receipt = await this.registeredStop(stop)
       this.alive()
       this.evidence.record('breakpoint.registered', {
         participant: stop.participant,
@@ -488,91 +500,148 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       await this.verifySources()
       return
     }
-    let binding: z.infer<typeof bindingSchema>
+    let binding: z.infer<typeof bindingSchema>,
+      boundElsewhere: z.infer<typeof bindingSchema> | undefined,
+      pollFailure: unknown
     try {
       binding = await waitUntil(
         async () => {
-          const result = await awaitResponse(
-            participant.selected!.getDebugProtocolBreakpoint(
-              stop.breakpoint!.breakpoint,
-            ),
-            'repository binding',
-            this.abort.signal,
-          )
+          let result: unknown
+          try {
+            result = await awaitResponse(
+              participant.selected!.getDebugProtocolBreakpoint(
+                stop.breakpoint!.breakpoint,
+              ),
+              'repository binding',
+              this.abort.signal,
+            )
+          } catch (error) {
+            pollFailure = error
+            throw error
+          }
           const parsed = bindingSchema.safeParse(result)
-          return parsed.success &&
-            parsed.data.line === position.line &&
-            parsed.data.column === position.column
-            ? parsed.data
-            : undefined
+          if (!parsed.success) return undefined
+          // The debugger chose another line and no later poll moves it back, so the wait ends at once.
+          if (parsed.data.line !== position.line) {
+            boundElsewhere = parsed.data
+            throw new Error('Repository breakpoint bound on another line')
+          }
+          return parsed.data
         },
-        `exact repository breakpoint binding at source ${position.line}:${position.column}; choose an executable statement reached by the requested action`,
+        `a verified binding of declared stop ${this.declaredAt(stop)} on its declared line (requested column ${position.column}); choose an executable statement reached by the requested action`,
         ACTIVE_TIMEOUT_MS,
         this.abort.signal,
       )
     } catch (error) {
-      const failureMessage =
-        error &&
-        typeof error === 'object' &&
-        'message' in error &&
-        typeof error.message === 'string'
-          ? error.message
-          : String(error)
-      if (
-        !failureMessage.startsWith(
-          'Timed out waiting for exact repository breakpoint binding',
+      if (boundElsewhere)
+        throw this.bindingFailure(
+          stop,
+          `Declared stop ${this.declaredAt(stop)} bound at ${boundElsewhere.line}:${boundElsewhere.column}, not on its declared line`,
         )
-      )
-        throw error
-      const anchor = this.definition.descriptor.anchors[stop.anchorIndex]!
-      let hint: string
-      try {
-        const mapped = stop.verifier.mappedPositions(
-          anchor.startLine,
-          anchor.endLine,
-        )
-        const mappedPositions = mapped.positions
-        const edgeCount = REPOSITORY_BINDING_HINT_EDGE_LINES,
-          nearCount = REPOSITORY_BINDING_HINT_NEAR_LINES
-        // Keep the citation's boundaries and the attempted line represented when a long map needs a bounded hint.
-        const sampled =
-          mappedPositions.length <= edgeCount * 2 + nearCount
-            ? mappedPositions
-            : [
-                ...new Map(
-                  [
-                    ...mappedPositions.slice(0, edgeCount),
-                    ...mappedPositions
-                      .toSorted(
-                        (left, right) =>
-                          Math.abs(left.line - position.line) -
-                          Math.abs(right.line - position.line),
-                      )
-                      .slice(0, nearCount),
-                    ...mappedPositions.slice(-edgeCount),
-                  ].map((candidate) => [candidate.line, candidate]),
-                ).values(),
-              ].sort((left, right) => left.line - right.line)
-        const locations = sampled
-          .map((candidate) => `${candidate.line}:${candidate.column}`)
-          .join(', ')
-        const qualifier = mapped.complete ? '' : ' (partial map scan)'
-        this.evidence.record('breakpoint.mapping-hints', {
-          requested: position,
-          citation: { startLine: anchor.startLine, endLine: anchor.endLine },
-          mappedLineCount: mappedPositions.length,
-          returnedLineCount: sampled.length,
-          complete: mapped.complete,
-        })
-        hint = `Frozen source map positions in the selected citation${qualifier}: ${locations || 'none'}. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.`
-      } catch {
-        throw error
-      }
-      throw new Error(`${failureMessage}. ${hint}`)
+      // Cancellation and an adapter failure keep their own reason; only the expired wait gains the mapping hints.
+      if (pollFailure !== undefined || this.abort.signal.aborted) throw error
+      throw this.bindingFailure(stop, thrownMessage(error))
     }
     this.alive()
-    this.evidence.record('breakpoint.bound', binding)
+    stop.bound = { line: binding.line, column: binding.column }
+    this.evidence.record('breakpoint.bound', {
+      ...binding,
+      requested: { line: position.line, column: position.column },
+    })
     await this.verifySources()
+  }
+
+  /**
+   * Waits for a declared stop's acknowledged registration, called wherever the run needs that receipt (arming, the final input check and the pause).
+   * The tracker's refusal carries positions only as JSON, so the failure gains the declared stop and the mapping hints here.
+   * @param stop - A declared server stop whose owned breakpoint exists.
+   * @returns The adapter's current receipt, `pending` until the module loads and `bound` afterwards.
+   * @throws When the adapter refuses or revokes the registration, for example by acknowledging another line.
+   * @example
+   * ```ts
+   * const receipt = await this.registeredStop(stop) // { status: 'pending', ... }
+   * ```
+   */
+  private async registeredStop(
+    stop: PreparedStop,
+  ): Promise<Awaited<ReturnType<OwnedRepositoryBreakpoint['registered']>>> {
+    try {
+      return await stop.breakpoint!.registered(
+        this.participants[stop.participant].selected!,
+        this.abort.signal,
+      )
+    } catch (error) {
+      if (this.abort.signal.aborted) throw error
+      throw this.bindingFailure(
+        stop,
+        `Declared stop ${this.declaredAt(stop)} was not registered: ${thrownMessage(error)}`,
+      )
+    }
+  }
+
+  /** Names a declared stop by its file and line in the failures an agent reads, so it can tell which of its stops to change. @example this.declaredAt(stop) // 'app/lib/actions.ts:36' */
+  private declaredAt(stop: PreparedStop): string {
+    return `${stop.source.path}:${stop.source.line}`
+  }
+
+  /**
+   * Builds the failure for a declared stop that cannot bind, called by the preparation line check, {@link armStop}, {@link registeredStop} and {@link inspect}.
+   * It appends the frozen map's positions in that stop's citation so the agent can choose another line; they are hints, never bindings.
+   * @param stop - The declared stop the failure is about.
+   * @param message - What happened, without a trailing period; it already names the stop.
+   * @returns The error to throw; without hints when the sealed map cannot be scanned.
+   * @example
+   * ```ts
+   * throw this.bindingFailure(stop, `Declared stop ${this.declaredAt(stop)} bound at 24:5, not on its declared line`)
+   * ```
+   */
+  private bindingFailure(stop: PreparedStop, message: string): Error {
+    const position = stop.source,
+      anchor = this.definition.descriptor.anchors[stop.anchorIndex]!
+    try {
+      const mapped = stop.verifier.mappedPositions(
+        anchor.startLine,
+        anchor.endLine,
+      )
+      const mappedPositions = mapped.positions
+      const edgeCount = REPOSITORY_BINDING_HINT_EDGE_LINES,
+        nearCount = REPOSITORY_BINDING_HINT_NEAR_LINES
+      // Keep the citation's boundaries and the attempted line represented when a long map needs a bounded hint.
+      const sampled =
+        mappedPositions.length <= edgeCount * 2 + nearCount
+          ? mappedPositions
+          : [
+              ...new Map(
+                [
+                  ...mappedPositions.slice(0, edgeCount),
+                  ...mappedPositions
+                    .toSorted(
+                      (left, right) =>
+                        Math.abs(left.line - position.line) -
+                        Math.abs(right.line - position.line),
+                    )
+                    .slice(0, nearCount),
+                  ...mappedPositions.slice(-edgeCount),
+                ].map((candidate) => [candidate.line, candidate]),
+              ).values(),
+            ].sort((left, right) => left.line - right.line)
+      const locations = sampled
+        .map((candidate) => `${candidate.line}:${candidate.column}`)
+        .join(', ')
+      const qualifier = mapped.complete ? '' : ' (partial map scan)'
+      this.evidence.record('breakpoint.mapping-hints', {
+        requested: position,
+        citation: { startLine: anchor.startLine, endLine: anchor.endLine },
+        mappedLineCount: mappedPositions.length,
+        returnedLineCount: sampled.length,
+        complete: mapped.complete,
+      })
+      return new Error(
+        `${message}. Frozen source map positions in the selected citation${qualifier}: ${locations || 'none'}. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.`,
+      )
+    } catch {
+      return new Error(message)
+    }
   }
 
   /** Observes each native proxy without borrowing another participant's script or suspension. @example await this.observeParticipant('server') */
@@ -911,10 +980,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     for (const stop of this.stops.filter(
       (candidate) => candidate.participant === 'server' && candidate.breakpoint,
     )) {
-      await stop.breakpoint!.registered(
-        this.participants.server.selected!,
-        this.abort.signal,
-      )
+      await this.registeredStop(stop)
       this.alive()
     }
     const target = await this.readDom('before')
@@ -1211,17 +1277,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     current()
     const frame = stack.stackFrames[0]
-    // New source mappings or a different location cannot certify the prior captured source.
-    if (
-      !frame?.source?.path ||
-      resolve(frame.source.path) !== stop.bundle.sourcePath ||
-      frame.line !== stop.source.line ||
-      frame.column !== stop.source.column
-    ) {
+    // New source mappings or a different location cannot certify the prior captured source; the bound position is the captured one.
+    if (!isFrameAtPosition(frame, stop.bundle.sourcePath, stop.bound))
       throw new Error(
         'Native stack refresh changed the captured source location',
       )
-    }
     participant.refresh = undefined
     this.progressDeadline(
       REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
@@ -1309,10 +1369,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     current()
     stopped.generation = pause.generation
     if (stop.participant === 'server') {
-      const registered = await stop.breakpoint!.registered(
-        participant.selected!,
-        this.abort.signal,
-      )
+      const registered = await this.registeredStop(stop)
       current()
       const binding = await awaitResponse(
         participant.selected!.getDebugProtocolBreakpoint(
@@ -1349,14 +1406,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (
         !parsed.success ||
         parsed.data.id !== registered.breakpointId ||
-        parsed.data.line !== stop.source.line ||
-        parsed.data.column !== stop.source.column ||
         (parsed.data.source?.path &&
           resolve(parsed.data.source.path) !== stop.bundle.sourcePath)
       )
         throw new Error(
           'Pending server breakpoint did not bind to the captured source',
         )
+      // The owned breakpoint is verified in the cited file but on another line: name where it landed so the declaration can be corrected.
+      if (parsed.data.line !== stop.source.line)
+        throw this.bindingFailure(
+          stop,
+          `Declared stop ${this.declaredAt(stop)} bound at ${parsed.data.line}:${parsed.data.column}, not on its declared line`,
+        )
+      stop.bound = { line: parsed.data.line, column: parsed.data.column }
     }
     const stack: DebugProtocol.StackTraceResponse['body'] = await awaitResponse(
       participant.selected!.customRequest('stackTrace', {
@@ -1371,12 +1433,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const frame = stack.stackFrames[0],
       callFrame = stopped.event.callFrames[0]!,
       position = stop.source
-    if (
-      !frame?.source?.path ||
-      resolve(frame.source.path) !== stop.bundle.sourcePath ||
-      frame.line !== position.line ||
-      frame.column !== position.column
-    )
+    // The paused frame must be the position the debugger bound, which lies on the declared line and may differ from the requested column.
+    if (!isFrameAtPosition(frame, stop.bundle.sourcePath, stop.bound))
       throw new Error('DAP frame differs from exact configured source')
     await this.verifySources()
     current()
@@ -1522,7 +1580,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw new Error('conflict: pause changed before continue')
       const nextStop = this.stops[this.stopIndex + 1]
       if (nextStop) {
-        await this.armStop(nextStop)
+        try {
+          await this.armStop(nextStop)
+        } catch (error) {
+          // Nothing has been resumed yet, so the record says exactly that instead of an uncertain continuation.
+          this.fail(
+            `Next declared stop was not armed and no resume was sent: ${String(error)}`,
+          )
+          throw error
+        }
         this.alive()
       }
       if (
@@ -1581,9 +1647,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.snapshotReady = false
       this.continuation = undefined
       this.status = 'acting'
+      // A later stop is armed only inside the preceding continuation, so a line that ran before its turn never pauses; say which stop and why.
       this.progressDeadline(
         ACTIVE_TIMEOUT_MS,
-        'Repository continuation reached no next declared pause',
+        `Repository continuation reached no next declared pause: declared stop ${this.declaredAt(this.stops[this.stopIndex]!)} was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s; its line must execute after the preceding continuation`,
       )
       const cdpStop = this.pendingCdpStop,
         dapStop = this.pendingDapStop

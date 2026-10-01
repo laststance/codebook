@@ -60,7 +60,7 @@ test('VS Code startup cannot hit Codebook’s click breakpoint before the learne
 })
 
 test('an unbound configured stop reports sealed map positions as unverified hints without clicking the application', async (context) => {
-  // Arrange: the debugger refuses an exact binding even though the frozen source map has a matching coordinate.
+  // Arrange: the debugger never verifies a binding even though the frozen source map has a position on the declared line.
   const { run, rejectBreakpointBinding, mouse } =
     await configuredRuntimeHarness(context)
   rejectBreakpointBinding()
@@ -74,7 +74,7 @@ test('an unbound configured stop reports sealed map positions as unverified hint
     )
     assert.match(
       error.message,
-      /^Timed out waiting for exact repository breakpoint binding at source 1:1/,
+      /^Timed out waiting for a verified binding of declared stop src\/theme\.ts:1 on its declared line \(requested column 1\)/,
     )
     assert.match(
       error.message,
@@ -731,13 +731,125 @@ test('an unbound second position leaves the application paused and never sends C
   // Act / Assert
   await assert.rejects(
     run.continue('browser', first.pause),
-    /exact repository breakpoint binding at source 1:7/,
+    /a verified binding of declared stop src\/theme\.ts:1 on its declared line \(requested column 7\)/,
   )
   await run.stop()
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
   assert.equal(run.view().snapshots.length, 1)
   assert.equal(commands.filter((command) => command === 'continue').length, 0)
   assert.equal(mouse.length, 2)
+  assert.match(
+    run.view().failures[0] ?? '',
+    /^Next declared stop was not armed and no resume was sent: Error: Timed out waiting for a verified binding of declared stop src\/theme\.ts:1/,
+  )
+})
+
+test('a browser stop the debugger binds at another column of its declared line is armed at once and commits at the bound column', async (context) => {
+  // Arrange: the request is 1:1 and the adapter verifies the breakpoint at 1:7 of the same line.
+  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { mappings: 'AAAA,MAAM' },
+  )
+  bindFirstStopAt(1, 7)
+  const startedMs = performance.now()
+  // Act
+  await run.prepare()
+  const armedWithinMs = performance.now() - startedMs
+  run.action('moved-column', 'repository-click')
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed at the bound column')
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+  // Assert
+  const bound = run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.bound')
+  assert.equal(
+    JSON.stringify(bound?.detail),
+    '{"verified":true,"line":1,"column":7,"requested":{"line":1,"column":1}}',
+  )
+  assert.ok(armedWithinMs < 5_000, `armed after ${armedWithinMs} ms`)
+  assert.equal(stop.source.line, 1)
+  assert.equal(stop.source.column, 7)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(mouse.length, 2)
+})
+
+test('a browser stop the debugger binds on another line fails at once and names the declared stop and where it landed', async (context) => {
+  // Arrange
+  const { run, bindFirstStopAt, mouse } =
+    await configuredRuntimeHarness(context)
+  bindFirstStopAt(2, 1)
+  const startedMs = performance.now()
+  // Act
+  await assert.rejects(run.prepare(), (error: unknown) => {
+    assert.equal(
+      String(error),
+      'Error: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+    )
+    return true
+  })
+  const failedWithinMs = performance.now() - startedMs
+  await run.stop()
+  // Assert: the 20 s binding wait was not spent, and nothing was clicked.
+  assert.ok(failedWithinMs < 1_000, `failed after ${failedWithinMs} ms`)
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+test('a declared line the sealed map is too large to scan completely does not refuse the stop at preparation', async (context) => {
+  // Arrange: the only mapped segment lies beyond the scan's generated-line limit, so the scan finds nothing and is incomplete.
+  const { run, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { mappings: `${';'.repeat(100_000)}AAAA` },
+  )
+  // Act
+  await run.prepare()
+  // Assert
+  assert.equal(run.view().status, 'ready')
+  assert.equal(run.view().failures.length, 0)
+  assert.equal(mouse.length, 0)
+  await run.stop()
+})
+
+test('a later stop whose line never runs after the preceding continuation ends the run naming that stop and the order rule', async (context) => {
+  // Arrange
+  const { run, suppressNextPause, advance, commands } =
+    await configuredRuntimeHarness(context, undefined, [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'enabled', mode: 'value', required: true }],
+      },
+    ])
+  suppressNextPause()
+  await run.prepare()
+  run.action('ordered', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+  await run.continue('browser', first.pause)
+  // Act: the active-progress budget passes without the second stop pausing.
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'next stop not hit')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s; its line must execute after the preceding continuation',
+  )
+  assert.equal(run.view().snapshots.length, 1)
+  assert.equal(commands.filter((command) => command === 'continue').length, 1)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
 })
 
 test('missing required facts at the second position retain both histories without reusing prior pixels but cannot continue or complete', async (context) => {
