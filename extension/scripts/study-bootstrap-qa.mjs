@@ -855,6 +855,51 @@ async function check(page, options) {
           inspectAfterSessionEnd.label === 'Inspect in native debugger' &&
           inspectAfterSessionEnd.disabled === false,
       })
+      // Act: the selected stop's captured source no longer matches its recorded hash.
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          sourceAvailable: false,
+          debuggerAvailable: false,
+        },
+      })
+      // Counted and read without waiting, so a missing element is a failed case instead of a harness timeout.
+      const sourceMismatch = {
+        position: await page.locator('#node-history-position').textContent(),
+        inspectButtons: await nodeInspect.count(),
+        explanation: await page
+          .locator('#node-history-events .node-history-event p.muted')
+          .allTextContents(),
+      }
+      cases.push({
+        name: 'a selected Node stop whose captured source does not match offers no Inspect in native debugger',
+        actual: sourceMismatch,
+        passed:
+          sourceMismatch.position ===
+            'Debugger stop 1 · captured source unavailable · 1.20 s · output shown through this event.' &&
+          sourceMismatch.inspectButtons === 0 &&
+          sourceMismatch.explanation.join('|') ===
+            'Matching captured source is unavailable for native debugging.',
+      })
+      // Act: the same stop is published again with matching captured source.
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      const sourceMatches = {
+        labels: await nodeInspect.allTextContents(),
+        enabled: await nodeInspect.evaluateAll((buttons) =>
+          buttons.map((button) => !button.disabled),
+        ),
+      }
+      cases.push({
+        name: 'a selected Node stop whose captured source matches offers Inspect in native debugger',
+        actual: sourceMatches,
+        passed:
+          sourceMatches.labels.join('|') === 'Inspect in native debugger' &&
+          sourceMatches.enabled.join('|') === 'true',
+      })
       await publish({
         ...replay,
         recording: {

@@ -27,6 +27,8 @@ export interface PlaybackDependencies {
   invalidate(): void
   changed(): void
   save(bundle: PlaybackBundle): Promise<void>
+  /** Whether the committed moment can be shown again as it is: the reader is open and its historical debugger is usable. Defaults to true. */
+  presentable?(): boolean
   now?(): number
   manualTicks?: boolean
 }
@@ -77,10 +79,15 @@ export class PlaybackController {
         `Stale playback revision; current revision is ${this.controlRevision}.`,
       )
     if (input.action === 'open') {
+      // A committed moment whose reader closed or whose historical debugger ended needs the full reload below; a load that is still running already provides one.
+      const needsReload =
+        this.readiness === 'ready' &&
+        !(this.dependencies.presentable?.() ?? true)
       if (
         this.studyId === input.studyId &&
         this.readiness !== 'idle' &&
-        this.readiness !== 'failed'
+        this.readiness !== 'failed' &&
+        !needsReload
       ) {
         // A hidden or timed-out frame left the confirmed moment unpainted; opening the same recording shows it again.
         if (this.readiness === 'ready' && this.cleared) this.reveal()

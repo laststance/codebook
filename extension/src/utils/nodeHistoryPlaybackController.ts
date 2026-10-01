@@ -80,7 +80,8 @@ export class NodeHistoryPlaybackController {
    * Gives up the in-flight native presentation when another owner takes the shared historical debugger.
    *
    * {@link StudyWorkspace} calls it when a browser recording opens and when the reader closes. Unlike {@link pause}, a
-   * presentation that resolves later can no longer commit its event or publish; the confirmed event and the list stay.
+   * presentation that resolves later can no longer commit its event; it only publishes that loading ended. The confirmed
+   * event and the list stay.
    *
    * @example
    * ```ts
@@ -91,7 +92,7 @@ export class NodeHistoryPlaybackController {
     this.generation++
     this.mode = 'paused'
     this.stopTimer()
-    // The abandoned presentation never publishes its outcome, so the reader learns here that nothing is loading any more.
+    // The abandoned presentation can no longer commit, so the reader learns here that playback paused; its settlement later publishes that loading ended.
     this.dependencies.changed()
   }
 
@@ -137,7 +138,8 @@ export class NodeHistoryPlaybackController {
     this.generation++
     const generation = this.generation
     this.stopTimer()
-    await this.pending
+    // An earlier presentation's failure belongs to its own caller; this seek only waits for the shared debugger to be free.
+    await this.pending?.catch(() => {})
     if (generation !== this.generation) return
     let targetIndex = 0
     for (let index = 1; index < this.events.length; index++) {

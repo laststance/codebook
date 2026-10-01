@@ -1682,12 +1682,13 @@ function studyClient(
         !nodeHistory || eventCount === 0 || selectedIndex === eventCount - 1
       replace(
         'node-history-events',
-        // The selected stop's Inspect follows the native session, so an ended session must render the list again.
+        // The selected stop's Inspect follows the native session and the captured source, so a change in either must render the list again.
         [
           nodeHistory?.entries ?? [],
           Boolean(recording),
           selectedSequence,
           Boolean(position?.debuggerAvailable),
+          position?.sourceAvailable,
         ],
         () =>
           (nodeHistory?.entries ?? []).map((entry) => {
@@ -1726,7 +1727,10 @@ function studyClient(
                 entry.frame.line === entry.source.line &&
                 entry.frame.column === entry.source.column &&
                 entry.debuggerSnapshot.frames[0]?.line === entry.frame.line &&
-                entry.debuggerSnapshot.frames[0]?.column === entry.frame.column
+                entry.debuggerSnapshot.frames[0]?.column ===
+                  entry.frame.column &&
+                // The selected stop's captured text was hashed by the extension; a mismatch there cannot be inspected either.
+                !(isSelected && position?.sourceAvailable === false)
               ) {
                 const inspect = document.createElement('button')
                 inspect.type = 'button'

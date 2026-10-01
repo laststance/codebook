@@ -84,6 +84,7 @@ import {
   CAPTURE_TIMEOUT_MS,
   VIEWPORT_ACK_TIMEOUT_REASON,
 } from './runtimeSupport/constants'
+import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { explainNodeHistorySchema } from './schemas'
@@ -123,6 +124,7 @@ import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { selectStudy } from './utils/selectStudy'
 import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
+import { untilAborted } from './utils/untilAborted'
 import { webviewFocusReceiptSchema } from './webviewFocusSchemas'
 
 const actionSchema = z.enum([
@@ -293,6 +295,8 @@ export class StudyWorkspace {
   private nodeHistoryPlaybackController?: NodeHistoryPlaybackController
   private playback?: PlaybackController
   private replayDebugger?: ReplayDebugger
+  /** The disposal of replaced historical debuggers that is still running; the editor accepts the next owner only once it has settled. */
+  private replayDebuggerRetirement?: Promise<void>
   private recordingActive = false
   private replayViewport?: BrowserViewport
   private replayNeedsReveal = false
@@ -375,6 +379,12 @@ export class StudyWorkspace {
   private sourceGroup?: vscode.TabGroup
   private opened = false
   private sourceEntryPending = false
+  /** The pending cold entry's cancellation and the moment its reservation ends, so a successor of an abandoned entry can wait for it. */
+  private sourceEntry?: {
+    signal?: AbortSignal
+    release(): void
+    released: Promise<void>
+  }
   private closing = false
   private closingPromise?: Promise<void>
   private arranging?: Promise<void>
@@ -3295,16 +3305,34 @@ export class StudyWorkspace {
     this.assertLifetime(lifetime)
     signal?.throwIfAborted()
     // Claim cold preparation before any await so a duplicate Open cannot bypass its unfinished native reservation.
-    if (this.sourceEntryPending)
-      throw new StudyError(
-        'BUSY',
-        'Study workspace is opening. Wait for its panes before opening it again.',
-      )
+    while (this.sourceEntryPending) {
+      const pending = this.sourceEntry
+      const busy = (): StudyError =>
+        new StudyError(
+          'BUSY',
+          'Study workspace is opening. Wait for its panes before opening it again.',
+        )
+      // Only an entry its own request already abandoned is waited for: it is just finishing a native call that ignores cancellation.
+      if (!pending?.signal?.aborted) throw busy()
+      try {
+        await awaitResponse(
+          pending.released,
+          'the abandoned Study workspace entry',
+          signal,
+          PRESENTATION_READY_TIMEOUT_MS,
+        )
+      } catch {
+        signal?.throwIfAborted()
+        throw busy()
+      }
+      this.assertLifetime(lifetime)
+      signal?.throwIfAborted()
+    }
     const request = ++this.openRequest,
       historyRequest = this.historyRequest
     const firstOpen = !this.opened
     // Polling and source watchers cannot reveal a reader until cold entry has reserved its native destinations.
-    if (firstOpen) this.sourceEntryPending = true
+    if (firstOpen) this.reserveSourceEntry(signal)
     const cancel = (): void => {
       // A cancelled first entry cannot let background refresh finish its UI, or retire a newer explicit Open.
       if (firstOpen && request === this.openRequest) this.opened = false
@@ -3477,7 +3505,7 @@ export class StudyWorkspace {
           panes: this.studyPanePositions(),
         }
       }
-      if (request === this.openRequest) this.sourceEntryPending = false
+      if (request === this.openRequest) this.releaseSourceEntry()
       if (firstOpen && this.currentRecord() && this.selection.follow)
         this.selection = { ...this.selection, follow: true, tab: 'live' }
       await this.refresh(signal)
@@ -3602,9 +3630,33 @@ export class StudyWorkspace {
         this.opened = false
       throw error
     } finally {
-      if (request === this.openRequest) this.sourceEntryPending = false
+      if (request === this.openRequest) this.releaseSourceEntry()
       signal?.removeEventListener('abort', cancel)
     }
+  }
+
+  /**
+   * Reserves the reader's native destinations for a cold {@link open} and remembers how to tell its successor when that ends.
+   * @param signal - The entering request's cancellation; once it aborts, a later open waits for the release instead of reporting busy.
+   * @example if (firstOpen) this.reserveSourceEntry(signal)
+   */
+  private reserveSourceEntry(signal?: AbortSignal): void {
+    let release = (): void => {}
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    this.sourceEntryPending = true
+    this.sourceEntry = { signal, release, released }
+  }
+
+  /**
+   * Ends the cold-entry reservation for {@link open}, both when its panes are reserved and when the entry fails or is abandoned.
+   * @example if (request === this.openRequest) this.releaseSourceEntry()
+   */
+  private releaseSourceEntry(): void {
+    this.sourceEntryPending = false
+    this.sourceEntry?.release()
+    this.sourceEntry = undefined
   }
 
   /** Explicitly checkpoints final service state after accepted runtime/explanation cleanup has completed. @example await workspace.retire(service) */
@@ -4067,8 +4119,10 @@ export class StudyWorkspace {
       this.replayViewport = undefined
       this.nodeHistoryPlaybackController?.dispose()
       this.nodeHistoryPlaybackController = undefined
-      await this.replayDebugger?.dispose()
-      this.replayDebugger = undefined
+      // A replacement may still be stopping an earlier owner: the reader is closed only once no historical debugger is left.
+      if (this.replayDebugger)
+        void this.retireReplayDebugger(this.replayDebugger)
+      await this.replayDebuggerRetirement
       await this.rendering
       await this.outlineRendering
       await Promise.allSettled(this.archiveWrites.values())
@@ -4194,6 +4248,11 @@ export class StudyWorkspace {
           return bytes
         },
         present: (bundle, signal) => this.presentPlayback(bundle, signal),
+        // A debugger that was never created is started by the next presentation; only one that ended needs the reload.
+        presentable: () =>
+          this.opened &&
+          !this.closing &&
+          this.replayDebugger?.available !== false,
         invalidate: () => {
           this.replayDebugger?.invalidate()
           if (this.highlight)
@@ -4746,7 +4805,7 @@ export class StudyWorkspace {
         ? 'repository'
         : 'study'
     if (origin === 'repository') this.repositoryRecordingOpen = undefined
-    await this.replaceUnavailableReplayDebugger()
+    await this.replaceUnavailableReplayDebugger(signal)
     signal.throwIfAborted()
     this.recordingActive = true
     this.pendingHistory = undefined
@@ -4809,12 +4868,72 @@ export class StudyWorkspace {
     return { index, context, contextHash, contextReason, preferredPositionMs }
   }
 
-  /** Replaces a historical debugger the learner stopped; only explicit replay/history opens and explicit Node stop selections call this, so playback never relaunches it silently. @example await this.replaceUnavailableReplayDebugger() */
-  private async replaceUnavailableReplayDebugger(): Promise<void> {
+  /**
+   * Replaces a historical debugger the learner stopped or that gave up after a bound.
+   *
+   * Only explicit replay/history opens and explicit Node stop selections call this, so playback never relaunches it silently.
+   * It also waits for a replacement that an earlier request started: {@link PlaybackController} lets an aborted load leave
+   * while the editor is still stopping the old owner.
+   *
+   * @param signal - The waiting request's cancellation; it never cancels the shared disposal.
+   * @throws The signal's reason once it aborts.
+   * @example await this.replaceUnavailableReplayDebugger(signal)
+   */
+  private async replaceUnavailableReplayDebugger(
+    signal?: AbortSignal,
+  ): Promise<void> {
     const current = this.replayDebugger
-    if (!current || current.available) return
-    this.replayDebugger = undefined
-    await current.dispose()
+    if (current && !current.available) void this.retireReplayDebugger(current)
+    await this.replayDebuggerRetired(signal)
+  }
+
+  /**
+   * Disposes one historical debugger as part of the shared retirement that {@link replayDebuggerRetired} waits for.
+   *
+   * {@link replaceUnavailableReplayDebugger} and {@link close} call it. The owner leaves its field at once, so no caller
+   * presents through it again; its descriptor factory stays registered until the editor has stopped its session.
+   *
+   * @param owner - The historical debugger to stop; a disposal failure is reported to the reader, never thrown.
+   * @returns The shared retirement, settled once this owner and every earlier one is disposed.
+   * @example void this.retireReplayDebugger(current)
+   */
+  private retireReplayDebugger(owner: ReplayDebugger): Promise<void> {
+    if (this.replayDebugger === owner) this.replayDebugger = undefined
+    const earlier = this.replayDebuggerRetirement
+    const retirement: Promise<void> = (async () => {
+      await earlier
+      try {
+        await owner.dispose()
+      } catch (error) {
+        this.report('replay-debugger', error)
+      }
+    })().finally(() => {
+      if (this.replayDebuggerRetirement === retirement)
+        this.replayDebuggerRetirement = undefined
+    })
+    this.replayDebuggerRetirement = retirement
+    return retirement
+  }
+
+  /**
+   * Waits until no replaced historical debugger is still being disposed, before a caller creates the next one.
+   *
+   * The editor accepts one descriptor factory per debug type, so {@link presentPlayback} and {@link selectNodeHistoryEvent}
+   * wait here, then check that they are still current, and only then create the owner synchronously.
+   *
+   * @param signal - The waiting request's cancellation; it never cancels the shared disposal.
+   * @throws The signal's reason once it aborts.
+   * @example
+   * ```ts
+   * await this.replayDebuggerRetired(signal)
+   * signal.throwIfAborted()
+   * this.replayDebugger ??= this.createReplayDebugger()
+   * ```
+   */
+  private async replayDebuggerRetired(signal?: AbortSignal): Promise<void> {
+    const retirement = this.replayDebuggerRetirement
+    if (!retirement) return
+    await (signal ? untilAborted(retirement, signal) : retirement)
   }
 
   /** Reuses the bounded PNG renderer without CDP, acquiring a fresh lease after replay-panel recreation. @example await this.ensureReplayViewport(signal) */
@@ -4847,8 +4966,12 @@ export class StudyWorkspace {
       return viewport
     } catch (error) {
       if (this.replayViewport === viewport) {
-        viewport.close()
-        this.replayViewport = undefined
+        // An abandoned request leaves the viewport to the newer one that may already be painting through it; the next presentation finishes its handshake.
+        if (signal.aborted) this.replayNeedsReveal = true
+        else {
+          viewport.close()
+          this.replayViewport = undefined
+        }
       }
       throw error
     }
@@ -4888,6 +5011,9 @@ export class StudyWorkspace {
       ) ||
       this.replayDebugger
     ) {
+      // An owner replaced by an earlier request may still be stopping; this presentation creates the next one only while it is current.
+      await this.replayDebuggerRetired(signal)
+      signal.throwIfAborted()
       this.replayDebugger ??= this.createReplayDebugger()
       inspection = await this.replayDebugger.present(
         bundle.projection.debugger,
@@ -8529,13 +8655,17 @@ export class StudyWorkspace {
           authority: this.library!.workspaceKey,
           path: `/node-history/${history.header.studyId}/${entry.sequence}/${verifiedSource.hash}/Captured-${basename(entry.source.path)}`,
         })
-        if (this.replayDebugger && !this.replayDebugger.available) {
-          // Only an explicit learner selection restarts a debugger the learner stopped; seek and Play report why they stopped.
-          if (!publish)
-            throw new Error(
-              'The historical Node debugger was stopped. Select this stop or use Inspect in native debugger to restart it.',
-            )
+        // Only an explicit learner selection restarts a debugger the learner stopped; seek and Play report why they stopped.
+        if (this.replayDebugger && !this.replayDebugger.available && !publish)
+          throw new Error(
+            'The historical Node debugger was stopped. Select this stop or use Inspect in native debugger to restart it.',
+          )
+        if (
+          (this.replayDebugger && !this.replayDebugger.available) ||
+          this.replayDebuggerRetirement
+        ) {
           await this.replaceUnavailableReplayDebugger()
+          // The reader may have closed or selected another stop meanwhile; only the current selection creates the next owner.
           if (request !== this.selectedNodeHistoryRequest) return
         }
         this.replayDebugger ??= this.createReplayDebugger()

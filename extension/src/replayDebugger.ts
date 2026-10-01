@@ -168,8 +168,9 @@ export class ReplayDebugger {
   /**
    * Retires the owned session before {@link StudyWorkspace.presentPlayback} shows a different historical stop; video frames within one stop keep their native context.
    *
-   * The retirement is shared by every presentation and bounded by {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}: an editor that never
-   * answers makes this owner unavailable, so only an explicit replay reopen restarts it. An aborted caller leaves at once.
+   * The retirement is shared by every presentation and bounded by {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}, counted once any
+   * pending startup has settled: an editor that never answers makes this owner unavailable, so only an explicit replay
+   * reopen restarts it. An aborted caller leaves at once.
    *
    * @param snapshot - Recorded stop about to be shown, compared with the one the session shows now.
    * @param signal - The presentation's cancellation; it never cancels the shared retirement.
@@ -184,7 +185,7 @@ export class ReplayDebugger {
     if (this.closed || this.detached)
       throw new Error(HISTORICAL_DEBUGGER_CLOSED)
     if (this.hasPresented && this.lastPresentedSnapshot === snapshot) return
-    this.retiring ??= this.bounded(this.retireSession()).finally(() => {
+    this.retiring ??= this.retireAfterStartup().finally(() => {
       this.retiring = undefined
     })
     await untilAborted(this.retiring, signal)
@@ -192,11 +193,27 @@ export class ReplayDebugger {
   }
 
   /**
-   * Stops the owned session and waits for its termination on behalf of {@link retire}, after any pending startup settles.
-   * @example this.retiring = this.bounded(this.retireSession())
+   * Runs the shared retirement for {@link retire} once a pending startup has settled, so each of the two gets its own bound.
+   *
+   * A seek during a slow cold start would otherwise expire a healthy owner: the startup and the stop together can outlast
+   * one {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS} although neither does alone.
+   *
+   * @throws The closed-debugger error when the owner closed or gave up during that startup, or when the retirement outlives its bound.
+   * @example this.retiring ??= this.retireAfterStartup()
+   */
+  private async retireAfterStartup(): Promise<void> {
+    await this.starting?.catch(() => {})
+    // An owner that gave up on its startup has no session of its own left to retire; launchSession stops one that starts late.
+    if (this.closed || this.detached)
+      throw new Error(HISTORICAL_DEBUGGER_CLOSED)
+    await this.bounded(this.retireSession())
+  }
+
+  /**
+   * Stops the owned session and waits for its termination on behalf of {@link retireAfterStartup}.
+   * @example await this.bounded(this.retireSession())
    */
   private async retireSession(): Promise<void> {
-    await this.starting?.catch(() => {})
     const session = this.session
     if (!session) return
     this.retiringSessionId = session.id
@@ -218,7 +235,7 @@ export class ReplayDebugger {
   /**
    * Bounds one shared native operation (startup or retirement) by {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}.
    *
-   * On expiry the owner gives up its session through {@link expire}, so every waiter and later presentation fails with the
+   * On expiry the owner gives up its session through {@link giveUp}, so every waiter and later presentation fails with the
    * closed-debugger error instead of waiting for an editor that never answers.
    *
    * @param operation - The shared operation; it keeps running, and its late outcome is ignored.
@@ -229,7 +246,7 @@ export class ReplayDebugger {
     let timer: ReturnType<typeof setTimeout> | undefined
     const expiry = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
-        this.expire()
+        this.giveUp()
         reject(new Error(HISTORICAL_DEBUGGER_CLOSED))
       }, REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
     })
@@ -237,15 +254,34 @@ export class ReplayDebugger {
   }
 
   /**
-   * Makes this owner unavailable after a shared native operation outlived its bound, as if the learner had stopped it.
+   * Gives up ownership through {@link expire} on behalf of {@link bounded} and {@link present}, keeping a reader listener that throws away from their waiters.
+   *
+   * The listener's error goes to the reader's error channel instead, so the expired operation still rejects with the closed-debugger error.
+   *
+   * @example this.giveUp()
+   */
+  private giveUp(): void {
+    try {
+      this.expire()
+    } catch (error) {
+      this.failed(error)
+    }
+  }
+
+  /**
+   * Makes this owner unavailable after a shared native operation outlived its bound or the editor disposed its adapter, as if the learner had stopped it.
    *
    * A termination that arrives later is then the learner-ended path rather than Codebook's own retirement, and a session that
    * starts later is stopped by {@link launchSession}. The reader drops its hint and re-enables Node Inspect.
    *
+   * An adapter the editor already disconnected still gives up here: its retiring session would otherwise survive, and the
+   * late termination would make this owner available again without the explicit reopen. The reader is notified every time,
+   * because that termination may never arrive.
+   *
    * @example this.expire()
    */
   private expire(): void {
-    if (this.closed || this.detached) return
+    if (this.closed) return
     this.detached = true
     this.retiringSessionId = undefined
     this.valuesUnrequested = false
@@ -303,7 +339,11 @@ export class ReplayDebugger {
       this.selected = { snapshot, label, sourceUri: sourceDocument?.uri }
     }
     // The editor can dispose the adapter just before it reports termination; a disposed adapter shows nothing, which is not "no values".
-    if (adapter.disposed) throw new Error(HISTORICAL_DEBUGGER_CLOSED)
+    if (adapter.disposed) {
+      // Only an unavailable owner is replaced by the next explicit reopen.
+      this.giveUp()
+      throw new Error(HISTORICAL_DEBUGGER_CLOSED)
+    }
     // The native session shows this stop from now on, so an interrupted wait cannot make retire() restart it.
     this.hasPresented = true
     this.lastPresentedSnapshot = snapshot

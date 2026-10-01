@@ -3274,10 +3274,11 @@ test('repository evidence whose recorded frame never paints fails within its bou
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
 
-    // Assert: the bound is measured from the paint phase, with both a lower and an upper limit (Cycle 0033 AC4).
+    // Assert: the bound is measured from the paint phase (Cycle 0033 AC4). The upper limit leaves room for the storage
+    // write that hiding the expired frame waits for before the navigation reports its failure.
     assert.ok(
-      elapsedMs >= PRESENTATION_READY_TIMEOUT_MS - 250 &&
-        elapsedMs <= PRESENTATION_READY_TIMEOUT_MS + 250,
+      elapsedMs >= PRESENTATION_READY_TIMEOUT_MS - 50 &&
+        elapsedMs <= PRESENTATION_READY_TIMEOUT_MS + 1_000,
       `bounded evidence navigation took ${Math.round(elapsedMs)} ms after its paint started`,
     )
     assert.equal(harness.controller.state().readiness, 'ready')

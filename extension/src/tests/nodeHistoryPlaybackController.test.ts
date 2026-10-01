@@ -460,3 +460,62 @@ test('abandoning a Node stop that is still loading publishes the pause, and its 
   assert.equal(controller.state().sequence, 1)
   controller.dispose()
 })
+
+// Value: protects=a learner's seek while a played Node stop is failing still lands on the sought event; fails_when=the seek waits on the failing step and rejects with that step's error; why_new=Cycle 0034 R2; seam=none
+test('a Node history seek made while a played stop is failing presents its own event', async () => {
+  // Arrange: Play is presenting stop 62, whose native presentation is about to fail.
+  let now = 0
+  const presented: number[] = []
+  let failPlayedStop = (_error: Error): void => {}
+  const controller = new NodeHistoryPlaybackController({
+    present: (sequence) => {
+      presented.push(sequence)
+      return sequence === 62
+        ? new Promise<void>((_resolve, reject) => {
+            failPlayedStop = reject
+          })
+        : Promise.resolve()
+    },
+    changed() {},
+    now: () => now,
+    manualTicks: true,
+  })
+  controller.open(
+    [
+      { sequence: 61, elapsedMs: 0 },
+      { sequence: 62, elapsedMs: 100 },
+      { sequence: 63, elapsedMs: 200 },
+    ],
+    61,
+  )
+  controller.play()
+  now = 100
+  const playedStep = controller.tick().then(
+    () => 'presented',
+    (error: unknown) => String(error),
+  )
+  await waitUntil(
+    () => controller.state().loading,
+    'played Node stop presentation',
+    1_000,
+    new AbortController().signal,
+  )
+
+  // Act: the learner seeks to the last event, then the played stop fails.
+  const seeking = controller.seek(200).then(
+    () => 'sought',
+    (error: unknown) => String(error),
+  )
+  failPlayedStop(new Error('Historical debugger closed by the learner'))
+
+  // Assert
+  assert.equal(await seeking, 'sought')
+  assert.equal(
+    await playedStep,
+    'Error: Historical debugger closed by the learner',
+  )
+  assert.deepEqual(presented, [62, 63])
+  assert.equal(controller.state().sequence, 63)
+  assert.equal(controller.state().mode, 'paused')
+  controller.dispose()
+})
