@@ -20,6 +20,7 @@ import { RepositoryBookStore } from '../repositoryBook'
 import type * as RepositoryReaderModule from '../repositoryReader'
 import type { BookObservationBinding } from '../repositorySchemas'
 import { RepositorySourceService } from '../repositorySource'
+import type { ConfiguredRuntimeView } from '../runtime'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type * as StudyWorkspaceModule from '../studyWorkspace'
@@ -253,10 +254,12 @@ export async function workspaceHarness(
     { wait: Promise<void>; entered(): void } | undefined
   class TestReplayDebugger {
     available = true
-    /** Registers the fake owner so {@link loadHistoricalDebugValues} can notify the workspace, as the real adapter's inspection callback does. @example new TestReplayDebugger(vscode, () => workspace.replayDebuggerChanged()) */
+    /** Registers the fake owner so {@link loadHistoricalDebugValues} and {@link endHistoricalDebugSession} can notify the workspace, as the real owner does. @example new TestReplayDebugger(vscode, (reason) => workspace.replayDebuggerChanged(reason)) */
     constructor(
       _editor: unknown,
-      readonly changed: () => void = () => {},
+      readonly changed: (
+        reason: 'values-loaded' | 'session-ended',
+      ) => void = () => {},
     ) {
       historicalDebuggers.push(this)
     }
@@ -986,10 +989,12 @@ export async function workspaceHarness(
       this.rendererAttached = true
       viewportEvents.push(`restore:${this.mode}`)
     }
-    /** Clears unavailable recorded pixels for playback readiness tests. @example viewport.clearRecorded() */
+    /** Clears unavailable recorded pixels for playback readiness tests; like the real frame delivery, it also rejects a paint still in flight. @example viewport.clearRecorded() */
     clearRecorded(): void {
       displayedImage = undefined
+      this.abandonPaint?.(new Error('Pause display invalidated'))
     }
+    private abandonPaint?: (error: Error) => void
     /** Delays only the requested replay image so workspace tests can interrupt pending paints. @example await viewport.present(png) */
     async present(image: string): Promise<void> {
       assert.equal(this.rendererAttached, true, 'Webview is not ready')
@@ -997,7 +1002,12 @@ export async function workspaceHarness(
       nextImage = undefined
       if (held) {
         held.entered()
-        await held.wait
+        await new Promise<void>((resolve, reject) => {
+          this.abandonPaint = reject
+          held.wait.then(resolve, reject)
+        }).finally(() => {
+          this.abandonPaint = undefined
+        })
       }
       displayedImage = image
     }
@@ -2406,7 +2416,16 @@ export async function workspaceHarness(
     /** Models the learner expanding Variables: later presentations load values and each owner notifies the workspace once, without a new seek. @example harness.loadHistoricalDebugValues() */
     loadHistoricalDebugValues(): void {
       historicalDebugInspection = 'inspected'
-      for (const debuggerView of historicalDebuggers) debuggerView.changed()
+      for (const debuggerView of historicalDebuggers)
+        debuggerView.changed('values-loaded')
+    },
+    /** Models the learner pressing Stop on the owned historical session: it becomes unavailable and tells the workspace the session ended. @example harness.endHistoricalDebugSession() */
+    endHistoricalDebugSession(): void {
+      for (const debuggerView of historicalDebuggers) {
+        if (!debuggerView.available) continue
+        debuggerView.available = false
+        debuggerView.changed('session-ended')
+      }
     },
     /** Keeps the next historical presentation loading until released or rejected, as native Run and Debug does before values load. @example const held = harness.holdHistoricalDebugPresentation(); await held.started; held.reject(new Error('superseded')) */
     holdHistoricalDebugPresentation() {
@@ -2537,6 +2556,37 @@ export async function recordedReaderHarness(
   const harness = await workspaceHarness(true, true),
     service = harness.service
   service.environment.build.sourceHash = sha256('recorded-build')
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
+    'base64',
+  )
+  // Observation visibility tests retain a real PNG checkpoint while the native renderer remains mocked.
+  if (capturedApplication) {
+    const createRuntime = service.environment.createRuntime
+    service.environment.createRuntime = async (root, definition) => {
+      const runtime = await createRuntime(root, definition),
+        view = runtime.view.bind(runtime),
+        prepare = runtime.prepare.bind(runtime)
+      let captures: ConfiguredRuntimeView['captures'] = {}
+      // The reader's periodic checkpoints must only ever see the real capture: a confirmed image withdrawn later is history tampering.
+      runtime.view = () => ({ ...view(), captures })
+      runtime.prepare = async (): Promise<void> => {
+        await prepare()
+        await writeFile(
+          join(runtime.evidence.directory, 'paused-browser.png'),
+          png,
+        )
+        captures = {
+          'paused-browser': {
+            status: 'captured',
+            file: 'paused-browser.png',
+            renderer: { epoch: 'test', id: 1, hash: sha256(png) },
+          },
+        }
+      }
+      return runtime
+    }
+  }
   harness.acknowledgeContext()
   harness.service.start({
     instanceId: harness.service.instanceId,
@@ -2575,28 +2625,8 @@ export async function recordedReaderHarness(
       return operation
     }
   }
-  const png = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
-    'base64',
-  )
   assert.ok(record.recording)
   record.recording.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
-  // Observation visibility tests retain a real PNG checkpoint while the native renderer remains mocked.
-  if (capturedApplication) {
-    const runtime = harness.runtimes[0]!,
-      view = runtime.view.bind(runtime)
-    await writeFile(join(runtime.evidence.directory, 'paused-browser.png'), png)
-    runtime.view = () => ({
-      ...view(),
-      captures: {
-        'paused-browser': {
-          status: 'captured',
-          file: 'paused-browser.png',
-          renderer: { epoch: 'test', id: 1, hash: sha256(png) },
-        },
-      },
-    })
-  }
   harness.clock(100)
   await harness.reader.action('click')
   // The continuation receipt seals the recorded stop's paused interval, long enough for several Play ticks to advance through it.

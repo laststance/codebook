@@ -52,13 +52,17 @@ export class ReplayDebugAdapter {
   private inspectedScopes = false
   private inspectedVariables = false
   private reportedInspection = false
+  private inspectionDue = false
+  private selectedAtMs = Date.now()
+  private stoppedAtMs?: number
 
   /**
    * Serves one owned historical session for {@link ReplayDebugger}.
    * @param send - Emits DAP responses/events to the editor's inline session.
    * @param disconnected - Runs when the editor disconnects or terminates this session.
    * @param inspected - Runs once per selection when the native client first retrieves its recorded values, so a moment committed without them can drop its hint.
-   * @example new ReplayDebugAdapter(message => events.fire(message), () => { this.detached = true; }, () => { this.valuesUnrequested = false; this.changed(); })
+   * @param failed - Receives an error thrown by `inspected`, which runs after the request's single response has been sent.
+   * @example new ReplayDebugAdapter(message => events.fire(message), () => { this.detached = true; }, () => { this.valuesUnrequested = false; this.changed(); }, error => report(error))
    */
   constructor(
     private readonly send: (
@@ -66,6 +70,7 @@ export class ReplayDebugAdapter {
     ) => void,
     private readonly disconnected: () => void = () => {},
     private readonly inspected: () => void = () => {},
+    private readonly failed: (error: unknown) => void = () => {},
   ) {}
 
   /**
@@ -81,22 +86,56 @@ export class ReplayDebugAdapter {
       !this.inspectedStack
     )
       return false
-    const executingFrameId = this.executingFrameId
+    const inspectionFrameId = this.inspectionFrameId
     // Missing history needs only its current empty stack; frames without scopes need no invented variable request.
     return (
-      executingFrameId === undefined ||
+      inspectionFrameId === undefined ||
       (this.inspectedScopes &&
-        (!this.frameScopes.get(executingFrameId)?.length ||
+        (!this.frameScopes.get(inspectionFrameId)?.length ||
           this.inspectedVariables))
     )
   }
 
   /**
-   * Identifies the selected recorded execution frame (top of the stack) whose retrieval {@link inspectionReady} requires.
-   * @returns The current top frame handle, or `undefined` for missing history.
-   * @example this.executingFrameId // => 1001
+   * Lets {@link ReplayDebugger.present} commit gaps and scope-less stops at once: only a selection whose inspection frame has scopes can load values in native Variables.
+   * @returns Whether the current selection has a frame with at least one scope for Variables to load.
+   * @example adapter.select(undefined, 'Not recorded at this moment'); adapter.hasLoadableValues // => false
    */
-  private get executingFrameId(): number | undefined {
+  get hasLoadableValues(): boolean {
+    const inspectionFrameId = this.inspectionFrameId
+    return Boolean(
+      !this.closed &&
+      this.selectionValid &&
+      inspectionFrameId !== undefined &&
+      this.frameScopes.get(inspectionFrameId)?.length,
+    )
+  }
+
+  /**
+   * Tells {@link ReplayDebugger} when native Run and Debug was told about the current selection, so its grace for loading values starts there rather than at session launch.
+   * @returns `Date.now()` of the current selection's `stopped` event, or `undefined` before the session is configured.
+   * @example adapter.select(snapshot, 'Recorded pause'); adapter.stoppedAt // => 1_790_805_320_000 once configured
+   */
+  get stoppedAt(): number | undefined {
+    return this.stoppedAtMs
+  }
+
+  /**
+   * Bounds how long {@link ReplayDebugger.present} waits for a `stopped` event that never comes.
+   * @returns `Date.now()` of the latest {@link select} call.
+   * @example adapter.selectedAt // => 1_790_805_319_000
+   */
+  get selectedAt(): number {
+    return this.selectedAtMs
+  }
+
+  /**
+   * Identifies the frame whose retrieval {@link inspectionReady} requires: native Call Stack focuses the first frame with source, so a library frame on top cannot hold the stop.
+   * @returns The first frame with recorded source, else the top frame, or `undefined` for missing history.
+   * @example this.inspectionFrameId // => 1001
+   */
+  private get inspectionFrameId(): number | undefined {
+    for (const [frameId, frame] of this.frames) if (frame.source) return frameId
     return this.frames.keys().next().value
   }
 
@@ -127,6 +166,9 @@ export class ReplayDebugAdapter {
     this.inspectedScopes = false
     this.inspectedVariables = false
     this.reportedInspection = false
+    this.inspectionDue = false
+    this.selectedAtMs = Date.now()
+    this.stoppedAtMs = undefined
     this.snapshot = undefined
     this.frames.clear()
     this.sources.clear()
@@ -253,10 +295,10 @@ export class ReplayDebugAdapter {
             arguments_.levels ? start + arguments_.levels : undefined,
           )
           respond({ stackFrames: selectedFrames, totalFrames: frames.length })
-          // A caller-only page cannot confirm that the native client inspected the selected execution frame.
+          // A page without the inspection frame cannot confirm that the native client inspected the selected stop.
           if (
             !frames.length ||
-            selectedFrames.some((frame) => frame.id === this.executingFrameId)
+            selectedFrames.some((frame) => frame.id === this.inspectionFrameId)
           )
             this.inspectedStack = true
           this.reportInspection()
@@ -270,8 +312,8 @@ export class ReplayDebugAdapter {
               (this.retiredFrameIds.has(frameId) ? [] : undefined)
           if (!scopes) throw new Error('Recorded frame is no longer selected.')
           respond({ scopes })
-          // Only the executing frame's scopes count; a caller or retired frame cannot confirm the selected moment.
-          if (frameId === this.executingFrameId) this.inspectedScopes = true
+          // Only the inspection frame's scopes count; another or retired frame cannot confirm the selected moment.
+          if (frameId === this.inspectionFrameId) this.inspectedScopes = true
           this.reportInspection()
           return
         }
@@ -287,13 +329,13 @@ export class ReplayDebugAdapter {
               arguments_.count ? start + arguments_.count : undefined,
             ),
           })
-          const executingFrameId = this.executingFrameId
+          const inspectionFrameId = this.inspectionFrameId
           // Native Variables expands the first scope; other groups or later pages do not establish its initial rows.
           if (
             start === 0 &&
-            executingFrameId !== undefined &&
+            inspectionFrameId !== undefined &&
             arguments_.variablesReference ===
-              this.frameScopes.get(executingFrameId)?.[0]?.variablesReference
+              this.frameScopes.get(inspectionFrameId)?.[0]?.variablesReference
           )
             this.inspectedVariables = true
           this.reportInspection()
@@ -341,6 +383,9 @@ export class ReplayDebugAdapter {
         success: false,
         message: error instanceof Error ? error.message : String(error),
       })
+    } finally {
+      // Notify after this request's single response, so a failing listener can never add a second one.
+      this.notifyInspection()
     }
   }
 
@@ -358,19 +403,28 @@ export class ReplayDebugAdapter {
     this.retiredFrameIds.clear()
   }
 
-  /** Tells {@link ReplayDebugger} once per selection that the native client has now retrieved its recorded values. @example this.reportInspection() */
+  /** Marks the once-per-selection notification that the native client has now retrieved its recorded values; {@link notifyInspection} delivers it. @example this.reportInspection() */
   private reportInspection(): void {
-    const executingFrameId = this.executingFrameId
     // An empty gap stack or a frame without scopes proves Call Stack is open, not that Variables loads values.
     if (
       this.reportedInspection ||
       !this.inspectionReady ||
-      executingFrameId === undefined ||
-      !this.frameScopes.get(executingFrameId)?.length
+      !this.hasLoadableValues
     )
       return
     this.reportedInspection = true
-    this.inspected()
+    this.inspectionDue = true
+  }
+
+  /** Delivers a due {@link reportInspection} after the request's response; a listener error goes to `failed`, never into the DAP stream. @example this.notifyInspection() */
+  private notifyInspection(): void {
+    if (!this.inspectionDue) return
+    this.inspectionDue = false
+    try {
+      this.inspected()
+    } catch (error) {
+      this.failed(error)
+    }
   }
 
   /** Materializes native variable groups from validated forward-only archive indices. @example this.group([0], undefined) */
@@ -400,6 +454,7 @@ export class ReplayDebugAdapter {
 
   /** Notifies native views of a new moment or missing history only after DAP configuration. @example this.stopped() */
   private stopped(): void {
+    this.stoppedAtMs = Date.now()
     this.event('stopped', {
       reason: 'pause',
       description: this.label,

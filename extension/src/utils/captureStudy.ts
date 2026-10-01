@@ -5,6 +5,7 @@ import {
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
 } from '../constants'
+import { StudyError } from '../errors'
 import { readResource } from '../resources'
 import type { RetainedStudy } from '../retainedStudySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -24,15 +25,29 @@ export async function captureStudy(
   const state = service.state(record),
     signature = state.materialSignature,
     runtime = record.runtime?.view()
+  // Evidence withdrawn after the state snapshot belongs to a newer checkpoint: discard this copy like the final signature check.
+  const readCommitted = async (
+    uri: string,
+  ): Promise<Awaited<ReturnType<typeof readResource>> | undefined> => {
+    try {
+      return await readResource(service, uri)
+    } catch (error) {
+      if (
+        error instanceof StudyError &&
+        error.code === 'EVIDENCE_UNAVAILABLE' &&
+        service.state(record).materialSignature !== signature
+      )
+        return undefined
+      throw error
+    }
+  }
   const observations: RetainedStudy['observations'][number][] = []
   const captures: RetainedStudy['captures'][number][] = []
   for (const reference of state.observations) {
     const snapshotUri = reference.snapshotUri
     const snapshot = service.snapshot(record, snapshotUri)
-    const source = await readResource(
-      service,
-      `${snapshotUri}/source/typescript`,
-    )
+    const source = await readCommitted(`${snapshotUri}/source/typescript`)
+    if (source === undefined) return undefined
     if (!('text' in source))
       throw new Error('Captured TypeScript is unavailable.')
     const committed = runtime?.events.find(
@@ -123,7 +138,8 @@ export async function captureStudy(
       if (capture.status === 'captured') {
         if (!capture.uri)
           throw new Error('Confirmed image has no canonical resource.')
-        const image = await readResource(service, capture.uri)
+        const image = await readCommitted(capture.uri)
+        if (image === undefined) return undefined
         if (!('blob' in image))
           throw new Error('Captured image is unavailable.')
         captures.push({

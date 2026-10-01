@@ -2753,3 +2753,245 @@ test('inspecting a Node stop whose captured source differs from its recorded pos
     await harness.close()
   }
 })
+
+// Value: protects=a truthful Run and Debug hint once browser replay takes the shared historical debugger; fails_when=opening a recording keeps the Node stop's hint and disabled Inspect although the stop no longer owns Run and Debug; why_new=Cycle 0032 H1; seam=none
+test('opening a recording drops the Run and Debug hint of a saved Node stop and re-enables its Inspect', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    harness.setHistoricalDebugInspection('uninspected')
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition
+          ?.nativeValuesUninspected === true,
+      'the Node stop shows the Run and Debug hint',
+      1_000,
+    )
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    const view = harness.postedMessages().slice(-1)[0]!
+    assert.equal(view.nodeHistoryPosition?.sequence, 2)
+    assert.equal(view.nodeHistoryPosition?.nativeValuesUninspected, false)
+    assert.equal(view.nodeHistoryPosition?.debuggerAvailable, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Node timeline and its selected event agreeing after browser replay supersedes a loading stop; fails_when=the abandoned Node presentation later commits its event in the Node timeline only; why_new=Cycle 0032 H1 (typed supersession deferred as D4); seam=none
+test('a Node stop still loading when a recording opens never becomes the Node timeline position', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    const held = harness.holdHistoricalDebugPresentation()
+    harness.receiveContext({
+      type: 'node-history-playback',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      action: 'seek',
+      positionMs: 200,
+    })
+    await held.started
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    held.release()
+    await harness.controller.settle()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    const view = harness.postedMessages().slice(-1)[0]!
+    assert.equal(view.nodeHistoryPosition?.sequence, 1)
+    assert.equal(view.nodeHistoryPlayback?.sequence, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a reopened reader after Node Play; fails_when=Node Play keeps ticking while close() drains, starts another Node stop and leaves its hint for the reopen; why_new=Cycle 0032 H2; seam=none
+test('closing the reader stops Node Play at once, so no Node stop starts while closing drains', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const store = harness.service.nodeHistoryStore!,
+    list = store.list.bind(store)
+  let releaseList = (): void => {}
+  try {
+    const history = await saveOneStopNodeHistory(store)
+    harness.setHistoricalDebugInspection('uninspected')
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    // The next periodic refresh stays pending, so closing drains while a running Node Play timer could still tick.
+    let listed = (): void => {}
+    const listing = new Promise<void>((resolve) => {
+      listed = resolve
+    })
+    const listGate = new Promise<void>((resolve) => {
+      releaseList = resolve
+    })
+    store.list = async () => {
+      listed()
+      await listGate
+      return list()
+    }
+    await listing
+    harness.receiveContext({
+      type: 'node-history-playback',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      action: 'play',
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPlayback?.mode ===
+        'playing',
+      'Node Play starts',
+      1_000,
+    )
+    const presentationsBeforeClose = harness.historicalDebugPresentations.length
+
+    // Act
+    const closing = harness.reader.close()
+    await new Promise<void>((resolve) => setTimeout(resolve, 400))
+    releaseList()
+    await closing
+    const presentationsAfterClose = harness.historicalDebugPresentations.length
+    store.list = list
+    await harness.reader.open()
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition !==
+        undefined,
+      'the reopened reader restores the Node history',
+      1_000,
+    )
+
+    // Assert
+    const view = harness.postedMessages().slice(-1)[0]!
+    assert.equal(presentationsAfterClose, presentationsBeforeClose)
+    assert.equal(view.nodeHistoryPosition?.sequence, 1)
+    assert.equal(view.nodeHistoryPosition?.nativeValuesUninspected, undefined)
+  } finally {
+    releaseList()
+    store.list = list
+    await harness.close()
+  }
+})
+
+// Value: protects=restarting native inspection of a Node stop after the learner stopped Codebook's session; fails_when=Inspect stays disabled because the ended session is only reported when a hint was showing; why_new=Cycle 0032 H3 and review clarification CQ1; seam=none
+test('ending the historical session re-enables Inspect for the selected Node stop, and Inspect restarts the session', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition
+          ?.debuggerAvailable === true,
+      'the Node stop shows its values in Run and Debug',
+      1_000,
+    )
+    const withValues = harness.postedMessages().slice(-1)[0]!
+
+    // Act
+    harness.endHistoricalDebugSession()
+    const afterSessionEnded = harness.postedMessages().slice(-1)[0]!
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: afterSessionEnded.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition
+          ?.debuggerAvailable === true,
+      'Inspect restarts the historical session',
+      1_000,
+    )
+
+    // Assert
+    assert.equal(withValues.nodeHistoryPosition?.nativeValuesUninspected, false)
+    assert.equal(
+      afterSessionEnded.nodeHistoryPosition?.debuggerAvailable,
+      false,
+    )
+    assert.equal(harness.historicalDebuggers.length, 2)
+    assert.equal(harness.historicalDebuggers[1]!.available, true)
+  } finally {
+    await harness.close()
+  }
+})

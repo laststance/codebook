@@ -1761,3 +1761,42 @@ for (const failure of ['corrupt', 'future', 'missing'] as const)
       await harness.close()
     }
   })
+
+// Value: protects=a reopened reader never pointing at Run and Debug values from the native session that closing disposed; fails_when=closing keeps the replay moment's hint, which the reopened reader shows for the retained moment; why_new=Cycle 0032 T2, the close reset had no replay test; seam=none
+test('a reader reopened after closing never shows the Run and Debug hint of the replay moment it showed before', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  let release = (): void => {}
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const beforeClose = harness.postedMessages().slice(-1)[0]!
+
+    // Act: observe the reopened reader while its new session is still presenting the retained moment.
+    await harness.reader.close()
+    const presenting = harness.holdHistoricalDebugPresentation()
+    release = presenting.release
+    const reopening = harness.reader.open()
+    await presenting.started
+    const whilePresenting = harness.postedMessages().slice(-1)[0]!
+    presenting.release()
+    await reopening
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(beforeClose.recording?.nativeValuesUninspected, true)
+    assert.equal(whilePresenting.recording?.presentedMs, 100)
+    assert.equal(whilePresenting.recording?.nativeValuesUninspected, false)
+  } finally {
+    release()
+    await harness.close()
+  }
+})

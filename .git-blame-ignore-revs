@@ -1,0 +1,6 @@
+# Commits that only reformatted the codebase; `git blame` and GitHub skip them.
+# Enable locally with: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# PR #57: Prettier formatting of the whole repository (plus ESLint autofixes; the few
+# semantic edits in service.ts and cdp.ts are listed in its commit message).
+d526695430c9089492973dacea619668368e3948

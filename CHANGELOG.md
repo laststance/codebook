@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.16.0] - 2026-10-01 (development candidate)
+
+Cycle 0032 makes the Run and Debug hint from 0.2.15 truthful and keeps every replay presentation wait bounded. Mechanism tests cover each fix with a red-before-green regression and a disabled-fix control, and bounded installed VS Code and Cursor trials were recorded on the 38e4620 cut. In Cursor, if Variables was collapsed at the stop, expand its first scope as well before values load. Final acceptance remains open. No registry publication.
+
+### Changed
+
+- The Run and Debug hint now appears about one second after native Run and Debug shows a recorded stop without loading its values, instead of one second after the moment was requested. Values that load clear it, and when you end the **Codebook · Recorded learning** session, the reader clears the hint and saved Node stops can be inspected again.
+- Unrecorded gaps and stops without recorded scopes commit at once with no hint.
+- The hint follows the frame native Call Stack actually focuses: the first frame with recorded source, not a library frame on top.
+- A replay frame that cannot paint because its panel is hidden no longer holds a presentation change or repository navigation open. It fails within about five seconds with a message to show the replay and try again, and the next recording opens normally.
+
+### Fixed
+
+- Opening a browser recording, or closing the reader, drops a saved Node stop's hint and re-enables Node Inspect, and a Node stop still loading can no longer take over afterward.
+- A reopened reader never shows the previous moment's hint.
+- Abandoning a presentation while the historical debugger is still starting releases replay playback at once. Retiring the previous session can still wait for the editor.
+- A failed debugger selection is selected again on the next presentation, and the debug adapter answers each request exactly once even when a listener fails.
+- Saving a learning checkpoint while a recording replaces a captured image discards that copy instead of failing the refresh.
+
 ## [0.2.15.0] - 2026-10-01 (development candidate)
 
 Cycle 0031 keeps the learner's first replay command when it reveals a hidden Application tab, lets replay continue when native Run and Debug has not loaded a moment's values, and counts recording paint time only while the recording is visible. Mechanism tests and bounded installed VS Code/Cursor development evidence cover the recorded cut; the new Run and Debug hint is not yet verified natively. Cursor summary placement, reader recovery/accessibility and final acceptance remain open. No registry publication.

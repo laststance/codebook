@@ -1622,3 +1622,40 @@ test('a rebound live viewport keeps one CDP stream and records later frames with
   cdp.close()
   assert.deepEqual(closes, [true])
 })
+
+// Value: protects=a hidden recorded gap when the learner closes the Application panel; fails_when=panel disposal marks the viewport closed without waking the gap wait, so playback stays loading until a later visibility change that never comes; why_new=Cycle 0032 T1, the lifecycle boundary tests cover explicit closure but not native panel disposal; seam=none
+test('disposing the recording panel promptly rejects a hidden recorded gap without fabricated paint confirmation', async () => {
+  // Arrange
+  const renderer = await recordedRenderer(false)
+  let outcome = 'pending'
+  const missing = renderer.viewport
+    .presentMissing('Not recorded at this moment')
+    .then(
+      () => {
+        outcome = 'painted'
+      },
+      (error) => {
+        outcome = String(error)
+      },
+    )
+  try {
+    await delay(0)
+    assert.equal(outcome, 'pending')
+
+    // Act
+    renderer.panel.dispose()
+    const promptOutcome = await Promise.race([
+      missing.then(() => outcome),
+      delay(500).then(() => 'still waiting for hidden paint'),
+    ])
+
+    // Assert
+    assert.equal(promptOutcome, 'Error: Recorded gap presentation invalidated.')
+    assert.equal(
+      renderer.events.some((event) => event.type === 'viewport.acknowledged'),
+      false,
+    )
+  } finally {
+    renderer.viewport.close()
+  }
+})

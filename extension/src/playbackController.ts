@@ -1,6 +1,7 @@
 import { PLAYBACK_TICK_INTERVAL_MS } from './constants'
 import type { PlaybackCommand } from './playbackSchemas'
 import type { RecordingContext, RecordingIndex } from './recordingSchemas'
+import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
 import { projectRecording } from './utils/projectRecording'
 
@@ -266,10 +267,27 @@ export class PlaybackController {
     this.dependencies.changed()
   }
 
-  /** Awaits owned asynchronous presentation/preferences during tests and workspace retirement. @example await controller.settle() */
-  async settle(): Promise<void> {
-    while (this.running) await this.running
-    await this.saves
+  /**
+   * Awaits owned asynchronous presentation/preferences during tests, workspace retirement and presentation changes.
+   *
+   * A replay frame that {@link StudyWorkspace} reveals while its panel is hidden can wait indefinitely, so presentation
+   * changes and repository navigation pass their cancellation and a bound. Giving up never cancels the frame itself.
+   *
+   * @param signal - Optional caller cancellation.
+   * @param timeoutMs - Optional bound on the wait; defaults to unbounded when neither argument is given.
+   * @throws When `signal` aborts or `timeoutMs` elapses first.
+   * @example
+   * ```ts
+   * await controller.settle(transition.signal, PRESENTATION_READY_TIMEOUT_MS)
+   * ```
+   */
+  async settle(signal?: AbortSignal, timeoutMs?: number): Promise<void> {
+    const settled = (async () => {
+      while (this.running) await this.running
+      await this.saves
+    })()
+    if (!signal && timeoutMs === undefined) return settled
+    await awaitResponse(settled, 'the replay frame', signal, timeoutMs)
   }
 
   /** Retires playback timers and pending receipts without closing any application/debug session. @example await controller.dispose() */
