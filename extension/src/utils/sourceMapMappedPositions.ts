@@ -13,13 +13,12 @@ import {
 
 type MappedPosition = { line: number; column: number }
 
-/** Finds one mapped column per cited original line when a configured breakpoint cannot bind; {@link createBundleVerifier} calls it only for a sealed map. @example sourceMapMappedPositions('AAAA;AACA', 0, 1, 2).positions // [{ line: 1, column: 1 }, { line: 2, column: 1 }] */
+/** Finds the first mapped column of each original line in a range, for the declared-line check before input and for the hints of a binding failure; {@link createBundleVerifier} calls it only for a sealed map. @example sourceMapMappedPositions('AAAA;AACA', 0, 1, 2).positions // [{ line: 1, column: 1 }, { line: 2, column: 1 }] */
 export function sourceMapMappedPositions(
   mappings: string,
   selectedSourceIndex: number,
   startLine: number,
   endLine: number,
-  requiredColumn?: number,
 ): { positions: MappedPosition[]; complete: boolean } {
   const columns = new Map<number, number>()
   let sourceIndex = 0,
@@ -74,7 +73,6 @@ export function sourceMapMappedPositions(
           sourceIndex === selectedSourceIndex &&
           line >= startLine &&
           line <= endLine &&
-          (requiredColumn === undefined || column === requiredColumn) &&
           (columns.get(line) ?? Infinity) > column
         )
           columns.set(line, column)

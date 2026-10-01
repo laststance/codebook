@@ -430,15 +430,19 @@ test('competing or trailing script identities cannot impersonate the selected we
   }
 })
 
-test('lazy breakpoint admission recognizes exact nonminimum mapped columns without accepting nearby columns', () => {
+test('a declared line counts as mapped at whichever column the sealed map reaches it and an unmapped line reports no position', () => {
   // Arrange
   const verifier = createBundleVerifier({
     ...bundle,
     sourceMap: JSON.stringify({ ...payload, mappings: 'ACAE,EAAE' }),
   })
-  // Act / Assert
-  assert.equal(verifier.hasMappedPosition(1, 3), true)
-  assert.equal(verifier.hasMappedPosition(1, 5), true)
-  assert.equal(verifier.hasMappedPosition(1, 4), false)
-  assert.equal(verifier.hasMappedPosition(2, 3), false)
+  // Act
+  const declaredLine = verifier.mappedPositions(1, 1),
+    unmappedLine = verifier.mappedPositions(2, 2)
+  // Assert
+  assert.deepEqual(declaredLine, {
+    positions: [{ line: 1, column: 3 }],
+    complete: true,
+  })
+  assert.deepEqual(unmappedLine, { positions: [], complete: true })
 })

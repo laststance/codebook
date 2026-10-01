@@ -137,15 +137,16 @@ export class PlaybackController {
       }
       return this.state()
     }
+    const range = this.range()
+    // Checked before the reader guard: the reader is marked open only late in a load, and a control sent meanwhile must hear that the recording is not ready, not that the reader is closed.
+    if (!range || !this.data)
+      throw new Error(
+        'Recording is not ready; read playback state before another control.',
+      )
     // A closed reader has no panes to present in, so a seek or play would recreate the Application panel alone; only an explicit open brings the reader back.
     if (!(this.dependencies.readerOpen?.() ?? true))
       throw new Error(
         'The replay reader is closed; open the recording before another control.',
-      )
-    const range = this.range()
-    if (!range || !this.data)
-      throw new Error(
-        'Recording is not ready; read playback state before another control.',
       )
     if (input.action === 'seek') {
       if (input.positionMs < range.startMs || input.positionMs > range.endMs)

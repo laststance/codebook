@@ -99,7 +99,9 @@ export function validateConfiguredStudyEvidence(
       observation.source.text !== source.text ||
       observation.source.hash !== source.hash ||
       observation.source.line !== stop.source.line ||
-      observation.source.column !== stop.source.column
+      // The debugger chooses the column on the declared line. A column other than the requested one is kept only when the saved native top frame confirms it, which the debugger check below requires.
+      (observation.source.column !== stop.source.column &&
+        !observation.debugger)
     )
       throw new Error(
         'Configured observation source differs from its sealed definition.',

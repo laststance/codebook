@@ -264,6 +264,8 @@ type WorkspaceContext = Pick<
   globalStorageUri: Pick<vscode.Uri, 'fsPath'>
   workspaceState: Pick<vscode.Memento, 'get' | 'update'>
 }
+/** How far one selection's leftover captured-source prelude has gone: not run yet; run with a tab the editor kept; run; or run and it closed the tab that had focus. */
+type LeftoverSourcePrelude = 'pending' | 'kept' | 'done' | 'closed-focused-tab'
 
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
 export class StudyWorkspace {
@@ -472,6 +474,8 @@ export class StudyWorkspace {
     runtimeIdentity?: string
   }
   private presentationOperation?: Promise<PresentationState>
+  /** Set from the start of a recording load until its first ready position, which retires a replay control's reported failure. */
+  private replayLoadAwaitingReady = false
   private presentationWrite?: Promise<void>
   private placingPresentation = false
   private presentationEditorScope?: {
@@ -695,6 +699,129 @@ export class StudyWorkspace {
 
   /** Reserves one current reader intent before asynchronous work; all three entry points share its native/storage receipts. @example await workspace.changePresentation({presentationId,expectedRevision:0,mode:'living-book',action:'select'}) */
   changePresentation(input: PresentationIntent): Promise<PresentationState> {
+    return this.admitPresentation(input, 'pending')
+  }
+
+  /** Tells whether a tab shows a captured source document of this workspace's reader; the one definition of ownership for every caller that closes such tabs or counts them as Codebook's own. It is false until {@link initialize} has created the library. @example vscode.window.tabGroups.all.flatMap((group) => group.tabs).filter((tab) => this.ownsCapturedSourceTab(tab)) */
+  private ownsCapturedSourceTab(tab: vscode.Tab): boolean {
+    return (
+      this.library !== undefined &&
+      tab.input instanceof vscode.TabInputText &&
+      tab.input.uri.scheme === STUDY_SOURCE_SCHEME &&
+      tab.input.uri.authority === this.library.workspaceKey
+    )
+  }
+
+  /**
+   * Closes every captured-source tab of this workspace that an earlier host session left behind; called by {@link selectAfterClosingLeftoverSources} once the library key is known.
+   * @returns
+   * - `'kept'` when the editor refused to close them
+   * - `'closed-focused-tab'` when the tab that had focus was one of the closed ones
+   * - `'done'` otherwise, including when there was nothing to close
+   * @example
+   * ```ts
+   * const leftoverSources = await this.closeLeftoverSources() // 'closed-focused-tab'
+   * ```
+   */
+  private async closeLeftoverSources(): Promise<
+    Exclude<LeftoverSourcePrelude, 'pending'>
+  > {
+    const focusedTab = vscode.window.tabGroups.activeTabGroup.activeTab,
+      leftover = vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .filter((tab) => this.ownsCapturedSourceTab(tab))
+    if (!leftover.length) return 'done'
+    const closed = await vscode.window.tabGroups.close(leftover, true).then(
+      (accepted) => accepted,
+      () => false,
+    )
+    if (!closed) return 'kept'
+    return leftover.some((tab) => tab === focusedTab)
+      ? 'closed-focused-tab'
+      : 'done'
+  }
+
+  /**
+   * Closes the captured-source tabs an earlier host session left behind, then admits the selection once on what remains; called by {@link admitPresentation} for a closed reader.
+   * The pending transition refuses other presentation controls while the tabs close. When a tab stays, the ordinary admission reports that the active editor cannot be restored, with this reason as its cause.
+   * @param input - The `select` request that met the leftover tab.
+   * @returns The state of the admitted selection.
+   * @throws The admission's own errors; `PRESENTATION_UNAVAILABLE` when the leftover tab is still active.
+   * @example
+   * ```ts
+   * const state = await this.selectAfterClosingLeftoverSources(input) // state.layoutConfirmed === true
+   * ```
+   */
+  private async selectAfterClosingLeftoverSources(
+    input: PresentationIntent,
+  ): Promise<PresentationState> {
+    const lifetime = this.lifetime,
+      transition = {
+        id: this.presentationId,
+        cancellation: new AbortController(),
+      }
+    let leftoverSources: Exclude<LeftoverSourcePrelude, 'pending'> = 'kept'
+    this.presentationTransition = transition
+    try {
+      // The library key exists only after initialization, so ownership is decided here and not by the caller's synchronous check.
+      await this.initialize()
+      this.assertLifetime(lifetime)
+      leftoverSources = await this.closeLeftoverSources()
+      // The editor reports its tabs and its active text editor separately; wait until they agree. A wait that expires leaves the decision to the admission below.
+      if (leftoverSources !== 'kept')
+        await waitUntil(
+          () => {
+            const activeInput =
+              vscode.window.tabGroups.activeTabGroup.activeTab?.input
+            return (
+              !(activeInput instanceof vscode.TabInputText) ||
+              vscode.window.activeTextEditor?.document.uri.toString() ===
+                activeInput.uri.toString()
+            )
+          },
+          'the active text editor after closing leftover captured source tabs',
+          PRESENTATION_READY_TIMEOUT_MS,
+          transition.cancellation.signal,
+        ).catch(() => undefined)
+    } finally {
+      if (this.presentationTransition === transition)
+        this.presentationTransition = undefined
+    }
+    this.assertLifetime(lifetime)
+    // The transition is released in this same turn, so no other control is admitted between it and this second, final admission.
+    try {
+      return this.admitPresentation(input, leftoverSources)
+    } catch (error) {
+      // Only the synchronous refusal gains the reason; later failures of the admitted change keep their own cause.
+      if (
+        leftoverSources === 'kept' &&
+        error instanceof StudyError &&
+        error.code === 'PRESENTATION_UNAVAILABLE'
+      )
+        throw new StudyError(
+          error.code,
+          error.message,
+          'A leftover captured source tab could not be closed.',
+        )
+      throw error
+    }
+  }
+
+  /**
+   * Admits one presentation change for {@link changePresentation}; every refusal is thrown before any native effect.
+   * @param input - The requested change with the reader lifetime and control revision it was made for.
+   * @param leftoverSources - `'pending'` on the first entry; on the single re-entry after {@link selectAfterClosingLeftoverSources} what {@link closeLeftoverSources} reported. Only `'closed-focused-tab'` changes the admission: no focus is left to keep.
+   * @returns The state after the admitted change.
+   * @throws When the request is stale, competes with a pending change, comes from a background window, or cannot keep the learner's focus.
+   * @example
+   * ```ts
+   * return this.admitPresentation(input, 'pending')
+   * ```
+   */
+  private admitPresentation(
+    input: PresentationIntent,
+    leftoverSources: LeftoverSourcePrelude,
+  ): Promise<PresentationState> {
     if (input.presentationId !== this.presentationId)
       throw new StudyError(
         'PRESENTATION_INSTANCE_GONE',
@@ -712,6 +839,16 @@ export class StudyWorkspace {
         'PRESENTATION_UNAVAILABLE',
         'Focus this Codebook work window before changing its presentation.',
       )
+    const activeInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input
+    // A captured-source tab the host restored from an earlier session has no text editor whose focus could be kept, so a closed reader closes such tabs before its selection is admitted.
+    if (
+      leftoverSources === 'pending' &&
+      input.action === 'select' &&
+      !this.opened &&
+      activeInput instanceof vscode.TabInputText &&
+      activeInput.uri.scheme === STUDY_SOURCE_SCHEME
+    )
+      return this.selectAfterClosingLeftoverSources(input)
     if (input.action === 'focus') return this.focusCurrentPresentation(input)
     if (this.liveComposition || this.summaryComposition) {
       if (
@@ -838,7 +975,9 @@ export class StudyWorkspace {
     const restoreFocus =
       input.action === 'save-preference'
         ? undefined
-        : this.capturePresentationFocus()
+        : this.capturePresentationFocus(
+            leftoverSources === 'closed-focused-tab',
+          )
     const transition = {
       id: this.presentationId,
       cancellation: new AbortController(),
@@ -1322,11 +1461,19 @@ export class StudyWorkspace {
     )
   }
 
-  /** Retains the logical reading region for one admitted handoff; foreign editors still require an exact source receipt. @example const restore = this.capturePresentationFocus() */
-  private capturePresentationFocus(): (
-    signal?: AbortSignal,
-    assertSourceFocus?: () => void,
-  ) => Promise<void> {
+  /**
+   * Retains the logical reading region for one admitted handoff; foreign editors still require an exact source receipt. Called by {@link admitPresentation} before a selection or restore changes any pane.
+   * @param focusedTabClosed - `true` when the tab that had focus was a leftover captured source this selection just closed: the tab the editor activated in its place was never the learner's reading position, so only the group focus is kept.
+   * @returns The function that gives focus back once the presentation is placed.
+   * @throws `PRESENTATION_UNAVAILABLE` when the focused editor is a foreign non-text editor whose focus cannot be given back.
+   * @example
+   * ```ts
+   * const restore = this.capturePresentationFocus(false)
+   * ```
+   */
+  private capturePresentationFocus(
+    focusedTabClosed: boolean,
+  ): (signal?: AbortSignal, assertSourceFocus?: () => void) => Promise<void> {
     const assertOwnedFocus = (assertSourceFocus?: () => void): void => {
       if (this.app?.active || this.contextPanel?.active) return
       // Placement may finish on its stationary source; only its exact focus/selection receipt permits restoration.
@@ -1405,8 +1552,8 @@ export class StudyWorkspace {
         await restoreReadingPosition(restored, signal)
       }
     }
-    // An empty group has no document to restore; retain its group focus after an explicit first entry.
-    if (!vscode.window.tabGroups.activeTabGroup.activeTab)
+    // An empty group has no document to restore, and neither has a group whose focused leftover tab was just closed; retain its group focus after an explicit first entry.
+    if (!vscode.window.tabGroups.activeTabGroup.activeTab || focusedTabClosed)
       return async (): Promise<void> => {
         await vscode.commands.executeCommand(
           'workbench.action.focusActiveEditorGroup',
@@ -3753,6 +3900,8 @@ export class StudyWorkspace {
           }
         }
         this.errors.delete('control')
+        // A live-run action that succeeded also answers an earlier refused replay control, as it did while both shared one key.
+        this.errors.delete('replay-control')
       } catch (error) {
         this.report('control', error)
         throw error
@@ -4127,12 +4276,7 @@ export class StudyWorkspace {
       await this.library?.flush()
       const tabs = vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)
-        .filter(
-          (tab) =>
-            tab.input instanceof vscode.TabInputText &&
-            tab.input.uri.scheme === STUDY_SOURCE_SCHEME &&
-            tab.input.uri.authority === this.library?.workspaceKey,
-        )
+        .filter((tab) => this.ownsCapturedSourceTab(tab))
       if (tabs.length && !(await vscode.window.tabGroups.close(tabs, true)))
         throw new Error('Some captured source readers could not close.')
       this.opened = false
@@ -4274,6 +4418,11 @@ export class StudyWorkspace {
             this.playbackPending = undefined
             this.playbackPresentingReady = false
             this.clearReadyReplayWarning()
+            // A recording that loaded and shows its position again answers an earlier refused replay control.
+            if (this.replayLoadAwaitingReady) {
+              this.replayLoadAwaitingReady = false
+              this.errors.delete('replay-control')
+            }
           }
           // A failed load has no live renderer to finish its loading state; retire any pending image before showing the reason.
           if (
@@ -4787,6 +4936,8 @@ export class StudyWorkspace {
       action: 'open',
       expectedRevision: revision,
     })
+    // The open was accepted, so an earlier refused replay control no longer describes the replay.
+    if (this.errors.delete('replay-control')) this.publish()
   }
 
   /** Loads immutable film/context before arranging its reader, restoring only the separately saved paused position. @example await this.loadPlayback(id, signal) */
@@ -4801,6 +4952,7 @@ export class StudyWorkspace {
         ? 'repository'
         : 'study'
     if (origin === 'repository') this.repositoryRecordingOpen = undefined
+    this.replayLoadAwaitingReady = true
     await this.replaceUnavailableReplayDebugger(signal)
     signal.throwIfAborted()
     this.recordingActive = true
@@ -5299,9 +5451,8 @@ export class StudyWorkspace {
           tab.isPreview &&
           !tab.isDirty &&
           !tab.isPinned &&
+          this.ownsCapturedSourceTab(tab) &&
           tab.input instanceof vscode.TabInputText &&
-          tab.input.uri.scheme === STUDY_SOURCE_SCHEME &&
-          tab.input.uri.authority === this.library?.workspaceKey &&
           tab.input.uri.path.startsWith(previousHistoryPath),
       )
     if (previews.length) {
@@ -6400,7 +6551,8 @@ export class StudyWorkspace {
     })
     panel.webview.onDidReceiveMessage((message) => {
       void this.receive(message, 'context', panel).catch((error) => {
-        if (this.contextPanel === panel) this.report('control', error)
+        if (this.contextPanel === panel)
+          this.report(this.panelFailureKind(message), error)
       })
     })
     panel.webview.html = studyHtml('context')
@@ -6608,7 +6760,8 @@ export class StudyWorkspace {
             }
             view.webview.onDidReceiveMessage((message) => {
               void this.receive(message, 'context', view).catch((error) => {
-                if (this.summaryView === view) this.report('control', error)
+                if (this.summaryView === view)
+                  this.report(this.panelFailureKind(message), error)
               })
             })
             view.onDidDispose(() => {
@@ -6650,7 +6803,8 @@ export class StudyWorkspace {
             view.webview.onDidReceiveMessage((message) => {
               if (this.moments === view)
                 void this.receive(message, 'moments', view).catch((error) => {
-                  if (this.moments === view) this.report('control', error)
+                  if (this.moments === view)
+                    this.report(this.panelFailureKind(message), error)
                 })
             })
             view.onDidDispose(() => {
@@ -7564,9 +7718,7 @@ export class StudyWorkspace {
       const ownsExtraTabs = extraGroups.every((group) =>
         group.tabs.every(
           (tab) =>
-            (tab.input instanceof vscode.TabInputText &&
-              tab.input.uri.scheme === STUDY_SOURCE_SCHEME &&
-              tab.input.uri.authority === this.library?.workspaceKey) ||
+            this.ownsCapturedSourceTab(tab) ||
             (tab.input instanceof vscode.TabInputWebview &&
               ['codebook.scopedBrowser', 'codebook.studyContext'].some(
                 (kind) =>
@@ -8115,6 +8267,22 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Names the status line for a failed panel message, for the three panel listeners that call {@link receive}.
+   * A replay control's failure gets its own line, which the next accepted replay control or loaded recording retires; `control` is retired only by a live-run action and would keep a replay refusal forever.
+   * @param value - The raw message the panel sent.
+   * @returns `'replay-control'` for a valid playback message, `'control'` for everything else.
+   * @example
+   * this.panelFailureKind({ type: 'playback', action: 'seek', revision: 4, expectedRevision: 2, positionMs: 0 }) // => 'replay-control'
+   * this.panelFailureKind({ type: 'tab', revision: 4, tab: 'live' })                                              // => 'control'
+   */
+  private panelFailureKind(value: unknown): 'replay-control' | 'control' {
+    const parsed = messageSchema.safeParse(value)
+    return parsed.success && parsed.data.type === 'playback'
+      ? 'replay-control'
+      : 'control'
+  }
+
   /** Accepts only bounded named UI messages, rejecting stale controls before dispatch. @example await this.receive(message) */
   private async receive(
     value: unknown,
@@ -8291,6 +8459,8 @@ export class StudyWorkspace {
           throw new Error('Only Seek accepts a position.')
         this.playback!.command({ ...identity, action: message.action })
       }
+      // The control was accepted, so an earlier refusal no longer describes the replay.
+      if (this.errors.delete('replay-control')) this.publish()
     }
     if (message.type === 'understanding')
       await this.understand(message.understood)

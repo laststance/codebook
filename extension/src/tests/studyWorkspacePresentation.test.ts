@@ -769,7 +769,7 @@ for (const editStage of [
       await harness.reader.open()
       const draft = harness.focusMutableDraft()
       harness.retainReadingRange(84, 96)
-      const restoreFocus = harness.reader['capturePresentationFocus']()
+      const restoreFocus = harness.reader['capturePresentationFocus'](false)
       await harness.reader.action('focus-app')
       const edit = (): void =>
         draft.replaceContent('New first line.\nNew last line.\n')
@@ -807,7 +807,7 @@ test('an unchanged learner draft restores its reading pose and remains dirty', a
     await harness.reader.open()
     const draft = harness.focusMutableDraft()
     harness.retainReadingRange(84, 96)
-    const restoreFocus = harness.reader['capturePresentationFocus']()
+    const restoreFocus = harness.reader['capturePresentationFocus'](false)
     await harness.reader.action('focus-app')
     // Act
     await restoreFocus()
@@ -2359,6 +2359,263 @@ test('presentation cannot save its mode from a stale reading restoration receipt
     assert.equal(harness.reader.presentationState().layoutConfirmed, true)
   } finally {
     releaseRestore?.()
+    await harness.close()
+  }
+})
+
+const capturedSourceTabs = (
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+): number =>
+  harness.groups
+    .flatMap((group) => group.tabs)
+    .filter(
+      (tab) =>
+        'uri' in tab.input &&
+        String(tab.input.uri).startsWith('codebook-source://'),
+    ).length
+
+test('selecting a presentation on a closed reader closes a leftover captured-source tab that has no text editor and keeps the learner’s own tab', async () => {
+  // Arrange: after a host restart the active tab is a captured source of this workspace, beside a learner draft and another workspace's captured source.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    const foreign = harness.restoreLeftoverCapturedSource({
+      active: false,
+      authority: 'f'.repeat(64),
+    })
+    const draft = harness.focusMutableDraft()
+    const leftover = harness.restoreLeftoverCapturedSource()
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(leftover), false)
+    assert.equal(tabs.includes(draft.tab), true)
+    assert.equal(tabs.includes(foreign), true)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+  } finally {
+    await harness.close()
+  }
+})
+
+test('the leftover captured-source tab is closed on a reader that has not loaded its library yet', async () => {
+  // Arrange: nothing has attached or opened this reader, so its workspace key is not known when the selection arrives.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const draft = harness.focusMutableDraft()
+    const leftover = harness.restoreLeftoverCapturedSource()
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(leftover), false)
+    assert.equal(tabs.includes(draft.tab), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('a second presentation control sent while the leftover captured-source tabs are closing is refused', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    harness.focusMutableDraft()
+    harness.restoreLeftoverCapturedSource()
+    const state = harness.reader.presentationState(),
+      request = {
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'select' as const,
+      }
+    // Act
+    const first = harness.reader.changePresentation(request)
+    // Assert
+    assert.throws(() => harness.reader.changePresentation(request), {
+      code: 'PRESENTATION_UNAVAILABLE',
+      message:
+        'A presentation change or reader close is pending. Read its state before another control.',
+    })
+    assert.equal((await first).layoutConfirmed, true)
+    assert.equal(harness.reader.presentationState().state, 'open')
+  } finally {
+    await harness.close()
+  }
+})
+
+test('a selection still succeeds when the editor reports the next text editor a moment after the leftover tab closed', async () => {
+  // Arrange: the tab model names the learner draft at once, the active text editor follows 60 ms later.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const draft = harness.focusMutableDraft()
+    const leftover = harness.restoreLeftoverCapturedSource({
+      lateTextEditor: true,
+    })
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(leftover), false)
+    assert.equal(tabs.includes(draft.tab), true)
+    // The draft the editor activated in the leftover tab's place has focus again once the panes are placed.
+    assert.equal(harness.focusedPanel(), undefined)
+    assert.equal(
+      harness.groups.some((group) => group.activeTab === draft.tab),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('a leftover captured-source tab the editor refuses to close leaves every tab in place and reports why the selection could not start', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const draft = harness.focusMutableDraft()
+    const leftover = harness.restoreLeftoverCapturedSource({
+      refuseClose: true,
+    })
+    const state = harness.reader.presentationState(),
+      tabsBefore = harness.groups.flatMap((group) => group.tabs)
+    // Act
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'select',
+      }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message:
+          'Focus a Codebook pane or text editor before selecting a presentation; the current foreign editor cannot be restored safely.',
+        causeDetail: 'A leftover captured source tab could not be closed.',
+      },
+    )
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(tabs.length, tabsBefore.length)
+    assert.equal(tabs.includes(leftover), true)
+    assert.equal(tabs.includes(draft.tab), true)
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.equal(harness.counts().panels, 0)
+  } finally {
+    harness.acceptLeftoverClose()
+    await harness.close()
+  }
+})
+
+test('a closed reader opens when closing its focused leftover captured-source tab leaves a non-text page of the editor active', async () => {
+  // Arrange: after a host restart the group holds the editor's own Settings page and, with focus, a captured source of this workspace.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    const settingsPage = harness.useOpaquePrimary('settings')
+    const leftover = harness.restoreLeftoverCapturedSource()
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(leftover), false)
+    assert.equal(
+      tabs.some((tab) => tab === settingsPage),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('a closed reader behind a foreign non-text editor refuses the selection and closes no leftover captured-source tab', async () => {
+  // Arrange: the active tab is the editor's Settings page; a leftover captured source sits inactive in the same group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    harness.useOpaquePrimary('settings')
+    const leftover = harness.restoreLeftoverCapturedSource({ active: false })
+    const state = harness.reader.presentationState()
+    // Act / Assert
+    assert.throws(
+      () =>
+        harness.reader.changePresentation({
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: state.mode,
+          action: 'select',
+        }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message:
+          'Focus a Codebook pane or text editor before selecting a presentation; the current foreign editor cannot be restored safely.',
+      },
+    )
+    assert.equal(
+      harness.groups.flatMap((group) => group.tabs).includes(leftover),
+      true,
+    )
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
+
+test('selecting a presentation on an open reader closes none of its captured-source tabs', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const capturedBefore = capturedSourceTabs(harness),
+      state = harness.reader.presentationState()
+    // Act
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    assert.equal(capturedBefore > 0, true)
+    assert.equal(capturedSourceTabs(harness), capturedBefore)
+  } finally {
     await harness.close()
   }
 })

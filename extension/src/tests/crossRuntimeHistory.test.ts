@@ -389,3 +389,47 @@ test('cross-runtime films reopen with their own format and cannot be relabeled a
     ),
   )
 })
+
+test('a saved stop the debugger bound at another column of its declared line reopens when its native top frame names that column', () => {
+  // Arrange: the server stop was declared at 1:1 and committed at 1:8, where its saved top frame also is.
+  const study = createCrossRuntimeStudy(),
+    server = study.observations[1]!
+  server.source = { ...server.source, column: 8 }
+  server.debugger!.frames[0]!.column = 8
+  // Act
+  const decoded = decodeConfiguredStudy(study, study.workspaceKey)
+  // Assert
+  assert.equal(decoded.observations[1]?.source.line, 1)
+  assert.equal(decoded.observations[1]?.source.column, 8)
+  assert.equal(decoded.observations[1]?.debugger?.frames[0]?.column, 8)
+  assert.equal(decoded.finalOutcome, 'demonstrated')
+})
+
+test('a saved stop whose column moved is rejected when its native top frame names another column or it sits on another line', () => {
+  // Arrange
+  const besideFrame = createCrossRuntimeStudy()
+  besideFrame.observations[1]!.source = {
+    ...besideFrame.observations[1]!.source,
+    column: 8,
+  }
+  const otherLine = createCrossRuntimeStudy()
+  otherLine.observations[1]!.source = {
+    ...otherLine.observations[1]!.source,
+    line: 2,
+  }
+  otherLine.observations[1]!.debugger!.frames[0]!.line = 2
+  // Act / Assert: the frame still says 1:1, so nothing confirms column 8.
+  assert.throws(
+    () => decodeConfiguredStudy(besideFrame, besideFrame.workspaceKey),
+    {
+      message: 'Historical debugger differs from its verified source stop.',
+    },
+  )
+  assert.throws(
+    () => decodeConfiguredStudy(otherLine, otherLine.workspaceKey),
+    {
+      message:
+        'Configured observation source differs from its sealed definition.',
+    },
+  )
+})

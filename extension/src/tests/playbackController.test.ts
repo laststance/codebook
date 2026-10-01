@@ -1084,3 +1084,92 @@ test('another recording opened after the learner confirmed a moment in the first
   assert.equal(player.displayed(), 50)
   await player.controller.dispose()
 })
+
+test('a seek or play sent before the load has delivered the recording is told the recording is not ready, although the reader is not marked open yet', async () => {
+  // Arrange: the reader is marked open only after the load, which storage is still holding.
+  let releaseLoad = (): void => {},
+    readerOpen = false
+  const player = playbackHarness({ readerOpen: () => readerOpen })
+  const loadRecording = player.dependencies.load
+  const loadHeld = new Promise<void>((resolve) => {
+    releaseLoad = resolve
+  })
+  player.dependencies.load = async (studyId, signal) => {
+    await loadHeld
+    return loadRecording(studyId, signal)
+  }
+  player.open()
+
+  // Act / Assert
+  assert.throws(() => player.seek(100), {
+    message:
+      'Recording is not ready; read playback state before another control.',
+  })
+  assert.throws(() => player.play(), {
+    message:
+      'Recording is not ready; read playback state before another control.',
+  })
+  readerOpen = true
+  releaseLoad()
+  await player.controller.settle()
+  assert.equal(player.controller.state().readiness, 'ready')
+  assert.equal(player.controller.state().presentedMs, 0)
+  await player.controller.dispose()
+})
+
+test('a seek or play on a loaded recording whose reader closed is told the reader is closed', async () => {
+  // Arrange
+  let readerOpen = true
+  const player = playbackHarness({ readerOpen: () => readerOpen })
+  player.open()
+  await player.controller.settle()
+  readerOpen = false
+
+  // Act / Assert
+  assert.throws(() => player.seek(100), {
+    message:
+      'The replay reader is closed; open the recording before another control.',
+  })
+  assert.throws(() => player.play(), {
+    message:
+      'The replay reader is closed; open the recording before another control.',
+  })
+  assert.equal(player.controller.state().presentedMs, 0)
+  await player.controller.dispose()
+})
+
+test('once the recording has arrived and before its first frame is presented, a play is asked to wait and a seek is accepted', async () => {
+  // Arrange: the load delivered the recording, and its first frame is still being painted.
+  let releaseFirstFrame = (): void => {},
+    firstFrameStarted = (): void => {}
+  const firstFrameHeld = new Promise<void>((resolve) => {
+      releaseFirstFrame = resolve
+    }),
+    started = new Promise<void>((resolve) => {
+      firstFrameStarted = resolve
+    })
+  const player = playbackHarness({ readerOpen: () => true })
+  player.dependencies.present = async (bundle): Promise<void> => {
+    if (bundle.projection.positionMs === 0) {
+      firstFrameStarted()
+      await firstFrameHeld
+    }
+    player.presented.push(bundle.projection.positionMs)
+  }
+  player.open()
+  await started
+
+  // Act
+  assert.throws(() => player.play(), {
+    message: 'Wait for matching presentation before playing.',
+  })
+  const sought = player.seek(100)
+  releaseFirstFrame()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(sought.requestedMs, 100)
+  assert.equal(player.controller.state().readiness, 'ready')
+  assert.equal(player.controller.state().presentedMs, 100)
+  await player.controller.dispose()
+})

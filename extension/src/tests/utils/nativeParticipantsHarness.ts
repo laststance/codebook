@@ -25,6 +25,10 @@ export async function nativeParticipantsHarness(
   options: {
     duplicateServerSession?: boolean
     distinctServerWorker?: boolean
+    /** Declares a participant's stops at another column of line 1 than the default 1:1, to model a request the debugger binds elsewhere on the line. */
+    declaredColumn?: Partial<Record<Participant, number>>
+    /** Replaces a participant's sealed map; the default maps only generated 0:0 to source 1:1. */
+    mappings?: Partial<Record<Participant, string>>
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -34,16 +38,24 @@ export async function nativeParticipantsHarness(
   })
   const repository = await repositoryHarness(context),
     history = createCrossRuntimeStudy()
-  const original = configuredStops(history.configuration),
-    server = original[1]!,
-    browser = original[0]!
+  const original = configuredStops(history.configuration)
+  const declared = (stop: (typeof original)[number]) => ({
+    ...stop,
+    source: {
+      ...stop.source,
+      column: options.declaredColumn?.[stop.participant] ?? stop.source.column,
+    },
+  })
+  const server = declared(original[1]!),
+    browser = declared(original[0]!),
+    first = stopParticipants[0] === 'browser' ? browser : server
   const configuration = crossRuntimeRepositoryConfigSchema.parse({
     ...history.configuration,
     version: 2 as const,
-    participant: 'server' as const,
-    source: server.source,
-    inspections: server.inspections,
-    book: { ...history.configuration.book, anchorIndex: server.anchorIndex },
+    participant: first.participant,
+    source: first.source,
+    inspections: first.inspections,
+    book: { ...history.configuration.book, anchorIndex: first.anchorIndex },
     additionalStops: stopParticipants
       .slice(1)
       .map((participant) => (participant === 'server' ? server : browser)),
@@ -68,7 +80,16 @@ export async function nativeParticipantsHarness(
     sequence = 0,
     breakpointNumber = 0,
     currentIndex = 0
-  let pausedLine = 1
+  let pausedLine = 1,
+    pausedColumn = 1
+  // What the adapter reports as each participant's verified binding; the declaration may ask for another column.
+  const boundAt: Record<Participant, { line: number; column: number }> = {
+    browser: { line: 1, column: 1 },
+    server: { line: 1, column: 1 },
+  }
+  let acknowledgedAt: { line: number; column: number } | undefined,
+    browserLineRunsOnInput = false,
+    reboundPauseId = false
   let inputResolve = (): void => {},
     heldResponse: (() => void) | undefined,
     holdResponse = false
@@ -98,7 +119,7 @@ export async function nativeParticipantsHarness(
         sources: [sourcePath],
         sourcesContent: [source.text],
         names: [],
-        mappings: 'AAAA',
+        mappings: options.mappings?.[name] ?? 'AAAA',
       }),
       mapSource: sourcePath,
       scriptUrl: `webpack-internal:///(${name === 'server' ? 'action-browser' : 'app-pages-browser'})/./${source.path}`,
@@ -145,7 +166,7 @@ export async function nativeParticipantsHarness(
               name: `${name}Step`,
               source: { path: bundle(name).sourcePath },
               line: pausedLine,
-              column: 1,
+              column: pausedColumn,
             },
           ],
         }
@@ -189,10 +210,10 @@ export async function nativeParticipantsHarness(
     getDebugProtocolBreakpoint: async (breakpoint) =>
       breakpoints.some((current) => current.id === breakpoint.id)
         ? {
-            id: breakpoint.id.length,
+            id: breakpoint.id.length + (reboundPauseId ? 1 : 0),
             verified: !unboundPause,
-            line: 1,
-            column: 1,
+            line: boundAt[name].line,
+            column: boundAt[name].column,
             source: {
               path: foreignBinding
                 ? '/foreign/source.ts'
@@ -322,6 +343,37 @@ export async function nativeParticipantsHarness(
         const pending = new Promise<void>((resolve) => {
           inputResolve = resolve
         })
+        // The click re-renders the component at once; the line pauses only where a breakpoint is installed for it at that moment.
+        if (
+          browserLineRunsOnInput &&
+          breakpoints.some(
+            (breakpoint) =>
+              breakpoint.location.uri.fsPath === bundle('browser').sourcePath,
+          )
+        ) {
+          // Order recorded in the installed trial: the adapter's stopped event, then the inspector's pause.
+          run.onEvent(sessions.browser, {
+            type: 'event',
+            seq: ++sequence,
+            event: 'stopped',
+            body: { reason: 'breakpoint', threadId: 1 },
+          })
+          emitScript('browser')
+          listeners.browser.get('Debugger.paused')?.({
+            reason: 'other',
+            hitBreakpoints: ['native'],
+            callFrames: [
+              {
+                callFrameId: 'browser',
+                location: {
+                  scriptId: 'browser',
+                  lineNumber: 0,
+                  columnNumber: 0,
+                },
+              },
+            ],
+          })
+        }
         emitPause(stops[0]!.participant)
         return pending
       }
@@ -358,7 +410,10 @@ export async function nativeParticipantsHarness(
         body: {
           breakpoints: selected.map((breakpoint) => ({
             id: breakpoint.id.length,
-            verified: false,
+            // A module that is already loaded is acknowledged as verified, at the position the adapter chose.
+            ...(acknowledgedAt
+              ? { verified: true, ...acknowledgedAt }
+              : { verified: false }),
           })),
         },
       })
@@ -590,8 +645,25 @@ export async function nativeParticipantsHarness(
       listeners[name].get('Debugger.resumed')?.({})
     },
     // A changed native frame must not inherit a previously captured source pause.
-    movePausedFrame(line: number): void {
+    movePausedFrame(line: number, column = 1): void {
       pausedLine = line
+      pausedColumn = column
+    },
+    /** Reports a participant's verified binding at this position instead of 1:1. */
+    bindAt(name: Participant, line: number, column: number): void {
+      boundAt[name] = { line, column }
+    },
+    /** Acknowledges later registrations as verified at this position, as an adapter does for a module that is already loaded. */
+    acknowledgeRegistrationsAt(line: number, column: number): void {
+      acknowledgedAt = { line, column }
+    },
+    /** Makes the click execute the browser stop's line before the first declared stop pauses. */
+    runBrowserLineOnInput(): void {
+      browserLineRunsOnInput = true
+    },
+    /** Reports the paused binding under another adapter id than the acknowledged registration. */
+    rebindPauseId(): void {
+      reboundPauseId = true
     },
     emitBrowserAdapterPause(): void {
       listeners.browser.get('Debugger.paused')?.({

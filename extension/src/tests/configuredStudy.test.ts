@@ -255,6 +255,30 @@ test('captured pause identity and selected source coordinates cannot be rebound 
   )
 })
 
+test('a saved stop at another column of its declared line is rejected when it has no native debugger state to confirm the column', () => {
+  // Arrange: this browser archive has no saved debugger snapshot.
+  const archive = createConfiguredStudy(),
+    observation = archive.observations[0]!
+  // Act / Assert
+  assert.equal(observation.debugger, undefined)
+  assert.throws(
+    () =>
+      decodeConfiguredStudy(
+        {
+          ...archive,
+          observations: [
+            { ...observation, source: { ...observation.source, column: 7 } },
+          ],
+        },
+        workspaceKey,
+      ),
+    {
+      message:
+        'Configured observation source differs from its sealed definition.',
+    },
+  )
+})
+
 test('undeclared, missing, unavailable or invented interpretation facts are rejected instead of becoming observed values', () => {
   // Arrange
   const archive = createConfiguredStudy(),

@@ -36,25 +36,13 @@ export function createBundleVerifier(input: BundleSource) {
   })
   return {
     hashes,
-    /** Reports frozen-map positions inside the selected citation after an exact binding timeout; callers must still verify a real pause. @example verifier.mappedPositions(1, 3).positions // [{ line: 1, column: 1 }] */
+    /** Reports frozen-map positions in a line range: preparation asks whether a declared line is mapped at all, and a binding failure lists the selected citation's lines as hints; callers must still verify a real pause. @example verifier.mappedPositions(1, 3).positions // [{ line: 1, column: 1 }] */
     mappedPositions(startLine: number, endLine: number) {
       return sourceMapMappedPositions(
         payload.mappings,
         matches[0]!,
         startLine,
         endLine,
-      )
-    },
-    /** Checks an exact original position before registering a lazy native breakpoint; does not prove a runtime binding. @example verifier.hasMappedPosition(19, 5) */
-    hasMappedPosition(line: number, column: number): boolean {
-      return sourceMapMappedPositions(
-        payload.mappings,
-        matches[0]!,
-        line,
-        line,
-        column,
-      ).positions.some(
-        (position) => position.line === line && position.column === column,
       )
     },
     /** Confirms exact source and generated coordinates for the guarded paused inspector. @example verifier.verify(js, tsx, location, 'script-1', 19, 5) */

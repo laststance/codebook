@@ -670,6 +670,109 @@ for (const version of [1, 2])
     }
   })
 
+test('configured help tells an agent that only the next stop is armed and that a stop binds anywhere on its declared line', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({
+      additionalStops: z.string(),
+      sourceBinding: z.string(),
+      sequence: z.array(z.string()),
+    })
+    .parse(JSON.parse(help.text))
+  assert.match(
+    contract.additionalStops,
+    /Codebook arms only the next expected stop: the first stop before input, and each later stop inside the codebook_continue that follows the stop before it\. A later stop's line can therefore execute earlier without pausing; declare stops in the order the action executes them\./,
+  )
+  assert.match(
+    contract.additionalStops,
+    /the run fails with 'Repository continuation reached no next declared pause' and names that stop\./,
+  )
+  assert.match(
+    contract.additionalStops,
+    /that codebook_continue fails with 'Next declared stop was not armed and no resume was sent', the run ends and earlier observations stay\./,
+  )
+  assert.match(
+    contract.sourceBinding,
+    /The line is the declaration and the column is a request: Codebook accepts the debugger's verified binding anywhere on the declared line in the sealed executed module/,
+  )
+  assert.match(
+    contract.sourceBinding,
+    /Each observation's inspection resource reports it as source \{line,column\} beside requestedSource \{line,column\}; cite source\./,
+  )
+  assert.match(
+    contract.sourceBinding,
+    /A verified binding on another line fails at once\./,
+  )
+  assert.match(
+    contract.sequence[2] ?? '',
+    /The inspection's source is the bound position to cite; requestedSource is the position you declared\./,
+  )
+  assert.match(
+    contract.sequence[3] ?? '',
+    /That continue arms the next declared stop before it resumes\./,
+  )
+  assert.doesNotMatch(help.text, /exact position/)
+  assert.doesNotMatch(help.text, /first stop of each participant/)
+})
+
+// Value: protects=each observation of a multi-stop run reporting the position its own stop declared as requestedSource; fails_when=the inspection resource pairs a later observation with the first declared stop, or with a stop at another index; why_new=the only requestedSource test reads a single-stop run, where every index resolves to the same declared stop; seam=none
+test('the second observation of a two-stop run reports the position its own stop declared as requestedSource, not the first stop’s', async (context) => {
+  // Arrange: the second stop is declared at 1:7 and the debugger committed it at 1:9 of the same line.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'two-stops',
+      configuration: {
+        ...configuration,
+        additionalStops: [
+          {
+            line: 1,
+            column: 7,
+            inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+          },
+        ],
+      },
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!,
+    firstStop = runtime.snapshots[0]!
+  runtime.snapshots.push({
+    ...firstStop,
+    id: 'browser-session:2',
+    pause: { ...firstStop.pause, generation: 2 },
+    source: { ...firstStop.source, column: 9 },
+  })
+  const observations = service.state(record).observations
+  // Act
+  const first = await readResource(service, observations[0]!.inspectionUri),
+    second = await readResource(service, observations[1]!.inspectionUri)
+  // Assert
+  assert.ok('text' in first)
+  assert.ok('text' in second)
+  const firstFacts = JSON.parse(JSON.parse(first.text).content),
+    secondFacts = JSON.parse(JSON.parse(second.text).content)
+  assert.equal(
+    JSON.stringify(firstFacts.requestedSource),
+    '{"line":1,"column":1}',
+  )
+  assert.equal(firstFacts.source.column, 1)
+  assert.equal(
+    JSON.stringify(secondFacts.requestedSource),
+    '{"line":1,"column":7}',
+  )
+  assert.equal(secondFacts.source.line, 1)
+  assert.equal(secondFacts.source.column, 9)
+})
+
 test('API 1.5 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {
   // Arrange
   const { service, runtimes } = await configuredServiceHarness(context)

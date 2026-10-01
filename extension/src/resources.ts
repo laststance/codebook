@@ -24,6 +24,7 @@ import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import type { StudyService } from './service'
+import { configuredStops } from './utils/configuredStops'
 import { describeStudy } from './utils/describeStudy'
 import { omittedDetail } from './utils/omittedDetail'
 import { readBoundedFile } from './utils/readBoundedFile'
@@ -137,18 +138,18 @@ export async function readResource(
       entry:
         'API 1.5 / extension 0.2.0. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
       additionalStops:
-        "Version 1 appends up to seven {line,column,inspections} browser stops within the first selected citation. Version 2 declares participant (browser or server) for the first source/book.anchorIndex/inspections; each additionalStops entry has participant, source {path,hash,line,column}, anchorIndex and inspections, using its own retained article citation. Each stop needs a required value inspection and must be reached in order by the single action. Server stops use the owned Next worker and sealed action-browser modules; pending breakpoint registration is not a verified pause. Codebook arms the first stop of each participant before input and subsequent stops before continuation. Explain each committed pause and copy that participant's current continueArguments. All declared stops are required before after-condition success. Chronological order alone does not establish an async causal link.",
+        "Version 1 appends up to seven {line,column,inspections} browser stops within the first selected citation. Version 2 declares participant (browser or server) for the first source/book.anchorIndex/inspections; each additionalStops entry has participant, source {path,hash,line,column}, anchorIndex and inspections, using its own retained article citation. Each stop needs a required value inspection and must be reached in order by the single action. Server stops use the owned Next worker and sealed action-browser modules; pending breakpoint registration is not a verified pause. Codebook arms only the next expected stop: the first stop before input, and each later stop inside the codebook_continue that follows the stop before it. A later stop's line can therefore execute earlier without pausing; declare stops in the order the action executes them. If a later stop is not hit within 20 seconds of the preceding continuation, the run fails with 'Repository continuation reached no next declared pause' and names that stop. If a later stop cannot be armed, that codebook_continue fails with 'Next declared stop was not armed and no resume was sent', the run ends and earlier observations stay. Explain each committed pause and copy that participant's current continueArguments. All declared stops are required before after-condition success. Chronological order alone does not establish an async causal link.",
       inspections:
         'Declare unique value:<path> or type:<path> inspections, at least one required value. Paths contain one to four ASCII identifier segments, excluding reserved roots and prototype access. Values are observed primitives, including the explicit {type:"undefined"} marker, not expected values. Required unavailable/unsafe/oversized inspections fail; optional unavailability remains explicit. DOM text/attribute conditions use exact literals and all conditions must hold.',
       sourceBinding:
-        'Choose a one-based source line/column for an executable statement reached by the requested action, such as the handler body or a state-driven render after a library callback. JSX attributes, declarations, or source proximity alone do not establish a bindable action stop. Binding must resolve to that exact position in the sealed executed module. If it times out, run error.cause may list one-based positions from the frozen source map within the selected citation. They are mapping hints, not verified debugger bindings or proof the action reaches them; inspect source and retry only a relevant executable statement before claiming an observed pause.',
+        "Choose a one-based source line/column for an executable statement reached by the requested action, such as the handler body or a state-driven render after a library callback. JSX attributes, declarations, or source proximity alone do not establish a bindable action stop. The line is the declaration and the column is a request: Codebook accepts the debugger's verified binding anywhere on the declared line in the sealed executed module and uses that bound position for every check, for saved evidence and for display. Each observation's inspection resource reports it as source {line,column} beside requestedSource {line,column}; cite source. Request the column where the statement begins. A declared line without a mapped position fails preparation before input unless the map was too large to scan completely. A verified binding on another line fails at once. A browser stop whose binding never verifies times out after 20 seconds while it is being armed; a server stop may stay registered as pending and fails only when no verified pause arrives within 20 seconds of the input or of the preceding continuation. Binding failures name the declared stop, and run error.cause may list one-based positions from the frozen source map within that stop's citation. They are mapping hints, not verified debugger bindings or proof the action reaches them; inspect source and retry only a relevant executable statement before claiming an observed pause.",
       initialState:
         'Optional configuration.entryPath selects a same-origin application path; redirects require selecting the actual path. Codebook checks action.before on the fresh managed page before applying optional initialInputs, then inserts those distinct selector/text pairs before breakpoint arming; uncertain input is never retried. All action, condition and initial-input selectors must be browser-native CSS accepted by querySelectorAll; Playwright-only pseudos such as :has-text() are invalid. Do not require an initialInputs value in action.before. Use a condition observable before input, such as the form heading or a visible control, and reserve filled-value checks for action.after only if the application still shows that value after the click. Do not assume system appearance or prior localStorage state. Use configuration.initialStorage only when the app source establishes the key/value needed for a deterministic initial state. A visible condition requires nonzero element geometry. For class membership, use a CSS class selector rather than exact class-attribute equality when other class tokens may exist. An invalid CSS selector immediately identifies the failing one-based condition or click target. A condition timeout identifies the failing one-based predicate without exposing page values. If preparation fails, read the returned run resource error.cause before changing configuration; a lock removed by cleanup does not establish the original failure.',
       sequence: [
         'codebook_start with profile repository-browser, full configuration and a stable key returns immediately. Reuse the complete identical input on response loss; never retry input with a new key.',
         "Poll the returned run resource until it becomes ready or terminal, or reaches preparationDeadlineAt. While preparing, preparationRemainingMs is computed from Codebook's clock; a positive value means the deadline has not passed even if a local time-zone display differs. An unchanged preparing state while the app loads is not a reason to stop it. Once repository-click appears in nextActions, read manifestUri and verify its configurationHash, accepted configuration, complete citation identity and exact source/JS/map hashes before input.",
-        'Send repository-click once with a stable action key. Read inspectionUri and sourceUri returned by the observation for actual declared values. Bounded resources provide content chunks and nextUri; concatenate every chunk in order and parse JSON before claiming complete inspection. Call codebook_explain with the exact source.hash and captured fact keys, including value: or type: prefixes; wait for its committed explanationUri before continuing. Chat prose alone is not saved in Study. Include learningSummary for saved question, processing summary and sequence steps; classify each relationship as observed, source-derived or unknown. Bind source steps to exact same-run snapshot/source references. After the run is stopped and demonstrated, its terminalReference can bind an observed final-result step in a newly committed full summary.',
-        'Use codebook_reveal for the immutable Study source, then copy the current paused participant continueArguments. Earlier observations remain immutable; an unexpected pause or manual resume invalidates this operation.',
+        "Send repository-click once with a stable action key. Read inspectionUri and sourceUri returned by the observation for actual declared values. The inspection's source is the bound position to cite; requestedSource is the position you declared. Bounded resources provide content chunks and nextUri; concatenate every chunk in order and parse JSON before claiming complete inspection. Call codebook_explain with the exact source.hash and captured fact keys, including value: or type: prefixes; wait for its committed explanationUri before continuing. Chat prose alone is not saved in Study. Include learningSummary for saved question, processing summary and sequence steps; classify each relationship as observed, source-derived or unknown. Bind source steps to exact same-run snapshot/source references. After the run is stopped and demonstrated, its terminalReference can bind an observed final-result step in a newly committed full summary.",
+        'Use codebook_reveal for the immutable Study source, then copy the current paused participant continueArguments. That continue arms the next declared stop before it resumes. Earlier observations remain immutable; an unexpected pause or manual resume invalidates this operation.',
         'After continuation, poll for observed.afterVerified or explicit failure. A Continue response alone does not establish input acknowledgement, after conditions or renderer confirmation. Stop/seal and wait for current history/recording receipts.',
         "Publish a new complete article revision containing the exact saved studyId/observationId/sourceHash link. Copy studyId from the terminal run resource and observationId from that resource's observations[].id; a debugger runtimeRunId is not a saved Study identity. Its default learning identity and full citation context stay the same. Open the linked observation or recording; replay after shutdown through the discovered recordingUri and playbackUri.",
       ],
@@ -453,6 +454,15 @@ export async function readResource(
   if (inspectionMatch?.[1]) {
     const snapshotUri = service.uri(record.id, inspectionMatch[1]),
       snapshot = service.snapshot(record, snapshotUri)
+    // Committed snapshots follow the declared stop order, so a snapshot's index names the stop it answers.
+    const declaredStop =
+      record.definition &&
+      configuredStops(record.definition.configuration)[
+        record.runtime
+          ?.view()
+          .snapshots.findIndex((committed) => committed.id === snapshot.id) ??
+          -1
+      ]
     return readJsonPage(
       `${snapshotUri}/inspection`,
       {
@@ -460,12 +470,19 @@ export async function readResource(
         historical: true,
         pause: snapshot.pause,
         elapsedMs: snapshot.elapsedMs,
+        // The position the debugger bound and paused at; it lies on the declared line and may differ from the requested column.
         source: {
           hash: snapshot.source.hash,
           line: snapshot.source.line,
           column: snapshot.source.column,
           uri: `${snapshotUri}/source/typescript`,
         },
+        ...(declaredStop && {
+          requestedSource: {
+            line: declaredStop.source.line,
+            column: declaredStop.source.column,
+          },
+        }),
         values: snapshot.values,
         unavailableValues: snapshot.unavailableValues,
       },

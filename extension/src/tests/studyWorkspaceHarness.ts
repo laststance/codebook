@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -171,6 +172,10 @@ export async function workspaceHarness(
   let primaryNotificationOrder: 'together' | 'editor first' | 'group first' =
     'together'
   let partialFocusEditor: { value: SourceEditor | undefined } | undefined
+  // Captured-source tabs a previous host session left behind; only their close changes the active tab, so other close paths keep their recorded behavior.
+  const leftoverCapturedTabs = new Set<Tab>()
+  let refuseLeftoverClose = false,
+    lateEditorAfterLeftoverClose = false
   let lastSourceEditor: SourceEditor | undefined
   let sourceFocusOnArrange: SourceEditor | undefined
   let reportedSourceColumn: number | undefined
@@ -1667,8 +1672,35 @@ export async function workspaceHarness(
             }
           },
           close: async (tabs: Tab[]) => {
-            for (const group of groups)
+            if (
+              refuseLeftoverClose &&
+              tabs.some((tab) => leftoverCapturedTabs.has(tab))
+            )
+              return false
+            let closedActiveLeftover = false
+            for (const group of groups) {
+              const active = group.activeTab
               group.tabs = group.tabs.filter((tab) => !tabs.includes(tab))
+              // The editor activates the neighbouring tab when the active one closes.
+              if (
+                active &&
+                tabs.includes(active) &&
+                leftoverCapturedTabs.has(active)
+              ) {
+                group.activeTab = group.tabs.at(-1)
+                closedActiveLeftover = true
+              }
+            }
+            if (closedActiveLeftover) {
+              if (lateEditorAfterLeftoverClose) {
+                // The tab model already names the next tab while the active text editor is still unset.
+                partialFocusEditor = { value: undefined }
+                setTimeout(() => {
+                  partialFocusEditor = undefined
+                  activeTextEditorChanged(focusedSourceEditor())
+                }, 60)
+              } else activeTextEditorChanged(focusedSourceEditor())
+            }
             return true
           },
         },
@@ -2268,6 +2300,47 @@ export async function workspaceHarness(
           activeTextEditorChanged(editor)
         },
       }
+    },
+    /** Leaves a captured-source tab in a group as the host restores one after a restart: a text tab without a text editor. @example const leftover = harness.restoreLeftoverCapturedSource(); harness.restoreLeftoverCapturedSource({ active: false, authority: 'f'.repeat(64) }) */
+    restoreLeftoverCapturedSource(
+      options: {
+        active?: boolean
+        authority?: string
+        column?: number
+        refuseClose?: boolean
+        lateTextEditor?: boolean
+      } = {},
+    ) {
+      const group = groups.find(
+        (group) =>
+          group.viewColumn === (options.column ?? groups[0]!.viewColumn),
+      )!
+      const tab: Tab = {
+        input: new TabInputText(
+          Uri.from({
+            scheme: 'codebook-source',
+            authority:
+              options.authority ?? sha256(realpathSync(harness.directory)),
+            path: '/earlier-study/repository%2Finterface%2Ftheme/hash/Captured-login-form.tsx',
+          }),
+        ),
+        isPreview: false,
+        isDirty: false,
+      }
+      if (options.authority === undefined) leftoverCapturedTabs.add(tab)
+      refuseLeftoverClose = Boolean(options.refuseClose)
+      lateEditorAfterLeftoverClose = Boolean(options.lateTextEditor)
+      group.tabs.push(tab)
+      if (options.active ?? true) {
+        group.activeTab = tab
+        activeTabGroup = group
+        activeTextEditorChanged(focusedSourceEditor())
+      }
+      return tab
+    },
+    /** Lets the editor close leftover captured-source tabs again after a refusal test, so the harness can shut its reader down. @example harness.acceptLeftoverClose() */
+    acceptLeftoverClose(): void {
+      refuseLeftoverClose = false
     },
     useOpaquePrimary(kind: 'blank' | 'settings') {
       const group = groups.find((group) => group.viewColumn === 1)!
