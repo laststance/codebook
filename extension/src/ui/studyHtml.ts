@@ -86,6 +86,9 @@ export interface StudyViewMessage {
     index?: number
     eventIndex: number
     elapsedMs: number
+    /** The stop's captured source is verified and matches it; unlike {@link debuggerAvailable}, ending the session never clears it. */
+    sourceAvailable?: boolean
+    /** The owned native session shows this stop now. */
     debuggerAvailable?: boolean
     nativeValuesUninspected?: boolean
   }
@@ -1636,7 +1639,7 @@ function studyClient(
         )
       const momentDescription =
         position?.type === 'stop'
-          ? `Debugger stop ${(position.index ?? 0) + 1}${position.debuggerAvailable ? '' : ' · captured source unavailable'}`
+          ? `Debugger stop ${(position.index ?? 0) + 1}${position.sourceAvailable ? '' : ' · captured source unavailable'}`
           : position?.type === 'result'
             ? 'Test result · debugger not recorded at this moment'
             : position?.type === 'output'

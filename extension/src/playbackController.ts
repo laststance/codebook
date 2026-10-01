@@ -4,6 +4,7 @@ import type { RecordingContext, RecordingIndex } from './recordingSchemas'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
 import { projectRecording } from './utils/projectRecording'
+import { untilAborted } from './utils/untilAborted'
 
 export interface PlaybackData {
   index: RecordingIndex
@@ -80,8 +81,11 @@ export class PlaybackController {
         this.studyId === input.studyId &&
         this.readiness !== 'idle' &&
         this.readiness !== 'failed'
-      )
+      ) {
+        // A hidden or timed-out frame left the confirmed moment unpainted; opening the same recording shows it again.
+        if (this.readiness === 'ready' && this.cleared) this.reveal()
         return this.state()
+      }
       this.remember()
       this.controlRevision++
       this.mode = 'paused'
@@ -268,26 +272,39 @@ export class PlaybackController {
   }
 
   /**
-   * Awaits owned asynchronous presentation/preferences during tests, workspace retirement and presentation changes.
+   * Awaits owned asynchronous presentation during tests, workspace retirement and presentation changes.
    *
-   * A replay frame that {@link StudyWorkspace} reveals while its panel is hidden can wait indefinitely, so presentation
-   * changes and repository navigation pass their cancellation and a bound. Giving up never cancels the frame itself.
+   * Unbounded (no arguments, as tests and {@link dispose} call it), it also waits for queued preference saves. A replay
+   * frame that {@link StudyWorkspace} reveals while its panel is hidden can wait indefinitely, so presentation changes,
+   * repository navigation and reader close pass their cancellation and a bound; a bounded wait covers only the
+   * presentation loop, never saves held behind the storage lock. Giving up never cancels the frame itself.
    *
    * @param signal - Optional caller cancellation.
    * @param timeoutMs - Optional bound on the wait; defaults to unbounded when neither argument is given.
    * @throws When `signal` aborts or `timeoutMs` elapses first.
    * @example
    * ```ts
-   * await controller.settle(transition.signal, PRESENTATION_READY_TIMEOUT_MS)
+   * await controller.settle(transition.signal, PRESENTATION_SETTLE_CEILING_MS)
    * ```
    */
   async settle(signal?: AbortSignal, timeoutMs?: number): Promise<void> {
-    const settled = (async () => {
+    const presented = (async () => {
       while (this.running) await this.running
-      await this.saves
     })()
-    if (!signal && timeoutMs === undefined) return settled
-    await awaitResponse(settled, 'the replay frame', signal, timeoutMs)
+    if (!signal && timeoutMs === undefined) {
+      await presented
+      return this.saved()
+    }
+    await awaitResponse(presented, 'the replay frame', signal, timeoutMs)
+  }
+
+  /**
+   * Waits for queued preference saves, which {@link StudyWorkspace.close} keeps awaiting after it bounds the presentation wait.
+   * @returns Once every queued save finished; a failed save is reported through state, never thrown.
+   * @example await controller.saved()
+   */
+  saved(): Promise<void> {
+    return this.saves
   }
 
   /** Retires playback timers and pending receipts without closing any application/debug session. @example await controller.dispose() */
@@ -343,8 +360,12 @@ export class PlaybackController {
         try {
           let data = this.data
           if (!data) {
-            data = await this.dependencies.load(request.studyId, abort.signal)
-            if (!current()) continue
+            // Every dependency wait leaves with the request's abort, so a stalled read cannot hold later requests.
+            data = await untilAborted(
+              this.dependencies.load(request.studyId, abort.signal),
+              abort.signal,
+            )
+            if (!current() || !data) continue
             this.data = data
             this.boundaries = [
               ...(data.context?.study.observations.map(
@@ -378,9 +399,8 @@ export class PlaybackController {
               ? this.presented.image
               : undefined)
           if (frameHash && !image) {
-            image = await this.dependencies.frame(
-              request.studyId,
-              frameHash,
+            image = await untilAborted(
+              this.dependencies.frame(request.studyId, frameHash, abort.signal),
               abort.signal,
             )
             if (!current()) continue
@@ -407,7 +427,10 @@ export class PlaybackController {
             this.dependencies.changed()
           }
           if (changed) {
-            await this.dependencies.present(bundle, abort.signal)
+            await untilAborted(
+              this.dependencies.present(bundle, abort.signal),
+              abort.signal,
+            )
             if (!current()) continue
           }
           if (!current()) continue

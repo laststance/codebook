@@ -688,7 +688,7 @@ async function check(page, options) {
           (await page.locator('#playback-hint').getAttribute('role')) ===
             'status' &&
           (await page.locator('#playback-hint').textContent()).includes(
-            'open it and expand Variables',
+            'expand Variables, then expand its first scope if it stays closed',
           ) &&
           (await page.locator('#playback-hint').textContent()).includes(
             'Codebook · Recorded learning',
@@ -726,6 +726,7 @@ async function check(page, options) {
         index: 0,
         eventIndex: 1,
         elapsedMs: 1200,
+        sourceAvailable: true,
         debuggerAvailable: true,
       }
       await publish({
@@ -762,6 +763,33 @@ async function check(page, options) {
           nodeWithValues.position ===
             'Debugger stop 1 · 1.20 s · output shown through this event.' &&
           nodeWithValues.hint === '',
+      })
+      await publish({
+        ...replay,
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      const nodeSessionEnded = await page
+        .locator('#node-history-position')
+        .textContent()
+      await publish({
+        ...replay,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          sourceAvailable: false,
+          debuggerAvailable: false,
+        },
+      })
+      const nodeSourceMismatch = await page
+        .locator('#node-history-position')
+        .textContent()
+      cases.push({
+        name: 'a saved Node stop whose native session ended keeps its source label, and only a real source mismatch says captured source unavailable',
+        actual: { nodeSessionEnded, nodeSourceMismatch },
+        passed:
+          nodeSessionEnded ===
+            'Debugger stop 1 · 1.20 s · output shown through this event.' &&
+          nodeSourceMismatch ===
+            'Debugger stop 1 · captured source unavailable · 1.20 s · output shown through this event.',
       })
       await publish({
         ...replay,

@@ -522,6 +522,9 @@ export const REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 5_000
 export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'
 /** How long a replay moment waits for native Run and Debug to load its recorded values (VS Code defers Variables ~400 ms) before committing without them. */
 export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000
+/** Ceiling on one owned replay settle: the 5 s paint bound plus one capture timeout each for retiring and starting the historical session; a stall before painting still ends here. */
+export const PRESENTATION_SETTLE_CEILING_MS =
+  PRESENTATION_READY_TIMEOUT_MS + 2 * REPLAY_DEBUG_CAPTURE_TIMEOUT_MS
 export const NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 1_500
 export const NODE_REPLAY_DEBUG_MAX_FRAMES = 8
 export const NODE_REPLAY_DEBUG_MAX_VARIABLES = 64

@@ -91,6 +91,8 @@ export class NodeHistoryPlaybackController {
     this.generation++
     this.mode = 'paused'
     this.stopTimer()
+    // The abandoned presentation never publishes its outcome, so the reader learns here that nothing is loading any more.
+    this.dependencies.changed()
   }
 
   /** Starts at the confirmed event and advances only after each native event has been presented. @example controller.play() */
@@ -207,8 +209,8 @@ export class NodeHistoryPlaybackController {
     } finally {
       if (this.pending === operation) {
         this.pending = undefined
-        // Publish settled controls only after the native event is no longer loading.
-        if (generation === this.generation) this.dependencies.changed()
+        // Publish settled controls only after the native event is no longer loading, even for an abandoned or superseded event: nothing else reports that loading ended.
+        this.dependencies.changed()
       }
     }
   }

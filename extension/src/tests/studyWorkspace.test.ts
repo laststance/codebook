@@ -2799,6 +2799,8 @@ test('opening a recording drops the Run and Debug hint of a saved Node stop and 
     assert.equal(view.nodeHistoryPosition?.sequence, 2)
     assert.equal(view.nodeHistoryPosition?.nativeValuesUninspected, false)
     assert.equal(view.nodeHistoryPosition?.debuggerAvailable, false)
+    // The stop no longer owns Run and Debug, but its captured source is still verified (Cycle 0033 T1).
+    assert.equal(view.nodeHistoryPosition?.sourceAvailable, true)
   } finally {
     await harness.close()
   }
@@ -2989,6 +2991,8 @@ test('ending the historical session re-enables Inspect for the selected Node sto
       afterSessionEnded.nodeHistoryPosition?.debuggerAvailable,
       false,
     )
+    // Ending the session never makes the label claim the captured source is unavailable (Cycle 0033 T1).
+    assert.equal(afterSessionEnded.nodeHistoryPosition?.sourceAvailable, true)
     assert.equal(harness.historicalDebuggers.length, 2)
     assert.equal(harness.historicalDebuggers[1]!.available, true)
   } finally {

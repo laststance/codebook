@@ -251,7 +251,8 @@ export async function workspaceHarness(
   const historicalDebuggers: TestReplayDebugger[] = []
   let historicalDebugInspection: ReplayInspection = 'inspected'
   let nextHistoricalDebugPresentation:
-    { wait: Promise<void>; entered(): void } | undefined
+    | { wait: Promise<void>; entered(): void; recordedStopOnly: boolean }
+    | undefined
   class TestReplayDebugger {
     available = true
     /** Registers the fake owner so {@link loadHistoricalDebugValues} and {@link endHistoricalDebugSession} can notify the workspace, as the real owner does. @example new TestReplayDebugger(vscode, (reason) => workspace.replayDebuggerChanged(reason)) */
@@ -260,6 +261,7 @@ export async function workspaceHarness(
       readonly changed: (
         reason: 'values-loaded' | 'session-ended',
       ) => void = () => {},
+      readonly failed: (error: unknown) => void = () => {},
     ) {
       historicalDebuggers.push(this)
     }
@@ -278,8 +280,9 @@ export async function workspaceHarness(
       historicalDebugPresentations.push({ snapshot, label, sourceDocument })
       // A held presentation models native Run and Debug still loading the recorded values.
       const held = nextHistoricalDebugPresentation
-      nextHistoricalDebugPresentation = undefined
-      if (held) {
+      // A hold reserved for a recorded stop lets earlier gap presentations pass and stays armed.
+      if (held && (!held.recordedStopOnly || snapshot)) {
+        nextHistoricalDebugPresentation = undefined
         held.entered()
         await held.wait
       }
@@ -2419,6 +2422,10 @@ export async function workspaceHarness(
       for (const debuggerView of historicalDebuggers)
         debuggerView.changed('values-loaded')
     },
+    /** Models a values-loaded notification whose handling threw, which the real owner reports through its failure callback. @example harness.failHistoricalDebugNotification(new Error('reader closed')) */
+    failHistoricalDebugNotification(error: Error): void {
+      for (const debuggerView of historicalDebuggers) debuggerView.failed(error)
+    },
     /** Models the learner pressing Stop on the owned historical session: it becomes unavailable and tells the workspace the session ended. @example harness.endHistoricalDebugSession() */
     endHistoricalDebugSession(): void {
       for (const debuggerView of historicalDebuggers) {
@@ -2427,8 +2434,8 @@ export async function workspaceHarness(
         debuggerView.changed('session-ended')
       }
     },
-    /** Keeps the next historical presentation loading until released or rejected, as native Run and Debug does before values load. @example const held = harness.holdHistoricalDebugPresentation(); await held.started; held.reject(new Error('superseded')) */
-    holdHistoricalDebugPresentation() {
+    /** Keeps the next historical presentation loading until released or rejected, as native Run and Debug does before values load; `recordedStopOnly` skips "Not recorded" gap presentations so the hold lands on the next recorded stop. @example const held = harness.holdHistoricalDebugPresentation(); await held.started; held.reject(new Error('superseded')) */
+    holdHistoricalDebugPresentation(recordedStopOnly = false) {
       let release = (): void => {},
         reject = (_error: Error): void => {},
         entered = (): void => {}
@@ -2439,7 +2446,7 @@ export async function workspaceHarness(
         release = resolve
         reject = rejectPromise
       })
-      nextHistoricalDebugPresentation = { wait, entered }
+      nextHistoricalDebugPresentation = { wait, entered, recordedStopOnly }
       return { started, release, reject }
     },
     holdNextSource() {
@@ -2734,11 +2741,15 @@ export async function configuredWorkspaceHarness(sourceText?: string) {
   }
 }
 
-/** Starts each actual-Return regression from a saved recording and the learner's native two-row article layout. @example await articleRecordingLayoutHarness() */
+/** Starts each actual-Return regression from a saved recording and the learner's native two-row article layout; `recordedDebugger` also attaches captured native debugger state to its stop. @example await articleRecordingLayoutHarness() */
 export async function articleRecordingLayoutHarness(
   capturedApplication = false,
+  recordedDebugger = false,
 ) {
-  const harness = await recordedReaderHarness(capturedApplication),
+  const harness = await recordedReaderHarness(
+      capturedApplication,
+      recordedDebugger,
+    ),
     library = await harness.reader.learningStorage()
   try {
     await harness.reader.close()
