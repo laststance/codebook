@@ -3900,6 +3900,8 @@ export class StudyWorkspace {
           }
         }
         this.errors.delete('control')
+        // A live-run action that succeeded also answers an earlier refused replay control, as it did while both shared one key.
+        this.errors.delete('replay-control')
       } catch (error) {
         this.report('control', error)
         throw error
