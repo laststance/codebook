@@ -127,7 +127,7 @@ Frozen before implementation, as amended by the plan reviews of 2026-10-01 ("Pla
 
 ## Attempts and evidence
 
-The plan reviews were recorded before any source change. The implementation and its mechanism proof follow them; the native trials (N5) are not run yet.
+The plan reviews were recorded before any source change. The implementation and its mechanism proof follow them, then the follow-up fix made after the first native trial, and the native trials (N5) on both candidates.
 
 ### Plan reviews, 2026-10-01 (before any source change)
 
@@ -235,6 +235,8 @@ The working context was compacted twice during the plan reviews, and each time t
 
 - Fourth compaction (after the implementation commit `b07dab7`, before the native trials, 2026-10-02): the full entry was repeated before any trial. PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md` were read in full. The PNG was opened with the image viewer (SHA-256 `f189ee82…caf2aa`, unchanged) and the same four regions were observed: live explanation (native Run and Debug with `amount`, `amountInCents`, `status`, the application above `actions.ts` with one highlighted line, standard chat with a `/codebook` request, "Recording explanation · Save learning replay"), learning replay ("Replay: Creating an invoice", "(recorded state)", "Recorded application · 00:42", Learning summary with the sequence diagram and "I understand this step", "Unrecorded interval"), the DeepWiki reproduction (chapters, flow diagram, Update LLM Wiki, Open in VS Code, Change location) and the shortcut strip. Checkout: `codex/cycle-0036-live-first-run` at `b07dab7`, clean; Node 24.21.0. One command ran before the hook's reminder was read: it built the package candidate in the clean worktree `/tmp/c36-head` (no product source or host was touched). No acceptance row changed since the gap audit: the commits since are this cycle's implementation and records.
 
+- Fifth compaction (during the native trials, 2026-10-02 at about 01:39 JST): the N5-a take on candidate 2 was in flight, with the chat agent waiting on its third question card and no run started. Before any further trial action the full entry was repeated: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md` were read in full. The PNG was opened with the image viewer (SHA-256 `f189ee82…caf2aa`, unchanged) and the same four regions were observed: live explanation (native Run and Debug with `amount`, `amountInCents`, `status`, Call Stack `createInvoice actions.ts:24`, the application above `actions.ts` with one highlighted line, standard chat with a `/codebook` request, "Recording explanation · Save learning replay"), learning replay ("Replay: Creating an invoice", "(recorded state)", "Recorded application · 00:42", "actions.ts (recorded source)", Learning summary with the sequence diagram and "I understand this step", "Unrecorded interval"), the DeepWiki reproduction (chapters, flow diagram, Ask composer, Update LLM Wiki, Open in VS Code, Change location) and the shortcut strip with the searchable list. Checkout: `codex/cycle-0036-live-first-run` at `0fecc57`, clean; Node 24.21.0. One action ran before the hook's reminder was read: a click on the already active `codebook · Study` tab of the QA window and a screenshot, which changed nothing. No acceptance row changed since the gap audit: the commits since are this cycle's implementation, its follow-up and records.
+
 ### Implementation, 2026-10-02
 
 Order followed: harness support, L1, L2 and L3 with the tracker change, the failure texts, saved-evidence validation, the requested position, the contract text, plan R2, L4, R1 with R6. Every behavior test was written against the plan before its result was looked at; the red run on `dceea3f` was taken afterwards in a separate worktree (below).
@@ -317,19 +319,73 @@ AC18, gates on the working tree (Node 24.21.0, pnpm 12.4.2):
 
 AC19: no stored format version, tool name, required argument or timeout value changed. The only added constant is `MILLISECONDS_PER_SECOND`, used to print the existing 20 s budget.
 
-Limits of this proof: everything above is mechanism level with controlled transports. No editor, debugger or application ran. The native observations (N5-a to N5-c) and the protected-state check (AC23) are not run yet. `replay-control` is not cleared by an agent's accepted seek or play through the service, only by a panel control, a recording open or a load.
+Limits of this proof: everything above is mechanism level with controlled transports. No editor, debugger or application ran. The native observations (N5-a to N5-c) and the protected-state check (AC23) follow below. `replay-control` is not cleared by an agent's accepted seek or play through the service, only by a panel control, a recording open or a load.
+
+### Native trials N5, 2026-10-02
+
+Level: development-native, bounded. No Stage 1, Stage 2 or final acceptance credit. Target: the designated dashboard at `1936e41` with only its untracked `.codebook/`; its existing local database container was started for the trials and stopped afterwards. Hosts: VS Code 1.140.0 with Copilot Chat **Auto** (routed to Claude Opus 5.5; credits were not exhausted, so the Codex Extension was not used) and Cursor 3.23.10. Chat prompts went through `code chat -m agent -r`; everything else was clicks. Recorder: OBS 32.2.2, macOS Screen Capture, Method Window Capture on the exact QA window, Reset Transform, muted audio, a changing-content preflight per host; all takes are 3456 × 2168 at 30 fps.
+
+Expectations were frozen before each candidate ran: version 1 at 00:48 for candidate 1, version 2 at 01:24:42 for candidate 2 (it adds L4's native expectation to N5-a and states that an L4 failure is recorded as a FAIL of L4's native check while R7 is judged on its own). Private evidence under `artifacts/cycle-0036/native/`: `n5-expectations.json`, `n5-expectations-v2.json`, `n5-vscode-receipt.json`, `n5-cursor-receipt.json`, the two action logs, six videos with their originals, and the inspected frames.
+
+| Candidate | Source | VSIX SHA-256 | Runtime SHA-256 |
+| --- | --- | --- | --- |
+| 1 | `b07dab7` | `aacf6397…743d60` | `d07ba393…ea2d06` |
+| 2 | `0fecc57` | `8e6880b3…19d137` | `a99c9228…80b494` |
+
+Both have 29 entries and pass `package:check`. Between them only `studyWorkspace.ts` changed; the runtime modules of L1 to L3 are byte-identical.
+
+| Check | Candidate | Expected | Actual | Outcome |
+| --- | --- | --- | --- | --- |
+| AC20 / N5-a | 1 | R7 | First and only run of the submission (`aca5c43b`). Four stops in declared order; declared → bound → saved observation → saved debugger top frame: `auth.ts` 41:11 → 41:24 → 41:24 → `Object.authorize` 41:24; `auth.ts` 23:5 → 23:5 → 23:5 → `getUser` 23:5; `app/lib/actions.ts` 36:7 → 36:7 → 36:7 → `authenticate` 36:7; `app/ui/login-form.tsx` 23:5 → 23:5 → 23:5 → `LoginForm` 23:5. One registration at preparation; each later stop was armed inside the preceding continuation. After condition verified, cleanup released, run demonstrated. The inspection resource shows `source` and `requestedSource`. One driver click on the host prompt "Continue to iterate?". | PASS |
+| AC20 / N5-a | 2 | R7 | First and only run of the submission (`a3e18780`). The same four positions and agreement as on candidate 1, read from the run record and its sealed snapshots. One registration at preparation (01:42:03.712); the browser stop was bound at 01:47:05.488 inside the third continuation and hit 21 ms later. After condition verified 01:48:01, cleanup released 01:48:02, run demonstrated. One driver click on "Continue to iterate?". | PASS |
+| N5-a, moved column | 1 and 2 | Recorded separately | The first stop moved from column 11 to column 24 on both candidates and committed at 41:24. | Observed (not NOT RUN) |
+| L4 native (version 2) | 2 | The first `select` after an extension update with the reader open succeeds without driver help | Admitted, and the leftover captured-source tab was closed. The placement then failed: `PRESENTATION_UNAVAILABLE`, "The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.", cause "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved." Later selects were refused for the active Welcome page (twice), for the italic Welcome preview tab ("A destination group contains a foreign preview…") and for two Study tabs ("The current presentation tab is not unique."). Three agent questions needed driver clicks before the sixth select was confirmed. | FAIL |
+| AC21 / N5-b | 1 | PASS, PARTIAL or FAIL per policy | One submission, two runs. Run 1 committed four server stops in order (two with moved columns: `actions.ts` 32:5 → 32:11, `auth.ts` 41:11 → 41:24) and failed while arming the fifth: "Next declared stop was not armed and no resume was sent: Error: Declared stop app/ui/login-form.tsx:22 bound at 23:5, not on its declared line." with the mapped positions; no resume was sent and cleanup released. Run 2 committed server `actions.ts` 36:7 and then browser `login-form.tsx` 23:5, armed only inside the server continuation, with the after condition verified. X11: 5 min 55 s from the submission to the first saved explanation; 2 runs; 3 driver clicks (two agent layout questions, one "Continue to iterate?"). The first selection with the leftover tab failed on this candidate with the foreign-editor refusal. | PARTIAL |
+| AC22 / N5-c | 2, VS Code | First open and the recovery present the saved moment | Saved study `…5568ae8b` (candidate 1's N5-a run). First open: Recorded 35.49 s, `Captured-auth.ts` 41:24, Variables `Block: authorize`, Call Stack `Object.authorize`. After Run > Stop Debugging the native views were empty and the reader kept 35.49 s. One Recording press brought the same frame, source and values back; in the video the Variables rows return about 1.5 s after the press. No timeout, closed-debugger or closed-reader message. | PASS |
+| AC22 / N5-c | 2, Cursor | Same | After Restart Extensions loaded candidate 2 (activated 01:57:58): study `57bbb9ae`, Recorded 74.59 s, `Captured-login-form.tsx` 77:15, Variables `Local: LoginForm`, Call Stack "Recorded pause · 74.59 s". After Run > Stop Debugging one Recording press restored them in about 1.0 s. No error message. No application was running. | PASS |
+| AC23 | both | Protected state unchanged, nothing left running | Hashes `0ac38ba2`, `8d6e64c2`, `80ba41bd`, `d578b9e3` unchanged; dashboard `1936e41` with only `.codebook/`; no listener on port 3000; the database container exited at 02:02:06; OBS quit through its menu. | PASS |
+
+What the trials say about the cycle's rules:
+
+- **L1, arming order.** Natively confirmed three times: a browser stop declared after server stops was bound only inside the preceding continuation and committed in its turn (N5-b run 2, N5-a on both candidates). In Cycle 0035 the same declaration failed 18 ms after the input.
+- **L2, line-level server binding.** Natively confirmed: 41:11 → 41:24 and 32:5 → 32:11 committed at the bound column, and the saved observation, the native top frame and the inspection resource agree.
+- **L3, browser binding.** The only natural browser miss was a stop declared on line 22 that the debugger binds on line 23. It failed at once and named both positions (X7, X9) instead of waiting 20 s; the agent's second run declared line 23. A browser binding at another column of the declared line was not met natively and stays on the mechanism tests.
+- **L4, leftover tab.** The hypothesis was only partly right. Closing the leftover captured-source tab is necessary, and candidate 2 admits the selection, but after an extension update with the reader open the window also holds the old host's dead Codebook webview tabs and, here, a Welcome preview tab, and the placement guard refuses. The cause of that refusal is not verified. AC11 holds at mechanism level only; its native check is FAIL and is carried to the next cycle.
+- **R1, R2.** Not exercised natively beyond N5-c's clean recovery; they stay on their tests and controls.
+
+Follow-up fix between the candidates (`0fecc57`, L4). On candidate 1 the prelude closed the focused leftover tab, the editor activated the group's Welcome page, and the repeated admission refused it as a foreign editor. The prelude now reports whether it closed the tab that had focus (`closeLeftoverSources`), and only in that case the admission accepts a non-text page of the editor as the place to return to, keeping the group focus. A new workspace test covers it ("a closed reader opens when closing its focused leftover captured-source tab leaves a non-text page of the editor active"), N8 now also asserts that the learner's draft has focus again, and both have disabled-fix controls. Gates on `0fecc57`: full suite 1,569/1,569, package 183/183, hook 4/4, 13 of 13 controls held with the compiled output restored byte-identically, and `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` exit 0 with the health baseline unchanged. No second fix was made after candidate 2's result: the pre-registered note of version 2 says an L4 failure is recorded, and the remaining cause lies in the placement guard and tabs this cycle's scope does not cover.
+
+Other observations, recorded and not fixed:
+
+- An ordinary quit and relaunch leaves no captured-source tab. The leftover state comes from Restart Extensions with the reader open: the old host's `deactivate` logs `Canceled` from `tabGroups.close`. A same-version reinstall offers no Restart Extensions; a version change does.
+- The natural run of N5-a on candidate 2 could not be saved: "Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, then retry storage. Existing learning was kept." The QA workspace is at the default limit of 64. The learner learns this only after the run; the setting was not changed, because the QA settings are protected. The next native trial needs the limit raised in the QA workspace first.
+- After a failed run the presentation state reads "The native editor layout receipt no longer matches the Study panes…", and restore and focus fail until a Study or Application pane is clicked (the existing layout-restore gap).
+- `codebook_reveal` failed once per trial while an observation was being read (`BUSY` on candidate 1, `EVIDENCE_UNAVAILABLE` "Matching captured source is not displayed." on candidate 2).
+- Copilot's host prompt "Continue to iterate?" paused the agent once per submission while a run was paused; a paused run holds for five minutes.
+- In Cursor the first Learning Outline click after the host restart opened Application, Study and the captured source together in this run.
+- Another actor used the same desktop during the trials. In the owner's Chrome a Playwright Extension connection page, an OAuth "Open Electron.app?" dialog and a GitHub Copilot plan checkout page in a "processing payment" state appeared, and the chat permission picker read "Allow all" for a while. None of these was started, clicked or approved by the trial driver; Chrome was read-only for this session, and the trial was followed through run records wherever a click was not needed.
+
+Limits of the native proof: one target, one scenario family (the failed login), VS Code only for the live path; the live path in Cursor Agent is out of scope. N5-a on candidate 2 was judged from the run record and its sealed snapshots, because its study could not be saved. N5-c in VS Code presented the first recorded stop only. Frame inspection covered the sampled frames named in the receipts and the native-rate frames around the two recoveries, not every frame.
 
 ## Result and decision
 
-- Result: pending
+- Result: demonstrated for L1 to L3, R1 and R2. L4 is demonstrated at mechanism level only; its native check failed on candidate 2 and is carried.
+- Decision: keep. The prepared declaration reaches its four stops on the first run on both candidates (R7), a natural request reaches the observed result in one submission (two runs, PARTIAL), and both hosts recover a stopped replay. Keep `0fecc57`: it moves the first-selection failure from admission to placement and is covered by a test and a control.
+- Not claimed: a first selection that succeeds after an extension update with the reader open; a natural request that passes on its first run; the live path in Cursor.
 
 ## Handoff
 
-Nothing to hand off yet.
+- Affected gaps before → after:
+  - AC-LIVE: "needs two submissions and four runs, no client-side observation" → one submission, two runs, with a client-side observation; the prepared four-stop declaration passes on its first run. Still PARTIAL for a natural request, VS Code only.
+  - AC-SAVE: a saved stop whose column moved reopens (N5-c on the study of N5-a). New gap: a full library is reported only after the run.
+  - AC-ENTRY: the first selection with a leftover captured-source tab is admitted; after an extension update with the reader open it still fails at placement (carried).
+  - AC-REPLAY: the two closed-reader refusal defects are fixed at mechanism level; N5-c passes in both hosts on candidate 2.
+- Review, CI, merge, package and installed status are recorded under "Delivery" once they exist.
 
 ## Next action
 
-- Exact next action: build the package candidate from the committed implementation, install it in both QA profiles, and run N5-a, N5-b and N5-c with OBS Window Capture (request Computer Use access first and notify before occupying the desktop); then the protected-state check, the local reviews and `/ship`.
-- Changed files / branch / active processes: `codex/cycle-0036-live-first-run`; the implementation and its tests are committed; no active processes. Scratch worktree `/tmp/c36-base` holds the base product source with this branch's tests.
-- State updated in PROJECT_STATE.md: product row, active cycle, checkout, tracking, AC-LIVE and AC-REPLAY next actions, one next action.
+- Exact next action: review the branch with the local CodeRabbit CLI and `open-code-review-delegate` against `dceea3f`, fix only critical findings, then `/ship`, CI, the Codex cloud review, a separate exact-HEAD gate and the merge in its own step.
+- Next cycle candidate: the first presentation selection after an extension update with the reader open (the old host's dead Codebook webview tabs, a preview tab in a destination group, the placement guard), together with the full-library report before a run; then the Cycle 0031 UI items.
+- Changed files / branch / active processes: `codex/cycle-0036-live-first-run`; implementation, follow-up and records committed; no active processes. Scratch worktrees `/tmp/c36-base` and `/tmp/c36-head` are left in place.
+- State updated in PROJECT_STATE.md: product row, active cycle, AC-LIVE, AC-SAVE, AC-REPLAY and AC-ENTRY rows, one next action.
 - Durable decisions updated: none.
