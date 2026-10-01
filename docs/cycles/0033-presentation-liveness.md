@@ -2,8 +2,8 @@
 
 Type: hardening\
 Status: validating\
-Result: pending\
-Delivery: not-applicable\
+Result: demonstrated (mechanism: every Issue #59 item red/green with disabled-fix controls; bounded installed native N2-a and N2-b in VS Code and Cursor, N2-c in VS Code; open: N2-d, N2-c in Cursor, M1 (f), three deferred OCR findings)\
+Delivery: pending (`/ship` as 0.2.17.0)\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/59\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -265,19 +265,101 @@ OCR findings, all deferred to the Cycle 0034 backlog:
 - Low, `studyWorkspace.ts` reader payload: `sourceAvailable` hashes the stop's captured source text on every publish while a Node stop is selected. It is bounded by the source limit and takes well under a millisecond per publish at normal sizes, but it could be computed once per selected stop.
 - Low, `nodeHistoryPlaybackController.ts`: a presentation that settles after `dispose()` now also calls `changed()`. The workspace publish it triggers is deduplicated and reflects current state, so nothing false is shown.
 
-Native N2 is NOT RUN at this point.
+### Package and installation, 2026-10-01
+
+Two private candidates were packaged, each from a clean tree with 29 entries and a passing `package:check`. Both are version 0.2.16; the release bump to 0.2.17.0 happens in `/ship`.
+
+| Candidate | Built from | VSIX SHA-256 | Runtime (`dist/extension.js`) | sourceHash |
+| --- | --- | --- | --- | --- |
+| r1 `codebook-0.2.16-c33-presentation-liveness-20261001.vsix` | `dc08ba4` | `c2881207edabc6c55ffe1da0c2feec5cdacd92d201a3624da1e8972a87c23aa0` | `b76f01edb20f4b3c72b574c3e7c8e91eac0e42e2dac6d41e588e9a0c41581933` | `36dab25b701ea5897397f1f1e224ad65e40909968bf93518635ea81c1cbe2e47` |
+| r2 `codebook-0.2.16-c33-presentation-liveness-r2-20261001.vsix` | `9725f29` | `c2de91ee86417ef58cd145bbd7034b912e3dabc3388dd9b6d501f536055a052f` | `bf0a5c8989148256390daf664d2925889fd3a6b069e61458f8900f5885634410` | `d987f6d5b518915d4c9bbc3558ea00e7f7aeba66d2c421eb08d618bca4651ce7` |
+
+- VS Code 1.140.0: installed into the default extensions, which the QA profile "Codebook QA 0029 Clean" uses. r1 ran in the hosts started at 12:53:47 and 13:54:46 JST, r2 in the host started at 14:05:41.
+- Cursor 3.23.10: installed with `--profile "Codebook QA 0029 Settings"`. Only r2 ran there, in the window launched at 14:08:49.
+- The installed `dist/extension.js` matched the candidate's runtime hash in both hosts before each trial.
+
+### N2 — installed native trials, 2026-10-01
+
+Entry after compaction, before the last VS Code takes and the Cursor takes: re-read PRODUCT_GOAL (v9), the three feature contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record and `docs/qa/native-recording.md` in full, and opened the v9 PNG again (same four regions, SHA-256 unchanged).
+
+Method: OBS 32.2.2 Window Capture of the exact QA window, following `docs/qa/native-recording.md`.
+
+- Canvas and output are both 3456×2168 at 30 fps. The transform was reset after each window selection, and both audio sources were muted.
+- Clicks only: nothing was typed or key-pressed into the editors.
+- The expectations were frozen before any native action: `artifacts/cycle-0033/native/n2-expectations.json`.
+- Event times come from ffmpeg scene scores per region, confirmed on extracted frames.
+
+Private evidence (in `artifacts/cycle-0033/native/`, not committed). Receipts: `n2-vscode-receipt.json` and `n2-cursor-receipt.json`.
+
+| Clip | Candidate | SHA-256 (video-only remux / original) | Content |
+| --- | --- | --- | --- |
+| `n2-vscode-preflight-01.mov` | r1 | `8a486520…` | Preflight PASS: 15.03 s, full window, a tab change is visible |
+| `n2-vscode-main-01.mov` | r1 | `ab8bfe88…` / `2ab4c41a…` | 202.47 s, 6,074 frames, started 13:49:56 JST. N2-b, N2-a |
+| `n2-vscode-nodelabel-01.mov` | r1 | `745fc5ee…` / `66a31cf8…` | 157.87 s, 4,736 frames, started 13:57:29. N2-c |
+| `n2-vscode-nodelabel-02.mov` | r2 | `e0e1c0f3…` / `2cf7953e…` | 121.77 s, 3,653 frames, started 14:06:11. N2-c again, then Node stop to recording |
+| `n2-cursor-preflight-01.mov` | r2 | `44884b54…` | Preflight PASS: 11.67 s, full window, a panel change is visible |
+| `n2-cursor-main-01.mov` | r2 | `bcd4c0c0…` / `ab477388…` | 121.07 s, 3,632 frames, started 14:10:11. N2-b, N2-a |
+
+Results against the frozen expectations:
+
+| Check | VS Code 1.140.0 (study `e4906307`) | Cursor 3.23.10 (study `57bbb9ae`) |
+| --- | --- | --- |
+| N2-b: the first Recording open after a fresh host commits | PASS (r1). Loading at video 14.50 s; "Paused · finalized" at 64.05 s with the frame, source and hint at 15.73 s. No failure message. | PASS (r2). Clicked at 42.37 s; "Paused · finalized" at 74.59 s with the frame, `login-form.tsx` line 77 and the Call Stack by 43.77 s. No failure message. |
+| N2-a: the hint names the first scope; expanding it loads the values and clears the hint, with the presented time unchanged | PASS (r1). The hint shows the exact new text. Expanding the first scope loaded the values and cleared the hint at 40.20 s. With Variables collapsed, Previous committed 55.87 s with the hint, and expanding Variables loaded the values and cleared it. | PASS (r2). Expanding Variables listed the scopes with the first one closed and the hint stayed. Expanding "Local: LoginForm" at 67.93 s loaded the values and cleared the hint in the same frame. With Variables collapsed, Previous committed 40.98 s with the hint, and expanding Variables loaded the values and cleared it. |
+| N2-c (best-effort): after the learner stops the session, the Node label has no "captured source unavailable" | PASS (r1 and r2). After Run > Stop Debugging the label stays "Debugger stop 1 · 198.63 s · output shown through this event." (Node history `4b47ab09`). | NOT RUN: this workspace has no saved Node test history. |
+| N2-d (best-effort): a paused foreign session | NOT RUN: it cannot be set up by clicks alone (as in Cycle 0032 N1-c). | NOT RUN, same reason. |
+
+Notes:
+
+- VS Code 1.140.0 now behaves like Cursor: with Variables open, the first scope stays closed until it is expanded. VS Code 1.139.1 expanded it by itself (Cycle 0032 N1). The new hint text covers both.
+- VS Code's N2-a and N2-b ran on r1. r2 changes only the Node event list's render key in the reader webview (see below), so the debugger, playback, workspace and hint-row bytes those checks exercise are unchanged. On r2, opening the recording from the selected Node stop also presented 17.29 s at once.
+- That Node-to-recording open is the click route Cycle 0032's N1-d lacked: select a Node history in Saved studies before opening a recording, then open the Study workspace from Learning Outline and press Recording. It ran once in VS Code on r2 (bounded PASS).
+- Outside the frozen checks, in the r1 main take: "Open article" during replay opened the Repository Wiki, and Restore at a gap left "The editor did not retain the requested Codebook layout". This joins the Cycle 0034 layout candidates.
+- Protected state after the trials: Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`; the dashboard at `1936e41` with only the untracked `.codebook/`. No development server ran. OBS has exited.
+
+### Native finding fixed in this cycle: Inspect stayed disabled after the session ended
+
+The r1 N2-c take showed a second defect behind the false label. After the learner stopped the session, the selected stop's button still read "Debugger stop selected" and stayed disabled, so the stop could not be inspected again without selecting another event.
+
+- Cause: the reader rendered the Node event list only when its entries, the recording flag or the selected sequence changed. Ending the session changes none of them. The payload was already correct (`debuggerAvailable: false`), which is why the Cycle 0032 workspace test H3 passed.
+- The defect is also in 0.2.16.0 (`b9c846b`). It belongs to this cycle's scope (truthful Node stop state after the session ends), so it was fixed here (recommended option) instead of being deferred.
+- Fix (`9725f29`): the list's render key includes `debuggerAvailable`.
+
+| Test | Red on `b9c846b` | Green on the branch | Disabled-fix control |
+| --- | --- | --- | --- |
+| DOM harness: ending the native session of the selected Node stop offers Inspect in native debugger again | FAIL: the button stays "Debugger stop selected" and disabled | PASS | The key entry removed from the compiled `dist`: the case fails; bytes restored identically |
+
+Verification on `9725f29` (logs `artifacts/cycle-0033/verification/r2-*`): full suite 1,478/1,478, package suite 183/183, hook 4/4, typecheck, lint, `format:check`, `dead-code`, `dupes` and `health` all pass. The DOM harness has 57 cases; only the pre-existing wide-sequence case fails.
+
+Native on r2 (`n2-vscode-nodelabel-02.mov`): the button reads "Debugger stop selected" while the session shows the stop (video 56 s), "Inspect in native debugger" and enabled after Run > Stop Debugging (60 s), and clicking it restarts the session with the source, Call Stack and values (68 s).
 
 ## Result and decision
 
-Pending.
+- Result: demonstrated at mechanism level (every Issue #59 item has a red-before-green test and a disabled-fix control, apart from the noted O4 defense in depth and the comment-only M1 (i); clean full suites) plus bounded installed native evidence.
+  - N2-a and N2-b: PASS in VS Code 1.140.0 and Cursor 3.23.10.
+  - N2-c: PASS in VS Code, including the Inspect fix; NOT RUN in Cursor (no saved Node history there).
+  - N2-d: NOT RUN in both hosts.
+- AC1–AC7: met. The falsifiers did not occur: no fix needed a change to saved recordings or schemas, and the installed hosts show neither the false label nor a failed cold open.
+- Still open, and none of these is final product acceptance:
+  - N2-d, and N2-c in Cursor.
+  - M1 (f), deferred under D1.
+  - The three OCR findings (retirement bound counts a pending startup; `sourceAvailable` hashes on every publish; a late `changed()` after `dispose()`).
+  - The wide-sequence page overflow in the DOM harness, which predates this cycle.
+  - The bound on storage and archive writes during `close()` (O4).
+- Decision: deliver this cut as 0.2.17.0.
+- Next cycle candidates (Cycle 0034), to be derived again from the gap table by `/spec`:
+  1. The Cycle 0031 UI items: one-click Show Variables, automatic summary placement in Cursor, summary density, focus on a cold first click, the reader recovery message, the AX range value and the retired presentation commands.
+  2. Layout restore and "Open article" during replay, and the wide-sequence page overflow.
+  3. The OCR findings above.
 
 ## Handoff
 
-Pending.
+- Evidence: `artifacts/cycle-0033/native/` holds the receipts, action logs, frames and hashes listed above. `artifacts/cycle-0033/{red-base,green-branch,controls,verification,reviews}` hold the test, control and review outputs.
+- No test, recorder or dev-server process is running. The VS Code and Cursor QA windows stay open on their Recordings (17.29 s and 74.59 s).
 
 ## Next action
 
-- Exact next action: commit the implementation in logical commits, run the local CodeRabbit CLI (never `--use-credits`) and `open-code-review-delegate`, package and install the VSIX in both QA profiles, run native N2 with OBS, then `/ship` as 0.2.17.0.
+- Exact next action: review the final cut with the local CodeRabbit CLI (never `--use-credits`) and OCR, then `/ship` as 0.2.17.0, CI, a separate exact-HEAD gate and the merge in its own step.
 - Changed files / branch / active processes: `codex/cycle-0033-presentation-liveness`; base worktree `/tmp/c33-base` (`b9c846b` plus the copied tests) is a private control and can be removed after delivery; no active processes.
-- State updated in PROJECT_STATE.md: active cycle, tracking and next action.
+- State updated in PROJECT_STATE.md: active cycle, AC-REPLAY, AC-ENTRY and AC-SAVE receipts, next action.
 - Durable decisions updated: none.
