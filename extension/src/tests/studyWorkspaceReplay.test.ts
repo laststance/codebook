@@ -1914,3 +1914,63 @@ test(
     }
   },
 )
+
+// Value: protects=the learner's replay position being stored before the reader finishes closing; fails_when=close() bounds the presentation wait and no longer waits for queued position saves; why_new=Cycle 0033 O4 split the close wait into a bounded frame wait plus saved(), and no close test holds a save; seam=none
+test(
+  'closing the reader waits for a replay position save that storage still holds',
+  { timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    let releaseSave = (): void => {},
+      saveEntered = (): void => {}
+    const storageHeld = new Promise<void>((resolve) => {
+        releaseSave = resolve
+      }),
+      saveStarted = new Promise<void>((resolve) => {
+        saveEntered = resolve
+      })
+    const order: string[] = []
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      const storePreference = RecordingStore.prototype.savePreference
+      context.mock.method(
+        RecordingStore.prototype,
+        'savePreference',
+        async function heldSave(
+          this: RecordingStore,
+          preference: Parameters<RecordingStore['savePreference']>[0],
+        ): Promise<void> {
+          saveEntered()
+          await storageHeld
+          await storePreference.call(this, preference)
+          order.push(`saved ${preference.positionMs}`)
+        },
+      )
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 100,
+      })
+      await saveStarted
+
+      // Act
+      const closing = harness.reader.close().then(() => {
+        order.push('closed')
+      })
+      await new Promise<void>((resolve) => setTimeout(resolve, 2_000))
+      const whileStorageHeld = [...order]
+      releaseSave()
+      await closing
+
+      // Assert: the seek's save and the one close() queues when it hides the frame both finish before the reader is closed.
+      assert.deepEqual(whileStorageHeld, [])
+      assert.deepEqual(order, ['saved 100', 'saved 100', 'closed'])
+    } finally {
+      releaseSave()
+      await harness.close()
+    }
+  },
+)

@@ -1883,3 +1883,62 @@ test('a stop presented after the editor disposed the historical adapter fails cl
     await fixture.owner.dispose()
   }
 })
+
+// Value: protects=the 5 s capture deadline when the wall clock jumps backward before a later presentation waits on a stop Run and Debug was never told about; fails_when=the stopped-event deadline is computed from Date without its nominal cap; why_new=Cycle 0033 C2 clamps two delays and only the 1 s grace had a test; seam=none
+test('a backward wall-clock jump cannot stretch the capture deadline for a stop Run and Debug is never told about', async (context) => {
+  // Arrange
+  context.mock.timers.enable({
+    apis: ['setTimeout', 'Date'],
+    now: 10_000_000,
+  })
+  const fixture = harness(
+      undefined,
+      undefined,
+      0,
+      false,
+      true,
+      new Promise<void>(() => {}),
+    ),
+    abandoned = new AbortController()
+  const first = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', abandoned.signal)
+    .catch((error: unknown) => String(error))
+  let outcome = 'pending'
+  try {
+    await fixture.started
+    await flushNative()
+    abandoned.abort(new Error('Playback presentation superseded'))
+    await first
+
+    // Act
+    context.mock.timers.setTime(10_000_000 - 3_600_000)
+    const again = fixture.owner
+      .present(
+        inspectedSnapshot,
+        'Recorded pause',
+        new AbortController().signal,
+      )
+      .then(
+        (result) => {
+          outcome = result
+        },
+        (error: unknown) => {
+          outcome = String(error)
+        },
+      )
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS - 1)
+    await flushNative()
+    const beforeDeadline = outcome
+    context.mock.timers.tick(1)
+    await flushNative()
+
+    // Assert
+    assert.equal(beforeDeadline, 'pending')
+    assert.equal(outcome, 'uninspected')
+    await again
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
