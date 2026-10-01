@@ -192,25 +192,42 @@ Two tests were added beyond the paused checkpoint:
 - AC5 asks for a unit assertion on the hint text, and only the DOM harness had one. `studyHtml.test.ts` now asserts the exact hint in the reader HTML.
 - The existing close test (a frame that never paints) passes on `b9c846b`, so the close bound had no failing-first test. The new close test holds the native debugger presentation, which ignores its cancellation, and fails on `b9c846b`.
 
-Disabled-fix controls (`artifacts/cycle-0033/controls/run-controls.mjs`, private). Each control patches one fix out of the compiled `dist`, runs the matching test, expects it to fail and restores the original bytes. The whole `dist` tree hashed identically before and after each run.
+Q1 evidence, one row per item. Red results come from a fresh run on `b9c846b` (`artifacts/cycle-0033/red-base/final/`), green from the final full suite, and controls from `artifacts/cycle-0033/controls/run-controls.mjs` (private). Each control patches one fix out of the compiled `dist`, runs the matching test, expects it to fail and restores the original bytes. The whole `dist` tree hashed identically before and after each run.
 
-| Control | Fix disabled | Result |
-| --- | --- | --- |
-| L1 | A refused startup is forgotten even after every waiter left | Test fails |
-| A2 (bound), A2 (late session) | Startup bound; stopping a session that starts after expiry | Tests fail (the bound one by the 30 s hang guard) |
-| L2 (abort), L2 (bound) | Retirement waiter leaves on abort; retirement bound | Tests fail |
-| O3 | Expiry gives up the retiring session | Test fails |
-| A1 | `dispose()` bounds its own stop | Test fails |
-| C2 / M1 (e) | Clamped grace and stopped deadline | Test fails |
-| M1 (a), (b), (c), (d), (g), (h) | One control each | Tests fail |
-| T1 (payload), T1 (renderer) | `sourceAvailable` in the payload; the label reading it | Workspace tests and the DOM case fail |
-| C1 | Hint text | Unit test and DOM case fail |
-| B2 (ceiling), B2 (saves), A3 | 15 s ceiling; bounded settle ignores saves; paint bound per phase | Tests fail |
-| O1, O2 | Same-study reopen repaints; the queue leaves stalled reads | Tests fail |
-| O2 + O4 | Both close defenses | The new close test fails |
-| O4 alone, O2 alone (informational) | One close defense | The close tests still pass: either defense alone lets `close()` finish, so no single-fix control exists for O4 |
+| Item | Test | Red on `b9c846b` | Green on the branch | Disabled-fix control |
+| --- | --- | --- | --- | --- |
+| L1 | `replayDebugger.test.ts`: a startup the editor refuses after its only presentation was abandoned is retried by the next presentation | FAIL: hangs until the 30 s guard | PASS | L1: test fails |
+| A2 | `replayDebugger.test.ts`: a startup the editor never answers makes the historical debugger unavailable after the capture timeout instead of waiting forever | FAIL: hangs until the 30 s guard | PASS | A2-bound: test fails |
+| A2 | `replayDebugger.test.ts`: a session the editor starts after the startup bound expired is stopped once its startup completes | FAIL: hangs until the 30 s guard | PASS | A2-late-session: test fails |
+| L2 | `replayDebugger.test.ts`: a presentation cancelled while the old stop is still retiring leaves at once with its own reason | FAIL: actual: 'still waiting for native termination'; expected: 'Error: Playback presentation superseded' | PASS | L2-abort: test fails |
+| L2 | `replayDebugger.test.ts`: a retirement the editor never finishes makes later presentations fail with the closed-debugger error after the capture timeout | FAIL: hangs until the 30 s guard | PASS | L2-bound: test fails |
+| O3 | `replayDebugger.test.ts`: a termination that arrives after the retirement bound expired leaves the historical debugger unavailable | FAIL: hangs until the 30 s guard | PASS | O3: test fails |
+| A1 | `replayDebugger.test.ts`: closing the historical debugger completes after the capture timeout when the editor never acknowledges the stop | FAIL: hangs until the 30 s guard | PASS | A1: test fails |
+| C2 / M1 (e) | `replayDebugger.test.ts`: a backward wall-clock jump cannot stretch the grace for a stop whose values Run and Debug never loads | FAIL: actual: 'pending'; expected: 'uninspected' | PASS | C2-M1e: test fails |
+| M1 (a) | `replayDebugger.test.ts`: a stop whose only Variables group is the recording limitations note commits at once without waiting for Run and Debug | FAIL: actual: 'still waiting for Run and Debug'; expected: 'no-values' | PASS | M1a: test fails |
+| M1 (g) | `replayDebugger.test.ts`: a stop presented after the editor disposed the historical adapter fails closed instead of committing without values | FAIL: actual: 'no-values'; expected: /Historical debugger closed/ | PASS | M1g: test fails |
+| M1 (h) | `untilAborted.test.ts`: a cancelled waiter with no shared operation receives a rejection it can catch instead of a synchronous throw | FAIL: threw synchronously (actual: true; expected: false) | PASS | M1h: test fails |
+| M1 (b) | `recordingContext.test.ts`: a checkpoint still fails on a tampered phase image when the run state also changes during the read | FAIL: actual: undefined; expected: { code: 'EVIDENCE_UNAVAILABLE', message: 'Captured image no longer matches its sealed hash.' } | PASS | M1b: test fails |
+| M1 (c) | `nodeHistoryPlaybackController.test.ts`: abandoning a Node stop that is still loading publishes the pause, and its late settlement publishes that loading ended | FAIL: actual: []; expected: [{ mode: 'paused', loading: true }] | PASS | M1c: test fails |
+| M1 (d) | `studyWorkspaceReplay.test.ts`: a native values notification the reader failed to handle is shown, and the next handled notification clears it | FAIL: the failure message stays after a handled notification (actual: true; expected: false) | PASS | M1d: test fails |
+| T1 / C1 | `nodeStopSourceMatches.test.ts`: a sealed Node stop whose captured source matches where it stopped is available for native debugging | FAIL: the module under test does not exist | PASS | covered by the T1 payload control |
+| T1 (H1) | `studyWorkspace.test.ts`: opening a recording drops the Run and Debug hint of a saved Node stop and re-enables its Inspect | FAIL: actual: undefined; expected: true | PASS | T1-payload: test fails |
+| T1 (H3) | `studyWorkspace.test.ts`: ending the historical session re-enables Inspect for the selected Node stop, and Inspect restarts the session | FAIL: actual: undefined; expected: true | PASS | T1-payload: test fails |
+| B2 | `studyWorkspaceLayout.test.ts`: a cold evidence navigation whose native debugger takes 4 s and whose frame paints in 2 s still presents | FAIL: actual: 'PRESENTATION_UNAVAILABLE'; expected: 'completed' | PASS | B2-ceiling: test fails |
+| B2 | `studyWorkspaceLayout.test.ts`: an evidence navigation stuck before painting fails at the settle ceiling and the next recording open presents | FAIL: took about 5 s instead of the 15 s ceiling (bound assertion false) | PASS | B2-ceiling: test fails |
+| A3 | `studyWorkspaceLayout.test.ts`: a newer frame painted during an evidence navigation gets its own paint bound | FAIL: the outcome is 'PRESENTATION_UNAVAILABLE', which the test forbids | PASS | A3: test fails |
+| B2 | `playbackController.test.ts`: a bounded settle does not wait for a preference save that is still held by storage | FAIL: actual: 'Error: Timed out waiting for the replay frame'; expected: 'settled' | PASS | B2-saves: test fails |
+| O1 | `playbackController.test.ts`: opening the same recording after its frame was hidden paints the confirmed moment again | FAIL: actual: undefined; expected: 100 | PASS | O1: test fails |
+| O2 | `playbackController.test.ts`: a newer seek presents while an earlier frame read never answers | FAIL: actual: 'Error: Timed out waiting for the replay frame'; expected: 'settled' | PASS | O2: test fails |
+| O4 | `studyWorkspaceReplay.test.ts`: closing the reader while the native debugger never answers a recorded stop still finishes | FAIL: actual: 'still closing'; expected: 'closed' | PASS | O2+O4-close: test fails |
+| C1 | `studyHtml.test.ts`: the Run and Debug hint tells the learner to expand the first Variables scope when it stays closed | FAIL: the reader HTML lacks the hint (actual: false; expected: true) | PASS | C1-hint-unit: test fails |
+| T1 (renderer), C1 | DOM harness (`study-bootstrap-qa.mjs`): a session-ended Node stop keeps its source label; the hint names the first scope | FAIL: both cases | PASS | T1-renderer+C1-hint: both cases fail |
 
-M1 (f) stays deferred under D1. Every other Q1 item now has a failing-first test and a control, except O4 as noted.
+Notes:
+
+- O4 has no single-fix control. With only the close bound removed, or only the queue's leave-on-abort removed, both close tests still pass: either defense alone lets `close()` finish. The new close test fails on `b9c846b` and when both are removed.
+- The other three `nodeStopSourceMatches` cases (edited text, another column, no captured source) also fail on `b9c846b`, because the helper does not exist there.
+- M1 (f) stays deferred under D1. M1 (i) changes only comments and is covered by review.
 
 Mechanism verification on the final source (Node 24.21.0, pnpm 12.4.2; logs in `artifacts/cycle-0033/verification/`):
 
@@ -218,7 +235,7 @@ Mechanism verification on the final source (Node 24.21.0, pnpm 12.4.2; logs in `
 | --- | --- |
 | Full suite, run 1 (`pnpm --dir extension test`, includes build) | 1,478/1,478 PASS, 0 fail, 107.2 s |
 | Full suite, run 2 (consecutive) | 1,478/1,478 PASS, 0 fail, 107.2 s |
-| Disabled-fix controls on that build | 23 held, 2 informational, `dist` restored byte-identical |
+| Disabled-fix controls on that build | 23 held, 2 informational (O4 alone, O2 alone on the close tests), `dist` restored byte-identical |
 | Package suite, after all extension readers exited | 183/183 PASS |
 | Compaction hook (`node --test .codex/restore-product-context.test.mjs`) | 4/4 PASS |
 | Typecheck, lint, `format:check`, `dead-code`, `dupes`, `health` | PASS |
@@ -232,6 +249,21 @@ Mechanism verification on the final source (Node 24.21.0, pnpm 12.4.2; logs in `
 The full suite, the controls and the package suite above ran after these changes.
 
 Found but out of scope: the DOM harness case "wide saved sequence remains reachable by keyboard inside its own scroll area" fails on `b9c846b` and on the branch with `pageOverflow: true` at the 600 px harness width. It passed on 2026-09-27 (`docs/cycles/evidence/0029/sequence-access.json`). A change between Cycle 0029 and 0.2.16.0 made the reader page overflow horizontally in that state. It joins the Cycle 0034 candidate list (AC-DESKTOP / AC-LEARNING).
+
+### Reviews of `bbfe561`, 2026-10-01
+
+Following the owner's direction, only CRITICAL findings would be fixed. None were reported.
+
+| Review | Coverage | Findings | Disposition |
+| --- | --- | --- | --- |
+| Local CodeRabbit CLI 0.8.2 (`--committed --base-commit b9c846b`, included reviews, no paid credits) | 30 changed files | 0 | None |
+| OCR 1.12.11, delegate mode, host review | 16 of 16 reviewable files; 0 skipped. Default exclusions: 10 test files (`default_path`) and 4 Markdown files (`unsupported_ext`) | 0 critical, 0 high, 1 medium, 2 low | Deferred (not CRITICAL), listed below |
+
+OCR findings, all deferred to the Cycle 0034 backlog:
+
+- Medium, `replayDebugger.ts` `retire()`: the retirement bound starts when `retire()` is called, and `retireSession()` first waits for a pending startup inside that bound. A seek made during a slow cold start can therefore expire the retirement when the remaining startup plus the stop exceeds 5 s, although neither step alone did. The owner then needs a replay reopen. Starting the bound after the pending startup settles would remove this.
+- Low, `studyWorkspace.ts` reader payload: `sourceAvailable` hashes the stop's captured source text on every publish while a Node stop is selected. It is bounded by the source limit and takes well under a millisecond per publish at normal sizes, but it could be computed once per selected stop.
+- Low, `nodeHistoryPlaybackController.ts`: a presentation that settles after `dispose()` now also calls `changed()`. The workspace publish it triggers is deduplicated and reflects current state, so nothing false is shown.
 
 Native N2 is NOT RUN at this point.
 
