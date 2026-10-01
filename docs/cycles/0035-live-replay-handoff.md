@@ -232,6 +232,10 @@ Other observations:
   - `showRecordingLoadingOnLiveViewport()` constructs a new recording renderer on every load made with a live viewport, also for a first open or another recording. The cost is one webview document write.
 - Hosted CodeRabbit stays owner-skipped (D027). Private receipts: `artifacts/cycle-0035/reviews/`.
 
+### Entry after compaction before delivery, 2026-10-01
+
+The context was compacted again after the reviews and before `/ship`. The mandatory entry was repeated from the files on disk: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure and the local TS rules. The PNG (SHA-256 `f189ee82…caf2aa`, unchanged) was opened with the image viewer; the four regions match the description under "Accepted product and design". Branch `codex/cycle-0035-live-replay-handoff` at `29d3975`, clean, six commits ahead of `origin/main` `e3fa161`; no PR open. No product source moved since the gap audit after the cycle, so it stands. The remaining phase is delivery only.
+
 ## Result and decision
 
 **Demonstrated.** Issue #63's acceptance criteria hold, with two recorded deviations:
