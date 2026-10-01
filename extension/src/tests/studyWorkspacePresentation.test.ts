@@ -2842,3 +2842,89 @@ test('a dead Codebook pane the editor refuses to close leaves every tab in place
     await harness.close()
   }
 })
+
+// Value: protects=a selection refused over a dead Codebook pane is confirmed when repeated once the editor lets the pane close; fails_when=the refusal leaves its pending transition or its kept-pane verdict behind, so the repeated selection is refused again; why_new=the refusal test stops at the refusal and never sends the selection again; seam=none
+test('a presentation selection refused over a dead Codebook pane is confirmed when it is repeated once the editor lets the pane close', async () => {
+  // Arrange: the editor refused to close the old host's panes, so the first selection ended with the instruction to close them and select again.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const deadApplication = harness.leaveDeadCodebookPane(
+        'codebook.scopedBrowser',
+        1,
+        { refuseClose: true },
+      ),
+      deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+    const draft = harness.focusMutableDraft('mutable-notes.txt', 3)
+    const refusedState = harness.reader.presentationState()
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: refusedState.presentationId,
+        expectedRevision: refusedState.presentationControlRevision,
+        mode: refusedState.mode,
+        action: 'select',
+      }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        causeDetail: 'A leftover Codebook pane could not be closed.',
+      },
+    )
+    harness.acceptDeadPaneClose()
+    // Act: the agent reads the presentation state again and repeats the selection.
+    const state = harness.reader.presentationState()
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(deadApplication), false)
+    assert.equal(tabs.includes(deadStudy), false)
+    assert.equal(codebookPaneTabs(harness, 'codebook.scopedBrowser'), 1)
+    assert.equal(codebookPaneTabs(harness, 'codebook.studyContext'), 1)
+    assert.equal(tabs.includes(draft.tab), true)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a selection behind a foreign non-text editor stays refused and opens no pane when an earlier extension session left a dead Codebook pane elsewhere; fails_when=closing a dead pane is reported as closing the focused tab, so the focus guard is skipped and the reader opens over the foreign editor; why_new=the foreign-editor refusal test has no dead pane, so its refusal is thrown before the close step ever runs; seam=none
+test('a closed reader behind a foreign non-text editor still refuses the selection and opens no pane when an earlier extension session left a dead Study pane in another group', async () => {
+  // Arrange: the editor's Settings page has focus in column 1; the old host's Study pane is the only tab of column 3.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const settingsPage = harness.useOpaquePrimary('settings')
+    harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+    const state = harness.reader.presentationState()
+    // Act / Assert
+    await assert.rejects(
+      async () =>
+        harness.reader.changePresentation({
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: state.mode,
+          action: 'select',
+        }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message:
+          'Focus a Codebook pane or text editor before selecting a presentation; the current foreign editor cannot be restored safely.',
+      },
+    )
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.equal(harness.counts().panels, 0)
+    // The learner's Settings page is still the visible tab of its group.
+    assert.equal(
+      harness.groups.find((group) => group.viewColumn === 1)?.activeTab,
+      settingsPage,
+    )
+  } finally {
+    await harness.close()
+  }
+})

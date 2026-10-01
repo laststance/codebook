@@ -19,12 +19,19 @@ import { createConfiguredStudy } from './utils/createConfiguredStudy'
  * @param context - The test whose teardown shuts the service down.
  * @param limit - The Saved Study Limit both stores read.
  * @param fill - Which store already holds one entry before the run starts.
+ * @param arrangeBeforeStart - Arranges a condition that holds only once the run starts, after the stores are filled: it may replace the limit setting or act on the service and its store.
  * @example const started = await startRunWithStorage(context, 1, 'study')
+ * @example const started = await startRunWithStorage(context, 1, 'study', ({ changeLimitSetting }) => changeLimitSetting(0))
  */
 async function startRunWithStorage(
   context: TestContext,
   limit: number,
   fill: 'study' | 'recording' | 'nothing',
+  arrangeBeforeStart: (arranged: {
+    service: StudyService
+    store: RecordingStore
+    changeLimitSetting(value: unknown): void
+  }) => void = () => {},
 ) {
   let service: StudyService | undefined, books: RepositoryBookStore | undefined
   context.after(async () => {
@@ -33,13 +40,18 @@ async function startRunWithStorage(
   })
   const harness = await configuredRuntimeHarness(context),
     directory = join(harness.directory, '.learning')
-  const library = new LearningLibrary(directory, '0'.repeat(64), () => limit),
+  let limitSetting: unknown = limit
+  const library = new LearningLibrary(
+      directory,
+      '0'.repeat(64),
+      () => limitSetting,
+    ),
     store = new RecordingStore(
       directory,
       library.workspaceKey,
       {},
       undefined,
-      () => limit,
+      () => limitSetting,
     )
   const savedStudy = createConfiguredStudy()
   if (fill === 'study') await library.saveStudy(savedStudy)
@@ -108,6 +120,13 @@ async function startRunWithStorage(
   service.repository = books
   service.recordings = store
   const libraryFilesBefore = await studyFiles(directory)
+  arrangeBeforeStart({
+    service,
+    store,
+    changeLimitSetting: (value) => {
+      limitSetting = value
+    },
+  })
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
@@ -205,4 +224,63 @@ test('a run whose recording slots alone are used up still prepares and reports i
     recording.reason,
     'Recording unavailable before input: Error: Recording library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another session. Existing recordings were kept.',
   )
+})
+
+// Value: protects=a run under an invalid Saved Study Limit setting ends before a runtime exists or input is sent, with the setting named in its error cause; fails_when=an error of the admission read is swallowed or read as admitted, so the run prepares and clicks though its study cannot be saved; why_new=the admission tests start runs under a valid limit only, where the read answers and never throws; seam=none
+test('a run started under an invalid Saved Study Limit setting is refused before the application receives any input and its error cause names the setting', async (context) => {
+  // Arrange / Act: one study was saved under a limit of one; the setting holds 0 when the run starts.
+  const started = await startRunWithStorage(
+    context,
+    1,
+    'study',
+    ({ changeLimitSetting }) => changeLimitSetting(0),
+  )
+  // Assert: the error code is left open; the cause carries the text the learner can act on.
+  assert.equal(
+    started.record.error?.causeDetail,
+    'Error: Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to 256. Existing learning was kept.',
+  )
+  assert.equal(started.record.prepared, false)
+  assert.equal(started.runtimeAcquisitions(), 0)
+  assert.equal(started.harness.mouse.length, 0)
+  assert.equal((await started.store.list()).length, 0)
+  assert.deepEqual(
+    await studyFiles(started.directory),
+    started.libraryFilesBefore,
+  )
+  assert.equal(started.libraryFilesBefore.length, 2)
+})
+
+// Value: protects=a run stopped while its study-library admission is read acquires no runtime, reserves no recording and sends no input; fails_when=the stop check after the admission read is dropped, so a run already stopped goes on to acquire its runtime; why_new=no test stops a run with a recording store attached before its runtime is acquired; seam=none
+test('a run stopped while its study library admission is being read acquires no runtime and reserves no recording', async (context) => {
+  // Arrange / Act: the library has room; the stop arrives while the admission read is pending.
+  let admissionReads = 0,
+    stopped: Promise<unknown> = Promise.resolve()
+  const started = await startRunWithStorage(
+    context,
+    2,
+    'nothing',
+    ({ service, store }) => {
+      const admitsStudy = store.admitsStudy.bind(store)
+      store.admitsStudy = (studyId) => {
+        admissionReads++
+        const admission = admitsStudy(studyId)
+        const [record] = service.records.values()
+        stopped = service.stop({
+          instanceId: service.instanceId,
+          runId: record!.id,
+        })
+        return admission
+      }
+    },
+  )
+  await stopped
+  // Assert
+  assert.equal(admissionReads, 1)
+  assert.equal(started.record.error, undefined)
+  assert.equal(started.record.prepared, false)
+  assert.equal(started.record.stopped, true)
+  assert.equal(started.runtimeAcquisitions(), 0)
+  assert.equal(started.harness.mouse.length, 0)
+  assert.equal((await started.store.list()).length, 0)
 })

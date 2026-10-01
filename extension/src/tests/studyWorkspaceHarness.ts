@@ -2413,6 +2413,10 @@ export async function workspaceHarness(
     acceptLeftoverClose(): void {
       refuseLeftoverClose = false
     },
+    /** Lets the editor close dead Codebook panes again after a refusal, so a test can repeat the request the editor first refused. @example harness.acceptDeadPaneClose() */
+    acceptDeadPaneClose(): void {
+      refuseDeadPaneClose = false
+    },
     useOpaquePrimary(kind: 'blank' | 'settings') {
       const group = groups.find((group) => group.viewColumn === 1)!
       const tab =
