@@ -226,7 +226,7 @@ Other observations:
 
 ### Reviews before `/ship`, 2026-10-01
 
-- Local CodeRabbit CLI 0.8.2 (`--agent --committed --base-commit e3fa161`, no paid credits): completed on `10781a6`, 13 files, 3 minor findings, all in documents (README, PROJECT_STATE and this record's Next action still described the cycle as not implemented). They are corrected in the records commit.
+- Local CodeRabbit CLI 0.8.2 (`--agent --committed --base-commit e3fa161`, no paid credits): completed on `10781a6`, 14 files, 3 minor findings, all in documents (README, PROJECT_STATE and this record's Next action still described the cycle as not implemented). They are corrected in the records commit.
 - `open-code-review-delegate` on `e3fa161..10781a6`: 6 of 6 eligible files reviewed, 0 skipped; 8 default exclusions (4 documents, 4 test files) reported separately. No critical, high or medium finding; 2 low:
   - `rememberedPosition` outlives `leave()` and nothing clears it. It is keyed by study and equals what the queued save writes, so nothing is wrong today; a later "reset position" feature would have to clear it.
   - `showRecordingLoadingOnLiveViewport()` constructs a new recording renderer on every load made with a live viewport, also for a first open or another recording. The cost is one webview document write.
@@ -279,6 +279,29 @@ The exploratory QA report with its checkpoints is private under `.gstack/qa-repo
   - **Latency.** With a live run attached every load rebuilds the recording renderer; its handshake sits on the recovery path measured against 2.0 s (the performance view of the low OCR finding).
   - **Renderer flag.** Two sites clear the recording renderer by hand without resetting `replayNeedsReveal` (the Application panel's dispose handler, the non-abort arm of `ensureReplayViewport`); advisory. No test pins the reset in `dropReplayViewport()`.
   - **Test quality.** The startup-bound double-fault test hangs in its cleanup when the fix regresses; the cancelled-waiter test uses a 250 ms wall-clock ceiling (the frozen AC10 bound); the H5c test's pattern accepts two different errors; the H5d test cannot fail when its named arm alone regresses; a held-save test reaches into a private field; the harness `showLive()` and `reveal()` differ from the real viewport in two unreached paths; no test drives the real `BrowserViewport` through the replaced-document sequence.
+
+**Pre-landing review, pass 2** (after the comment corrections; the same five specialists and red team): no critical finding and no edit, so the review converged. New findings, recorded and not fixed:
+
+- **Misleading refusal during a cold open.** The closed-reader guard runs before the not-ready check and the reader is marked open late in the load, so a seek or play sent while a recording is still loading is answered "The replay reader is closed; open the recording before another control." instead of "Recording is not ready". It heals once the load opens the reader. Found by the red team and by the adversarial pass.
+- **Double fault outside `giveUp()`.** The values-loaded notification calls the error channel unguarded, and the session-ended handler calls the reader listener unguarded; only the give-up path is protected. Owner state is updated before both calls, so nothing is stranded.
+- **Test note.** The held-save tests use a bounded `settle(signal, ms)` without saying that an unbounded one would wait for the held save.
+
+**Adversarial review** on the same tree (`8cf13c7`):
+
+- Claude subagent: no blocker, "ship as-is". Besides the items above it adds that `showRecordingLoadingOnLiveViewport()` treats a live lease the editor already closed as attached: `showHistory` then throws and the load fails, as it did before this cycle, but now after the recording renderer was dropped. It also notes that the settle-ceiling comment still omits the renderer handshake (up to 20 s) among the waits that can outlast 15 s.
+- Codex adversarial challenge: one P2, the single-slot position memory. Its reproduction: recording A opened at 100 ms and moved to 200 ms, then B, then A again while A's save is held, reopens A at 100 ms, and once the saves are released the older 100 ms is the one saved last. The same sequence loses the position on 0.2.18.0 as well; this cycle fixed only the reload of the same recording.
+- Codex structured review: it answered, in Japanese, that it found no concrete defect newly introduced by the change. The review tool's marker check did not recognize that answer, so the pass is recorded as missing coverage, not as a pass.
+
+Review records are bound to the reviewed tree `b12ef8ac` (private review log). Version 0.2.19.0 and its CHANGELOG entry follow as release metadata.
+
+**Documentation audit** (ship-owned, edit mode, two passes): the first pass made two one-token corrections, both accepted.
+
+- README now says the saved study reopened with two recorded stops (N4-b visited two of three).
+- The local CodeRabbit run above covered 14 files, not 13; its receipt and the commit range agree.
+- Its three observations on the CHANGELOG entry were applied by hand: two recorded stops, the cold-open refusal among the known limits, and the structured review counted as missing coverage. The second and last pass audits the result.
+- Recorded debt, not fixed: the `PLAYBACK_UNAVAILABLE` recovery row in `extension/README.md` does not name the closed-reader refusal or its remedy (it belongs with the agent-contract finding above), and that README still describes the Cycle 0029 preview as extension 0.2.12.
+
+**Entry after compaction during delivery.** The context was compacted while the first documentation audit ran. The mandatory entry was repeated from the files on disk before any further repository write: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure and the local TS rules. The PNG (SHA-256 `f189ee82…caf2aa`, unchanged) was opened with the image viewer; the four regions match the description under "Accepted product and design". Branch `codex/cycle-0035-live-replay-handoff` at `8cf13c7` with the release metadata uncommitted; no PR open. No product source moved, so the gap audit after the cycle stands. The remaining phase is delivery only.
 
 ## Result and decision
 
