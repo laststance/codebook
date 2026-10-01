@@ -232,12 +232,55 @@ Notes:
 
 During the trial the owner asked whether OBS can capture the editor window instead of the screen, so that their own window switching stays out of a take, and then: "一応、Agents.mdやそこから参照されているファイルにOBSのWindow Captureモードガイドがなかったら追加してください。" The guide exists (`docs/qa/native-recording.md`, linked from AGENTS.md, DEVELOPMENT.md and IMPLEMENTATION.md). It lacked the explicit mode check, because the source keeps the name "macOS Screen Capture" whichever method it uses. Step 5 now tells the agent to confirm **Method: Window Capture** and the exact window in the source's Properties before every take, and how to change hosts.
 
+### Third entry after compaction, 2026-10-01
+
+The context was compacted during `/ship` Step 9, while the review specialists were running. The mandatory entry was repeated in full before the release steps: PRODUCT_GOAL (v9), the replay, DeepWiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure and the local TS rules. The PNG (SHA-256 `f189ee82…caf2aa`, unchanged) was opened with the image viewer; the four regions (Live explanation, Learning replay, DeepWiki reproduction, Shortcut discovery) are as recorded above. Branch `codex/cycle-0034-replay-ownership` at `943beb3` with three uncommitted test files from the coverage audit; no PR open.
+
+### Delivery review (`/ship`), 2026-10-01
+
+Every decision took the recommended option under the owner's standing direction, and only a CRITICAL finding would have been fixed. No reviewer reported one, so the production source is unchanged since `dd7aa0f`. Every finding below is carried to the next cycle.
+
+**Coverage audit.** 30 changed paths, 28 with a test. The audit found three mutations of `studyWorkspace.ts` that the suite did not catch, plus an untested failure arm, and added four tests to three existing files:
+
+| Test | Protects |
+| --- | --- |
+| `studyWorkspaceReplay.test.ts`: "pressing Recording again on a displayed replay without recorded debugger state keeps its moment without reloading it" | `presentable()` treats a replay that never had a historical debugger as presentable |
+| `studyWorkspaceReplay.test.ts`: "pressing Recording after the historical session ended still presents the saved moment when the editor fails to release the old debugger" | `retireReplayDebugger()` reports a disposal failure and does not throw |
+| `studyWorkspace.test.ts`: "pressing Inspect again while the editor is still stopping the ended historical session shows the Node stop through one new session" | `selectNodeHistoryEvent()` waits for a pending retirement and checks that it is still current |
+| `studyWorkspaceEntry.test.ts`: "an Open Study cancelled while it waits for an abandoned first entry leaves with its own cancellation instead of reporting busy" | a cancelled waiter of an abandoned cold entry leaves with its own reason |
+
+A separate read-only rating ran seven mutations against the full suite in a scratch copy. Six turned exactly one of the new tests red and nothing else. The seventh (the wait ignores the waiter's signal) passed 1,509/1,509: the last test does not time "leaves at once". Value-weighted coverage is 28/30 (93%). Two paths stay without a test: the closed arm of `retireAfterStartup()` and the non-abort failure arm of `ensureReplayViewport()`.
+
+**Plan audit.** 38 items: 32 done, 2 changed (E2's guard sits in `retireAfterStartup()`; O1's one-registration rule is in the `TestReplayDebugger` stand-in), 2 partial (O1 tests: "within 250 ms" is not timed and the same recording is reopened; O5 tests: no workspace case with a live, available debugger), 2 not done at the audit (T5; the CHANGELOG, written in this delivery).
+
+**T5 decision.** The plan did not allow "not reachable" for T5. Recommended option taken: ship and defer. The source check agrees that no caller under the one app/source layout starts a settle while a paint phase is in progress, but reading is not proof. The issue is therefore closed by hand after the merge, with T5 named as carried, and the PR links it without an auto-close.
+
+**Pre-landing review** (core checklist, five specialists, Red Team): 0 critical, 8 informational, 2 advisory.
+
+- `replayDebugger.ts`: the `@param failed` comment is stale. `giveUp()` forwards a listener error to `failed`, and in the workspace both end in `publish()`, so a `publish()` that throws twice leaves the bounded waiters stranded (double fault, no known trigger).
+- `studyWorkspace.ts`: a disposal failure reuses the `'replay-debugger'` error key that `replayDebuggerChanged` clears. A seek or play through `StudyService.playback` after `close()` still presents and creates an Application panel (unchanged from `54add83`; O4 covers `open` only). `presentable()` can be false for a few milliseconds during Codebook's own stop-change retirement, which costs one needless reload.
+- Performance: two retirement bounds can exceed the 15 s settle ceiling (plan amendment P6, the ceiling stays); about 6 s of real-timer time was added to `studyWorkspaceReplay.test.ts`.
+- Tests: no workspace assertion that pressing Recording again changes nothing while the historical session is live and available.
+- Advisory: `giveUp()` could fold into `expire()`; `retireReplayDebugger()` returns a value nobody reads and its `=== owner` guard is always true.
+
+**Exploratory QA** (report-only): nine probes, all pass. Full suite 1,509/1,509 with the four added tests, package suite 183/183, hook 4/4, static gates, the DOM harness's R1 cases and the protected state. The T2 20-run result and native N3 rest on the recorded evidence, whose inputs are unchanged.
+
+**Adversarial reviews.** All three completed on the reviewed tree.
+
+- Claude subagent (tests read in summary mode): 0 critical, 6 informational. A seek that lands between the adapter's disconnect and the termination event of Codebook's own retirement is rejected as closed (also on `54add83`). The settle ceiling comment assumes 15 s where the worst case is now 16 s. The Inspect check applies only to the selected stop, so an unselected stop with a mismatching text hash still offers Inspect and fails on each press. `replayNeedsReveal` is lowered before the reveal completes, so two aborts in a row can hand out a viewport without a handshake. `open()` does not check for a running presentation change again after its wait. Recommendation: ship as-is.
+- Codex adversarial: 2 P2. Recommendation: request changes.
+  - A reload of a displayed replay while a live run's viewport still holds the shared Application panel: `loadPlayback()` calls that viewport's `showHistory()`, which replaces the panel's HTML, while the existing replay viewport is reused. The frame then never acknowledges its paint. The source agrees with this reading. It was not reproduced: the workspace harness acknowledges paints whatever the panel's HTML is, and native N3 ran with no application. It is not critical: it needs a live run during replay, it fails after the five-second paint bound, leaving the recording recovers, and on `54add83` the same press did nothing.
+  - The same reload reads the saved position before a pending position save lands, so the replay can return to the earlier saved position and save it again.
+- Codex structured review: gate PASS (no P1); 1 P2, the same position finding.
+
+Private receipts: `~/.gstack/projects/codebook/ship-records/` (invocation record, coverage and plan audits, Codex outputs) and `.gstack/qa-reports/cycle-0034-ship-20261001/` (ignored).
+
 ## Result and decision
 
 **Demonstrated.** Issue #61's acceptance criteria hold, with one recorded exception:
 
 - AC1–AC12 and AC18: each behavior change fails on `54add83`, passes on the branch and has a disabled-fix control that HELD.
-- AC13: T1–T4 done; **T5 NOT REACHABLE** with no test added and no source change.
+- AC13: T1–T4 done; **T5 NOT REACHABLE** with no test added and no source change. The delivery took the recommended option: ship, and carry T5 into the retired-presentation cleanup.
 - AC14–AC16: red runs, controls, full gates and protected state as recorded above.
 - AC17: N3-a and N3-b pass in VS Code 1.140.0 and Cursor 3.23.10.
 
@@ -249,7 +292,7 @@ Affected gaps after this cycle:
 
 | AC | Before | After |
 | --- | --- | --- |
-| AC-REPLAY | A second debugger factory and an expired owner revived by a late termination were reproduced on 0.2.17.0. Recording did nothing after the learner stopped the session. | Fixed with red/green tests and controls; the recovery after Stop Debugging is observed in both installed hosts. Still open: N2-d, the Cycle 0031 UI items, a startup slower than 5 s, unbounded storage writes in `close()`, and final acceptance. |
+| AC-REPLAY | A second debugger factory and an expired owner revived by a late termination were reproduced on 0.2.17.0. Recording did nothing after the learner stopped the session. | Fixed with red/green tests and controls; the recovery after Stop Debugging is observed in both installed hosts with no application running. Still open: the two unreproduced Codex findings on that recovery (a live run's panel still attached; a pending position save), N2-d, the Cycle 0031 UI items, a startup slower than 5 s, unbounded storage writes in `close()`, and final acceptance. |
 | AC-ENTRY | Inspect was offered for a stop whose captured source does not match; a Node seek inherited a failing step's error; an agent open of the same study after `close()` presented without the reader. | Fixed at mechanism level (DOM cases for Inspect). No native Node trial in this cycle. |
 | AC-GAPS | Dependency. | Unchanged; gap frames still commit at once through the changed retirement path (full suite). |
 | AC-SAVE | An oversized or changing sealed file was discarded after a concurrent state change. | The checkpoint now fails with an integrity error (mechanism only). |
@@ -262,11 +305,12 @@ The other eight rows carry forward: this cycle did not touch their source paths.
 - Evidence: `artifacts/cycle-0034/` (private, ignored) holds the red runs, controls, verification logs, review receipts and the native videos, frames and receipts.
 - Not done in this cycle, by scope: N2-d, the Node stop in Cursor, M1 (f), and every item listed under "Out of scope".
 - New candidates found here: the transient "captured source is not ready" text on the first Recording open; the unreachable `settleOwnedPlayback` arm (part of retiring the presentation commands).
+- Carried from the delivery review, none critical: the two Codex findings on the same-recording reload (first, because they sit in the path this cycle added), the `publish()` double fault in `giveUp()`, the availability window during Codebook's own retirement, the Inspect check for unselected stops, `replayNeedsReveal`, the missing presentation-idle check after the cold-entry wait, a seek or play on a closed reader, the settle ceiling, the stale comment and error key, the advisory simplifications, and the test gaps (a live-debugger no-reload case, timing the cancelled waiter, the two untested arms).
 
 ## Next action
 
-- Exact next action: deliver this branch through `/ship` (version 0.2.18.0, Draft PR starting with `@coderabbitai ignore`), wait for CI and the Codex cloud review, run the read-only exact-HEAD gate, then merge in a separate step and record the closure here and in PROJECT_STATE.
-- After the merge: plan the next cycle through `/spec`. Candidates in order: the Cycle 0031 UI items (one-click Show Variables, automatic summary placement in Cursor, summary density, cold first-click focus, the reader recovery message, the AX range value, the retired presentation commands with the unreachable settle arm, the transient layout text), then layout restore and "Open article" during replay, the wide-sequence overflow, the natural multi-stop live path and a saved two-host Node replay.
+- Exact next action: finish `/ship` for 0.2.18.0 (Draft PR starting with `@coderabbitai ignore`, linked to Issue #61 without an auto-close), wait for CI and the Codex cloud review, run the read-only exact-HEAD gate, then merge in a separate step, close Issue #61 by hand with T5 named as carried, and record the closure here and in PROJECT_STATE.
+- After the merge: plan the next cycle through `/spec`. Candidates in order: the delivery-review findings on the same-recording reload, then the Cycle 0031 UI items (one-click Show Variables, automatic summary placement in Cursor, summary density, cold first-click focus, the reader recovery message, the AX range value, the retired presentation commands with the unreachable settle arm, the transient layout text), then layout restore and "Open article" during replay, the wide-sequence overflow, the natural multi-stop live path and a saved two-host Node replay.
 - Changed files / branch / active processes: `codex/cycle-0034-replay-ownership`; no active processes. The private worktrees `/tmp/c34-base`, `/tmp/c34-head` and `/tmp/c33-base` can be removed after delivery.
 - State updated in PROJECT_STATE.md: active cycle row, AC-REPLAY, AC-ENTRY and AC-SAVE rows, next action.
 - Durable decisions updated: none.
