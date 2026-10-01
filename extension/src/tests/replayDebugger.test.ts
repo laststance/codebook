@@ -2268,3 +2268,137 @@ test('a stop the editor never answers after a 4 s startup fails the retirement 5
     await fixture.owner.dispose()
   }
 })
+
+// Value: protects=waiting presentations when the reader's listener and its error channel both fail as the startup bound expires; fails_when=the rejection runs only if the give-up call returns; why_new=Cycle 0035 H3 (Cycle 0034 E3 covers a listener that throws while the error channel works); seam=none
+test('a waiting presentation still fails with the closed-debugger error when the reader listener and its error channel both throw as the startup bound expires', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const fixture = harness(
+    undefined,
+    undefined,
+    1,
+    false,
+    false,
+    undefined,
+    new Promise<void>(() => {}),
+    {
+      changed: () => {
+        throw new Error('reader publish failed')
+      },
+      failed: () => {
+        throw new Error('reader error channel failed')
+      },
+    },
+  )
+  let outcome = 'pending'
+  void fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then(
+      (result) => {
+        outcome = result
+      },
+      (error: unknown) => {
+        outcome = String(error)
+      },
+    )
+  try {
+    await fixture.started
+    await flushNative()
+
+    // Act
+    try {
+      context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
+    } catch {
+      // Without the fix the error channel's own error escapes the expiry timer.
+    }
+    await flushNative()
+
+    // Assert
+    assert.match(outcome, /Historical debugger closed/)
+    assert.equal(fixture.owner.available, false)
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=the reopen message for a stop presented on an adapter the editor disposed, when the reader's listener and its error channel both fail; fails_when=the presentation rejects with the error channel's own error instead of the closed-debugger error; why_new=Cycle 0035 H3 (the disposed-adapter give-up had no failing-listener test); seam=none
+test('a stop presented after the editor disposed the historical adapter still fails with the closed-debugger error when the reader listener and its error channel both throw', async () => {
+  // Arrange
+  let readerFailing = false
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    false,
+    undefined,
+    undefined,
+    {
+      changed: () => {
+        if (readerFailing) throw new Error('reader publish failed')
+      },
+      failed: () => {
+        throw new Error('reader error channel failed')
+      },
+    },
+  )
+  await fixture.owner.present(
+    firstSnapshot,
+    'First recorded stop',
+    new AbortController().signal,
+  )
+  try {
+    fixture.disposeAdapter()
+    readerFailing = true
+
+    // Act
+    const outcome = await fixture.owner
+      .present(
+        inspectedSnapshot,
+        'Second recorded stop',
+        new AbortController().signal,
+      )
+      .catch((error: unknown) => String(error))
+
+    // Assert
+    assert.match(outcome, /Historical debugger closed/)
+    assert.equal(fixture.owner.available, false)
+  } finally {
+    readerFailing = false
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=an owner the reader closed while its native startup was still pending; fails_when=the retirement that waited for that startup resolves as retired or stops the session a second time; why_new=Cycle 0035 H5c (Cycle 0034 E2 covers the gave-up arm of the same guard only); seam=none
+test('a retirement that was waiting for a startup during which the reader closed fails closed and stops the session only once', async () => {
+  // Arrange
+  let releaseStartup = (): void => {}
+  const startupGate = new Promise<void>((resolve) => {
+    releaseStartup = resolve
+  })
+  const fixture = harness(startupGate),
+    abandoned = new AbortController()
+  const first = fixture.owner
+    .present(inspectedSnapshot, 'First recorded stop', abandoned.signal)
+    .catch((error: unknown) => String(error))
+  await fixture.started
+  abandoned.abort(new Error('Playback presentation superseded'))
+  await first
+  const retiring = fixture.owner
+    .retire(firstSnapshot, new AbortController().signal)
+    .then(
+      () => 'retired',
+      (error: unknown) => String(error),
+    )
+
+  // Act
+  const closing = fixture.owner.dispose()
+  releaseStartup()
+  const outcome = await retiring
+  await closing
+
+  // Assert
+  assert.match(outcome, /Historical debugger closed/)
+  assert.deepEqual(fixture.stopped, ['historical-owned'])
+})

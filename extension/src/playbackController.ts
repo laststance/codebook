@@ -29,6 +29,8 @@ export interface PlaybackDependencies {
   save(bundle: PlaybackBundle): Promise<void>
   /** Whether the committed moment can be shown again as it is: the reader is open and its historical debugger is usable. Defaults to true. */
   presentable?(): boolean
+  /** Whether the replay reader's panes exist (open and not closing); without them only `open` and `pause` are accepted. Defaults to true. */
+  readerOpen?(): boolean
   now?(): number
   manualTicks?: boolean
 }
@@ -62,6 +64,8 @@ export class PlaybackController {
   private readonly clock: () => number
   private disposed = false
   private saves: Promise<void> = Promise.resolve()
+  /** The last position handed to {@link remember}; an open of the same study prefers it to a stored preference that its own queued save may not have written yet. */
+  private rememberedPosition?: { studyId: string; positionMs: number }
 
   constructor(private readonly dependencies: PlaybackDependencies) {
     this.clock = dependencies.now ?? (() => performance.now())
@@ -133,6 +137,11 @@ export class PlaybackController {
       }
       return this.state()
     }
+    // A closed reader has no panes to present in, so a seek or play would recreate the Application panel alone; only an explicit open brings the reader back.
+    if (!(this.dependencies.readerOpen?.() ?? true))
+      throw new Error(
+        'The replay reader is closed; open the recording before another control.',
+      )
     const range = this.range()
     if (!range || !this.data)
       throw new Error(
@@ -386,14 +395,16 @@ export class PlaybackController {
             ].sort((left, right) => left - right)
           }
           const range = this.range()!
+          // The moment this controller last confirmed for the study outranks storage: its save may still be queued, and a failed save must not move the learner back.
+          const preferredPositionMs =
+            this.rememberedPosition?.studyId === request.studyId
+              ? this.rememberedPosition.positionMs
+              : data.preferredPositionMs
           const positionMs =
             request.positionMs ??
             Math.min(
               range.endMs,
-              Math.max(
-                range.startMs,
-                data.preferredPositionMs ?? range.startMs,
-              ),
+              Math.max(range.startMs, preferredPositionMs ?? range.startMs),
             )
           this.requestedMs = positionMs
           const projection =
@@ -513,6 +524,10 @@ export class PlaybackController {
   private remember(): void {
     const bundle = this.presented
     if (!bundle) return
+    this.rememberedPosition = {
+      studyId: bundle.studyId,
+      positionMs: bundle.projection.positionMs,
+    }
     this.saves = this.saves
       .then(() => this.dependencies.save(bundle))
       .catch((error) => {

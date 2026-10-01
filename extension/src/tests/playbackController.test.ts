@@ -945,3 +945,109 @@ test('opening the same recording again while its first load is still running doe
   assert.equal(player.controller.state().readiness, 'ready')
   await player.controller.dispose()
 })
+
+// Value: protects=the moment the learner confirmed last across a reload of the same recording; fails_when=the reload presents the position storage still holds because the confirmed moment's save has not landed, and then saves that older position last; why_new=Cycle 0035 H2 (every reload test let its saves land before reopening); seam=none
+test('a recording reloaded while its position save is still held by storage presents the moment the learner confirmed last', async () => {
+  // Arrange: storage holds 100 ms; the save of the confirmed 200 ms waits behind the storage lock.
+  let presentable = true,
+    releaseSave: () => void = () => undefined
+  const player = playbackHarness({ presentable: () => presentable })
+  const loadRecording = player.dependencies.load
+  player.dependencies.load = async (studyId, signal) => ({
+    ...(await loadRecording(studyId, signal)),
+    // The workspace restores whatever position storage holds when the load reads it.
+    preferredPositionMs: player.saved.at(-1),
+  })
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  const storageHeld = new Promise<void>((resolve) => {
+    releaseSave = resolve
+  })
+  player.dependencies.save = async (bundle): Promise<void> => {
+    await storageHeld
+    player.saved.push(bundle.projection.positionMs)
+  }
+  player.seek(200)
+  await player.controller.settle(new AbortController().signal, 1_000)
+
+  // Act: the historical session ended, so opening the same recording reloads it.
+  presentable = false
+  player.open()
+  await player.controller.settle(new AbortController().signal, 1_000)
+  const presentedWhileSaveHeld = player.controller.state().presentedMs
+  releaseSave()
+  await player.controller.saved()
+
+  // Assert
+  assert.equal(presentedWhileSaveHeld, 200)
+  assert.equal(player.displayed(), 200)
+  assert.equal(player.saved.at(-1), 200)
+  await player.controller.dispose()
+})
+
+// Value: protects=the learner's confirmed moment when its position save fails; fails_when=a reload falls back to the older stored position, or the failed save is no longer reported; why_new=Cycle 0035 H2 keeps the confirmed position in memory and must keep it after a storage failure; seam=none
+test('a recording reloaded after its position save failed still presents the moment the learner confirmed last and reports the failed save', async () => {
+  // Arrange: storage holds 100 ms and rejects every later save.
+  let presentable = true
+  const player = playbackHarness({ presentable: () => presentable })
+  const loadRecording = player.dependencies.load
+  player.dependencies.load = async (studyId, signal) => ({
+    ...(await loadRecording(studyId, signal)),
+    preferredPositionMs: player.saved.at(-1),
+  })
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  player.dependencies.save = async (): Promise<void> => {
+    throw new Error('disk full')
+  }
+  player.seek(200)
+  await player.controller.settle()
+
+  // Act
+  presentable = false
+  player.open()
+  await player.controller.settle()
+
+  // Assert
+  const state = player.controller.state()
+  assert.equal(state.presentedMs, 200)
+  assert.equal(state.readiness, 'ready')
+  assert.equal(state.reason, 'Playback position not saved: Error: disk full')
+  assert.equal(player.saved.at(-1), 100)
+  await player.controller.dispose()
+})
+
+// Value: protects=a reopened recording never presenting outside its verified range; fails_when=the remembered position bypasses the range clamp that the stored preference goes through; why_new=Cycle 0035 R2 (the remembered position is a new source of the opening position); seam=none
+test('a recording that became shorter than the last confirmed moment reopens at its verified end', async () => {
+  // Arrange: the learner confirmed 200 ms, then the recording is repaired to a verified range that ends at 150 ms.
+  const player = playbackHarness()
+  const loadRecording = player.dependencies.load
+  player.open()
+  await player.controller.settle()
+  player.seek(200)
+  await player.controller.settle()
+  player.dependencies.load = async (studyId, signal) => {
+    const recording = await loadRecording(studyId, signal)
+    return {
+      ...recording,
+      index: { ...recording.index, endMs: 150, lastVerifiedMs: 150 },
+      preferredPositionMs: player.saved.at(-1),
+    }
+  }
+  player.controller.leave()
+
+  // Act
+  player.open()
+  await player.controller.settle()
+
+  // Assert
+  const state = player.controller.state()
+  assert.equal(state.presentedMs, 150)
+  assert.equal(state.range?.endMs, 150)
+  assert.equal(state.readiness, 'ready')
+  await player.controller.dispose()
+})

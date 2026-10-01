@@ -3223,8 +3223,7 @@ export class StudyWorkspace {
         viewport.showHistory(capturedAppHtml(this.message()))
       // A new live lease cannot replace the independently selected recording renderer.
       if (this.recordingActive) {
-        this.replayViewport?.close()
-        this.replayViewport = undefined
+        this.dropReplayViewport()
         this.playback?.hide()
         this.playback?.reveal()
       }
@@ -4115,8 +4114,7 @@ export class StudyWorkspace {
         ?.settle(undefined, PRESENTATION_READY_TIMEOUT_MS)
         .catch(() => {})
       await this.playback?.saved()
-      this.replayViewport?.close()
-      this.replayViewport = undefined
+      this.dropReplayViewport()
       this.nodeHistoryPlaybackController?.dispose()
       this.nodeHistoryPlaybackController = undefined
       // A replacement may still be stopping an earlier owner: the reader is closed only once no historical debugger is left.
@@ -4248,11 +4246,10 @@ export class StudyWorkspace {
           return bytes
         },
         present: (bundle, signal) => this.presentPlayback(bundle, signal),
+        readerOpen: () => this.replayReaderOpen,
         // A debugger that was never created is started by the next presentation; only one that ended needs the reload.
         presentable: () =>
-          this.opened &&
-          !this.closing &&
-          this.replayDebugger?.available !== false,
+          this.replayReaderOpen && this.replayDebugger?.available !== false,
         invalidate: () => {
           this.replayDebugger?.invalidate()
           if (this.highlight)
@@ -4284,8 +4281,7 @@ export class StudyWorkspace {
             this.recordingActive &&
             this.app
           ) {
-            this.replayViewport?.close()
-            this.replayViewport = undefined
+            this.dropReplayViewport()
             this.app.webview.html = capturedAppHtml(this.message())
           }
           this.publish()
@@ -4810,9 +4806,7 @@ export class StudyWorkspace {
     this.recordingActive = true
     this.pendingHistory = undefined
     this.selection = { ...this.selection, studyId, follow: false }
-    this.viewport?.showHistory(
-      capturedAppHtml({ ...this.message(), loading: true }),
-    )
+    this.showRecordingLoadingOnLiveViewport()
     const index = await this.recordings!.read(studyId)
     signal.throwIfAborted()
     let context: PlaybackData['context'],
@@ -4934,6 +4928,41 @@ export class StudyWorkspace {
     const retirement = this.replayDebuggerRetirement
     if (!retirement) return
     await (signal ? untilAborted(retirement, signal) : retirement)
+  }
+
+  /** Whether the replay reader's panes exist, for {@link PlaybackController}'s reload and control guards: open and not closing. @example this.replayReaderOpen */
+  private get replayReaderOpen(): boolean {
+    return this.opened && !this.closing
+  }
+
+  /**
+   * Shows the loading page on a live run's viewport while a recording loads, releasing the recording renderer that page replaces.
+   *
+   * {@link loadPlayback} calls it before it reads the recording. Without a live viewport nothing is written and the renderer stays.
+   *
+   * @example this.showRecordingLoadingOnLiveViewport()
+   */
+  private showRecordingLoadingOnLiveViewport(): void {
+    if (!this.viewport) return
+    // The live lease's loading page replaces the shared panel's document, so a recording renderer reused across this reload could never acknowledge a frame.
+    this.dropReplayViewport()
+    this.viewport.showHistory(
+      capturedAppHtml({ ...this.message(), loading: true }),
+    )
+  }
+
+  /**
+   * Releases the recording renderer whenever another writer takes over the shared Application panel's document or the recording is left.
+   *
+   * {@link loadPlayback}, {@link presentation}'s new live lease, a failed load, {@link leavePlayback} and {@link close} call it;
+   * {@link ensureReplayViewport} then constructs a new renderer for the next presentation, which performs its own first reveal.
+   *
+   * @example this.dropReplayViewport()
+   */
+  private dropReplayViewport(): void {
+    this.replayViewport?.close()
+    this.replayViewport = undefined
+    this.replayNeedsReveal = false
   }
 
   /** Reuses the bounded PNG renderer without CDP, acquiring a fresh lease after replay-panel recreation. @example await this.ensureReplayViewport(signal) */
@@ -5231,8 +5260,7 @@ export class StudyWorkspace {
     if (!this.recordingActive) return
     this.playback?.leave()
     this.clearLearningSummary()
-    this.replayViewport?.close()
-    this.replayViewport = undefined
+    this.dropReplayViewport()
     this.recordingActive = false
     this.playbackPending = undefined
     this.playbackPresentingReady = false
