@@ -1,0 +1,132 @@
+# Cycle 0035 — Live-to-replay handoff: a displayed replay recovers while a live run is attached
+
+Type: product-increment\
+Status: planning\
+Result: pending\
+Delivery: not-applicable\
+Goal version: 9\
+Tracking issue: https://github.com/laststance/codebook/issues/63\
+Goal issue: https://github.com/laststance/codebook/issues/1\
+Goal links: G01, G03, G04, G11\
+Source state: [Cycle 0034 delivery closure](0034-replay-ownership.md#delivery-closure-2026-10-01), [PROJECT_STATE](../../PROJECT_STATE.md)
+
+Owner authority:
+- D043: continue to completion; protected Mac use is allowed while the owner is away.
+- D044: plan each cycle through `/spec`.
+- Standing direction of 2026-10-01: "CRITICAL が出た場合だけ直して。止まらないで最後まで進めて。", "全部選択肢はレコメンドでええで", "返事ができないので、選択肢はReccomendをpickしてください" and "そのまま最後まで進めて". This cycle takes the recommended option at every decision point and records each one below.
+- D040: VS Code practical trials use Copilot Chat **Auto**; the Codex Extension only after observed credit exhaustion.
+
+## Question and authorized scope
+
+Does a learning replay survive the handoff from a live explanation? Concretely: when the live run's application is still attached, can the learner recover a stopped historical session by pressing Recording, at the moment they last confirmed? And does a natural `/codebook` request, saved and reopened, reach that handoff at all in an installed editor?
+
+Why now: live explanation, then save, then replay is the product's defining path (PRODUCT_GOAL, "Defining live-to-learning experience"). Cycle 0034 added the reload that this handoff uses, and its delivery review reported two defects in it that the suite cannot see and the native trial did not exercise. The next step on the route, a natural multi-stop live explanation that is saved and replayed, runs straight into them.
+
+## Hypothesis and scope
+
+- Hypothesis: the reload fails only because the live viewport's loading document replaces the recording renderer that is then reused, and it loses the position only because the open reads storage before the pending save lands. Dropping the reused viewport before that document, and carrying the committed position in memory, closes both without a change to storage, schemas, MCP tool shapes or timeouts.
+- Smallest observable outcome: Issue #63 acceptance criteria 1–18.
+- In scope: Issue #63 H1–H6, the harness's renderer-document model, and native N4-a to N4-d.
+- Out of scope (still in PRODUCT_GOAL):
+  - The Cycle 0031 UI items: one-click Show Variables, automatic summary placement in Cursor, summary density, cold first-click focus, the reader recovery message, the AX range value, the transient "captured source is not ready" text.
+  - Retiring `Codebook: Select Presentation` and `codebook_presentation`, and with them T5.
+  - The Inspect check for unselected Node stops; `detached` during Codebook's own retirement; `replayNeedsReveal` lowered before the reveal completes; the missing presentation-idle check after the cold-entry wait; the reused `'replay-debugger'` error key; the advisory simplifications.
+  - Raising the 15 s settle ceiling; a startup slower than 5 s; unbounded storage writes in `close()`.
+  - Layout restore and "Open article" during replay; the wide-sequence overflow; the DOM harness in CI.
+  - A live explanation in Cursor Agent, a saved two-host Node replay, Wiki, shortcuts, skill and final acceptance.
+- The approach is falsified if the harness model shows the reload failing for a different reason than the replaced document, if a fix needs a storage, schema or timeout change, or if the installed VS Code still fails to recover with a live run attached (N4-c).
+
+Recorded scope decision (recommended option): the two reload findings come first, because they sit in the path Cycle 0034 added. They are combined with the natural live explanation trial instead of a fourth mechanism-only cycle, because that trial supplies the live run the reload needs and advances AC-LIVE and AC-SAVE, whose next actions have waited since Cycle 0030. The Cycle 0031 UI items follow in the next cycle with `/plan-design-review`.
+
+## Plan and selected skills
+
+The spec is Issue #63, archived at `~/.gstack/projects/codebook/specs/20261001-190800-87473-cycle-0035--live-to-replay-handoff-a-displayed-replay-recove.md` (private). Its quality gate was Codex 8/10; the five ambiguities it named (N4 outcome policy, protected-state locations, H2 after a failed or overlapping save, the N4-c timing boundary, the scope of the README and CodeRabbit edits) were fixed in the issue before filing.
+
+Order: harness model → H1 → H2 → H3 → H4 → H5 → H6 → gates → package and install → N4.
+
+- `/plan-eng-review` on the spec, because it changes renderer ownership and the position a reload presents.
+- `/plan-design-review` is skipped (recommended option): no control, layout or state is added or removed.
+- `/plan-devex-review` is skipped (recommended option): no MCP tool shape, capability or error code changes. H4 makes `seek`, `play` and `pause` after `close()` answer with the existing `PLAYBACK_UNAVAILABLE` error.
+- Local CodeRabbit CLI (never `--use-credits`) and `open-code-review-delegate`.
+- Then `/ship`, CI, a separate exact-HEAD gate and the merge (D039/D044).
+- Native: OBS Window Capture per `docs/qa/native-recording.md`. The VS Code chat request goes through the editor's public `code chat` command, because input to the editors is limited to clicks.
+
+## Accepted product and design
+
+- Authorized phase and acceptance-map IDs: implementation. Primary: AC-REPLAY. Dependencies: AC-LIVE, AC-SAVE. Regression: AC-GAPS, AC-LEARNING, AC-ENTRY.
+- Approved PNG: `docs/designs/assets/codebook-product-spec-v9.png`, SHA-256 `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`, verified on 2026-10-01; owner-approved under D036.
+- Image-viewing action, 2026-10-01 after compaction: opened the PNG with the image viewer and observed four regions.
+  - **1. Live explanation.** Native Run and Debug on the left (Variables, Watch, Call Stack, Breakpoints), the application above the stopped source `actions.ts`, standard chat on the right with a `/codebook` request, and a bottom status with "Recording explanation · Save learning replay".
+  - **2. Learning replay · Time-travel debugging.** The same composition with the session "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", a Learning summary with a sequence diagram and "I understand this step", and a timeline with Jump back, previous, pause, next, an "Unrecorded interval" marker and "Recorded state · Before database insert".
+  - **3. LLM Wiki — Reproduce DeepWiki.** Chapters, an article with relevant source files and a flow diagram, the Ask composer, Update LLM Wiki, On this page, Open in VS Code and Output project folder / Change location.
+  - **Shortcut discovery.** A `?` Keyboard shortcuts control and a searchable dialog.
+- Relevant difference: regions 1 and 2 show the same application panel in the live explanation and in the replay. The product reuses that one panel for both, and this cycle makes the replay keep its recorded frame there when the live run is still attached. No visible element is added or removed.
+- Contracts: `docs/specs/learning-replay.md` ("Replay controls must not resume an unrelated live debugger or borrow its state"; "Reopen and verify progress, playback position and its corresponding historical debug state"), `docs/designs/codebook.md` (recording and replay; live explanation experience), D031, D032, D040.
+
+## Entry evidence, 2026-10-01
+
+- Mandatory reads, all in full after compaction: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, the Cycle 0034 record (the active cycle at entry), DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure and the local TS rules.
+- Checkout: branch `codex/cycle-0035-live-replay-handoff` from `origin/main` `e3fa161`. Dirty only with the Cycle 0034 closure records and this file. No PR is open.
+- Tools: Node 24.21.0; pnpm 12.4.2 from the local corepack cache; VS Code 1.140.0 (`code chat` is available).
+- Main CI on `e3fa161`: all seven runs passed.
+- Protected state (first 8 hex digits of SHA-256): Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`. The dashboard is at `1936e41` with only the untracked `.codebook/`; nothing listens on port 3000.
+
+## Source-gap audit and selected increment
+
+Baseline: `main` `e3fa161`. Goal version 9 and the PNG have not changed since the Cycle 0034 audit, and the only product source change since then is PR #62 itself. Every row is accounted for below; rows this cycle does not touch carry forward with their limits in PROJECT_STATE.
+
+| AC | Affected? | Implementation / proof gap for this cycle (source inspected on `e3fa161`) |
+| --- | --- | --- |
+| AC-REPLAY | Primary | `loadPlayback()` (`studyWorkspace.ts:4813`) lets the live viewport's `showHistory()` replace the panel document while `ensureReplayViewport()` (`:4943-4949`) reuses the existing recording viewport, so a same-recording reload with a live run attached never has its paint acknowledged. The reload branch of `open` (`playbackController.ts:81-107`) clears the presented bundle after `remember()` only queues its save, and `loadPlayback()` reads `readPreference()` (`:4857`) without that save. `bounded()` (`replayDebugger.ts:245-253`) skips its rejection when `giveUp()` throws. No native proof with a live run attached. |
+| AC-LIVE | Dependency | Source unchanged. Proof gap from PROJECT_STATE: no natural multi-stop request without a prepared stop recipe on the current candidate. N4-a is that trial in VS Code. |
+| AC-SAVE | Dependency | Source unchanged. Proof gap: the saved result of a natural live explanation has not been reopened from the library on the current candidate. N4-b is that check. |
+| AC-ENTRY | Regression | `close()` (`studyWorkspace.ts:4096`) only hides playback, so a `seek` or `play` through `StudyService.playback` (`service.ts:461`) after the reader closed presents and creates an Application panel (H4). |
+| AC-GAPS | Regression | Gap frames go through the same reload and `presentMissing`; they must keep committing. |
+| AC-LEARNING | Regression | Learner decisions and saved archives must stay untouched; the trial adds one saved study to the dashboard's library and marks nothing understood. |
+| AC-WIKI, AC-WIKI-UPDATE, AC-SOURCE-LINKS, AC-DESKTOP, AC-SHORTCUTS, AC-SKILL, AC-REAL-PROJECTS | Carry forward | This cycle does not touch their source paths. The prior limits in PROJECT_STATE are unchanged. N4-a loads the bundled skill through `/codebook`, which is observed but earns AC-SKILL no new claim. |
+
+The selected increments and their falsifiers are Issue #63 H1–H6 and N4, as amended by the plan review below.
+
+## Validation contract
+
+Frozen before implementation. These are Issue #63's acceptance criteria in short form; the issue holds the exact wording.
+
+| Check | Expected observable result | Procedure | Evidence |
+| --- | --- | --- | --- |
+| AC1 / H1 | Live viewport attached, recording at `ready`, historical session ended: `openRecording` for the same study ends `ready` at the same `presentedMs` with the saved frame displayed. | Workspace test with the harness model | Red on `e3fa161`, green, control |
+| AC2 / H1 | A first Recording open with a live viewport attached still commits; with no live viewport the reload constructs no new recording viewport. | Workspace tests | Pass on base; control or reason |
+| AC3 | The harness rejects a recording paint when the panel document is not that viewport's renderer; the full suite passes with the model. | Harness self-test; full suite | Output |
+| AC4 / H2 | Stored A, presented B, B's save held: a same-study reload presents B; after release the last saved position is B. | `playbackController.test.ts` | Red/green and control |
+| AC5 / H2 | The same through `StudyWorkspace` after the historical session ended. | Workspace test | Red/green and control |
+| AC6 / H2 | A first open of a never-remembered study presents the stored preference; after B's save fails, the state reports it and a same-study open still presents B. | Controller test | Pass on base (first half); control |
+| AC7 / H3 | Reader listener and `failed` both throw: a bounded startup waiter and a presentation on a disposed adapter still reject with the closed-debugger error (within 5,000 + 250 ms). | `replayDebugger.test.ts` | Red/green and control |
+| AC8 / H4 | After `close()`: `seek`, `play`, `pause` reject with `PLAYBACK_UNAVAILABLE`, no panel and no session is created; `open` opens the reader at the saved position. | Service or workspace tests | Red/green and control |
+| AC9 / H5a | Recording pressed with a live, available historical session: no load, no registration, `presentationRevision` unchanged. | Workspace test | Pass on base; control fails |
+| AC10 / H5b | A cancelled cold-entry waiter leaves within 250 ms of its abort. | `studyWorkspaceEntry.test.ts` | Pass on base; control fails |
+| AC11 / H5c | `retire()` on an owner disposed during a pending startup rejects closed and registers no retirement. | `replayDebugger.test.ts` | Pass on base; control |
+| AC12 / H5d | A recording reveal that fails without an abort drops the viewport; the next open constructs a new one and commits. | Workspace test | Pass on base; control |
+| AC13 / H6 | Both comments corrected. | Diff | exempt |
+| AC14 | Each behavior change (AC1, 4, 5, 7, 8) has its red run on `e3fa161` and a disabled-fix control with `dist` restored. | Private control script | Table in this record |
+| AC15 | Full suite, package suite, hook, typecheck, lint, `format:check`, `dead-code`, `dupes` and `health` pass. | Commands per `docs/qa/test-execution.md` | Command output |
+| AC16 | Protected hashes and the dashboard are unchanged; nothing started for the trial is left running. | `shasum -a 256`, `git status`, port and process checks | Output |
+| AC17 / N4 | N4-a to N4-d each have a recorded outcome per the issue's outcome policy. | OBS video, `code chat` for the request, clicks otherwise | Private video, frames and hashes |
+| AC18 | No storage format, schema, MCP tool shape or timeout changes. | Diff review | Diff |
+
+## Attempts and evidence
+
+No observations yet.
+
+## Result and decision
+
+Pending.
+
+## Handoff
+
+Pending.
+
+## Next action
+
+- Exact next action: run `/plan-eng-review` on Issue #63, record its amendments here and in the issue, then implement in the recorded order, test-first, with a red run on `e3fa161` and a disabled-fix control per behavior change.
+- Changed files / branch / active processes: `codex/cycle-0035-live-replay-handoff`; no active processes.
+- State updated in PROJECT_STATE.md: active cycle, tracking, next action.
+- Durable decisions updated: none.
