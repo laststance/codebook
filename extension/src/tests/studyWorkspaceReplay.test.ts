@@ -2454,6 +2454,51 @@ test('pressing Recording after the historical session ended presents the saved m
   }
 })
 
+// Value: protects=the workspace harness refusing recorded paints, gaps and handshakes once another writer replaced the recording renderer in the shared Application panel; fails_when=the harness acknowledges a recording viewport whatever document its panel holds, so a reload that reuses a replaced renderer passes unnoticed; why_new=Cycle 0035 AC3 (the model's rejection was shown only by the private red run on the base source); seam=WorkspaceViewport models the renderer document
+test('the workspace harness answers a recording viewport only while its own renderer is the document in the shared Application panel', async () => {
+  // Arrange: a live viewport and the recording viewport share one Application panel, and the recording renderer was written last.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.reader.presentation.createViewport(
+      'attached-live',
+      () => {},
+      () => {},
+      'normal',
+    )
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const live = harness.viewportInstances.find(
+        (candidate) => candidate.mode !== 'recording',
+      ),
+      recording = harness.viewportInstances.find(
+        (candidate) => candidate.mode === 'recording',
+      )
+    assert.ok(live)
+    assert.ok(recording)
+    assert.equal(recording.panel, live.panel)
+    await recording.present('renderer-in-place')
+    const acknowledgedInPlace = harness.displayedImage()
+
+    // Act: the live lease writes its history page into the shared panel.
+    live.showHistory('<p>Loading recording</p>')
+
+    // Assert
+    assert.equal(acknowledgedInPlace, 'renderer-in-place')
+    await assert.rejects(recording.present('renderer-replaced'), {
+      message: 'Viewport frame acknowledgement timed out',
+    })
+    await assert.rejects(recording.presentMissing(), {
+      message: 'Timed out waiting for recorded gap presentation',
+    })
+    await assert.rejects(recording.reveal(), {
+      message: 'Timed out waiting for owned viewport ready',
+    })
+    assert.equal(harness.displayedImage(), 'renderer-in-place')
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the first open of a recording while a live run holds the Application panel; fails_when=the recording renderer is not the last document written into the shared panel; why_new=Cycle 0035 H1 changes who writes that panel during a load, and no test asserted this open's outcome; seam=WorkspaceViewport models the renderer document
 test('opening a recording while a live run is attached presents its saved frame', async () => {
   // Arrange
@@ -2602,6 +2647,74 @@ test('an agent seeking or playing a recording after the reader closed is refused
     assert.equal(harness.reader['app'], undefined)
     assert.equal(harness.historicalDebuggers.length, debuggersAtClose)
     assert.equal(harness.controller.state().presentedMs, 100)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a closed reader staying closed when the learner seeks or plays from the Learning replay panel, and the panel saying why; fails_when=the closed-reader refusal covers only the agent's playback route, so the panel's control presents and recreates the Application panel alone; why_new=Cycle 0035 H4's test sends controls through the service only, and the panel calls the controller directly; seam=none
+test('a learner seeking or playing from the Learning replay panel after the reader closed is refused, told why, and nothing opens', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    await harness.reader.close()
+    const debuggersAtClose = harness.historicalDebuggers.length,
+      revisionAtClose = harness.controller.state().revision,
+      errorsAtClose = harness.playbackPanelMessages.at(-1)!.errors
+
+    // Act: the panel outlives the reader, so its controls still reach the workspace.
+    harness.receivePlaybackPanel({
+      type: 'playback',
+      action: 'seek',
+      positionMs: 0,
+      revision: harness.playbackPanelMessages.at(-1)!.revision,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await waitUntil(
+      () =>
+        harness.playbackPanelMessages
+          .at(-1)!
+          .errors.some((error) => error.includes('replay reader is closed')),
+      'the refused seek reaching the Learning replay panel',
+      1_000,
+    )
+    await harness.controller.settle()
+    const afterSeek = harness.controller.state()
+    harness.receivePlaybackPanel({
+      type: 'playback',
+      action: 'play',
+      revision: harness.playbackPanelMessages.at(-1)!.revision,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    await harness.controller.settle()
+
+    // Assert
+    const afterPlay = harness.controller.state()
+    assert.equal(
+      harness.playbackPanelMessages
+        .at(-1)!
+        .errors.filter((error) => !errorsAtClose.includes(error))
+        .join('\n'),
+      'Error: The replay reader is closed; open the recording before another control.',
+    )
+    assert.equal(afterSeek.presentedMs, 100)
+    assert.equal(afterSeek.revision, revisionAtClose)
+    assert.equal(afterPlay.mode, 'paused')
+    assert.equal(afterPlay.presentedMs, 100)
+    assert.equal(afterPlay.revision, revisionAtClose)
+    assert.equal(harness.reader.inspect().opened, false)
+    assert.equal(harness.reader['app'], undefined)
+    assert.equal(harness.historicalDebuggers.length, debuggersAtClose)
   } finally {
     await harness.close()
   }

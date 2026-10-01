@@ -1051,3 +1051,36 @@ test('a recording that became shorter than the last confirmed moment reopens at 
   assert.equal(state.readiness, 'ready')
   await player.controller.dispose()
 })
+
+// Value: protects=another recording opening at its own stored position after the learner confirmed a moment in a different recording; fails_when=the remembered position is used without matching its study, so the other recording opens at the first recording's moment; why_new=Cycle 0035 H2 remembers the confirmed position, and the existing study switch abandons the first load before any moment is confirmed; seam=none
+test('another recording opened after the learner confirmed a moment in the first one opens at its own stored position', async () => {
+  // Arrange: the learner confirmed 200 ms in the first recording; storage holds 50 ms for the other recording.
+  const player = playbackHarness(),
+    other = playbackFixture()
+  player.dependencies.load = async (studyId) =>
+    studyId === player.studyId
+      ? player.data
+      : { ...other, preferredPositionMs: 50 }
+  player.open()
+  await player.controller.settle()
+  player.seek(200)
+  await player.controller.settle()
+  const confirmedInFirst = player.controller.state().presentedMs
+
+  // Act
+  player.controller.command({
+    studyId: other.index.header.studyId,
+    action: 'open',
+    expectedRevision: player.controller.state().revision,
+  })
+  await player.controller.settle()
+
+  // Assert
+  const state = player.controller.state()
+  assert.equal(confirmedInFirst, 200)
+  assert.equal(player.controller.bundle()?.studyId, other.index.header.studyId)
+  assert.equal(state.readiness, 'ready')
+  assert.equal(state.presentedMs, 50)
+  assert.equal(player.displayed(), 50)
+  await player.controller.dispose()
+})
