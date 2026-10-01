@@ -1,5 +1,5 @@
 export const API_VERSION = '1.5'
-export const EXTENSION_VERSION = '0.2.18'
+export const EXTENSION_VERSION = '0.2.19'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
