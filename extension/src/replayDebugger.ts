@@ -13,6 +13,7 @@ import {
   type ReplaySourceDocument,
 } from './replayDebugAdapter'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
+import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { untilAborted } from './utils/untilAborted'
 
@@ -30,7 +31,7 @@ export type ReplayDebuggerChange = 'values-loaded' | 'session-ended'
 /** How one {@link ReplayDebugger} inspection wait ends: with a presentation outcome or with the error that ended it. */
 type InspectionOutcome = { inspection: ReplayInspection } | { error: unknown }
 
-/** Owns the selected native historical session for {@link StudyWorkspace}; never adopts or stops another debugger. @example await debuggerView.present(snapshot, 'Recorded · 00:42', signal) */
+/** Owns the selected native historical session for {@link StudyWorkspace}; never adopts or stops another debugger. @example await debuggerView.present(snapshot, 'Recorded · 00:42', signal) // => 'uninspected' while Variables is collapsed */
 export class ReplayDebugger {
   private readonly token = randomUUID()
   private readonly disposables: vscode.Disposable[] = []
@@ -164,7 +165,17 @@ export class ReplayDebugger {
     this.adapter?.select(undefined, 'Not recorded at this moment')
   }
 
-  /** Retires only a different historical stop; video frames within one stop keep their native context. @example await debuggerView.retire(snapshot, signal) */
+  /**
+   * Retires the owned session before {@link StudyWorkspace.presentPlayback} shows a different historical stop; video frames within one stop keep their native context.
+   *
+   * The retirement is shared by every presentation and bounded by {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}: an editor that never
+   * answers makes this owner unavailable, so only an explicit replay reopen restarts it. An aborted caller leaves at once.
+   *
+   * @param snapshot - Recorded stop about to be shown, compared with the one the session shows now.
+   * @param signal - The presentation's cancellation; it never cancels the shared retirement.
+   * @throws The signal's reason once it aborts, or the closed-debugger error when this owner is or becomes unavailable.
+   * @example await debuggerView.retire(snapshot, signal)
+   */
   async retire(
     snapshot: ReplayDebugSnapshot | undefined,
     signal: AbortSignal,
@@ -173,27 +184,73 @@ export class ReplayDebugger {
     if (this.closed || this.detached)
       throw new Error(HISTORICAL_DEBUGGER_CLOSED)
     if (this.hasPresented && this.lastPresentedSnapshot === snapshot) return
-    this.retiring ??= (async () => {
-      await this.starting?.catch(() => {})
-      const session = this.session
-      if (!session) return
-      this.retiringSessionId = session.id
-      try {
-        await this.editor.debug.stopDebugging(session)
-        await waitUntil(
-          () => this.session?.id !== session.id,
-          'owned historical debugger termination',
-          REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
-          new AbortController().signal,
-        )
-      } finally {
-        this.retiringSessionId = undefined
-      }
-    })().finally(() => {
+    this.retiring ??= this.bounded(this.retireSession()).finally(() => {
       this.retiring = undefined
     })
-    await this.retiring
+    await untilAborted(this.retiring, signal)
     signal.throwIfAborted()
+  }
+
+  /**
+   * Stops the owned session and waits for its termination on behalf of {@link retire}, after any pending startup settles.
+   * @example this.retiring = this.bounded(this.retireSession())
+   */
+  private async retireSession(): Promise<void> {
+    await this.starting?.catch(() => {})
+    const session = this.session
+    if (!session) return
+    this.retiringSessionId = session.id
+    try {
+      await this.editor.debug.stopDebugging(session)
+      await waitUntil(
+        () => this.session?.id !== session.id,
+        'owned historical debugger termination',
+        REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+        new AbortController().signal,
+      )
+    } finally {
+      // An expired retirement already gave up this session; a later one may own the field by now.
+      if (this.retiringSessionId === session.id)
+        this.retiringSessionId = undefined
+    }
+  }
+
+  /**
+   * Bounds one shared native operation (startup or retirement) by {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}.
+   *
+   * On expiry the owner gives up its session through {@link expire}, so every waiter and later presentation fails with the
+   * closed-debugger error instead of waiting for an editor that never answers.
+   *
+   * @param operation - The shared operation; it keeps running, and its late outcome is ignored.
+   * @returns The operation's outcome, or a rejection with the closed-debugger error on expiry.
+   * @example this.starting = this.bounded(this.launchSession())
+   */
+  private bounded(operation: Promise<void>): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const expiry = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        this.expire()
+        reject(new Error(HISTORICAL_DEBUGGER_CLOSED))
+      }, REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
+    })
+    return Promise.race([operation, expiry]).finally(() => clearTimeout(timer))
+  }
+
+  /**
+   * Makes this owner unavailable after a shared native operation outlived its bound, as if the learner had stopped it.
+   *
+   * A termination that arrives later is then the learner-ended path rather than Codebook's own retirement, and a session that
+   * starts later is stopped by {@link launchSession}. The reader drops its hint and re-enables Node Inspect.
+   *
+   * @example this.expire()
+   */
+  private expire(): void {
+    if (this.closed || this.detached) return
+    this.detached = true
+    this.retiringSessionId = undefined
+    this.valuesUnrequested = false
+    this.wakeInspection()
+    this.changed('session-ended')
   }
 
   /**
@@ -245,6 +302,8 @@ export class ReplayDebugger {
       adapter.select(snapshot, label, sourceDocument)
       this.selected = { snapshot, label, sourceUri: sourceDocument?.uri }
     }
+    // The editor can dispose the adapter just before it reports termination; a disposed adapter shows nothing, which is not "no values".
+    if (adapter.disposed) throw new Error(HISTORICAL_DEBUGGER_CLOSED)
     // The native session shows this stop from now on, so an interrupted wait cannot make retire() restart it.
     this.hasPresented = true
     this.lastPresentedSnapshot = snapshot
@@ -266,46 +325,86 @@ export class ReplayDebugger {
    * Waits for the owned native session on behalf of {@link present}, starting it when none is running.
    *
    * Startup and retirement are shared by every presentation, so an abandoned presentation only stops waiting: its
-   * signal never cancels them, and {@link PlaybackController}'s queue moves on even when the editor never answers.
+   * signal never cancels them, and {@link PlaybackController}'s queue moves on even when the editor never answers. Both are
+   * bounded by {@link bounded}, so a presentation whose signal never aborts (a saved Node stop) cannot wait forever either.
    *
    * @param signal - The waiting presentation's cancellation.
-   * @throws The signal's reason once it aborts, or the startup failure (which the next presentation retries).
+   * @throws The signal's reason once it aborts, the startup failure (which the next presentation retries) or the closed-debugger error after expiry.
    * @example await this.awaitSession(signal)
    */
   private async awaitSession(signal: AbortSignal): Promise<void> {
     await untilAborted(this.retiring, signal)
-    const starting = (this.starting ??= (async () => {
-      const started = await this.editor.debug.startDebugging(
-        undefined,
-        {
-          type: REPLAY_DEBUG_TYPE,
-          request: 'launch',
-          name: REPLAY_DEBUG_SESSION_NAME,
-          codebookReplayOwner: this.token,
-          internalConsoleOptions: 'neverOpen',
-        },
-        {
-          suppressSaveBeforeStart: true,
-          suppressDebugToolbar: true,
-          suppressDebugStatusbar: true,
+    if (!this.starting) {
+      const starting: Promise<void> = this.bounded(this.launchSession()).catch(
+        (error: unknown) => {
+          // A refused startup must not poison later presentations, even after every waiter left: the next one retries it.
+          if (this.starting === starting && !this.session)
+            this.starting = undefined
+          throw error
         },
       )
-      if (!started || !this.session || !this.adapter)
-        throw new Error(
-          'The editor did not start its historical debug session.',
-        )
-      if (this.closed)
-        throw new Error('Historical debugger closed during startup.')
-    })())
-    // A refused startup must not poison later presentations; the next one retries it.
-    try {
-      await untilAborted(starting, signal)
-    } catch (error) {
-      // Only a failed startup is forgotten; an abandoned waiter leaves the pending one to its next presentation.
-      if (!signal.aborted && this.starting === starting && !this.session)
-        this.starting = undefined
-      throw error
+      this.starting = starting
     }
+    await untilAborted(this.starting, signal)
+  }
+
+  /**
+   * Asks the editor to launch the owned historical session on behalf of {@link awaitSession}.
+   *
+   * A session that only appears after this owner closed or gave up (see {@link expire}) is stopped at once, so no
+   * unowned "Codebook · Recorded learning" session keeps showing history.
+   *
+   * @throws When the editor refused the launch or this owner closed during it.
+   * @example this.starting = this.bounded(this.launchSession())
+   */
+  private async launchSession(): Promise<void> {
+    const started = await this.editor.debug.startDebugging(
+      undefined,
+      {
+        type: REPLAY_DEBUG_TYPE,
+        request: 'launch',
+        name: REPLAY_DEBUG_SESSION_NAME,
+        codebookReplayOwner: this.token,
+        internalConsoleOptions: 'neverOpen',
+      },
+      {
+        suppressSaveBeforeStart: true,
+        suppressDebugToolbar: true,
+        suppressDebugStatusbar: true,
+      },
+    )
+    this.stopSessionStartedAfterExpiry()
+    if (!started || !this.session || !this.adapter)
+      throw new Error('The editor did not start its historical debug session.')
+    if (this.closed)
+      throw new Error('Historical debugger closed during startup.')
+  }
+
+  /**
+   * Stops a session that only appeared after this owner gave up on its startup (see {@link expire}), on behalf of {@link launchSession}.
+   *
+   * A closed owner is left to {@link dispose}, which stops the session itself once the startup settles.
+   *
+   * @example this.stopSessionStartedAfterExpiry()
+   */
+  private stopSessionStartedAfterExpiry(): void {
+    if (this.detached && !this.closed && this.session)
+      void this.stopOwnedSession(this.session)
+  }
+
+  /**
+   * Stops one owned session for {@link dispose} and {@link launchSession} without letting an editor that never answers hold the caller.
+   * @param session - The owned historical session to stop.
+   * @returns Once the stop is acknowledged or {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS} elapsed; it never rejects.
+   * @example await this.stopOwnedSession(session)
+   */
+  private async stopOwnedSession(session: vscode.DebugSession): Promise<void> {
+    await awaitResponse(
+      this.editor.debug.stopDebugging(session),
+      'the owned historical debugger stop',
+      undefined,
+      REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+    ).catch(() => {})
   }
 
   /**
@@ -355,11 +454,15 @@ export class ReplayDebugger {
         expired = true
         check()
       }
+      // The wall clock may jump backward; the deadline never exceeds its nominal length from now.
       const stoppedTimer = setTimeout(
         expire,
-        Math.max(
-          0,
-          adapter.selectedAt + REPLAY_DEBUG_CAPTURE_TIMEOUT_MS - Date.now(),
+        Math.min(
+          REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+          Math.max(
+            0,
+            adapter.selectedAt + REPLAY_DEBUG_CAPTURE_TIMEOUT_MS - Date.now(),
+          ),
         ),
       )
       this.inspectionWaiters.add(check)
@@ -423,9 +526,13 @@ export class ReplayDebugger {
   ): ReturnType<typeof setTimeout> | undefined {
     const stoppedAt = adapter.stoppedAt
     if (stoppedAt === undefined) return undefined
+    // A backward wall-clock jump cannot stretch the grace beyond its nominal length.
     return setTimeout(
       expire,
-      Math.max(0, stoppedAt + REPLAY_DEBUG_INSPECTION_GRACE_MS - Date.now()),
+      Math.min(
+        REPLAY_DEBUG_INSPECTION_GRACE_MS,
+        Math.max(0, stoppedAt + REPLAY_DEBUG_INSPECTION_GRACE_MS - Date.now()),
+      ),
     )
   }
 
@@ -434,7 +541,14 @@ export class ReplayDebugger {
     for (const check of [...this.inspectionWaiters]) check()
   }
 
-  /** Stops only its exact owned session, including a startup that completes after workspace closure. @example await debuggerView.dispose() */
+  /**
+   * Stops only its exact owned session, including a startup that completes after workspace closure.
+   *
+   * {@link StudyWorkspace.close} and its replacement of an unavailable debugger await this, so every wait is bounded: pending
+   * startup or retirement by their own {@link bounded} deadline, the final stop by {@link stopOwnedSession}. Cleanup always runs.
+   *
+   * @example await debuggerView.dispose()
+   */
   async dispose(): Promise<void> {
     if (this.closed) return
     this.closed = true
@@ -442,7 +556,7 @@ export class ReplayDebugger {
     try {
       await this.retiring?.catch(() => {})
       await this.starting?.catch(() => {})
-      if (this.session) await this.editor.debug.stopDebugging(this.session)
+      if (this.session) await this.stopOwnedSession(this.session)
     } finally {
       this.adapter?.dispose()
       for (const disposable of this.disposables) disposable.dispose()
