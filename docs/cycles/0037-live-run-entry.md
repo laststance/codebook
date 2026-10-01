@@ -2,8 +2,8 @@
 
 Type: product-increment\
 Status: validating\
-Result: pending\
-Delivery: not-applicable\
+Result: demonstrated\
+Delivery: committed\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/67\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -107,6 +107,15 @@ The context was compacted after the implementation review had been recorded and 
 - The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 "Live explanation" with native Run and Debug (Variables `amount: 120`, `amountInCents: 12000`, `status: 'pending'`; Call Stack `createInvoice actions.ts:24`), the Create Invoice application above the stopped `actions.ts`, standard chat with a `/codebook` request and the bottom "Recording explanation · Save learning replay"; region 2 "Learning replay · Time-travel debugging" with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", the Learning summary with its sequence diagram and "I understand this step", and the timeline at 00:42 / 02:18 with "Unrecorded interval"; region 3 "LLM Wiki — Reproduce DeepWiki" with chapters, the article, the flow diagram, the Ask composer, "Update LLM Wiki" and "Change location"; the "Shortcut discovery" strip with the `?` control and the searchable dialog.
 - Checkout: `codex/cycle-0037-live-run-entry` at `04101e7`, clean; nothing pushed, no PR open; no subagent or trial running.
 - Gap audit: no product source changed since `8a86ef9`, whose rows (AC-ENTRY, AC-SAVE, AC-LIVE) carry the native N6 and review results recorded below; the other rows' source paths are untouched, so their assessment stands. The remaining phase is delivery only and needs no desktop.
+
+### Entry after compaction, 2026-10-02 (fourth in this cycle)
+
+The context was compacted during the delivery step, while the documentation audit of `/ship` was running in a separate reviewer context. Before the compaction reminder was read, one action ran: a private draft of the pull-request description was written under `/tmp`. No product source, test, repository record or runtime trial was touched. The mandatory entry was then repeated on the files on disk:
+
+- Read in full: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md`.
+- The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 "Live explanation" with native Run and Debug (Variables `amount: 120`, `amountInCents: 12000`, `status: 'pending'`; Call Stack `createInvoice actions.ts:24`, `handleSubmit form.tsx:18`; Breakpoints `actions.ts` 24), the Create Invoice application above the stopped `actions.ts` with the `await db.insert(invoices).values({` line highlighted, standard chat with a `/codebook` request and the bottom "Recording explanation · Save learning replay"; region 2 "Learning replay · Time-travel debugging" with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", the Learning summary with its sequence diagram, "Before database insert" and "I understand this step", and the transport at 00:42 / 02:18 with "Jump back" and "Unrecorded interval"; region 3 "LLM Wiki — Reproduce DeepWiki" with the chapter list, the article "Creating an invoice" with "Relevant source files" and the flow diagram, the Ask composer, "Source changed · Update available", "Update LLM Wiki", "On this page", "Open in VS Code" and "Output: project folder / Change location"; the "Shortcut discovery" strip with the "Keyboard shortcuts ?" control and the searchable dialog ("Show keyboard shortcuts ?", "Close Esc").
+- Checkout: `codex/cycle-0037-live-run-entry` at `7d7ff0b`, dirty with this delivery's uncommitted work (four tests and one harness hook, the release metadata, the CHANGELOG entry and the records); nothing pushed, no PR open; the documentation audit was the only subagent running and it had ended when this note was written; no trial running.
+- Gap audit: no product source changed since `8a86ef9` except the version literal of the release metadata; the rows AC-ENTRY, AC-SAVE and AC-LIVE carry the native N6 and review results recorded below, and the other rows' source paths are untouched, so their assessment stands. The remaining phase is delivery only and needs no desktop.
 
 ## Source-gap audit and selected increment
 
@@ -261,7 +270,9 @@ Disabled-fix controls (criterion 17; private `artifacts/cycle-0037/controls/run-
 | 17 | E4: the declared-column rule itself | yes |
 | 18 | Criterion 16: the corrected help sentence (E5) | yes |
 
-Gates on the working tree (criterion 18): full suite 1,609/1,609 (1,574 on `9885f7f`), package suite 183/183 with no edit to its skill expectations, hook 4/4, and `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` each exit 0. The bundled skill is byte-unchanged (`39f03be0`). Cycle 0036's leftover-tab tests, its two refresh tests and its tracker tests pass unmodified (criteria 7, 13, 15); `RecordingStore.start` and its tests are not edited.
+Gates on the working tree (criterion 18): full suite 1,606/1,606 (1,574 on `9885f7f`; see the correction below), package suite 183/183 with no edit to its skill expectations, hook 4/4, and `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` each exit 0. The bundled skill is byte-unchanged (`39f03be0`). Cycle 0036's leftover-tab tests, its two refresh tests and its tracker tests pass unmodified (criteria 7, 13, 15); `RecordingStore.start` and its tests are not edited.
+
+Correction of the full-suite count, found at delivery: this record first said 1,609/1,609. That run read three tests from a compiled file that an earlier draft of the refresh utility had left in `dist/tests` (the TypeScript build does not remove outputs of deleted sources; the package suite's clean build does). The committed source has 1,606 tests in 107 files: the delivery run on `7d7ff0b` passed 1,606/1,606, every name of that run is in the earlier one, and the three extra names belong to the replaced draft. No committed test was lost.
 
 Corrections and limits found while implementing:
 
@@ -324,17 +335,52 @@ Both reviews ran on `1a8d536` against the cycle base `9885f7f`. Owner direction:
 
 No finding was reported for E3 (`isRefreshedFrameAtStop`, `verifyStackRefresh`), E4 (`acknowledgesPosition`, both Node call sites), E5, the constants and the view-type predicate, or the admission mechanics (lock-free read, one rule shared with `saveStudy`, the study id that `checkpoint` uses). The reviewer traced no path that closes a pane this host owns.
 
+### Delivery review, 2026-10-02
+
+`/ship` ran on `7d7ff0b`. Owner direction: fix only critical findings and record the rest. No pass reported a critical finding, so no product source changed after the native candidate `1a8d536`; the delivery adds four tests, one harness hook, the release metadata and these records.
+
+- **Coverage audit.** 30 changed paths traced; 25 have a test of value (83 %, against a target of 80 %), 5 have none. The audit added four tests to two existing files: a run under an invalid Saved Study Limit ends before a runtime exists and names the setting in its cause; a run stopped while its admission is read acquires no runtime; a selection refused over a dead pane is confirmed when repeated once the pane can close; a dead pane in another group does not weaken the foreign-editor refusal. A separate read-only pass rated all four as valid. None is red on the branch, so none is a regression test. The private control script now holds 22 controls (four for these tests); 22 of 22 held and the compiled output was identical before and after.
+- **Plan completion.** 44 items: 38 done, 3 changed (the admission answers a boolean instead of rejecting; the Recording test asserts one Application tab and no Study tab; the existing-id case is proven at library level), 1 partial (PROJECT_STATE's next action was stale; rewritten in this delivery), 2 not done at audit time (the CHANGELOG entry and the version bump, both written by this delivery).
+- **Review.** Core checklist plus five specialists and a red team on tree `fb2d9d13`: 0 critical, 13 informational, 1 advisory; security, performance and simplification reported nothing. Exploratory QA: 22 probes (7 smoke, 15 plan checks), all passing: full suite 1,610/1,610, package 183/183, hook 4/4, six static gates, the controls, the bundled skill hash, the protected state, the native evidence with the product source equal to candidate `1a8d536`, the red log and the CodeRabbit configuration.
+- **Adversarial passes** on the same tree: a native pass (no critical or high; three medium, four lower), a Codex adversarial pass (one P2) and a Codex structured review (two P2, no P1: gate passed).
+- **Documentation audit.** A first pass (separate reviewer context, 16 documents) made two factual edits: the README now says a full library at the maximum limit refuses every configured run (Node test runs do not reach the check), and the extension README's Saved learning capacity section names the refusal before input. It reported one imprecise CHANGELOG sentence ("two binding rules … that 0.2.20.0 loosened"; 0.2.20.0 was stricter about the stack refresh), which was corrected to "two behaviors … that 0.2.20.0 changed". That correction and the fourth entry note above go through a second pass before the commit; its result is recorded with the delivery closure. Documentation debt it named, not written: the extension README does not describe the dead-pane close or its refusal text, nor the missing remedy at the limit of 256.
+
+Findings carried, none fixed:
+
+| # | Reported by | Finding |
+| --- | --- | --- |
+| D1 | red team, Codex structured, native pass; seen in N6 | A run refused for a full library stays in the service's records. The reader's refresh tries to save it, the save is refused and it stays pending. After the learner raises the limit, Retry storage, a server stop or an editor shutdown writes it as a not-demonstrated study and takes the freed slot, so the next run is refused again; with k refused attempts the limit must rise by k + 1. While the library is still full, Stop Agent Server and deactivation report "Runtime released; final reader history was not saved" for a run that sent no input. Refused runs also count against the 16 retained runs. Traced in code by three passes; the Codex pass reports reproducing it with the existing capture and save functions; not run in an editor |
+| D2 | OCR F2, core, Codex structured, native pass | With the limit at its maximum of 256 every configured run is refused, the message names a remedy that cannot be applied, and nothing removes a saved study. On `9885f7f` such a run still ran unsaved |
+| D3 | OCR F1, testing, Codex adversarial, native pass | A run that creates the Application panel before any reader open leaves the dead panes in place (the dead-pane reader answers none once this host owns a panel); a later open or selection meets the old duplicate-tab state. A close the editor refuses on a cold open is not reported once a panel exists; the prelude covers `select` only |
+| D4 | OCR F3, core, native pass | Another error of the admission read (an invalid limit, a file in the library folder whose name only ends like an archive, an unreadable folder) ends every configured run as `RUNTIME_FAILED` with the useful text only in the cause; on `9885f7f` these failed the save only |
+| D5 | native pass | A focused dead pane that shares its group with a non-text editor: closing it counts as closing the focused tab, so the foreign-editor refusal is skipped and the selection is admitted. With the dead pane in another group the same editor refuses (tested) |
+| D6 | native pass | E4's "refused before the test continues" holds when the adapter answers verified in the registration reply. A first reply that is pending without a position is accepted, and a later binding at another column is still caught only at the pause, as before. The assumed reply shape of the debugger was not verified; N6 had no Node run. The refusal text is raw JSON without the declared and bound positions |
+| D7 | maintainability | Two docstrings are stale: `isFrameAtPosition` (its new caller passes the declared line with the frame's own column) and `admitPresentation` ("every refusal is thrown before any native effect": the closed-reader prelude now closes tabs before a refusal that may follow; OCR F5). The names around the prelude still say "LeftoverSources" (advisory) |
+| D8 | testing, coverage audit | Test gaps: the fake editor closes all requested tabs or none, so a partial close, a rejected close request and a cold open with the dead pane focused are untested (OCR F4, F6); the refused cold-open guard passes without the close step; one test exercises the harness only; nothing calls the admission while the storage lock is held; the Study-only half of the live-panel condition has no reachable test |
+
+D1 and D2 are the first items for the next cycle: three passes reported them independently, and together they can leave a learner unable to start a run.
+
+Release metadata: VERSION 0.2.21.0, manifest and runtime version 0.2.21, the package regression expectation and the README's package path. The CHANGELOG entry names the three new texts (E2's message, E1's refusal message and its cause), E5's sentence, the two restored behaviors, the bounded guarantee (R5) and the limits above.
+
 ## Result and decision
 
-- Result: pending.
+- Result: demonstrated, with one partial native check.
+  - E1 to E5 hold at mechanism level: 13 behavior tests red on `9885f7f`, green on the branch, 22 of 22 disabled-fix controls.
+  - Native (VS Code 1.140.0 with Copilot Chat Auto, Cursor 3.23.10, candidate `4a06d630`): N6-b PASS, N6-c PASS, N6-e PASS in both hosts, N6-d PASS with a disclosed limit, N6-a PARTIAL. The cycle's falsifier did not occur: the first selection after an update needed no driver click in a window without a foreign preview tab.
+  - Not shown: `layoutConfirmed: true` on that first selection (it answered unconfirmed once, as `9885f7f` does without a dead pane when a learner's text tab is in the source column); E4 in an editor; the live path in Cursor.
+- Decision: keep E1 to E5 and deliver them as 0.2.21.0. The findings D1 to D8, the limits recorded under the implementation and the native observations go to the next cycles; D1 and D2 first.
+- Acceptance rows after this cycle: AC-ENTRY, AC-SAVE and AC-LIVE advance at mechanism and bounded development-native level and stay open; AC-REPLAY held as a regression (N6-e); the other rows carry forward untouched. No Stage 1 or Stage 2 credit.
 
 ## Handoff
 
-Pending.
+- Before: the first presentation selection after an extension update failed and needed driver clicks (Cycle 0036 N5, FAIL); a full library was reported after the run; a stack refresh before the binding failed the run; a Node stop at another column was refused only at its pause.
+- After: the dead Application and Study panes are closed at a cold open and the selection is admitted (PARTIAL natively, see above); a run on a full library is refused before any input; the refresh window and the Node column rule are back to 0.2.19.0's behavior.
+- Review, CI, merge, package, publication and installed verification are separate: reviews are complete for the delivered tree; CI, the Codex cloud review, the exact-HEAD gate and the merge are recorded in the delivery closure of this record once they have happened; the private candidate package is for 0.2.20 metadata (`b5b7bf22…`), no 0.2.21 package is built or installed, and nothing is published.
+- State left on this machine: both QA profiles run the Cycle 0037 candidate (runtime `4a06d630`); the QA workspace file sets `codebook.savedStudyLimit` to 128; the QA library holds 67 studies, one of them the refused run of N6-b.
 
 ## Next action
 
-- Exact next action: package the candidate, install it in both QA profiles and run N6 in the recorded order (N6-b on the unchanged full library, then the QA workspace limit, then N6-a, N6-c, N6-d, N6-e), then the local CodeRabbit CLI and OCR reviews and `/ship`.
-- Changed files / branch / active processes: `codex/cycle-0037-live-run-entry`; the E1 to E5 implementation and this record; no active processes.
-- State updated in PROJECT_STATE.md: product row, active cycle, checkout, tracking, one next action.
+- Exact next action: push this branch, open the pull request (body starting with `@coderabbitai ignore`, "Linked to #67", no closing keyword), wait for CI, mark it ready, read the Codex cloud review, run the read-only exact-HEAD gate and merge in a separate step; then record the delivery closure, close Issue #67 by hand and create the next cycle's issue through `/spec` from D1 and D2.
+- Changed files / branch / active processes: `codex/cycle-0037-live-run-entry`; no active processes; no desktop use is needed.
+- State updated in PROJECT_STATE.md: product row, active cycle, AC-LIVE, AC-SAVE and AC-ENTRY next actions, one next action.
 - Durable decisions updated: none.
