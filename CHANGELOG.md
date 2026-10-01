@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.18.0] - 2026-10-01 (development candidate)
+
+Cycle 0034 makes a learning replay recover when you reopen it, and keeps one replay request from colliding with the cleanup of the request it replaced. Mechanism tests cover each fix with a red-before-green regression and a disabled-fix control, and bounded installed trials ran in VS Code 1.140.0 and Cursor 3.23.10 with no application running. One planned test for a settle path that the reader cannot reach was not written. Delivery review found nothing critical. It reported, from reading the code, that the recovery below may fail while a live run's application panel is still attached, and that it may return to an earlier saved position while a position save is still pending; neither was reproduced, and both go to the next cycle. The paused foreign-session case and the Node stop in Cursor were not run. Final acceptance remains open. No registry publication.
+
+### Changed
+
+- After you end the **Codebook · Recorded learning** session on a displayed replay, pressing **Recording** presents the saved moment again in a new session. Before, that press did nothing until a seek had failed.
+- An agent that opens the same recording after you closed the reader opens the reader again and presents the saved moment.
+- A historical debugger that gave up after its five-second bound stays unavailable until you reopen the recording. A late answer from the editor no longer brings it back by itself.
+
+### Fixed
+
+- Opening a recording while the editor is still stopping the previous historical debugger waits for that stop instead of failing with a second debugger registration. Closing the reader waits for it too.
+- Opening a recording again after its first reader entry was abandoned waits for that entry instead of reporting that Codebook is busy. If the entry never finishes, the busy message follows after about five seconds.
+- A recorded-application panel that was still being revealed when you opened the recording again keeps its place and paints the next frame.
+- Stopping the historical debugger right after a slow startup no longer fails: the five-second stop bound now starts once the startup has settled.
+- A stop presented after the editor disposed the historical debugger, or a reader update that throws while the debugger gives up, now ends with the reopen message instead of leaving the replay waiting.
+- A saved Node stop whose captured source no longer matches offers no **Inspect in native debugger** button, because Inspect could not open it.
+- A Node history seek made while a played stop is failing presents the event you chose instead of repeating that stop's error.
+- A learning checkpoint still reports a sealed image or source that outgrew its size limit, or was rewritten while it was read, when the run state changes during the same read.
+
 ## [0.2.17.0] - 2026-10-01 (development candidate)
 
 Cycle 0033 keeps replay moving when the editor's debugger answers slowly or not at all, and keeps a saved Node stop's state truthful after its native session ends. Mechanism tests cover each fix with a red-before-green regression and a disabled-fix control, and bounded installed trials ran in VS Code 1.140.0 and Cursor 3.23.10. The paused foreign-session case and the Node stop in Cursor were not run. Final acceptance remains open. No registry publication.
