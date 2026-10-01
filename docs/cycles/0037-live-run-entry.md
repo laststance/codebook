@@ -1,7 +1,7 @@
 # Cycle 0037 — Live run entry: the first presentation after an extension update, a full library told before the run, and two binding regressions
 
 Type: product-increment\
-Status: implementing\
+Status: validating\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -89,6 +89,15 @@ The context was compacted while `/plan-eng-review` was writing its saved outputs
 - The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 with native Run and Debug, the application above the stopped `actions.ts`, standard chat and the bottom "Recording explanation · Save learning replay"; region 2 with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", the Learning summary with its sequence diagram and the timeline's "Unrecorded interval"; region 3 with the DeepWiki chapters, article, flow diagram, Ask composer, Update LLM Wiki and Change location; the shortcut strip with the `?` control and the searchable dialog.
 - Checkout: `codex/cycle-0037-live-run-entry` at `e1c15e9`, clean; no PR open; no subagent or trial running.
 - Gap audit: no product source changed since the audit above, so its rows stand.
+
+### Entry after compaction, 2026-10-02 (second in this cycle)
+
+The context was compacted after the disabled-fix controls had run on the uncommitted E1 to E5 implementation. Before the compaction reminder was read, one command ran: the new tests were built against `9885f7f` in the scratch base worktree and their output was saved privately as red evidence. It read the product; it changed no product source, test or repository record, and it was no runtime trial. The mandatory entry was then repeated on the files on disk:
+
+- Read in full: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md`.
+- The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 "Live explanation" with native Run and Debug (Variables `amount: 120`, Call Stack `createInvoice actions.ts:24`), the Create Invoice application above the stopped `actions.ts`, standard chat with a `/codebook` request and the bottom "Recording explanation · Save learning replay"; region 2 "Learning replay · Time-travel debugging" with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", the Learning summary with its sequence diagram and "I understand this step", and the timeline at 00:42 / 02:18 with "Unrecorded interval"; region 3 "LLM Wiki — Reproduce DeepWiki" with chapters, the article, the flow diagram, the Ask composer, "Update LLM Wiki" and "Change location"; the "Shortcut discovery" strip with the `?` control and the searchable dialog.
+- Checkout: `codex/cycle-0037-live-run-entry` at `b31d086`, dirty with the E1 to E5 implementation (19 modified and 5 new files under `extension/`); no PR open; no subagent or trial running.
+- Gap audit: the source changes are this cycle's own increments on the rows named above (AC-ENTRY, AC-SAVE, AC-LIVE); the other rows' source paths are untouched, so their assessment stands.
 
 ## Source-gap audit and selected increment
 
@@ -183,7 +192,78 @@ Implementation order after the review: harness helper → T2 (E1, with criterion
 
 ## Attempts and evidence
 
-No observations yet.
+### Implementation, 2026-10-02
+
+Order as planned: harness helper, E1 with criterion 26, E2 (R1), E3 (R3), E4 (R6), E5. Each behavior test ran on `9885f7f` (scratch worktree, the branch's test and harness files copied in) before the fix was kept.
+
+What changed (19 modified and 5 new files under `extension/`):
+
+- **E1.** `studyWorkspace.ts`: one private reader of dead panes (every webview tab of a Codebook pane view type while this host has neither panel object), used by the closed-reader `select` prelude, whose trigger now also fires for a dead pane, and by the start of every other cold `open()`. The prelude closes leftover captured-source tabs and dead panes in one request; if a dead pane is still open afterwards the selection ends with `PRESENTATION_UNAVAILABLE`. The view types are one constant with one predicate (`utils/isCodebookPaneViewType.ts`); the twelve existing inline matchers are untouched.
+- **E2.** `learningLibrary.ts` has one admission rule that `saveStudy` uses inside its lock and that a new lock-free `admitsStudy` exposes; `recordingStore.ts` forwards it; `service.ts` asks it for the run's study id before a runtime is created. `RecordingStore.start` is not edited.
+- **E3.** `utils/isRefreshedFrameAtStop.ts`: until a stop's bound position is known, a refreshed top frame is held to the declared line of the cited file; afterwards to the bound position, as before. `inspect()` is unchanged.
+- **E4.** `OwnedRepositoryBreakpoint` takes a fourth constructor parameter (default: the line rule); both Node test call sites pass `'declared-column'`.
+- **E5.** One sentence in the help resource and the README.
+
+No stored format version, tool name, required argument or timeout value changed (criterion 19, diff review).
+
+Red on `9885f7f`, green on the branch (private log `artifacts/cycle-0037/red/base-9885f7f.log`, SHA-256 `57097d6aed7d4907…`; 233 tests of the six affected files on the base build, 13 failing):
+
+| Criterion | Test | Result on `9885f7f` |
+| --- | --- | --- |
+| 1 (E1) | the first presentation selection after an extension-host restart closes the old host's dead Application and Study panes and is confirmed | Red: `Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.` This is the error of the native N5 trial, so the derived chain is verified in the harness. |
+| 2 (E1) | the first presentation selection is confirmed when the old host's dead Study pane had focus and no text editor was active | Red: `Focus a Codebook pane or text editor before selecting a presentation…` |
+| 3 (E1) | the first presentation selection closes a dead Application pane together with the focused leftover captured-source tab | Red: the same error as criterion 1 |
+| 4 (E1) | a presentation selection on a closed reader that already owns a live Application panel closes no Codebook pane | Passes (guard) |
+| 6 (E1) | a dead Codebook pane the editor refuses to close leaves every tab in place and tells why the selection could not start | Red: the cause was `The current presentation tab is not unique.` |
+| 26 (E1, R2) | a Learning Outline click after an extension-host restart closes the old host's dead panes and opens one Application and one Study pane | Red: the same error as criterion 1 |
+| 26 (E1, R2) | opening a recording after an extension-host restart closes the old host's dead Application pane and presents the recording in one Application pane | Red: the reader stayed closed |
+| 26 (E1, R2) | a dead Codebook pane the editor refuses to close does not stop the Study workspace from opening | Passes (guard) |
+| 9 (E2) | a run on a full study library is refused before the application receives any input and names the limit setting | Red: no error code; the run went on |
+| 9, 10 (E2) | the admitted side below the limit; only the recording store full | Pass (guards) |
+| 11 (E3) | a stack refresh that arrives before a server stop's bound position is known keeps the pause and the stop commits at the bound position | Red: `Native stack refresh changed the captured source location` |
+| 11 (E3, R3) | a stack refresh before the binding at another column of the declared line does not move the stop from the position the debugger then binds | Red: the same error |
+| 12 (E3) | a refresh on another line, and in another file, during that window | Pass (guards) |
+| 14 (E4) | a Node test stop acknowledged as verified at another column; as pending at another column; a second stop acknowledged at another column inside a continuation | Red, all three: no rejection |
+| 14 (E4, R6) | a pending acknowledgement that names no column is accepted | Passes (guard) |
+| 16 (E5) | configured help tells an agent that a continuation whose next stop cannot be armed answers "Continue was not confirmed." and where the run's reason is read | Red: the old sentence |
+
+The library-level admission tests (criterion 8) and the two new utilities' tests call functions that do not exist on `9885f7f`; they have no base run and are covered by controls instead.
+
+Disabled-fix controls (criterion 17; private `artifacts/cycle-0037/controls/run-controls.mjs` and `controls.log`): each control disables one fix in the compiled output, runs the test that names it and restores the file. 18 of 18 held (the named test failed), and `dist` was byte-identical before and after (`f8ec09bd…`).
+
+| # | Control | Held |
+| --- | --- | --- |
+| 1 | Criterion 1: dead panes are recognized (E1) | yes |
+| 2 | Criterion 2: the selection prelude fires for a dead pane (E1) | yes |
+| 3 | Criterion 3: a dead pane is closed with the leftover captured source (E1) | yes |
+| 4 | Criterion 4: a live panel keeps every Codebook pane (E1 guard) | yes |
+| 5 | Criterion 6: a kept dead pane ends the selection (E1) | yes |
+| 6 | Criterion 26: the cold open closes dead panes, Learning Outline (R2) | yes |
+| 7 | Criterion 26: the cold open closes dead panes, Recording (R2) | yes |
+| 8 | Criterion 9: the service's admission before the runtime (E2, R1) | yes |
+| 9 | Criterion 8: admission keeps a study the library already holds (E2) | yes |
+| 10 | Criterion 11: a refresh before the binding is held to the declared line (E3) | yes |
+| 11 | Criterion 11: a refresh at another column of the declared line (E3, R3) | yes |
+| 12 | Criterion 12: a refresh on another line is still refused (E3 guard) | yes |
+| 13 | Criterion 14: a Node stop verified at another column (E4) | yes |
+| 14 | Criterion 14: a Node stop pending at another column (E4) | yes |
+| 15 | Criterion 14: a second Node stop armed inside a continuation (E4, R6) | yes |
+| 16 | Criterion 14: a pending reply without a column stays accepted (E4 guard, R6) | yes |
+| 17 | E4: the declared-column rule itself | yes |
+| 18 | Criterion 16: the corrected help sentence (E5) | yes |
+
+Gates on the working tree (criterion 18): full suite 1,609/1,609 (1,574 on `9885f7f`), package suite 183/183 with no edit to its skill expectations, hook 4/4, and `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` each exit 0. The bundled skill is byte-unchanged (`39f03be0`). Cycle 0036's leftover-tab tests, its two refresh tests and its tracker tests pass unmodified (criteria 7, 13, 15); `RecordingStore.start` and its tests are not edited.
+
+Corrections and limits found while implementing:
+
+- **Criterion 6 adds a second new text.** Besides the cause `A leftover Codebook pane could not be closed.`, the refusal has its own message: `A Codebook pane left by an earlier extension session is still open. Close the leftover Application and Study tabs, then select the presentation again.` The CHANGELOG names both.
+- **Criterion 26 was wrong about Recording open.** A recording is presented with one Application tab and the summary as a sidebar view; it opens no Study tab. The test asserts one Application tab and no Study tab. The same holds for N6-e in Cursor when the learner's first click is Recording: the expected result there is one Application tab and no dead tab, and one Study tab only after a Learning Outline click.
+- **Criterion 10's "a run whose study id already exists is admitted at the limit" is proven at library level.** A run's study id is new by construction (instance id plus run id), so the service cannot reach that case; the library test covers it.
+- **Known limit: an agent run that creates the Application panel before any reader open leaves the dead panes in place.** The dead-pane reader answers "none" once this host owns a panel, which is the condition that keeps it away from live panes. A later selection then meets the old duplicate-tab state. Carried.
+- **Known limit: a cold open that is not a `select` does not close leftover captured-source tabs.** Unchanged from `9885f7f`; only dead panes are closed there.
+- **Harness observation, not a product change:** a selection made while the learner's focused text tab is in the source column ends with `layoutConfirmed: false` ("The current captured source is not ready in its native pane…"), with or without dead panes. The new tests keep the learner's draft in another column. Carried as a question for the layout items.
+- **One assertion moved.** The existing help test asserted the old sentence; that assertion is removed there and the new test asserts the corrected sentence and the old one's absence.
+- **`health` shaped three details.** The refresh rule lives in a utility because it took `verifyStackRefresh` over the gate's complexity bound; the tracker's rule is one private method for the same reason; the tracker test loads the class without a type import, which would have raised the module's fan-in over the gate's refactoring threshold.
 
 ## Result and decision
 
@@ -195,7 +275,7 @@ Pending.
 
 ## Next action
 
-- Exact next action: implement in the order of the plan review (harness helper, E1 with criterion 26, E2 as amended by R1, E3, E4 as amended by R6, E5), each red on `9885f7f` before green, then controls and gates.
-- Changed files / branch / active processes: `codex/cycle-0037-live-run-entry`; the Cycle 0036 closure records and this file; no active processes.
+- Exact next action: package the candidate, install it in both QA profiles and run N6 in the recorded order (N6-b on the unchanged full library, then the QA workspace limit, then N6-a, N6-c, N6-d, N6-e), then the local CodeRabbit CLI and OCR reviews and `/ship`.
+- Changed files / branch / active processes: `codex/cycle-0037-live-run-entry`; the E1 to E5 implementation and this record; no active processes.
 - State updated in PROJECT_STATE.md: product row, active cycle, checkout, tracking, one next action.
 - Durable decisions updated: none.
