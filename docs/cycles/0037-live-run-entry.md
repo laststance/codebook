@@ -1,7 +1,7 @@
 # Cycle 0037 — Live run entry: the first presentation after an extension update, a full library told before the run, and two binding regressions
 
 Type: product-increment\
-Status: planning\
+Status: implementing\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -53,7 +53,7 @@ The spec is Issue #67, archived privately as `20261002-043259-85891-cycle-0037--
 
 Order: harness helper → E1 → E2 → E3 → E4 → E5 → gates → package and install → N6.
 
-- `/plan-eng-review` on the spec: it changes which tabs a selection may close, where a run is refused for capacity, and what a stack refresh is compared with.
+- `/plan-eng-review` on the spec: it changes which tabs a selection may close, where a run is refused for capacity, and what a stack refresh is compared with. Done on 2026-10-02; see [Plan review](#plan-review-2026-10-02).
 - `/plan-devex-review` is skipped (recommended option): the agent-facing change is one corrected help sentence, one new refusal text and one new cause text; the contract items that need that review are out of scope.
 - `/plan-design-review` is skipped (recommended option): no control, layout or state is added or removed.
 - Local CodeRabbit CLI (never `--use-credits`) and `open-code-review-delegate`.
@@ -80,6 +80,15 @@ Order: harness helper → E1 → E2 → E3 → E4 → E5 → gates → package a
 - Main CI on `9885f7f`: all seven runs passed.
 - Protected state (first 8 hex digits of SHA-256), checked on the delivered tree: Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`; bundled skill `39f03be0`. The dashboard is at `1936e41` with only the untracked `.codebook/`; nothing listens on port 3000.
 - Installed candidate in both QA profiles: Cycle 0036's candidate 2 (runtime `a99c9228`, version 0.2.19). The QA workspace's Learning Library is at its limit of 64.
+
+### Entry after compaction, 2026-10-02 (first in this cycle)
+
+The context was compacted while `/plan-eng-review` was writing its saved outputs. Before the compaction reminder was read, one private scratch file was written (the review report body under `/tmp`); no product source, test, repository record or runtime trial was touched. The mandatory entry was then repeated on the files on disk:
+
+- Read in full: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md`.
+- The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 with native Run and Debug, the application above the stopped `actions.ts`, standard chat and the bottom "Recording explanation · Save learning replay"; region 2 with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", the Learning summary with its sequence diagram and the timeline's "Unrecorded interval"; region 3 with the DeepWiki chapters, article, flow diagram, Ask composer, Update LLM Wiki and Change location; the shortcut strip with the `?` control and the searchable dialog.
+- Checkout: `codex/cycle-0037-live-run-entry` at `e1c15e9`, clean; no PR open; no subagent or trial running.
+- Gap audit: no product source changed since the audit above, so its rows stand.
 
 ## Source-gap audit and selected increment
 
@@ -136,6 +145,42 @@ Frozen inputs for the native checks:
 - Protected files: `~/Library/Application Support/Code/User/settings.json` (`0ac38ba2`), `~/Library/Application Support/Code/User/profiles/4f0ed86d/settings.json` (`8d6e64c2`), `~/Library/Application Support/Cursor/User/settings.json` (`80ba41bd`), `~/.cursor/skills/codebook/SKILL.md` (`d578b9e3`).
 - The native expectations of this cycle are frozen in the private `artifacts/cycle-0037/native/` before each candidate runs.
 
+## Plan review, 2026-10-02
+
+`/plan-eng-review` ran on this plan on 2026-10-02 (Claude host review plus a Codex outside voice, read-only). The owner is away, so each decision is the recommended option under the standing direction of 2026-10-01; the full briefs are in the private review report. Result: 12 issues in the four review sections (architecture 4, code quality 3, test gaps 5, performance 0), 0 critical gaps, 0 unresolved decisions; the outside voice reported 4 findings (1 P1, 3 P2), all confirmed against the source and applied. Scope is unchanged (E1 to E5, N6); seven amendments replace parts of the filed text.
+
+**One claim of the filed plan was wrong.** E2 said a rejected `RecordingStore.start` ends the run. It does not: `extension/src/service.ts:1832-1834` stores the rejection as `recordingFailure` and still calls `runtime.prepare()`, so the run continues unrecorded. A second constraint was missed: `withStorageLock` is not reentrant and the study library and the recording store lock the same directory, so a library call that takes the lock from inside `RecordingStore.start` would wait on itself.
+
+| # | Amendment | Replaces |
+|---|---|---|
+| R1 | **E2 mechanism.** The service asks the study library's admission for the run's study id in its own step before the recording reservation. On a library at its limit with no entry of that id it throws `StudyError('PREREQUISITE_MISSING', 'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run. Existing learning was kept.')`; the run ends before `runtime.prepare()` and no input is sent. The admission is a lock-free read with one definition that `saveStudy` also uses inside its own lock (its message at save time is unchanged). `RecordingStore.start` and the recording-full path (the run continues with `recording.status: 'failed'`) are not changed. Another error of that read (an invalid limit setting, an unreadable directory) is passed on unchanged. | E2's second and third bullets; criteria 8 to 10 |
+| R2 | **E1 placement.** The failing step is in the shared cold `open()`, so one helper closes the dead panes for every entry: the closed-reader `select` prelude (trigger widened as filed), and the start of every other cold `open()` (Learning Outline, Recording open) before `installReaders()` and `ensureApp()`. Condition as filed: the reader is closed and both panel objects are undefined. On a non-select entry a refused close changes nothing (the open continues as today). The pane view types are matched inline at twelve sites and no single matcher exists; the new code gets one private predicate and the existing sites are not refactored. | E1's first two bullets ("use the existing viewType matcher") |
+| R3 | **E3 confirmed.** The line-only comparison while `stop.bound` is unset stays as filed; `inspect()` is unchanged. One test is added: a refresh at a column of the declared line that differs from the column bound afterwards commits the observation at the bound column. | adds to criterion 11 |
+| R4 | **The admitted side is proven.** Criterion 9 gains its other side: below the limit the same run prepares and the application receives its input. N6-c becomes an unconditional delivery condition and includes saving the run and reopening it through Recording. Its library slot comes from a `codebook.savedStudyLimit` value in the private QA workspace file (a QA fixture of this project, not one of the four protected files), set after N6-b has run on the unchanged full library; the file's hash before and after is recorded and the value stays. If the editor does not apply that value, N6-c is blocked and the delivery waits; no protected file is changed to get a slot. | criteria 9 and 22 |
+| R5 | **The guarantee is bounded.** A run is refused when the library is already full at its start. A slot taken by another window during the run is still reported at save time (`saveStudy`'s check stays). No slot is reserved, because a reservation is a new stored artifact. The CHANGELOG says this. | E2's heading sentence |
+| R6 | **E4 is the 0.2.19.0 rule, verbatim.** Under the option, an acknowledgement is refused when it names another line, when it names another column, or when it is verified and does not name the declared line and column. A pending acknowledgement that names no column is accepted, as on 0.2.19.0. The option is a fourth constructor parameter whose default is the line rule, so the configured-run call site and the Cycle 0036 tracker tests are untouched. Both Node call sites pass it (`ownedNodeTestRun.ts:204` and `:313`). | E4's second bullet; criterion 14 |
+| R7 | **The added entries are tested.** Two mechanism tests open the reader through the Learning Outline entry and through Recording open with dead panes present. N6-e's Cursor part runs right after Restart Extensions with the reader open. | adds criterion 26; criterion 24 |
+
+Amended and added acceptance criteria (criteria not listed are unchanged):
+
+- **8 (replaced).** The library's admission answers "full" for a new study id at the limit, admits an existing id at the limit and admits any id below the limit. `RecordingStore.start` and its tests are not edited.
+- **9 (replaced).** Through the service, with the library at its limit and recordings below theirs, the run ends failed with code `PREREQUISITE_MISSING` and E2's message, `runtime.prepare()` is not called, the application receives no input, no recording directory is created and the library's entries are byte-unchanged. Red on `9885f7f`. With the library below its limit the same run prepares and the application receives its input (guard).
+- **10 (replaced).** Guards: a run whose study id already exists is admitted at the limit; `saveStudy` on a full library rejects with its unchanged message; with only the recording store full the run continues and reports `recording.status: 'failed'`.
+- **11 (addition).** A refresh at a column of the declared line that differs from the column bound afterwards: the observation commits at the bound column.
+- **14 (replaced).** Node test stops, four cases: a verified acknowledgement at another column fails preparation with `Selected adapter did not acknowledge the exact breakpoint registration` before any continue; a pending one at another column fails the same way; a pending one that names no column is accepted (guard); a second stop, armed inside a continuation, acknowledged at another column fails before its continue is sent. The first, second and fourth are red on `9885f7f`.
+- **22 (replaced).** N6-c, VS Code, delivery condition: after N6-b, with the limit raised in the QA workspace file, the prepared four-stop declaration of N5-a reaches all four stops in order on its first run, the run is saved from the status bar and reopens through Recording.
+- **24 (replaced).** N6-e, delivery condition: in VS Code, Recording open and the recovery after Run > Stop Debugging present the saved moment. In Cursor, with the reader open, install the candidate and use Restart Extensions; the learner's first click (Learning Outline or Recording) leaves exactly one Application tab and one Study tab and presents the saved moment; the recovery after Run > Stop Debugging presents it again.
+- **25 (addition).** The QA workspace file's hash before and after its one settings change is recorded; the four protected files stay byte-identical.
+- **26 (new).** E1: with the reader closed, no live panel and one dead pane of each kind, opening the reader through the Learning Outline entry and through Recording open leaves exactly one tab of each Codebook kind and keeps the learner's tabs. If the editor refuses the close on these entries, the open continues as on `9885f7f` (no new refusal).
+
+Not in scope after the review: a slot reservation, blocking a run when only the recording store is full, a refactor of the twelve inline view-type matchers, waiting for the binding before a refresh is validated.
+
+Review records (private, under the project's gstack state): the report `codex-cycle-0037-live-run-entry-eng-review-20261002-044315.md` (decision ledger R1 to R7, coverage diagram, failure modes, tasks T1 to T6), the test plan `ryotamurakami-codex-cycle-0037-live-run-entry-eng-review-test-plan-20261002-044947.md` and the task list `tasks-eng-review-20261002-044947.jsonl`. The same amendments are posted as a comment on Issue #67.
+
+Carried findings of the review (not fixed here): the twelve inline view-type matchers; the two-window race on the last library slot; two unverified low-confidence notes (a dead pane of a second instance in one window, column renumbering when a closed dead pane empties its group).
+
+Implementation order after the review: harness helper → T2 (E1, with criterion 26) → T1 (E2) → T3 (E3) → T4 (E4) → T5 (E5) → gates → package and install → N6-b → QA workspace limit → N6-a, N6-c, N6-d, N6-e.
+
 ## Attempts and evidence
 
 No observations yet.
@@ -150,7 +195,7 @@ Pending.
 
 ## Next action
 
-- Exact next action: run `/plan-eng-review` on Issue #67, record its amendments here and on the issue, then implement in the order above.
+- Exact next action: implement in the order of the plan review (harness helper, E1 with criterion 26, E2 as amended by R1, E3, E4 as amended by R6, E5), each red on `9885f7f` before green, then controls and gates.
 - Changed files / branch / active processes: `codex/cycle-0037-live-run-entry`; the Cycle 0036 closure records and this file; no active processes.
 - State updated in PROJECT_STATE.md: product row, active cycle, checkout, tracking, one next action.
 - Durable decisions updated: none.
