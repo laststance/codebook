@@ -99,6 +99,15 @@ The context was compacted after the disabled-fix controls had run on the uncommi
 - Checkout: `codex/cycle-0037-live-run-entry` at `b31d086`, dirty with the E1 to E5 implementation (19 modified and 5 new files under `extension/`); no PR open; no subagent or trial running.
 - Gap audit: the source changes are this cycle's own increments on the rows named above (AC-ENTRY, AC-SAVE, AC-LIVE); the other rows' source paths are untouched, so their assessment stands.
 
+### Entry after compaction, 2026-10-02 (third in this cycle)
+
+The context was compacted after the implementation review had been recorded and committed (`04101e7`). Before the compaction reminder was read, one action ran: the `/ship` skill was invoked, which loaded its instructions and ran none of its steps. No product source, test, repository record or runtime trial was touched. The mandatory entry was then repeated on the files on disk:
+
+- Read in full: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md`.
+- The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 "Live explanation" with native Run and Debug (Variables `amount: 120`, `amountInCents: 12000`, `status: 'pending'`; Call Stack `createInvoice actions.ts:24`), the Create Invoice application above the stopped `actions.ts`, standard chat with a `/codebook` request and the bottom "Recording explanation · Save learning replay"; region 2 "Learning replay · Time-travel debugging" with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", the Learning summary with its sequence diagram and "I understand this step", and the timeline at 00:42 / 02:18 with "Unrecorded interval"; region 3 "LLM Wiki — Reproduce DeepWiki" with chapters, the article, the flow diagram, the Ask composer, "Update LLM Wiki" and "Change location"; the "Shortcut discovery" strip with the `?` control and the searchable dialog.
+- Checkout: `codex/cycle-0037-live-run-entry` at `04101e7`, clean; nothing pushed, no PR open; no subagent or trial running.
+- Gap audit: no product source changed since `8a86ef9`, whose rows (AC-ENTRY, AC-SAVE, AC-LIVE) carry the native N6 and review results recorded below; the other rows' source paths are untouched, so their assessment stands. The remaining phase is delivery only and needs no desktop.
+
 ## Source-gap audit and selected increment
 
 Baseline: `main` `9885f7f`. Goal version 9 and the PNG have not changed since the Cycle 0036 audit, and the only product source change since then is PR #66 itself. Every row is accounted for below; rows this cycle does not touch carry forward with their limits in PROJECT_STATE.
