@@ -206,14 +206,80 @@ Preservation after both hosts:
 - The dashboard is still at `1936e41`, with only the untracked `.codebook/`.
 - No dev server is running, no target source was edited, and OBS is closed.
 
+### Delivery review (`/ship`), 2026-10-01
+
+All checks ran on `00fbc73`, reviewed tree `e4a57ad5`, with Node 24.21.0 and pnpm 12.4.2.
+
+| Check | Result |
+| --- | --- |
+| Full suite | Ran twice in a row; 1,449/1,449 PASS each time. |
+| R1 stress | 50/50 parallel runs of `studyWorkspacePresentation.test.js` passed (60/60 each). |
+| Package suite | 183/183 PASS. |
+| Hook | 4/4 PASS. |
+| Lint, format, typecheck, `dead-code`, `dupes`, `health` | PASS. |
+| Exploratory QA smoke (`.gstack/qa-reports/ship-c32-*`) | 3/3 contracts passed. |
+| Disabled-fix controls | Not re-executed. Reused from the Implementation table: the production source is identical and only docs changed since. |
+
+Reviews:
+- The core checklist found nothing.
+- Specialists:
+  - Testing: 8 findings.
+  - Maintainability: 9 findings, 2 of them advisory.
+  - Security: none.
+  - Performance: 3 findings.
+  - Simplification: 2 advisory findings.
+  - Red Team: 3 findings.
+- Adversarial reviews:
+  - Claude: 14 findings.
+  - Codex: 1 high and 3 medium.
+- Codex structured review: no P1 (gate PASS), one P2.
+- No finding was CRITICAL.
+- Coverage audit: 73% value-weighted and 77% for any test, with 7 untested paths.
+- Plan audit: 46 items: 34 done, 4 changed, 6 partial, 2 not done. The two not done are the DOM-harness cases in `study-bootstrap-qa.mjs` and N1-d.
+
+Every finding is deferred to the next cycle, as the owner directed: fix only CRITICAL findings and do not stop. Several sources agreed on the first four items below, so they take priority.
+
+1. **Startup regression.** `ReplayDebugger.awaitSession` forgets a failed startup only when its own waiter was not aborted. If a presentation is abandoned and the editor then refuses the startup, the rejected startup stays cached. The next presentation fails once with the stale error instead of retrying; base retried. Six reviewers reported it, and a probe reproduced it.
+2. **`retire()` cannot be cancelled.** `retire()` still awaits `this.retiring` and the pending startup without the presentation's signal. A startup or stop that never answers therefore blocks the playback queue and an unbounded `close()` settle. The line predates this branch, but D5 left it uncovered. Claude and Codex adversarial, and the performance specialist, reported it.
+3. **False "source unavailable" label.** The Node stop label reads "captured source unavailable" after the session ends, after a browser recording opens, or after the reader closes and reopens. `debuggerAvailable` now also means "the session shows this stop", but the webview still reads it as "source mismatch". This is a user-visible regression from H1–H3. Found by the Red Team.
+4. **The 5 s settle bound covers more than painting.** It includes preference saves, which wait on the storage lock, and a cold first presentation, made of retire, startup and paint. A slow but healthy run can therefore fail with `PRESENTATION_UNAVAILABLE` and hide the replay. Found by the Red Team and Claude adversarial.
+5. **Smaller items:**
+   - The synthetic "Recording limitations" scope counts as loadable values.
+   - The `EVIDENCE_UNAVAILABLE` discard also covers hash mismatches.
+   - `abandon()` never publishes, which can leave a stale loading state.
+   - `replay-debugger` errors are never cleared.
+   - The grace uses the wall clock.
+   - The inspection frame can sit beyond VS Code's first stack page.
+   - A closed adapter is reported as `no-values`.
+   - Several JSDoc and examples are stale.
+6. **Test gaps:**
+   - The three bounded `performPresentation` sites, which the harness cannot reach.
+   - Prompt waking on ownership change.
+   - An abort while retiring.
+   - `close()` resetting availability.
+   - The abort branch of `settleOwnedPlayback`.
+   - Discarding an observation source.
+   - The `failed` → `report` wiring.
+   - The reason mapping.
+   - The B1 upper bound (the deferred CodeRabbit item).
+
 ## Result and decision
 
 - Result: demonstrated at mechanism level (every Issue #56 item has a red-before-green test and a disabled-fix control; clean full suites; R1 stress) plus bounded installed native evidence in both hosts.
   - The truthful soft hint: VS Code PASS; Cursor PASS apart from the O2 scope difference.
   - Gap entry: PASS in both hosts.
   - Latency: measured in both hosts, about 1 s to the hint and about 0.4 s to values.
-- Still open: the N1-c paused-foreign variant, N1-d (no click route), O2 in Cursor, and the deferred CodeRabbit minor finding. None of these is final product acceptance.
-- Decision: deliver this cut. The candidate for the next cycle is Cursor's first-scope behavior (O2), together with the Cycle 0031 items that remain deferred.
+- Still open, and none of these is final product acceptance:
+  - The N1-c paused-foreign variant.
+  - N1-d (no click route).
+  - O2 in Cursor.
+  - The DOM-harness cases.
+  - The delivery-review deferrals above, including the startup regression, the uncancellable `retire()` and the false "captured source unavailable" label.
+- Decision: deliver this cut as 0.2.16.0.
+- Next cycle candidates, in this order:
+  1. The four prioritized delivery-review items.
+  2. Cursor's first-scope behavior (O2).
+  3. The Cycle 0031 items that remain deferred.
 
 ## Handoff
 
