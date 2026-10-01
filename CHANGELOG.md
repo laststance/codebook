@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.17.0] - 2026-10-01 (development candidate)
+
+Cycle 0033 keeps replay moving when the editor's debugger answers slowly or not at all, and keeps a saved Node stop's state truthful after its native session ends. Mechanism tests cover each fix with a red-before-green regression and a disabled-fix control, and bounded installed trials ran in VS Code 1.140.0 and Cursor 3.23.10. The paused foreign-session case and the Node stop in Cursor were not run. Final acceptance remains open. No registry publication.
+
+### Changed
+
+- A slow first replay open no longer fails. Each recorded frame gets five seconds to paint, counted from when painting starts, and the whole presentation change ends after at most fifteen seconds. Loading, debugger startup and saving your position no longer count against the paint time.
+- The Run and Debug hint now also tells you to expand the first Variables scope when it stays closed. VS Code 1.140 and Cursor both keep that scope closed until you expand it.
+- A stop whose only Variables group is the recording limitations note shows at once, with no wait and no hint.
+- Closing the reader finishes even when a frame never paints or the debugger never answers. It still waits for your replay position to be saved.
+
+### Fixed
+
+- A saved Node stop keeps its position label after you end the **Codebook · Recorded learning** session, open a recording or reopen the reader. "captured source unavailable" now appears only when the captured source really does not match the stop.
+- After that session ends, the selected Node stop offers **Inspect in native debugger** again, and Inspect restarts the session.
+- A debugger startup the editor refused after you left the moment is retried by the next moment instead of failing every later one.
+- A debugger startup, retirement or stop that the editor never answers ends after about five seconds. Replay then asks you to reopen the learning replay, and a session that starts late is stopped.
+- A newer seek or another recording opens while an earlier recording load, frame read or frame paint never answers.
+- Opening the same recording again after its frame was hidden or timed out paints the moment again.
+- A learning checkpoint still reports a changed sealed image or source when the run state changes during the same read.
+- A failed Run and Debug update is shown in the reader and leaves once the next update succeeds, and opening a recording while a Node stop is still loading updates the reader at once.
+- A stop shown after the editor closed the historical debugger asks you to reopen the learning replay instead of appearing without values.
+- A backward wall-clock jump can no longer stretch the one-second values wait or the five-second debugger wait.
+
 ## [0.2.16.0] - 2026-10-01 (development candidate)
 
 Cycle 0032 makes the Run and Debug hint from 0.2.15 truthful and keeps every replay presentation wait bounded. Mechanism tests cover each fix with a red-before-green regression and a disabled-fix control, and bounded installed VS Code and Cursor trials were recorded on the 38e4620 cut. In Cursor, if Variables was collapsed at the stop, expand its first scope as well before values load. Final acceptance remains open. No registry publication.
