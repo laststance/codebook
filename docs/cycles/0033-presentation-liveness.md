@@ -333,6 +333,17 @@ Verification on `9725f29` (logs `artifacts/cycle-0033/verification/r2-*`): full 
 
 Native on r2 (`n2-vscode-nodelabel-02.mov`): the button reads "Debugger stop selected" while the session shows the stop (video 56 s), "Inspect in native debugger" and enabled after Run > Stop Debugging (60 s), and clicking it restarts the session with the source, Call Stack and values (68 s).
 
+### Reviews of `e165d1c`, 2026-10-01
+
+The final cut adds the Inspect fix (`9725f29`) and the records above to the reviewed `bbfe561`.
+
+| Review | Coverage | Findings | Disposition |
+| --- | --- | --- | --- |
+| Local CodeRabbit CLI 0.8.2 (`--committed --base-commit b9c846b`, included reviews, no paid credits) | 31 changed files | 0 | None |
+| OCR 1.12.11, delegate mode, host review of `bbfe561..e165d1c` | 2 of 2 reviewable files; 0 skipped. Default exclusions: 4 Markdown files (`unsupported_ext`) | 0 critical, 0 high, 0 medium, 1 low | Deferred (not CRITICAL) |
+
+OCR low finding, `studyHtml.ts`: rendering the event list again replaces the Inspect button the learner just activated, so keyboard focus falls back to the document. Selecting another event already behaves this way. It joins the Cycle 0034 focus items.
+
 ## Result and decision
 
 - Result: demonstrated at mechanism level (every Issue #59 item has a red-before-green test and a disabled-fix control, apart from the noted O4 defense in depth and the comment-only M1 (i); clean full suites) plus bounded installed native evidence.
