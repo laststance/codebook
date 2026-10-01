@@ -295,6 +295,26 @@ Other observations of the trial (none fixed here):
 
 Limits of the native proof: one target and one scenario family (the failed login); the live path in VS Code only; N6-a's second take was staged by the driver (an install of the previous build, a restart, a Learning Outline click, an install of the candidate, a restart); N6-d was influenced by the preceding run's manifest; frame inspection covered the sampled frames named in the receipt and the 30 fps measurements around the two recoveries, not every frame.
 
+### Implementation review, 2026-10-02
+
+Both reviews ran on `1a8d536` against the cycle base `9885f7f`. Owner direction: fix only critical findings and record the rest. Neither review reported a critical or high finding, so nothing was changed.
+
+- **Local CodeRabbit CLI** (`--agent --committed --base-commit 9885f7f`, no credits): 29 files, 1 finding. Trivial: the `codebookPaneTabs` helper is written out in both `studyWorkspaceEntry.test.ts` and `studyWorkspacePresentation.test.ts` (kept: the two files stay readable on their own). Private output: `artifacts/cycle-0037/reviews/coderabbit-1a8d536.jsonl`.
+- **Open Code Review, delegated** (D028): OCR selected 14 of 29 files; all 14 were reviewed and none skipped (coverage 100 %). The 15 default exclusions are five Markdown files (unsupported extension) and ten `*.test.ts` files (default path); the test diffs were read to judge whether the production changes are exercised. The review was done by a separate reviewer context that was given the intent and the diff, not the author's conclusions. It is a host review, not an external provider's. Findings: 0 critical, 0 high, 2 medium, 6 low.
+
+| # | Severity | Finding | Disposition |
+| --- | --- | --- | --- |
+| F1 | medium | Dead panes are never closed once a run has created the Application panel: an agent that calls `codebook_start` before any reader open leaves both dead tabs, and a later selection meets the old duplicate-tab state | Carried. It is the known limit recorded under the implementation; the reviewer confirmed the gating and notes that the bundled skill permits the start-then-select order |
+| F2 | medium | With the library at the maximum limit (256, the setting's upper bound) every configured run is refused, the message names a remedy that cannot be applied, and no command deletes a study; on `9885f7f` such a run still ran unsaved. Retained runs are saved automatically, so the library fills with ordinary use | Carried as a first item for the next cycle (verified: `MAX_SAVED_STUDIES = 256`, the setting's `maximum: 256`, no delete path in the library or the recording store). It follows from E2 as specified; the plan did not address the maximum. The CHANGELOG names it |
+| F3 | low | Another error of the admission read (an invalid limit setting, more than 256 archives, a malformed archive name, an unreadable directory) ends the run as `RUNTIME_FAILED` with the useful text only in the cause; with an invalid limit `9885f7f` ran unrecorded | Carried with the agent-contract items. R1 passes these errors on deliberately; the code an agent sees is the gap |
+| F4 | low | A refused close may not be all-or-nothing in the real editor (the close works per group), so "every tab stays in place" is proven for the harness only; a refused captured-source tab beside a closed focused dead pane skips the editor-agreement wait | Carried; plausible, not reproduced (a dead webview tab has no veto) |
+| F5 | low | The widened prelude closes dead panes and leftover captured-source tabs before refusals that used to change nothing (for example a focused foreign webview), against the admission's "refusals come before any native effect" comment; N6-a's first take showed exactly this | Carried. The tabs closed are dead or leftover ones |
+| F6 | low | On a cold open that is not a selection, closing a focused dead pane may leave keyboard focus nowhere until a click | Carried; plausible, not reproduced |
+| F7 | low | Test gaps: the refused cold-open guard passes without the fix, the harness self-test proves the harness only, only the Application half of the live-panel condition is tested, nothing calls the admission while the storage lock is held, no test covers F3, and the binding-lookup hold would catch the wrong lookup in a two-participant test | Carried with the test-quality items |
+| F8 | low | This record said the CHANGELOG names the new texts and the bounded guarantee before the CHANGELOG was written | Resolved by the delivery step, which writes that entry |
+
+No finding was reported for E3 (`isRefreshedFrameAtStop`, `verifyStackRefresh`), E4 (`acknowledgesPosition`, both Node call sites), E5, the constants and the view-type predicate, or the admission mechanics (lock-free read, one rule shared with `saveStudy`, the study id that `checkpoint` uses). The reviewer traced no path that closes a pane this host owns.
+
 ## Result and decision
 
 - Result: pending.
