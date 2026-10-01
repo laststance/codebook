@@ -5,7 +5,7 @@ fixes:
 codecov:
   notify:
     # One upload per shard of .github/workflows/test.yml; report only when all of them have arrived.
-    after_n_builds: 8
+    after_n_builds: 12
 
 coverage:
   status:
@@ -20,4 +20,4 @@ coverage:
 comment:
   layout: 'reach,diff,flags,files'
   behavior: default
-  after_n_builds: 8
+  after_n_builds: 12

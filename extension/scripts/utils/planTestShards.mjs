@@ -1,6 +1,7 @@
 import { testNamePattern } from './testNamePattern.mjs'
 import {
   SPLIT_TEST_FILE_MS,
+  TEST_FILE_OVERHEAD_MS,
   TEST_INVOCATION_OVERHEAD_MS,
   TEST_PART_TARGET_MS,
   UNKNOWN_TEST_FILE_MS,
@@ -55,12 +56,12 @@ function isSplit(timing) {
   )
 }
 
-/** Turns one test file into the units a lane can take: the whole file, or its name-selected parts when its recorded tests are slow. @example unitsOfTestFile('a.test.js', { totalMs: 300 }) // => [{ file: 'a.test.js', ms: 300 }] */
+/** Turns one test file into the units a lane can take: the whole file, or its name-selected parts when its recorded tests are slow. @example unitsOfTestFile('a.test.js', { totalMs: 300 }) // => [{ file: 'a.test.js', ms: 700 }] */
 function unitsOfTestFile(file, timing) {
   if (!timing) return [{ file, ms: UNKNOWN_TEST_FILE_MS }]
   return isSplit(timing)
     ? splitTestFile(file, timing.tests)
-    : [{ file, ms: timing.totalMs }]
+    : [{ file, ms: timing.totalMs + TEST_FILE_OVERHEAD_MS }]
 }
 
 /**

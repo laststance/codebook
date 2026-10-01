@@ -8,5 +8,7 @@ export const SPLIT_TEST_FILE_MS = 8_000
 export const TEST_PART_TARGET_MS = 8_000
 /** Process start and module loading of one extra `node --test` call, counted when lanes are balanced. */
 export const TEST_INVOCATION_OVERHEAD_MS = 500
+/** Process start, module loading and coverage writing of one whole test file, measured on the CI runner. */
+export const TEST_FILE_OVERHEAD_MS = 400
 /** Number of test files a recording run executes at the same time; low enough that durations stay close to an uncontended run. */
 export const TIMING_RECORD_CONCURRENCY = 4

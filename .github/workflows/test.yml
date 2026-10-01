@@ -24,23 +24,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Prepare environment
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      # Restoring the installed dependencies is faster than installing pnpm and linking them in every shard.
+      # The steps below call node directly, so a restored shard needs no pnpm.
+      - name: Restore installed dependencies
+        id: dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: extension/node_modules
+          key: extension-node-modules-${{ runner.os }}-${{ hashFiles('.node-version', 'extension/pnpm-lock.yaml', 'extension/pnpm-workspace.yaml', 'extension/patches/**') }}
+
+      - name: Install dependencies after a cache miss
+        if: steps.dependencies.outputs.cache-hit != 'true'
         uses: ./.github/actions/prepare
 
-      # Type errors are reported by the TypeCheck and Build workflows. package.yml proves that this emit equals the
-      # compiler's output.
+      # The two commands of `pnpm build:fast`. Type errors are reported by the TypeCheck and Build workflows;
+      # package.yml proves that this emit equals the compiler's output.
       - name: Emit the compiled tests without type checking
-        run: pnpm --dir extension build:fast
+        working-directory: extension
+        run: node scripts/build-fast.mjs && node scripts/build-metadata.mjs
 
       # Two lanes match the runner's two processors; most of the suite waits on real deadlines.
       - name: Run this shard's tests with coverage
-        run: pnpm --dir extension exec c8 node scripts/test-shard.mjs --shard "$SHARD/$SHARD_TOTAL" --lanes 2
+        working-directory: extension
+        run: node node_modules/c8/bin/c8.js node scripts/test-shard.mjs --shard "$SHARD/$SHARD_TOTAL" --lanes 2
         env:
           SHARD: ${{ matrix.shard }}
           SHARD_TOTAL: ${{ strategy.job-total }}

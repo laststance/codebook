@@ -149,11 +149,11 @@ test('a slow file is spread over the lanes so that every lane of every shard tak
     lanes: 2,
   })
 
-  // Assert: four parts of two tests (8,000 ms plus 500 ms per call) and one quick file per lane.
+  // Assert: four parts of two tests (8,000 ms plus 500 ms per call) and one quick file (1,000 ms plus 400 ms) per lane.
   const plannedLaneMs = plan.flatMap((shard) =>
     shard.map((lane) => lane.reduce((sum, call) => sum + call.ms, 0)),
   )
-  assert.deepEqual(plannedLaneMs, [9_500, 9_500, 9_500, 9_500])
+  assert.deepEqual(plannedLaneMs, [9_900, 9_900, 9_900, 9_900])
 })
 
 test('every shard computes the same plan whatever order the test files are listed in', () => {
@@ -183,8 +183,8 @@ test('every shard computes the same plan whatever order the test files are liste
   // Assert
   assert.deepEqual(reversed, sorted)
   assert.deepEqual(sorted, [
-    [[{ files: ['a.test.js', 'c.test.js'], ms: 6_000 }]],
-    [[{ files: ['b.test.js'], ms: 3_000 }]],
+    [[{ files: ['a.test.js', 'c.test.js'], ms: 6_800 }]],
+    [[{ files: ['b.test.js'], ms: 3_400 }]],
   ])
 })
 
