@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import fsPromises, { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 
+import { IMAGE_LIMIT_BYTES } from '../constants'
 import { LearningLibrary } from '../learningLibrary'
 import {
   RecordingStore,
@@ -646,6 +647,64 @@ test('a checkpoint still fails on a tampered phase image when the run state also
       message: 'Captured image no longer matches its sealed hash.',
     })
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an oversized sealed image surfacing even when a newer checkpoint changes state during the same read; fails_when=the size refusal is a plain evidence error, so the checkpoint silently discards its copy; why_new=Cycle 0034 R3; seam=none
+test('a checkpoint still fails on a phase image that outgrew its size limit when the run state also changes during the read', async () => {
+  // Arrange: the saved before image now exceeds the image limit, and the runtime will withdraw another image mid-read.
+  const harness = await contextHarness(),
+    { runtime, record, service, workspaceKey } = harness
+  try {
+    await writeFile(
+      join(runtime.evidence.directory, 'before.png'),
+      Buffer.alloc(IMAGE_LIMIT_BYTES + 1),
+    )
+    // Act
+    const checkpoint = captureStudy(service, record, workspaceKey)
+    delete runtime.captures.after
+    // Assert
+    await assert.rejects(checkpoint, {
+      code: 'EVIDENCE_UNAVAILABLE',
+      message: 'Captured file exceeds 8388608 bytes.',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a sealed image rewritten during its read surfacing even when a newer checkpoint changes state meanwhile; fails_when=the changed-while-reading refusal is a plain evidence error, so the checkpoint silently discards its copy; why_new=Cycle 0034 R3; seam=node:fs/promises open (reports the size from before the rewrite)
+test('a checkpoint still fails on a phase image rewritten while it is read when the run state also changes during the read', async () => {
+  // Arrange: the before image grows by one byte between the size check and the read, and the runtime will withdraw another image mid-read.
+  const harness = await contextHarness(),
+    { runtime, record, service, workspaceKey } = harness
+  const open = fsPromises.open.bind(fsPromises)
+  const opened = mock.method(
+    fsPromises,
+    'open',
+    async (...parameters: Parameters<typeof fsPromises.open>) => {
+      const handle = await open(...parameters)
+      if (!String(parameters[0]).endsWith('before.png')) return handle
+      const stat = handle.stat.bind(handle)
+      mock.method(handle, 'stat', async () => {
+        const measured = await stat()
+        return { ...measured, size: measured.size - 1 }
+      })
+      return handle
+    },
+  )
+  try {
+    // Act
+    const checkpoint = captureStudy(service, record, workspaceKey)
+    delete runtime.captures.after
+    // Assert
+    await assert.rejects(checkpoint, {
+      code: 'EVIDENCE_UNAVAILABLE',
+      message: 'Captured file changed while reading.',
+    })
+  } finally {
+    opened.mock.restore()
     await harness.close()
   }
 })
