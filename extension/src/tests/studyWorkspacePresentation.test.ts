@@ -769,7 +769,7 @@ for (const editStage of [
       await harness.reader.open()
       const draft = harness.focusMutableDraft()
       harness.retainReadingRange(84, 96)
-      const restoreFocus = harness.reader['capturePresentationFocus']()
+      const restoreFocus = harness.reader['capturePresentationFocus'](false)
       await harness.reader.action('focus-app')
       const edit = (): void =>
         draft.replaceContent('New first line.\nNew last line.\n')
@@ -807,7 +807,7 @@ test('an unchanged learner draft restores its reading pose and remains dirty', a
     await harness.reader.open()
     const draft = harness.focusMutableDraft()
     harness.retainReadingRange(84, 96)
-    const restoreFocus = harness.reader['capturePresentationFocus']()
+    const restoreFocus = harness.reader['capturePresentationFocus'](false)
     await harness.reader.action('focus-app')
     // Act
     await restoreFocus()
@@ -2483,6 +2483,12 @@ test('a selection still succeeds when the editor reports the next text editor a 
     assert.equal(selected.layoutConfirmed, true)
     assert.equal(tabs.includes(leftover), false)
     assert.equal(tabs.includes(draft.tab), true)
+    // The draft the editor activated in the leftover tab's place has focus again once the panes are placed.
+    assert.equal(harness.focusedPanel(), undefined)
+    assert.equal(
+      harness.groups.some((group) => group.activeTab === draft.tab),
+      true,
+    )
   } finally {
     await harness.close()
   }
@@ -2523,6 +2529,36 @@ test('a leftover captured-source tab the editor refuses to close leaves every ta
     assert.equal(harness.counts().panels, 0)
   } finally {
     harness.acceptLeftoverClose()
+    await harness.close()
+  }
+})
+
+test('a closed reader opens when closing its focused leftover captured-source tab leaves a non-text page of the editor active', async () => {
+  // Arrange: after a host restart the group holds the editor's own Settings page and, with focus, a captured source of this workspace.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    const settingsPage = harness.useOpaquePrimary('settings')
+    const leftover = harness.restoreLeftoverCapturedSource()
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(leftover), false)
+    assert.equal(
+      tabs.some((tab) => tab === settingsPage),
+      true,
+    )
+  } finally {
     await harness.close()
   }
 })
