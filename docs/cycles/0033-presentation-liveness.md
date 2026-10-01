@@ -2,8 +2,8 @@
 
 Type: hardening\
 Status: validating\
-Result: demonstrated (mechanism: every Issue #59 item red/green with disabled-fix controls; bounded installed native N2-a and N2-b in VS Code and Cursor, N2-c in VS Code; open: N2-d, N2-c in Cursor, M1 (f), three deferred OCR findings)\
-Delivery: pending (`/ship` as 0.2.17.0)\
+Result: demonstrated (mechanism: every Issue #59 item red/green with disabled-fix controls; bounded installed native N2-a and N2-b in VS Code and Cursor, N2-c in VS Code; open: N2-d, N2-c in Cursor, M1 (f) and the non-critical review findings listed under the delivery review)\
+Delivery: committed as 0.2.17.0 (the Draft PR from `/ship`, CI, a separate exact-HEAD gate and the merge follow as separate steps)\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/59\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -344,6 +344,92 @@ The final cut adds the Inspect fix (`9725f29`) and the records above to the revi
 
 OCR low finding, `studyHtml.ts`: rendering the event list again replaces the Inspect button the learner just activated, so keyboard focus falls back to the document. Selecting another event already behaves this way. It joins the Cycle 0034 focus items.
 
+### Delivery review (`/ship`), 2026-10-01
+
+Entry after compaction, before the review: re-read PRODUCT_GOAL (v9), the three feature contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record and DEVELOPMENT in full, and opened the v9 PNG again (same four regions, SHA-256 unchanged).
+
+Every decision took the recommended option, and only a CRITICAL finding would have been fixed. None was reported.
+
+Decisions recorded:
+
+- Version: 0.2.17.0 (patch). The cycle is hardening and adds no feature surface.
+- Plan audit: its one missing item was the CHANGELOG entry, which `/ship` writes. No deferral was needed for it.
+- `TODOS.md`: not created. The repository has none, and cycle records own the follow-ups.
+- Review findings: every non-critical finding is skipped here and listed below for Cycle 0034.
+
+#### Tests added by the coverage audit
+
+The audit traced 30 changed code paths. All had a test, and five of them only a test that could not catch a regression of this cycle's fix. It added five tests to four existing test files. An independent rating marked all five as real behavior tests, so value-weighted coverage is 30/30.
+
+| Item | Test | Disabled-fix control (compiled `dist`, bytes restored) |
+| --- | --- | --- |
+| C2: the 5 s capture deadline clamp | `replayDebugger.test.ts`: a backward wall-clock jump cannot stretch the capture deadline for a stop Run and Debug is never told about | Clamp removed: test fails |
+| O2: the `load` wait | `playbackController.test.ts`: another recording opens while an earlier recording load never answers | Leave-on-abort removed from `load` only: test fails |
+| O2: the `present` wait | `playbackController.test.ts`: a newer seek presents while an earlier frame paint never answers | Leave-on-abort removed from `present` only: test fails |
+| O4: close still waits for saves | `studyWorkspaceReplay.test.ts`: closing the reader waits for a replay position save that storage still holds | `saved()` removed from `close()`: test fails |
+| T1: the payload for a real mismatch | `studyWorkspace.test.ts`: a Node stop selected on the timeline whose captured source differs from its recorded position is reported with unavailable captured source | `sourceAvailable` forced to `true`: test fails |
+
+These five pass on the branch as written, so they are coverage tests with controls, not red-before-green regressions. The controls ran from `artifacts/cycle-0033/controls/ship-controls.mjs` (private); `dist` hashed identically before and after.
+
+#### Verification on the delivery cut
+
+| Check | Result |
+| --- | --- |
+| Full suite (`pnpm --dir extension test`, includes build) | 1,483/1,483 PASS, 0 fail (the five added tests included) |
+| Package suite, after all extension readers exited | 183/183 PASS |
+| Compaction hook | 4/4 PASS |
+| Typecheck, lint, `format:check`, `dead-code`, `dupes`, `health` | PASS |
+| Plan completion audit (Issue #59 plus the amendments) | 50 items: 39 done, 6 changed, 4 partial, 1 not done (the CHANGELOG entry, written in this delivery) |
+| Exploratory QA smoke (`.gstack/qa-reports/ship-c33-20261001-143635`, private) | 5 charters, 7 probes, all as expected. DOM harness 56 of 57: only the wide-sequence case fails |
+| Installed native N2 | Not repeated. Product source is unchanged since `9725f29` (r2) apart from `extension/README.md` and the version constant, so the r2 receipts above stand for behavior. The 0.2.17 package itself has no installed run |
+
+Plan audit, partial items (not blocking, carried to Cycle 0034):
+
+- M1 (b): hash mismatches and the source size check raise the integrity error. An image file that exceeds its size limit or changes while it is read is still discarded as withdrawn evidence after a concurrent state change.
+- T1: the close-and-reopen path has no `sourceAvailable` assertion.
+- A3: no test starts a settle while a paint is already in progress.
+- S7: no new test for the three bounded `performPresentation` sites, a waiter woken by an ownership change, `close()` resetting availability, or discarding an observation source.
+
+#### Review results
+
+| Review | Coverage | Result |
+| --- | --- | --- |
+| Core checklist | Whole diff | Nothing critical |
+| Specialists: testing, maintainability, security, performance, simplification | Whole diff | 11 informational findings; simplification found nothing |
+| Red Team | Whole diff | 3 informational findings |
+| Claude adversarial (same harness, fresh context) | Product source in full, tests in summary mode | 8 informational findings |
+| Codex adversarial | Whole diff | 1 finding it rated P1, 4 P2 |
+| Codex structured review (`codex review --base main`) | Whole diff | Gate passed: no P1, 2 P2 |
+
+After merging duplicates there are 22 findings, none critical. All are deferred.
+
+The one P1 claim (Codex adversarial, `studyWorkspace.ts` `settleOwnedPlayback`): a paint phase that never ends after it is superseded would keep counting, and would cut the next navigation short. A private probe on the real workspace code did not reproduce it. A seek 4.5 s into a stuck paint, with 1.5 s of its own debugger preparation, was not cut at the old paint's start plus 5 s. A superseded frame delivery is rejected at once (`clearRecorded` in the viewport), which ends its paint phase. The claim holds only for a paint-phase wait that ignores that invalidation, such as one queued behind a native placement hold. It is recorded as informational.
+
+Findings, grouped (all deferred to the Cycle 0034 backlog):
+
+1. **A request that follows an abandoned one can overlap its cleanup.** Four reviewers reported this family. It follows from O2 and O1 and is the lead candidate for Cycle 0034.
+   - A newer load can reach `open()` while the abandoned cold open still holds its reservation, and fail with `BUSY`.
+   - A newer presentation can adopt a replay viewport that the aborted one is still creating and then closes ("Owned viewport is closed").
+   - `replaceUnavailableReplayDebugger` clears its field before `dispose()` finishes, which can now take up to 5 s. A second explicit action in that window registers a second descriptor factory for the same debug type, which the editor rejects.
+   - A same-recording open through the MCP route now re-reveals into a closed reader.
+2. **Ownership after a bound expires.**
+   - `expire()` returns early when a disconnect already detached the owner, so a late termination makes it available again. `retireSession()` does the same after an expired startup.
+   - `bounded()` rejects its waiters only after `expire()` returns, so a throwing reader listener would leave them waiting.
+   - A disposed adapter fails closed but leaves `available` true, so the replacement is skipped.
+   - Expiry does not stop a session that is still alive, and `dispose()` tries for 5 s once.
+   - The retirement bound counts a pending startup (also in the OCR review), a startup slower than 5 s now needs a reopen, and the 15 s ceiling leaves out the inspection wait, the load and the viewport handshake.
+3. **Reader and integrity.**
+   - The webview's own Inspect check omits the text hash that `nodeStopSourceMatches` has. A stop with a mismatched hash is labelled unavailable but still shows an enabled Inspect, which then fails.
+   - The M1 (b) remainder listed above.
+   - A Node history seek made during a failing step inherits that step's error.
+4. **Tests and comments.**
+   - The never-painting test's 5,000 ± 250 ms window includes a storage write and may fail on a slow runner.
+   - The reader's label and render-key changes are covered only by the DOM harness, which CI does not run.
+   - The `failureCleared` publish is not tested without a hint showing.
+   - Real-clock tests add about 27 s to the suite, and race timers that are never cleared leave an idle tail.
+   - `abandon()`'s comment and `untilAborted`'s docstring describe the earlier behavior.
+   - The five added tests had no recorded control; the table above closes that.
+
 ## Result and decision
 
 - Result: demonstrated at mechanism level (every Issue #59 item has a red-before-green test and a disabled-fix control, apart from the noted O4 defense in depth and the comment-only M1 (i); clean full suites) plus bounded installed native evidence.
@@ -355,10 +441,12 @@ OCR low finding, `studyHtml.ts`: rendering the event list again replaces the Ins
   - N2-d, and N2-c in Cursor.
   - M1 (f), deferred under D1.
   - The three OCR findings (retirement bound counts a pending startup; `sourceAvailable` hashes on every publish; a late `changed()` after `dispose()`).
+  - The 22 non-critical delivery-review findings and the four partial plan items, listed under the delivery review.
   - The wide-sequence page overflow in the DOM harness, which predates this cycle.
   - The bound on storage and archive writes during `close()` (O4).
 - Decision: deliver this cut as 0.2.17.0.
 - Next cycle candidates (Cycle 0034), to be derived again from the gap table by `/spec`:
+  0. The overlap and ownership findings from the delivery review (groups 1 and 2). They touch the paths this cycle changed, so they come first.
   1. The Cycle 0031 UI items: one-click Show Variables, automatic summary placement in Cursor, summary density, focus on a cold first click, the reader recovery message, the AX range value and the retired presentation commands.
   2. Layout restore and "Open article" during replay, and the wide-sequence page overflow.
   3. The OCR findings above.
@@ -370,7 +458,7 @@ OCR low finding, `studyHtml.ts`: rendering the event list again replaces the Ins
 
 ## Next action
 
-- Exact next action: review the final cut with the local CodeRabbit CLI (never `--use-credits`) and OCR, then `/ship` as 0.2.17.0, CI, a separate exact-HEAD gate and the merge in its own step.
+- Exact next action: finish the delivery of 0.2.17.0: the Draft PR from `/ship`, CI, a separate exact-HEAD gate and the merge in its own step. Then record the delivery, close Issue #59 and create the Cycle 0034 Issue through `/spec`.
 - Changed files / branch / active processes: `codex/cycle-0033-presentation-liveness`; base worktree `/tmp/c33-base` (`b9c846b` plus the copied tests) is a private control and can be removed after delivery; no active processes.
 - State updated in PROJECT_STATE.md: active cycle, AC-REPLAY, AC-ENTRY and AC-SAVE receipts, next action.
 - Durable decisions updated: none.
