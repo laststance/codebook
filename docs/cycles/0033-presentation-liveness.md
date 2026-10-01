@@ -1,7 +1,7 @@
 # Cycle 0033 — Replay presentation liveness and truthful Node stop state
 
 Type: hardening\
-Status: planning\
+Status: implementing\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -111,7 +111,33 @@ Frozen before implementation; these are Issue #59 AC1–AC7 in short form.
 
 ## Attempts and evidence
 
-No observations yet.
+### Plan review (`/plan-eng-review`), 2026-10-01
+
+The full report, ledger and Codex outside voice are in the archived spec (private, `~/.gstack/projects/codebook/specs/…cycle-0033…md`). The Test Plan is in `~/.gstack/projects/codebook/*-eng-review-test-plan-20261001-095903.md`.
+
+Every choice took the recommended option under the owner's standing direction. Results:
+- Scope accepted as-is.
+- 29 findings, all mapped to tasks; 0 critical gaps.
+- Codex (outside voice): 3 P1 and 1 P2, all applied.
+
+Amendments to Issue #59:
+
+| ID | Amendment |
+| --- | --- |
+| D1 | M1 (f) is deferred. The truthful `'uninspected'` hint already covers a stop whose first source frame sits beyond VS Code's first stack page. Revisit when a recorded stop has its first source frame at index 20 or higher. |
+| A1 | `dispose()` bounds its own `stopDebugging` call by `REPLAY_DEBUG_CAPTURE_TIMEOUT_MS`, and its cleanup always runs. `close()` and an explicit reopen then complete even when the stop never answers. |
+| A2 | The shared startup gets the same 5 s bound and expiry rule as retirement: the owner becomes unavailable, and a session that starts late is stopped. A Node selection uses a signal that never aborts, so without this it would wait forever. |
+| A3 | The paint watchdog has an owner. `presentPlayback` records when each paint phase starts and ends. `settleOwnedPlayback` arms a 5 s timer at every paint start it observes, counting a phase already in progress from its recorded start. It clears the timer when the phase ends and re-arms it on the next start. The 15 s ceiling covers the whole settle, and both timers are owned and cleared by `settleOwnedPlayback`. |
+| C1 | A new helper, `utils/nodeStopSourceMatches.ts`, is the single source match. It is used by `selectNodeHistoryEvent` and by the payload's `sourceAvailable`. The webview's per-entry Inspect buttons keep their structural predicate; the existing `requireDebugger` refusal still covers a stop whose source text fails the hash check. |
+| C2 | M1 (e) clamps each computed delay to its nominal maximum: grace at most 1 s, stopped deadline at most 5 s. A backward clock jump then cannot stretch them. The clock source is unchanged, so the existing `node:test` `Date` mocks still work. |
+| O1 | A same-study open after an owner-scoped paint timeout presents the confirmed moment again. Today `command('open')` returns early at `ready` (`playbackController.ts:78-82`). A test drives A → B timeout → reopen until a new paint ACK. |
+| O2 | `pump()` waits on `load`, `frame` and `present` through `untilAborted(…, abort.signal)`. A stalled read then no longer blocks later requests, and a late completion is dropped by `current()`. |
+| O3 | On expiry, a retirement or startup gives up ownership: `retiringSessionId` clears and the owner stays unavailable. A late termination then takes the learner-ended path. This replaces the spec's incorrect claim that a late termination is already ignored. |
+| O4 | The closing claim is narrowed. `close()` never waits on the native debugger or a painting frame without a bound. Storage and archive writes stay awaited, because they protect learner data. The bound on storage writes is not in this cycle. |
+
+Validation contract additions, frozen with the amendments:
+- AC2 adds four cases: startup never answers; expiry followed by a late termination; a hung `stopDebugging` in `dispose()`; and a same-study reopen after a timeout.
+- AC4 adds a stalled `load` that does not block a newer open, and the paint bound restarting after a superseded presentation.
 
 ## Result and decision
 
@@ -123,7 +149,7 @@ Pending.
 
 ## Next action
 
-- Exact next action: run `/plan-eng-review` on Issue #59, then implement L1 → L2 → T1 → B2 → C1 → M1 → Q1 on this branch.
+- Exact next action: implement the tasks in order (T1 L1+A2, T2 L2+A1+O3, T3 T1+C1, T4 B2+A3, T8 O1+O2, T5 C1 text, T6 M1), each with a test that fails before the fix and a disabled-fix control.
 - Changed files / branch / active processes: `codex/cycle-0033-presentation-liveness`; no active processes.
 - State updated in PROJECT_STATE.md: active cycle, tracking and next action.
 - Durable decisions updated: none.
