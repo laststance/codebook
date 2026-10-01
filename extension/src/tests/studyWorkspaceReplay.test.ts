@@ -2317,3 +2317,89 @@ test(
     }
   },
 )
+
+// Value: protects=a repeated Recording press on a healthy replay keeping its moment and control revision; fails_when=a replay whose historical debugger was never created counts as not presentable and reloads; why_new=Cycle 0034 O4/O5 tests cover only the reload, and the controller test stubs presentable; seam=none
+test('pressing Recording again on a displayed replay without recorded debugger state keeps its moment without reloading it', async () => {
+  // Arrange: the recording has no recorded debugger state, so no historical debugger was ever started for it.
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const displayed = harness.controller.state()
+    const publishedBefore = harness.postedMessages().length
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    const state = harness.controller.state()
+    assert.equal(harness.historicalDebuggers.length, 0)
+    assert.equal(displayed.revision, 2)
+    assert.equal(state.revision, 2)
+    assert.equal(state.presentationRevision, displayed.presentationRevision)
+    assert.equal(state.presentedMs, 100)
+    assert.equal(state.readiness, 'ready')
+    assert.deepEqual(
+      harness
+        .postedMessages()
+        .slice(publishedBefore)
+        .map((message) => message.recording?.readiness)
+        .filter((readiness) => readiness !== 'ready'),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an explicit reopen still presenting, with the failure shown, when stopping the ended historical debugger fails; fails_when=the shared retirement rejects, so the open fails or the rejection is unhandled; why_new=Cycle 0034 O1 moved disposal into a shared retirement whose error path had no test; seam=none
+test('pressing Recording after the historical session ended still presents the saved moment when the editor fails to release the old debugger', async () => {
+  // Arrange: the editor will end the old owner's registration and then fail its disposal.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const endedDebugger = harness.historicalDebuggers[0]!,
+      dispose = endedDebugger.dispose.bind(endedDebugger)
+    endedDebugger.dispose = async (): Promise<void> => {
+      await dispose()
+      throw new Error('The editor failed to release the historical debugger')
+    }
+    harness.endHistoricalDebugSession()
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    const view = harness.postedMessages().slice(-1)[0]!
+    assert.equal(view.recording?.readiness, 'ready')
+    assert.equal(view.recording?.presentedMs, 100)
+    assert.equal(harness.controller.state().reason, undefined)
+    assert.equal(harness.historicalDebuggers.length, 2)
+    assert.equal(harness.historicalDebuggers[1]!.available, true)
+    assert.equal(
+      view.errors
+        .filter((error) => error.includes('historical debugger'))
+        .join(' | '),
+      'Error: The editor failed to release the historical debugger',
+    )
+  } finally {
+    await harness.close()
+  }
+})

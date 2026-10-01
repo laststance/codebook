@@ -345,6 +345,38 @@ test('a duplicate Open Study during initialization reports busy while the first 
   }
 })
 
+// Value: protects=a cancelled Open Study reporting its own cancellation while it waits for an abandoned first entry; fails_when=the wait reports busy for a waiter whose own request was cancelled; why_new=Cycle 0034 O2 tests cover the release and the bound, not a cancelled waiter; seam=none
+test('an Open Study cancelled while it waits for an abandoned first entry leaves with its own cancellation instead of reporting busy', async () => {
+  // Arrange: the first entry was abandoned inside a native layout call that ignores cancellation, and a second entry waits for it.
+  const harness = await workspaceHarness(false)
+  const entry = harness.holdNextCommand('vscode.getEditorLayout'),
+    abandonedEntry = new AbortController(),
+    waitingEntry = new AbortController()
+  const first = harness.reader
+    .open(abandonedEntry.signal)
+    .catch((error: unknown) => error)
+  let second: Promise<unknown> | undefined
+  try {
+    await entry.started
+    abandonedEntry.abort(new Error('First entry abandoned'))
+    second = harness.reader
+      .open(waitingEntry.signal)
+      .catch((error: unknown) => error)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Act
+    waitingEntry.abort(new Error('Second entry cancelled'))
+    const outcome = await second
+
+    // Assert
+    assert.equal(String(outcome), 'Error: Second entry cancelled')
+  } finally {
+    entry.release()
+    await Promise.allSettled([first, second])
+    await harness.close()
+  }
+})
+
 test('a failed cold initialization allows the next explicit Open Study to retry', async () => {
   // Arrange
   const harness = await workspaceHarness(false),

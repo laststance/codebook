@@ -3218,3 +3218,86 @@ test('a Node stop selected before the reader closed keeps its matching captured 
     await harness.close()
   }
 })
+
+// Value: protects=Inspect pressed twice while the editor is still stopping the ended historical session; fails_when=the second press creates the next owner while the first press's disposal still holds the debug type; why_new=Cycle 0034 O1 tests cover the browser route and a closed reader only; seam=none
+test('pressing Inspect again while the editor is still stopping the ended historical session shows the Node stop through one new session', async () => {
+  // Arrange: the learner ended the historical session, and the first Inspect press is waiting for the editor to stop it.
+  const harness = await workspaceHarness()
+  let releaseDisposal = (): void => {}
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition
+          ?.debuggerAvailable === true,
+      'the Node stop shows its values in Run and Debug',
+      1_000,
+    )
+    harness.endHistoricalDebugSession()
+    const disposal = harness.holdHistoricalDebugDisposal()
+    releaseDisposal = disposal.release
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await disposal.started
+
+    // Act: the learner presses Inspect a second time, then the editor finishes stopping the old session.
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    const sessionsWhileStopping = harness.historicalDebuggers.length
+    disposal.release()
+    await waitUntil(
+      () => {
+        const view = harness.reader.inspect().view
+        return (
+          view?.nodeHistoryPosition?.debuggerAvailable === true ||
+          Boolean(view?.errors.length)
+        )
+      },
+      'the second Inspect press settles',
+      1_000,
+    )
+
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(view.errors.join(' | '), '')
+    assert.equal(sessionsWhileStopping, 1)
+    assert.equal(harness.historicalDebuggers.length, 2)
+    assert.equal(harness.historicalDebuggers[1]!.available, true)
+    assert.equal(harness.historicalDebugPresentations.length, 2)
+    assert.equal(view.nodeHistoryPosition?.sequence, 2)
+    assert.equal(view.nodeHistoryPosition?.debuggerAvailable, true)
+  } finally {
+    releaseDisposal()
+    await harness.close()
+  }
+})
