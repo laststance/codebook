@@ -855,7 +855,7 @@ export class StudyService {
     if (record.evidenceHeld)
       throw new StudyError(
         'BUSY',
-        'The learner is deleting this run’s saved study; wait for it to finish.',
+        "The learner is deleting this run's saved study; wait for it to finish.",
       )
     const snapshot = this.snapshot(record, input.snapshotUri)
     if (

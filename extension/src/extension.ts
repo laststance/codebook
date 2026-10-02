@@ -12,6 +12,8 @@ import { URLSearchParams } from 'node:url'
 import * as vscode from 'vscode'
 
 import {
+  AGENT_STORAGE_DIRECTORY,
+  CONNECTION_DESCRIPTOR_SUFFIX,
   EXTENSION_VERSION,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
@@ -131,7 +133,10 @@ export function activate(
         context,
         workspace().presentation,
       )
-      const directory = join(context.globalStorageUri.fsPath, 'agent')
+      const directory = join(
+        context.globalStorageUri.fsPath,
+        AGENT_STORAGE_DIRECTORY,
+      )
       let endpoint: Awaited<ReturnType<typeof startServer>> | undefined
       let service: StudyService | undefined
       try {
@@ -152,7 +157,7 @@ export function activate(
         endpoint = await startServer(service)
         const descriptorPath = join(
           storageRoot,
-          `${service.instanceId}.connection.json`,
+          `${service.instanceId}${CONNECTION_DESCRIPTOR_SUFFIX}`,
         )
         await writeFile(descriptorPath, JSON.stringify(endpoint.descriptor), {
           mode: PRIVATE_FILE_MODE,

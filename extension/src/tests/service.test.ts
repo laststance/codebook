@@ -864,7 +864,7 @@ test('a removal of a run’s study waits for an explanation that is being writte
     assert.deepEqual(refusedWhileWaiting, {
       code: 'BUSY',
       message:
-        'The learner is deleting this run’s saved study; wait for it to finish.',
+        "The learner is deleting this run's saved study; wait for it to finish.",
     })
     assert.deepEqual(refusedWhileMoving, refusedWhileWaiting)
     assert.match(acceptedAfterwards.explanationUri, /\/explanations\//)

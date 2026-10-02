@@ -87,8 +87,12 @@ export const STUDY_REMOVAL_REFUSALS = {
   runNotStopped: 'Stop the run before deleting its study.',
   recordingOpen:
     'Choose Overview or Live to leave Recording before deleting this study.',
+  studyOpening: 'Wait for the chosen saved study to open.',
   unavailable: 'Study archive is unavailable.',
 } as const
+// Where the agent server keeps each instance's connection descriptor and each run's raw evidence, below the extension's global storage.
+export const AGENT_STORAGE_DIRECTORY = 'agent'
+export const CONNECTION_DESCRIPTOR_SUFFIX = '.connection.json'
 export const INVALID_SAVED_STUDY_LIMIT_MESSAGE = `Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to ${MAX_SAVED_STUDIES}. Existing learning was kept.`
 export const MAX_SOURCE_DOCUMENTS = 34
 export const STUDY_REFRESH_INTERVAL_MS = 250
