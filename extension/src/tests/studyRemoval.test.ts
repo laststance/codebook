@@ -407,6 +407,34 @@ test('a removal of a study the library does not hold moves nothing and says the 
   assert.deepEqual(storage.moved, [])
 })
 
+// Value: protects=a learner ledger that cannot be read stops a removal before its first move, so no recording leaves while the ledger may still name the study; fails_when=the ledger is read only when its rewrite step is reached, after the recording already went to the Trash; why_new=every removal test arranges a ledger that is readable or absent; seam=none
+test('a removal on a library whose learner ledger cannot be read moves nothing and keeps the study with its recording', async (context) => {
+  // Arrange: a saved study with a recording; the ledger file holds a version the library does not read.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  await writeFile(
+    join(storage.directory, 'progress.repository.v4.json'),
+    '{"version":3}',
+  )
+  const filesBefore = await filesBelow(storage.directory)
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'nothing-moved',
+    cause: 'Version 4 progress has an incompatible schema.',
+  })
+  assert.deepEqual(storage.moved, [])
+  assert.deepEqual(await filesBelow(storage.directory), filesBefore)
+  assert.deepEqual(
+    (await storage.recordings.list()).map((entry) => entry.studyId),
+    [study.id],
+  )
+})
+
 // Value: protects=a removal takes its turn among the other writers of the learning directory instead of deadlocking or overtaking them; fails_when=the removal takes the storage lock more than once or outside the writers' queue; why_new=the removal is the first writer that touches the study, the ledger and the playback file in one step; seam=the injected mover
 test('a removal queued between a study save and a playback position save completes and all three take effect', async (context) => {
   // Arrange

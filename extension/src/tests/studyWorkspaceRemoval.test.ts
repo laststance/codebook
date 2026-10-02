@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { readFile, readdir, unlink, utimes, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { test } from 'node:test'
 
@@ -445,6 +445,58 @@ test('removing a saved study that is not the shown one keeps the shown study', a
   }
 })
 
+// Value: protects=after the shown study is removed the reader shows the nearest saved study it can open and passes over an entry it cannot, and shows none when only such an entry is left; fails_when=the reader selects the unopenable neighbour, or keeps a removed study selected because no neighbour could be read; why_new=the neighbour tests arrange only studies that can be opened; seam=none
+test('after the shown study is removed the reader passes over a saved study that cannot be opened, and shows none when only that entry is left', async () => {
+  // Arrange: three entries, newest first: the shown study, a first-format archive that cannot be opened, and an older study.
+  const harness = await workspaceHarness()
+  try {
+    const older = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      shown = await saveEarlierStudy(harness, '2026-09-20T00:00:03.000Z')
+    const unopenableStudyId = `${randomUUID()}_${randomUUID()}`,
+      unopenableArchive = join(
+        harness.reader.inspect().libraryDirectory!,
+        `${unopenableStudyId}.study.json`,
+      )
+    await writeFile(unopenableArchive, 'not json')
+    // The list places a first-format archive by its file time.
+    const savedBetweenTheOthers = new Date('2026-09-20T00:00:02.000Z')
+    await utimes(
+      unopenableArchive,
+      savedBetweenTheOthers,
+      savedBetweenTheOthers,
+    )
+    await harness.reader.action('retry')
+    await chooseStudy(harness, shown.id)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    // Act
+    await requestRemoval(harness, shown.id)
+    const afterFirstRemoval = harness.reader.inspect().view!
+    await requestRemoval(harness, older.id)
+    const afterSecondRemoval = harness.reader.inspect().view!
+    // Assert
+    assert.deepEqual(
+      structuredClone(
+        afterFirstRemoval.studies.map((entry) => [entry.id, entry.metadata]),
+      ),
+      [
+        [unopenableStudyId, 'unavailable'],
+        [older.id, 'validated'],
+      ],
+    )
+    assert.equal(afterFirstRemoval.model.selection.studyId, older.id)
+    assert.equal(afterFirstRemoval.study?.id, older.id)
+    assert.deepEqual(
+      structuredClone(afterSecondRemoval.studies.map((entry) => entry.id)),
+      [unopenableStudyId],
+    )
+    assert.equal(afterSecondRemoval.model.selection.studyId, undefined)
+    assert.equal(afterSecondRemoval.study, undefined)
+    assert.equal(afterSecondRemoval.studyRemoval?.status, 'moved')
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the outcome line of a removal is replaced by the next request and retired when a run starts; fails_when=a stale "moved to the Trash" line stays beside a new run or a new request; why_new=the outcome line is new; seam=the editor's dialog and Trash, stubbed at the vscode boundary
 test('the outcome line of a removal gives way to the next delete request and to a run that starts', async () => {
   // Arrange: two saved studies; the first removal is confirmed.
@@ -735,6 +787,51 @@ test('while a saved study is being moved to the Trash it cannot be opened or pla
   }
 })
 
+// Value: protects=while one saved study is on its way to the Trash a delete request for another entry opens no dialog and removes nothing; fails_when=only a waiting confirmation blocks a further request, so a second removal replaces the moving state while the first study's files are still being moved; why_new=the single-flight test repeats the request only while the dialog waits for its answer; seam=none
+test('a delete request for another saved study while one is being moved to the Trash opens no dialog and leaves that study in place', async () => {
+  // Arrange: two saved studies; the Trash holds the first move of the older one's confirmed removal.
+  const harness = await workspaceHarness()
+  try {
+    const moving = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      other = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    const held = harness.holdTrashMove()
+    const removal = requestRemoval(harness, moving.id)
+    await held.started
+    // Act
+    const repeated = requestRemoval(harness, other.id)
+    // A request that is not taken returns within the turn; one that was taken would open its own dialog.
+    await new Promise((resolve) => setImmediate(resolve))
+    const dialogsWhileMoving = harness.warningDialogs.length,
+      whileMoving = harness.reader.inspect().view!.studyRemoval
+    held.release()
+    await Promise.all([removal, repeated])
+    // Assert
+    const afterRemoval = harness.reader.inspect().view!
+    assert.equal(dialogsWhileMoving, 1)
+    assert.deepEqual(structuredClone(whileMoving), {
+      status: 'moving',
+      studyId: moving.id,
+      text: 'Moving the saved study to the Trash…',
+    })
+    assert.deepEqual(
+      harness.trashMoves.map((move) => basename(move.path)),
+      [`${moving.id}.study.meta.v3.json`, `${moving.id}.study.v3.json`],
+    )
+    assert.deepEqual(
+      structuredClone(afterRemoval.studies.map((entry) => entry.id)),
+      [other.id],
+    )
+    assert.deepEqual(structuredClone(afterRemoval.studyRemoval), {
+      status: 'moved',
+      studyId: moving.id,
+      text: 'Saved study moved to the Trash. The library now holds 1 of 64 saved studies.',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a removal that fails before anything moved changes nothing: the run stays saved and keeps being saved; fails_when=the run is excluded from history although its study still exists; why_new=no removal existed; seam=the editor's dialog and Trash, stubbed at the vscode boundary
 test('a removal the Trash refuses at its first move deletes nothing, and a later explanation of that run is still saved', async () => {
   // Arrange: a recorded, stopped and saved run; the Trash refuses every move.
@@ -841,6 +938,44 @@ test('a removal that fails unexpectedly leaves the study listed and deletable ag
     assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'moved')
   } finally {
     context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a confirmation the editor fails to show leaves the saved study and the delete control as they were, so the learner can ask again; fails_when=the removal stays "confirming" after the dialog rejected, so every later delete request is ignored until the window reloads; why_new=the unexpected-failure test breaks the move, after the dialog was already answered; seam=none
+test('a confirmation dialog the editor cannot show moves nothing, and the next delete request is asked and carried out', async () => {
+  // Arrange: one saved study; the editor rejects the first confirmation dialog.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    harness.answerWarningDialogs(async () => {
+      throw new Error('The editor could not show the dialog')
+    })
+    // Act
+    await assert.rejects(requestRemoval(harness, study.id), {
+      message: 'The editor could not show the dialog',
+    })
+    const afterFailedDialog = harness.reader.inspect().view!,
+      movesAfterFailedDialog = harness.trashMoves.length
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    await requestRemoval(harness, study.id)
+    // Assert
+    assert.equal(afterFailedDialog.studyRemoval, undefined)
+    assert.deepEqual(
+      structuredClone(afterFailedDialog.studies.map((entry) => entry.id)),
+      [study.id],
+    )
+    assert.equal(movesAfterFailedDialog, 0)
+    assert.equal(harness.warningDialogs.length, 2)
+    assert.deepEqual(
+      structuredClone(harness.reader.inspect().view!.studyRemoval),
+      {
+        status: 'moved',
+        studyId: study.id,
+        text: 'Saved study moved to the Trash. The library now holds 0 of 64 saved studies.',
+      },
+    )
+  } finally {
     await harness.close()
   }
 })

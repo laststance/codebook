@@ -386,6 +386,32 @@ test('a run whose study library cannot be read ends as a failed run and is still
   assert.equal(checkpoint, 1)
 })
 
+// Value: protects=a run that fails a prerequisite before the study library is asked ends as an ordinary failed run the reader still saves, not as one left waiting for its admission; fails_when=the exclusion a configured run starts with is not lifted when preparation fails before the admission answers, so the run is never saved and never gives up its retained slot; why_new=the failed preparations tested with a recording store attached fail at the admission read or after it; seam=none
+test('a run whose repository storage is unavailable ends as a missing prerequisite and is still offered for a history checkpoint', async (context) => {
+  // Arrange / Act: the library has room; the repository store is gone when the run starts, which preparation checks before it asks the library.
+  const started = await startRunWithStorage(
+    context,
+    2,
+    'study',
+    ({ service }) => {
+      service.repository = undefined
+    },
+  )
+  const checkpoint = started.service.beginHistory(
+    started.record,
+    started.service.state(started.record).materialSignature,
+  )
+  // Assert
+  assert.equal(started.record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(
+    started.record.error?.message,
+    'Repository source/book storage is unavailable in this editor.',
+  )
+  assert.equal(started.record.prepared, false)
+  assert.equal(started.runtimeAcquisitions(), 0)
+  assert.equal(checkpoint, 1)
+})
+
 // Value: protects=refusals on a full library never use up the sixteen runs an editor instance retains; fails_when=a refused run keeps its slot, so the seventeenth start is refused for the bound; why_new=the retained-run bound had no test; seam=none
 test('after sixteen runs refused on a full study library a further start is accepted and the oldest refused run is forgotten', async (context) => {
   // Arrange: the first refused run comes from the harness; fifteen more follow on the same full library.
