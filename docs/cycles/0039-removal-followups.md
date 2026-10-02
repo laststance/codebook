@@ -2,8 +2,8 @@
 
 Type: product-increment\
 Status: validating\
-Result: pending\
-Delivery: local-only\
+Result: demonstrated (criterion 25 PARTIAL)\
+Delivery: PR-open\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/72\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -337,17 +337,58 @@ Limits and observations:
 - The "left in place" sentence (another window's evidence) was not exercised natively; it holds at mechanism level. The Trash route is verified on macOS only. The takes are 30 fps; no sub-frame timing is claimed.
 - New finding candidates from the trial: an agent's too-strict `text` before condition ends an otherwise admitted run (AC-LIVE); the VS Code layout after a maximized panel.
 
+### Delivery through `/ship`, 2026-10-02
+
+Reviewed tree `0b224fc0` (HEAD `40a1f0f`: the product source of `4cedf00` plus five tests and the records). Version 0.2.23.0.
+
+| Step | Result |
+| --- | --- |
+| Tests on the reviewed tree | hook 4 of 4, extension 1,720 of 1,720, package 192 of 192; typecheck, lint, format:check, dead-code, dupes and health exit 0; the fast emit equals the compiler's output (630 files) |
+| Coverage audit (two generation passes) | 30 changed paths, 28 with a test; five tests added in three test files (a save that is writing when the removal is confirmed; a delete after a saved study and a Node test history failed to open; a reader closed while the neighbour is read; an evidence move refused after the recording moved, red on `471ad67`; a refused run's `events` and `manifest` resources answering as before). A read-only rating gave four of them three stars and one two stars; value-weighted coverage 93%. The two paths without a test are carried findings 2 and 3 |
+| Plan completion audit | 50 items: 46 done, 1 changed, 2 partial (both closed by the second coverage pass), 1 produced by the delivery itself (version and changelog) |
+| Delivery review | the checklist pass and five specialists (testing, maintainability, security, performance, simplification), then a red team: no critical finding; 18 informational findings and 2 advisory notes |
+| Exploratory QA | 18 captured probes: four smoke charters (21, 50, 38 and 24 tests), the 36 controls held again with `dist` restored byte for byte, the static gates, the DOM gate (68 of 69 with the carried case), the bundled skill hash, the protected state, the restored QA workspace file, the N8 evidence bound to the reviewed product source (0 lines of difference to `4cedf00`), the CodeRabbit configuration. No probe failed against its expectation |
+| Adversarial review | a Claude pass (10 findings read from code, test files in summary mode), a Codex challenge (3 P2, read-only sandbox) and a Codex structured review (2 P2, both reproduced by fault injection; no P1; it ran with the sandbox the owner's Codex configuration gives it, and the working tree hash is the same before and after). All three completed and are bound to the reviewed tree |
+
+Decisions (the owner was away until the adversarial passes; the recommended option each time):
+
+- **Criterion 25 stays PARTIAL and is a named exception of the delivery.** The review record of the delivery is marked incomplete for that one check; everything else it names passed.
+- **Nothing was fixed.** No finding is critical. The owner read the summary of the reproduced regression (finding 7 below) in chat and answered "持ち越しで大丈夫です。": the findings are carried.
+- **No TODOS.md is created**; the follow-ups live in this record and in PROJECT_STATE, as in the earlier cycles.
+- **Version 0.2.23.0**: one third-component step per cycle, as since 0.2.16.0.
+- From the next delivery on, the red team starts together with the three adversarial passes (the owner's direction of 2026-10-02; it ran alone for about 19 minutes here).
+
+Carried findings of the delivery (continuing the list under "Reviews before delivery"; read from code unless stated):
+
+7. **After a storage lock that cannot be released, a completed removal is reported as `nothing-moved`** (`learningLibrary.ts`, the outer catch of `removeStudy`). `changes` lives inside the locked callback, so a rejection of the lock release after the moves answers "Nothing was deleted", the run stays a checkpoint candidate and a held-back write can put the trashed study back. `471ad67` answered `partly-moved` there. Found by the security and maintainability specialists and the Claude pass; reproduced by both Codex passes. A regression of this cycle; my own note in the earlier OCR review ("the outer catch only sees failures before the first step") was wrong for this path.
+8. **A neighbour that cannot be arranged loses the removal's outcome** (`showSavedStudy` calls `open()` unguarded). When `open()` throws after the files moved (a presentation change in progress, a reader entry pending), `settleMovedStudy` is skipped: no "moved" line, a refused run is not told to start again, the neighbour is not remembered. Maintainability and the Claude pass; reproduced by the Codex structured review. A regression of this cycle.
+9. **A repeated start forgets the refused record before the guards that can still reject it** (`service.ts` `start`): a rejected repeat leaves neither the old receipt nor a new run.
+10. **The pane's remembered choice does not settle when the host refuses the open before it starts loading** (a presentation change, a Node test history chosen while Recording is active); this widens carried finding 3. A host-named "opening" entry in the Study message would cover both.
+11. **An overtaken or closing neighbour leaves the selection on the removed study** (`showRemovalNeighbour` returns without `selectNoStudy()`); later selection saves fail with "Study archive is unavailable.".
+12. **A choice that completes while the removal reads the ledger is replaced by the neighbour** (`showAfterRemoval` awaits `refreshProgress()` first): a hole in R5 (Codex challenge).
+13. **`partly-moved` after a ledger-only failure is treated as moved** (the reader forgets the study and excludes the run although no path moved); it needs a refused move and then a failed write-back.
+14. **Reads during the move.** Between the evidence move and the exclusion, an agent's image reads answer with the raw file error and the storage path, and a capture that overlaps the move reports a failed receipt after a removal that succeeded.
+15. **A forced checkpoint waits for the whole removal**, including the neighbour's arrangement and the usage read; a forced capture already in progress when the removal is confirmed is discarded, and when that removal then moves nothing the final state is not saved.
+16. **Evidence that stays without a retry.** An evidence directory that cannot be inspected is left while the outcome is `moved` (the decision above, questioned by the Codex challenge because the study has left the list), a descriptor that cannot be inspected counts as absent, and a mover that rejects after it moved counts as not moved.
+17. **Test findings.** No test binds the directory a run really writes its evidence to with the one the removal names; `withEvidenceHeld` with a failed explanation write or flush; a pending choice that fails after the removal settled; DOM cases for a Node test history choice; three assertions that cannot fail or compare a value with itself; no reader test of the same-key repeat after a removal.
+18. Two JSDoc sentences that miss a new caller (`assertStudyNotMoving`, `renderStudyRemoval`), and `studyEvidenceDirectory` can use `split`.
+
+Private records (ignored `artifacts/cycle-0039/reviews/`): `ship-step9-pass1.md`, `ship-step11-adversarial.md`, the two Codex texts; the QA report under the ignored `.gstack/qa-reports/`. The branch diff went to OpenAI through the Codex CLI for the two outside passes.
+
 ## Result and decision
 
-- Result: pending
+- Result: demonstrated at mechanism level for R1 to R7 (criteria 1 to 24), with the regressions of findings 7 and 8 in failure paths outside those criteria; native criteria 26 to 29 passed and criterion 25 is PARTIAL.
+- Decision: keep. The removal acts on the chosen study, reports a refused first move truthfully, writes a held-back checkpoint, takes the run's raw evidence and lets a refused start be repeated. Revise in the next cycle: findings 7 and 8 first, because they make a completed removal look like one that did nothing.
 
 ## Handoff
 
-Pending.
+- Before: AC-SAVE, AC-LEARNING and AC-ENTRY carried Cycle 0038's findings 1 to 7 on the removal. After: those seven are closed at mechanism level and seen natively in both hosts (the same-key start and the removal with evidence in VS Code, the removal and a Recording in Cursor); the delivery's findings 7 to 18 and the earlier findings 1 to 6 are open. AC-LIVE and AC-REPLAY regressions: the prepared four-stop run and the Recording of a remaining study still work; one run ended on a before condition the agent added itself.
+- Review, CI, merge, packaging, publication and installed verification are separate: the delivery review is complete with the named exception; CI, the exact-HEAD gate and the merge follow the pull request; 0.2.23.0 is not packaged for installation or published; both QA profiles run the pre-release candidate `41bdbdfb`.
+- Issue #72 stays open through the merge (the pull request links it without a closing keyword) and is closed by hand with criterion 25's PARTIAL outcome and the carried findings named.
 
 ## Next action
 
-- Exact next action: finish `/ship` (coverage pass, delivery review, version 0.2.23.0, changelog, push, pull request), then CI on the head, the separate exact-HEAD gate and the merge in its own step. Native N8 and both local reviews are done.
+- Exact next action: CI on the pull request head, the separate exact-HEAD gate and the merge in its own step; then close Issue #72 by hand and plan the next cycle through `/spec`, with findings 7 and 8 of the delivery as its first candidates.
 - Changed files / branch / active processes: the product and test files of T1 to T5, this record and PROJECT_STATE.md on `codex/cycle-0039-removal-followups`; no editor, recorder, dev server or database container of the trial is running.
 - State updated in PROJECT_STATE.md: the resume, the active cycle, tracking and the next action.
 - Durable decisions updated: D045.
