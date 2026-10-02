@@ -15,20 +15,52 @@ concurrency:
 
 jobs:
   test:
-    name: Test
+    # The shards together run the product suite exactly once. extension/scripts/test-shard.mjs gives every shard an
+    # equal share from extension/test-timings.json; a slow test file is run in parts selected by test name.
+    # Keep the shard count equal to `after_n_builds` in codecov.yml: every shard uploads its own coverage.
+    name: Test (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-24.04
-    # V8 coverage makes the full suite several times slower than package.yml's plain run.
-    timeout-minutes: 30
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Prepare environment
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      # Restoring the installed dependencies is faster than installing pnpm and linking them in every shard.
+      # The steps below call node directly, so a restored shard needs no pnpm.
+      - name: Restore installed dependencies
+        id: dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: extension/node_modules
+          key: extension-node-modules-${{ runner.os }}-${{ hashFiles('.node-version', 'extension/pnpm-lock.yaml', 'extension/pnpm-workspace.yaml', 'extension/patches/**') }}
+
+      - name: Install dependencies after a cache miss
+        if: steps.dependencies.outputs.cache-hit != 'true'
         uses: ./.github/actions/prepare
 
-      - name: Run tests with coverage
-        run: pnpm --dir extension test:coverage
+      # The two commands of `pnpm build:fast`. Type errors are reported by the TypeCheck and Build workflows;
+      # package.yml proves that this emit equals the compiler's output.
+      - name: Emit the compiled tests without type checking
+        working-directory: extension
+        run: node scripts/build-fast.mjs && node scripts/build-metadata.mjs
+
+      # Two lanes match the runner's two processors; most of the suite waits on real deadlines.
+      - name: Run this shard's tests with coverage
+        working-directory: extension
+        run: node node_modules/c8/bin/c8.js node scripts/test-shard.mjs --shard "$SHARD/$SHARD_TOTAL" --lanes 2
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
 
       # GitHub Free does not expose organization secrets to private repositories, so the token may be absent.
       - name: Check Codecov token

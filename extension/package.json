@@ -284,10 +284,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-metadata.mjs",
+    "build:fast": "node scripts/build-fast.mjs && node scripts/build-metadata.mjs",
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && node --test dist/tests/*.test.js",
     "package": "node scripts/package.mjs",
     "package:check": "node scripts/check-package.mjs",
+    "test:shard": "node scripts/test-shard.mjs",
     "test:package": "node --test --test-concurrency=4 scripts/tests/*.test.mjs",
     "prepare": "node scripts/install-git-hooks.mjs",
     "test:coverage": "pnpm build && c8 node --test dist/tests/*.test.js",

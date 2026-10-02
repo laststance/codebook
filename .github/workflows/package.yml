@@ -40,8 +40,10 @@ jobs:
       - name: Compile extension and regression suites
         run: |
           pnpm --dir extension build
-      - name: Run product and shared runtime tests
-        run: node --test extension/dist/tests/*.test.js
+      # The product suite runs once, in the Test workflow, on an emit made without type checking.
+      # This comparison proves those tests run the same bytes the compiler writes here.
+      - name: Compare the Test workflow's unchecked emit with the compiler output
+        run: node extension/scripts/build-fast.mjs --check
       - name: Run actual package and failure regressions
         run: pnpm --dir extension test:package
       - name: Produce and verify private VSIX
