@@ -8,7 +8,7 @@ export function configuredDomExpression(
   return `(${inspectDom.toString()})(${JSON.stringify(conditions)},${JSON.stringify(selector) ?? 'undefined'})`
 }
 
-/** Evaluates exact unique-node conditions and an optional hittable click center inside the owned page. @example inspectDom([{kind:'visible',selector:'button'}], 'button').ready */
+/** Evaluates unique-node conditions (text with whitespace collapsed, attributes exactly) and an optional hittable click center inside the owned page; it is serialized with `toString()`, so everything it calls is declared inside it. @example inspectDom([{kind:'visible',selector:'button'}], 'button').ready */
 function inspectDom(
   conditions: RepositoryConfiguration['action']['before'],
   selector?: string,
@@ -32,6 +32,18 @@ function inspectDom(
       style.visibility !== 'collapse' &&
       style.opacity !== '0'
     )
+  }
+  // Text is compared as a reader sees it: whitespace runs collapse to one space and both ends are trimmed, on both sides.
+  const collapseWhitespace = (value: string | null) =>
+    (value ?? '').replace(/\s+/g, ' ').trim()
+  const textFailure = (element: Element, declaredText: string) => {
+    const elementText = collapseWhitespace(element.textContent),
+      expectedText = collapseWhitespace(declaredText)
+    if (elementText === expectedText) return undefined
+    // Name only the relation to the declared literal: the element holds it beside other text.
+    return expectedText && elementText.includes(expectedText)
+      ? { reason: 'text-mismatch', textDifference: 'surrounding-text' }
+      : { reason: 'text-mismatch' }
   }
   for (const [conditionIndex, condition] of conditions.entries()) {
     const elements = select(condition.selector),
@@ -57,11 +69,12 @@ function inspectDom(
         ready: false,
         failure: { conditionIndex, reason: 'not-visible' },
       }
-    if (condition.kind === 'text' && element.textContent !== condition.equals)
-      return {
-        ready: false,
-        failure: { conditionIndex, reason: 'text-mismatch' },
-      }
+    const textMismatch =
+      condition.kind === 'text'
+        ? textFailure(element, condition.equals)
+        : undefined
+    if (textMismatch)
+      return { ready: false, failure: { conditionIndex, ...textMismatch } }
     if (
       condition.kind === 'attribute' &&
       element.getAttribute(condition.attribute) !== condition.equals

@@ -518,6 +518,82 @@ test('DOM configuration compares literal text and attributes and refuses duplica
   })
 })
 
+// Value: protects=a text condition an agent derives from JSX holding on the first run although the element's text carries the whitespace JSX keeps beside a child element; fails_when=the comparison goes back to exact textContent, or collapses only one side; why_new=the exact comparison ended a natural run on the dashboard's "Log in " button (Cycle 0039, N8-a); seam=none
+test('a text condition holds when the element’s text and the declared text differ only in whitespace', () => {
+  // Arrange: a button whose JSX text is followed by an icon, a result paragraph with line breaks, and a literal declared with a doubled space.
+  const textBySelector: Record<string, string> = {
+    '#login': 'Log in ',
+    '#result': '  Invalid\n credentials. ',
+    '#plain': 'Log in',
+  }
+  const environment = {
+    document: {
+      querySelectorAll: (selector: string) =>
+        selector in textBySelector
+          ? [{ textContent: textBySelector[selector] }]
+          : [],
+    },
+  }
+  const read = (selector: string, equals: string) =>
+    JSON.parse(
+      JSON.stringify(
+        runInNewContext(
+          configuredDomExpression([{ kind: 'text', selector, equals }]),
+          environment,
+        ),
+      ),
+    )
+  // Act
+  const trailingSpace = read('#login', 'Log in')
+  const lineBreaks = read('#result', 'Invalid credentials.')
+  const doubledSpaceInLiteral = read('#plain', 'Log  in')
+  // Assert
+  assert.deepEqual(trailingSpace, { ready: true })
+  assert.deepEqual(lineBreaks, { ready: true })
+  assert.deepEqual(doubledSpaceInLiteral, { ready: true })
+})
+
+// Value: protects=the agent learning that its text is there beside other text, which it can fix with another selector, without the page's text reaching it; fails_when=the relation is not reported, is reported for unrelated text, or the result carries page text; why_new=a text mismatch was reported with no relation; seam=none
+test('a text condition whose element holds the declared text beside other text reports that relation and no page text', () => {
+  // Arrange
+  const textBySelector: Record<string, string> = {
+    '#beside': 'Log in to Acme',
+    '#unrelated': 'Sign up',
+  }
+  const environment = {
+    document: {
+      querySelectorAll: (selector: string) =>
+        selector in textBySelector
+          ? [{ textContent: textBySelector[selector] }]
+          : [],
+    },
+  }
+  const readSerialized = (selector: string) =>
+    JSON.stringify(
+      runInNewContext(
+        configuredDomExpression([{ kind: 'text', selector, equals: 'Log in' }]),
+        environment,
+      ),
+    )
+  // Act
+  const besideOtherText = readSerialized('#beside')
+  const unrelatedText = readSerialized('#unrelated')
+  // Assert
+  assert.deepEqual(JSON.parse(besideOtherText), {
+    ready: false,
+    failure: {
+      conditionIndex: 0,
+      reason: 'text-mismatch',
+      textDifference: 'surrounding-text',
+    },
+  })
+  assert.equal(besideOtherText.includes('Acme'), false)
+  assert.deepEqual(JSON.parse(unrelatedText), {
+    ready: false,
+    failure: { conditionIndex: 0, reason: 'text-mismatch' },
+  })
+})
+
 test('configured browser checks identify absent condition and click elements separately from duplicates', () => {
   // Arrange
   const environment = {

@@ -20,6 +20,13 @@ import { createConfiguredStudy } from './createConfiguredStudy'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
 
+/** What the owned page reports for a condition that does not hold; `textDifference` is left open so a test can send a value the run must refuse. */
+interface BeforeFailure {
+  conditionIndex?: number
+  reason: string
+  textDifference?: string
+}
+
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
 export async function configuredRuntimeHarness(
   context: TestContext,
@@ -28,6 +35,8 @@ export async function configuredRuntimeHarness(
   options: {
     /** Replaces the sealed map; by default generated 0:0 maps to source 1:1, and with additional stops generated 0:6 maps to 1:7 as well. */
     mappings?: string
+    /** Replaces the declared before conditions, so a test can make a text or attribute condition the one that fails. */
+    before?: RepositoryConfiguration['action']['before']
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -36,12 +45,14 @@ export async function configuredRuntimeHarness(
   })
   const repository = await repositoryHarness(context),
     reference = createConfiguredStudy()
-  if (additionalStops.length) {
+  if (additionalStops.length)
     reference.configuration.additionalStops = additionalStops
+  if (options.before) reference.configuration.action.before = options.before
+  // Either change makes the frozen intent hash stale.
+  if (additionalStops.length || options.before)
     reference.configurationHash = sha256(
       JSON.stringify(reference.configuration),
     )
-  }
   for (const source of reference.descriptor!.sources)
     await repository.track(source.path, source.text)
   const definition = configuredDefinitionSchema.parse({
@@ -90,6 +101,7 @@ export async function configuredRuntimeHarness(
     bound = false,
     rejectBinding = false,
     ready = true,
+    beforeFailure: BeforeFailure = { conditionIndex: 0, reason: 'not-visible' },
     inputResolve = (): void => {},
     inputReject = (_error: Error): void => {},
     onClose = (): void => {},
@@ -297,10 +309,7 @@ export async function configuredRuntimeHarness(
                       }
                     : ready
                       ? { ready: true, x: 12, y: 18 }
-                      : {
-                          ready: false,
-                          failure: { conditionIndex: 0, reason: 'not-visible' },
-                        },
+                      : { ready: false, failure: beforeFailure },
           },
         }
       if (method === 'Page.navigate') {
@@ -672,6 +681,11 @@ export async function configuredRuntimeHarness(
     },
     setReady(value: boolean): void {
       ready = value
+    },
+    /** Makes every later DOM read answer this failure, as the owned page would for a before condition that never holds. */
+    failBeforeWith(failure: BeforeFailure): void {
+      ready = false
+      beforeFailure = failure
     },
     suppressRetirementAck(): void {
       removedAck = false
