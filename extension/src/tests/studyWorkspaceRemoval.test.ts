@@ -85,7 +85,7 @@ function requestRemoval(harness: Harness, studyId: string): Promise<void> {
 
 /** Chooses one entry of Saved studies, as the Study pane's list does, and waits until the reader shows it. @example await chooseStudy(harness, study.id) */
 async function chooseStudy(harness: Harness, studyId: string): Promise<void> {
-  // The list only exists in an open Study pane, and a closed reader never finishes loading a chosen study.
+  // The choice is made in the Study pane's own list, which exists only while the Study workspace is open.
   await harness.reader.open()
   await harness.reader['receive'](
     {
@@ -2215,6 +2215,43 @@ test('a chosen saved study that opens is shown and its pane is told that the req
     assert.deepEqual(harness.openRequestReplies(), [
       { webview: 'context', openRequest: 6 },
     ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study chosen in the bottom panel while the Study workspace is closed is shown in that panel; fails_when=a closed reader selects the study but publishes nothing and stays loading, so the panel keeps the earlier study's content and, once the request is answered, its list falls back to that earlier study as if the choice had been ignored; why_new=found natively on the candidate: after a fresh editor start the bottom panel is up while the Study workspace is closed; seam=the bottom panel's webview, stubbed at the vscode boundary
+test('a saved study chosen in the bottom panel while the Study workspace is closed is shown there and stops loading', async () => {
+  // Arrange: two saved studies; the older one is shown, then the Study workspace is closed and the bottom panel is resolved again, as after an editor restart.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await chooseStudy(harness, shown.id)
+    await harness.reader.close()
+    await harness.resolveRestoredObservedMoments()
+    const library = await harness.reader.learningStorage()
+    // Act
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: harness.playbackPanelMessages.at(-1)!.revision,
+      studyId: chosen.id,
+      openRequest: 1,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the reply to the open request',
+      1_000,
+    )
+    // Assert
+    const panel = harness.playbackPanelMessages.at(-1)!
+    assert.equal(harness.reader.inspect().opened, false)
+    assert.equal(panel.model.selection.studyId, chosen.id)
+    assert.equal(panel.loading, false)
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'moments', openRequest: 1 },
+    ])
+    assert.equal((await library.readProgress()).selection?.studyId, chosen.id)
   } finally {
     await harness.close()
   }

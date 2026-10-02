@@ -9015,6 +9015,19 @@ export class StudyWorkspace {
     // Closing a native preview can publish a new reader revision; the owned history request still controls this switch.
     if (!this.isLatestHistoryRequest(request)) return
     await this.showSavedStudy(archive)
+    this.publishChoiceOfClosedReader(request)
+  }
+
+  /**
+   * Ends the loading state of a choice made while the Study workspace is closed and publishes the chosen study to the panes that are still up; called by {@link showChosenStudy} once the study is selected.
+   * An open reader has rendered and published the study already. A closed one renders nothing, so without this the bottom panel would keep the earlier study and stay loading until the reader is opened.
+   * @param request - The history request number of the choice; a newer choice or a closing reader publishes its own state.
+   * @example this.publishChoiceOfClosedReader(request)
+   */
+  private publishChoiceOfClosedReader(request: number): void {
+    if (this.opened || !this.isLatestHistoryRequest(request)) return
+    this.loading = false
+    this.publish()
   }
 
   /** Says whether a saved-study read no longer owns the reader when it ends: a newer saved study or Node test history was chosen, the reader changed its revision, or it is closing. @example if (this.isStaleHistoryRead(request, message.revision)) return */
