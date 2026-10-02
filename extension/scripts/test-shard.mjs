@@ -2,7 +2,7 @@
 //
 //   node scripts/test-shard.mjs --shard 3/8 --lanes 2   one CI job's share
 //   node scripts/test-shard.mjs                         the whole suite on this machine
-//   node scripts/test-shard.mjs --shard 3/8 --list      print that share's plan without running it
+//   node scripts/test-shard.mjs --shard 3/8 --lanes 2 --list   print that share's plan without running it
 //   node scripts/test-shard.mjs --record                run every file and rewrite test-timings.json
 //
 // Build first (`pnpm build` or `pnpm build:fast`); this script only reads dist/tests.

@@ -18,9 +18,9 @@ function timingOfFile(tests) {
   return {
     totalMs: Math.round(totalMs),
     tests: Object.fromEntries(
-      [...tests.entries()]
-        .toSorted(([left], [right]) => left.localeCompare(right))
-        .map(([name, ms]) => [name, Math.round(ms)]),
+      [...tests.keys()]
+        .toSorted()
+        .map((name) => [name, Math.round(tests.get(name))]),
     ),
   }
 }

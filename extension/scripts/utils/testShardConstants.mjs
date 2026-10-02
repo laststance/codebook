@@ -1,4 +1,4 @@
-/** Recorded per-file and per-test durations that balance the shard plan; a stale file costs balance only, never coverage. */
+/** Recorded per-file and per-test durations that balance the shard plan; the recorded test names of a slow file also select its parts. A file or top-level test it does not know still runs exactly once. */
 export const TEST_TIMINGS_FILE = 'test-timings.json'
 /** Estimate for a test file the timings do not know yet, so a new file still gets a lane. */
 export const UNKNOWN_TEST_FILE_MS = 1_000

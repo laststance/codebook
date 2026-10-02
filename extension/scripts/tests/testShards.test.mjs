@@ -188,6 +188,32 @@ test('every shard computes the same plan whatever order the test files are liste
   ])
 })
 
+test('jobs whose runners sort text differently still give two equally slow tests of a split file to the same parts', () => {
+  // Arrange: a locale-aware comparison puts "apple" first, code-unit order puts "Zebra" first.
+  const timings = {
+    files: {
+      'tie.test.js': {
+        totalMs: 18_000,
+        tests: { apple: 9_000, Zebra: 9_000 },
+      },
+    },
+  }
+
+  // Act
+  const plan = planTestShards({
+    files: ['tie.test.js'],
+    timings,
+    shards: 2,
+    lanes: 1,
+  })
+
+  // Assert: "Zebra" is always the complement part, in whatever locale the job runs.
+  assert.deepEqual(plan, [
+    [[{ files: ['tie.test.js'], ms: 9_500, skipPattern: '/^(?:apple)$/' }]],
+    [[{ files: ['tie.test.js'], ms: 9_500, namePattern: '/^(?:apple)$/' }]],
+  ])
+})
+
 test('a recording keeps per-test durations only for a file slow enough to split and adds up tests that share a name', () => {
   // Arrange
   const results = [

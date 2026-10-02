@@ -21,9 +21,10 @@ function packLightestFirst(items, binCount) {
 
 /** Splits one slow test file into name-selected parts; the lightest part runs "every test not named elsewhere", so a test the timings do not know still runs exactly once. @example splitTestFile('a.test.js', { tests: { slow: 9000, quick: 10 } }) */
 function splitTestFile(file, tests) {
-  const named = Object.entries(tests)
-    .toSorted(([left], [right]) => left.localeCompare(right))
-    .map(([name, ms]) => ({ name, ms }))
+  // Code-unit order, not the runner's locale: tests of equal duration must reach the same part in every job.
+  const named = Object.keys(tests)
+    .toSorted()
+    .map((name) => ({ name, ms: tests[name] }))
   const total = named.reduce((sum, test) => sum + test.ms, 0)
   const parts = packLightestFirst(named, Math.ceil(total / TEST_PART_TARGET_MS))
     .filter((part) => part.length > 0)
