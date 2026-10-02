@@ -1,4 +1,8 @@
-import { DEFAULT_SAVED_STUDY_LIMIT, MAX_SAVED_STUDIES } from '../constants'
+import {
+  DEFAULT_SAVED_STUDY_LIMIT,
+  INVALID_SAVED_STUDY_LIMIT_MESSAGE,
+  MAX_SAVED_STUDIES,
+} from '../constants'
 
 /** Validates the current setting when library/store admission runs; reads and existing checkpoints stay available. @example savedStudyLimit(undefined) // 64 */
 export function savedStudyLimit(value: unknown): number {
@@ -10,9 +14,7 @@ export function savedStudyLimit(value: unknown): number {
     value < 1 ||
     value > MAX_SAVED_STUDIES
   ) {
-    throw new Error(
-      `Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to ${MAX_SAVED_STUDIES}. Existing learning was kept.`,
-    )
+    throw new Error(INVALID_SAVED_STUDY_LIMIT_MESSAGE)
   }
   return value
 }

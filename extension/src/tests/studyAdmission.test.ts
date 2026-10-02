@@ -4,6 +4,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 import { RepositoryBookStore } from '../repositoryBook'
@@ -148,6 +149,28 @@ async function startRunWithStorage(
   }
 }
 
+/**
+ * Starts one more configured run on a service whose earlier run has ended, and waits until this one has ended too; used to fill the service's retained runs with refused ones.
+ * @param started - The service and its controlled application from {@link startRunWithStorage}.
+ * @param key - The start key of the new run.
+ * @example const second = await startEndedRun(started, 'run-2')
+ */
+async function startEndedRun(
+  started: Awaited<ReturnType<typeof startRunWithStorage>>,
+  key: string,
+) {
+  const receipt = started.service.start({
+    instanceId: started.service.instanceId,
+    profile: 'repository-browser',
+    key,
+    configuration: started.harness.definition.configuration,
+  })
+  const record = started.service.record(receipt)
+  await record.preparation
+  await waitUntil(() => record.stopped, `the end of run ${key}`)
+  return { receipt, record }
+}
+
 /** Reads every saved study file of a library directory with its bytes, so a test can assert the library is byte-unchanged. @example assert.deepEqual(await studyFiles(directory), before) */
 async function studyFiles(directory: string): Promise<[string, string][]> {
   const names = (await readdir(directory))
@@ -168,7 +191,7 @@ test('a run on a full study library is refused before the application receives a
   assert.equal(started.record.error?.code, 'PREREQUISITE_MISSING')
   assert.equal(
     started.record.error?.message,
-    'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run. Existing learning was kept.',
+    'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, before starting another run. Existing learning was kept.',
   )
   assert.equal(started.record.prepared, false)
   // No runtime was acquired, so nothing was prepared and no click reached the application.
@@ -222,12 +245,12 @@ test('a run whose recording slots alone are used up still prepares and reports i
   assert.equal(recording.status, 'failed')
   assert.equal(
     recording.reason,
-    'Recording unavailable before input: Error: Recording library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another session. Existing recordings were kept.',
+    'Recording unavailable before input: Error: Recording library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study that has a recording from Saved studies in the Study workspace, before starting another session. Existing recordings were kept.',
   )
 })
 
-// Value: protects=a run under an invalid Saved Study Limit setting ends before a runtime exists or input is sent, with the setting named in its error cause; fails_when=an error of the admission read is swallowed or read as admitted, so the run prepares and clicks though its study cannot be saved; why_new=the admission tests start runs under a valid limit only, where the read answers and never throws; seam=none
-test('a run started under an invalid Saved Study Limit setting is refused before the application receives any input and its error cause names the setting', async (context) => {
+// Value: protects=a run under an invalid Saved Study Limit setting ends as a prerequisite the learner can fix, before a runtime exists or input is sent; fails_when=the invalid setting is read as admitted, or it ends the run as a runtime failure whose message names no setting; why_new=the admission tests start runs under a valid limit only, where the read answers and never throws; seam=none
+test('a run started under an invalid Saved Study Limit setting ends as a missing prerequisite that names the setting, before the application receives any input', async (context) => {
   // Arrange / Act: one study was saved under a limit of one; the setting holds 0 when the run starts.
   const started = await startRunWithStorage(
     context,
@@ -235,10 +258,11 @@ test('a run started under an invalid Saved Study Limit setting is refused before
     'study',
     ({ changeLimitSetting }) => changeLimitSetting(0),
   )
-  // Assert: the error code is left open; the cause carries the text the learner can act on.
+  // Assert
+  assert.equal(started.record.error?.code, 'PREREQUISITE_MISSING')
   assert.equal(
-    started.record.error?.causeDetail,
-    'Error: Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to 256. Existing learning was kept.',
+    started.record.error?.message,
+    'Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to 256. Existing learning was kept.',
   )
   assert.equal(started.record.prepared, false)
   assert.equal(started.runtimeAcquisitions(), 0)
@@ -262,9 +286,11 @@ test('a run stopped while its study library admission is being read acquires no 
     'nothing',
     ({ service, store }) => {
       const admitsStudy = store.admitsStudy.bind(store)
-      store.admitsStudy = (studyId) => {
+      store.admitsStudy = async (studyId) => {
         admissionReads++
         const admission = admitsStudy(studyId)
+        // The admission is read before start() returns, where no caller can stop the run yet; the stop arrives one turn later.
+        await new Promise((resolve) => setTimeout(resolve, 0))
         const [record] = service.records.values()
         stopped = service.stop({
           instanceId: service.instanceId,
@@ -283,4 +309,173 @@ test('a run stopped while its study library admission is being read acquires no 
   assert.equal(started.runtimeAcquisitions(), 0)
   assert.equal(started.harness.mouse.length, 0)
   assert.equal((await started.store.list()).length, 0)
+})
+
+// Value: protects=a run the full library refuses is never captured for a later save, so it cannot take the room a learner frees; fails_when=a record is a checkpoint candidate before its admission answered or after it was refused; why_new=no test asks for a checkpoint while the admission read is pending; seam=none
+test('a run the full study library refuses is never offered for a history checkpoint, also while its admission is still being read', async (context) => {
+  // Arrange: the library holds one study under a limit of one; a reader refresh arrives while the admission is read.
+  let checkpointWhileAwaitingAdmission: number | undefined | 'not asked' =
+    'not asked'
+  const started = await startRunWithStorage(
+    context,
+    1,
+    'study',
+    ({ service, store }) => {
+      const admitsStudy = store.admitsStudy.bind(store)
+      store.admitsStudy = async (studyId) => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        const [record] = service.records.values()
+        checkpointWhileAwaitingAdmission = service.beginHistory(
+          record!,
+          service.state(record!).materialSignature,
+        )
+        return admitsStudy(studyId)
+      }
+    },
+  )
+  // Act
+  const checkpointAfterRefusal = started.service.beginHistory(
+    started.record,
+    started.service.state(started.record).materialSignature,
+  )
+  // Assert
+  assert.equal(started.record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(checkpointWhileAwaitingAdmission, undefined)
+  assert.equal(checkpointAfterRefusal, undefined)
+})
+
+// Value: protects=an editor agent that reads a refused run is told nothing was saved and why; fails_when=the run resource of a refused run gives no reason for its missing history; why_new=the state of a refused run was never asserted; seam=none
+test('the run resource of a run refused on a full study library reports its history as unavailable because the run never started', async (context) => {
+  // Arrange / Act
+  const started = await startRunWithStorage(context, 1, 'study')
+  const state = started.service.state(started.record)
+  // Assert
+  assert.equal(state.historyOutcome.status, 'unavailable')
+  assert.equal(
+    state.historyOutcome.reason,
+    'The run was refused before it started; nothing was saved.',
+  )
+  assert.equal(state.historyOutcome.savedSignature, undefined)
+  assert.equal(state.recording.status, 'unavailable')
+  assert.equal(state.recording.contextStatus, 'unavailable')
+})
+
+// Value: protects=a library that cannot be read ends the run as a failure that is still saved as not demonstrated; fails_when=every error of the admission read is treated as a refusal and the failed run is dropped from history; why_new=the admission read was only tested with an answer or an invalid setting; seam=none
+test('a run whose study library cannot be read ends as a failed run and is still offered for a history checkpoint', async (context) => {
+  // Arrange / Act: the library read rejects for a reason that is neither a full library nor an invalid limit.
+  const started = await startRunWithStorage(
+    context,
+    2,
+    'study',
+    ({ store }) => {
+      store.admitsStudy = () =>
+        Promise.reject(new Error('EACCES: permission denied, scandir'))
+    },
+  )
+  const checkpoint = started.service.beginHistory(
+    started.record,
+    started.service.state(started.record).materialSignature,
+  )
+  // Assert
+  assert.equal(started.record.error?.code, 'RUNTIME_FAILED')
+  assert.equal(
+    started.record.error?.causeDetail,
+    'Error: EACCES: permission denied, scandir',
+  )
+  assert.equal(started.runtimeAcquisitions(), 0)
+  assert.equal(checkpoint, 1)
+})
+
+// Value: protects=a run that fails a prerequisite before the study library is asked ends as an ordinary failed run the reader still saves, not as one left waiting for its admission; fails_when=the exclusion a configured run starts with is not lifted when preparation fails before the admission answers, so the run is never saved and never gives up its retained slot; why_new=the failed preparations tested with a recording store attached fail at the admission read or after it; seam=none
+test('a run whose repository storage is unavailable ends as a missing prerequisite and is still offered for a history checkpoint', async (context) => {
+  // Arrange / Act: the library has room; the repository store is gone when the run starts, which preparation checks before it asks the library.
+  const started = await startRunWithStorage(
+    context,
+    2,
+    'study',
+    ({ service }) => {
+      service.repository = undefined
+    },
+  )
+  const checkpoint = started.service.beginHistory(
+    started.record,
+    started.service.state(started.record).materialSignature,
+  )
+  // Assert
+  assert.equal(started.record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(
+    started.record.error?.message,
+    'Repository source/book storage is unavailable in this editor.',
+  )
+  assert.equal(started.record.prepared, false)
+  assert.equal(started.runtimeAcquisitions(), 0)
+  assert.equal(checkpoint, 1)
+})
+
+// Value: protects=refusals on a full library never use up the sixteen runs an editor instance retains; fails_when=a refused run keeps its slot, so the seventeenth start is refused for the bound; why_new=the retained-run bound had no test; seam=none
+test('after sixteen runs refused on a full study library a further start is accepted and the oldest refused run is forgotten', async (context) => {
+  // Arrange: the first refused run comes from the harness; fifteen more follow on the same full library.
+  const started = await startRunWithStorage(context, 1, 'study')
+  await waitUntil(() => started.record.stopped, 'the end of the first run')
+  for (let run = 2; run <= 16; run++) await startEndedRun(started, `run-${run}`)
+  assert.equal(started.service.records.size, 16)
+  // Act
+  const seventeenth = await startEndedRun(started, 'run-17')
+  // Assert
+  assert.equal(seventeenth.record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(started.service.records.size, 16)
+  assert.equal(started.service.records.has(started.record.id), false)
+  assert.equal(started.service.records.has(seventeenth.record.id), true)
+  assert.throws(
+    () => started.service.record(started.receipt),
+    (error) => error instanceof StudyError && error.code === 'NOT_FOUND',
+  )
+})
+
+// Value: protects=a start key of a forgotten refused run starts a fresh run instead of replaying a receipt nobody can read; fails_when=eviction forgets the record but keeps its start key; why_new=eviction is new; seam=none
+test('a start that reuses the key of a forgotten refused run begins a new run', async (context) => {
+  // Arrange: sixteen refused runs, then one more start forgets the first run, whose key was "admission".
+  const started = await startRunWithStorage(context, 1, 'study')
+  await waitUntil(() => started.record.stopped, 'the end of the first run')
+  for (let run = 2; run <= 17; run++) await startEndedRun(started, `run-${run}`)
+  // Act
+  const reused = await startEndedRun(started, 'admission')
+  // Assert
+  assert.notEqual(reused.receipt.runId, started.receipt.runId)
+  assert.equal(started.service.records.has(reused.record.id), true)
+  assert.equal(started.service.records.size, 16)
+})
+
+// Value: protects=an editor agent is never told that a study the learner removed is still saved; fails_when=the run resource keeps reading its old receipts after the removal; why_new=no run could lose its saved study before; seam=none
+test('the run resource of a run whose saved study the learner removed reports its history and its recording as gone', async (context) => {
+  // Arrange: an admitted run that recorded, was stopped and whose history the reader saved.
+  const started = await startRunWithStorage(context, 2, 'nothing')
+  await started.service.stop(started.receipt)
+  const signature = started.service.state(started.record).materialSignature,
+    revision = started.service.beginHistory(started.record, signature)!
+  started.service.reportHistory(started.record, signature, revision, 'saved')
+  assert.equal(
+    started.service.state(started.record).historyOutcome.status,
+    'saved',
+  )
+  // Act
+  started.service.excludeHistory(started.record, 'removed-by-learner')
+  // Assert
+  const state = started.service.state(started.record)
+  assert.equal(state.historyOutcome.status, 'unavailable')
+  assert.equal(
+    state.historyOutcome.reason,
+    'The learner moved this saved study to the Trash.',
+  )
+  assert.equal(state.historyOutcome.savedSignature, undefined)
+  assert.equal(state.recording.status, 'failed')
+  assert.equal(
+    state.recording.reason,
+    'The learner moved this saved study to the Trash.',
+  )
+  assert.equal(state.recording.contextStatus, 'unavailable')
+  assert.equal(
+    started.service.beginHistory(started.record, state.materialSignature),
+    undefined,
+  )
 })

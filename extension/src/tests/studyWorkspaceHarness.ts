@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
+import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 import type { RepositorySelection } from '../learnerSchemas'
@@ -42,6 +42,17 @@ export async function workspaceHarness(
 ) {
   let clock = 0
   let savedStudyCapacity: unknown
+  const warningDialogs: {
+    title: string
+    options: unknown
+    items: string[]
+  }[] = []
+  let answerWarningDialog: (
+    items: string[],
+  ) => Promise<string | undefined> = async () => undefined
+  const trashMoves: { path: string; options: unknown }[] = []
+  let rejectsTrashMove: (path: string) => boolean = () => false
+  let heldTrashMove: { wait: Promise<void>; entered(): void } | undefined
   const harness = await createHarness({
     create: async (directory, profile) => {
       const runtime = new ControlledRuntime(directory, profile)
@@ -1519,6 +1530,14 @@ export async function workspaceHarness(
           return focusedSourceEditor()
         },
         showQuickPick: async () => undefined,
+        showWarningMessage: (
+          title: string,
+          options: unknown,
+          ...items: string[]
+        ) => {
+          warningDialogs.push({ title, options, items })
+          return answerWarningDialog(items)
+        },
         createTextEditorDecorationType: disposable,
         createTreeView: (
           _id: string,
@@ -1752,6 +1771,24 @@ export async function workspaceHarness(
               ? savedStudyCapacity
               : undefined,
         }),
+        fs: {
+          // Models the editor's Trash: the path leaves the library and stays recoverable outside it.
+          delete: async (uri: Uri, options: unknown): Promise<void> => {
+            const held = heldTrashMove
+            heldTrashMove = undefined
+            held?.entered()
+            await held?.wait
+            if (rejectsTrashMove(uri.fsPath))
+              throw new Error(`Trash refused ${basename(uri.fsPath)}`)
+            trashMoves.push({ path: uri.fsPath, options })
+            const trash = join(harness.directory, 'trash')
+            await mkdir(trash, { recursive: true })
+            await rename(
+              uri.fsPath,
+              join(trash, `${trashMoves.length}-${basename(uri.fsPath)}`),
+            )
+          },
+        },
         textDocuments,
         registerTextDocumentContentProvider: (
           _scheme: string,
@@ -1849,6 +1886,32 @@ export async function workspaceHarness(
     },
     setSavedStudyCapacity(value: unknown): void {
       savedStudyCapacity = value
+    },
+    /** Every native warning dialog the reader opened, with its title, options and buttons. @example harness.warningDialogs[0].title */
+    warningDialogs,
+    /** Decides how the learner answers the reader's next native warning dialogs; unanswered dialogs are dismissed. @example harness.answerWarningDialogs(async ([confirm]) => confirm) */
+    answerWarningDialogs(
+      answer: (items: string[]) => Promise<string | undefined>,
+    ): void {
+      answerWarningDialog = answer
+    },
+    /** Every path the reader moved to the editor's Trash, with the options it passed. @example harness.trashMoves.map((move) => move.path) */
+    trashMoves,
+    /** Makes the editor's Trash refuse the moves a test names. @example harness.rejectTrashMoves((path) => path.endsWith('.study.v3.json')) */
+    rejectTrashMoves(rejects: (path: string) => boolean): void {
+      rejectsTrashMove = rejects
+    },
+    /** Holds the editor's next Trash move until the test releases it, so a test can act while a removal is moving files. @example const held = harness.holdTrashMove(); await held.started; held.release() */
+    holdTrashMove() {
+      let entered!: () => void, release!: () => void
+      const started = new Promise<void>((resolve) => {
+          entered = resolve
+        }),
+        wait = new Promise<void>((resolve) => {
+          release = resolve
+        })
+      heldTrashMove = { wait, entered }
+      return { started, release }
     },
     saveStatus,
     reader,

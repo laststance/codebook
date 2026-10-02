@@ -58,6 +58,7 @@ import {
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { fullLibraryMessage } from './utils/fullLibraryMessage'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
 import { recordingPhases } from './utils/recordingPhases'
@@ -188,10 +189,9 @@ export class RecordingStore {
       withStorageLock(this.learningDirectory, async () => {
         await this.initialize(version)
         const identities = await this.identities()
-        if (identities.length >= savedStudyLimit(this.capacity()))
-          throw new Error(
-            'Recording library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another session. Existing recordings were kept.',
-          )
+        const limit = savedStudyLimit(this.capacity())
+        if (identities.length >= limit)
+          throw new Error(fullLibraryMessage('recording', limit))
         if (identities.includes(binding.studyId))
           throw new Error('Recording already exists for this study.')
         const directory = this.path(binding.studyId, version)

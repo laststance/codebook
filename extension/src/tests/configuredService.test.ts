@@ -737,6 +737,24 @@ test('configured help tells an agent that a continuation whose next stop cannot 
   )
 })
 
+test('configured help tells an agent that only the learner removes a saved study and that a full library is reported, not repaired', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ recovery: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.recovery.endsWith(
+      ' Only the learner removes a saved study, in the Study workspace; an agent reports a full library and never deletes files.',
+    ),
+    true,
+  )
+})
+
 // Value: protects=each observation of a multi-stop run reporting the position its own stop declared as requestedSource; fails_when=the inspection resource pairs a later observation with the first declared stop, or with a stop at another index; why_new=the only requestedSource test reads a single-stop run, where every index resolves to the same declared stop; seam=none
 test('the second observation of a two-stop run reports the position its own stop declared as requestedSource, not the first stop’s', async (context) => {
   // Arrange: the second stop is declared at 1:7 and the debugger committed it at 1:9 of the same line.

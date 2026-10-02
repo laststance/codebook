@@ -1157,6 +1157,7 @@ async function check(page, options) {
           (await page.locator('#recording-transport').isVisible()) &&
           !(await page.locator('.learning-header').isVisible()) &&
           !(await page.locator('#observed-moments').isVisible()) &&
+          !(await page.locator('#saved-studies').isVisible()) &&
           !(await page.locator('[data-action="open-article"]').isVisible()) &&
           !(await page.locator('#recording-save-state').isVisible()) &&
           !(await page.locator('#evidence-details').isVisible()) &&
@@ -1239,6 +1240,436 @@ async function check(page, options) {
       })
     }
   }
+  // Saved studies: the delete control, its reasons, an entry that cannot be opened, the outcome line and focus.
+  await page.setViewportSize({ width: 420, height: 720 })
+  await page.goto(options.url)
+  await page.evaluate(() => {
+    window.sent = []
+    window.acquireVsCodeApi = () => ({
+      getState: () => undefined,
+      setState() {},
+      postMessage: (message) => window.sent.push(message),
+    })
+  })
+  await page.setContent(options.html.context)
+  await page.waitForFunction(() =>
+    window.sent.some((message) => message.type === 'ready'),
+  )
+  const savedStudy = (id, overrides = {}) => ({
+      id,
+      savedAt: '2026-09-20T00:00:10.000Z',
+      profile: 'repository-browser',
+      format: 'v3',
+      outcome: 'demonstrated',
+      metadata: 'validated',
+      ...overrides,
+    }),
+    shownStudy = savedStudy('window_run-shown01'),
+    otherStudy = savedStudy('window_run-other02'),
+    staleStudy = savedStudy('window_run-stale03', {
+      profile: undefined,
+      outcome: 'unverified',
+      metadata: 'unavailable',
+    }),
+    legacyStudy = savedStudy('window_run-legacy4', {
+      format: 'legacy-v1',
+      outcome: 'Unsupported historical format; original file preserved',
+      metadata: 'unavailable',
+    }),
+    nodeHistory = savedStudy('window_run-node005', {
+      profile: 'node-test',
+      format: 'node-test-history',
+      outcome: 'Node test complete',
+    }),
+    brokenNodeHistory = savedStudy('window_run-node006', {
+      profile: 'node-test',
+      format: 'node-test-history',
+      outcome: 'Node test partial',
+      metadata: 'unavailable',
+    })
+  let savedRevision = 100
+  /** Publishes one Study message for the Saved studies cases; `chosen` is the study the reader shows. */
+  const library = (studies, chosen, extra = {}) =>
+    publish({
+      ...options.message,
+      revision: ++savedRevision,
+      studies,
+      model: {
+        ...options.message.model,
+        selection: { ...options.message.model.selection, studyId: chosen },
+      },
+      ...extra,
+    })
+  const removalControl = () =>
+    page.evaluate(() => {
+      const visible = (id) =>
+          document.getElementById(id).getClientRects().length > 0,
+        // The text of a line the learner can see; null while the line is hidden.
+        shownText = (id) =>
+          visible(id) ? document.getElementById(id).textContent : null,
+        control = document.getElementById('delete-study'),
+        list = document.getElementById('studies'),
+        status = document.getElementById('delete-study-status'),
+        sent = (type) => window.sent.filter((message) => message.type === type)
+      return {
+        heading: document.querySelector('#saved-studies h2').textContent,
+        options: [...list.options].map((option) => [
+          option.value,
+          option.disabled,
+        ]),
+        chosen: list.value,
+        shownText: list.selectedOptions[0]?.textContent,
+        buttonVisible: visible('delete-study'),
+        ariaDisabled: control.getAttribute('aria-disabled'),
+        disabledAttribute: control.hasAttribute('disabled'),
+        describedBy: control.getAttribute('aria-describedby'),
+        reason: shownText('delete-study-reason'),
+        note: shownText('study-unopenable'),
+        status: status.textContent,
+        statusIsError: status.classList.contains('error'),
+        statusRole: `${status.getAttribute('role')}/${status.getAttribute('aria-live')}`,
+        focus: document.activeElement.id,
+        deletes: sent('delete-study').map((message) => [
+          message.studyId,
+          message.revision,
+        ]),
+        histories: sent('history').length,
+      }
+    })
+  const deleteButton = page.getByRole('button', {
+    name: 'Delete saved study…',
+    exact: true,
+  })
+
+  await library([], undefined)
+  const emptyLibrary = await removalControl()
+  cases.push({
+    name: 'an empty library shows No saved study yet under its own heading and offers no delete control',
+    actual: emptyLibrary,
+    passed:
+      emptyLibrary.heading === 'Saved studies' &&
+      emptyLibrary.shownText === 'No saved study yet' &&
+      emptyLibrary.options.length === 1 &&
+      !emptyLibrary.buttonVisible &&
+      emptyLibrary.reason === null,
+  })
+
+  await library([shownStudy, otherStudy], undefined)
+  await page.locator('#studies').focus()
+  await page.keyboard.press('Tab')
+  const reachedByTab = await removalControl()
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Space')
+  // A learner can still press a button that is only marked unavailable; Playwright waits for an enabled one unless forced.
+  await deleteButton.click({ force: true })
+  const nothingChosen = await removalControl()
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-reason.png` })
+  cases.push({
+    name: 'with no study chosen the delete button is reached by Tab, says why it cannot be used and sends nothing',
+    actual: nothingChosen,
+    passed:
+      (await deleteButton.count()) === 1 &&
+      reachedByTab.focus === 'delete-study' &&
+      nothingChosen.buttonVisible &&
+      nothingChosen.ariaDisabled === 'true' &&
+      !nothingChosen.disabledAttribute &&
+      nothingChosen.describedBy === 'delete-study-reason delete-study-status' &&
+      nothingChosen.reason === 'Choose a saved study to delete.' &&
+      nothingChosen.statusRole === 'status/polite' &&
+      nothingChosen.focus === 'delete-study' &&
+      nothingChosen.deletes.length === 0,
+  })
+
+  await library([shownStudy, otherStudy], shownStudy.id)
+  const deletable = await removalControl()
+  await deleteButton.focus()
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Space')
+  const requested = await removalControl()
+  cases.push({
+    name: 'for the shown saved study Enter and Space on the delete button each ask the host to delete it',
+    actual: { deletable, requested },
+    passed:
+      deletable.chosen === shownStudy.id &&
+      deletable.ariaDisabled === null &&
+      deletable.reason === null &&
+      JSON.stringify(requested.deletes) ===
+        JSON.stringify([
+          [shownStudy.id, 103],
+          [shownStudy.id, 103],
+        ]),
+  })
+  const deletesSoFar = requested.deletes.length
+
+  const replaying = {
+    contentTab: 'recording',
+    study: {
+      terminal: true,
+      studyOutcome: 'demonstrated',
+      historyOutcome: 'saved',
+      finalOutcome: 'demonstrated',
+      recordingSave: { status: 'finalized', contextStatus: 'saved' },
+    },
+    recording: {
+      revision: 7,
+      mode: 'paused',
+      readiness: 'ready',
+      cleared: false,
+      presentedMs: 2000,
+      range: { startMs: 0, endMs: 5000, endKnown: true },
+      recordingStatus: 'finalized',
+    },
+  }
+  await library([shownStudy, nodeHistory], nodeHistory.id, {
+    unstoppedStudyId: nodeHistory.id,
+    ...replaying,
+  })
+  const nodeReason = (await removalControl()).reason
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    unstoppedStudyId: shownStudy.id,
+    ...replaying,
+  })
+  const liveReason = (await removalControl()).reason
+  await library([shownStudy, otherStudy], shownStudy.id, replaying)
+  const recordingReason = (await removalControl()).reason
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    unstoppedStudyId: shownStudy.id,
+    studyRemoval: {
+      status: 'moving',
+      studyId: shownStudy.id,
+      text: 'Moving the saved study to the Trash…',
+    },
+  })
+  const moving = await removalControl()
+  await deleteButton.click({ force: true })
+  cases.push({
+    name: 'the delete button gives one reason at a time: Node history, then a run that has not stopped, then an open Recording; a removal in progress is named by the status line',
+    actual: { nodeReason, liveReason, recordingReason, moving },
+    passed:
+      nodeReason === 'Node test histories cannot be deleted here yet.' &&
+      liveReason === 'Stop the run before deleting its study.' &&
+      recordingReason ===
+        'Choose Overview or Live to leave Recording before deleting this study.' &&
+      moving.ariaDisabled === 'true' &&
+      moving.reason === null &&
+      moving.status === 'Moving the saved study to the Trash…' &&
+      !moving.statusIsError &&
+      (await removalControl()).deletes.length === deletesSoFar,
+  })
+
+  const mixedLibrary = [
+    shownStudy,
+    staleStudy,
+    legacyStudy,
+    nodeHistory,
+    brokenNodeHistory,
+  ]
+  await library(mixedLibrary, shownStudy.id)
+  const historiesBefore = (await removalControl()).histories
+  await page.selectOption('#studies', staleStudy.id)
+  const choseUnopenable = await removalControl()
+  await library(mixedLibrary, shownStudy.id)
+  const keptAcrossRender = await removalControl()
+  await deleteButton.click()
+  const askedForUnopenable = await removalControl()
+  await page.selectOption('#studies', legacyStudy.id)
+  const choseLegacy = await removalControl()
+  await library([shownStudy, nodeHistory, brokenNodeHistory], shownStudy.id)
+  const afterItLeft = await removalControl()
+  cases.push({
+    name: 'a saved study that cannot be opened can be chosen and deleted without being opened, stays chosen across a render, and a broken Node history stays unavailable',
+    actual: {
+      choseUnopenable,
+      keptAcrossRender,
+      askedForUnopenable,
+      choseLegacy,
+      afterItLeft,
+    },
+    passed:
+      JSON.stringify(choseUnopenable.options) ===
+        JSON.stringify([
+          [shownStudy.id, false],
+          [staleStudy.id, false],
+          [legacyStudy.id, false],
+          [nodeHistory.id, false],
+          [brokenNodeHistory.id, true],
+        ]) &&
+      choseUnopenable.chosen === staleStudy.id &&
+      choseUnopenable.histories === historiesBefore &&
+      choseUnopenable.note ===
+        'This saved study cannot be opened. It can still be deleted.' &&
+      choseUnopenable.ariaDisabled === null &&
+      keptAcrossRender.chosen === staleStudy.id &&
+      keptAcrossRender.note ===
+        'This saved study cannot be opened. It can still be deleted.' &&
+      JSON.stringify(askedForUnopenable.deletes.at(-1)) ===
+        JSON.stringify([staleStudy.id, 109]) &&
+      askedForUnopenable.deletes.length === deletesSoFar + 1 &&
+      choseLegacy.chosen === legacyStudy.id &&
+      choseLegacy.histories === historiesBefore &&
+      choseLegacy.ariaDisabled === null &&
+      afterItLeft.chosen === shownStudy.id &&
+      afterItLeft.note === null,
+  })
+
+  const partlyMoved = {
+    status: 'failed',
+    studyId: staleStudy.id,
+    text: 'The saved study was only partly moved to the Trash; delete it again to finish. Trash refused the archive',
+  }
+  await library(mixedLibrary, staleStudy.id, { studyRemoval: partlyMoved })
+  const failedOutcome = await removalControl()
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-failed.png` })
+  await library(mixedLibrary, staleStudy.id, { studyRemoval: partlyMoved })
+  const outcomeAfterRender = await removalControl()
+  await page.selectOption('#studies', legacyStudy.id)
+  const outcomeAfterAnotherChoice = await removalControl()
+  await library(mixedLibrary, staleStudy.id, {
+    studyRemoval: { status: 'confirming', studyId: legacyStudy.id },
+  })
+  await library(mixedLibrary, staleStudy.id, { studyRemoval: partlyMoved })
+  const outcomeOfTheNextAttempt = await removalControl()
+  cases.push({
+    name: 'the outcome of a removal stays under the button across renders, is shown as an error when it failed, and gives way when another entry is chosen',
+    actual: {
+      failedOutcome,
+      outcomeAfterRender,
+      outcomeAfterAnotherChoice,
+      outcomeOfTheNextAttempt,
+    },
+    passed:
+      failedOutcome.status === partlyMoved.text &&
+      failedOutcome.statusIsError &&
+      failedOutcome.chosen === staleStudy.id &&
+      failedOutcome.note ===
+        'This saved study cannot be opened. It can still be deleted.' &&
+      outcomeAfterRender.status === partlyMoved.text &&
+      outcomeAfterAnotherChoice.status === '' &&
+      outcomeOfTheNextAttempt.status === partlyMoved.text,
+  })
+
+  const confirming = { status: 'confirming', studyId: shownStudy.id },
+    movingShown = {
+      status: 'moving',
+      studyId: shownStudy.id,
+      text: 'Moving the saved study to the Trash…',
+    },
+    movedShown = {
+      status: 'moved',
+      studyId: shownStudy.id,
+      text: 'Saved study moved to the Trash. The library now holds 1 of 64 saved studies.',
+    }
+  // This pane asks, the learner confirms, the study moves: focus goes to the list.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.click()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: confirming,
+  })
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: movingShown,
+  })
+  await library([otherStudy], otherStudy.id, { studyRemoval: movedShown })
+  const afterOwnRemoval = await removalControl()
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-moved.png` })
+  // This pane asks and the learner cancels: the field is cleared and focus stays on the button.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.click()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: confirming,
+  })
+  await library([shownStudy, otherStudy], shownStudy.id)
+  const afterCancel = await removalControl()
+  // This pane asks and the host refuses at once.
+  await deleteButton.click()
+  await page.evaluate(() => document.activeElement.blur())
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: {
+      status: 'refused',
+      studyId: shownStudy.id,
+      text: 'Stop the run before deleting its study.',
+    },
+  })
+  const afterRefusal = await removalControl()
+  // Another pane asked: this pane shows the outcome and moves no focus.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.focus()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: confirming,
+  })
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: movingShown,
+  })
+  await library([otherStudy], otherStudy.id, { studyRemoval: movedShown })
+  const afterAnotherPanesRemoval = await removalControl()
+  // This pane asked, but the learner moved on to another control before the answer.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.click()
+  await page.locator('#overview-tab').focus()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: confirming,
+  })
+  await library([otherStudy], otherStudy.id, { studyRemoval: movedShown })
+  const afterMovingOn = await removalControl()
+  cases.push({
+    name: 'after its own delete request a pane moves focus once: to the list after a removal, to the button after Cancel or a refusal, and nowhere when the learner moved on or another pane asked',
+    actual: {
+      afterOwnRemoval,
+      afterCancel,
+      afterRefusal,
+      afterAnotherPanesRemoval,
+      afterMovingOn,
+    },
+    passed:
+      afterOwnRemoval.focus === 'studies' &&
+      afterOwnRemoval.status === movedShown.text &&
+      !afterOwnRemoval.statusIsError &&
+      afterOwnRemoval.chosen === otherStudy.id &&
+      afterCancel.focus === 'delete-study' &&
+      afterCancel.status === '' &&
+      afterRefusal.focus === 'delete-study' &&
+      afterRefusal.status === 'Stop the run before deleting its study.' &&
+      afterRefusal.statusIsError &&
+      afterAnotherPanesRemoval.focus === 'delete-study' &&
+      afterAnotherPanesRemoval.status === movedShown.text &&
+      afterMovingOn.focus === 'overview-tab',
+  })
+
+  const runRefusal =
+    'The last run did not start: Study library is full at its maximum of 256 saved studies. Delete a saved study from Saved studies in the Study workspace before starting another run. Existing learning was kept.'
+  await library([shownStudy], shownStudy.id, { runRefusal })
+  const refusalAlone = await page.evaluate(() => ({
+    errors: document.getElementById('errors').textContent,
+    retryVisible:
+      document.querySelector('[data-action="retry"]').getClientRects().length >
+      0,
+  }))
+  await library([shownStudy], shownStudy.id, {
+    runRefusal,
+    errors: ['Error: History not saved: disk is read-only'],
+  })
+  const refusalWithStorageError = await page.evaluate(() => ({
+    errors: document.getElementById('errors').textContent,
+    retryVisible:
+      document.querySelector('[data-action="retry"]').getClientRects().length >
+      0,
+  }))
+  cases.push({
+    name: 'a run that did not start is named first in the error region and offers Retry storage only beside a storage error',
+    actual: { refusalAlone, refusalWithStorageError },
+    passed:
+      refusalAlone.errors === runRefusal &&
+      !refusalAlone.retryVisible &&
+      refusalWithStorageError.errors ===
+        `${runRefusal}\nError: History not saved: disk is read-only` &&
+      refusalWithStorageError.retryVisible,
+  })
+  await page.screenshot({ path: `${options.output}/run-refusal.png` })
   return { cases, errors }
 }
 

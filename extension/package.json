@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.21",
+  "version": "0.2.22",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -213,7 +213,7 @@
           "minimum": 1,
           "maximum": 256,
           "scope": "resource",
-          "description": "Maximum new saved studies and recordings per workspace. Increase this when the library is full. Lowering it keeps existing history readable; no recordings are automatically deleted. Each recording consumes disk space. Changes apply to the next admission without restarting."
+          "description": "Maximum new saved studies and recordings per workspace. When the library is full, increase this or delete a saved study from Saved studies in the Study workspace. Lowering it keeps existing history readable; no recordings are automatically deleted. Each recording consumes disk space. Changes apply to the next admission without restarting."
         }
       }
     },

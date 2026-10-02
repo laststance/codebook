@@ -10,12 +10,15 @@ import {
   MAX_LEARNER_DECISIONS,
   MAX_SAVED_STUDIES,
   MAX_STUDY_ARCHIVE_BYTES,
+  PLAYBACK_PREFERENCE_FILE,
+  PLAYBACK_PREFERENCE_LIMIT_BYTES,
   PRIVATE_DIRECTORY_MODE,
   PROGRESS_LIMIT_BYTES,
   PROGRESS_V2_FILE,
   PROGRESS_V3_FILE,
   PROGRESS_V4_FILE,
   PROGRESS_REPOSITORY_FILE,
+  RECORDING_STORAGE_FORMATS,
   STUDY_STORAGE_FORMATS,
   STUDY_METADATA_LIMIT_BYTES,
 } from './constants'
@@ -40,10 +43,26 @@ import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { decodeLearnerProgress } from './utils/decodeLearnerProgress'
 import { decodeRetainedStudy } from './utils/decodeRetainedStudy'
+import { fullLibraryMessage } from './utils/fullLibraryMessage'
+import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStudy'
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { savedStudyLimit } from './utils/savedStudyLimit'
+import { withoutStudyReferences } from './utils/withoutStudyReferences'
 import { withStorageLock } from './utils/withStorageLock'
+
+/** Moves one file or directory of a saved study to the system Trash; injected into {@link LearningLibrary.removeStudy} so the library stays free of the editor API. @example const moveToTrash: StudyMover = (path) => workspace.fs.delete(Uri.file(path), { recursive: true, useTrash: true }) */
+export type StudyMover = (path: string) => Promise<void>
+
+/**
+ * What a removal changed on disk.
+ * - `moved`: every file of the study is in the system Trash.
+ * - `nothing-moved`: the removal failed before anything changed.
+ * - `partly-moved`: a later step failed; the study is still listed and a second removal finishes it.
+ */
+export type StudyRemoval =
+  | { outcome: 'moved' }
+  | { outcome: 'nothing-moved' | 'partly-moved'; cause: string }
 
 /** Retains learner choices and bounded sealed studies across editor restarts without restoring runtime authority. @example const library = new LearningLibrary(directory, workspaceKey) */
 export class LearningLibrary {
@@ -332,7 +351,7 @@ export class LearningLibrary {
       const existing = await this.entries()
       if (!this.admits(existing, study.id))
         throw new Error(
-          'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, then retry storage. Existing learning was kept.',
+          fullLibraryMessage('save', savedStudyLimit(this.capacity())),
         )
       if (existing.some((value) => value.id === study.id))
         assertStudyCheckpoint(await this.readStudy(study.id), study)
@@ -346,6 +365,115 @@ export class LearningLibrary {
       )
       await this.writeMetadata(study)
     })
+  }
+
+  /**
+   * Reads how many studies the library keeps and the limit in force, without the storage lock; called by {@link StudyWorkspace} once after a removal to word its outcome and to tell whether a refused run would now be admitted.
+   * @returns The kept count, and the limit unless the limit setting is invalid.
+   * @throws When the library directory cannot be read.
+   * @example
+   * await library.usage() // => { count: 63, limit: 64 }
+   * await library.usage() // => { count: 63 } under an invalid limit setting
+   */
+  async usage(): Promise<{ count: number; limit?: number }> {
+    const count = (await this.entries()).length
+    try {
+      return { count, limit: savedStudyLimit(this.capacity()) }
+    } catch {
+      // An invalid setting hides the limit only; the count stays readable.
+      return { count }
+    }
+  }
+
+  /**
+   * Moves every file of one saved study to the system Trash as one unit under the storage lock; called by {@link StudyWorkspace} after the learner confirmed the removal.
+   * Order, each step skipping a path that does not exist:
+   * 1. the recording directories of every recording format,
+   * 2. the playback position file when it names this study (a file that cannot be parsed is left alone),
+   * 3. the ledger, rewritten only when its selection or repository return names this study,
+   * 4. the catalog sidecars of every study format,
+   * 5. the archives from the lowest format to the highest.
+   * The recording goes first and the archive last, so a failure never leaves a recording without its study, and the study stays listed by its highest format until the last move.
+   * @param id - The saved study to remove.
+   * @param moveToTrash - Moves one path to the system Trash.
+   * @returns What changed on disk; an expected failure, including a lock held by another writer, is a result and not a rejection.
+   * @throws When `id` is not a study identity.
+   * @example
+   * await library.removeStudy(study.id, moveToTrash) // => { outcome: 'moved' }
+   */
+  removeStudy(id: string, moveToTrash: StudyMover): Promise<StudyRemoval> {
+    const identity = studyIdSchema.parse(id)
+    let didStorageChange = false
+    const trash = (path: string) => (): Promise<void> => moveToTrash(path)
+    return this.locked(async (): Promise<StudyRemoval> => {
+      // Lowest format first: the highest archive is the last move, so the study is listed until then.
+      const archives = await this.existingPaths(
+        STUDY_STORAGE_FORMATS.toReversed().map(
+          (storage) => `${identity}${storage.archiveSuffix}`,
+        ),
+      )
+      if (!archives.length) throw new Error('Study archive is unavailable.')
+      // The ledger is read before the first move, so an unreadable ledger changes nothing.
+      const ledger = withoutStudyReferences(await this.readProgress(), identity)
+      const recordings = await this.existingPaths(
+        RECORDING_STORAGE_FORMATS.map((storage) =>
+          join(storage.directory, identity),
+        ),
+      )
+      const sidecars = await this.existingPaths(
+        STUDY_STORAGE_FORMATS.flatMap((storage) =>
+          storage.metadataSuffix
+            ? [`${identity}${storage.metadataSuffix}`]
+            : [],
+        ),
+      )
+      const steps: (() => Promise<void>)[] = [
+        ...recordings.map(trash),
+        ...(await this.playbackPathsNaming(identity)).map(trash),
+        // Learner decisions name no study; only the two navigation references to the removed study are dropped.
+        ...(ledger
+          ? [
+              (): Promise<void> =>
+                atomicPrivateWrite(
+                  join(this.directory, PROGRESS_REPOSITORY_FILE),
+                  ledger,
+                  PROGRESS_LIMIT_BYTES,
+                ),
+            ]
+          : []),
+        ...sidecars.map(trash),
+        ...archives.map(trash),
+      ]
+      for (const step of steps) {
+        await step()
+        didStorageChange = true
+      }
+      return { outcome: 'moved' }
+    }).catch((error): StudyRemoval => ({
+      outcome: didStorageChange ? 'partly-moved' : 'nothing-moved',
+      cause: error instanceof Error ? error.message : String(error),
+    }))
+  }
+
+  /** Keeps the paths under the library directory that exist, in the given order, so {@link removeStudy} skips what a study never had or an earlier removal already moved. @example await this.existingPaths(['a.study.v3.json']) // => ['/…/a.study.v3.json'] */
+  private async existingPaths(names: string[]): Promise<string[]> {
+    const existing: string[] = []
+    for (const name of names) {
+      const path = join(this.directory, name)
+      if (await this.optionalStat(path)) existing.push(path)
+    }
+    return existing
+  }
+
+  /** Gives {@link removeStudy} the playback position file when it remembers this study; a file that is absent or cannot be read or parsed remembers nothing and is left in place. @example await this.playbackPathsNaming(study.id) // => ['/…/playback.v1.json'] */
+  private async playbackPathsNaming(studyId: string): Promise<string[]> {
+    const path = join(this.directory, PLAYBACK_PREFERENCE_FILE)
+    const names = await readBoundedFile(path, PLAYBACK_PREFERENCE_LIMIT_BYTES)
+      .then((bytes) =>
+        playbackPreferenceNamesStudy(JSON.parse(bytes.toString()), studyId),
+      )
+      .catch(() => false)
+    return names ? [path] : []
   }
 
   /** Explicit Retry repairs current archive sidecars while unsupported historical bytes stay untouched. @example await library.reconcile() */
