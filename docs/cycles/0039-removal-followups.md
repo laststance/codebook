@@ -94,6 +94,10 @@ The working context was compacted after the engineering review. Before any produ
 
 The working context was compacted again after T1 to T5 were written and while the gates (T6) ran. Before any further gate, control or runtime trial, the mandatory entry was repeated from the files on disk: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review. The approved PNG was opened with the image viewer again (hash `f189ee82…caf2aa` verified; the four regions as described above). Checkout `codex/cycle-0039-removal-followups` at `0cdecda` with the uncommitted pane, README and test edits that became `0fa07d5`; Node 24.21.0, pnpm 12.4.2; the protected hashes, the dashboard (`1936e41`, only the untracked `.codebook/`), port 3000, the recorder and the database container are as at the entry. Gap audit: the product source differs from `471ad67` in the files this cycle names (library, service, resources, reader, pane, utilities, constants), so the affected rows stay AC-SAVE, AC-LEARNING and AC-ENTRY with AC-LIVE and AC-REPLAY as regressions; the other rows carry forward.
 
+### Entry after compaction, 2026-10-02 (third in this cycle, during native N8)
+
+The working context was compacted a third time while the native trial N8 ran in VS Code, after N8-b and before N8-c. The OBS main take kept recording meanwhile, as in Cycle 0038; no input was sent to an editor between the compaction and the end of this entry (one screenshot was taken). Before any further trial step, the mandatory entry was repeated from the files on disk: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review. The approved PNG was opened with the image viewer again (hash `f189ee82…caf2aa` verified; the four regions as described above). Checkout `codex/cycle-0039-removal-followups` at `4cedf00`, clean; Node 24.21.0, pnpm 12.4.2; the four protected hashes and the bundled skill are as at the entry, the dashboard is at `1936e41` with only the untracked `.codebook/`, port 3000 has no listener and the database container is stopped; the private OBS copy is running for the take. Gap audit: no source changed since the second entry's audit, so the affected rows stay AC-SAVE, AC-LEARNING and AC-ENTRY with AC-LIVE and AC-REPLAY as regressions.
+
 ## Source-gap audit and selected increment
 
 Baseline: `main` `471ad67` (0.2.22.0). Goal version 9 and the PNG have not changed since the Cycle 0038 audit, and no product source changed since its delivery. Every row is accounted for below; rows this cycle does not touch carry forward with their limits in PROJECT_STATE.
@@ -261,6 +265,26 @@ Recommended option each time; none changes an acceptance criterion's observable 
 - **The two apostrophes in new sentences are straight** (`run's`), as in the specification's text.
 - **The code is shaped for the health gate, and the baseline is not changed.** The first T4 and T1 code added one moderate finding each (`chooseSavedStudy`, the removal's locked function); `askHostToOpen` and `runRemovalSteps` were split out until every new or touched function has a cyclomatic complexity of 4 or lower.
 - **The DOM gate passes with one carried failure** (the wide-sequence case), as in Cycles 0033 to 0038.
+
+### Reviews before delivery, 2026-10-02
+
+Both ran on the committed diff `471ad67..4cedf00` while the native trial waited for the Mac. Only a critical finding is fixed (the owner's standing direction); there was none, so the product is unchanged and the findings are carried.
+
+| Review | Cut and coverage | Findings |
+| --- | --- | --- |
+| Local CodeRabbit CLI 0.8.2 (`coderabbit review --agent --committed --base-commit 471ad67`, no credits) | `4cedf00` against `471ad67`, 30 files | 1, trivial: add a test for a Save learning replay that started before the removal was confirmed (hold `service.stop`, confirm the removal, release). Carried |
+| `open-code-review-delegate` (OCR 1.12.11, range mode; reviewed by the host, which also wrote the change) | 16 of 16 eligible files reviewed, 0 skipped; 14 excluded by OCR's defaults (six Markdown files, eight test files) | no critical, no high; 1 medium, 4 low. Carried |
+
+Carried findings of these reviews:
+
+1. **A Save learning replay that is between its start and its forced checkpoint when its study starts moving would wait for the move, which waits for the save** (CodeRabbit's test request, read against the source). With the real service the window is not reachable by an event: a run that has not stopped refuses the removal at the request and again after the confirmation, and for a stopped run `stop()` returns at once, so the save reaches its forced checkpoint in the same microtask chain in which it started (`studyWorkspace.ts` `saveLearningReplay`, `service.ts` `stopRecord`). A save that is past its checkpoint when the study starts moving fails with "Study archive is unavailable." and the removal goes on. No test holds `service.stop` open; the ordering depends on `stopped` being set at the end of the stop.
+2. **A saved-study request discarded as stale leaves its marker set** (OCR, medium). When the reader revision changes while a chosen archive is read (a repository navigation or the playback's cleared callback within those milliseconds), the `history` handler returns without clearing `pendingHistory`, as on `471ad67`. Since this cycle that marker also refuses a delete request with "Wait for the chosen saved study to open." and makes a removal's neighbour give way, until another entry is chosen.
+3. **The pane may keep a remembered choice after a failed Recording open** (OCR, low; read, not reproduced). An entry chosen while Recording is active is opened through `openRecording`; when that fails before the selection changes, the host's error message may carry the same revision and no loading state, and the pane then keeps the delete button held back until the next message with another revision.
+4. **The write-back of a ledger that was projected from a historical file creates the repository ledger file** (OCR, low). The content is the ledger as read; the file set differs from before. Already recorded under the decisions above.
+5. **A connection descriptor left by a crashed window keeps that instance's evidence in place for every later removal** (OCR, low; ER12's accepted limit). The VS Code QA profile holds one from 2026-09-29.
+6. **The evidence hold is a boolean** (OCR, low). One removal runs at a time, so nothing re-enters it today.
+
+Private records (ignored `artifacts/cycle-0039/reviews/`): `coderabbit-4cedf00.jsonl` with its `.err`, `ocr-4cedf00.md`. The branch diff went to CodeRabbit's service through its local CLI.
 
 ## Result and decision
 
