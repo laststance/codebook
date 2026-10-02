@@ -15,13 +15,11 @@ concurrency:
 
 jobs:
   fallow:
-    name: ${{ matrix.check }}
+    # One job for the three checks: each takes about a second after a 30-second setup and build, and a push
+    # must stay below the 20 concurrent jobs of the plan (the Test workflow alone starts twelve).
+    name: Fallow (health, dupes, dead-code)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        check: [health, dupes, dead-code]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,9 +30,17 @@ jobs:
 
       # Package and native-QA scripts import the compiled extension from dist; build it so those imports resolve.
       - name: Build
+        id: build
         run: pnpm --dir extension build
 
-      - name: Run fallow ${{ matrix.check }}
-        run: pnpm --dir extension "$FALLOW_CHECK"
-        env:
-          FALLOW_CHECK: ${{ matrix.check }}
+      - name: Run fallow health
+        run: pnpm --dir extension health
+
+      # A failed check does not hide the result of the next one.
+      - name: Run fallow dupes
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm --dir extension dupes
+
+      - name: Run fallow dead-code
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm --dir extension dead-code
