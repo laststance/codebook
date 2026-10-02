@@ -867,6 +867,13 @@ test('a removal the Trash refuses at its first move deletes nothing, and a later
       'the explanation saved after the failed removal',
       2_000,
     )
+    // The writer reports the checkpoint as saved only after it has read the catalog again, which follows the write on disk.
+    await waitUntil(
+      () =>
+        harness.service.state(harness.record).historyOutcome.status === 'saved',
+      'the history receipt of the explanation saved after the failed removal',
+      2_000,
+    )
     // Assert
     assert.deepEqual(structuredClone(afterRefusedMove.studyRemoval), {
       status: 'failed',
