@@ -8,6 +8,7 @@ import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 import { RepositoryBookStore } from '../repositoryBook'
+import { readResource } from '../resources'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { StudyService } from '../service'
 import { createRecordingObserver } from '../utils/createRecordingObserver'
@@ -358,6 +359,33 @@ test('the run resource of a run refused on a full study library reports its hist
   assert.equal(state.historyOutcome.savedSignature, undefined)
   assert.equal(state.recording.status, 'unavailable')
   assert.equal(state.recording.contextStatus, 'unavailable')
+})
+
+// Value: protects=an agent reading the events or manifest of a refused run gets the answers it got before removals existed; fails_when=the removed-study refusal is widened to every run excluded from history; why_new=only a removed run's evidence resources were asserted; seam=none
+test('the events and manifest resources of a run refused on a full study library answer as for a run that never started, not as evidence that was removed', async (context) => {
+  // Arrange: the library holds one study under a limit of one, so the run is refused at its admission.
+  const started = await startRunWithStorage(context, 1, 'study')
+  const eventsUri = started.service.uri(started.record.id, 'events/0'),
+    manifestUri = started.service.uri(started.record.id, 'manifest')
+  // Act
+  const events = await readResource(started.service, eventsUri)
+  const manifest = readResource(started.service, manifestUri)
+  // Assert
+  assert.equal(started.record.historyExcluded, 'refused-at-admission')
+  assert.ok('text' in events)
+  assert.deepEqual(JSON.parse(events.text), {
+    events: [],
+    afterSequence: 0,
+    lastSequence: 0,
+  })
+  await assert.rejects(
+    manifest,
+    (error) =>
+      error instanceof StudyError &&
+      error.code === 'EVIDENCE_UNAVAILABLE' &&
+      error.message ===
+        'The run has not frozen its source and scenario manifest.',
+  )
 })
 
 // Value: protects=a library that cannot be read ends the run as a failure that is still saved as not demonstrated; fails_when=every error of the admission read is treated as a refusal and the failed run is dropped from history; why_new=the admission read was only tested with an answer or an invalid setting; seam=none

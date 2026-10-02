@@ -722,6 +722,61 @@ test('a removal whose sidecar move the Trash refuses after the evidence moved is
   ])
 })
 
+// Value: protects=a Trash that takes the recording but refuses the raw evidence leaves a removal the learner finishes by deleting again; fails_when=a refused evidence move is swallowed or the second removal trips over the recording that is gone; why_new=only a refusal after the evidence had moved was tested; seam=the injected mover
+test('a removal whose evidence move the Trash refuses after the recording moved is reported as partly moved, and a second removal moves the evidence and the rest of the study', async (context) => {
+  // Arrange: a study with a recording whose run left evidence; the Trash takes the recording and refuses the evidence directory.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const evidenceDirectory = join(
+    storage.directory,
+    '..',
+    'agent',
+    study.instanceId,
+    study.runId,
+  )
+  await mkdir(evidenceDirectory, { recursive: true })
+  await writeFile(join(evidenceDirectory, 'events.jsonl'), '{"sequence":1}\n')
+  storage.rejectMovesOf(
+    (path) => path === join('..', 'agent', study.instanceId, study.runId),
+  )
+  // Act
+  const first = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    evidenceDirectory,
+  )
+  const movedByFirst = [...storage.moved]
+  const evidenceLeftByFirst = await readdir(evidenceDirectory)
+  storage.rejectMovesOf(() => false)
+  const second = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    evidenceDirectory,
+  )
+  // Assert
+  assert.deepEqual(first, {
+    outcome: 'partly-moved',
+    cause: `Trash refused ${study.runId}`,
+  })
+  assert.deepEqual(movedByFirst, [join('recordings.v2', study.id)])
+  assert.deepEqual(evidenceLeftByFirst, ['events.jsonl'])
+  assert.deepEqual(second, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    join('recordings.v2', study.id),
+    join('..', 'agent', study.instanceId, study.runId),
+    `${study.id}.study.meta.v3.json`,
+    `${study.id}.study.v3.json`,
+  ])
+  await assert.rejects(lstat(evidenceDirectory), { code: 'ENOENT' })
+  assert.deepEqual(
+    (await filesBelow(storage.directory)).filter(([path]) =>
+      path.includes(study.id),
+    ),
+    [],
+  )
+  assert.deepEqual(await storage.library.list(), [])
+})
+
 // Value: protects=the count sentence after a removal and the "would a run be admitted now" question read the same figures the admission uses; fails_when=usage counts a study twice across formats or fails under an invalid limit; why_new=usage is new; seam=none
 test('the library reports how many studies it keeps and its limit, and only the count while the limit setting is invalid', async (context) => {
   // Arrange
