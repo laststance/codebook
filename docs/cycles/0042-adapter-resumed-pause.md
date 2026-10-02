@@ -1,7 +1,7 @@
 # Cycle 0042 — A pause the debugger resumes by itself after a continuation no longer ends a live run
 
 Type: product-increment with an investigation and a bounded native experiment\
-Status: planning\
+Status: implementing\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -238,6 +238,66 @@ Cleanup after R, 05:48 JST: both editors quit through their menus; the database 
 
 Carried from R, outside this cycle: a run resource has no `error.cause` for these failures (the prompts asked for it; both agents quoted `terminalReason` instead); Cursor's agent answered `layoutConfirmed: false` for a foreign preview tab, as in Cycle 0037.
 
+### Entry after compaction, 2026-10-03 (during the engineering review of F)
+
+The working context was compacted while `/plan-eng-review` of F was reading source and tests. Nothing of the review had been written, no trial was in flight, and no editor, recorder, development server or database container was running.
+
+- Done again in full at 05:58 to 06:05 JST, before any review text, source change or trial: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE (both pages), DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review.
+- The approved PNG was opened with the image viewer and its hash verified (`f189ee82…`). The four regions are as recorded under "Accepted product and design": the live explanation with the native debugger on the left, the application above the stopped source and the standard chat on the right, with "Recording explanation · Save learning replay" at the bottom; the replay with the Learning summary in the chat's place and one transport; the DeepWiki reader; the shortcut strip.
+- One command ran between the compaction and the entry: a read of three product source files (`waitUntil.ts`, two constants files, `describeCdpPause.ts`). It changed nothing.
+- State found: branch `codex/cycle-0042-adapter-resumed-pause` at `a4c895a`, clean; no pull request open; Issue #78 and Goal #1 open; Node 24.21.0, pnpm 12.4.2; the dashboard at `1936e41` with only `.codebook/`; the protected hashes `0ac38ba2`, `8d6e64c2`, `80ba41bd`, bundled skill `39f03be0`, Cursor's deployed skill `3067468e` (the disclosed value after R); the QA workspace file restored (`31a3e369`); no VS Code, no Cursor, no recorder; port 3000 free; OrbStack stopped. The owner's input idle time was above sixteen minutes.
+- Gap audit: no product source changed since `9634972` (D), which adds journal fields and no behavior. The table under "Source-gap audit and selected increment" stands; R replaced its "not known" with the two causes above.
+
+### Engineering review of F through `/plan-eng-review`, 2026-10-03
+
+The review read the ownership code, both run harnesses and every test that sends a bare pause, resume or `continued`, and ran two read-only probes (the health analyzer's numbers per function of the run class; Node's `SourceMap.findEntry` on small maps). Its full text, with the quoted lines, the coverage diagram and the outside voice's answer, is appended to the private spec archive of Issue #78; the test plan and the task list are beside it in the project's gstack state. Result: 19 issues (7 architecture, 4 code quality, 8 test gaps beyond the spec's plan, 0 performance), 0 critical gaps, 14 amendments (ER1 to ER14), 0 unresolved. The outside voice (Codex CLI, read-only) completed with three findings; two became tests and criteria, one is kept with its limit recorded. Every choice took the recommended option (D045).
+
+Words used here. Declared stop: a stop the agent's declaration names. Expected stop: the one declared stop whose pause may arrive next. Unannounced pause: a pause on the inspector channel (CDP) for which the debug adapter sends no `stopped` on its own channel (DAP).
+
+| Amendment | What F does, and why |
+| --- | --- |
+| ER1 | **Where a pause is decides whose it is.** A pause belongs to the expected stop only when its top frame is in that stop's module and the sealed source map puts it on the declared line. Every other pause is held as unannounced: no failure, no receipt, no generation. The spec's default rule let the adapter's `stopped` decide, which cannot hold in both channel orders: in P1 the adapter's own pause is in the module of the next declared stop, and a `stopped` was read up to 29 ms before the pause it announces. The expected stop is the next one while a continuation is in flight, the current one until its snapshot is ready, and none afterwards. A second pause of a participant that already holds one fails as today. Both participants use the rule. |
+| ER2 | **When a `continued` is idle.** It is idle when the participant has no accepted pause, no queued announced stop and no continuation of its own that still waits for its DAP receipt. `this.continuation` stays set after the last continuation, because the completion check depends on it. |
+| ER3 | **Retirement.** A resume of a held unannounced pause empties the slot and records `cdp.adapter-pause-retired` with the pause's URL, generated position, function, hit breakpoint ids, `place` and `pausedForMs`. Nothing else changes. |
+| ER4 | **An announced pause elsewhere in the stop's module keeps today's failure texts.** When the 3 s wait for a pause on the declared line expires and the participant still holds an unannounced pause in the stop's module, that pause is inspected, so "bound at ..., not on its declared line" and "DAP frame differs from exact configured source" stay, 3 s later than today. A passing stop is never slower. |
+| ER5 | **Completion waits.** The after phase also waits until no participant holds an unannounced pause, before and after the `after` capture. |
+| ER6 | **The sentence for a pause that stays.** It is built when the deadline expires and joined with a period: `<deadline text>. The <participant> is paused at <place> without a debugger stop.` `<place>` is `<repository path>:<line>` inside a declared stop's module, otherwise `<script URL> <line>:<column>`. Only a deadline gets it, not every failure. With no pause held every deadline text is unchanged. |
+| ER7 | **The browser's 250 ms transient case stays** for a run that declares no browser stop; three tests pin its texts. |
+| ER8 | **Structure under the unchanged health baseline.** The baseline counts findings per file and band, so a function that leaves its band in either direction changes two counts. `onCdpPaused` (20, the threshold) loses its tail to one call and lands at 10; `onEvent` loses the idle condition; `onCdpResumed` gains one branch (13 to 14); `beginAfter` (10) is not touched; new methods and utilities stay at 4 or lower. The analyzer's JSON is compared before and after. |
+| ER9 | **Tests.** Server shapes go to `nativeParticipants.test.ts`, whose harness gains the event controls they need; the deadline shape goes to `configuredRuntime.test.ts`, the only harness with a controllable clock. A pause "on another line" needs a second mapping line, because the default test map sends every position of the module back to line 1. |
+| ER10 | **Criteria** changed and added: see the table below. |
+| ER11 | **Native checks.** N11-a: P1 once in VS Code. N11-b: in Cursor the two declarations that failed there, once each. N11-c as specified. N11-d, optional: P2 in VS Code with the database stopped on purpose, to see the WebAssembly hook's pause retired; it never blocks the delivery. |
+| ER12 | **Nothing says who sent a resume** (outside voice). A resume of an unannounced pause away from the expected stop is retired, whoever sent it: `Debugger.resumed` carries no sender. It cannot make a result, because a retired pause gives the run no snapshot, receipt or generation; a resume of a pause on the expected stop's line still fails, announced or not. N11 reports the place and `pausedForMs` of every retired pause, as the measurement a later bound would need. |
+| ER13 | **A pause of the other participant during a capture or a hold** (outside voice) is held like any other; it fails only when it is announced. Both outcomes get a test. |
+| ER14 | **The channel order ER1 exists for** (outside voice) gets its own tests: the declared stop's `stopped` read before the adapter's pause, after the continuation and before its response. |
+
+Criteria changed or added (the unchanged ones stay as in the validation contract above):
+
+| Check | Expected observable result | Red on `784a9da` with |
+| --- | --- | --- |
+| AC4 (changed) | Both orders of the adapter's `continued`; one `cdp.adapter-pause-retired` with its exact detail; stop 2 captured with generation 2 | Selected server resumed outside its owned continuation |
+| AC6 (changed) | Tested with the input acknowledgement held | Unowned continuation invalidated live pause |
+| AC7 (changed) | `Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s; its line must execute after the preceding continuation. The browser is paused at eval-ca9ab6a4.cdp 1:220 without a debugger stop.` (browser participant, mock clock) | the deadline text without the sentence |
+| AC8 (reclassified) | Not a guard: the run fails at the `stopped` with `Unexpected or additional server stop invalidated the declared operation` | Additional server stop invalidated the declared operation, at the CDP pause |
+| AC10 (confirmed) | The five named guards pass unchanged; every pause they send is on the declared line of the declared module | guard |
+| AC11 (changed) | Control rows C1 to C9: journal fields, `pausedForMs`, the retirement, the position test, the hold, the idle condition, the sentence, the recovery of ER4, the completion wait | table |
+| AC13 (changed) | No function that existed on `784a9da` changes its health band; new functions at 4 or lower; baseline byte-identical | diff |
+| AC14, AC15 (changed) | N11-a: P1 in VS Code. N11-b: P2 and the three-stop declaration in Cursor | native |
+| AC20 | The pause of AC4 read before the `continue` response is not queued as the next stop | Queued server stop resumed before prior continuation receipts completed |
+| AC21 | Two browser stops: a pause in another script that the adapter resumes is retired and the second stop is captured | Selected browser resumed outside its owned continuation |
+| AC22 | A server pause announced on another line of the stop's module, bound at 2:1, fails with `Declared stop <path>:1 bound at 2:1, not on its declared line` and the mapping hints | guard (passes on base) |
+| AC23 | An unannounced pause still open after the last continuation keeps the run from completing; its resume lets it complete | Additional server stop invalidated the declared operation |
+| AC24 | Unit tables: the position test, the verifier's original-line reader, the place and sentence texts | new files |
+| AC25 | While a server stop is held, a browser pause followed by its `stopped` fails with `Unexpected or additional browser stop invalidated the declared operation` | Additional browser stop invalidated the declared operation, at the CDP pause |
+| AC26 | While a server stop's capture is in flight, a browser pause the adapter resumes leaves the capture valid and the run completes | Additional browser stop invalidated the declared operation |
+| AC27 | The declared stop's `stopped` read before the adapter's pause in the same module: stop 2 is captured (a: after the continuation; b: before its response) | a: Selected server resumed outside its owned continuation; b: Queued server stop resumed before prior continuation receipts completed |
+
+Limits the review recorded: an adapter pause on the declared line of the expected stop, at another column and reached first, still fails as today; a resume that a second inspector client sends of an unannounced pause is not told from the adapter's (ER12); the browser keeps two rules (ER7); the Node test path was not examined for the adapter's pauses.
+
+Implementation order (the review's tasks): T1 utilities with their unit tables; T2 the run class; T3 the harnesses; T4 fifteen run-level tests; T5 the control table and the gates; T6 the candidate and N11.
+
+Decisions (recommended options, the owner is away): every amendment above; no `/plan-design-review` and no `/plan-devex-review` (no element changes, and the one agent-facing sentence is decided in ER6); after the review, "ready to implement" was taken at the skill's navigation question.
+
 ## Result and decision
 
 - Result: pending
@@ -248,7 +308,7 @@ Carried from R, outside this cycle: a run resource has no `error.cause` for thes
 
 ## Next action
 
-- Exact next action: `/plan-eng-review` of F with the two verified causes and the five points under "What the fix has to cover"; then implement F with its tests and controls.
-- Changed files / branch / active processes: D (`9634972`) and this record on `codex/cycle-0042-adapter-resumed-pause`; no editor, recorder, dev server or database container is running.
+- Exact next action: implement F as amended by the engineering review (ER1 to ER14 above), in the order T1 to T4; then the control table and the gates (T5), the candidate and N11 in both hosts (T6), the local reviews and `/ship` as 0.2.26.0.
+- Changed files / branch / active processes: D (`9634972`), R's record (`a4c895a`) and this record on `codex/cycle-0042-adapter-resumed-pause`; no editor, recorder, dev server or database container is running.
 - State updated in PROJECT_STATE.md: the active cycle, the checkout, tracking and the next action.
 - Durable decisions updated: none.
