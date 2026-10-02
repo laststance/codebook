@@ -40,7 +40,7 @@ Read [AGENTS.md](AGENTS.md) when starting or resuming work. Claude Code also ent
 ## Tracking and continuation
 
 - [Goal Issue #1](https://github.com/laststance/codebook/issues/1) remains open until all acceptance conditions and owner acceptance hold.
-- No cycle issue is open; the next cycle is specified through `/spec` from the two full-library findings of Cycle 0037.
+- [Cycle 0038 Issue #70](https://github.com/laststance/codebook/issues/70) is open: a run refused on a full study library leaves nothing behind, and the learner can remove a saved study ([record](docs/cycles/0038-full-library.md)).
 - [Cycle 0037 Issue #67](https://github.com/laststance/codebook/issues/67) is closed after PR #68, [Cycle 0036 Issue #65](https://github.com/laststance/codebook/issues/65) after PR #66, [Cycle 0035 Issue #63](https://github.com/laststance/codebook/issues/63) after PR #64, [Cycle 0034 Issue #61](https://github.com/laststance/codebook/issues/61) after PR #62, [Cycle 0033 Issue #59](https://github.com/laststance/codebook/issues/59) after PR #60, [Cycle 0032 Issue #56](https://github.com/laststance/codebook/issues/56) after PR #58, [Cycle 0031 Issue #53](https://github.com/laststance/codebook/issues/53) after PR #54, Cycle 0030 Issue #50 after corrective PR #52, and Cycle 0029 Issue #46 after PR #48. The next cycle Issue is created through `/spec`.
 - Closed cycle records preserve historical results, failed attempts and their exact source/host boundaries.
 
