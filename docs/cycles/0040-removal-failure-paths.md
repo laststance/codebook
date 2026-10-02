@@ -2,8 +2,8 @@
 
 Type: product-increment\
 Status: validating\
-Result: pending\
-Delivery: not-applicable\
+Result: demonstrated\
+Delivery: PR-open\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/74\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -197,6 +197,7 @@ Commits on `codex/cycle-0040-removal-failure-paths`, in the review's order:
 | T6 | `347da74` | README "Delete a saved study" and the JSDoc of `assertStudyNotMoving` and `renderStudyRemoval` (P9). |
 | Criterion 20 | `e68a16e` | One assertion added to Cycle 0039's closed-reader test. |
 | Closed reader (found by N9) | `17cc306` | Reader: a saved study chosen while the Study workspace is closed ends its loading state and is published to the bottom panel (`publishChoiceOfClosedReader`); one red test and one control. See the native finding below. |
+| Delivery tests | `2b0be38` | Six reader tests added by the delivery's coverage and plan audits (`studyWorkspaceRemoval.test.ts`, 73 tests); no product change. See the delivery section below. |
 
 Decisions taken during the implementation (recommended options, the owner is away):
 
@@ -337,7 +338,7 @@ This cycle adds no element. The screens the takes show, against region 2 of the 
 
 OCR findings (the host's own reading of the diff; none reproduced, none fixed, all carried):
 
-1. **Medium. A reply held back for a Recording load is posted only from the playback controller's change callback** (`settleOpenRequest`, `flushDeferredOpenReplies`). If that load ends without another change callback (the reader is closed while a recording chosen in the bottom panel is still loading), the reply stays queued until a later playback change, and the bottom panel's delete button keeps "Wait for the chosen saved study to open." until another entry is chosen.
+1. **Medium. A reply held back for a Recording load is posted only from the playback controller's change callback** (`settleOpenRequest`, `flushDeferredOpenReplies`). If that load ends without another change callback (the reader is closed while a recording chosen in the bottom panel is still loading), the reply stays queued until a later playback change, and the bottom panel's delete button keeps "Wait for the chosen saved study to open." until another entry is chosen. **Corrected by the delivery (2026-10-03):** for the close named here the finding does not hold. `close()` hides the playback, the controller's change callback runs and the held-back reply is posted; the delivery's test "a saved study chosen in the bottom panel during Recording is answered when the Study workspace is closed before its recording has loaded" passes on the branch, and the Claude adversarial pass found that every exit from `loading` in `playbackController.ts` calls the change callback.
 2. **Low. The reply is posted when the message was handled; a Study message that shows the chosen entry may still be queued behind it.** The pane would then put the list back on the earlier study for one message, with the delete button enabled for the entry the list shows at that moment.
 3. **Low. `publishChoiceOfClosedReader` reads `opened`**; a choice that arrives while the reader is still opening would end the loading state and publish before the open's own render.
 4. **Low (closed by a run). The closed-reader test had no red run on `97dd1e9` on record.** Run during the review: red on `97dd1e9`, where it stops at its first wait because no reply exists there (`artifacts/cycle-0040/red/closed-reader-base.tap`); its publish assertion is what is red on `2b2eef6`.
@@ -345,10 +346,62 @@ OCR findings (the host's own reading of the diff; none reproduced, none fixed, a
 
 Private records (ignored `artifacts/cycle-0040/reviews/`): `coderabbit-a3684ef.jsonl` with its empty `.err`, `ocr-preview.json`, `ocr-rules.json`, `ocr-a3684ef.md`. The branch diff went to CodeRabbit's service through its local CLI. This is a host review plus one external pass, not an independent provider review of every file; nothing critical was found, so nothing was changed.
 
+### Entry after compaction, 2026-10-03 (during the delivery, after the specialists returned)
+
+- The working context was compacted during `/ship`, after the delivery's coverage audit, plan audit, exploratory checks and three of the five specialists, and before the red team and the adversarial passes were dispatched. Nothing in the working tree changed between the compaction and this entry. The mandatory entry was repeated from the files on disk at 00:22 to 00:27 JST: full reads of PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE (both pages), DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review.
+- The approved PNG was opened with the image viewer again (the same four regions as recorded above: live explanation with the bottom "Recording explanation · Save learning replay", learning replay with the recorded-state debugger and the transport at 00:42 / 02:18, the DeepWiki reader with "Update LLM Wiki", and the shortcut strip) and its SHA-256 is `f189ee82…caf2aa`.
+- Checkout: `codex/cycle-0040-removal-failure-paths` at `2b0be38`, clean, tree `76c6b9b4`; Node 24.21.0. No editor, recorder, dev server or database container running.
+- This entry was written with the delivery section, after the reviews were bound to that tree, so that the documents the documentation audit read stayed byte-identical while it ran.
+- Gap audit: no acceptance row changes against the audit above; the product source is that of `17cc306`.
+
+### Delivery through `/ship`, 2026-10-03
+
+Reviewed tree `76c6b9b4` (HEAD `2b0be38`: the product source of `17cc306` plus six tests and the records). Version 0.2.24.0.
+
+| Step | Result |
+| --- | --- |
+| Tests before the audits (`e105a8c`) | hook 4 of 4, extension 1,745 of 1,745, package 192 of 192. The release tree is verified again before the push; its results are in the delivery closure |
+| Coverage audit (one generation pass) | 30 changed paths, each with a test after the pass. Five tests added to `studyWorkspaceRemoval.test.ts`: an archive read that fails after the reader changed meanwhile; an overtaken choice whose own read fails later; a recording chosen in the bottom panel that is answered when the Study workspace closes during its load; a Recording choice with an outdated view answered at once; an overtaken choice on a closed Study workspace. Five more proposals were rejected as covered elsewhere. A read-only rating killed eight mutations in a scratch worktree and gave each of the five tests three stars; value-weighted coverage 100% |
+| Plan completion audit | 46 items: 41 done, 2 changed (the two recorded decisions: no unit file for `removalAfterLockFailure`, criterion 20 without a red test of its own), 1 partial, 2 produced by the delivery itself (version with changelog, the pull request). The partial item was criterion 5: its test set up no refused run, so the next-step sentence was not asserted when the arrangement fails. A sixth test closes it ("a removal that makes room for a refused run names the next step and retires the refusal line although the next study cannot be arranged"). Scope check: clean |
+| Base runs of the six tests | On a worktree of `97dd1e9` five of the six are red and one passes on both (the overtaken choice whose own read fails later, a guard). With the 23 of the table above and the closed-reader test, 29 behavior tests are red on `97dd1e9` |
+| Delivery review | the checklist pass and five specialists (testing, maintainability, security, performance, simplification), then a red team: no critical finding; 16 informational findings and 2 advisory notes |
+| Exploratory QA | 18 captured probes: four smoke charters (24, 73, 43 and 3 tests), the 32 controls held again with `dist` restored byte for byte, the six static gates, the emit comparison (634 files, 0 differences), the DOM gate (71 of 72 with the carried case), the bundled skill hash, the protected state, the restored QA workspace file, the N9 evidence bound to the reviewed product source (0 lines of difference to `17cc306`), the CodeRabbit configuration. No probe failed against its expectation |
+| Adversarial review | a Claude pass (8 findings read from code, test files in summary mode), a Codex challenge (2 P2, each confirmed by the reviewer with an in-memory probe of the extracted methods, read-only sandbox) and a Codex structured review against `origin/main` (1 P2 read from source; no P1, gate passed). All three completed and are bound to the reviewed tree |
+| Documentation audit | `/document-release` as a subagent, started in the same message as the red team and the three adversarial passes: status current, no file edited, no blocker. Its worktree began at the base commit instead of the branch head; it made no checkout and read the candidate's bytes through Git objects, with hashes equal to the candidate's. It left to the release pass: the README's test count and delivery sentence, the package path, and the next action of the state records |
+
+Decisions (the owner is away; the recommended option each time):
+
+- **Nothing was fixed.** No finding is critical: none loses saved material or makes the removal's line false. Finding D1 below is named by three reviewers, and two of them recommend fixing it before the merge; under the standing direction (only a critical finding is fixed) it is carried, like the reproduced regressions of the 0.2.23.0 delivery, and it is named first for the next selection of work on this control.
+- **OCR finding 1 above does not hold for the close it names**; the correction is written at the finding. It would need a load that ends without any change callback, and the Claude pass found no such exit in `playbackController.ts`.
+- **No TODOS.md is created**; the follow-ups live in this record and in PROJECT_STATE, as in the earlier cycles.
+- **Version 0.2.24.0**: one third-component step per cycle, as since 0.2.16.0.
+- **The structured review's base is `origin/main`**: the local `main` ref of this checkout is older (`97f18d4`) and would have widened the diff by two cycles.
+
+Carried findings of the delivery (read from code unless stated; the reviewer is named):
+
+- D1. **A failed arrangement of the next study drops a study chosen meanwhile** (`showAfterCompletedRemoval`'s catch calls `showNoStudyAfterRemoval()` without a generation check). While the neighbour's `open()` waits, the learner can choose and see another study; when that `open()` then rejects, the catch clears the selection and the archive, renders, and saves "no study", with a `reading` line about a study the learner did not ask for. On `97dd1e9` the rejection left the selection and lost the "moved" line. Codex challenge (probe), red team, Claude pass. Fix named by all three: fall back only while the request is still the latest.
+- D2. **An action that chooses no entry counts as a choice made during the removal.** `historyRequest` is also advanced by `select()`, `returnCurrentSelection()` and `openRepositoryEvidence()`, none of which is refused while a study moves; the removal then ends on no study instead of the neighbour, which `97dd1e9` showed. Red team, Claude pass.
+- D3. **A failed or discarded choice on a closed Study workspace leaves `loading` set.** `publishChoiceOfClosedReader` covers only a choice that opens; `reportFailedChoice` and `releaseStaleHistoryRequest` end in renders that return for a closed reader. The bottom panel keeps loading beside the error line until the reader is opened or another choice opens. `97dd1e9` had the same failure arm. Testing, maintainability, Claude pass.
+- D4. **A removal that completes between a saved study's read and the end of the Node preview close clears that study's archive** (`leaveRemovedSelection` when `studyOpening()` is already false): the selection names the study, no archive is held and no error is shown. Codex challenge (probe).
+- D5. **A Node test history stop opened while the neighbour is read gets the saved-study source placeholder**: the overtaken arm goes on to `renderShownSelection()`, which renders from the cleared saved-study selection, so the source pane shows "Configured source is unavailable" while the history and the native debugger stay on the stop. Codex structured review (P2, names criterion 41).
+- D6. **`reportFailedChoice` reads a cleared marker as "failed after the read".** `close()` and `loadPlayback` clear `pendingHistory` too, so a read that fails after either is reported under `reading` for a reader that moved on; `97dd1e9` discarded it silently. Maintainability.
+- D7. **The two new `reading` lines are retired only by a successful pane read**, so the reason a study could not be arranged stays listed after the next study opened. Red team.
+- D8. **The "moved" line still names the refused run's next step while `writer.lock` stays**, although that run's saves will be refused and nothing removes the lock; and an unlink that fails because the lock file is already gone is reported as unreleased although nothing blocks later writes. Claude pass.
+- D9. **After `nothing-moved` with a failed write-back the host does not reconcile with the ledger on disk**, which lost the selection and the repository return until the next selection save. Claude pass.
+- D10. **The reply bookkeeping sits outside the reader's checks.** The deferred-reply queue has no bound and also holds replies for messages `receive` rejected during a Recording load (security); `receivePaneMessage` reads `owner.webview` in `finally` after the await, which can throw for a disposed panel and replace the original error, swallowed today (Claude pass); the pane's request numbers restart with every pane document, so a late reply to an earlier document could match a new request with the same number, with no ordinary flow found that does it (Claude pass).
+- D11. **A reader that is still closing when the neighbour's read ends saves an empty selection, and one that has finished closing saves the neighbour** (Claude pass); no test has `closing` true at that moment (testing; criterion 20 has no red test of its own).
+- D12. **Test findings.** The pane half of the reply (criteria 15 to 18) is tested only by the Chromium script, which no CI job runs and which exits 1 on the carried case; the `loading` guard in `flushDeferredOpenReplies` has no test with a Recording load that succeeds; every unreleased-lock test deletes `writer.lock`, so the case where the lock stays and later writes are refused is not exercised; the six tests of `2b0be38` have base runs but no disabled-fix control rows (the control table above still has 32 rows).
+- D13. **Maintainability notes.** The boolean result of `retireNodeHistorySelection` and its `@returns` are dead after this diff (also the simplification note: two removable lines); the comment "Nothing changed on disk" on the `nothing-moved` branch is no longer true for a failed write-back; `openRequest` now names two unrelated counters in `StudyWorkspace`; the rule for a valid open-request number is written twice (`openRequestShape` and `readOpenRequest`; advisory).
+- D14. **`extension/test-timings.json` has no entry for `studyWorkspaceRemoval.test.js`**, so the CI shard plan counts its 73 tests as one second and cannot split the file; the performance specialist estimates about 48 s for its job. The Test job times of the pull request are checked in the closure.
+
+Still carried from before the delivery: the CodeRabbit finding and OCR findings 2, 3 and 5 above, and the observations of native N9.
+
+Private records (ignored `artifacts/cycle-0040/reviews/`): `ship-step9-specialists.md`, `ship-step11-claude-adversarial.md`, the two Codex texts; `artifacts/cycle-0040/red/delivery-tests-base.tap` and `criterion5-next-step-base.tap`; the QA report under the ignored `.gstack/qa-reports/`. The branch diff went to OpenAI through the Codex CLI for the two outside passes.
+
 ## Result and decision
 
-- Result: pending the delivery. The hypothesis held for P1 to P9: every defect criterion's test is red on `97dd1e9` and green on the branch with a control (32 of 32), no stored format, tool shape or timeout changed, and Cycle 0039's two pane cases still pass. Native N9 passed in both hosts on candidate 2 (N9-a to N9-e and criterion 35).
-- Decision: keep. One behavior was added during validation (`17cc306`: a study chosen on a closed reader is published), because P5's reply would otherwise have turned a silent wait into a visible fallback.
+- Result: demonstrated at mechanism level for P1 to P9 (criteria 1 to 30 and 36 to 41): every defect criterion's test is red on `97dd1e9` and green on the branch with a control (32 of 32), no stored format, tool shape or timeout changed, and Cycle 0039's two pane cases still pass. Native N9 passed in both hosts on candidate 2 (criteria 31 to 35 and the added check N9-e). The delivery review found further timing overlaps on the same control (D1 to D14), none critical.
+- Decision: keep. One behavior was added during validation (`17cc306`: a study chosen on a closed reader is published), because P5's reply would otherwise have turned a silent wait into a visible fallback. Revise later: D1 first, because it works against this cycle's own rule that a choice made during the removal wins.
 
 ### Gap audit after the cycle
 
@@ -365,12 +418,13 @@ Whole-goal route check: all thirteen rows stay short of integrated acceptance. T
 
 ## Handoff
 
-- Review, CI, merge, packaging, installation and publication are separate: at this point only the implementation, its mechanism gates and the bounded native trial exist; the branch is not pushed.
+- Review, CI, merge, packaging, installation and publication are separate: the local reviews and the delivery review are complete without a critical finding; CI, the exact-HEAD gate and the merge follow the pull request; 0.2.24.0 is not packaged for installation or published.
 - Both QA profiles run candidate 2 (pre-release, 0.2.23 metadata).
+- Issue #74 stays open through the merge (the pull request links it without a closing keyword) and is closed by hand with the carried findings named.
 
 ## Next action
 
-- Exact next action: local CodeRabbit CLI (never with credits) and `open-code-review-delegate` on the committed diff against `97dd1e9`; then `/ship` (0.2.24.0) with the red team, the three adversarial passes and the documentation audit dispatched together, CI, the separate exact-HEAD gate and the merge; then close Issue #74 by hand and plan the next cycle through `/spec`.
-- Changed files / branch / active processes: everything is committed on `codex/cycle-0040-removal-failure-paths` (not pushed); no editor, recorder, dev server or database container is running; the base worktree `/tmp/c40-base` (`97dd1e9`) still exists for a red run a review may ask for.
+- Exact next action: CI on the pull request head (with the Test job times of D14), the separate exact-HEAD gate and the merge in its own step, CI on `main`, then close Issue #74 by hand and plan the next cycle through `/spec`. Its candidates are the live path in Cursor Agent and a natural request that passes on its first run (AC-LIVE, G11), and on this control D1 first.
+- Changed files / branch / active processes: everything is committed on `codex/cycle-0040-removal-failure-paths`; no editor, recorder, dev server or database container is running; the base worktree `/tmp/c40-base` (`97dd1e9`) still exists and is removed at the closure.
 - State updated in PROJECT_STATE.md: the active cycle, the affected rows and the next action.
 - Durable decisions updated: none.
