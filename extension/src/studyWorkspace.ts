@@ -9154,12 +9154,14 @@ export class StudyWorkspace {
 
   /**
    * Moves a confirmed study to the system Trash and settles the removal's outcome; called by {@link holdStudyAsMoving} while the removal state is `moving`.
-   * Waits for this window's accepted writes of the study first, forgets the study only when something moved, and shows a neighbour when the shown study left.
+   * Waits for this window's accepted writes of the study first, forgets the study only when something moved, and shows a neighbour when the shown study left. Once every file moved, the outcome line is settled whatever happens to the step that shows what follows.
    * @param studyId - The confirmed entry.
    * @example await this.moveSavedStudy(studyId)
    */
   private async moveSavedStudy(studyId: string): Promise<void> {
     const messages = studyRemovalMessages()
+    // A saved study or Node test history chosen from here on owns the reader; the neighbour gives way to it.
+    const choiceGeneration = this.historyRequest
     await this.settleStudyWrites(studyId)
     const neighbours = this.removalNeighbours(studyId)
     const evidence = await this.studyEvidenceToMove(studyId)
@@ -9174,8 +9176,8 @@ export class StudyWorkspace {
       return
     }
     await this.forgetRemovedStudy(studyId)
-    if (removal.outcome === 'partly-moved') {
-      // The study is still listed and stays chosen, so deleting it again finishes the removal.
+    if (removal.outcome !== 'moved') {
+      // Partly moved: the study is still listed and stays chosen, so deleting it again finishes the removal.
       this.settleStudyRemoval({
         status: 'failed',
         studyId,
@@ -9183,8 +9185,39 @@ export class StudyWorkspace {
       })
       return
     }
-    await this.showAfterRemoval(studyId, neighbours)
+    this.reportUnreleasedLock(removal.unreleasedLock)
+    await this.showAfterCompletedRemoval(studyId, neighbours, choiceGeneration)
     await this.settleMovedStudy(studyId, evidence.isLeftInPlace)
+  }
+
+  /** Tells the learner in the reader's storage line that a completed removal could not release the storage lock; the next successful checkpoint write or Retry storage retires the line, and a write the lock still blocks reports it again. @example this.reportUnreleasedLock(removal.unreleasedLock) */
+  private reportUnreleasedLock(cause: string | undefined): void {
+    if (cause === undefined) return
+    this.report(
+      'archive',
+      new Error(studyRemovalMessages().lockNotReleased(cause)),
+    )
+  }
+
+  /**
+   * Shows what follows a study that has left the library, without letting a failure of that step take the removal's outcome with it; called by {@link moveSavedStudy} after every file moved.
+   * A study that cannot be arranged (a presentation change or a reader close is pending) is reported in the reader's own line, and the reader shows no study.
+   * @param studyId - The study that was moved.
+   * @param neighbours - The candidates from {@link removalNeighbours}, nearest first.
+   * @param choiceGeneration - The history request number from before the removal's first step.
+   * @example await this.showAfterCompletedRemoval(studyId, neighbours, choiceGeneration)
+   */
+  private async showAfterCompletedRemoval(
+    studyId: string,
+    neighbours: string[],
+    choiceGeneration: number,
+  ): Promise<void> {
+    try {
+      await this.showAfterRemoval(studyId, neighbours, choiceGeneration)
+    } catch (error) {
+      this.report('reading', error)
+      await this.showNoStudyAfterRemoval()
+    }
   }
 
   /**
@@ -9280,16 +9313,46 @@ export class StudyWorkspace {
     }
   }
 
-  /** After a study left the library: drops the archives the reader still held of it, follows the ledger that no longer names it, and shows a neighbour when it was the shown study. @example await this.showAfterRemoval(studyId, neighbours) */
+  /**
+   * After a study left the library: drops the archives the reader still held of it, follows the ledger that no longer names it, and shows a neighbour when it is still the selection and nothing was chosen meanwhile; called by {@link showAfterCompletedRemoval}.
+   * Both are read after the ledger read, so a choice that completes during it wins. A Node test history never changes the saved-study selection, so a choice is recognised by the request number it took, not by the selected study.
+   * @param studyId - The study that was moved.
+   * @param neighbours - The candidates from {@link removalNeighbours}, nearest first.
+   * @param choiceGeneration - The history request number from before the removal's first step.
+   * @example await this.showAfterRemoval(studyId, neighbours, choiceGeneration)
+   */
   private async showAfterRemoval(
     studyId: string,
     neighbours: string[],
+    choiceGeneration: number,
   ): Promise<void> {
-    const wasShown = this.selection.studyId === studyId
     this.activeArchive = withoutStudy(this.activeArchive, studyId)
     this.selectedArchive = withoutStudy(this.selectedArchive, studyId)
     await this.refreshProgress()
-    if (wasShown) await this.showRemovalNeighbour(neighbours)
+    // A saved study chosen meanwhile is the selection already.
+    if (this.selection.studyId !== studyId) return
+    if (this.historyRequest !== choiceGeneration) {
+      await this.leaveRemovedSelection()
+      return
+    }
+    await this.showRemovalNeighbour(studyId, neighbours)
+  }
+
+  /** Takes the removed study out of the selection when the learner's own choice owns the reader: a choice that is still opening shows itself, or no study when it fails; one that has ended (a shown Node test history, a failed open) leaves the reader with no saved study. @example await this.leaveRemovedSelection() */
+  private async leaveRemovedSelection(): Promise<void> {
+    if (this.studyOpening()) {
+      this.selectNoStudy()
+      return
+    }
+    await this.showNoStudyAfterRemoval()
+  }
+
+  /** Leaves the reader with no saved study after the shown one was removed and none follows it: selects none, renders and saves that selection. @example await this.showNoStudyAfterRemoval() */
+  private async showNoStudyAfterRemoval(): Promise<void> {
+    this.selectedArchive = undefined
+    this.selectNoStudy()
+    await this.renderShownSelection()
+    await this.saveSelection()
   }
 
   /** Names the current run when the library refused it at its admission and no removal has made room for it yet. @example this.refusedRunAwaitingRoom()?.id */
@@ -9363,8 +9426,8 @@ export class StudyWorkspace {
     return undefined
   }
 
-  /** Renders the reader's selection after a removal changed it; a closed reader renders nothing, and a rendering failure is reported like any other. @example await this.renderAfterRemoval() */
-  private async renderAfterRemoval(): Promise<void> {
+  /** Renders the reader's current selection after a removal or a discarded request changed what is shown; a closed reader renders nothing, and a rendering failure is reported like any other. @example await this.renderShownSelection() */
+  private async renderShownSelection(): Promise<void> {
     if (!this.opened || this.closing) return
     await this.renderSelection(true, true).catch((error: unknown) =>
       this.report('reading', error),
@@ -9372,28 +9435,28 @@ export class StudyWorkspace {
   }
 
   /**
-   * Shows the nearest remaining saved study after the shown one was removed, or no study when none can be opened; called by {@link showAfterRemoval}.
-   * A study the learner chose in the meantime wins: one that is still opening shows itself, and one chosen while the neighbour was read replaces it.
+   * Shows the nearest remaining saved study after the shown one was removed, or no study when none can be opened; called by {@link showAfterRemoval} when nothing was chosen during the removal.
+   * A study the learner chooses while the neighbour is read wins, and neither that choice nor a closing reader finds the removed study still selected.
+   * @param studyId - The study that was moved.
    * @param neighbours - The candidates from {@link removalNeighbours}, nearest first.
-   * @example await this.showRemovalNeighbour([olderStudyId])
+   * @example await this.showRemovalNeighbour(removedStudyId, [olderStudyId])
    */
-  private async showRemovalNeighbour(neighbours: string[]): Promise<void> {
-    if (this.studyOpening()) {
-      // The pending choice shows itself, or no study when it fails; the removed study is no longer the selection either way.
-      this.selectNoStudy()
-      return
-    }
+  private async showRemovalNeighbour(
+    studyId: string,
+    neighbours: string[],
+  ): Promise<void> {
     const request = ++this.historyRequest
     const shown = await this.firstReadableStudy(neighbours)
-    if (!this.isLatestHistoryRequest(request)) return
-    this.selectedArchive = shown
-    if (shown) {
-      await this.showSavedStudy(shown, () => this.renderAfterRemoval())
+    if (!this.isLatestHistoryRequest(request)) {
+      if (this.selection.studyId === studyId) await this.leaveRemovedSelection()
       return
     }
-    this.selectNoStudy()
-    await this.renderAfterRemoval()
-    await this.saveSelection()
+    if (!shown) {
+      await this.showNoStudyAfterRemoval()
+      return
+    }
+    this.selectedArchive = shown
+    await this.showSavedStudy(shown, () => this.renderShownSelection())
   }
 
   /** Says whether no saved study or Node test history was chosen since this request took its number, on a reader that is not closing. @example if (!this.isLatestHistoryRequest(request)) return */
@@ -9401,7 +9464,7 @@ export class StudyWorkspace {
     return request === this.historyRequest && !this.closing
   }
 
-  /** Leaves the reader without a selected study after the shown one was removed and nothing replaces it yet. @example this.selectNoStudy() */
+  /** Leaves the reader without a selected study after the shown one was removed and nothing replaces it yet; called by {@link leaveRemovedSelection} and {@link showNoStudyAfterRemoval}. @example this.selectNoStudy() */
   private selectNoStudy(): void {
     this.readerSelectionRevision++
     this.selection = { ...NO_STUDY_SELECTION }

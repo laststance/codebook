@@ -52,6 +52,7 @@ export async function workspaceHarness(
   ) => Promise<string | undefined> = async () => undefined
   const trashMoves: { path: string; options: unknown }[] = []
   let rejectsTrashMove: (path: string) => boolean = () => false
+  let beforeTrashMove: (path: string) => Promise<void> = async () => {}
   let heldTrashMove: { wait: Promise<void>; entered(): void } | undefined
   const harness = await createHarness({
     create: async (directory, profile) => {
@@ -1778,6 +1779,7 @@ export async function workspaceHarness(
             heldTrashMove = undefined
             held?.entered()
             await held?.wait
+            await beforeTrashMove(uri.fsPath)
             if (rejectsTrashMove(uri.fsPath))
               throw new Error(`Trash refused ${basename(uri.fsPath)}`)
             trashMoves.push({ path: uri.fsPath, options })
@@ -1900,6 +1902,10 @@ export async function workspaceHarness(
     /** Makes the editor's Trash refuse the moves a test names. @example harness.rejectTrashMoves((path) => path.endsWith('.study.v3.json')) */
     rejectTrashMoves(rejects: (path: string) => boolean): void {
       rejectsTrashMove = rejects
+    },
+    /** Runs a test's step right before each Trash move is carried out or refused, so a test can change the storage while a removal is moving files. @example harness.beforeTrashMoves(async (path) => { if (path.endsWith('.study.v3.json')) await rm(lockPath) }) */
+    beforeTrashMoves(step: (path: string) => Promise<void>): void {
+      beforeTrashMove = step
     },
     /** Holds the editor's next Trash move until the test releases it, so a test can act while a removal is moving files. @example const held = harness.holdTrashMove(); await held.started; held.release() */
     holdTrashMove() {

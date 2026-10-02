@@ -4,6 +4,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rm,
   unlink,
   utimes,
@@ -13,6 +14,7 @@ import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
+import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { RecordingStore } from '../recordingStore'
@@ -2300,6 +2302,370 @@ test('a reader closed while the neighbour of the removed study of a finished liv
       (await library.readProgress()).selection?.studyId,
       neighbour.id,
     )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a removal that moved every file says so even when the storage lock cannot be released, and no waiting checkpoint writes the study back; fails_when=the reader reads the lock's failure as "nothing was deleted", keeps the run as a checkpoint candidate and resumes its held-back write; why_new=no reader test made the lock release fail after the moves; seam=the editor's Trash, stubbed at the vscode boundary, which loses the lock file with the last move
+test('a removal whose storage lock cannot be released after every file moved reports the study as moved, names the lock in the reader and writes no waiting checkpoint', async (context) => {
+  // Arrange: a recorded, stopped and saved run; its next study save is held and a newer checkpoint waits behind it. The lock file disappears with the archive's move.
+  const harness = await recordedReaderHarness()
+  try {
+    const directory = harness.reader.inspect().libraryDirectory!
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    let studySaves = 0
+    let releaseFirstSave!: () => void
+    const firstSaveHeld = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve
+    })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        study: Parameters<LearningLibrary['saveStudy']>[0],
+      ) {
+        studySaves++
+        if (studySaves === 1) await firstSaveHeld
+        return saveStudy.call(this, study)
+      },
+    )
+    const snapshotUri = harness.service.state(harness.record).participants
+      .browser.snapshotUri!
+    const explain = (key: string, interpretation: string) =>
+      harness.service.explain({
+        instanceId: harness.service.instanceId,
+        runId: harness.record.id,
+        key,
+        snapshotUri,
+        sourceHash: sha256('const nextTheme = "dark";\n'),
+        valuePaths: ['value:nextTheme'],
+        interpretation,
+      })
+    await explain('write-in-flight', 'The first later explanation.')
+    await harness.reader['refresh']()
+    await waitUntil(() => studySaves === 1, 'the held study save', 2_000)
+    await explain('waiting-checkpoint', 'The second later explanation.')
+    await harness.reader['refresh']()
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    harness.beforeTrashMoves(async (path) => {
+      if (path.endsWith('.study.v3.json'))
+        await rm(join(directory, 'writer.lock'))
+    })
+    // Act: the learner confirms while the first save is in flight; every file then moves and the lock release fails.
+    const removal = requestRemoval(harness, harness.studyId)
+    await waitUntil(
+      () => harness.reader.inspect().view!.studyRemoval?.status === 'moving',
+      'the confirmed removal',
+      2_000,
+    )
+    releaseFirstSave()
+    await removal
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(structuredClone(view.studyRemoval), {
+      status: 'moved',
+      studyId: harness.studyId,
+      text: 'Saved study moved to the Trash. The library now holds 0 of 64 saved studies.',
+    })
+    assert.equal(
+      view.studies.some((entry) => entry.id === harness.studyId),
+      false,
+    )
+    assert.equal(studySaves, 1)
+    assert.deepEqual(await studyFiles(harness), [])
+    assert.equal(harness.record.historyExcluded, 'removed-by-learner')
+    assert.deepEqual(
+      structuredClone(
+        view.errors.filter((line) => line.includes('storage lock')),
+      ),
+      [
+        `Error: Learning storage lock could not be released after the removal: ENOENT: no such file or directory, unlink '${join(await realpath(directory), 'writer.lock')}'`,
+      ],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a removal keeps its outcome line when the reader cannot arrange the study that follows; fails_when=the arrangement's rejection skips the outcome, so the learner sees a control error and no "moved" line, with a neighbour selected that was never shown; why_new=the neighbour was only tested with an arrangement that succeeds; seam=the reader's open, which rejects as it does while a presentation change is pending
+test('a removal whose next study cannot be arranged still reports the study as moved, shows no study and names the arrangement failure', async () => {
+  // Arrange: an earlier saved study; a run that was followed live, then stopped and saved, is the shown study. Arranging the reader is refused.
+  const harness = await workspaceHarness()
+  try {
+    const library = await harness.reader.learningStorage()
+    const neighbour = await saveEarlierStudy(
+      harness,
+      '2026-09-20T00:00:01.000Z',
+    )
+    const { record } = await startRun(harness)
+    const liveStudyId = `${harness.service.instanceId}_${record.id}`
+    await harness.reader.open()
+    await harness.reader.action('stop')
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.studies.some((entry) => entry.id === liveStudyId),
+      'the saved study of the finished run',
+      2_000,
+    )
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    harness.reader.open = async (): Promise<void> => {
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        'A presentation change or reader close is pending. Read its state before another control.',
+      )
+    }
+    // Act
+    await requestRemoval(harness, liveStudyId)
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(structuredClone(view.studyRemoval), {
+      status: 'moved',
+      studyId: liveStudyId,
+      text: 'Saved study moved to the Trash. The library now holds 1 of 64 saved studies.',
+    })
+    assert.equal(view.model.selection.studyId, undefined)
+    assert.equal((await library.readProgress()).selection?.studyId, undefined)
+    assert.equal(
+      view.studies.some((entry) => entry.id === neighbour.id),
+      true,
+    )
+    assert.deepEqual(
+      structuredClone(
+        view.errors.filter((line) => line.includes('presentation change')),
+      ),
+      [
+        'Error: A presentation change or reader close is pending. Read its state before another control.',
+      ],
+    )
+    assert.equal(harness.reader['errors'].has('control'), false)
+    assert.equal(harness.reader['errors'].has('reading'), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a study of which no file left the library stays the reader's study when only the ledger write-back failed; fails_when=that failure is treated as a partial removal, so the run is dropped from history and never saved again although its study is whole; why_new=the reader was only tested with a write-back that succeeds; seam=the editor's Trash, stubbed at the vscode boundary, which blocks the ledger path before it refuses the move
+test('a removal that moved no file and cannot write the ledger back says that nothing was deleted and keeps the run saved and offered for Save learning replay', async () => {
+  // Arrange: a recorded, stopped and saved run, chosen so the ledger names its study, without a recording directory, so the ledger is rewritten before the first file move. That move is refused after the ledger path was blocked.
+  const harness = await recordedReaderHarness()
+  try {
+    const directory = harness.reader.inspect().libraryDirectory!
+    await chooseStudy(harness, harness.studyId)
+    await rm(join(directory, 'recordings.v2', harness.studyId), {
+      recursive: true,
+    })
+    const ledgerPath = join(directory, 'progress.repository.v4.json')
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    harness.beforeTrashMoves(async () => {
+      await rm(ledgerPath, { recursive: true })
+      await mkdir(join(ledgerPath, 'blocked'), { recursive: true })
+    })
+    harness.rejectTrashMoves(() => true)
+    // Act
+    await requestRemoval(harness, harness.studyId)
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(view.studyRemoval?.status, 'failed')
+    assert.match(
+      view.studyRemoval?.text ?? '',
+      new RegExp(
+        `^The saved study could not be moved to the Trash\\. Nothing was deleted\\. Trash refused ${harness.studyId}\\.study\\.meta\\.v3\\.json; the learner ledger could not be written back: EISDIR`,
+      ),
+    )
+    assert.deepEqual(harness.trashMoves, [])
+    assert.equal(
+      view.studies.some((entry) => entry.id === harness.studyId),
+      true,
+    )
+    assert.equal(view.model.selection.studyId, harness.studyId)
+    assert.equal(harness.record.historyExcluded, undefined)
+    assert.equal(harness.saveStatus.visible, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=after a removal the reader never keeps the removed study selected when a newer choice took over and then failed; fails_when=the overtaken neighbour returns without changing the selection, so later selection saves fail with "Study archive is unavailable."; why_new=the overtaken neighbour was only tested with a newer choice that opens; seam=the library's archive read, held and failed by the test
+test('a newer choice that fails to open while the neighbour of a removed study is being read leaves the reader with no study selected', async (context) => {
+  // Arrange: three studies; the middle one is shown and removed, the oldest is its neighbour, the newest is chosen meanwhile and cannot be read.
+  const harness = await workspaceHarness()
+  try {
+    const library = await harness.reader.learningStorage()
+    const neighbour = await saveEarlierStudy(
+        harness,
+        '2026-09-20T00:00:01.000Z',
+      ),
+      removed = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:03.000Z')
+    await chooseStudy(harness, removed.id)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    const readCheckpoint = LearningLibrary.prototype.readCheckpoint
+    let neighbourReadStarted!: () => void, releaseNeighbourRead!: () => void
+    const started = new Promise<void>((resolve) => {
+        neighbourReadStarted = resolve
+      }),
+      released = new Promise<void>((resolve) => {
+        releaseNeighbourRead = resolve
+      })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'readCheckpoint',
+      async function (this: LearningLibrary, id: string) {
+        if (id === chosen.id) throw new Error('The chosen archive is damaged.')
+        if (id === neighbour.id) {
+          neighbourReadStarted()
+          await released
+        }
+        return readCheckpoint.call(this, id)
+      },
+    )
+    // Act
+    const removal = requestRemoval(harness, removed.id)
+    await started
+    await sendChoice(harness, 'history', chosen.id)
+    releaseNeighbourRead()
+    await removal
+    await harness.reader['saveSelection']()
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(view.model.selection.studyId, undefined)
+    assert.equal(view.studyRemoval?.status, 'moved')
+    assert.equal((await library.readProgress()).selection?.studyId, undefined)
+    assert.deepEqual(
+      structuredClone(
+        view.errors.filter((line) => line.includes('unavailable')),
+      ),
+      [],
+    )
+    assert.deepEqual(
+      structuredClone(view.errors.filter((line) => line.includes('damaged'))),
+      ['Error: The chosen archive is damaged.'],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a study the learner chose and saw while a removal was reading the ledger stays the reader's study; fails_when=the removal decides before that read that the removed study is shown, and then replaces the newer choice with the neighbour; why_new=the existing tests choose while the neighbour is read or while files move; seam=the library's ledger read after the moves, held by the test
+test('a saved study chosen and shown while a removal reads the ledger stays shown and saved, and the neighbour is never read', async (context) => {
+  // Arrange: three studies; the middle one is shown and removed. The ledger read that follows its two file moves is held.
+  const harness = await workspaceHarness()
+  try {
+    const library = await harness.reader.learningStorage()
+    const neighbour = await saveEarlierStudy(
+        harness,
+        '2026-09-20T00:00:01.000Z',
+      ),
+      removed = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:03.000Z')
+    await chooseStudy(harness, removed.id)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    const readProgress = LearningLibrary.prototype.readProgress
+    let ledgerReadStarted!: () => void, releaseLedgerRead!: () => void
+    let heldOnce = false
+    const started = new Promise<void>((resolve) => {
+        ledgerReadStarted = resolve
+      }),
+      released = new Promise<void>((resolve) => {
+        releaseLedgerRead = resolve
+      })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'readProgress',
+      async function (this: LearningLibrary) {
+        if (harness.trashMoves.length === 2 && !heldOnce) {
+          heldOnce = true
+          ledgerReadStarted()
+          await released
+        }
+        return readProgress.call(this)
+      },
+    )
+    const readCheckpoint = LearningLibrary.prototype.readCheckpoint
+    const archiveReads: string[] = []
+    context.mock.method(
+      LearningLibrary.prototype,
+      'readCheckpoint',
+      function (this: LearningLibrary, id: string) {
+        archiveReads.push(id)
+        return readCheckpoint.call(this, id)
+      },
+    )
+    // Act
+    const removal = requestRemoval(harness, removed.id)
+    await started
+    await sendChoice(harness, 'history', chosen.id)
+    const shownBeforeRelease =
+      harness.reader.inspect().view!.model.selection.studyId
+    releaseLedgerRead()
+    await removal
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(shownBeforeRelease, chosen.id)
+    assert.equal(view.model.selection.studyId, chosen.id)
+    assert.equal(view.study?.id, chosen.id)
+    assert.equal((await library.readProgress()).selection?.studyId, chosen.id)
+    assert.equal(archiveReads.includes(neighbour.id), false)
+    assert.equal(view.studyRemoval?.status, 'moved')
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a Node test history the learner chose and saw while a study was being deleted stays shown; fails_when=the removal compares only the saved-study selection, which a Node test history never changes, and shows the neighbour over it; why_new=the existing Node test history case is still opening when the removal settles; seam=the editor's Trash, held by the test
+test('a Node test history chosen and shown while a removal moves files stays shown, and the neighbour is never read', async (context) => {
+  // Arrange: two saved studies and a Node test history; the shown study's removal is moving files when the history is chosen and shown.
+  const harness = await workspaceHarness()
+  try {
+    const library = await harness.reader.learningStorage()
+    const neighbour = await saveEarlierStudy(
+        harness,
+        '2026-09-20T00:00:01.000Z',
+      ),
+      removed = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await chooseStudy(harness, removed.id)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    const readCheckpoint = LearningLibrary.prototype.readCheckpoint
+    const archiveReads: string[] = []
+    context.mock.method(
+      LearningLibrary.prototype,
+      'readCheckpoint',
+      function (this: LearningLibrary, id: string) {
+        archiveReads.push(id)
+        return readCheckpoint.call(this, id)
+      },
+    )
+    const trashMove = harness.holdTrashMove()
+    const removal = requestRemoval(harness, removed.id)
+    await trashMove.started
+    await sendChoice(harness, 'node-history', nodeHistory.studyId)
+    const shownWhileMoving =
+      harness.reader.inspect().view!.nodeHistory?.header.studyId
+    // Act
+    trashMove.release()
+    await removal
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(shownWhileMoving, nodeHistory.studyId)
+    assert.equal(view.nodeHistory?.header.studyId, nodeHistory.studyId)
+    assert.equal(view.loading, false)
+    assert.equal(view.model.selection.studyId, undefined)
+    assert.equal(archiveReads.includes(neighbour.id), false)
+    assert.equal((await library.readProgress()).selection?.studyId, undefined)
+    assert.equal(view.studyRemoval?.status, 'moved')
   } finally {
     context.mock.restoreAll()
     await harness.close()
