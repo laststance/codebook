@@ -1,7 +1,7 @@
 # Cycle 0041 — Live first run in both chats: a too-strict text condition says how it differs, and a natural request is run in Copilot Chat and Cursor Agent
 
 Type: product-increment with a bounded native experiment\
-Status: planning\
+Status: implementing\
 Result: pending\
 Delivery: local-only\
 Goal version: 9\
@@ -25,7 +25,7 @@ Why now: live explanation is the product's first defining step (PRODUCT_GOAL, "D
 ## Hypothesis and scope
 
 - Hypothesis:
-  - K1. The run that ended on "condition 3 (text) text-mismatch" in N8-a failed because the login button's `textContent` is `"Log in "` (a trailing space before the icon) and the failure text gives the agent nothing to correct. Saying how the text differs, without returning page text, lets an agent fix its condition, and a help sentence keeps it from declaring one.
+  - K1. The run that ended on "condition 3 (text) text-mismatch" in N8-a failed because the login button's `textContent` is `"Log in "` (a trailing space before the icon) and the failure text gives the agent nothing to correct. As filed: saying how the text differs, without returning page text, lets an agent fix its condition. As amended by the plan review (DX1): the comparison ignores that whitespace, so the condition holds on the first run, and the hint covers the case that remains (the expected text beside other text).
   - N10. With the arming-order, moved-column, full-library and same-key causes closed by Cycles 0036 to 0040, the frozen natural request can pass on its first run in VS Code. Cursor Agent can receive the same request through Cursor's documented prompt deeplink and reach Codebook's MCP server through the existing bridge. Both are unknown until run.
 - Smallest observable outcome: Issue #76 acceptance criteria 1 to 20.
 - In scope: K1 and native N10-a, N10-b, N10-c of Issue #76.
@@ -123,6 +123,40 @@ Frozen before implementation; the plan review may amend it, and amendments are r
 
 Frozen inputs for the native checks: the natural prompt is the N5-b prompt of the private `artifacts/cycle-0036/native/n5-expectations.json` (quoted in Issue #76); the outcome policy and the order (N10-a, then N10-c; N10-b in Cursor) are those of the issue; the expectations file of this cycle is frozen in the private `artifacts/cycle-0041/native/` before the candidate runs.
 
+The table above is the contract as filed. The plan review below amends criteria 1, 2, 5 to 7, 9 to 11 and 14 to 17; where they differ, the amended text decides.
+
+## Plan review, 2026-10-03
+
+### Developer-experience review
+
+`/plan-devex-review` ran on Issue #76 on 2026-10-03 in DX POLISH mode: the persona (the editor's chat agent that declares a run from source and gets one run), the journey trace against the source on `db8d188`, the eight passes, and one outside voice (Codex CLI, read-only, 5 findings, all confirmed on the quoted lines). The owner is away, so each decision took the recommended option under D045. Result: 6 amendments (DX1 to DX6), 0 unresolved decisions; score 6/10 before, 7/10 after (the remaining gaps are outside this cycle: a declared line without a mapped position still costs a run, and the help has no worked example).
+
+**What the filed plan had wrong or left open.**
+
+- K1 only explained the failure. The agent derives a text from JSX, where whitespace beside a child element is invisible, and the first run was still lost. The tools an agent knows compare such text with whitespace normalized (Playwright's `toHaveText` for string expectations; its API documentation, read through Context7).
+- The hint "declare the exact textContent" asked for a value the agent cannot see.
+- "Use a visible condition" is right for a before condition and wrong for an after condition, where it would replace "Invalid credentials is shown" with "some element is shown" (outside voice).
+- The run checks its after conditions before it sends the input and refuses when they already hold (`configuredBrowserRun.ts:991-997`). A normalized comparison changes that check too (outside voice).
+- Criterion 9 was listed as a guard, but on `db8d188` the schema drops an unknown key, so the case times out there (outside voice).
+- A fix made during N10 would leave the earlier native results without a candidate they belong to, and N10-b mixed three things in one PASS: the explicit invocation, the connection and the run (outside voice).
+
+**Amendments.**
+
+- DX1 (K1's rule). A `text` condition compares the element's text and the declared literal after collapsing whitespace runs to one space and trimming, on both sides. `whitespace-only` is no failure any more; `textDifference` keeps one value, `'surrounding-text'` (the collapsed element text contains the collapsed, non-empty literal). For declarations that exist: a before `text` condition holds in more cases; an after `text` condition that differs from the text before the click only in whitespace is now already true before the input, and the run refuses with "Configured after conditions were already true before application input".
+- DX2 (hints by phase). Every `text-mismatch`: ` A text condition compares the element's whole text, child elements included, with whitespace collapsed.` With `surrounding-text` in phase `before`: then ` Here the element holds the expected text beside other text; use a visible condition, or a selector whose element holds only that text.` In phase `after`: then ` Here the element holds the expected text beside other text; keep the text check and choose a selector whose element holds only that text.`
+- DX3 (help). `inspections` states the rule ("DOM conditions use literals, never patterns, and all conditions must hold: a text condition compares the element's whole text, child elements included, with whitespace collapsed and trimmed on both sides; an attribute condition compares the entire value exactly."), and `initialState` gains the icon-button sentence and what a text-mismatch timeout says. The issue comment holds both texts verbatim.
+- DX4 (native judgement). N10-c expects the prepared `text` equals "Log in" condition to pass its before conditions on the first run. N10-a and N10-b are each judged in three parts fixed before the trial: (i) explicit invocation (the chat shows the `codebook` skill loaded for the `/codebook` request, G12); (ii) connection (the first Codebook call is `codebook_status` naming the QA workspace); (iii) the run, by the frozen policy. In Cursor a prefilled "/codebook …" that is not treated as an explicit invocation makes (i) NOT RUN (route) and leaves (ii) and (iii) judged; no connection makes (ii) FAIL and (iii) NOT RUN (connection).
+- DX5 (criterion 9). New behavior, red on the base, with a control row.
+- DX6 (candidates). Every native result is bound to its candidate (source commit and VSIX SHA-256). First results stay as recorded. If an amendment changes product source after a native check ran, a new candidate is packaged and installed in both profiles, the checks whose path the change touches run again on it, and both rows stay.
+
+Amended criteria (the issue comment holds the exact texts): 1 the three whitespace cases are ready; 2 `surrounding-text`; 5 and 6 the run-level timeout texts for `surrounding-text` and for a bare mismatch; 7 the existing refusal of an after condition that is already true still holds, and the changelog names DX1's after case; 9 an unknown `textDifference` is rejected at once; 10 the hint utility's six texts; 11 the two help texts and no "use exact literals"; 14 control rows for 1, 2, 5, 6, 9, 10, 11; 15 to 17 per DX4 and DX6.
+
+Considered and left out: the declared selector or the text's length in the failure text; ending the wait early for a stable mismatch; a worked example, a declaration preflight tool and a help link in failure texts; normalizing attribute comparisons.
+
+Implementation order (one implementer): T1 page function and schema (DX1) → T2 hint utility and `waitForDom` (DX2) → T3 help (DX3) → T4 harness, tests and controls (DX5) → T5 changelog → T6 native N10 (DX4, DX6).
+
+Review records (private, under the project's gstack state): the report appended to the spec archive (persona, journey, passes, scorecard, tasks T1 to T6, the review table), the task list `tasks-devex-review-20261003-021813.jsonl`, and the outside voice's text under the ignored `artifacts/cycle-0041/reviews/`. The same amendments are posted as a comment on Issue #76. The spec text went to Codex CLI for the quality gate and the outside voice.
+
 ## Attempts and evidence
 
 No observations yet.
@@ -137,7 +171,7 @@ No observations yet.
 
 ## Next action
 
-- Exact next action: `/plan-devex-review` on Issue #76, then K1 in the order above.
+- Exact next action: K1 as amended (T1 to T5 of the plan review), then the candidate package and native N10 (T6).
 - Changed files / branch / active processes: this record, PROJECT_STATE, README and `.coderabbit.yaml` on `codex/cycle-0041-live-first-run-both-chats`; no editor, recorder, dev server or database container is running.
 - State updated in PROJECT_STATE.md: the active cycle, tracking, checkout and the next action.
 - Durable decisions updated: none.
