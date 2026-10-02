@@ -280,9 +280,27 @@ Unit doubles cover transport, ownership, source integrity and persistence withou
 
 ### Saved learning capacity
 
-**Codebook: Saved Study Limit** (`codebook.savedStudyLimit`) controls new study and recording admission for the opened workspace: 64 by default, configurable from 1 to 256 in ordinary editor Settings. Changes apply without restarting. When full, raise this setting before starting a new recording; use **Retry storage / refresh** to retry an existing study checkpoint. From 0.2.21, a configured run started while the study library is already full is refused before the application receives any input: the run ends with `PREREQUISITE_MISSING` and a message that names this setting. A recording that never started cannot reconstruct missing video afterward.
+**Codebook: Saved Study Limit** (`codebook.savedStudyLimit`) controls new study and recording admission for the opened workspace: 64 by default, configurable from 1 to 256 in ordinary editor Settings. Changes apply without restarting. When full, raise this setting or delete a saved study (below) before starting a new recording; use **Retry storage / refresh** to retry an existing study checkpoint. From 0.2.21, a configured run started while the study library is already full is refused before the application receives any input: the run ends with `PREREQUISITE_MISSING`. A recording that never started cannot reconstruct missing video afterward.
 
-Existing studies, recordings and learner decisions are never evicted. Lowering the limit does not hide existing history or prevent updates to a previously admitted study. Invalid values reject new admission with an actionable error. The fixed catalog ceiling is 256; per-recording frame/byte limits remain unchanged. Raising a count limit permits more disk use, not larger individual recordings.
+From 0.2.22 the refusal names what you can do at your limit:
+
+- below 256: `Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, before starting another run. Existing learning was kept.`
+- at 256: `Study library is full at its maximum of 256 saved studies. Delete a saved study from Saved studies in the Study workspace before starting another run. Existing learning was kept.`
+
+The messages for a study that cannot be saved and for a recording that cannot start follow the same pattern (`…then retry storage.`, `Recording library is full…delete a saved study that has a recording…`). A refused run is not saved later either: it leaves no study behind, the Study pane shows `The last run did not start: <message>` without offering **Retry storage / refresh** for it, and its run resource reports its history as unavailable. A limit setting that is not an integer from 1 to 256 also ends a run with `PREREQUISITE_MISSING` and `Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to 256. Existing learning was kept.`
+
+#### Delete a saved study
+
+Only you remove saved material; an agent has no tool for it. In the Study pane, **Saved studies** lists every saved study of the opened workspace, newest first. Choose one and press **Delete saved study…**. A native dialog names the study and asks **Move this saved study to the Trash?**; **Move to Trash** moves its archive, its catalog file and any saved recording to the system Trash (Recycle Bin on Windows), where you can restore them with the operating system. Codebook has no permanent delete. Afterwards the pane shows a line such as `Saved study moved to the Trash. The library now holds 63 of 64 saved studies.`; when the removal made room for a run that was refused, the line ends with `Ask your editor agent to start the run again.`
+
+- When the deleted study was the one shown, the pane shows the next older study (the next newer one when none is older).
+- What you marked as understood is kept. A Repository Wiki link to the removed study shows as unavailable.
+- The button says why it cannot be used: `Choose a saved study to delete.`, `Node test histories cannot be deleted here yet.`, `Stop the run before deleting its study.` or `Choose Overview or Live to leave Recording before deleting this study.`
+- An entry that cannot be opened (an older format, or a study whose catalog file is missing) can still be chosen and deleted.
+- If the Trash refuses, nothing is deleted and the line says so. If only part of the study could be moved, the study stays listed; delete it again to finish.
+- Not covered yet: Node test histories, a recording that has no study, removing several studies at once, and a study whose run is still held by another window of the same workspace.
+
+Existing studies, recordings and learner decisions are never evicted. Lowering the limit does not hide existing history or prevent updates to a previously admitted study. The fixed catalog ceiling is 256; per-recording frame/byte limits remain unchanged. Raising a count limit permits more disk use, not larger individual recordings.
 
 
 ### Recording capacity

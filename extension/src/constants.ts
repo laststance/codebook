@@ -139,6 +139,7 @@ export const PRESENTATION_FOCUS_IDS = [
   'understood',
   'profiles',
   'studies',
+  'delete-study',
 ] as const
 export const PRESENTATION_FOCUS_ACTIONS = [
   'return-wiki',

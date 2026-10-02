@@ -148,8 +148,9 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite" hidden></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
-<section id="node-history"><h2>Node test history</h2><p class="muted">Step through a saved Node test entry selected in Saved studies above. Captured source and native debugger state appear only at verified stops; output and result events clear debugger state. This test has no application video or synchronized application replay.</p><p id="node-history-status" class="status" role="status"></p><p id="node-history-position" class="status" role="status" aria-live="polite"></p><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Node test learning sequence"></div><p class="muted">This learning material describes the saved test journal; it does not create application video or claim synchronized application replay.</p></section><div class="playback-row"><button id="node-history-playback-toggle" class="primary" type="button" data-node-history-playback="play">Play</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><p class="muted">Timeline follows recorded test events; application video is unavailable.</p><pre id="node-history-output" aria-label="Recorded test output through selected event"></pre><div class="row"><button id="node-history-moment-previous" type="button">Previous event</button><button id="node-history-moment-next" type="button">Next event</button><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></section>
-<section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div><label for="studies">Saved studies</label><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select></section>
+<section id="node-history"><h2>Node test history</h2><p class="muted">Step through a saved Node test entry selected in Saved studies. Captured source and native debugger state appear only at verified stops; output and result events clear debugger state. This test has no application video or synchronized application replay.</p><p id="node-history-status" class="status" role="status"></p><p id="node-history-position" class="status" role="status" aria-live="polite"></p><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Node test learning sequence"></div><p class="muted">This learning material describes the saved test journal; it does not create application video or claim synchronized application replay.</p></section><div class="playback-row"><button id="node-history-playback-toggle" class="primary" type="button" data-node-history-playback="play">Play</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><p class="muted">Timeline follows recorded test events; application video is unavailable.</p><pre id="node-history-output" aria-label="Recorded test output through selected event"></pre><div class="row"><button id="node-history-moment-previous" type="button">Previous event</button><button id="node-history-moment-next" type="button">Next event</button><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></section>
+<section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
+<section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden>This saved study cannot be opened. It can still be deleted.</p><div id="delete-study-row" class="row" hidden><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p></section>
 <section id="recording-transport" aria-label="Recorded playback" hidden><div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p><p id="playback-hint" class="muted" role="status" aria-live="polite"></p></section>
 </main>
 <script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'})</script></body></html>`
@@ -164,6 +165,12 @@ function studyClient(
     visited = new Set(api.getState()?.visited ?? [])
   installFocus?.(api)
   let current: StudyViewMessage | undefined
+  // A saved study that cannot be opened is chosen in this pane only; the host hears of it when the learner deletes it.
+  let unopenableChoice: string | undefined
+  // The removal outcome this pane stopped showing because the learner chose an entry the host is not told about.
+  let dismissedRemoval: string | undefined
+  // This pane's own delete request, so only the pane the learner used moves focus when the request is answered.
+  let removalRequest: { studyId: string; started: boolean } | undefined
   let scrubbing = false
   let nodeHistoryScrubbing = false
   let inputRevision = 0
@@ -400,9 +407,35 @@ function studyClient(
       return
     const selectedStudyId = event.target.value
     const entry = current?.studies.find((study) => study.id === selectedStudyId)
+    // A configured study that cannot be opened is only chosen for deletion: nothing is loaded and the host is not asked.
+    if (
+      current &&
+      entry &&
+      entry.format !== 'node-test-history' &&
+      entry.metadata === 'unavailable'
+    ) {
+      unopenableChoice = selectedStudyId
+      dismissedRemoval = JSON.stringify(current.studyRemoval)
+      renderStudyRemoval(current)
+      return
+    }
+    unopenableChoice = undefined
     if (entry?.format === 'node-test-history')
       send({ type: 'node-history', studyId: entry.id })
     else send({ type: 'history', studyId: selectedStudyId })
+  })
+  element('delete-study').addEventListener('click', (event) => {
+    const studies = element('studies')
+    if (
+      !(event.currentTarget instanceof HTMLElement) ||
+      !(studies instanceof HTMLSelectElement) ||
+      // The button stays focusable while it cannot be used, so its reason can be read; it then sends nothing.
+      event.currentTarget.getAttribute('aria-disabled') === 'true' ||
+      !studies.value
+    )
+      return
+    removalRequest = { studyId: studies.value, started: false }
+    send({ type: 'delete-study', studyId: studies.value })
   })
   element('node-history-previous').addEventListener('click', () => {
     if (current?.nodeHistory && (current.nodeHistoryPage ?? 0) > 0)
@@ -783,6 +816,73 @@ function studyClient(
       })
     })
   }
+  /**
+   * Renders the Saved studies section's delete control: whether it can be used and why not, the note for an entry that cannot be opened, the last removal's outcome, and the focus after this pane's own request was answered.
+   * Called on every Study message after the list's value is set, and when the learner chooses an entry that cannot be opened.
+   * @param message - The current Study message.
+   * @example renderStudyRemoval(message)
+   */
+  const renderStudyRemoval = (message: StudyViewMessage): void => {
+    const studies = element('studies'),
+      deleteStudy = element('delete-study')
+    if (!(studies instanceof HTMLSelectElement)) return
+    const chosen = message.studies.find((study) => study.id === studies.value),
+      removal = message.studyRemoval,
+      inProgress =
+        removal?.status === 'confirming' || removal?.status === 'moving'
+    // First match wins; a removal in progress is named by the status line instead of a reason.
+    const reason = inProgress
+      ? ''
+      : !chosen
+        ? options.studyRemovalRefusals.nothingChosen
+        : chosen.format === 'node-test-history'
+          ? options.studyRemovalRefusals.nodeHistory
+          : message.unstoppedStudyId === chosen.id
+            ? options.studyRemovalRefusals.runNotStopped
+            : message.contentTab === 'recording'
+              ? options.studyRemovalRefusals.recordingOpen
+              : ''
+    // With no saved study there is nothing to delete and nothing to explain.
+    element('delete-study-row').hidden = !message.studies.length
+    if (inProgress || reason) deleteStudy.setAttribute('aria-disabled', 'true')
+    else deleteStudy.removeAttribute('aria-disabled')
+    text('delete-study-reason', reason)
+    element('delete-study-reason').hidden = !reason || !message.studies.length
+    element('study-unopenable').hidden = !(
+      chosen &&
+      chosen.format !== 'node-test-history' &&
+      chosen.metadata === 'unavailable'
+    )
+    // A dismissed outcome stays hidden only while the host still reports that same outcome.
+    if (dismissedRemoval !== JSON.stringify(removal))
+      dismissedRemoval = undefined
+    text('delete-study-status', dismissedRemoval ? '' : (removal?.text ?? ''))
+    element('delete-study-status').classList.toggle(
+      'error',
+      removal?.status === 'refused' || removal?.status === 'failed',
+    )
+    if (!removalRequest) return
+    const own = removal?.studyId === removalRequest.studyId
+    if (inProgress) {
+      // Another study's removal holds the single flight, so this pane's request was not taken.
+      if (own) removalRequest.started = true
+      else removalRequest = undefined
+      return
+    }
+    // Answered: the dialog was answered and the move ended, or the host refused at once. Cancel clears the field.
+    if (!removalRequest.started && !(own && removal?.status === 'refused'))
+      return
+    removalRequest = undefined
+    // Focus moves once, only in the pane the learner used and only when it still rests on the button or nowhere.
+    if (
+      document.hasFocus() &&
+      (document.activeElement === deleteStudy ||
+        document.activeElement === document.body)
+    )
+      (own && removal?.status === 'moved' ? studies : deleteStudy).focus({
+        preventScroll: true,
+      })
+  }
   window.addEventListener('message', (event) => {
     const message:
       StudyViewMessage | PresentationPoseCapture | PresentationPoseRestore =
@@ -1132,7 +1232,14 @@ function studyClient(
     element('recording-save-state').hidden = !message.study
     element('evidence-details').hidden = !message.study
     text('evidence-summary', `Evidence status · ${outcomeLabel}`)
-    text('errors', message.errors.join('\n'))
+    // Why the last run did not start comes first; Retry storage / refresh cannot fix it, so it does not count for that button.
+    text(
+      'errors',
+      (message.runRefusal
+        ? [message.runRefusal, ...message.errors]
+        : message.errors
+      ).join('\n'),
+    )
     button('retry')!.hidden =
       !message.errors.length &&
       savedRecording?.contextStatus !== 'failed' &&
@@ -1458,8 +1565,14 @@ function studyClient(
     if (studies instanceof HTMLSelectElement) {
       const previous = studies.value
       // Unloaded configured entries must not borrow the selected article's title through a shared profile ID.
-      replace('studies', message.studies, () =>
-        message.studies.map((study) => {
+      replace('studies', message.studies, () => {
+        if (!message.studies.length) {
+          const placeholder = document.createElement('option')
+          placeholder.value = ''
+          placeholder.textContent = 'No saved study yet'
+          return [placeholder]
+        }
+        return message.studies.map((study) => {
           const option = document.createElement('option')
           option.value = study.id
           const label =
@@ -1471,14 +1584,25 @@ function studyClient(
                     (profile) => profile.id === study.profile,
                   )?.title ?? 'Unknown scenario')
           option.textContent = `${label}${study.format === 'legacy-v1' ? ' (legacy)' : ''} · ${new Date(study.savedAt).toLocaleString()} · ${study.outcome} · ${study.id.slice(-8)}`
-          option.disabled = study.metadata === 'unavailable'
+          // A configured study that cannot be opened can still be chosen for deletion; a Node test history cannot be deleted here.
+          option.disabled =
+            study.metadata === 'unavailable' &&
+            study.format === 'node-test-history'
           return option
-        }),
+        })
+      })
+      // An entry that cannot be opened stays chosen until the learner chooses another or it leaves the list.
+      if (
+        unopenableChoice &&
+        !message.studies.some((study) => study.id === unopenableChoice)
       )
+        unopenableChoice = undefined
       studies.value =
+        unopenableChoice ??
         message.nodeHistory?.header.studyId ??
         model.selection.studyId ??
         previous
+      renderStudyRemoval(message)
       const nodeHistories = message.nodeHistoryCatalog ?? []
       const nodeHistory = message.nodeHistory
       text(
@@ -1486,7 +1610,7 @@ function studyClient(
         nodeHistory
           ? `${nodeHistory.status}${nodeHistory.reason ? ` · ${nodeHistory.reason}` : ''} · ${nodeHistory.entries.length} verified events. Test output is the recorded surface; application video and synchronized application replay are unavailable.`
           : nodeHistories.length
-            ? 'Choose a Node test history from Saved studies above to inspect its verified output and debugger stops.'
+            ? 'Choose a Node test history from Saved studies to inspect its verified output and debugger stops.'
             : 'No Node test history has been saved in this workspace.',
       )
       const nodeHistoryUnderstanding = element(
