@@ -2,7 +2,7 @@
 
 Type: product-increment with a bounded native experiment\
 Status: validating\
-Result: pending\
+Result: demonstrated\
 Delivery: local-only\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/76\
@@ -87,6 +87,14 @@ Order: K1 source (page helper, schema, utility, constants, help) → tests and h
 - The approved PNG was opened with the image viewer again; its SHA-256 is `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`. Observed as in the entry above: region 1 (native Run and Debug, the application above the stopped source, the standard chat with the `/codebook` request, the bottom "Recording explanation · Save learning replay"), region 2 (the same composition with the Learning summary and the transport with "Unrecorded interval"), region 3 (the DeepWiki reader with "Update LLM Wiki" and "Output: project folder") and the shortcut strip. Region 1 stays this cycle's target.
 - Checkout: `codex/cycle-0041-live-first-run-both-chats` at `b21c421`, clean. Gap audit: no product source changed since the audit above (candidate 1 is `a9a9b0b`), so its rows stand.
 - Live state at the entry: VS Code's QA window open on the saved N10-a run's Recording, OBS open with its recording stopped, OrbStack and the database container running, no listener on port 3000, the QA workspace file carrying the two temporary chat settings.
+
+### Entry after compaction, 2026-10-03 (during `/ship`, at its test step)
+
+- The working context was compacted at about 03:35 JST, after the native records were committed (`da89e01`), the local reviews had finished and `/ship` had started its test run. No runtime trial was pending, and no source was edited before the entry below was complete.
+- Read in full again from the files on disk: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE (both pages), DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review.
+- The approved PNG was opened with the image viewer again; its SHA-256 is `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`. Observed as before: region 1 (native Run and Debug with Variables, Watch, Call Stack and Breakpoints, the Create Invoice application above the stopped `actions.ts`, the standard chat with the `/codebook` request, the bottom "Recording explanation · Save learning replay"), region 2 (the same composition with "Replay: Creating an invoice", the recorded-state labels, the Learning summary with its sequence diagram and the transport at 00:42 / 02:18 with "Unrecorded interval"), region 3 (the DeepWiki reader with its chapter list, "Relevant source files", the flow diagram, the Ask composer, "Update LLM Wiki" and "Output: project folder / Change location") and the shortcut strip. Region 1 stays this cycle's target; this delivery changes no element.
+- Checkout: `codex/cycle-0041-live-first-run-both-chats` at `da89e01`, clean, not pushed; `origin/main` at `db8d188`. No pull request open; Issue #76 and Goal Issue #1 open. Gap audit: no product source changed since candidate 1 (`a9a9b0b`), so the audit after the cycle (below) stands.
+- Live state at the entry: no editor, recorder, development server or database container running; the protected hashes as in criterion 18's row.
 
 ## Source-gap audit and selected increment
 
@@ -285,6 +293,17 @@ Inspected frames (`frames/`): the two preflight frames per take (the whole windo
 **Image comparison with region 1 of the approved PNG.** VS Code take 01 at 150 s and Cursor take 02 at 330 s show the board's live composition with real content: the native Run and Debug view on the left (Variables with captured locals, the Call Stack on `authenticate actions.ts`), the application's page stream above the stopped source with one highlighted line, the standard chat on the right with the `/codebook` request and the agent's steps, and the bottom status "Recording explanation · Save learning replay". Differences: the application is Codebook's page stream of the owned browser instead of an embedded browser tab with an address bar; the stopped source is the captured copy in a second editor group in VS Code and in the same column in Cursor; Cursor's chat steps are collapsed ("Explored 3 tools"). Region 2 in Cursor (take 02 at 1,262 s) has the Learning summary in the right panel beside the recorded application, source and native debugger. No element changed in this cycle, so no new comparison of changed UI is owed.
 
 **Limits.** One submission per check and host; the chat models were chosen by the hosts (two different ones in VS Code). The Cursor checks did not use Composer 2.5. No Node test path, no Wiki route, no restart or reconnection check beyond the one warning seen. The cause of the continuation failure is a hypothesis. The after-phase hint and the surrounding-text hint were not produced natively (N10-c's condition held). Development target only: no acceptance credit.
+
+### Local reviews, 2026-10-03
+
+Both ran on `db8d188..da89e01`, before `/ship`. Only a critical finding is fixed (owner, 2026-10-02); none was found, and the findings are carried.
+
+| Review | Coverage | Findings |
+| --- | --- | --- |
+| Local CodeRabbit CLI (committed changes against `main`; no `--use-credits`) | 16 of 16 changed files | 2 minor: (1) this record's header said `Result: pending` while its "Result and decision" says demonstrated (corrected in the delivery records); (2) `utils/configuredDomExpression.ts:44`: the `surrounding-text` relation is also reported when the declared literal is part of another word ("Log in" inside "Log into Acme") |
+| `open-code-review-delegate` (ocr 1.12.11, range mode; the host reviews, so this is not an independent provider) | 7 of 7 eligible files reviewed, 0 skipped; 9 excluded by default and reported apart (5 Markdown, 4 test files) | 0 critical, 0 high, 0 medium, 3 low: (1) `utils/configuredConditionHint.ts:11-15` restates part of the private result schema, so a new relation has three places to change; (2) the same substring case as CodeRabbit's second finding, with the hint then proposing a selector that may not exist; (3) the relation tells an agent one more bit about page text than equality did (accepted in the plan review, DX2: each probe costs a whole run and the literal is the agent's own) |
+
+Private outputs: `artifacts/cycle-0041/reviews/` (`coderabbit-1.txt`, `ocr-preview.json`, `ocr-rules.json`, `ocr-report.md`).
 
 ## Result and decision
 
