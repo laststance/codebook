@@ -65,7 +65,10 @@ import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { configuredConditionHint } from './utils/configuredConditionHint'
 import { configuredDomExpression } from './utils/configuredDomExpression'
 import { configuredStops } from './utils/configuredStops'
+import { continuationReceipts } from './utils/continuationReceipts'
 import { createBundleVerifier } from './utils/createBundleVerifier'
+import { describeCdpPause } from './utils/describeCdpPause'
+import { elapsedMsSince } from './utils/elapsedMsSince'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
@@ -99,6 +102,10 @@ type DebugParticipant = {
   selected?: vscode.DebugSession
   cdp?: Cdp
   stopped?: { event: Protocol.Debugger.PausedEvent; generation?: number }
+  /** Every script this participant announced, by script id, so the journal can name the place of a pause in any of them. */
+  scriptUrls: Map<string, string>
+  /** The journal clock when the last pause was observed; cleared by its resume. */
+  pauseObservedAtMs?: number
   /** A DAP presentation refresh awaiting its matching stop and source check; the CDP target stays paused. */
   refresh?: {
     pause: PauseIdentity
@@ -164,8 +171,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   readonly activeSessions = new Set<string>()
   private readonly sessions = new Map<string, vscode.DebugSession>()
   private readonly participants: Record<Participant, DebugParticipant> = {
-    browser: { gate: new PauseGate(), expectedResumeRequests: 0 },
-    server: { gate: new PauseGate(), expectedResumeRequests: 0 },
+    browser: {
+      gate: new PauseGate(),
+      expectedResumeRequests: 0,
+      scriptUrls: new Map(),
+    },
+    server: {
+      gate: new PauseGate(),
+      expectedResumeRequests: 0,
+      scriptUrls: new Map(),
+    },
   }
   private readonly stops: PreparedStop[] = []
   private readonly activities = new Set<Promise<void>>()
@@ -658,6 +673,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     let observedScripts = 0
     cdp.on('Debugger.scriptParsed', (event) => {
+      // The journal lists only the first scripts; a pause in a later one still needs its URL.
+      participant.scriptUrls.set(event.scriptId, event.url)
       if (observedScripts++ < REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT)
         this.evidence.record('script.observed', {
           participant: name,
@@ -694,12 +711,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent,
   ): void {
     if (this.cleaning) return
+    const participant = this.participants[name]
+    participant.pauseObservedAtMs = this.evidence.elapsedMs()
     this.evidence.record('cdp.pause-observed', {
       participant: name,
       reason: event.reason,
       scriptId: event.callFrames[0]?.location.scriptId,
       hitBreakpointCount: event.hitBreakpoints?.length,
       inputDispatched: this.operation?.inputDispatched ?? false,
+      // Where the pause is and how far a continuation in flight was: a pause the adapter resumes by itself leaves nothing else behind.
+      ...describeCdpPause(event, participant.scriptUrls),
+      stopIndex: this.stopIndex,
+      continuation: continuationReceipts(this.continuation),
     })
     if (event.reason === 'instrumentation' || !this.operation) return
     // js-debug may hit and auto-resume its own browser breakpoint even when this run declares only server stops.
@@ -737,7 +760,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.pendingCdpStop = { participant: name, event }
       return
     }
-    const participant = this.participants[name]
     if (
       this.stops[this.stopIndex]?.participant !== name ||
       participant.stopped ||
@@ -1307,6 +1329,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
     if (this.cleaning) return
+    const participant = this.participants[name],
+      pausedForMs = elapsedMsSince(
+        participant.pauseObservedAtMs,
+        this.evidence.elapsedMs(),
+      )
+    participant.pauseObservedAtMs = undefined
     if (name === 'browser' && this.transientBrowserPause) {
       clearTimeout(this.transientBrowserPause.timer)
       this.transientBrowserPause = undefined
@@ -1319,12 +1347,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       return
     }
-    const participant = this.participants[name],
-      stopped = participant.stopped
+    const stopped = participant.stopped
     participant.stopped = undefined
     this.evidence.record('cdp.resumed', {
       participant: name,
       generation: stopped?.generation,
+      pausedForMs,
     })
     if (!stopped) return
     const continuation = this.continuation

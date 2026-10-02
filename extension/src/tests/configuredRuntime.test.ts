@@ -1104,3 +1104,119 @@ test('a queued next stop that resumes before the prior command response cannot a
   assert.match(run.view().failures.join('\n'), /Queued browser stop resumed/)
   assert.equal(commands.filter((command) => command === 'continue').length, 1)
 })
+
+// Value: protects=the run journal naming where a pause is when the debug adapter makes and resumes it by itself; fails_when=the URL of a late script, the position, the function or the hit breakpoint ids are missing from the journal; why_new=the journal held only a script id and a count, and no URL after the first 200 scripts; seam=none
+test('a pause in a script announced after the first two hundred is journaled with its script URL, position, function and hit breakpoints', async (context) => {
+  // Arrange
+  const { run, announceScript, emitCdpPauseAt } =
+    await configuredRuntimeHarness(context)
+  await run.prepare()
+  for (let index = 0; index < 200; index++)
+    announceScript(
+      `filler-${index}`,
+      `webpack-internal:///(rsc)/./filler-${index}.ts`,
+    )
+  announceScript('late', 'webpack-internal:///(action-browser)/./auth.ts')
+  // Act
+  emitCdpPauseAt({
+    scriptId: 'late',
+    lineNumber: 22,
+    columnNumber: 4,
+    functionName: 'getUser',
+    hitBreakpoints: ['1:22:4:webpack-internal:///(action-browser)/./auth.ts'],
+  })
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    run
+      .view()
+      .events.filter((event) => event.type === 'cdp.pause-observed')
+      .at(-1)?.detail,
+    {
+      participant: 'browser',
+      reason: 'other',
+      scriptId: 'late',
+      hitBreakpointCount: 1,
+      inputDispatched: false,
+      url: 'webpack-internal:///(action-browser)/./auth.ts',
+      line: 23,
+      column: 5,
+      functionName: 'getUser',
+      hitBreakpoints: ['1:22:4:webpack-internal:///(action-browser)/./auth.ts'],
+      stopIndex: 0,
+      continuation: null,
+    },
+  )
+})
+
+// Value: protects=the journal saying how far an owned continuation was when another pause arrived, which decides whether that pause was queued, refused or foreign; fails_when=the receipts are missing or copied from another moment; why_new=the journal did not hold them; seam=none
+test('a pause that arrives during a continuation is journaled with the receipts that continuation already has', async (context) => {
+  // Arrange
+  const { run, holdContinuation, emitCdpPauseAt } =
+    await configuredRuntimeHarness(context)
+  const receipts = holdContinuation()
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+  const continuation = run
+    .continue('browser', first.pause)
+    .catch(() => undefined)
+  await receipts.started
+  receipts.dap()
+  // Act
+  emitCdpPauseAt({
+    scriptId: 'actual',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: 'configured',
+    hitBreakpoints: ['mapped-source'],
+  })
+  receipts.response()
+  await continuation
+  await run.stop()
+  // Assert
+  const detail = run
+    .view()
+    .events.filter((event) => event.type === 'cdp.pause-observed')
+    .at(-1)?.detail
+  assert.deepEqual(
+    detail && typeof detail === 'object' && 'continuation' in detail
+      ? detail.continuation
+      : undefined,
+    { response: false, dap: true, cdp: false },
+  )
+})
+
+// Value: protects=the journal saying how long an observed pause lasted, which tells a pause the adapter resumed at once from one a learner looked at; fails_when=the resume entry has no duration after a pause, or carries one without a pause; why_new=the resume entry held no duration; seam=none
+test('a resume after an observed pause is journaled with how long that pause lasted, and a resume without one is not', async (context) => {
+  // Arrange
+  const { run, emitCdpPause, manualResume } =
+    await configuredRuntimeHarness(context)
+  await run.prepare()
+  const durations = (): unknown[] =>
+    run
+      .view()
+      .events.filter((event) => event.type === 'cdp.resumed')
+      .map((event) =>
+        event.detail &&
+        typeof event.detail === 'object' &&
+        'pausedForMs' in event.detail
+          ? event.detail.pausedForMs
+          : 'absent',
+      )
+  const before = durations().length
+  // Act
+  emitCdpPause()
+  manualResume()
+  manualResume()
+  await run.stop()
+  // Assert
+  const [afterPause, withoutPause] = durations().slice(before)
+  assert.equal(Number.isInteger(afterPause), true)
+  assert.equal(typeof afterPause === 'number' && afterPause >= 0, true)
+  assert.equal(typeof afterPause === 'number' && afterPause < 1000, true)
+  assert.equal(withoutPause, 'absent')
+})
