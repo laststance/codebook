@@ -9072,7 +9072,7 @@ export class StudyWorkspace {
       : undefined
   }
 
-  /** Refuses to open or play a study whose files are on their way to the Trash and may be half moved; called by {@link readSavedArchive}, {@link openRecording} and {@link loadPlayback}. @throws `Study archive is unavailable.` for the moving study. @example this.assertStudyNotMoving(id) */
+  /** Refuses to open, play or save a study whose files are on their way to the Trash and may be half moved; called by {@link readSavedArchive}, {@link openRecording}, {@link loadPlayback} and {@link saveLearningReplay}. @throws `Study archive is unavailable.` for the moving study. @example this.assertStudyNotMoving(id) */
   private assertStudyNotMoving(studyId: string): void {
     if (this.movingStudyId() === studyId)
       throw new Error(STUDY_REMOVAL_REFUSALS.unavailable)
