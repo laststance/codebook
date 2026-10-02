@@ -23,6 +23,16 @@ import type { projectLearningSummary } from '../utils/projectLearningSummary'
 
 import { STUDY_STYLES, STUDY_UI_OPTIONS, STUDY_SHORTCUTS } from './constants'
 
+/**
+ * The learner's last removal of a saved study, from its confirmation dialog to its outcome.
+ * `confirming` and `moving` are in progress; `moved`, `refused` and `failed` carry the sentence shown under the button.
+ */
+export interface StudyRemovalView {
+  status: 'confirming' | 'moving' | 'moved' | 'refused' | 'failed'
+  studyId: string
+  text?: string
+}
+
 export interface StudyViewMessage {
   type: 'study'
   revision: number
@@ -65,6 +75,11 @@ export interface StudyViewMessage {
     elapsedMs?: number
   }[]
   studies: StudyCatalogEntry[]
+  studyRemoval?: StudyRemovalView
+  /** Why the current run never started; shown first in the error region and no reason to offer Retry storage. */
+  runRefusal?: string
+  /** The saved study of this window's run that has not stopped, which cannot be deleted. */
+  unstoppedStudyId?: string
   nodeHistoryCatalog?: Awaited<ReturnType<NodeTestHistoryStore['list']>>
   nodeHistory?: NodeTestHistoryIndex
   nodeHistoryPage?: number

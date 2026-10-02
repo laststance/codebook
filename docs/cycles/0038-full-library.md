@@ -102,6 +102,15 @@ The context was compacted at the end of `/plan-eng-review`: its report was writt
 - Checkout: `codex/cycle-0038-full-library` at `9a7b5d8`, clean, not pushed; no PR open; no trial running. Protected hashes (`0ac38ba2`, `8d6e64c2`, `80ba41bd`, `d578b9e3`, bundled skill `39f03be0`), the dashboard (`1936e41`, only the untracked `.codebook/`), port 3000 (no listener), OBS (not running) and the database container (stopped) are as recorded above.
 - Gap audit: no product source changed since the audit below, so its rows stand.
 
+### Entry after compaction, 2026-10-02 (third in this cycle)
+
+The context was compacted during S3: the reader's removal code and its new test partition were written and uncommitted, and the first run of that partition had 15 failing tests whose output had not been read. S1 (`98915d7`) and S2 (`645cdd1`) were committed and not pushed. The mandatory entry was repeated on the files on disk before any further edit or test run was used as evidence:
+
+- Read in full: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, `docs/plans/bundled-codebook-skill.md` and, for the UI work of S4, `docs/plans/cycle-0029-product-design.md`.
+- The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 with native Run and Debug (Variables `amount: 120`, `amountInCents: 12000`, `status: 'pending'`, Call Stack `createInvoice actions.ts:24`), the Create Invoice application above the stopped `actions.ts`, standard chat with the `/codebook` request and the bottom "Recording explanation · Save learning replay"; region 2 with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", the Learning summary with its sequence diagram, "Before database insert", "I understand this step" and the transport at 00:42 / 02:18 with "Jump back" and "Unrecorded interval"; region 3 with the DeepWiki chapters, the article with "Relevant source files", the flow diagram, the Ask composer, "Update LLM Wiki", "On this page", "Open in VS Code" and "Change location"; the shortcut strip with the "Keyboard shortcuts ?" control and the searchable dialog.
+- Checkout: `codex/cycle-0038-full-library` at `645cdd1` with the uncommitted S3 files, not pushed; no PR open; no trial running. Protected hashes (`0ac38ba2`, `8d6e64c2`, `80ba41bd`, `d578b9e3`, bundled skill `39f03be0`), the dashboard (`1936e41`, only the untracked `.codebook/`), port 3000 (no listener), OBS (not running) and the database container (stopped) are as recorded above.
+- Gap audit: the product source changed only through this cycle's S1 to S3, which are the selected increments of the rows below; no other row's source path was touched, so the audit stands.
+
 ## Source-gap audit and selected increment
 
 Baseline: `main` `b72ecb1`. Goal version 9 and the PNG have not changed since the Cycle 0037 audit, and the only changes since `97f18d4` are CI workflows, test scripts and documents (PR #69): no product source. Every row is accounted for below; rows this cycle does not touch carry forward with their limits in PROJECT_STATE.
@@ -270,7 +279,31 @@ Review records (private, under the project's gstack state): the report `codex-cy
 
 ## Attempts and evidence
 
-No observations yet.
+### Implementation S1 to S3, 2026-10-02 (mechanism level)
+
+Base for "red on base" is `b72ecb1` in a separate worktree; the new test files are copied there, emitted with `scripts/build-fast.mjs` and run with `node --test`.
+
+| Step | Commit | What changed | Tests | On `b72ecb1` |
+| --- | --- | --- | --- | --- |
+| S1 service | `98915d7` | `historyExcluded` on the record (`awaiting-admission`, `refused-at-admission`, `removed-by-learner`); the admission runs in `prepare()` before any awaited read; `beginHistory()` returns nothing for an excluded record; `excludeHistory()`; `state()` reports an excluded record's history and recording context as unavailable with the reason; excluded records are evicted oldest first at the 16-run bound; an invalid limit ends the run as `PREREQUISITE_MISSING` | `studyAdmission.test.ts`, `service.test.ts`, `fullLibraryMessage.test.ts` | 8 behavior tests red, the guards (16 ordinary runs still refuse the 17th, an unreadable library ends as before) green |
+| S2 library | `645cdd1` | `LearningLibrary.removeStudy(id, moveToTrash)` in one locked section (recording directories, the playback file when it names the id, the ledger's two references, sidecars, archives lowest format first); `usage()`; the six "full" texts from `fullLibraryMessage()` | `studyRemoval.test.ts` (11), text assertions in `storageCapacity.test.ts` and `studyAdmission.test.ts` | new API; not applicable |
+| S3 reader | this commit | the `delete-study` message; the removal state (`confirming`, `moving`, `moved`, `refused`, `failed`) in the Study message; the native confirmation; writers and readers of the id held off while it moves; the record excluded only when something moved; the neighbour shown after the shown study left; the room read once; `runRefusal` and `unstoppedStudyId` in the Study message | `studyWorkspaceRemoval.test.ts` (24), `studyRemovalMessages.test.ts` (3) | 23 of 24 red, the guard (a run whose runtime cannot be acquired is still saved as not demonstrated) green. The four E1 tests fail there on the defect itself: "Runtime released; final reader history was not saved: Error: Study library is full…", and Retry storage after the raised limit leaves a third and fourth study file |
+
+Full suite after S3: 1,660 of 1,660, no failure, cancellation or skip (`pnpm --dir extension test`). `typecheck`, `lint` and `format:check` pass.
+
+Decisions made while implementing (recommended option each time; none changes an acceptance criterion's observable result unless stated):
+
+- **Where the admission sits.** ER2 says "the first step of `prepare()`". It runs after the two synchronous prerequisite checks (the workspace assertion and the repository store) and before the first awaited read, so the error precedence of those two checks is unchanged and no checkpoint can run between the start and the admission.
+- **One existing test changed its arrangement.** "a run stopped while its study library admission is being read…" stopped the run in the same turn as the start. The admission now runs in that turn, before the record's preparation promise is assigned, so the stop arrived before the state it tests existed. The test's stop now arrives one event-loop turn later; the product's timing is unchanged.
+- **The ledger is read before the first move.** An unreadable ledger therefore ends a removal as `nothing-moved` instead of leaving a moved recording beside a ledger that still names the study.
+- **An id with no archive is `nothing-moved`** with "Study archive is unavailable.", also when a recording directory of that id exists (study-less recordings are out of scope).
+- **Only the two named references leave the ledger.** `selection.studyId` and `repositoryReturn` are dropped when they name the id; the selection's other fields stay, as Issue #70's text says.
+- **Criterion 12's sub-case "a run that starts while the modal is open makes the confirmed removal of its study refuse" has no reachable arrangement**: a study's own run cannot go from stopped back to running, and another run has another id. The check after the dialog is exercised with Recording opening while the dialog waits (the confirmed removal is then refused with the Recording sentence and nothing moves).
+- **DR19 is not implemented** (texts for a host without removal). It applies only if E2's falsifier occurs in the native trial.
+- **The disabled reasons are computed in the webview** from the same constant (`STUDY_REMOVAL_REFUSALS`) and the host fields `unstoppedStudyId` and the recording tab; the host repeats every check when the request arrives and after the dialog.
+- **A removal that fails in a way nobody planned for clears its state.** The move step runs under a `finally` that drops a leftover `moving` state, so the study is not held unopenable and undeletable for the rest of the session; the error itself goes the reader's ordinary error path. (Added in S3 with its test.)
+- **The tests run the reader in another JavaScript realm** (`loadModule` evaluates `studyWorkspace.js` in a `vm` context), so values taken from the Study message are passed through `structuredClone` before a deep comparison. The first run of the new partition failed 15 tests on that and on choosing a study in a reader that was not open (a closed reader never finishes loading a chosen study; the list only exists in an open pane); neither was a product defect.
+- **The position-save test delays the queued save by 50 ms** before it reaches the storage lock, because a save that already holds its place in the lock queue would land before the removal with or without the reader's wait.
 
 ## Result and decision
 

@@ -80,6 +80,15 @@ export const MAX_STUDY_OBSERVATIONS = 2
 export const MAX_STUDY_LINKS = 5
 export const DEFAULT_SAVED_STUDY_LIMIT = 64
 export const MAX_SAVED_STUDIES = 256
+// Why a saved study cannot be removed right now; the Study pane shows them beside its button and the host repeats them when it refuses.
+export const STUDY_REMOVAL_REFUSALS = {
+  nothingChosen: 'Choose a saved study to delete.',
+  nodeHistory: 'Node test histories cannot be deleted here yet.',
+  runNotStopped: 'Stop the run before deleting its study.',
+  recordingOpen:
+    'Choose Overview or Live to leave Recording before deleting this study.',
+  unavailable: 'Study archive is unavailable.',
+} as const
 export const INVALID_SAVED_STUDY_LIMIT_MESSAGE = `Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to ${MAX_SAVED_STUDIES}. Existing learning was kept.`
 export const MAX_SOURCE_DOCUMENTS = 34
 export const STUDY_REFRESH_INTERVAL_MS = 250
