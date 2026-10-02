@@ -1422,7 +1422,12 @@ test('a checkpoint that waited behind a write during a removal that moved nothin
       ).filter((text) => text.endsWith('later explanation.')),
       ['The first later explanation.', 'The second later explanation.'],
     )
-    assert.equal(harness.reader['pendingArchives'].size, 0)
+    // The writer reports "saved" before it saves the recording context and drops its entry.
+    await waitUntil(
+      () => harness.reader['pendingArchives'].size === 0,
+      'the written checkpoint leaving the queue',
+      2_000,
+    )
   } finally {
     context.mock.restoreAll()
     await harness.close()
