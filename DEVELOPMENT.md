@@ -88,7 +88,7 @@ D040 supersedes D025's VS Code **development** chat fallback: Copilot Chat **Aut
 
 Before changing code, inspect existing source-project implementations and freeze expected observations. Changed assumptions create a new expectation version; preserve earlier attempts. Use IMPLEMENTATION.md's evidence fields. Record source/dirty/environment identities, exact actions, expected/actual outcomes, artifact locations and proof limits.
 
-Follow [the test execution guide](docs/qa/test-execution.md): reuse one current build for focused iterations, parallelize independent test files through process isolation, include every workspace partition, and finish all extension readers before package cleanup. Keep real timeout coverage and public-result waits; measure sharding before adding workers. The existing CI test glob includes every partition automatically.
+Follow [the test execution guide](docs/qa/test-execution.md): reuse one current build for focused iterations, parallelize independent test files through process isolation, include every workspace partition, and finish all extension readers before package cleanup. Keep real timeout coverage and public-result waits; measure sharding before adding workers. The CI Test workflow runs every compiled test file exactly once across its balanced shards, so a new partition needs no workflow change; keep its shard count equal to Codecov's `after_n_builds`.
 
 Keep recordings/sensitive data in ignored or other durable private storage with sanitized manifests. Before team handoff or checkout deletion, make required evidence accessible and update its location/hash. Missing artifacts invalidate the affected proof until revalidated.
 

@@ -49,8 +49,49 @@ Run all four shard indices against the same complete sorted file set and source 
 
 The [Node runner execution model](https://nodejs.org/docs/latest-v24.x/api/test.html#test-runner-execution-model) documents file-level process isolation and concurrency. Keep this default isolation enabled.
 
+## CI shards
+
+The Test workflow runs the product suite once, as twelve jobs of [the shard runner](../../extension/scripts/test-shard.mjs). The owner asked on 2026-10-02 for that job to finish in under one minute. A GitHub-hosted runner of this private repository has two processors, so `node --test` ran the 107 files one after another there (about 370 s of an about 410 s job), and most of that time is tests waiting on real deadlines, which more processors on one runner would not shorten.
+
+| Part | What it does |
+| --- | --- |
+| `extension/test-timings.json` | Recorded duration of every test file, and of every test of a file slower than 8 s. It balances the plan only: a file or test it does not know still runs exactly once. |
+| `scripts/utils/planTestShards.mjs` | Puts the heaviest unit on the lightest of `shards × lanes` lanes. A file slower than 8 s is split into parts of about 8 s, selected by exact test name; its lightest part runs every test the other parts do not name. The plan depends only on the sorted file list and the timings, so every job computes the same one. |
+| `scripts/test-shard.mjs` | Runs one shard's lanes side by side (`--shard 3/12 --lanes 2`), each lane's calls in order. Whole files of a lane share one `node --test --test-concurrency=1` call. It prints the planned and measured time of every call and exits 1 when any call fails. |
+| `scripts/build-fast.mjs` | Emits `dist` with `ts.transpileModule`, without type checking (about 5 s instead of about 18 s on the runner). The package job compares this emit with the compiler's output byte for byte (`--check`); `isolatedModules` in `tsconfig.json` keeps the source compatible. Type errors are reported by the TypeCheck, Build and package jobs. |
+
+```sh
+pnpm --dir extension build:fast                       # unchecked emit, for running compiled tests only
+pnpm --dir extension test:shard --shard 3/12 --lanes 2  # one CI job's share
+pnpm --dir extension test:shard --shard 3/12 --list     # print that share's plan without running it
+pnpm --dir extension test:shard --record                # run every file and rewrite test-timings.json
+```
+
+`pnpm --dir extension test` is unchanged and remains the local command and the gate before a delivery.
+
+Rules that keep the result equal to the unsharded suite:
+
+- **Shard count in three places.** The `matrix.shard` list in `.github/workflows/test.yml`, and both `after_n_builds` values in `codecov.yml` (one coverage upload per shard). Change them together.
+- **A part of a split file ends with its last selected test.** Parts run with `--test-force-exit`, because without it each part waits for the timers its file's tests leave behind. An error raised after a part's last test (a late rejection, a leaked handle) is therefore not reported for the 14 split files on CI. Whole-file calls and the local `pnpm --dir extension test` keep Node's default and still report it.
+- **A split is by top-level test name.** Two tests of one file with the same name stay in the same part. A test added later runs in its file's complement part until the timings are recorded again.
+- **Dependencies come from a cache.** The job restores `extension/node_modules` (key: Node version, lockfile, workspace file, patches) and calls `node` directly; on a miss it runs the shared `prepare` action and saves the cache. A lockfile change therefore costs one slower run.
+- **The package job no longer runs the product suite.** It ran the same 1,610 tests a second time. It keeps its own work: the compaction-hook test, the compiler build, the emit comparison, the 191 package and script tests and the VSIX.
+
+When a shard comes close to 60 s, compare the planned and measured seconds in its log (`▶ … (planned … s)`). Record the timings again if they have drifted; add a shard if the whole suite has grown.
+
+### CI measurement, 2026-10-02
+
+| Run | Test job | Package job |
+| --- | --- | --- |
+| Before, `main` `97f18d4` (runs 36940187080, 36940187082) | 409 s, one job | 481 s |
+| Eight shards planned from local timings (run 36943077817) | 53 to 68 s per job | 119 s |
+| Twelve shards, dependency cache missed (run 36943539690, first attempt) | 47 to 58 s per job | 104 s |
+| Twelve shards, dependency cache restored (same run, second attempt) | 34 to 47 s per job | not run again |
+
+The twelve jobs of the last run reported 1,610 tests in 76 calls with no failed call, the count of the unsharded suite. Of a job's time with the cache restored, about 21 s is the tests, 5 s the emit, 3 s the cache, 3 s the coverage upload and the rest the runner's own setup. The committed timings were taken from the eight-shard run's reports, because durations under two lanes on the runner are longer than on the development Mac (436 s against 343 s in total). GitHub bills a started minute per job: a Test run now counts 12 minutes instead of 7 and a package run 2 instead of 9. These are observations of single runs, not a guarantee.
+
 ## Measurement evidence
 
-On the development Mac (Node 24.21.0, 16 available CPUs), the same 1,368 extension cases took 189.32 s before partitioning and 54.34 s afterward, about 71% less elapsed time. Four read-only shards at concurrency 4 each took 55.55 s; they added no local speed benefit, so CI keeps the existing complete glob. The same 175 package cases took 19.53 s at concurrency 1 and 7.97 s at concurrency 4. All green runs had zero failures/cancellations/skips; the combined shard names exactly match the full suite. These are one-machine observations, not a CI timing guarantee; build time is separate (baseline 4.24 s).
+On the development Mac (Node 24.21.0, 16 available CPUs), the same 1,368 extension cases took 189.32 s before partitioning and 54.34 s afterward, about 71% less elapsed time. Four read-only shards at concurrency 4 each took 55.55 s; they added no local speed benefit, so CI kept the complete glob at that time (the Test workflow has run [balanced shards](#ci-shards) since 2026-10-02). The same 175 package cases took 19.53 s at concurrency 1 and 7.97 s at concurrency 4. All green runs had zero failures/cancellations/skips; the combined shard names exactly match the full suite. These are one-machine observations, not a CI timing guarantee; build time is separate (baseline 4.24 s).
 
 Cycle 0031 records wall time, exact test-name multisets, unchanged assertions, source identity and failed attempts. Private logs: `artifacts/cycle-0031/test-performance/`. Measurements include real timeout/failure-path coverage; production deadlines and assertions are retained. The first partition trial exposed a pre-existing wait race: native presentation finished before the durable reader cursor was published. The test now waits for both public outcomes; a 150 ms persistence delay reproduces the old failure and passes with that wait. See [the cycle](../cycles/0031-replay-transport.md#test-execution-performance-entry-2026-09-30) for evidence and limitations.
