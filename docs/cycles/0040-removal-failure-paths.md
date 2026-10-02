@@ -196,6 +196,7 @@ Commits on `codex/cycle-0040-removal-failure-paths`, in the review's order:
 | T5 | `6eba00b`, `c82345e`, `2b2eef6` | Host: `receivePaneMessage` answers the webview that sent an open request, and the reply waits for a Recording load. Pane: the choice is `{ studyId, requestId }` and the revision and loading heuristics are gone. Harness: replies are recorded per webview. DOM script: an acknowledging stub and three cases (P5). |
 | T6 | `347da74` | README "Delete a saved study" and the JSDoc of `assertStudyNotMoving` and `renderStudyRemoval` (P9). |
 | Criterion 20 | `e68a16e` | One assertion added to Cycle 0039's closed-reader test. |
+| Closed reader (found by N9) | `17cc306` | Reader: a saved study chosen while the Study workspace is closed ends its loading state and is published to the bottom panel (`publishChoiceOfClosedReader`); one red test and one control. See the native finding below. |
 
 Decisions taken during the implementation (recommended options, the owner is away):
 
@@ -259,15 +260,100 @@ Private runner `artifacts/cycle-0040/controls/run-controls.mjs` (the Cycle 0039 
 
 Private logs: `artifacts/cycle-0040/gates/`. One note for later runs: `dead-code` reported an unresolved `../dist/build.json` once, right after a fast emit had replaced a full build; it passed after `pnpm --dir extension build` (the fast emit writes no build metadata).
 
+### Native finding on candidate 1 and its fix (`17cc306`)
+
+Candidate 1 (`artifacts/packages/codebook-0.2.23-c40-removal-failure-paths-20261002.vsix`, source `035597c`, VSIX `8160daf0…`, runtime `a8865d79…`) ran no check to its end. Its first step, in VS Code after a fresh start with the Study workspace closed: a saved study chosen in the bottom panel's Saved studies list was selected by the host (the saved selection changed) but nothing was published and the reader stayed loading; three seconds later the list was back on the earlier study, the panel still showed the earlier study's moments, and no error line was shown (private take `n9-vscode-take-01-closed-reader-finding.mov`).
+
+- Cause, read in the source: `renderSelection` returns early while the reader is not opened, so a choice on a closed reader never rendered or published and `loading` stayed true. On 0.2.23.0 the pane hid this: the list kept the chosen entry and the delete button waited with "Wait for the chosen saved study to open." until the reader was opened. P5's reply released that wait, so the pane fell back to the last published study, as if the choice had been ignored.
+- Decision (recommended option; the owner is away): fix it in this cycle instead of carrying it, because the candidate would otherwise make a visible behavior worse than 0.2.23.0 on the control this cycle is about.
+- Fix: after `showSavedStudy(archive)` the handler calls `publishChoiceOfClosedReader(request)`, which, for a reader that is not opened and a request that is still the latest, ends `loading` and publishes. An opened reader is untouched.
+- Test "a saved study chosen in the bottom panel while the Study workspace is closed is shown there and stops loading" (`studyWorkspaceRemoval.test.ts`, 67 tests now): red on `2b2eef6`, green on `17cc306`; it also expects the reply `{ moments, 1 }`. Control row added (the call removed from `dist`): third run, `controls-3.log`, **32 of 32 held**, `dist` identical before and after (`af600d0a…`).
+- Gates on `17cc306`: `pnpm --dir extension test` 1,745 of 1,745; `test:package` 192 of 192 (after every test process ended); `typecheck`, `lint`, `format:check`, `dead-code`, `dupes`, `health` exit 0 each; `build-fast.mjs --check` 634 files, 0 differences. The webview DOM script was not run again: the fix does not touch the pane.
+
+### Native N9, 2026-10-02 (candidate 2)
+
+Level: development-native, bounded; no Stage 1, Stage 2 or final acceptance credit. Hosts are kept apart: VS Code 1.140.0 (profile "Codebook QA 0029 Clean", Copilot Chat **Auto** in a Local session; the chat showed "Auto routed task to GPT-6.1 Sol"; no credit exhaustion, so the Codex extension was not used) and Cursor 3.23.14 (profile "Codebook QA 0029 Settings"; no chat, clicks only); macOS 26.7; target `/Users/ryotamurakami/repository/nextjs-dashboard` at `1936e41` through the private QA workspace file.
+
+Candidate 2: `artifacts/packages/codebook-0.2.23-c40-removal-failure-paths-2-20261002.vsix`, source `17cc306` (clean checkout), VSIX SHA-256 `c72448616af812bb7643449ea5571caeb3b17f2af67b20d5423802bfc3dadfb4`, runtime `bd985d05fcde4189…`, sourceHash `1ba81016aa8f03ec…`, 29 entries, 0.2.23 metadata, bundled skill `39f03be0`. Installed with each host's `--install-extension --force` while that host was not running.
+
+Expectations: version 1 (`n9-expectations.json`, frozen 23:04:27, `42f526d1…`) was superseded when candidate 1's first step found the closed-reader defect; version 2 (`n9-expectations-v2.json`, frozen 23:16:59 before candidate 2 ran, `5a41771f…`) adds the check N9-e. Recorded decision in version 2 (recommended option): one VS Code study is deleted, not two; the deletion inside N9-d is also N9-b's deletion.
+
+For N9-d the QA workspace file set `codebook.savedStudyLimit` to 67 (the count of the VS Code QA library) and the two `chat.*CopilotHarness` settings to false (the QA fixture of Cycle 0038). Input to the editors was clicks only; the two chat requests went through `code chat -m agent -r "<prompt>"` (prompts `9762f572…` and `f24a3f38…`, each submitted once).
+
+| Check | Expected (frozen) | Actual | Result |
+| --- | --- | --- | --- |
+| N9-e, VS Code (new; closed reader) | A study chosen in the bottom panel while the Study workspace is closed is shown there within a few seconds; the delete button is enabled; the saved selection names it | After a fresh start the panel showed `…ef32bfb7`. `…eb8ff124` chosen: three seconds later the list's value is `…eb8ff124`, the panel shows that study's five observed moments, the delete button is enabled with no reason line, and the saved selection is `…eb8ff124` | PASS |
+| N9-a, VS Code (criterion 31) | A Node test history chosen during Recording is refused in the reader's error lines; the list returns to the shown study without another click; the reason is the Recording sentence, not the waiting sentence; Recording stays at its moment | Recording of `…eb8ff124` at 41.94 s (Captured-auth.ts line 41, Ln 41, Col 24). Node test history `…4b47ab09` chosen in the Learning summary's Saved studies: the red line "Error: Close browser replay before opening a separate Node test history.", the list back on `…eb8ff124`, the reason "Choose Overview or Live to leave Recording before deleting this study.", Recording unchanged at 41.94 s, no Node test history shown | PASS |
+| N9-b, VS Code (criterion 32) | The modal with the identity line; "Saved study moved to the Trash. The library now holds 66 of 67 saved studies. Ask your editor agent to start the run again."; the "did not start" line gone; archive, sidecar, recording and evidence in the Trash; 66 ids; a neighbour shown | `…d25c3d31` chosen (the reader arranged itself for it), "Delete saved study…", the modal "Move this saved study to the Trash?" with "Repository browser study · 10/2/2026, 12:51:59 AM · not-demonstrated · d25c3d31", "Move to Trash": exactly that status line, the "did not start" line gone, the neighbour `…9b07b728` shown with focus on the list. Library 66 ids (removed `8e3a3ace-…_41c69aaa-…5b00d25c3d31`), `recordings.v3` 39 to 38, the run's evidence directory gone from the agent storage; `~/.Trash` holds the recording directory, the sidecar (576 bytes), the archive (189,534 bytes) and the evidence directory | PASS |
+| N9-c, Cursor (criterion 33) | The same modal; the entry leaves the list; "Saved study moved to the Trash. The library now holds 19 of 67 saved studies." with no next-step and no "left in place" sentence; the four items in the Trash; 19 ids; a neighbour shown; Recording of `…57bbb9ae` presents its saved moment | One Learning Outline click opened the reader on `…57bbb9ae`. `…fb8530a2` chosen and shown (Captured-actions.ts line 32), "Delete saved study…", the modal with "Repository browser study · 9/28/2026, 1:57:11 AM · not-demonstrated · fb8530a2", "Move to Trash": exactly that status line, the neighbour `…8cbbecba` shown with focus on the list, the entry gone from the list. Library 19 ids (removed `54594e06-…_08484b54-…760efb8530a2`), `recordings.v3` 19 to 18; `~/.Trash` holds the recording directory, the sidecar (576 bytes), the archive (188,070 bytes) and the evidence directory. `…57bbb9ae` chosen, Recording: "Recorded · 74.59 s", Captured-login-form.tsx at 77:15, native Variables "Local: LoginForm" with `state = 'CredentialsSignin'`, Call Stack "LoginForm app/ui/login-form.tsx 77:15" under "Recorded pause · 74.59 s" | PASS |
+| N9-d, VS Code, Copilot Chat Auto (criterion 34) | Refused on the full library with no operation; after the deletion the same key begins a new, admitted run with four stops in order and a verified after condition; saved, listed and reopened through Recording | Prompt 1 on 67 of 67: run `150cb264-…` stopped with `PREREQUISITE_MISSING` and the "Study library is full…" text; no operation, no observation, no file left in the library or the agent storage. After N9-b's deletion, prompt 2 with the same key `n9-login-unknown-email`: a **new** run `7eeed199-…`, admitted; four observations in the declared order (server `auth.ts` 41:24 for the declared 41:11, server `auth.ts` 23:5, server `app/lib/actions.ts` 36:7, browser `app/ui/login-form.tsx` 23:5), `afterVerified` true, outcome demonstrated, history saved, recording finalized (2,347 frames, 174.8 s); no driver click during the run ("Completed 93 steps in 6m 6s"). "Save learning replay" changed to "Learning saved · Open replay"; pressed, then Next: "Recorded · 38.25 s", Captured-auth.ts line 41 (Ln 41, Col 24), native "Block: authorize" with email and password, Call Stack "Object.authorize". Library 67 ids | PASS |
+| Criterion 35 | The five hashes, the dashboard, the QA workspace file, the Trash and the processes as specified | After the trial: Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`, bundled skill `39f03be0`; the dashboard at `1936e41` with only the untracked `.codebook/`; the QA workspace file byte-identical to its copy from before the trial (`31a3e369…`); no listener on port 3000; no editor, recorder or database container running; `~/.Trash` holds the eight items of the two removals and was not emptied | PASS |
+
+N9-d is the first run in which one start both repeats a refused key and reaches its four stops (in Cycle 0039's N8-a the agent's own text condition ended that run). The agent took the first start's arguments from the earlier chat's log file, so the second start is a faithful repeat, not an independent derivation.
+
+Deleted through the product's button (in the system Trash, recoverable): VS Code QA library `8e3a3ace-ad88-45d5-8b55-a797408f5049_41c69aaa-ec3c-4c26-ace5-5b00d25c3d31`; Cursor QA library `54594e06-3dca-4bc3-ae5a-cd81ff276f32_08484b54-8ad9-4d78-967a-760efb8530a2`. Added: the VS Code study of run `7eeed199-…` (instance `ec2d2571-…`).
+
+#### Evidence (private, under the ignored `artifacts/cycle-0040/native/`)
+
+| File | Content | Identity |
+| --- | --- | --- |
+| `n9-expectations.json`, `n9-expectations-v2.json` | Frozen expectations, versions 1 and 2 | `42f526d1…`, `5a41771f…` |
+| `n9-vscode-actions.log`, `n9-cursor-actions.log` | Every action with its time and observed result | text |
+| `n9-vscode-preflight-01.mov`, `n9-vscode-preflight-02.mov`, `n9-cursor-preflight-01.mov` | Recorder preflights: exact QA window (Method Window Capture, Reset Transform, both mixers muted), a visible change, another application in front | 50.37 s / 1,511 frames `1d5e5031…`; 24.67 s / 740 frames `ec9998aa…`; 39.87 s / 1,196 frames `623e32a0…` |
+| `n9-vscode-take-01-closed-reader-finding.mov` | Candidate 1: the closed-reader finding | 139.07 s, `d23162cf…` |
+| `n9-vscode-main-02.mov` | Candidate 2 in VS Code: N9-e, N9-a, N9-d with N9-b | 892.37 s, 26,772 frames, h264 3456×2168, 30 fps, `a8d72497…` (video-only remux; original `a54a8322…`) |
+| `n9-cursor-main-01.mov` | Candidate 2 in Cursor: N9-c | 116.40 s, 3,492 frames, h264 3456×2168, 30 fps, `f966c5a4…` (video-only remux; original `5cab9d41…`) |
+| `n9-library-*.json` | Library snapshots before and after each removal (ids, file counts, fingerprints) | text |
+| `frames/` | Extracted frames | see below |
+
+Frames opened with the image viewer: the preflight frames of both hosts (the whole window with its four edges, no other application); from the VS Code take a 20-frame contact sheet (every 45 s) and full frames at 132 s (Recording at 41.94 s with the Recording reason under the delete button), 368 s (after the removal: the neighbour's Study pane and the first prompt's refusal in the chat) and 886 s (the saved run reopened at 38.25 s with the native "Block: authorize"); from the Cursor take a 20-frame contact sheet (every 6 s) and full frames at 62 s (the modal), 75 s (the status line and the neighbour) and 112 s (Recording at 74.59 s). The takes are 30 fps full-window captures; no timing claim below a frame is made.
+
+#### Image comparison (approved PNG, opened again in this entry)
+
+This cycle adds no element. The screens the takes show, against region 2 of the board (learning replay): in both hosts Recording keeps the board's composition, native Run and Debug with the recorded state on the left, the recorded application above the captured source in the middle, and the Learning summary on the right. Differences, all carried and none introduced here: the transport sits in the bottom panel's `codebook` view instead of a strip under the editors; the board shows no Saved studies section (DESIGN.md: the library is required although the board emphasizes an opened item), which is where this cycle's control lives; in Cursor the summary is on the right only because of the manual placement kept from Cycle 0031; in VS Code the Application group collapsed to a strip after the panel had been maximized.
+
+#### Limits and observations
+
+- The other criteria (1 to 30, 36 to 41) are proven at mechanism level only: a lock that cannot be released, a neighbour that cannot be arranged, a stale read and a rejected repeat need fault injection and were not produced natively.
+- N9-a's settled state is checked; whether the waiting sentence was visible for a frame is not claimed.
+- One prepared declaration, one target, macOS only; the Trash route on other systems is not verified. Cursor Agent was not used.
+- Observations, not fixed here: (1) the pane offers "Retry storage / refresh" under a control refusal ("Close browser replay…"), which is not a storage failure, and that error line stayed through the later run and its reopened replay; (2) after the run the panel also showed "Existing editor groups were preserved…" (carried); (3) Copilot's "Continue to iterate?" appeared after the run had ended and was not answered; (4) in Cursor two `Captured-actions.ts` tabs stood side by side after the neighbour was shown (captured-source tabs piling up, carried); (5) the removed run's instance directory stays behind as an empty directory in Cursor's agent storage; (6) VS Code's extension folder held a 0.2.22 and a 0.2.23 build of the extension side by side during the trial (not investigated; the running build was candidate 2, checked by its runtime hash).
+- Trial housekeeping: OrbStack had stopped by itself before the trial; this session started it for the second prompt and stopped it again afterwards (no seed, schema or source change; the database container is stopped). While the recorder was being pointed at Cursor, a Git notification vanished under a click on its close button and the click landed in the owner's open `config.toml` editor tab: a selection only, nothing typed, the tab not dirty; one more click cleared the selection. The notification's Never/Always choices were not used.
+
+### Entry after compaction, 2026-10-02 (during native N9, before the Cursor take)
+
+- The working context was compacted after the VS Code half of N9 and the Cursor recorder preflight, before any Codebook control in Cursor was used. No input went to an editor between the compaction and this entry. The mandatory entry was repeated from the files on disk at 23:39 JST: full reads of PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE (both pages), DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review.
+- The approved PNG was opened with the image viewer again (the same four regions as recorded above: live explanation with the bottom "Recording explanation · Save learning replay", learning replay with the recorded-state debugger and the transport at 00:42 / 02:18, the DeepWiki reader with "Update LLM Wiki", and the shortcut strip) and its SHA-256 is `f189ee82…caf2aa`.
+- Checkout: `codex/cycle-0040-removal-failure-paths` at `17cc306`, clean before this record; Node 24.21.0.
+- Protected state: Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`, bundled skill `39f03be0`; the dashboard at `1936e41` with only the untracked `.codebook/`; no listener on port 3000; the database container exited. Running by this trial: Cursor with the QA profile and the QA workspace file, and the private OBS copy with its recording stopped. VS Code is not running.
+- Gap audit: no acceptance row changes against the audit above; the source changed only inside this cycle's scope (T1 to T6 and the closed-reader fix `17cc306`).
+
 ## Result and decision
 
-- Result: pending
+- Result: pending the delivery. The hypothesis held for P1 to P9: every defect criterion's test is red on `97dd1e9` and green on the branch with a control (32 of 32), no stored format, tool shape or timeout changed, and Cycle 0039's two pane cases still pass. Native N9 passed in both hosts on candidate 2 (N9-a to N9-e and criterion 35).
+- Decision: keep. One behavior was added during validation (`17cc306`: a study chosen on a closed reader is published), because P5's reply would otherwise have turned a silent wait into a visible fallback.
+
+### Gap audit after the cycle
+
+| AC | Before | After (source `17cc306`, candidate `c7244861…`) |
+| --- | --- | --- |
+| AC-SAVE | A complete removal could say "Nothing was deleted" and a waiting write put the study back; `partly-moved` after a ledger-only change; a rejected repeat forgot the refusal | Mechanism: the outcome follows the steps, `partly-moved` only with a path in the Trash, a refusal is kept until its repeat is accepted. Native: a removal in each host with archive, sidecar, recording and evidence in the Trash; in VS Code one run that repeats a refused key and reaches its four stops, saved and reopened. Open: the lock and write-back failures are not produced natively; Node test histories and study-less recordings cannot be removed; the cross-window case; the Trash route on other systems |
+| AC-ENTRY | A neighbour that cannot be arranged lost the "moved" line; a discarded or refused open left the reader loading or the delete button waiting; a choice made during the removal could be replaced | Mechanism: all closed with tests and controls. Native: a refused Node test history during Recording releases the button with the right reason (VS Code); a study chosen on a closed reader is shown in the bottom panel (VS Code). Open: "Retry storage / refresh" under a control refusal and the refusal line that stays; the carried layout items |
+| AC-LEARNING | The status line could be false about what a deletion took | The line is true in the cases above; the README section describes the failure lines. Learner decisions untouched |
+| AC-LIVE | Regression row | Unchanged behavior for an accepted repeat; N9-d reached four stops on its first run with no driver click (prepared declaration). Still open: a natural request that passes on its first run, Cursor Agent |
+| AC-REPLAY | Regression row | Recording of the remaining studies presents the saved moment in both hosts |
+| AC-GAPS, AC-SKILL, AC-WIKI, AC-WIKI-UPDATE, AC-SOURCE-LINKS, AC-DESKTOP, AC-SHORTCUTS, AC-REAL-PROJECTS | Carried | Unchanged source paths; the bundled skill is `39f03be0` |
+
+Whole-goal route check: all thirteen rows stay short of integrated acceptance. The next candidates are unchanged: the live path in Cursor Agent and a natural request that passes on its first run (AC-LIVE, G11), then the Cycle 0031 UI items of the replay screen.
 
 ## Handoff
 
+- Review, CI, merge, packaging, installation and publication are separate: at this point only the implementation, its mechanism gates and the bounded native trial exist; the branch is not pushed.
+- Both QA profiles run candidate 2 (pre-release, 0.2.23 metadata).
+
 ## Next action
 
-- Exact next action: build the candidate VSIX from the branch, install it in both QA profiles and run native N9-a to N9-d with their expectations frozen first; then the protected-state check, the local CodeRabbit CLI and `open-code-review-delegate`, and `/ship`.
-- Changed files / branch / active processes: T1 to T6 and their tests are committed on `codex/cycle-0040-removal-failure-paths` (not pushed); no editor, recorder, dev server or database container is running.
-- State updated in PROJECT_STATE.md: the active cycle, the checkout, tracking and the next action.
+- Exact next action: local CodeRabbit CLI (never with credits) and `open-code-review-delegate` on the committed diff against `97dd1e9`; then `/ship` (0.2.24.0) with the red team, the three adversarial passes and the documentation audit dispatched together, CI, the separate exact-HEAD gate and the merge; then close Issue #74 by hand and plan the next cycle through `/spec`.
+- Changed files / branch / active processes: everything is committed on `codex/cycle-0040-removal-failure-paths` (not pushed); no editor, recorder, dev server or database container is running; the base worktree `/tmp/c40-base` (`97dd1e9`) still exists for a red run a review may ask for.
+- State updated in PROJECT_STATE.md: the active cycle, the affected rows and the next action.
 - Durable decisions updated: none.
