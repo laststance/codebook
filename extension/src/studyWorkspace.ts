@@ -130,6 +130,11 @@ import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { projectLearningSummary } from './utils/projectLearningSummary'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
+import {
+  type OpenRequestSettled,
+  type PaneOpenRequest,
+  readOpenRequest,
+} from './utils/readOpenRequest'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
 import { selectStudy } from './utils/selectStudy'
@@ -166,6 +171,8 @@ const actionSchema = z.enum([
 const FIRST_REPLAY_POSITION_WARNING =
   'Wait for the first confirmed replay position before selecting a presentation.'
 const revisionShape = { revision: z.number().int().nonnegative() }
+// The number a Study pane gives its request to open a Saved studies entry; {@link StudyWorkspace.receivePaneMessage} answers it.
+const openRequestShape = { openRequest: z.number().int().positive().optional() }
 const NODE_HISTORY_READER_PAGE_SIZE = 20
 const messageSchema = z.discriminatedUnion('type', [
   webviewFocusReceiptSchema,
@@ -208,6 +215,7 @@ const messageSchema = z.discriminatedUnion('type', [
     type: z.literal('history'),
     ...revisionShape,
     studyId: studyIdSchema,
+    ...openRequestShape,
   }),
   z.strictObject({
     type: z.literal('delete-study'),
@@ -218,6 +226,7 @@ const messageSchema = z.discriminatedUnion('type', [
     type: z.literal('node-history'),
     ...revisionShape,
     studyId: studyIdSchema,
+    ...openRequestShape,
   }),
   z.strictObject({
     type: z.literal('node-history-understanding'),
@@ -476,6 +485,11 @@ export class StudyWorkspace {
   private pendingHistory?: number
   /** The request number of a Node test history that is still opening; a removal's neighbour and a delete request give way to it like to {@link pendingHistory}. */
   private pendingNodeHistory?: number
+  /** Replies owed to the webviews whose open request started a Recording load that is still in flight; {@link flushDeferredOpenReplies} posts them when the load has ended. */
+  private deferredOpenReplies: {
+    webview: Pick<vscode.Webview, 'postMessage'>
+    openRequest: PaneOpenRequest['openRequest']
+  }[] = []
   private rendering: Promise<void> = Promise.resolve()
   private refreshing?: Promise<void>
   private timer?: ReturnType<typeof setInterval>
@@ -4532,6 +4546,7 @@ export class StudyWorkspace {
             this.dropReplayViewport()
             this.app.webview.html = capturedAppHtml(this.message())
           }
+          this.flushDeferredOpenReplies()
           this.publish()
         },
         save: (bundle) =>
@@ -6677,7 +6692,7 @@ export class StudyWorkspace {
       }
     })
     panel.webview.onDidReceiveMessage((message) => {
-      void this.receive(message, 'context', panel).catch((error) => {
+      void this.receivePaneMessage(message, 'context', panel).catch((error) => {
         if (this.contextPanel === panel)
           this.report(this.panelFailureKind(message), error)
       })
@@ -6886,10 +6901,12 @@ export class StudyWorkspace {
               localResourceRoots: [],
             }
             view.webview.onDidReceiveMessage((message) => {
-              void this.receive(message, 'context', view).catch((error) => {
-                if (this.summaryView === view)
-                  this.report(this.panelFailureKind(message), error)
-              })
+              void this.receivePaneMessage(message, 'context', view).catch(
+                (error) => {
+                  if (this.summaryView === view)
+                    this.report(this.panelFailureKind(message), error)
+                },
+              )
             })
             view.onDidDispose(() => {
               if (this.summaryView === view) {
@@ -6929,10 +6946,12 @@ export class StudyWorkspace {
             // Disposed or replaced panel documents cannot send actions into a later replay.
             view.webview.onDidReceiveMessage((message) => {
               if (this.moments === view)
-                void this.receive(message, 'moments', view).catch((error) => {
-                  if (this.moments === view)
-                    this.report(this.panelFailureKind(message), error)
-                })
+                void this.receivePaneMessage(message, 'moments', view).catch(
+                  (error) => {
+                    if (this.moments === view)
+                      this.report(this.panelFailureKind(message), error)
+                  },
+                )
             })
             view.onDidDispose(() => {
               if (this.moments === view) {
@@ -8408,6 +8427,73 @@ export class StudyWorkspace {
     return parsed.success && parsed.data.type === 'playback'
       ? 'replay-control'
       : 'control'
+  }
+
+  /**
+   * Receives a webview's message and, when it asked to open a Saved studies entry by number, answers that webview once the request has ended.
+   * Called by the three webview message listeners instead of {@link receive}, so a request the reader refuses, discards or fails releases the pane that waits for it. The reply goes to the sending webview only: the same Study message reaches several panes, and each counts its own requests.
+   * @param value - The raw webview message.
+   * @param origin - The pane family the webview belongs to.
+   * @param owner - The panel or view whose webview sent the message.
+   * @throws Whatever {@link receive} throws; the reply is posted first.
+   * @example void this.receivePaneMessage(message, 'context', panel).catch((error) => this.report('control', error))
+   */
+  private async receivePaneMessage(
+    value: unknown,
+    origin: 'context' | 'moments',
+    owner: vscode.WebviewPanel | vscode.WebviewView,
+  ): Promise<void> {
+    const request = readOpenRequest(value)
+    // A saved study chosen during Recording opens its recording, whose load outlives the call below.
+    const opensRecording = request?.type === 'history' && this.recordingActive
+    try {
+      await this.receive(value, origin, owner)
+    } finally {
+      if (request)
+        this.settleOpenRequest(
+          owner.webview,
+          request.openRequest,
+          opensRecording,
+        )
+    }
+  }
+
+  /**
+   * Answers a pane's open request, or keeps the answer while the Recording load that request started is still in flight; called by {@link receivePaneMessage}.
+   * @param webview - The webview that sent the request.
+   * @param openRequest - The number the pane gave its request.
+   * @param opensRecording - Whether the request arrived as a saved-study choice during Recording.
+   * @example this.settleOpenRequest(panel.webview, 3, false)
+   */
+  private settleOpenRequest(
+    webview: Pick<vscode.Webview, 'postMessage'>,
+    openRequest: PaneOpenRequest['openRequest'],
+    opensRecording: boolean,
+  ): void {
+    if (opensRecording && this.playback?.state().readiness === 'loading') {
+      this.deferredOpenReplies.push({ webview, openRequest })
+      return
+    }
+    this.postOpenRequestSettled(webview, openRequest)
+  }
+
+  /** Posts the replies kept by {@link settleOpenRequest} once no Recording load is in flight; called by the playback controller's change callback. @example this.flushDeferredOpenReplies() */
+  private flushDeferredOpenReplies(): void {
+    if (this.playback?.state().readiness === 'loading') return
+    for (const reply of this.deferredOpenReplies.splice(0))
+      this.postOpenRequestSettled(reply.webview, reply.openRequest)
+  }
+
+  /** Tells one webview that the open request it numbered has ended; called by {@link settleOpenRequest} and {@link flushDeferredOpenReplies}. @example this.postOpenRequestSettled(panel.webview, 3) */
+  private postOpenRequestSettled(
+    webview: Pick<vscode.Webview, 'postMessage'>,
+    openRequest: PaneOpenRequest['openRequest'],
+  ): void {
+    const reply: OpenRequestSettled = {
+      type: 'open-request-settled',
+      openRequest,
+    }
+    void webview.postMessage(reply)
   }
 
   /** Accepts only bounded named UI messages, rejecting stale controls before dispatch. @example await this.receive(message) */

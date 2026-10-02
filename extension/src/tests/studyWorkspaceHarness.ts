@@ -28,6 +28,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type * as StudyWorkspaceModule from '../studyWorkspace'
 import type { StudyViewMessage } from '../ui/studyHtml'
 import { bookObservationHash } from '../utils/bookObservationHash'
+import type { OpenRequestSettled } from '../utils/readOpenRequest'
 
 import { ControlledRuntime, createHarness } from './helpers'
 import { ControlledConfiguredRuntime } from './utils/configuredServiceHarness'
@@ -405,6 +406,11 @@ export async function workspaceHarness(
   let deferredMovedPanelPlacement: string | undefined,
     asynchronousLayoutReads = false
   const postedMessages: StudyViewMessage[] = []
+  // What a webview receives besides Study messages: the reader's replies to a pane's open requests, with the webview that got each.
+  const openRequestReplies: {
+    webview: 'context' | 'summary' | 'moments'
+    openRequest: number
+  }[] = []
   let heldPresentationMessage:
     { mode?: 'living-book'; wait: Promise<void>; entered(): void } | undefined
   const receivers = new Map<string, (message: unknown) => void>()
@@ -545,6 +551,7 @@ export async function workspaceHarness(
             | StudyViewMessage
             | PresentationPoseCapture
             | PresentationPoseRestore
+            | OpenRequestSettled
             | {
                 type: 'codebook-focus'
                 phase: string
@@ -552,6 +559,13 @@ export async function workspaceHarness(
                 epoch?: string
               },
         ) => {
+          if (message.type === 'open-request-settled') {
+            openRequestReplies.push({
+              webview: 'context',
+              openRequest: message.openRequest,
+            })
+            return true
+          }
           if (message.type === 'capture-presentation-pose') {
             emit({
               ...message,
@@ -1162,7 +1176,14 @@ export async function workspaceHarness(
           },
         }
       },
-      async postMessage(message: StudyViewMessage) {
+      async postMessage(message: StudyViewMessage | OpenRequestSettled) {
+        if (message.type === 'open-request-settled') {
+          openRequestReplies.push({
+            webview: 'summary',
+            openRequest: message.openRequest,
+          })
+          return true
+        }
         postedMessages.push(message)
         if (
           summary.visible &&
@@ -1205,7 +1226,14 @@ export async function workspaceHarness(
         playbackPanelListeners.add(callback)
         return disposable()
       },
-      async postMessage(message: StudyViewMessage) {
+      async postMessage(message: StudyViewMessage | OpenRequestSettled) {
+        if (message.type === 'open-request-settled') {
+          openRequestReplies.push({
+            webview: 'moments',
+            openRequest: message.openRequest,
+          })
+          return true
+        }
         playbackPanelMessages.push(message)
         return true
       },
@@ -1979,6 +2007,8 @@ export async function workspaceHarness(
     changeOutlineCheckbox: (itemId: string, checked: boolean): void =>
       outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
     postedMessages: () => postedMessages,
+    /** Lists the reader's replies to open requests in the order the webviews received them, so a test can assert which pane was answered and when. @example harness.openRequestReplies() // => [{ webview: 'context', openRequest: 3 }] */
+    openRequestReplies: () => openRequestReplies.map((reply) => ({ ...reply })),
     presentationPreferences,
     watchedPatterns,
     viewportEvents,

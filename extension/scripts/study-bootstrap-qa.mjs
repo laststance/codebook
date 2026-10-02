@@ -1697,17 +1697,32 @@ async function check(page, options) {
         JSON.stringify([otherStudy.id, savedRevision]),
   })
 
-  // The host starts loading the chosen entry and then shows the earlier study again: the open failed.
+  /** Reads the number the pane gave its last request to open an entry. */
+  const lastOpenRequest = () =>
+    page.evaluate(
+      () =>
+        window.sent.findLast(
+          (message) =>
+            message.type === 'history' || message.type === 'node-history',
+        )?.openRequest,
+    )
+  /** Answers one open request the way the host does once the request has ended: a reply to this pane only. */
+  const settleOpenRequest = (openRequest) =>
+    publish({ type: 'open-request-settled', openRequest })
+
+  // The host starts loading the chosen entry, shows the earlier study again and answers the request: the open failed.
   await library([shownStudy, otherStudy], shownStudy.id)
   await page.selectOption('#studies', otherStudy.id)
   await republish([shownStudy, otherStudy], shownStudy.id, { loading: true })
   await library([shownStudy, otherStudy], shownStudy.id, {
     errors: ['Error: Study archive is unavailable.'],
   })
+  await settleOpenRequest(await lastOpenRequest())
   const afterFailedOpen = await removalControl()
-  // The host answers with another revision without ever loading: the request was refused as stale.
+  // The host answers with another revision without ever loading, and answers the request: it was refused as stale.
   await page.selectOption('#studies', otherStudy.id)
   await library([shownStudy, otherStudy], shownStudy.id)
+  await settleOpenRequest(await lastOpenRequest())
   const afterRefusedRequest = await removalControl()
   await deleteButton.click()
   const askedForShown = await removalControl()
@@ -1722,6 +1737,64 @@ async function check(page, options) {
       afterRefusedRequest.ariaDisabled === null &&
       JSON.stringify(askedForShown.deletes.at(-1)) ===
         JSON.stringify([shownStudy.id, savedRevision]),
+  })
+
+  // The host refuses the request before it loads anything: the same revision, the earlier study, no loading state.
+  await library([shownStudy, otherStudy, nodeHistory], shownStudy.id)
+  await page.selectOption('#studies', otherStudy.id)
+  const refusedRequest = await lastOpenRequest()
+  await republish([shownStudy, otherStudy, nodeHistory], shownStudy.id)
+  const refusedWithoutReply = await removalControl()
+  // A reply to an earlier request of this pane does not end the wait for the newer one.
+  await settleOpenRequest(refusedRequest - 1)
+  const afterEarlierReply = await removalControl()
+  cases.push({
+    name: 'a chosen saved study the host has not answered stays chosen and the delete button keeps waiting, also after a reply to an earlier request',
+    actual: { refusedRequest, refusedWithoutReply, afterEarlierReply },
+    passed:
+      Number.isInteger(refusedRequest) &&
+      refusedRequest > 1 &&
+      refusedWithoutReply.chosen === otherStudy.id &&
+      refusedWithoutReply.ariaDisabled === 'true' &&
+      refusedWithoutReply.reason ===
+        'Wait for the chosen saved study to open.' &&
+      afterEarlierReply.chosen === otherStudy.id &&
+      afterEarlierReply.ariaDisabled === 'true' &&
+      afterEarlierReply.reason === 'Wait for the chosen saved study to open.',
+  })
+  await settleOpenRequest(refusedRequest)
+  const afterReply = await removalControl()
+  await deleteButton.click()
+  const askedAfterReply = await removalControl()
+  cases.push({
+    name: 'when the host answers a chosen saved study it refused before loading, the list returns to the shown study and the delete button deletes that study',
+    actual: { afterReply, askedAfterReply },
+    passed:
+      afterReply.chosen === shownStudy.id &&
+      afterReply.ariaDisabled === null &&
+      afterReply.reason === null &&
+      JSON.stringify(askedAfterReply.deletes.at(-1)) ===
+        JSON.stringify([shownStudy.id, savedRevision]),
+  })
+
+  // A Node test history the host refuses to open (as it does during Recording) is answered the same way.
+  await page.selectOption('#studies', nodeHistory.id)
+  const nodeRequest = await lastOpenRequest()
+  const whileNodeHistoryWaits = await removalControl()
+  await settleOpenRequest(nodeRequest)
+  const afterNodeReply = await removalControl()
+  cases.push({
+    name: 'when the host answers a chosen Node test history it did not open, the list returns to the shown study and the delete button is offered for it',
+    actual: { nodeRequest, whileNodeHistoryWaits, afterNodeReply },
+    passed:
+      nodeRequest === refusedRequest + 1 &&
+      whileNodeHistoryWaits.chosen === nodeHistory.id &&
+      whileNodeHistoryWaits.ariaDisabled === 'true' &&
+      whileNodeHistoryWaits.reason ===
+        'Wait for the chosen saved study to open.' &&
+      afterNodeReply.chosen === shownStudy.id &&
+      afterNodeReply.ariaDisabled === null &&
+      afterNodeReply.reason === null,
   })
 
   const runRefusal =
