@@ -1658,6 +1658,9 @@ async function check(page, options) {
   await deleteButton.click({ force: true })
   await republish([shownStudy, otherStudy], shownStudy.id, { loading: true })
   const whileHostLoads = await removalControl()
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-opening.png` })
   await deleteButton.click({ force: true })
   const afterPresses = await removalControl()
   await library([shownStudy, otherStudy], otherStudy.id)
