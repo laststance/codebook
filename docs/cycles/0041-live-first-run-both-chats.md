@@ -80,6 +80,14 @@ Order: K1 source (page helper, schema, utility, constants, help) → tests and h
 - Installed candidate in both QA profiles: the Cycle 0040 pre-release build `c7244861` (runtime `bd985d05`, 0.2.23 metadata). 0.2.24.0 itself is not installed.
 - Computer Use: the session's allowlist was empty at 02:10 JST. The owner then asked in chat for the access to be requested up front, and granted all seven applications at 02:10 JST (Visual Studio Code and Cursor at the click tier, Google Chrome at the read tier, Finder, OBS, QuickTime Player and Aqua Voice at the full tier). One screenshot showed the desktop with Terminal in front (not granted, so not shown) and no other blocking window.
 
+### Entry after compaction, 2026-10-03 (during native N10, after N10-a)
+
+- The working context was compacted at about 02:47 JST, after N10-a had finished in VS Code and before N10-c. The recording of N10-a was stopped and preserved first (a recorder control, no product action), and no runtime trial ran before the entry below was complete.
+- Read in full again from the files on disk: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE (both pages), DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review.
+- The approved PNG was opened with the image viewer again; its SHA-256 is `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`. Observed as in the entry above: region 1 (native Run and Debug, the application above the stopped source, the standard chat with the `/codebook` request, the bottom "Recording explanation · Save learning replay"), region 2 (the same composition with the Learning summary and the transport with "Unrecorded interval"), region 3 (the DeepWiki reader with "Update LLM Wiki" and "Output: project folder") and the shortcut strip. Region 1 stays this cycle's target.
+- Checkout: `codex/cycle-0041-live-first-run-both-chats` at `b21c421`, clean. Gap audit: no product source changed since the audit above (candidate 1 is `a9a9b0b`), so its rows stand.
+- Live state at the entry: VS Code's QA window open on the saved N10-a run's Recording, OBS open with its recording stopped, OrbStack and the database container running, no listener on port 3000, the QA workspace file carrying the two temporary chat settings.
+
 ## Source-gap audit and selected increment
 
 Baseline: `main` `db8d188` (0.2.24.0). Goal version 9 and the PNG have not changed since the Cycle 0040 audit, and no product source changed since its delivery. Every row is accounted for below; rows this cycle does not touch carry forward with their limits in PROJECT_STATE.
@@ -215,17 +223,95 @@ Private logs: `artifacts/cycle-0041/gates/`. The package suite ran before the RE
 
 `artifacts/packages/codebook-0.2.24-c41-live-first-run-20261003.vsix`, source `a9a9b0b` (clean checkout), VSIX SHA-256 `1aa69857deb2f20ab1fd3378bc9cb8cacb1f0b8d616bc403fa30e92d826b026c`, sourceHash `818059bb1257aa14…`, 29 entries, 0.2.24 metadata, bundled skill `39f03be0`; `check-package.mjs` passed.
 
+### Native N10, 2026-10-03 (development-native, bounded; no Stage 1 or Stage 2 credit)
+
+Hosts: VS Code 1.140.0, profile "Codebook QA 0029 Clean", Copilot Chat **Auto** in a Local session; Cursor 3.23.14, profile "Codebook QA 0029 Settings", Agent. Target: the designated dashboard at `1936e41` through the private QA workspace file, with its existing database container started for the trial and stopped afterwards (no seed, schema or source change). QA window 3456 × 2168 px (expanded on the built-in display, default zoom, dark theme). Input: `code chat -m agent -r "<prompt>"` in VS Code, Cursor's documented prompt deeplink in Cursor, clicks otherwise; nothing was typed into an editor. The expectations (`n10-expectations.json`, sha256 `5a4d0eb9…`) were frozen at 02:32 JST before the first submission. Candidate 1 is the build above (source `a9a9b0b`, VSIX `1aa69857…`, runtime `d198ea6a…`).
+
+| Check | Host, chat model, candidate | Expected (frozen) | Actual | Result |
+| --- | --- | --- | --- | --- |
+| N10-a (i) explicit invocation | VS Code, Auto routed to GPT-6.1 Sol, candidate 1 | The chat shows the `codebook` skill loaded for `/codebook` | The session loaded `…/laststance.codebook-0.2.24/skills/codebook/SKILL.md` for the `/codebook` request | PASS |
+| N10-a (ii) connection | same | The first Codebook call is `codebook_status` | It is | PASS |
+| N10-a (iii) run | same | The first run of the one submission is admitted, reaches every declared stop (at least two, one server), verifies its after condition, is saved and reopened | One submission, three runs. Run 1 declared four server stops and one browser stop, was admitted, reached `app/lib/actions.ts` 32:5 with a saved explanation after 2 min 38 s, and failed at its first continuation: "Selected server resumed outside its owned continuation". Run 2 failed before input (a browser stop at an unmapped column, with the mapping hints). Run 3 declared one browser stop (`login-form.tsx` 75:13), reached it, verified "Invalid credentials" and was demonstrated. No earlier run's material was read before the first start. One driver click (Copilot's "Continue to iterate?"). Saved from the status bar and reopened through Recording at "Recorded · 28.22 s" with native values (`state` and three more) and the call stack `LoginForm 75:13` | PARTIAL |
+| N10-c prepared `text` condition | VS Code, Auto routed to Claude Opus 5.5, candidate 1 | The agent declares a before `text` condition equal to "Log in" on the login button, and the first run passes its before conditions and sends its click | Declared `{ kind: "text", selector: "form button", equals: "Log in" }` beside a visible condition; both held, and the click was dispatched (the button's markup is `Log in <Icon />`, the text that ended N8-a of Cycle 0039). The run then committed `auth.ts` 42:11 and `actions.ts` 36:7 with explanations and failed when it armed its browser stop: "Declared stop app/ui/login-form.tsx:22 bound at 23:5, not on its declared line" (22:3 is a mapped position that the debugger moves). The agent did not retry, as the prompt told it, and reported the cause | PASS |
+| N10-b (i) explicit invocation | Cursor, Grok 4.7 Extra High Fast, **the Cycle 0040 candidate `c7244861`** (driver error, below) | As N10-a | The deeplink opened "Create chat with prompt", and after one click the prompt was prefilled as plain text in a new Agent tab of the QA window. Cursor did not treat it as a slash invocation; the agent's first tool call read `~/.cursor/skills/codebook/SKILL.md` by itself | NOT RUN (route) |
+| N10-b (ii) connection | same | The first Codebook call is `codebook_status` | No Codebook tool in the agent's tool list. The agent answered that it cannot observe the login through Codebook, wrote no source-only path, and named the recovery ("Codebook: Set Up AI Chat", Customize → MCPs with 16 tools and 6 resources, a new Agent chat) | FAIL |
+| N10-b (iii) run | same | By the policy | No run | NOT RUN (connection) |
+| N10-b2 (i) | Cursor, Grok 4.7 Extra High Fast, candidate 1, after the public setup | As N10-a | As N10-b (i); the deployed skill read is `22f32374…` (1.0.41) | NOT RUN (route) |
+| N10-b2 (ii) | same | As N10-a | The first Codebook call is `codebook_status` | PASS |
+| N10-b2 (iii) | same | As N10-a | One submission, four runs, no tool approval prompt and no driver click after Send. Run 1 declared the same four server stops as VS Code's run 1 and a browser stop, reached `actions.ts` 32:5 with a saved explanation after about 5 min, and failed at its first continuation with the same text and the same events as in VS Code. Run 2 reached `actions.ts` 32:5 and `auth.ts` 41:11 and failed at the second continuation: "Additional server stop invalidated the declared operation". Run 3 reached the same two stops and failed: "Unowned continuation invalidated live pause". Run 4 declared one server stop (`auth.ts` 42:11), reached it, verified "Invalid credentials" and was demonstrated. No earlier material was read before the first start. Saved from the status bar and reopened: Recording at "Recorded · 40.00 s" with the recorded application frame, captured `auth.ts` line 42, native Variables (`user = undefined` and three more), the call stack `Object.authorize auth.ts 42:11` and the Learning summary beside them | PARTIAL |
+| Criterion 18, protected state | both | The five hashes, the dashboard, the QA workspace file and the processes as before | Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, bundled skill `39f03be0`, dashboard `1936e41` with only `.codebook/`, QA workspace file `31a3e369` restored byte for byte, port 3000 free, no editor, recorder or database container. **Changed on purpose:** Cursor's deployed skill `d578b9e3` → `22f32374`, by the product's public setup (below) | PASS with one disclosed change |
+
+N10-b2 is the first live explanation in Cursor Agent: one chat request operated the dashboard, stopped the server in real source with the native debugger beside the application, explained from captured values and continued to the observed result; the explanation was saved and reopened.
+
+**What the two natural requests have in common.** Four of the six failed runs end at a continuation from a server stop. In each, a few milliseconds after the continuation Codebook accepted, the debugger reports another pause or another `continued` that Codebook did not ask for, and the run fails with one of three texts:
+
+| Run | Continued from | Next declared stop | Journal after the owned resume | Failure text |
+| --- | --- | --- | --- | --- |
+| VS Code run 1, Cursor run 1 | `actions.ts` 32:5 (bound 32:11, `await signIn(…)`) | `auth.ts` 23:5 | 6 to 9 ms later a pause in another script with one hit breakpoint, resumed 1 to 3 ms later without a Codebook request | Selected server resumed outside its owned continuation |
+| Cursor run 2 | `auth.ts` 41:11 (bound 41:24, `await getUser(email)`) | a browser stop | 5 ms later a pause in the same script with one hit breakpoint | Additional server stop invalidated the declared operation |
+| Cursor run 3 | the same | none | 9 ms later a second `continued` from the debugger | Unowned continuation invalidated live pause |
+
+Runs that continued from a line without `await` (`auth.ts` 42:11, `actions.ts` 36:7, in N10-c and in Cursor's run 4) did not show it, and the prepared four-stop declarations of Cycles 0036 to 0040 started in `auth.ts` and passed. The journal does not record where the extra pause was, so the cause is not verified. Hypothesis for the next cycle: the debugger pauses once more on its own (a breakpoint it still holds on the awaited line, or its own pause for a script it has not mapped yet) and resumes by itself, and Codebook reads that as someone else's resume.
+
+**Other findings (not changed in this cycle).**
+
+1. A stop declared at a mapped position that the debugger binds on the next line still costs a run (`login-form.tsx` 22:3 → 23:5, as in N5-b of Cycle 0036), and a browser stop at an unmapped column costs one too (it fails before input with the mapping hints).
+2. Cursor needs "Codebook: Set Up AI Chat" once per workspace before its Agent has any Codebook tool, and again after every extension update that changes the install directory: the deployed skill records the extension's publisher path, and the reconnection check compares it with the running extension ("Codebook AI chat did not reconnect: … Cursor skill is missing, changed or outdated. Run Codebook: Set Up AI Chat"). The command is reachable through the Command Palette only.
+3. Before this trial the deployed Cursor skill recorded the publisher of a 0.2.11 directory that no longer exists, so a Wiki update from Cursor would have been pointed at a missing file (AC-WIKI-UPDATE, AC-SKILL).
+4. A prompt prefilled through Cursor's deeplink is not an explicit `/codebook` invocation; both Cursor agents read the deployed skill on their own. G12's explicit invocation in Cursor needs a typed slash command and stays unverified by this route.
+5. In Cursor the first presentation selection answered an unconfirmed layout once and confirmed it on the next call (the N6-a case of Cycle 0037, now seen in Cursor).
+6. Copilot's "Continue to iterate?" needed one driver click in N10-a (a host limit).
+
+**Driver errors and decisions (recommended options; the owner was away until 03:22 JST).**
+
+- Candidate 1 was installed in Cursor without `--profile`. Cursor's QA profile has its own extension registry, so N10-b ran on the Cycle 0040 candidate `c7244861` (runtime `bd985d05…`). The row is bound to that candidate (DX6); its outcome does not depend on K1. The candidate was then installed with `--profile 'Codebook QA 0029 Settings'` and verified in that profile's registry.
+- N10-b stays as recorded. Its cause was read from disk: the Cursor QA workspace had never saved an AI chat setup (earlier Cursor checks used the reader only). The published onboarding step was then run by clicks (View → Command Palette…, scrolling to "Codebook: Set Up AI Chat", no typing), and the same prompt was sent once more as N10-b2. The setup rewrote Cursor's deployed skill (publisher path only; the product kept the old bytes) and registered the MCP bridge (16 tools, 6 resources); Cursor's settings file is unchanged.
+- The continuation failure is not fixed in this cycle. It is a change to pause ownership, which the plan rules send through `/investigate` and `/plan-eng-review`, and the issue names what N10 finds as the next cycle's first candidate.
+- N10-b and N10-b2 ran on the profile's default model (Grok 4.7 Extra High Fast). At 03:22 JST the owner directed in chat that Cursor trials use Composer 2.5, the cheapest model; no further Cursor submission was made in this cycle, and later Cursor trials use it.
+
+**Evidence** (private, under the ignored `artifacts/cycle-0041/native/`; every take is H.264, 3456 × 2168, 30 fps, OBS Window Capture of the exact QA window with Reset Transform and both mixers muted; the listed hashes are of the video-only remux).
+
+| Take | Content | Duration, frames | SHA-256 |
+| --- | --- | --- | --- |
+| `n10-vscode-preflight-01.mov` | Panel tab change, QA window inactive | 40.80 s, 1,224 | `f3e6d148…` |
+| `n10-vscode-main-01.mov` | N10-a with save and reopen | 759.17 s, 22,776 | `7d9760de…` |
+| `n10-vscode-main-02.mov` | N10-c | 337.10 s, 10,114 | `4fe620cc…` |
+| `n10-cursor-preflight-01.mov`, `-02.mov` | Panel tab change, QA window inactive (the second after the window was recreated) | 38.37 s, 1,151; 30.70 s, 921 | `da0da41a…`, `4e831b9a…` |
+| `n10-cursor-main-01.mov` | N10-b and the first setup | 337.33 s, 10,120 | `3510b762…` |
+| `n10-cursor-main-02.mov` | The second setup, N10-b2, save and reopen | 1,281.63 s, 38,449 | `8d87b6ba…` |
+
+Inspected frames (`frames/`): the two preflight frames per take (the whole window with its four corners; the panel on Output, then back on codebook with the recorder in front); VS Code take 01 at 150 s (run 1 paused at `actions.ts` 32 with the page stream, native Call Stack and the chat's tool calls) and 330 s (run 3's captured `login-form.tsx` 75 and the agent's explanation of `state`); VS Code take 02 at 190 s (N10-c paused at `auth.ts` 42 after "Manifest matches. Sending the click once.") and 325 s (the agent's report of its `text` condition); Cursor take 02 at 330 s (run 1 paused at `actions.ts` 32:11 with native Variables and the model label), 1,240 s (the reopened replay at 0.00 s: "Not recorded at this moment" on the source and the call stack) and 1,262 s (the replay at 40.00 s). The action logs (`n10-vscode-actions.log`, `n10-cursor-actions.log`), the chat log and transcript paths, the run identities and the library counts before and after (VS Code 67 → 71 studies, Cursor 19 → 23) are beside the takes.
+
+**Image comparison with region 1 of the approved PNG.** VS Code take 01 at 150 s and Cursor take 02 at 330 s show the board's live composition with real content: the native Run and Debug view on the left (Variables with captured locals, the Call Stack on `authenticate actions.ts`), the application's page stream above the stopped source with one highlighted line, the standard chat on the right with the `/codebook` request and the agent's steps, and the bottom status "Recording explanation · Save learning replay". Differences: the application is Codebook's page stream of the owned browser instead of an embedded browser tab with an address bar; the stopped source is the captured copy in a second editor group in VS Code and in the same column in Cursor; Cursor's chat steps are collapsed ("Explored 3 tools"). Region 2 in Cursor (take 02 at 1,262 s) has the Learning summary in the right panel beside the recorded application, source and native debugger. No element changed in this cycle, so no new comparison of changed UI is owed.
+
+**Limits.** One submission per check and host; the chat models were chosen by the hosts (two different ones in VS Code). The Cursor checks did not use Composer 2.5. No Node test path, no Wiki route, no restart or reconnection check beyond the one warning seen. The cause of the continuation failure is a hypothesis. The after-phase hint and the surrounding-text hint were not produced natively (N10-c's condition held). Development target only: no acceptance credit.
+
 ## Result and decision
 
-- Result: pending
+- Result: demonstrated for K1 (mechanism, and natively in N10-c: the condition that ended N8-a now holds and the click is sent). N10's question is answered: a natural request does **not** pass on its first run today, in either chat (PARTIAL in VS Code on its third run, PARTIAL in Cursor on its fourth), and one cause stops both: a continuation from a server stop on an awaited call.
+- Decision: keep K1 and deliver it. The next cycle's first candidate is the continuation failure, with `/investigate` (a prepared declaration that reproduces it, and a journal entry that records where the extra pause is) and `/plan-eng-review`. After it: the stop that binds on the next line (finding 1), Cursor's setup after an update (findings 2 and 3), then D1 to D5 on the Saved studies control.
+
+## Gap audit after the cycle
+
+| AC | Before | After |
+| --- | --- | --- |
+| AC-LIVE | A natural request had not passed on its first run without an earlier run's manifest; Cursor Agent had never run the live path; an agent's too-strict `text` condition ended an admitted run with no hint | A `text` condition compares with whitespace collapsed and says when the element holds more text (mechanism; N10-c native). VS Code: one submission, three runs, 2 min 38 s to the first saved explanation, one driver click (PARTIAL). Cursor Agent: the first live explanation, one submission, four runs, about 5 min to the first saved explanation, no driver click after Send (PARTIAL). Open: the continuation from a server stop on an awaited call (both hosts), a stop that binds on the next line, an unmapped browser column, a typed `/codebook` in Cursor, Composer 2.5 in Cursor |
+| AC-SKILL | Cursor's deployed skill and connection were verified for a Wiki question only | In VS Code `/codebook` loads the bundled skill and the first call is `codebook_status` (two sessions, two models). In Cursor the agent reads the deployed skill by itself, states a missing connection truthfully with the published recovery, and after "Set Up AI Chat" its first call is `codebook_status`. Open: the setup needed again after every update, the stale publisher path it leaves until then, explicit invocation in Cursor |
+| AC-SAVE | The save and reopen of a live explanation was seen in VS Code only | Also in Cursor: saved from the status bar and reopened; understanding stays unmarked |
+| AC-REPLAY | Recording of a live run's saved stop in Cursor was seen for prepared studies | Cursor presents the saved natural run's stop at 40.00 s with its native values and stack, and "Not recorded at this moment" at 0.00 s |
+| AC-ENTRY | The unconfirmed first selection was seen in VS Code | Seen in Cursor too (finding 5); no change |
+| The other eight rows | — | Not touched; carried forward with their limits |
+
+Whole-goal route check: all thirteen rows stay short of integrated acceptance. The largest blocker of the defining path is now one named defect that both hosts hit on a natural declaration; fixing it is the shortest step toward a first-run pass in both chats (G01, G11). After it, in order: the stop that binds on the next line, Cursor's setup after an update, D1 to D5 on the Saved studies control, the Cycle 0031 UI items of the replay screen.
 
 ## Handoff
 
-- Nothing is delivered yet. The branch holds the records of this cycle's opening.
+- Not delivered yet: the branch holds K1, its tests and these records. Local reviews and `/ship` follow.
+- Both QA profiles run candidate 1 (0.2.24 metadata). Cursor's QA workspace now has a saved AI chat setup, and Cursor's deployed skill is `22f32374…` (publisher path of the 0.2.24 directory); installing another version there needs the setup again.
 
 ## Next action
 
-- Exact next action: K1 as amended (T1 to T5 of the plan review), then the candidate package and native N10 (T6).
-- Changed files / branch / active processes: this record, PROJECT_STATE, README and `.coderabbit.yaml` on `codex/cycle-0041-live-first-run-both-chats`; no editor, recorder, dev server or database container is running.
-- State updated in PROJECT_STATE.md: the active cycle, tracking, checkout and the next action.
+- Exact next action: local CodeRabbit CLI and `open-code-review-delegate` on `db8d188..HEAD`, then `/ship` (0.2.25.0), CI, the separate exact-HEAD gate, the merge in its own step, CI on `main`, Issue #76 closed by hand with the N10 outcomes named, and the next cycle through `/spec`.
+- Changed files / branch / active processes: this record and PROJECT_STATE on `codex/cycle-0041-live-first-run-both-chats`; no editor, recorder, dev server or database container is running.
+- State updated in PROJECT_STATE.md: the active cycle, the AC-LIVE and AC-SKILL rows and the next action.
 - Durable decisions updated: none.
