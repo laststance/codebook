@@ -62,6 +62,7 @@ import {
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
+import { configuredConditionHint } from './utils/configuredConditionHint'
 import { configuredDomExpression } from './utils/configuredDomExpression'
 import { configuredStops } from './utils/configuredStops'
 import { createBundleVerifier } from './utils/createBundleVerifier'
@@ -134,6 +135,8 @@ const domResultSchema = z.object({
         'click-target-disabled',
         'click-target-obscured',
       ]),
+      // The only relation the page reports about a text mismatch; any other value fails the read instead of being dropped.
+      textDifference: z.literal('surrounding-text').optional(),
     })
     .optional(),
 })
@@ -1795,14 +1798,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         conditionIndex === undefined
           ? undefined
           : this.definition.configuration.action[phase][conditionIndex]
-      const attributeHint =
-        reason === 'attribute-mismatch' && failedCondition?.kind === 'attribute'
-          ? failedCondition.attribute === 'value' && phase === 'before'
-            ? ' Before conditions are checked before initialInputs are inserted; choose a condition observable on the fresh page.'
-            : ' An attribute condition compares the entire value; use a CSS class selector to test class membership.'
-          : ''
       throw new Error(
-        `${timeoutMessage}: ${condition} ${reason}.${attributeHint}`,
+        `${timeoutMessage}: ${condition} ${reason}.${configuredConditionHint(phase, failedCondition, lastResult.failure)}`,
       )
     }
   }

@@ -518,6 +518,141 @@ test('DOM configuration compares literal text and attributes and refuses duplica
   })
 })
 
+// Value: protects=a text condition an agent derives from JSX holding on the first run although the element's text carries the whitespace JSX keeps beside a child element; fails_when=the comparison goes back to exact textContent, or collapses only one side; why_new=the exact comparison ended a natural run on the dashboard's "Log in " button (Cycle 0039, N8-a); seam=none
+// Extended by the Cycle 0041 /ship coverage audit with the non-breaking space and tab row.
+// Value: protects=a label written with a non-breaking space or a tab holding against the literal an agent types with plain spaces; fails_when=the collapse is narrowed to spaces and line breaks; why_new=the other rows hold only spaces and one line break; seam=none
+test('a text condition holds when the element’s text and the declared text differ only in whitespace', () => {
+  // Arrange: a button whose JSX text is followed by an icon, a result paragraph with line breaks, a literal declared with a doubled space, and a label written with a non-breaking space and a tab.
+  const textBySelector: Record<string, string> = {
+    '#login': 'Log in ',
+    '#result': '  Invalid\n credentials. ',
+    '#plain': 'Log in',
+    '#nonBreaking': 'Log in\tnow',
+  }
+  const environment = {
+    document: {
+      querySelectorAll: (selector: string) =>
+        selector in textBySelector
+          ? [{ textContent: textBySelector[selector] }]
+          : [],
+    },
+  }
+  const read = (selector: string, equals: string) =>
+    JSON.parse(
+      JSON.stringify(
+        runInNewContext(
+          configuredDomExpression([{ kind: 'text', selector, equals }]),
+          environment,
+        ),
+      ),
+    )
+  // Act
+  const trailingSpace = read('#login', 'Log in')
+  const lineBreaks = read('#result', 'Invalid credentials.')
+  const doubledSpaceInLiteral = read('#plain', 'Log  in')
+  const nonBreakingSpaceAndTab = read('#nonBreaking', 'Log in now')
+  // Assert
+  assert.deepEqual(trailingSpace, { ready: true })
+  assert.deepEqual(lineBreaks, { ready: true })
+  assert.deepEqual(doubledSpaceInLiteral, { ready: true })
+  assert.deepEqual(nonBreakingSpaceAndTab, { ready: true })
+})
+
+// Value: protects=the agent learning that its text is there beside other text, which it can fix with another selector, without the page's text reaching it; fails_when=the relation is not reported, is reported for unrelated text, or the result carries page text; why_new=a text mismatch was reported with no relation; seam=none
+// Extended by the Cycle 0041 /ship coverage audit with the row whose text spans several lines.
+// Value: protects=the beside-other-text fix reaching an agent whose element spreads its text over several JSX lines; fails_when=the relation is judged on the raw text while equality uses the collapsed text; why_new=the first row has single spaces, where raw and collapsed text agree; seam=none
+test('a text condition whose element holds the declared text beside other text reports that relation and no page text', () => {
+  // Arrange
+  const textBySelector: Record<string, string> = {
+    '#beside': 'Log in to Acme',
+    '#besideAcrossLines': 'Welcome.\n  Log   in\n to Acme',
+    '#unrelated': 'Sign up',
+  }
+  const environment = {
+    document: {
+      querySelectorAll: (selector: string) =>
+        selector in textBySelector
+          ? [{ textContent: textBySelector[selector] }]
+          : [],
+    },
+  }
+  const readSerialized = (selector: string) =>
+    JSON.stringify(
+      runInNewContext(
+        configuredDomExpression([{ kind: 'text', selector, equals: 'Log in' }]),
+        environment,
+      ),
+    )
+  // Act
+  const besideOtherText = readSerialized('#beside')
+  const besideOtherTextAcrossLines = readSerialized('#besideAcrossLines')
+  const unrelatedText = readSerialized('#unrelated')
+  // Assert
+  assert.deepEqual(JSON.parse(besideOtherText), {
+    ready: false,
+    failure: {
+      conditionIndex: 0,
+      reason: 'text-mismatch',
+      textDifference: 'surrounding-text',
+    },
+  })
+  assert.equal(besideOtherText.includes('Acme'), false)
+  assert.deepEqual(JSON.parse(besideOtherTextAcrossLines), {
+    ready: false,
+    failure: {
+      conditionIndex: 0,
+      reason: 'text-mismatch',
+      textDifference: 'surrounding-text',
+    },
+  })
+  assert.equal(besideOtherTextAcrossLines.includes('Welcome'), false)
+  assert.deepEqual(JSON.parse(unrelatedText), {
+    ready: false,
+    failure: { conditionIndex: 0, reason: 'text-mismatch' },
+  })
+})
+
+// Added by the Cycle 0041 /ship coverage audit.
+// Value: protects=a declaration without text meaning "the element is empty" and never earning the beside-other-text fix; fails_when=the relation loses its non-empty guard, since every text contains the empty text; why_new=no test declared an empty or whitespace-only literal; seam=none
+test('a text condition that declares no text holds for an element without text and is never reported as text beside other text', () => {
+  // Arrange: an error paragraph rendered empty except for its JSX line break, and a button that has a label.
+  const textBySelector: Record<string, string> = {
+    '#error': '\n  ',
+    '#login': 'Log in',
+  }
+  const environment = {
+    document: {
+      querySelectorAll: (selector: string) =>
+        selector in textBySelector
+          ? [{ textContent: textBySelector[selector] }]
+          : [],
+    },
+  }
+  const read = (selector: string, equals: string) =>
+    JSON.parse(
+      JSON.stringify(
+        runInNewContext(
+          configuredDomExpression([{ kind: 'text', selector, equals }]),
+          environment,
+        ),
+      ),
+    )
+  // Act
+  const emptyLiteralOnEmptyElement = read('#error', '')
+  const emptyLiteralOnLabel = read('#login', '')
+  const whitespaceLiteralOnLabel = read('#login', '  ')
+  // Assert
+  assert.deepEqual(emptyLiteralOnEmptyElement, { ready: true })
+  assert.deepEqual(emptyLiteralOnLabel, {
+    ready: false,
+    failure: { conditionIndex: 0, reason: 'text-mismatch' },
+  })
+  assert.deepEqual(whitespaceLiteralOnLabel, {
+    ready: false,
+    failure: { conditionIndex: 0, reason: 'text-mismatch' },
+  })
+})
+
 test('configured browser checks identify absent condition and click elements separately from duplicates', () => {
   // Arrange
   const environment = {

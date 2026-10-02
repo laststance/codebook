@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { thrownMessage } from '../utils/thrownMessage'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 
@@ -100,6 +101,134 @@ test('an unsatisfied before condition names the failing predicate without clicki
   await run.stop()
   assert.equal(mouse.length, 0)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=the agent reading in the run's failure that its text is on the page beside other text and how to correct a before condition; fails_when=the relation the page reported is dropped on the way to the timeout text, or the fix sentence drifts; why_new=a text mismatch ended a natural run with only "text-mismatch" (Cycle 0039, N8-a); seam=none
+test('a before text condition whose element holds more text ends the run with the rule and the fix, without clicking the application', async (context) => {
+  // Arrange: the declared before condition is a text condition, and the page keeps answering that the element holds the text beside other text.
+  const { run, failBeforeWith, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { before: [{ kind: 'text', selector: 'button', equals: 'Log in' }] },
+  )
+  failBeforeWith({
+    conditionIndex: 0,
+    reason: 'text-mismatch',
+    textDifference: 'surrounding-text',
+  })
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert
+  // The run is loaded in its own module context, so its error is read by shape, not by `instanceof`.
+  assert.equal(
+    thrownMessage(failure),
+    "Timed out waiting for configured before conditions: condition 1 (text) text-mismatch. A text condition compares the element's whole text, child elements included, with whitespace collapsed. Here the element holds the expected text beside other text; use a visible condition, or a selector whose element holds only that text.",
+  )
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=a plain text mismatch telling the agent what a text condition compares; fails_when=the rule sentence is missing from the timeout text; why_new=a text mismatch had no hint; seam=none
+test('a before text condition on other text ends the run with the comparison rule', async (context) => {
+  // Arrange
+  const { run, failBeforeWith, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { before: [{ kind: 'text', selector: 'button', equals: 'Log in' }] },
+  )
+  failBeforeWith({ conditionIndex: 0, reason: 'text-mismatch' })
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert
+  // The run is loaded in its own module context, so its error is read by shape, not by `instanceof`.
+  assert.equal(
+    thrownMessage(failure),
+    "Timed out waiting for configured before conditions: condition 1 (text) text-mismatch. A text condition compares the element's whole text, child elements included, with whitespace collapsed.",
+  )
+  assert.equal(mouse.length, 0)
+})
+
+// Value: protects=a relation the run does not know failing the read at once instead of being dropped and polled for twenty seconds; fails_when=the result schema strips or accepts an unknown textDifference; why_new=the field is new and the base schema dropped unknown keys; seam=none
+test('a text relation the run does not know fails the read at once instead of timing out', async (context) => {
+  // Arrange
+  const { run, failBeforeWith, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { before: [{ kind: 'text', selector: 'button', equals: 'Log in' }] },
+  )
+  failBeforeWith({
+    conditionIndex: 0,
+    reason: 'text-mismatch',
+    textDifference: 'longer',
+  })
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert
+  assert.match(thrownMessage(failure), /textDifference/)
+  assert.doesNotMatch(thrownMessage(failure), /Timed out/)
+  assert.equal(mouse.length, 0)
+})
+
+// Value: protects=the attribute hints reaching the timeout text unchanged after they moved into the hint utility; fails_when=the run stops passing the phase or the declared condition to the utility; why_new=the two sentences had no run-level test; seam=none
+test('a before value attribute condition still ends the run with the before-input sentence, and another attribute with the entire-value sentence', async (context) => {
+  // Arrange
+  const valueRun = await configuredRuntimeHarness(context, undefined, [], {
+    before: [
+      {
+        kind: 'attribute',
+        selector: 'input',
+        attribute: 'value',
+        equals: 'user@example.com',
+      },
+    ],
+  })
+  valueRun.failBeforeWith({ conditionIndex: 0, reason: 'attribute-mismatch' })
+  const classRun = await configuredRuntimeHarness(context, undefined, [], {
+    before: [
+      {
+        kind: 'attribute',
+        selector: 'button',
+        attribute: 'class',
+        equals: 'primary',
+      },
+    ],
+  })
+  classRun.failBeforeWith({ conditionIndex: 0, reason: 'attribute-mismatch' })
+  // Act
+  const valueFailure = await valueRun.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await valueRun.run.stop()
+  const classFailure = await classRun.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await classRun.run.stop()
+  // Assert
+  assert.equal(
+    thrownMessage(valueFailure),
+    'Timed out waiting for configured before conditions: condition 1 (attribute) attribute-mismatch. Before conditions are checked before initialInputs are inserted; choose a condition observable on the fresh page.',
+  )
+  assert.equal(
+    thrownMessage(classFailure),
+    'Timed out waiting for configured before conditions: condition 1 (attribute) attribute-mismatch. An attribute condition compares the entire value; use a CSS class selector to test class membership.',
+  )
 })
 
 test('a real debugger stop before configured input still fails instead of being ignored as browser setup', async (context) => {

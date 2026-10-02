@@ -201,6 +201,87 @@ test('a Vitest listing that outlives its deadline is stopped and reported', asyn
   }
 })
 
+test('cancelling a listing keeps the reason of the run while an exited member of its group is not reaped yet', async (context) => {
+  // Arrange
+  const vitest = await stubVitest(
+    `setTimeout(() => writeFileSync(output, '[]'), 30_000);`,
+  )
+  const cancellation = new AbortController()
+  const kill = process.kill.bind(process)
+  let unreapedProbes = 2
+  // macOS answers EPERM to a probe of a group that holds only exited members their parent has not reaped yet.
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid < 0 && signal === 0 && unreapedProbes > 0) {
+        unreapedProbes -= 1
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      }
+      return kill(pid, signal)
+    },
+  )
+  try {
+    // Act
+    const listing = listVitestTestFiles({
+      node: process.execPath,
+      program: vitest.program,
+      workspace: vitest.directory,
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: cancellation.signal,
+    })
+    setTimeout(() => cancellation.abort(new Error('run cancelled')), 200)
+    // Assert
+    await assert.rejects(listing, /run cancelled/)
+    assert.equal(unreapedProbes, 0)
+  } finally {
+    await rm(vitest.directory, { recursive: true, force: true })
+  }
+})
+
+// Added by the Cycle 0041 /ship coverage audit. Red at 6f245cd: the release reports EPERM from the signal it sends, not only from its probe.
+// Value: protects=a finished listing returning its files while an exited member of its group is not reaped yet; fails_when=the release reports EPERM from the signal it sends to that group instead of waiting; why_new=the test above answers EPERM only to the signal-0 probe; seam=none
+test('a finished listing still returns its files while an exited member of its group is not reaped yet', async (context) => {
+  // Arrange
+  const vitest = await stubVitest(
+    `writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));`,
+  )
+  const kill = process.kill.bind(process)
+  let unreapedAnswers = 2
+  // macOS answers EPERM to every signal sent to a group that holds only exited members their parent has not reaped yet, not only to signal 0.
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid < 0 && unreapedAnswers > 0) {
+        unreapedAnswers -= 1
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      }
+      return kill(pid, signal)
+    },
+  )
+  try {
+    // Act
+    const outcome = await listVitestTestFiles({
+      node: process.execPath,
+      program: vitest.program,
+      workspace: vitest.directory,
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: new AbortController().signal,
+    }).then(
+      (files) => files,
+      (error: unknown) => error,
+    )
+    // Assert
+    assert.deepEqual(outcome, [{ file: '/repo/src/a.test.ts' }])
+    assert.equal(unreapedAnswers, 0)
+  } finally {
+    await rm(vitest.directory, { recursive: true, force: true })
+  }
+})
+
 test('cancelling a listing releases a SIGTERM-resistant launcher and its helper before rejecting', async () => {
   // Arrange
   const vitest = await stubVitest(`

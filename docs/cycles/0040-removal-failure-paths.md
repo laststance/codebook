@@ -1,9 +1,9 @@
 # Cycle 0040 — Removal failure paths: a completed deletion is reported as completed, and a choice that could not open releases the delete button
 
 Type: product-increment\
-Status: validating\
+Status: closed\
 Result: demonstrated\
-Delivery: PR-open\
+Delivery: merged\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/74\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -398,6 +398,13 @@ Still carried from before the delivery: the CodeRabbit finding and OCR findings 
 
 Private records (ignored `artifacts/cycle-0040/reviews/`): `ship-step9-specialists.md`, `ship-step11-claude-adversarial.md`, the two Codex texts; `artifacts/cycle-0040/red/delivery-tests-base.tap` and `criterion5-next-step-base.tap`; the QA report under the ignored `.gstack/qa-reports/`. The branch diff went to OpenAI through the Codex CLI for the two outside passes.
 
+### Entry after compaction, 2026-10-03 (after `/ship`, before the gate and the merge)
+
+- The working context was compacted after `/ship` had opened the pull request and while its CI ran. No file changed between the compaction and this entry. Before the gate, the merge and these closure records, the mandatory entry was repeated from the files on disk at about 01:50 JST: full reads of PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE (both pages), DESIGN, this record (both pages), DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review.
+- The approved PNG was opened with the image viewer again (the same four regions as recorded above: live explanation with the bottom "Recording explanation · Save learning replay", learning replay with the recorded-state debugger and the transport at 00:42 / 02:18, the DeepWiki reader with "Update LLM Wiki", and the shortcut strip) and its SHA-256 is `f189ee82…caf2aa`.
+- Checkout: `codex/cycle-0040-removal-failure-paths` at `496d321`, clean, equal to its remote and to the pull request's head; Node 24.21.0. No editor, recorder, dev server or database container running.
+- Gap audit: no acceptance row changes against the audit below; the product source is that of `17cc306`, and the release commits changed documents and version literals only.
+
 ## Result and decision
 
 - Result: demonstrated at mechanism level for P1 to P9 (criteria 1 to 30 and 36 to 41): every defect criterion's test is red on `97dd1e9` and green on the branch with a control (32 of 32), no stored format, tool shape or timeout changed, and Cycle 0039's two pane cases still pass. Native N9 passed in both hosts on candidate 2 (criteria 31 to 35 and the added check N9-e). The delivery review found further timing overlaps on the same control (D1 to D14), none critical.
@@ -418,13 +425,29 @@ Whole-goal route check: all thirteen rows stay short of integrated acceptance. T
 
 ## Handoff
 
-- Review, CI, merge, packaging, installation and publication are separate: the local reviews and the delivery review are complete without a critical finding; CI, the exact-HEAD gate and the merge follow the pull request; 0.2.24.0 is not packaged for installation or published.
+- Review, CI, merge, packaging, installation and publication are separate: the local reviews and the delivery review are complete without a critical finding; CI passed on the pull request head and on `main`, the exact-HEAD gate passed and the merge ran in its own step (the closure below); 0.2.24.0 is not packaged for installation or published.
 - Both QA profiles run candidate 2 (pre-release, 0.2.23 metadata).
-- Issue #74 stays open through the merge (the pull request links it without a closing keyword) and is closed by hand with the carried findings named.
+- Issue #74 stayed open through the merge (the pull request linked it without a closing keyword) and was closed by hand with the carried findings named.
+
+## Delivery closure, 2026-10-03
+
+- **Pull request.** [PR #75](https://github.com/laststance/codebook/pull/75), "v0.2.24.0 fix: a deletion reports what its steps did, and a choice that could not open releases the delete button", opened ready for review from head `496d321` (18 commits over `97dd1e9`, the first of them Cycle 0039's closure record), its description starting with `@coderabbitai ignore` and linking Issue #74 without a closing reference. No image is attached: the cycle adds no element, and the native recordings stay private.
+- **Documentation audit.** One audit of the delivery (`/document-release` as a subagent, started with the red team and the adversarial passes on the reviewed tree `76c6b9b4`): status current, no file edited, no blocker. The release pass edited documents after it (the README's test count and delivery sentence, the package path, the changelog, the state records); those edits were cross-checked by the driving session and are named in the pull request's documentation section. One of two audit attempts was used.
+- **Release metadata.** `VERSION` 0.2.24.0; `extension/package.json`, `EXTENSION_VERSION`, the package test's expected version and the README's package path 0.2.24; the CHANGELOG entry with nine known limits.
+- **Verification on the release tree before the push.** Against the reviewed tree `76c6b9b4` only documents and the version literals had changed (nine files, tree `21b9bd71`). `pnpm --dir extension test` 1,751 of 1,751; `test:package` 192 of 192; the hook test 4 of 4; `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` exit 0; the build; the emit comparison 634 files without a difference; the two fallow baselines, `test-timings.json` and the bundled skill unchanged.
+- **CI on the head `496d321`.** 22 of 22 check runs passed: Test run 37036444087 in twelve jobs of 37 to 52 s, package 37036444269 (122 s), Build 37036443895, TypeCheck 37036443968, Lint 37036443962, Format 37036443851, Fallow 37036444019, the two Socket Security checks and the two Codecov checks (`codecov/patch`, `codecov/project`).
+- **D14 checked.** `studyWorkspaceRemoval.test.js` ran in Test job 1 of 12, in a call of six files planned at 12.9 s and measured at 23.2 s (112 tests); that job took 52 s on the head and 53 s on `main`, the longest of the twelve and under the one-minute target. `test-timings.json` was not recorded again by this delivery. The next change that adds tests to this file records the timings again, so that the plan can split it.
+- **Gate and merge.** The read-only exact-HEAD gate passed in its own step (local, remote and pull-request head equal; not a draft; mergeable and clean; base `main` not moved; no closing reference; 22 of 22 check runs successful; no review thread; clean working tree); the squash merge ran in a separate step with `--match-head-commit` and produced `db8d188` on `main` at 2026-10-02T16:53:07Z. No Codex cloud step (switched off by the owner). The squash commit's tree equals the head's (`21b9bd71`).
+- **CI on `main` `db8d188`.** 19 of 19 check runs passed: Test run 37036963257 in twelve jobs of 38 to 53 s, package 37036963390 (145 s), Build 37036963488, TypeCheck 37036963504, Lint 37036963459, Format 37036963376, Fallow 37036963343, Socket Security.
+- **Tracking.** Issue #74 stayed open through the merge and was closed by hand at 2026-10-02T16:56:03Z with the criteria that hold at mechanism level only and the carried findings D1 to D14 named. Goal Issue #1 stays open.
+- **Not done by this delivery.** No VSIX of 0.2.24.0 was packaged for installation, nothing was installed or published; both QA profiles still run the pre-release candidate `c7244861` (0.2.23 metadata, runtime `bd985d05`). No Stage 1, Stage 2 or final acceptance credit.
+- **Protected state after the delivery.** Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`, bundled skill `39f03be0`; the dashboard at `1936e41` with only the untracked `.codebook/`; no listener on port 3000; no recorder process; no database container running. The system Trash is empty at the closure. This session did not empty it; after N9 it held the eight items of the two removals. The two studies deleted in N9 can therefore not be restored (Cycle 0039's trial saw Trash entries removed by something else as well).
+- **The base worktree** `/tmp/c40-base` (`97dd1e9`) is left in place: this session does not delete files permanently, and the system clears `/tmp` at a restart. It holds a checkout of `main`'s earlier commit, copied test files and a build; nothing of it is evidence (the red runs' outputs are under the ignored `artifacts/cycle-0040/red/`).
+- **The pre-push credential guard** reported 25 medium findings of the kind "personal or internal" in the pushed diff and did not block; the repository is private. They were not triaged one by one.
 
 ## Next action
 
-- Exact next action: CI on the pull request head (with the Test job times of D14), the separate exact-HEAD gate and the merge in its own step, CI on `main`, then close Issue #74 by hand and plan the next cycle through `/spec`. Its candidates are the live path in Cursor Agent and a natural request that passes on its first run (AC-LIVE, G11), and on this control D1 first.
-- Changed files / branch / active processes: everything is committed on `codex/cycle-0040-removal-failure-paths`; no editor, recorder, dev server or database container is running; the base worktree `/tmp/c40-base` (`97dd1e9`) still exists and is removed at the closure.
-- State updated in PROJECT_STATE.md: the active cycle, the affected rows and the next action.
+- Exact next action: specify the next cycle through `/spec`. Its candidates are the live path in Cursor Agent and a natural request that passes on its first run (AC-LIVE, G11); on the Saved studies control D1 comes first (a study chosen while the next one is being arranged is dropped when that arrangement fails), then D2 to D5.
+- Changed files / branch / active processes: the delivery is on `main` (`db8d188`); these closure records are on `codex/cycle-0040-closure` (records only) and are carried to `main` by the next cycle's branch; no editor, recorder, dev server or database container is running.
+- State updated in PROJECT_STATE.md: the delivered product, tracking and the next action.
 - Durable decisions updated: none.

@@ -1,5 +1,5 @@
 export const API_VERSION = '1.5'
-export const EXTENSION_VERSION = '0.2.24'
+export const EXTENSION_VERSION = '0.2.25'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -519,6 +519,21 @@ export const REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES = 100_000
 export const REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS = 4_194_304
 export const REPOSITORY_BINDING_HINT_EDGE_LINES = 20
 export const REPOSITORY_BINDING_HINT_NEAR_LINES = 40
+/** Appended to every timed-out `text` condition: the comparison rule, which the agent cannot read from the failure reason. Each hint begins with one space because it follows the reason's period. */
+export const TEXT_CONDITION_RULE_HINT =
+  " A text condition compares the element's whole text, child elements included, with whitespace collapsed."
+/** Added for a before `text` condition whose element holds the expected text beside other text; a visible condition is enough when only presence matters. */
+export const TEXT_BESIDE_OTHER_TEXT_BEFORE_HINT =
+  ' Here the element holds the expected text beside other text; use a visible condition, or a selector whose element holds only that text.'
+/** Added for an after `text` condition in the same case; the text check is the result proof, so it stays. */
+export const TEXT_BESIDE_OTHER_TEXT_AFTER_HINT =
+  ' Here the element holds the expected text beside other text; keep the text check and choose a selector whose element holds only that text.'
+/** A before `value` attribute condition is checked before `initialInputs` exist. */
+export const ATTRIBUTE_VALUE_BEFORE_INPUT_HINT =
+  ' Before conditions are checked before initialInputs are inserted; choose a condition observable on the fresh page.'
+/** Every other attribute mismatch: the whole value is compared, which fails for one class among several. */
+export const ATTRIBUTE_ENTIRE_VALUE_HINT =
+  ' An attribute condition compares the entire value; use a CSS class selector to test class membership.'
 export const SOURCE_MAP_VLQ_VALUE_MASK = 31
 export const SOURCE_MAP_VLQ_CONTINUATION_MASK = 32
 export const SOURCE_MAP_VLQ_SHIFT_BITS = 5

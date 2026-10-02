@@ -737,6 +737,32 @@ test('configured help tells an agent that a continuation whose next stop cannot 
   )
 })
 
+// Value: protects=an agent that reads the help once knowing what a text condition compares, in both fields that speak about conditions; fails_when=either sentence drifts, or the old "exact literals" wording comes back and contradicts the new rule; why_new=the help named no rule for whitespace and child text; seam=none
+test('configured help tells an agent that a text condition compares the whole text with whitespace collapsed, and what to declare for a button with an icon', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ inspections: z.string(), initialState: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.inspections.endsWith(
+      " DOM conditions use literals, never patterns, and all conditions must hold: a text condition compares the element's whole text, child elements included, with whitespace collapsed and trimmed on both sides; an attribute condition compares the entire value exactly.",
+    ),
+    true,
+  )
+  assert.doesNotMatch(contract.inspections, /use exact literals/)
+  assert.equal(
+    contract.initialState.includes(
+      ' A visible condition requires nonzero element geometry. A button with an icon or a hidden label often holds more text than its visible label: for a before condition prefer visible unless the text itself matters, and for an after condition keep the text check on a selector whose element holds only that text. A text-mismatch timeout says when the element holds the expected text beside other text, without exposing page text. For class membership,',
+    ),
+    true,
+  )
+})
+
 test('configured help tells an agent that only the learner removes a saved study and that a full library is reported, not repaired', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
