@@ -48,6 +48,7 @@ import { fullLibraryMessage } from './utils/fullLibraryMessage'
 import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStudy'
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
+import { removalAfterLockFailure } from './utils/removalAfterLockFailure'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { thrownMessage } from './utils/thrownMessage'
 import { withoutStudyReferences } from './utils/withoutStudyReferences'
@@ -58,12 +59,12 @@ export type StudyMover = (path: string) => Promise<void>
 
 /**
  * What a removal changed on disk.
- * - `moved`: every file of the study is in the system Trash.
- * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes.
- * - `partly-moved`: a step failed after at least one path went to the Trash, or the ledger could not be written back; the study is still listed and a second removal finishes it.
+ * - `moved`: every file of the study is in the system Trash; `unreleasedLock` names the failure when the storage lock could not be released afterwards.
+ * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes, or the cause says that it could not be written back.
+ * - `partly-moved`: a step failed after at least one path went to the Trash; the study is still listed and a second removal finishes it.
  */
 export type StudyRemoval =
-  | { outcome: 'moved' }
+  | { outcome: 'moved'; unreleasedLock?: string }
   | { outcome: 'nothing-moved' | 'partly-moved'; cause: string }
 
 /** What {@link LearningLibrary.removeStudy} has changed so far, read when a step fails to tell `nothing-moved` from `partly-moved`. @example const changes: StudyRemovalChanges = { movedPathCount: 0 } */
@@ -408,7 +409,7 @@ export class LearningLibrary {
    * @param id - The saved study to remove.
    * @param moveToTrash - Moves one path to the system Trash.
    * @param evidenceDirectory - The directory that holds the raw evidence of the study's run; omitted when it must stay in place.
-   * @returns What changed on disk; an expected failure, including a lock held by another writer, is a result and not a rejection.
+   * @returns What changed on disk; an expected failure, including a lock held by another writer or one that cannot be released afterwards, is a result and not a rejection.
    * @throws When `id` is not a study identity.
    * @example
    * await library.removeStudy(study.id, moveToTrash) // => { outcome: 'moved' }
@@ -420,6 +421,8 @@ export class LearningLibrary {
     evidenceDirectory?: string,
   ): Promise<StudyRemoval> {
     const identity = studyIdSchema.parse(id)
+    // The lock call also rejects when its release fails after the steps ran; what they settled then decides the outcome.
+    let settled: StudyRemoval | undefined
     return this.locked(async (): Promise<StudyRemoval> => {
       // Lowest format first: the highest archive is the last move, so the study is listed until then.
       const archives = await this.existingPaths(
@@ -459,11 +462,11 @@ export class LearningLibrary {
         ...sidecars.map(trash),
         ...archives.map(trash),
       ]
-      return this.runRemovalSteps(steps, changes)
-    }).catch((error): StudyRemoval => ({
-      outcome: 'nothing-moved',
-      cause: thrownMessage(error),
-    }))
+      settled = await this.runRemovalSteps(steps, changes)
+      return settled
+    }).catch((error): StudyRemoval =>
+      removalAfterLockFailure(settled, thrownMessage(error)),
+    )
   }
 
   /**
@@ -521,8 +524,7 @@ export class LearningLibrary {
    * @param changes - What the removal changed before the failure.
    * @returns
    * - `partly-moved` when at least one path went to the Trash
-   * - `nothing-moved` when no path moved; a rewritten ledger is written back to its bytes first
-   * - `partly-moved` naming both failures when that write-back fails
+   * - `nothing-moved` when no path moved; a rewritten ledger is written back to its bytes first, and the cause names both failures when that write-back fails
    * @example await this.failedRemoval('Trash refused a.study.v3.json', { movedPathCount: 0 }) // => { outcome: 'nothing-moved', cause: 'Trash refused a.study.v3.json' }
    */
   private async failedRemoval(
@@ -539,8 +541,9 @@ export class LearningLibrary {
       )
       return { outcome: 'nothing-moved', cause }
     } catch (error) {
+      // No file of the study left the library, so the study is whole; only the ledger lost its two references to it.
       return {
-        outcome: 'partly-moved',
+        outcome: 'nothing-moved',
         cause: `${cause}; the learner ledger could not be written back: ${thrownMessage(error)}`,
       }
     }

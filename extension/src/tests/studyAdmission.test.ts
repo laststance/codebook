@@ -548,6 +548,171 @@ test('a start that reuses the key of a refused run with other arguments begins a
   assert.equal(started.service.records.size, 1)
 })
 
+// Value: protects=a repeated start that is rejected for a live run leaves the refused run where it was; fails_when=the refused record is forgotten before the guards, so a rejected repeat leaves neither the old receipt nor a new run; why_new=the existing repeats are all accepted; seam=none
+test('a repeat of a refused start that is rejected because another run is live keeps the refused run, and begins a new run once that run has stopped', async (context) => {
+  // Arrange: a run refused under the key "admission"; the limit is raised and another run is admitted and still live.
+  let raiseLimit = (): void => {}
+  const started = await startRunWithStorage(
+    context,
+    1,
+    'study',
+    ({ changeLimitSetting }) => {
+      raiseLimit = (): void => changeLimitSetting(3)
+    },
+  )
+  await waitUntil(() => started.record.stopped, 'the end of the refused run')
+  raiseLimit()
+  const live = started.service.start({
+    instanceId: started.service.instanceId,
+    profile: 'repository-browser',
+    key: 'live',
+    configuration: started.harness.definition.configuration,
+  })
+  await started.service.record(live).preparation
+  const repeat = {
+    instanceId: started.service.instanceId,
+    profile: 'repository-browser' as const,
+    key: 'admission',
+    configuration: started.harness.definition.configuration,
+  }
+  // Act
+  let rejection: unknown
+  try {
+    started.service.start(repeat)
+  } catch (error) {
+    rejection = error
+  }
+  const retainedAfterRejection = started.service.records.has(started.record.id)
+  const refusedReceiptStillRead =
+    started.service.record(started.receipt).id === started.record.id
+  await started.service.stop(live)
+  const accepted = started.service.start(repeat)
+  await started.service.record(accepted).preparation
+  // Assert
+  assert.equal(rejection instanceof StudyError && rejection.code, 'BUSY')
+  assert.equal(retainedAfterRejection, true)
+  assert.equal(refusedReceiptStillRead, true)
+  assert.notEqual(accepted.runId, started.receipt.runId)
+  assert.equal(started.service.records.has(started.record.id), false)
+  assert.equal(started.service.record(accepted).error, undefined)
+})
+
+// Value: protects=a repeated start refused while the reader changes its presentation leaves the refused run where it was; fails_when=the refused record is forgotten before the presentation guard; why_new=no start test had a presentation controller that rejects; seam=the service's presentation controller, set as the extension sets it
+test('a repeat of a refused start that is rejected while a presentation change is pending keeps the refused run', async (context) => {
+  // Arrange: a run refused under the key "admission"; the reader then reports a pending presentation change.
+  const started = await startRunWithStorage(context, 1, 'study')
+  await waitUntil(() => started.record.stopped, 'the end of the refused run')
+  const pending = (): never => {
+    throw new StudyError(
+      'PRESENTATION_UNAVAILABLE',
+      'A presentation change or reader close is pending. Read its state before another control.',
+    )
+  }
+  started.service.presentationController = {
+    readPresentationState: pending,
+    changePresentation: pending,
+    returnToCurrent: pending,
+    assertPresentationIdle: pending,
+    nodeHistoryLearningMaterialSaved: pending,
+  }
+  // Act
+  let rejection: unknown
+  try {
+    started.service.start({
+      instanceId: started.service.instanceId,
+      profile: 'repository-browser',
+      key: 'admission',
+      configuration: started.harness.definition.configuration,
+    })
+  } catch (error) {
+    rejection = error
+  }
+  // Assert
+  assert.equal(
+    rejection instanceof StudyError && rejection.code,
+    'PRESENTATION_UNAVAILABLE',
+  )
+  assert.equal(started.service.records.has(started.record.id), true)
+  assert.equal(
+    started.service.record(started.receipt).error?.code,
+    'PREREQUISITE_MISSING',
+  )
+})
+
+// Value: protects=a repeated start with a profile the service does not know leaves the refused run where it was; fails_when=the refused record is forgotten before the profile guard; why_new=the existing repeats use a supported profile; seam=none
+test('a repeat of a refused start that names an unsupported profile is rejected and keeps the refused run', async (context) => {
+  // Arrange
+  const started = await startRunWithStorage(context, 1, 'study')
+  await waitUntil(() => started.record.stopped, 'the end of the refused run')
+  // Act
+  let rejection: unknown
+  try {
+    started.service.start({
+      instanceId: started.service.instanceId,
+      profile: 'unknown-profile',
+      key: 'admission',
+      configuration: started.harness.definition.configuration,
+    })
+  } catch (error) {
+    rejection = error
+  }
+  // Assert
+  assert.equal(
+    rejection instanceof StudyError && rejection.code,
+    'UNSUPPORTED_PROFILE',
+  )
+  assert.equal(started.service.records.has(started.record.id), true)
+  assert.equal(
+    started.service.record(started.receipt).error?.code,
+    'PREREQUISITE_MISSING',
+  )
+})
+
+// Value: protects=a repeated start whose arguments do not parse leaves the refused run where it was; fails_when=the refused record is forgotten before the arguments are checked; why_new=the existing repeats pass valid arguments; seam=none
+test('a repeat of a refused start whose arguments do not match the profile is rejected and keeps the refused run', async (context) => {
+  // Arrange
+  const started = await startRunWithStorage(context, 1, 'study')
+  await waitUntil(() => started.record.stopped, 'the end of the refused run')
+  // Act: the same key and profile without a configuration.
+  let rejection: unknown
+  try {
+    started.service.start({
+      instanceId: started.service.instanceId,
+      profile: 'repository-browser',
+      key: 'admission',
+    })
+  } catch (error) {
+    rejection = error
+  }
+  // Assert: a refused run's key is free, so the answer is the arguments' own error and not a conflict.
+  assert.equal(
+    rejection instanceof StudyError && rejection.code,
+    'INVALID_CONFIGURATION',
+  )
+  assert.equal(started.service.records.has(started.record.id), true)
+  assert.equal(
+    started.service.record(started.receipt).error?.code,
+    'PREREQUISITE_MISSING',
+  )
+})
+
+// Value: protects=repeating the newest refused start with every retained slot taken uses that refusal's own slot; fails_when=the repeat evicts the oldest run instead, or is refused for the bound; why_new=the repeat and the bound were only tested apart; seam=none
+test("a repeat of the newest refused start with sixteen runs retained takes that run's slot and keeps the oldest run", async (context) => {
+  // Arrange: sixteen refused runs on a full library; the last one has the key "run-16".
+  const started = await startRunWithStorage(context, 1, 'study')
+  await waitUntil(() => started.record.stopped, 'the end of the first run')
+  let sixteenth = { record: started.record }
+  for (let run = 2; run <= 16; run++)
+    sixteenth = await startEndedRun(started, `run-${run}`)
+  // Act
+  const repeated = await startEndedRun(started, 'run-16')
+  // Assert
+  assert.notEqual(repeated.record.id, sixteenth.record.id)
+  assert.equal(started.service.records.size, 16)
+  assert.equal(started.service.records.has(sixteenth.record.id), false)
+  assert.equal(started.service.records.has(started.record.id), true)
+})
+
 // Value: protects=a start repeated because its response was lost still returns the one run while that run is being refused; fails_when=a refused run is forgotten before it has ended, so two runs exist for one key during cleanup, or a start still waiting for its admission is restarted; why_new=forgetting a refused run on a repeated start is new; seam=a held source reveal keeps the refused run from ending
 test('a start repeated while its run awaits the admission, and while the refused run is still ending, returns the same receipt', async (context) => {
   // Arrange: the repeated start arrives during the admission read; a held reveal keeps the refused run stopping.
