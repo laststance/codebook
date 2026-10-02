@@ -1,3 +1,5 @@
+import { systemErrorCode } from './systemErrorCode'
+
 /** What the error code of a signal-0 probe says about the probed process group. */
 const IS_GROUP_GONE_BY_PROBE_ERROR_CODE: ReadonlyMap<string, boolean> = new Map(
   [
@@ -6,11 +8,6 @@ const IS_GROUP_GONE_BY_PROBE_ERROR_CODE: ReadonlyMap<string, boolean> = new Map(
     ['EPERM', false],
   ],
 )
-
-/** Reads the system error name of a failed probe for {@link isProcessGroupGone}; a failure without one answers `''`. @example probeErrorCode(Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })) // => 'ESRCH' */
-function probeErrorCode(error: unknown): string {
-  return error instanceof Error && 'code' in error ? String(error.code) : ''
-}
 
 /**
  * Tells whether an owned process group has no member left, so that its release can end.
@@ -33,7 +30,7 @@ export function isProcessGroupGone(processGroup: number): boolean {
     process.kill(-processGroup, 0)
     return false
   } catch (error) {
-    const isGone = IS_GROUP_GONE_BY_PROBE_ERROR_CODE.get(probeErrorCode(error))
+    const isGone = IS_GROUP_GONE_BY_PROBE_ERROR_CODE.get(systemErrorCode(error))
     // An unknown probe failure says nothing about the group; the release reports it.
     if (isGone === undefined) throw error
     return isGone

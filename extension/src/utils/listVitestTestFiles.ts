@@ -16,6 +16,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { buildNodeTestEnvironment } from './buildNodeTestEnvironment'
 import { isProcessGroupGone } from './isProcessGroupGone'
+import { signalProcessGroup } from './signalProcessGroup'
 
 /** One test file Vitest would run; a file included by several Vitest projects appears once per project. */
 export type VitestListedFile = { file: string; projectName?: string }
@@ -98,19 +99,6 @@ export async function listVitestTestFiles(
         )
         return
       }
-      const signalGroup = (signal: NodeJS.Signals): void => {
-        try {
-          process.kill(-processGroup, signal)
-        } catch (error) {
-          if (!(
-            error &&
-            typeof error === 'object' &&
-            'code' in error &&
-            error.code === 'ESRCH'
-          ))
-            throw error
-        }
-      }
       const drain = async (): Promise<void> => {
         await awaitResponse(
           closed,
@@ -124,12 +112,12 @@ export async function listVitestTestFiles(
           VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS,
         )
       }
-      signalGroup('SIGTERM')
+      signalProcessGroup(processGroup, 'SIGTERM')
       // Repository configuration can spawn a helper or intercept SIGTERM; release the complete owned group.
       try {
         await drain()
       } catch {
-        signalGroup('SIGKILL')
+        signalProcessGroup(processGroup, 'SIGKILL')
         await drain()
       }
     }
