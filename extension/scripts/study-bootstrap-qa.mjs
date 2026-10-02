@@ -1764,7 +1764,8 @@ async function check(page, options) {
   })
   await settleOpenRequest(refusedRequest)
   const afterReply = await removalControl()
-  await deleteButton.click()
+  // Forced, so a button that still waits is a failed case instead of a harness timeout.
+  await deleteButton.click({ force: true })
   const askedAfterReply = await removalControl()
   cases.push({
     name: 'when the host answers a chosen saved study it refused before loading, the list returns to the shown study and the delete button deletes that study',
