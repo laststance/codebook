@@ -86,6 +86,10 @@ Order: R2 and R7 library → R6 and R7 service and resources → R1, R4, R5, R7 
 - Protected state (first 8 hex digits of SHA-256), checked at entry: Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`, bundled skill `39f03be0`; the dashboard at `1936e41` with only the untracked `.codebook/`; no listener on port 3000; no recorder process; the database container stopped.
 - Installed candidate in both QA profiles: the Cycle 0038 pre-release build (runtime `5b697c76`, 0.2.21 metadata). 0.2.22.0 itself is not installed.
 
+### Entry after compaction, 2026-10-02 (before implementation)
+
+The working context was compacted after the engineering review. Before any product source was changed, the mandatory entry was repeated from the files on disk: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review. The approved PNG was opened with the image viewer again (hash `f189ee82…caf2aa` verified; the four regions as described above). Checkout `codex/cycle-0039-removal-followups` at `a9a4a40`, clean; Node 24.21.0, pnpm 12.4.2; the protected hashes, the dashboard (`1936e41`, only the untracked `.codebook/`), port 3000, the recorder and the database container are as at the entry. No product source differs from `471ad67`, so the source-gap audit below stands.
+
 ## Source-gap audit and selected increment
 
 Baseline: `main` `471ad67` (0.2.22.0). Goal version 9 and the PNG have not changed since the Cycle 0038 audit, and no product source changed since its delivery. Every row is accounted for below; rows this cycle does not touch carry forward with their limits in PROJECT_STATE.

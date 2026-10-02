@@ -3,7 +3,7 @@ import type { HistoryExclusion } from '../service'
 import { systemTrashName, type SystemTrashName } from './systemTrashName'
 
 /**
- * Says why a retained run has no saved history, for the run resource an editor agent reads; called by {@link StudyService.state} for a record whose history is excluded.
+ * Says why a retained run has no saved history, for the run resource an editor agent reads; called by {@link StudyService.state} for a record whose history is excluded and by {@link StudyService.assertEvidenceAvailable} for a removed run's evidence.
  * @param exclusion - The record's exclusion, if any.
  * @param trashName - The host's word for the system Trash.
  * @returns
@@ -14,6 +14,14 @@ import { systemTrashName, type SystemTrashName } from './systemTrashName'
  * historyExclusionReason('refused-at-admission') // => 'The run was refused before it started; nothing was saved.'
  * historyExclusionReason('removed-by-learner', 'Trash') // => 'The learner moved this saved study to the Trash.'
  */
+export function historyExclusionReason(
+  exclusion: Exclude<HistoryExclusion, 'awaiting-admission'>,
+  trashName?: SystemTrashName,
+): string
+export function historyExclusionReason(
+  exclusion: HistoryExclusion | undefined,
+  trashName?: SystemTrashName,
+): string | undefined
 export function historyExclusionReason(
   exclusion: HistoryExclusion | undefined,
   trashName: SystemTrashName = systemTrashName(),

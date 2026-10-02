@@ -446,6 +446,149 @@ test('a start that reuses the key of a forgotten refused run begins a new run', 
   assert.equal(started.service.records.size, 16)
 })
 
+// Value: protects=after the learner made room, the agent's identical start runs instead of returning the refusal again; fails_when=a refused run keeps its start key, so the same start replays the refused receipt forever; why_new=a refused run was forgotten only at the sixteen-run bound; seam=none
+test('a start that repeats the key of a run the full study library refused begins a new run, which prepares once the library has room', async (context) => {
+  // Arrange: a run refused on a library full at one study; afterwards the limit is raised to two.
+  let raiseLimit = (): void => {}
+  const started = await startRunWithStorage(
+    context,
+    1,
+    'study',
+    ({ changeLimitSetting }) => {
+      raiseLimit = (): void => changeLimitSetting(2)
+    },
+  )
+  await waitUntil(() => started.record.stopped, 'the end of the refused run')
+  raiseLimit()
+  // Act: the same key and the same arguments.
+  const repeated = started.service.start({
+    instanceId: started.service.instanceId,
+    profile: 'repository-browser',
+    key: 'admission',
+    configuration: started.harness.definition.configuration,
+  })
+  const repeatedRecord = started.service.record(repeated)
+  await repeatedRecord.preparation
+  // Assert
+  assert.notEqual(repeated.runId, started.receipt.runId)
+  assert.equal(repeatedRecord.error, undefined)
+  assert.equal(repeatedRecord.prepared, true)
+  assert.equal(started.runtimeAcquisitions(), 1)
+  assert.equal(started.service.records.size, 1)
+  assert.throws(
+    () => started.service.record(started.receipt),
+    (error) => error instanceof StudyError && error.code === 'NOT_FOUND',
+  )
+})
+
+// Value: protects=repeating a refused start on a library that is still full gives a fresh refusal and never piles up retained runs; fails_when=the repeated start keeps the old record beside the new one; why_new=forgetting a refused run on a repeated start is new; seam=none
+test('a start that repeats the key of a refused run on a library that is still full is refused again as a new run and retains one run', async (context) => {
+  // Arrange
+  const started = await startRunWithStorage(context, 1, 'study')
+  await waitUntil(() => started.record.stopped, 'the end of the refused run')
+  // Act
+  const repeated = await startEndedRun(started, 'admission')
+  // Assert
+  assert.notEqual(repeated.receipt.runId, started.receipt.runId)
+  assert.equal(repeated.record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(repeated.record.historyExcluded, 'refused-at-admission')
+  assert.equal(started.service.records.size, 1)
+  assert.equal(started.runtimeAcquisitions(), 0)
+})
+
+// Value: protects=a refused run never ran, so its key is free for a corrected request; fails_when=the refused record still owns the key and other arguments are answered as a conflict; why_new=forgetting a refused run on a repeated start is new; seam=none
+test('a start that reuses the key of a refused run with other arguments begins a new run instead of a conflict', async (context) => {
+  // Arrange
+  const started = await startRunWithStorage(context, 1, 'study')
+  await waitUntil(() => started.record.stopped, 'the end of the refused run')
+  const configuration = started.harness.definition.configuration
+  // Act: the same key with another action title.
+  const receipt = started.service.start({
+    instanceId: started.service.instanceId,
+    profile: 'repository-browser',
+    key: 'admission',
+    configuration: {
+      ...configuration,
+      action: { ...configuration.action, title: 'Change theme again' },
+    },
+  })
+  const record = started.service.record(receipt)
+  await record.preparation
+  // Assert: a new run that the still-full library refuses, not IDEMPOTENCY_CONFLICT.
+  assert.notEqual(receipt.runId, started.receipt.runId)
+  assert.equal(record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(started.service.records.size, 1)
+})
+
+// Value: protects=a start repeated because its response was lost still returns the one run while that run is being refused; fails_when=a refused run is forgotten before it has ended, so two runs exist for one key during cleanup, or a start still waiting for its admission is restarted; why_new=forgetting a refused run on a repeated start is new; seam=a held source reveal keeps the refused run from ending
+test('a start repeated while its run awaits the admission, and while the refused run is still ending, returns the same receipt', async (context) => {
+  // Arrange: the repeated start arrives during the admission read; a held reveal keeps the refused run stopping.
+  let receiptWhileAwaiting: unknown = 'not asked',
+    releaseStop = (): void => {}
+  const heldUntilReleased = new Promise<void>((resolve) => {
+    releaseStop = resolve
+  })
+  const started = await startRunWithStorage(
+    context,
+    1,
+    'study',
+    ({ service, store }) => {
+      const admitsStudy = store.admitsStudy.bind(store)
+      store.admitsStudy = async (studyId) => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        const [record] = service.records.values()
+        record!.sourceReveals.add(heldUntilReleased)
+        if (record!.profile === 'repository-browser')
+          receiptWhileAwaiting = service.start({
+            instanceId: service.instanceId,
+            profile: 'repository-browser',
+            key: 'admission',
+            configuration: record!.configuration,
+          })
+        return admitsStudy(studyId)
+      }
+    },
+  )
+  const input = {
+    instanceId: started.service.instanceId,
+    profile: 'repository-browser' as const,
+    key: 'admission',
+    configuration: started.harness.definition.configuration,
+  }
+  // Act
+  const stoppedBeforeRepeat = started.record.stopped
+  const receiptWhileEnding = started.service.start(input)
+  releaseStop()
+  await waitUntil(() => started.record.stopped, 'the end of the refused run')
+  // Assert
+  assert.equal(started.record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(stoppedBeforeRepeat, false)
+  assert.deepEqual(receiptWhileAwaiting, started.receipt)
+  assert.deepEqual(receiptWhileEnding, started.receipt)
+  assert.equal(started.service.records.size, 1)
+})
+
+// Value: protects=a run that was admitted keeps answering a repeated start with its own receipt, also after its saved study was removed; fails_when=forgetting on a repeated start reaches runs that really ran; why_new=forgetting a refused run on a repeated start is new; seam=none
+test('a start that repeats the key of an admitted run returns the same receipt, also after its saved study was removed', async (context) => {
+  // Arrange: an admitted, stopped run.
+  const started = await startRunWithStorage(context, 2, 'nothing')
+  await started.service.stop(started.receipt)
+  const input = {
+    instanceId: started.service.instanceId,
+    profile: 'repository-browser' as const,
+    key: 'admission',
+    configuration: started.harness.definition.configuration,
+  }
+  // Act
+  const repeated = started.service.start(input)
+  started.service.excludeHistory(started.record, 'removed-by-learner')
+  const repeatedAfterRemoval = started.service.start(input)
+  // Assert
+  assert.deepEqual(repeated, started.receipt)
+  assert.deepEqual(repeatedAfterRemoval, started.receipt)
+  assert.equal(started.runtimeAcquisitions(), 1)
+})
+
 // Value: protects=an editor agent is never told that a study the learner removed is still saved; fails_when=the run resource keeps reading its old receipts after the removal; why_new=no run could lose its saved study before; seam=none
 test('the run resource of a run whose saved study the learner removed reports its history and its recording as gone', async (context) => {
   // Arrange: an admitted run that recorded, was stopped and whose history the reader saved.

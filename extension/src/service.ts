@@ -152,6 +152,8 @@ interface StudyRecordState {
     reason?: string
   }
   historyExcluded?: HistoryExclusion
+  /** Set by {@link StudyService.withEvidenceHeld} while the reader moves this run's saved study, so no explanation is written into the evidence directory on its way to the Trash. */
+  evidenceHeld?: boolean
   recording?: RecordingWriter
   recordingEndMs?: number
   recordingSeal?: RecordingSeal
@@ -543,6 +545,8 @@ export class StudyService {
   /** Reserves intent before prerequisite I/O so duplicate starts cannot create two runtimes. @example service.start(input).runUri */
   start(input: StartInput) {
     this.assertMutable(input.instanceId)
+    // A refused run had no effect, so repeating its start asks the library again instead of replaying the refusal.
+    this.forgetStoppedRefusal(input.key)
     const previous = this.startKeys.get(input.key)
     if (previous && previous.profile !== input.profile)
       throw new StudyError(
@@ -642,11 +646,34 @@ export class StudyService {
         record.historyExcluded === 'removed-by-learner',
     )
     if (!evicted) return false
-    this.records.delete(evicted.id)
-    // A later start with one of its keys begins a new run instead of replaying the forgotten receipt.
-    for (const [key, keyedRecord] of this.startKeys)
-      if (keyedRecord === evicted) this.startKeys.delete(key)
+    this.forgetRecord(evicted)
     return true
+  }
+
+  /**
+   * Forgets the run a start key names when the study library refused it and it has ended, so the same start begins a new run once room was made; called first by {@link StudyService.start}.
+   * A refused run that is still stopping keeps its record, and its receipt is replayed.
+   * @param key - The start key of the incoming start.
+   * @example
+   * this.forgetStoppedRefusal('explain-login') // the run refused under this key is no longer retained
+   */
+  private forgetStoppedRefusal(key: string): void {
+    const refused = this.startKeys.get(key)
+    if (refused?.historyExcluded === 'refused-at-admission' && refused.stopped)
+      this.forgetRecord(refused)
+  }
+
+  /**
+   * Drops one retained run with every start key that names it; called by {@link StudyService.evictOldestExcludedRecord} and {@link StudyService.forgetStoppedRefusal}.
+   * A later start with one of its keys begins a new run instead of replaying the forgotten receipt.
+   * @param record - A run that holds no history.
+   * @example
+   * this.forgetRecord(refused) // this.records.has(refused.id) === false
+   */
+  private forgetRecord(record: StudyRecord): void {
+    this.records.delete(record.id)
+    for (const [key, keyedRecord] of this.startKeys)
+      if (keyedRecord === record) this.startKeys.delete(key)
   }
 
   /** Admits the next fixed action while replaying every original receipt across later steps and cleanup. @example service.action({...run, key:'operation', action:'repository-click'}) */
@@ -793,6 +820,8 @@ export class StudyService {
   explain(input: ExplainInput): Promise<{ explanationUri: string }> {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
+    // An explanation after the removal would be written into a directory that is in the Trash.
+    this.assertEvidenceAvailable(record)
     // Internal callers must satisfy the same fact bounds as MCP before reserving or persisting an explanation.
     if (!explainSchema.shape.valuePaths.safeParse(input.valuePaths).success)
       throw new StudyError(
@@ -822,6 +851,11 @@ export class StudyService {
       throw new StudyError(
         'BUSY',
         'Wait for owned cleanup before adding historical explanations.',
+      )
+    if (record.evidenceHeld)
+      throw new StudyError(
+        'BUSY',
+        'The learner is deleting this run’s saved study; wait for it to finish.',
       )
     const snapshot = this.snapshot(record, input.snapshotUri)
     if (
@@ -1076,6 +1110,48 @@ export class StudyService {
   ): void {
     if (this.records.get(record.id) !== record) return
     record.historyExcluded = exclusion
+  }
+
+  /**
+   * Refuses to read or extend the raw evidence of a run whose saved study the learner removed, because the evidence directory went to the system Trash with it; called by {@link readResource} before every `/runs/<id>/<suffix>` resource and by {@link StudyService.explain}.
+   * The bare run resource stays readable and names the same reason.
+   * @param record - The retained run that is being read or explained.
+   * @throws An `EVIDENCE_UNAVAILABLE` {@link StudyError} with the removal sentence for a `removed-by-learner` run.
+   * @example
+   * service.assertEvidenceAvailable(record) // throws after service.excludeHistory(record, 'removed-by-learner')
+   */
+  assertEvidenceAvailable(record: StudyRecord): void {
+    if (record.historyExcluded === 'removed-by-learner')
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        historyExclusionReason(record.historyExcluded),
+      )
+  }
+
+  /**
+   * Runs the removal of a run's saved study while no explanation can be written into its evidence directory; called by {@link StudyWorkspace} around the library removal for a run of this window.
+   * It first waits for the explanation writes already accepted and for the evidence queue, so nothing is still on its way when the directory moves; while it runs, {@link StudyService.explain} answers `BUSY`.
+   * @param record - The stopped run whose saved study is being removed.
+   * @param operation - The removal.
+   * @returns The removal's own result.
+   * @example
+   * await service.withEvidenceHeld(record, () => library.removeStudy(studyId, moveToTrash, evidenceDirectory))
+   */
+  async withEvidenceHeld<Value>(
+    record: StudyRecord,
+    operation: () => Promise<Value>,
+  ): Promise<Value> {
+    record.evidenceHeld = true
+    try {
+      // A failed explanation or evidence write is that write's own error; it does not stop the removal.
+      await Promise.allSettled(
+        [...record.explanationKeys.values()].map((accepted) => accepted.result),
+      )
+      await record.runtime?.evidence.flush().catch(() => undefined)
+      return await operation()
+    } finally {
+      record.evidenceHeld = false
+    }
   }
 
   /** Accepts only the latest reader persistence receipt; stale saves cannot certify newer evidence or retries. @example service.reportHistory(record, signature, revision, 'saved') */
