@@ -1,7 +1,7 @@
 # Cycle 0040 — Removal failure paths: a completed deletion is reported as completed, and a choice that could not open releases the delete button
 
 Type: product-increment\
-Status: implementing\
+Status: validating\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -184,6 +184,81 @@ Review records (private, under the project's gstack state): the report appended 
 - Computer Use access was requested again at the start of the resumed session, as the owner asked, and granted for the seven applications (Visual Studio Code and Cursor at the click tier, Google Chrome at the read tier, Finder, OBS, QuickTime Player and Aqua Voice at the full tier). One screenshot showed the desktop with Terminal in front and no other blocking window.
 - Gap audit: no acceptance row changes against the audit above; the source changed only inside this cycle's scope (T1 to T4).
 
+### Implementation, 2026-10-02
+
+Commits on `codex/cycle-0040-removal-failure-paths`, in the review's order:
+
+| Task | Commit | What changed |
+| --- | --- | --- |
+| T1, T2 | `4a49c6e` | Library: the steps' result is kept outside the locked callback and `removalAfterLockFailure` decides what a rejected lock call answers (P1); a failed write-back with no moved path is `nothing-moved` naming both failures (P3). Service: `retainedStart` returns a stopped refusal apart from `previous`, and `reserveRunSlot(refusal)` forgets it after every guard (P8). |
+| T3 | `d1ef1ae` | Reader: the unreleased lock is reported under `archive` (P1), a neighbour that cannot be arranged is reported under `reading` and the reader shows no study (P2), and a choice made during the removal wins by request generation (P6, P7). |
+| T4 | `ef0c05a` | Reader: `openChosenStudy` and its helpers; a saved-study request owns its loading marker to the end (P4). |
+| T5 | `6eba00b`, `c82345e`, `2b2eef6` | Host: `receivePaneMessage` answers the webview that sent an open request, and the reply waits for a Recording load. Pane: the choice is `{ studyId, requestId }` and the revision and loading heuristics are gone. Harness: replies are recorded per webview. DOM script: an acknowledging stub and three cases (P5). |
+| T6 | `347da74` | README "Delete a saved study" and the JSDoc of `assertStudyNotMoving` and `renderStudyRemoval` (P9). |
+| Criterion 20 | `e68a16e` | One assertion added to Cycle 0039's closed-reader test. |
+
+Decisions taken during the implementation (recommended options, the owner is away):
+
+- **No unit test file for `removalAfterLockFailure`.** Its three branches are each reached by a library test through `removeStudy` (criteria 1, 2 and the first-file refusal with an unreleased lock), and each has a control. A separate file would repeat them.
+- **No unit test file for `readOpenRequest`.** Criteria 11 to 14 and 36 to 38 reach it through the webview route.
+- **Criterion 20 has no red test of its own.** A reader closed while the neighbour is read takes the same arm of `showRemovalNeighbour` as criterion 19 (overtaken or closing). Cycle 0039's closed-reader test now also asserts that the reader's selection names the neighbour and not the removed study; it passes on `97dd1e9` too, because there the close has completed before the neighbour returns. The arm itself is covered by criterion 19's test and control.
+- **The reply is posted before the playback callback's Study message.** Either order releases the pane: a reply first re-renders from the last Study message, a Study message first is followed by the reply.
+- **A complexity finding was removed, not baselined.** `showChosenEntry` in the pane reached a cyclomatic complexity of 6; `keptChoice` was split off and the health gate passes against the unchanged baseline.
+
+### Red on `97dd1e9`, green on the branch
+
+Procedure: a detached worktree of `97dd1e9` under `/tmp`, this branch's five test files and the DOM script copied into it, `node extension/scripts/build-fast.mjs`, then `node --test --test-timeout=15000 --test-force-exit` per file. The private outputs are under `artifacts/cycle-0040/red/`.
+
+| File | Tests | Red on `97dd1e9` | New and green on `97dd1e9` (guards) |
+| --- | --- | --- | --- |
+| `studyRemoval.test.ts` | 24 | 4: lock unreleased after every file moved (criterion 1), after a refused sidecar (2), after a first-file refusal; the failed write-back (6) | 0 |
+| `studyAdmission.test.ts` | 23 | 4: a repeat rejected by `BUSY` (22), `PRESENTATION_UNAVAILABLE`, `UNSUPPORTED_PROFILE`, `INVALID_CONFIGURATION` (23) | 1: the sixteen-run slot (24) |
+| `studyRemovalMessages.test.ts` | 3 | 1: the existing text test, which now also expects the lock sentence | 0 |
+| `studyWorkspaceRemoval.test.ts` | 66 | 14: criteria 4, 5, 7, 9, 11, 12, 13, 14, 19, 21, 36, 39, 40, 41 (two of them ended by the 15 s timeout) | 2: no request number (37), a zero or a text as request number (38) |
+| DOM script | 72 cases | 3 new cases (criteria 15 and 17, and the case that reads the request number) plus the carried wide-sequence case | the two Cycle 0039 cases pass with the acknowledging stub (18) |
+
+Every other test of these files passes on `97dd1e9`. On the branch all four files pass (24, 23, 3, 66) and the DOM script passes 71 of 72 cases.
+
+Two tests were strengthened after their first control run showed that they did not prove their criterion (see the controls below): the Recording-load test read the replies before the message had been handled to its end, and two DOM clicks waited for an enabled button, which ends the script instead of failing a case.
+
+### Disabled-fix controls (criterion 30)
+
+Private runner `artifacts/cycle-0040/controls/run-controls.mjs` (the Cycle 0039 runner with this cycle's rows): each row removes one fix from the compiled `extension/dist`, runs the named test alone (or the DOM script) and restores the file. Second run, `controls-2.log`: **31 of 31 held**, every file restored, the hash over `dist` identical before and after (`57e9a5e4…`). First run, `controls-1.log`: 27 of 31; the four that did not hold were the two test weaknesses named above, fixed in `2b2eef6`, not product behavior.
+
+| Criterion | Fix removed from `dist` | Test that must fail |
+| --- | --- | --- |
+| 1 | the catch answers `removalAfterLockFailure(undefined, …)` | lock unreleased after every file moved (library) |
+| 2 | the same; and the cause no longer names the lock failure | lock unreleased after a refused sidecar; after a first-file refusal (library, 3 rows) |
+| 6 | a failed write-back answers `partly-moved` | the failed write-back (library) |
+| 4 | the catch as for criterion 1; and `reportUnreleasedLock` not called | lock unreleased, reader (2 rows) |
+| 5 | no guard around `showAfterRemoval`; and no fallback to no study | neighbour that cannot be arranged (2 rows) |
+| 7 | a failed write-back answers `partly-moved` | the failed write-back, reader |
+| 9 | `releaseStaleHistoryRequest` not called | a discarded saved-study request |
+| 39 | a failure after the read returns silently | arrangement refused after the read |
+| 40 | the stale check ignores a newer history request | older read after a newer Node test history |
+| 19 | the overtaken neighbour returns without leaving the removed selection | a newer choice that fails during the neighbour read |
+| 21 | the selection is not compared after the ledger read | a choice shown during the ledger read |
+| 41 | no generation check | a Node test history shown during the move |
+| 22, 23 | the refusal is forgotten before the guards | the four rejected repeats (4 rows) |
+| 11, 12, 14, 36 | no reply posted | refused before loading; Node test history during Recording; a study that opens; two overlapping choices (4 rows) |
+| 13 | the reply is not deferred; and the deferred reply is never posted | answered only once the Recording load ended (2 rows) |
+| 36 | the message schema has no request number | two overlapping choices |
+| 15, 17 | the pane ignores the reply; the pane does not put the list back; the pane accepts a reply to another request | the three DOM cases (4 rows) |
+
+### Gates on `2b2eef6` (criteria 26 to 29)
+
+| Gate | Result |
+| --- | --- |
+| `pnpm --dir extension test` | 1,744 of 1,744 (1,720 on `97dd1e9` plus 24), 111 s |
+| `pnpm --dir extension test:package` (after every test process ended) | 192 of 192 |
+| `node --test .codex/restore-product-context.test.mjs` | 4 of 4 |
+| `typecheck`, `lint`, `format:check`, `dead-code`, `dupes`, `health` | exit 0 each |
+| `node extension/scripts/build-fast.mjs --check` | 634 files, 0 differences |
+| `node extension/scripts/study-bootstrap-qa.mjs verify` | 71 of 72; the one failure is the carried "wide saved sequence remains reachable by keyboard inside its own scroll area" |
+| Criterion 29 | no change in `constants.ts`, any schema file, `package.json`, the two fallow baselines, `test-timings.json` or `extension/skills`; `removeStudy` has one caller and the repository one `useTrash` call; the bundled skill is `39f03be0` |
+
+Private logs: `artifacts/cycle-0040/gates/`. One note for later runs: `dead-code` reported an unresolved `../dist/build.json` once, right after a fast emit had replaced a full build; it passed after `pnpm --dir extension build` (the fast emit writes no build metadata).
+
 ## Result and decision
 
 - Result: pending
@@ -192,7 +267,7 @@ Review records (private, under the project's gstack state): the report appended 
 
 ## Next action
 
-- Exact next action: implement T1 (P1 and P3 in the library) with its red tests, then T2 to T7 in the order of the engineering review.
-- Changed files / branch / active processes: this record, PROJECT_STATE, README and the CodeRabbit mapping on `codex/cycle-0040-removal-failure-paths`; no editor, recorder, dev server or database container is running.
+- Exact next action: build the candidate VSIX from the branch, install it in both QA profiles and run native N9-a to N9-d with their expectations frozen first; then the protected-state check, the local CodeRabbit CLI and `open-code-review-delegate`, and `/ship`.
+- Changed files / branch / active processes: T1 to T6 and their tests are committed on `codex/cycle-0040-removal-failure-paths` (not pushed); no editor, recorder, dev server or database container is running.
 - State updated in PROJECT_STATE.md: the active cycle, the checkout, tracking and the next action.
 - Durable decisions updated: none.
