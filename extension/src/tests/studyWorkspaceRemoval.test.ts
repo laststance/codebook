@@ -658,11 +658,11 @@ test('a second delete request while the confirmation is waiting opens no second 
   try {
     const first = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
       second = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
-    let cancel!: () => void
+    const cancels: (() => void)[] = []
     harness.answerWarningDialogs(
       () =>
         new Promise<string | undefined>((resolve) => {
-          cancel = (): void => resolve(undefined)
+          cancels.push((): void => resolve(undefined))
         }),
     )
     // Act
@@ -673,11 +673,15 @@ test('a second delete request while the confirmation is waiting opens no second 
       1_000,
     )
     const whileWaiting = harness.reader.inspect().view!.studyRemoval
-    await requestRemoval(harness, second.id)
-    await requestRemoval(harness, first.id)
+    const repeated = [
+      requestRemoval(harness, second.id),
+      requestRemoval(harness, first.id),
+    ]
+    // A request that is not taken returns within the turn; one that opened a dialog would wait for its answer.
+    await new Promise((resolve) => setImmediate(resolve))
     const dialogsWhileWaiting = harness.warningDialogs.length
-    cancel()
-    await waiting
+    for (const cancel of cancels) cancel()
+    await Promise.all([waiting, ...repeated])
     // Assert
     assert.deepEqual(structuredClone(whileWaiting), {
       status: 'confirming',
@@ -932,6 +936,68 @@ test('a checkpoint that was capturing a study when its removal was confirmed wri
     )
     assert.equal(harness.reader['pendingArchives'].size, 0)
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a newer checkpoint that waits behind a write in flight does not bring the study back once its removal is confirmed; fails_when=the writer picks up the waiting checkpoint after the removal started, so the study is written again behind the removal; why_new=no removal existed; seam=the editor's dialog and Trash, stubbed at the vscode boundary
+test('a checkpoint that waits behind a write in flight is not written once the removal of its study is confirmed', async (context) => {
+  // Arrange: a recorded, stopped and saved run; its next study save is held, and a newer checkpoint waits behind it.
+  const harness = await recordedReaderHarness()
+  try {
+    const library = await harness.reader.learningStorage()
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    let studySaves = 0
+    let releaseFirstSave!: () => void
+    const firstSaveHeld = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve
+    })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        study: Parameters<LearningLibrary['saveStudy']>[0],
+      ) {
+        studySaves++
+        if (studySaves === 1) await firstSaveHeld
+        return saveStudy.call(this, study)
+      },
+    )
+    const snapshotUri = harness.service.state(harness.record).participants
+      .browser.snapshotUri!
+    const explain = (key: string, interpretation: string) =>
+      harness.service.explain({
+        instanceId: harness.service.instanceId,
+        runId: harness.record.id,
+        key,
+        snapshotUri,
+        sourceHash: sha256('const nextTheme = "dark";\n'),
+        valuePaths: ['value:nextTheme'],
+        interpretation,
+      })
+    await explain('write-in-flight', 'The first later explanation.')
+    await harness.reader['refresh']()
+    await waitUntil(() => studySaves === 1, 'the held study save', 2_000)
+    await explain('waiting-checkpoint', 'The second later explanation.')
+    await harness.reader['refresh']()
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    // Act: the learner confirms the removal while the first save is still in flight, then that save finishes.
+    const removal = requestRemoval(harness, harness.studyId)
+    await waitUntil(
+      () => harness.reader.inspect().view!.studyRemoval?.status === 'moving',
+      'the confirmed removal',
+      2_000,
+    )
+    releaseFirstSave()
+    await removal
+    // Assert
+    assert.equal(studySaves, 1)
+    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'moved')
+    assert.deepEqual(await library.list(), [])
+    assert.equal(harness.reader['pendingArchives'].size, 0)
+  } finally {
+    context.mock.restoreAll()
     await harness.close()
   }
 })
