@@ -174,7 +174,15 @@ Review records (private, under the project's gstack state): the report appended 
 
 ## Attempts and evidence
 
-No observations yet.
+### Entry after compaction, 2026-10-02 (during T4)
+
+- The working context was compacted while T4 was in the working tree, and the Mac was restarted in the same hour (it ended a running all-partitions test run with exit 137 and emptied `/tmp`). Before any further implementation the mandatory entry was repeated from the files on disk: full reads of PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE (both pages), DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review.
+- The approved PNG was opened with the image viewer again (the same four regions as recorded above) and its SHA-256 is `f189ee82…caf2aa`.
+- Checkout: `codex/cycle-0040-removal-failure-paths` at `d1ef1ae` (T1 to T3 committed) with T4 uncommitted in `extension/src/studyWorkspace.ts` and `extension/src/tests/studyWorkspaceRemoval.test.ts`; nothing lost by the restart.
+- Tools: Node 24.21.0, pnpm 12.4.2. The helper scripts that lived in `/tmp` (the pinned pnpm shim, the protected-state check, the exact-HEAD gate) were rebuilt from the session transcript under the ignored `artifacts/tools/`.
+- Protected state after the restart: Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`, bundled skill `39f03be0`; the dashboard at `1936e41` with only the untracked `.codebook/`; no listener on port 3000; no recorder process; the database container exited.
+- Computer Use access was requested again at the start of the resumed session, as the owner asked, and granted for the seven applications (Visual Studio Code and Cursor at the click tier, Google Chrome at the read tier, Finder, OBS, QuickTime Player and Aqua Voice at the full tier). One screenshot showed the desktop with Terminal in front and no other blocking window.
+- Gap audit: no acceptance row changes against the audit above; the source changed only inside this cycle's scope (T1 to T4).
 
 ## Result and decision
 

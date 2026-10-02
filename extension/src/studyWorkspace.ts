@@ -275,6 +275,12 @@ const messageSchema = z.discriminatedUnion('type', [
     action: z.enum(['select', 'restore', 'save-preference']),
   }),
 ])
+
+/** The Saved studies list's choice of a saved study, as the Study pane sends it. @example const message: HistoryPaneMessage = { type: 'history', revision: 4, studyId } */
+type HistoryPaneMessage = Extract<
+  z.infer<typeof messageSchema>,
+  { type: 'history' }
+>
 type WorkspaceContext = Pick<
   vscode.ExtensionContext,
   'extensionPath' | 'subscriptions'
@@ -8875,49 +8881,102 @@ export class StudyWorkspace {
         await this.nodeHistoryPlaybackController.seek(message.positionMs)
       }
     }
-    if (message.type === 'history') {
-      if (this.recordingActive) {
-        await this.openRecording(message.studyId)
-        return
-      }
-      const request = ++this.historyRequest
-      this.pendingHistory = request
-      this.loading = true
-      this.lastRendered = undefined
-      this.publish()
-      try {
-        const archive = await this.readSavedArchive(message.studyId)
-        if (
-          this.pendingHistory !== request ||
-          message.revision !== this.revision ||
-          this.closing
-        )
-          return
-        this.pendingHistory = undefined
-        this.selectedArchive = archive
-        // Browser selection retires the separate Node journal and its historical debugger context.
-        if (await this.retireNodeHistorySelection()) {
-          // Closing a native preview can publish a new reader revision; the owned history request still controls this switch.
-          if (
-            this.pendingHistory !== undefined ||
-            request !== this.historyRequest ||
-            this.closing
-          )
-            return
-        }
-        await this.showSavedStudy(archive)
-      } catch (error) {
-        if (
-          this.pendingHistory !== request ||
-          message.revision !== this.revision ||
-          this.closing
-        )
-          return
-        this.pendingHistory = undefined
-        this.report('archive', error)
-        await this.renderSelection(true, true)
-      }
+    if (message.type === 'history') await this.openChosenStudy(message)
+  }
+
+  /**
+   * Opens the saved study the learner chose in Saved studies; called by {@link receive} for a `history` message.
+   * During Recording the choice opens that study's recording. Otherwise the request takes a history request number and owns the reader until it has shown the study, failed, or been overtaken by a newer choice; {@link pendingHistory} only marks the time its archive is being read.
+   * @param message - The pane's choice with the revision the pane had seen.
+   * @example await this.openChosenStudy({ type: 'history', revision: this.revision, studyId })
+   */
+  private async openChosenStudy(message: HistoryPaneMessage): Promise<void> {
+    if (this.recordingActive) {
+      await this.openRecording(message.studyId)
+      return
     }
+    const request = ++this.historyRequest
+    this.pendingHistory = request
+    this.loading = true
+    this.lastRendered = undefined
+    this.publish()
+    try {
+      await this.showChosenStudy(message, request)
+    } catch (error) {
+      await this.reportFailedChoice(request, message.revision, error)
+    } finally {
+      await this.releaseStaleHistoryRequest(request)
+    }
+  }
+
+  /**
+   * Reads the chosen archive and shows it, unless the request went stale while the archive was read; called by {@link openChosenStudy}.
+   * A stale read touches nothing: neither the selection nor a Node test history the learner chose in the meantime.
+   * @param message - The pane's choice.
+   * @param request - The history request number this choice took.
+   * @example await this.showChosenStudy(message, request)
+   */
+  private async showChosenStudy(
+    message: HistoryPaneMessage,
+    request: number,
+  ): Promise<void> {
+    const archive = await this.readSavedArchive(message.studyId)
+    if (this.isStaleHistoryRead(request, message.revision)) return
+    this.pendingHistory = undefined
+    this.selectedArchive = archive
+    // Browser selection retires the separate Node journal and its historical debugger context.
+    await this.retireNodeHistorySelection()
+    // Closing a native preview can publish a new reader revision; the owned history request still controls this switch.
+    if (!this.isLatestHistoryRequest(request)) return
+    await this.showSavedStudy(archive)
+  }
+
+  /** Says whether a saved-study read no longer owns the reader when it ends: a newer saved study or Node test history was chosen, the reader changed its revision, or it is closing. @example if (this.isStaleHistoryRead(request, message.revision)) return */
+  private isStaleHistoryRead(request: number, revision: number): boolean {
+    return (
+      this.pendingHistory !== request ||
+      !this.isLatestHistoryRequest(request) ||
+      revision !== this.revision
+    )
+  }
+
+  /**
+   * Reports a chosen saved study that failed while its request still owns the reader, and renders what is selected so the loading state ends; called by {@link openChosenStudy}.
+   * A failure of the archive read is a storage failure and leaves the earlier study selected. A failure after the read (the reader could not be arranged for the study) is a reading failure with the chosen study selected.
+   * @param request - The history request number of the failed choice.
+   * @param revision - The revision the pane had seen when it sent the choice.
+   * @param error - What the read or the arrangement threw.
+   * @example await this.reportFailedChoice(request, message.revision, error)
+   */
+  private async reportFailedChoice(
+    request: number,
+    revision: number,
+    error: unknown,
+  ): Promise<void> {
+    if (!this.isLatestHistoryRequest(request)) return
+    if (this.pendingHistory !== request) {
+      this.report('reading', error)
+      await this.renderShownSelection()
+      return
+    }
+    // A read that failed for a reader that changed meanwhile is discarded without a line; releaseStaleHistoryRequest ends it.
+    if (revision !== this.revision) return
+    this.pendingHistory = undefined
+    this.report('archive', error)
+    await this.renderSelection(true, true)
+  }
+
+  /**
+   * Ends a saved-study request that was discarded while its archive was still marked as opening; called last by {@link openChosenStudy}.
+   * Without this the marker would keep refusing delete requests and holding back every render until another entry is chosen. A request that showed its study or reported its failure has cleared the marker itself, and a newer saved-study choice owns it by then.
+   * @param request - The history request number of the choice that just ended.
+   * @example await this.releaseStaleHistoryRequest(request)
+   */
+  private async releaseStaleHistoryRequest(request: number): Promise<void> {
+    if (this.pendingHistory !== request) return
+    this.pendingHistory = undefined
+    // Renders asked for while the marker was set returned early, so nothing else shows the selection; a newer choice or a closing reader needs no render from here.
+    if (this.isLatestHistoryRequest(request)) await this.renderShownSelection()
   }
 
   /** Names the study whose files a confirmed removal is moving right now, for the writers and readers that must leave it alone. @example if (this.movingStudyId() === id) return */
