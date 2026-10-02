@@ -1,7 +1,7 @@
 # Cycle 0038 — Full library: a refused run leaves nothing behind, and the learner can remove a saved study
 
 Type: product-increment\
-Status: implementing\
+Status: validating\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -110,6 +110,15 @@ The context was compacted during S3: the reader's removal code and its new test 
 - The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 with native Run and Debug (Variables `amount: 120`, `amountInCents: 12000`, `status: 'pending'`, Call Stack `createInvoice actions.ts:24`), the Create Invoice application above the stopped `actions.ts`, standard chat with the `/codebook` request and the bottom "Recording explanation · Save learning replay"; region 2 with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", the Learning summary with its sequence diagram, "Before database insert", "I understand this step" and the transport at 00:42 / 02:18 with "Jump back" and "Unrecorded interval"; region 3 with the DeepWiki chapters, the article with "Relevant source files", the flow diagram, the Ask composer, "Update LLM Wiki", "On this page", "Open in VS Code" and "Change location"; the shortcut strip with the "Keyboard shortcuts ?" control and the searchable dialog.
 - Checkout: `codex/cycle-0038-full-library` at `645cdd1` with the uncommitted S3 files, not pushed; no PR open; no trial running. Protected hashes (`0ac38ba2`, `8d6e64c2`, `80ba41bd`, `d578b9e3`, bundled skill `39f03be0`), the dashboard (`1936e41`, only the untracked `.codebook/`), port 3000 (no listener), OBS (not running) and the database container (stopped) are as recorded above.
 - Gap audit: the product source changed only through this cycle's S1 to S3, which are the selected increments of the rows below; no other row's source path was touched, so the audit stands.
+
+### Entry after compaction, 2026-10-02 (fourth in this cycle)
+
+The context was compacted during the disabled-fix controls: S1 to S5 and the refactor for the health gate were committed (`98915d7` to `d15dd1d`, not pushed), the first control run had 33 of 38 rows held, and two test changes were uncommitted. The mandatory entry was repeated on the files on disk before the controls were changed or run again:
+
+- Read in full: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, `docs/plans/bundled-codebook-skill.md` and, for the visual check of the native trial, `docs/plans/cycle-0029-product-design.md`.
+- The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 with native Run and Debug (Variables `amount: 120`, `amountInCents: 12000`, `status: 'pending'`, Call Stack `createInvoice actions.ts:24`), the Create Invoice application above the stopped `actions.ts`, standard chat with the `/codebook` request and the bottom "Recording explanation · Save learning replay"; region 2 with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", the Learning summary with its sequence diagram, "Before database insert", "I understand this step" and the transport at 00:42 / 02:18 with "Jump back" and "Unrecorded interval"; region 3 with the DeepWiki chapters, the article with "Relevant source files", the flow diagram, the Ask composer, "Update LLM Wiki", "On this page", "Open in VS Code" and "Change location"; the shortcut strip with the "Keyboard shortcuts ?" control and the searchable dialog.
+- Checkout: `codex/cycle-0038-full-library` at `d15dd1d` with one uncommitted test file, not pushed; no PR open; no trial running. Protected hashes (`0ac38ba2`, `8d6e64c2`, `80ba41bd`, `d578b9e3`, bundled skill `39f03be0`), the dashboard (`1936e41`, only the untracked `.codebook/`), port 3000 (no listener), OBS (not running) and the database container (stopped) are as recorded above.
+- Gap audit: the product source changed only through this cycle's S1 to S5, which are the selected increments of the rows below; no other row's source path was touched, so the audit stands.
 
 ## Source-gap audit and selected increment
 
@@ -279,7 +288,7 @@ Review records (private, under the project's gstack state): the report `codex-cy
 
 ## Attempts and evidence
 
-### Implementation S1 to S3, 2026-10-02 (mechanism level)
+### Implementation S1 to S5, 2026-10-02 (mechanism level)
 
 Base for "red on base" is `b72ecb1` in a separate worktree; the new test files are copied there, emitted with `scripts/build-fast.mjs` and run with `node --test`.
 
@@ -287,9 +296,62 @@ Base for "red on base" is `b72ecb1` in a separate worktree; the new test files a
 | --- | --- | --- | --- | --- |
 | S1 service | `98915d7` | `historyExcluded` on the record (`awaiting-admission`, `refused-at-admission`, `removed-by-learner`); the admission runs in `prepare()` before any awaited read; `beginHistory()` returns nothing for an excluded record; `excludeHistory()`; `state()` reports an excluded record's history and recording context as unavailable with the reason; excluded records are evicted oldest first at the 16-run bound; an invalid limit ends the run as `PREREQUISITE_MISSING` | `studyAdmission.test.ts`, `service.test.ts`, `fullLibraryMessage.test.ts` | 8 behavior tests red, the guards (16 ordinary runs still refuse the 17th, an unreadable library ends as before) green |
 | S2 library | `645cdd1` | `LearningLibrary.removeStudy(id, moveToTrash)` in one locked section (recording directories, the playback file when it names the id, the ledger's two references, sidecars, archives lowest format first); `usage()`; the six "full" texts from `fullLibraryMessage()` | `studyRemoval.test.ts` (11), text assertions in `storageCapacity.test.ts` and `studyAdmission.test.ts` | new API; not applicable |
-| S3 reader | this commit | the `delete-study` message; the removal state (`confirming`, `moving`, `moved`, `refused`, `failed`) in the Study message; the native confirmation; writers and readers of the id held off while it moves; the record excluded only when something moved; the neighbour shown after the shown study left; the room read once; `runRefusal` and `unstoppedStudyId` in the Study message | `studyWorkspaceRemoval.test.ts` (24), `studyRemovalMessages.test.ts` (3) | 23 of 24 red, the guard (a run whose runtime cannot be acquired is still saved as not demonstrated) green. The four E1 tests fail there on the defect itself: "Runtime released; final reader history was not saved: Error: Study library is full…", and Retry storage after the raised limit leaves a third and fourth study file |
+| S3 reader | `7bb3b08` | the `delete-study` message; the removal state (`confirming`, `moving`, `moved`, `refused`, `failed`) in the Study message; the native confirmation; writers and readers of the id held off while it moves; the record excluded only when something moved; the neighbour shown after the shown study left; the room read once; `runRefusal` and `unstoppedStudyId` in the Study message | `studyWorkspaceRemoval.test.ts` (24), `studyRemovalMessages.test.ts` (3) | 23 of 24 red, the guard (a run whose runtime cannot be acquired is still saved as not demonstrated) green. The four E1 tests fail there on the defect itself: "Runtime released; final reader history was not saved: Error: Study library is full…", and Retry storage after the raised limit leaves a third and fourth study file |
+| S4 webview, S5 cases and documents | `0e6b65d` | the section `Saved studies` after Observed moments with the list, the note for an entry that cannot be opened, the button `Delete saved study…` (`aria-disabled`, never `disabled`), its reason line and its status line; an entry that cannot be opened can be chosen and stays chosen; `runRefusal` shown first in the error region without counting for Retry; focus after the pane's own request; the help sentence, the setting's description and the README section | eight Chromium DOM cases in `extension/scripts/study-bootstrap-qa.mjs`; the help sentence in `configuredService.test.ts` | new UI; not applicable |
+| Shape for the health gate | `d15dd1d` | no behavior change: the admission, the removal and the Saved studies client are split into functions of cyclomatic complexity 4 or lower, with four more one-purpose utilities (`withoutStudyReferences`, `playbackPreferenceNamesStudy`, `libraryHasRoom`, `withoutStudy`) | a test file for each utility | not applicable |
+| Two removal tests | `c534628` | tests only: a checkpoint that waits behind a write in flight is not written once the removal is confirmed (criterion 12's last sentence); the single-flight case now fails instead of waiting forever when its fix is absent | `studyWorkspaceRemoval.test.ts` (25) | 24 of 25 red, the guard green |
 
 Full suite after S3: 1,660 of 1,660, no failure, cancellation or skip (`pnpm --dir extension test`). `typecheck`, `lint` and `format:check` pass.
+
+### Gates on `c534628`, 2026-10-02 (criterion 19)
+
+| Gate | Result |
+| --- | --- |
+| `pnpm --dir extension test` | 1,671 of 1,671; no failure, cancellation or skip |
+| `pnpm --dir extension test:package` (after every extension test process had ended) | 192 of 192 |
+| `node --test .codex/restore-product-context.test.mjs` | 4 of 4 |
+| `typecheck`, `lint`, `format:check`, `dead-code`, `dupes`, `health` | each exit 0; `extension/fallow-health-baseline.json` is unchanged |
+| `node scripts/build-fast.mjs --check` | 622 files, 0 differences from the compiler's output |
+| `node extension/scripts/study-bootstrap-qa.mjs verify artifacts/cycle-0038/bootstrap-renderer` (criterion 19's addition, ER14) | 67 cases, 66 passed. The eight new Saved studies cases pass. The one failure is "wide saved sequence remains reachable by keyboard inside its own scroll area" (`pageOverflow: true`), which also fails on the commit before S4 and is carried since Cycle 0033 (PROJECT_STATE candidate 4); the script therefore exits 1. Four screenshots of the new section were opened and looked at: the reason line, a failed removal, a moved study with its count sentence, and the "did not start" line without Retry |
+| Bundled skill | `39f03be0`, unchanged (criterion 20) |
+
+Criterion 15, source search on `c534628`: the only call that removes learning material is `vscode.workspace.fs.delete(Uri.file(path), { recursive: true, useTrash: true })` in `studyWorkspace.ts` (`moveSavedStudy`). The product source's other `unlink`, `rm` and `rmdir` calls are unchanged from `b72ecb1` and touch the connection descriptor, the Cursor skill and MCP catalog deployment, the temporary file of an atomic write, the storage lock file, a temporary Vitest listing directory, a temporary Wiki question workspace and a Node test report directory; the cycle's diff adds no such call.
+
+Criterion 20, diff review of `b72ecb1..c534628`: 18 product source files changed. No stored format version, MCP tool name, required argument or timeout constant changed; `constants.ts` gains the removal refusal texts, the invalid-limit sentence and the focus id `delete-study`; `resources.ts` changes one help sentence; `package.json` changes the description of `codebook.savedStudyLimit`. No MCP tool removes a study.
+
+### Disabled-fix controls, 2026-10-02 (criterion 18)
+
+A private script (`artifacts/cycle-0038/controls/run-controls.mjs`) removes one fix from the compiled `extension/dist`, runs the one named test, expects exactly that test to fail, and restores the file byte for byte. Final run on `c534628`: **38 of 38 held**, every file restored, and the hash over all of `dist` is the same before and after (`8d5147ed…`). Log: `artifacts/cycle-0038/controls/controls-2.log`.
+
+| Criterion | Fix removed | Held |
+| --- | --- | --- |
+| 1 | an excluded record is no checkpoint candidate, with the reader's drop of an excluded record's capture (both, see below) | yes |
+| 1 | a configured record is created as `awaiting-admission` | yes |
+| 2, 3 | the same two guards as the first row, against Retry storage and retirement | yes, yes |
+| 4 | the `runRefusal` field; the room check that keeps the line while the library is still full | yes, yes |
+| 5 | eviction of excluded records; the evicted record's start key; the exclusion of a removed record | yes, yes, yes |
+| 7 | the recording moves with the study | yes |
+| 8 | the ledger forgets the study; the playback position file moves | yes, yes |
+| 9 | `nothing-moved` for a refused first move; `partly-moved` for a refused archive move; lowest format first; the storage lock | yes, yes, yes, yes |
+| 10 | the native confirmation | yes |
+| 11 | the neighbour; the outcome line giving way to another choice and to a run; the removed run's exclusion | yes, yes, yes, yes |
+| 12 | the refusals; the check after the dialog; single flight; a moving study cannot be opened; a waiting checkpoint is not written | yes, yes, yes, yes, yes |
+| 14 | the removal answers the refused run; the archive move that makes the room | yes, yes |
+| 16 | the texts at 256; the texts below 256 | yes, yes |
+| 17 | the invalid limit as a missing prerequisite | yes |
+| 28 | the drop of a capture in flight, with the writer's guard for a moving study (both, see below) | yes |
+| 29 | `nothing-moved` keeps the run a checkpoint candidate | yes |
+| 30 | the wait for a queued position save; no position save for a removed study | yes, yes |
+| 31 | an excluded record's history status; its reason | yes, yes |
+| (S3) | an unexpected failure releases the moving study | yes |
+
+The first run held 33 of 38. What the five showed:
+
+- **Three rows of criteria 1 to 3 passed with one fix removed**, because two guards keep a refused run out of the library: `StudyService.beginHistory()` returns nothing for an excluded record, and the reader drops a capture whose record is excluded (`discardsCapture`). Either one alone is enough for the observable result, so the control removes both. The second guard exists for a capture that is in flight when its record becomes excluded.
+- **The row of criterion 28 passed with the capture's drop removed**, because the writer's loop also leaves a moving study's pending archive unwritten and the cleanup after the move forgets it. The control removes the drop and the writer's guard together.
+- **The single-flight row did not finish**: without the fix the test's second request opened a second dialog that nothing answered, so the test waited forever and the run was stopped by hand (only that one test process). The test now collects every dialog's answer, issues the repeated requests without awaiting them and cancels all dialogs, so it fails; the script also stops a control after 120 s.
+
+One guard has no test of its own: the reader's drop of a capture that ends only after the whole removal has ended (the record is then excluded and nothing is moving). The capture has no seam at which a test can hold it across the removal; the guard is exercised only together with the service's.
 
 Decisions made while implementing (recommended option each time; none changes an acceptance criterion's observable result unless stated):
 
@@ -304,6 +366,14 @@ Decisions made while implementing (recommended option each time; none changes an
 - **A removal that fails in a way nobody planned for clears its state.** The move step runs under a `finally` that drops a leftover `moving` state, so the study is not held unopenable and undeletable for the rest of the session; the error itself goes the reader's ordinary error path. (Added in S3 with its test.)
 - **The tests run the reader in another JavaScript realm** (`loadModule` evaluates `studyWorkspace.js` in a `vm` context), so values taken from the Study message are passed through `structuredClone` before a deep comparison. The first run of the new partition failed 15 tests on that and on choosing a study in a reader that was not open (a closed reader never finishes loading a chosen study; the list only exists in an open pane); neither was a product defect.
 - **The position-save test delays the queued save by 50 ms** before it reaches the storage lock, because a save that already holds its place in the lock queue would land before the removal with or without the reader's wait.
+- **The code is shaped for the health gate, and the baseline is not changed.** The gate compares each file's count of complex, untested functions with `extension/fallow-health-baseline.json`. The first S1 to S4 code raised four files above it; the functions were split until every new one has a cyclomatic complexity of 4 or lower and every touched existing one is back in its base bucket. The ledger is written with `repositoryReturn: undefined` when the return named the removed study, which JSON omits.
+- **The setting's description changed too** (`extension/package.json`, `codebook.savedStudyLimit`): "Increase this when the library is full" became "When the library is full, increase this or delete a saved study from Saved studies in the Study workspace". Issue #70's file table does not list the manifest; the sentence would otherwise name half of E3's remedy.
+- **`delete-study` is a presentation focus id**, so a re-render keeps the focus on the button like on the pane's other controls.
+- **The Node-history texts no longer say "above"**: the list they point to now sits in its own section below.
+- **The reason line is hidden while a removal is in progress**; the status line says "Moving the saved study to the Trash…" (DR4), and two lines for one state would repeat each other.
+- **Focus without a request token (ER7).** The pane that sent `delete-study` remembers the study id and moves focus once when the removal state leaves `confirming` and `moving` or is cleared. A refusal that arrives at once counts as the answer when it names that pane's study.
+- **Choosing an entry that cannot be opened hides the last outcome line in that pane only.** It sends no message to the host (DR6), so the host's field stays; the pane keeps the line hidden until the next removal state arrives.
+- **The DOM gate passes with one carried failure** (the wide-sequence case above), as in Cycles 0033 to 0037.
 
 ## Result and decision
 
@@ -315,7 +385,7 @@ Not yet.
 
 ## Next action
 
-- Exact next action: implement S1 in `extension/src/service.ts` (the exclusion states of ER2, the admission as the first preparation step, `excludeHistory`, the state of an excluded record, eviction at the 16-run bound, E4 through the capacity status), each behavior test red on `b72ecb1` first; then S2 to S5 in the order of the engineering review. (`/plan-design-review` and `/plan-eng-review` are done: see "Plan review, 2026-10-02".)
-- Changed files / branch / active processes: this record, PROJECT_STATE, README tracking lines and the CodeRabbit mapping on `codex/cycle-0038-full-library`; no active processes.
-- State updated in PROJECT_STATE.md: product row, active cycle, checkout, tracking, one next action.
+- Exact next action: package the candidate from `c534628` (the version stays 0.2.21 until `/ship`), install it in both QA profiles, and run the native checks N7-a to N7-d (criteria 21 to 25) with their expectations frozen first under the private `artifacts/cycle-0038/native/`. Then the reviews (local CodeRabbit CLI, `open-code-review-delegate`), `/ship`, CI, the separate exact-HEAD gate and the merge.
+- Changed files / branch / active processes: the cycle's source, tests, QA script and documents on `codex/cycle-0038-full-library` (`98915d7` to `c534628` and this record), not pushed; no active processes.
+- State updated in PROJECT_STATE.md: active cycle status and the one next action.
 - Durable decisions updated: none.
