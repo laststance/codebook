@@ -150,7 +150,93 @@ Frozen inputs for the native checks: P1 and P2 are the declaration of VS Code ru
 
 ## Attempts and evidence
 
-No implementation yet.
+### Implementation of D, 2026-10-03
+
+| Task | Commit | What changed |
+| --- | --- | --- |
+| D | `9634972` | `configuredBrowserRun.ts`: every participant keeps the URL of every script it announces (`scriptUrls`), not only the first 200 journal entries; `cdp.pause-observed` gains `url`, `line`, `column` (1-based, generated), `functionName`, `hitBreakpoints` (at most 8 ids of at most 512 characters), `stopIndex` and `continuation` (`null` or the three receipts); `cdp.resumed` gains `pausedForMs` after an observed pause. Three pure utilities, one per file: `utils/describeCdpPause.ts`, `utils/continuationReceipts.ts`, `utils/elapsedMsSince.ts`; two constants. The harness can announce a script and report a pause at a chosen place. Ten tests: three run-level ones in `configuredRuntime.test.ts` and seven for the utilities. |
+
+Decisions taken during the implementation (recommended options, the owner is away):
+
+- **The new fields go through small utilities**, so `onCdpPaused` and `onCdpResumed` gain statements but no branch; `health` passes against the unchanged baseline.
+- **The script map has no bound.** It lives as long as one run and holds a URL per announced script (a few thousand for the dashboard's development server).
+- **The journal is what `run.view().events` shows**, so an agent that reads a run's events now also sees script URLs, generated positions and the debugger's breakpoint ids of an observed pause. They are paths and positions; no page text, variable value or source text.
+
+Red on `784a9da`, green on the branch: on a detached worktree of `784a9da` under `/tmp` with this branch's `configuredRuntime.test.ts` and its harness, the three run-level tests fail and the other 53 of the file pass (`artifacts/cycle-0042/red/d-configuredRuntime-base.txt`); the three utility test files cannot exist there. On the branch the four files pass (56, 3, 2, 2).
+
+Gates on `9634972` (private logs under `artifacts/cycle-0042/gates/`):
+
+| Gate | Result |
+| --- | --- |
+| `pnpm --dir extension test` | 1,784 of 1,784 (1,774 on `784a9da` plus 10) |
+| `pnpm --dir extension test:package` (after every test process ended) | 192 of 192 |
+| `node --test .codex/restore-product-context.test.mjs` | 4 of 4 |
+| `typecheck`, `lint`, `format:check`, `dupes`, `health` | exit 0 each |
+| `dead-code` | exit 0 on a fresh analysis cache. The first runs failed with one unresolved import (`scripts/build-metadata.mjs:10`, `../dist/build.json`): `health` had run while only the fast emit existed and the tool cached that answer in the ignored `extension/.fallow/`; `--no-cache` passed, and the stale cache was moved aside to `/tmp` (not deleted), after which the plain command passes |
+| `node extension/scripts/build-fast.mjs --check` | 660 files, 0 differences |
+
+The control rows for criteria 1 and 2 are run with the others after F (criterion 11).
+
+### Candidate D1 (diagnostics only, no fix)
+
+`artifacts/packages/codebook-0.2.25-c42-diagnostics-20261003.vsix`, source `9634972` (clean checkout), VSIX SHA-256 `66e67041c96d496144ebc2bcfd86ce4b3fed3bc94028a83f0bd6b2a57db47426`, runtime `d3854cf6…`, sourceHash `8715528c…`, 29 entries, 0.2.25 metadata, bundled skill `39f03be0`; `check-package.mjs` passed.
+
+### Entry after compaction, 2026-10-03 (during R, after P2-1)
+
+The working context was compacted after the second reproduction run (P2-1) had ended and its journal had been copied. No trial was in flight and no recorder was running.
+
+- Done again in full at 05:22 to 05:24 JST, before any further trial or source change: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE (both pages), DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review.
+- The approved PNG was opened with the image viewer and its hash verified (`f189ee82…`). The four regions are as recorded under "Accepted product and design": live explanation with the native debugger, the application above the stopped source and the standard chat; the replay with the Learning summary in the chat's place and the shared transport; the DeepWiki reader; the shortcut strip.
+- One command ran between the compaction and the entry: a read-only text search of VS Code's bundled js-debug file. It read a third-party file and started nothing.
+- State found: branch `codex/cycle-0042-adapter-resumed-pause` at `9634972` with this record as the only modified file; no pull request open; Issue #78 and Goal #1 open; Node 24.21.0, pnpm 12.4.2; the dashboard at `1936e41` with only `.codebook/`; the protected hashes as before (`0ac38ba2`, `8d6e64c2`, `80ba41bd`, `22f32374`, `39f03be0`); the QA workspace file in its trial form (`b8637998`), its byte copy `31a3e369`; one VS Code window (the QA window, idle), no Cursor, no recorder, port 3000 free; **OrbStack stopped and with it the database container** (see R below: its app was quit at 05:05:42 JST, not by this session). The owner's input idle time was above ten minutes.
+- Gap audit: no product source changed since the audit above except D (`9634972`), which adds journal fields and no behavior. The table above stands.
+
+### Root cause through `/investigate`, 2026-10-03 (R)
+
+Five native runs on candidate D1, each one submission of a prepared prompt that names its stops; evidence is each run's `events.jsonl` with the new journal fields (private copies under `artifacts/cycle-0042/native/`, with the prompts, three frozen expectation versions and two action logs). No OBS take: the claim is about protocol events a few milliseconds apart, which a 30 fps video cannot show. Offsets are milliseconds after the owned `cdp.resumed`.
+
+| Run | Host | Declared stops | Result | What followed the continuation |
+| --- | --- | --- | --- | --- |
+| P1-1 `33c3692f` | VS Code 1.140.0 (js-debug 1.140.0), Copilot Chat Auto, Local session | server `app/lib/actions.ts` 32:5, server `auth.ts` 23:5 | failed: "Selected server resumed outside its owned continuation" | +6 ms a second `continued` (idle), then a server pause, reason `other`, in `webpack-internal:///(action-browser)/./auth.ts` at generated 28:24 in `getUser`, one hit breakpoint `4:14:0:2221`, no DAP `stopped`, resumed after 0 ms |
+| P2-1 `79e6c230` | same | server `actions.ts` 32:5, server `auth.ts` 41:11 | failed: "Additional server stop invalidated the declared operation"; **void for P2**, the database was down (below) | no pause at the entry of `getUser`; +278 ms a server pause, reason `other`, **no hit breakpoint**, in `eval-ca9ab6a4.cdp` at 1:220, all three continuation receipts present |
+| P2-2 `92eb64b5` | same | same | **demonstrated** | no server pause, no further `continued`; "Invalid credentials" observed |
+| C-P2-1 `4676d7f1` | Cursor 3.23.14 (js-debug 1.93.0), Agent, Composer 2.5 | same | failed: "Unowned continuation invalidated live pause" | +5 ms a second `continued`; the run ended there, so its journal holds no pause |
+| C-P2b-1 `81b0c38a` | same | the same two, then browser `app/ui/login-form.tsx` 77:15 | failed: "Additional server stop invalidated the declared operation" | +5 ms a second `continued` (idle), then a server pause, reason `other`, in the same `auth.ts` module at generated 28:24 in `getUser`, one hit breakpoint `4:14:0:2211`, no DAP `stopped` |
+
+In every run stop 1 was accepted at `actions.ts` 32 (bound 32:11) and, where declared, the stop at `auth.ts` 41 was accepted at 41:24 with its DAP `stopped`. No agent retried. No extra pause was announced by a DAP `stopped`.
+
+**Cause 1: js-debug's module entry breakpoint, bound into the first function of a module that is already loaded.** Read from both bundled adapters and confirmed by the predictions frozen before the runs (the URL, the function, the generated line and the form of the breakpoint id all held in P1-1 and C-P2b-1):
+
+- When a `setBreakpoints` request adds a breakpoint to a source, `BreakpointManager.setBreakpoints` calls `ensureModuleEntryBreakpoint`: one more breakpoint at source line 1, column 1 of that file. Its purpose is to pause a module that loads later, so that the adapter can place its source-mapped breakpoints before the module's code runs.
+- Codebook arms each later stop inside the preceding continuation. `auth.ts` is loaded by then, so the adapter binds the entry breakpoint through the source map at once, by script id. In the dashboard's webpack module the first source line maps to generated 15:1 (CDP id `4:14:0:<script id>`), a line with no code, and V8 moves the breakpoint to the next place it can break: the first statement of `getUser`, generated 28:24.
+- The next call of `getUser` pauses there. `Thread._onPaused` classifies the pause as the adapter's own (`isEntrypointBreak`), announces nothing and resumes it; every CDP resume also sends a DAP `continued`.
+- Codebook reads the pause as an additional stop, its resume as a foreign resume, or its `continued` as an unowned continuation, depending on what is declared next and which event arrives first (three failure texts, one cause).
+- A stop that is the first in its file is armed before the module is loaded; its entry breakpoint exists by path only and caused no separate pause in any run. That is why the prepared declarations of Cycles 0036 to 0040 passed.
+
+**The hosts differ, by the adapter's version.**
+
+- js-debug 1.140.0 (VS Code): any pause in a script that still has an enabled entry breakpoint, an announced stop included, removes that breakpoint (`Thread._handleSourceMapPause` calls `disableEntrypointBreaks`). So P2 passes (P2-2: the announced stop on line 41 removes it before `getUser` is called), and P1 fails (the first pause in `auth.ts` is the entry breakpoint itself).
+- js-debug 1.93.0 (Cursor) has no `disableEntrypointBreaks`; its entry breakpoint goes only when it is hit itself (`BreakpointManager.shouldPauseAt`). So P2 fails there too (C-P2-1, C-P2b-1), which is shapes 2 and 3 of Cycle 0041; shape 1 (Cursor run 1 and VS Code run 1 of N10) is P1.
+
+**Cause 2, found by accident: js-debug's WebAssembly hook (VS Code's 1.140.0 only).** The adapter injects a script that wraps `WebAssembly.instantiate`, `instantiateStreaming`, `compile` and `compileStreaming` and runs a `debugger` statement after such a call resolves; `Thread._onPaused` recognises that script by its name, reads the new module's symbols and resumes, again with no DAP `stopped`. The injected line is 245 characters long and its `debugger` statement starts at column 220, the journaled position; the name `eval-ca9ab6a4.cdp` is that hook's per-process constant, and 1.93.0 does not contain the hook. What called WebAssembly in P2-1 is inferred, not verified by a controlled run: the server printed the failed query with source-mapped frames and a code frame, and Next's bundled `source-map` 0.8 consumer ships `mappings.wasm`. This pause has no hit breakpoint and can come at any time while an application instantiates a WebAssembly module, also after the last continuation.
+
+**The database incident.** Both P1-1's last second and all of P2-1 ran without a database: the server log in each run's `application.closed` event shows `ECONNREFUSED`. OrbStack's own logs say its app was quit at 05:05:42 JST (`gui.log`: "preparing to terminate"), one second before P1-1's continuation; this session had started it at 05:02 and did not stop it, and the owner was at the Mac at that time. It was noticed only after P2-1, while reading the server log. Effect: P1-1 stands (its pause came 6 ms after the continue, at the entry of `getUser` and before the query); P2-1 says nothing about P2 with a working database and is kept as the run that showed cause 2. OrbStack and the container were started again, the preflight now checks the database immediately before every submission and the server log after every run, and P2 was run again (P2-2).
+
+**Predictions against results.** Version 1 (frozen 05:02): P1 held in every detail; P2 was left open between "no extra pause" and "a pause in `auth.ts`", and P2-1 failed for a third reason. Version 2 (05:28, after the database finding): P2-2 passed as predicted; C-P2-1 failed as predicted, but its journal holds no pause, which the prediction had expected. Version 3 (05:41): one more Cursor run whose third stop is in the browser, so that the server's `continued` is idle and the pause is read; it held in every detail. Two Cursor runs are more than Issue #78's R names (VS Code only); they were run on the recommended option, because shapes 2 and 3 are Cursor runs and the hosts differ.
+
+**What the fix has to cover (input for `/plan-eng-review`).**
+
+1. Three failure sites: `onCdpResumed` (a stored pause resumed outside a continuation), `onCdpPaused` (a pause while the next stop is elsewhere or there is none) and `onEvent` (a `continued` after the last continuation, which stays set).
+2. Both orders of the two channels. The adapter's `continued` was read before its pause in three runs. A DAP `stopped` was read 5 and 29 ms before its CDP pause at the first stop of two runs, while the server was still announcing scripts.
+3. The adapter's pause can be in the script of the next declared stop (P1: both in `auth.ts`), so the script id does not tell them apart; the position does.
+4. A pause with no hit breakpoint, and a pause after the last continuation.
+5. Both participants: the browser session hits entry breakpoints of its own (`br:2:0:0:actions`, five times before the input in C-P2-1).
+
+Decisions (recommended options): no scope lock for `/investigate` (R writes no product source); the Cursor runs above; OrbStack restarted for the trial although the owner had quit it, because the owner's message at 05:07 freed the Mac for the trial, and stopped again afterwards.
+
+Cleanup after R, 05:48 JST: both editors quit through their menus; the database container and OrbStack stopped; the QA workspace file restored byte for byte (`31a3e369`); protected hashes `0ac38ba2`, `8d6e64c2`, `80ba41bd`, bundled skill `39f03be0`; the dashboard at `1936e41` with only `.codebook/`; port 3000 free; the Trash empty. Disclosed changes: Cursor's deployed skill is `3067468e` (was `22f32374`; the public "Codebook: Set Up AI Chat" writes the extension's path into it, and the 0.2.25 candidate changed that path), both QA profiles now run candidate D1, and the libraries hold the five runs (VS Code 71 to 74 studies, Cursor 23 to 25).
+
+Carried from R, outside this cycle: a run resource has no `error.cause` for these failures (the prompts asked for it; both agents quoted `terminalReason` instead); Cursor's agent answered `layoutConfirmed: false` for a foreign preview tab, as in Cycle 0037.
 
 ## Result and decision
 
@@ -158,11 +244,11 @@ No implementation yet.
 
 ## Handoff
 
-- Nothing delivered yet. Both QA profiles run Cycle 0041's candidate 1.
+- Nothing delivered yet. Both QA profiles run candidate D1 (diagnostics only; `9634972`).
 
 ## Next action
 
-- Exact next action: implement D (the journal fields with their two tests), build a diagnostic candidate, and run `/investigate` with P1 and P2 in VS Code.
-- Changed files / branch / active processes: this record, PROJECT_STATE, the root README's tracking line and `.coderabbit.yaml` on `codex/cycle-0042-adapter-resumed-pause`; no editor, recorder, dev server or database container is running.
+- Exact next action: `/plan-eng-review` of F with the two verified causes and the five points under "What the fix has to cover"; then implement F with its tests and controls.
+- Changed files / branch / active processes: D (`9634972`) and this record on `codex/cycle-0042-adapter-resumed-pause`; no editor, recorder, dev server or database container is running.
 - State updated in PROJECT_STATE.md: the active cycle, the checkout, tracking and the next action.
 - Durable decisions updated: none.
