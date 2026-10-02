@@ -80,6 +80,7 @@ export const MAX_STUDY_OBSERVATIONS = 2
 export const MAX_STUDY_LINKS = 5
 export const DEFAULT_SAVED_STUDY_LIMIT = 64
 export const MAX_SAVED_STUDIES = 256
+export const INVALID_SAVED_STUDY_LIMIT_MESSAGE = `Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to ${MAX_SAVED_STUDIES}. Existing learning was kept.`
 export const MAX_SOURCE_DOCUMENTS = 34
 export const STUDY_REFRESH_INTERVAL_MS = 250
 export const STUDY_EDITOR_GROUP_COUNT = 3

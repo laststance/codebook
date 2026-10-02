@@ -608,3 +608,76 @@ test('event pagination bounds response detail and a source resource retains the 
     await harness.close()
   }
 })
+
+// Value: protects=runs that hold history are never evicted to make room for a new one; fails_when=the retained-run bound evicts an ordinary run or stops refusing; why_new=the bound had no test; seam=none
+test('a seventeenth start is refused while all sixteen retained runs hold history', async () => {
+  // Arrange: sixteen ordinary runs, each prepared and stopped.
+  const harness = await createHarness(),
+    service = harness.service
+  try {
+    for (let run = 1; run <= 16; run++)
+      await service.stop(
+        service.start({
+          instanceId: service.instanceId,
+          profile: PROFILE_ID,
+          configuration: harness.configuration,
+          key: `run-${run}`,
+        }),
+      )
+    // Act / Assert
+    assert.throws(
+      () =>
+        service.start({
+          instanceId: service.instanceId,
+          profile: PROFILE_ID,
+          configuration: harness.configuration,
+          key: 'run-17',
+        }),
+      (error) =>
+        error instanceof StudyError &&
+        error.code === 'LIMIT_EXCEEDED' &&
+        error.message ===
+          'This instance retains at most 16 runs; no history was evicted.',
+    )
+    assert.equal(service.records.size, 16)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a run whose saved study the learner removed gives up its slot at the retained-run bound; fails_when=only refused runs are evicted, so removals cannot make room for a new run in a long editor session; why_new=eviction and removal are new; seam=none
+test('a seventeenth start is accepted after the learner removed the saved study of one of sixteen retained runs', async () => {
+  // Arrange: sixteen ordinary stopped runs; the study of the third one was removed by the learner.
+  const harness = await createHarness(),
+    service = harness.service
+  try {
+    const receipts = []
+    for (let run = 1; run <= 16; run++) {
+      const receipt = service.start({
+        instanceId: service.instanceId,
+        profile: PROFILE_ID,
+        configuration: harness.configuration,
+        key: `run-${run}`,
+      })
+      await service.stop(receipt)
+      receipts.push(receipt)
+    }
+    const removed = service.record(receipts[2]!)
+    service.excludeHistory(removed, 'removed-by-learner')
+    // Act
+    const seventeenth = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'run-17',
+    })
+    await service.record(seventeenth).preparation
+    // Assert
+    assert.equal(service.records.size, 16)
+    assert.equal(service.records.has(removed.id), false)
+    assert.equal(service.records.has(receipts[0]!.runId), true)
+    assert.equal(service.records.has(seventeenth.runId), true)
+  } finally {
+    await harness.close()
+  }
+})
