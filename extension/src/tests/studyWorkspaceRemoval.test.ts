@@ -1757,7 +1757,9 @@ test('a removal is refused while a recording is still opening, also when the ope
       const held = new Promise<void>((resolve) => {
         releaseLoad = resolve
       })
-      harness.reader['replaceUnavailableReplayDebugger'] = async (signal) => {
+      harness.reader['replaceUnavailableReplayDebugger'] = async (
+        signal,
+      ): Promise<void> => {
         await held
         await prepareDebugger(signal)
       }

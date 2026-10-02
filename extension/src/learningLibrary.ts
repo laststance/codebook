@@ -459,16 +459,30 @@ export class LearningLibrary {
         ...sidecars.map(trash),
         ...archives.map(trash),
       ]
-      try {
-        for (const step of steps) await step()
-        return { outcome: 'moved' }
-      } catch (error) {
-        return await this.failedRemoval(thrownMessage(error), changes)
-      }
+      return this.runRemovalSteps(steps, changes)
     }).catch((error): StudyRemoval => ({
       outcome: 'nothing-moved',
       cause: thrownMessage(error),
     }))
+  }
+
+  /**
+   * Runs the steps of a removal in order and stops at the first that fails; called by {@link removeStudy} under the storage lock.
+   * @param steps - The moves and the ledger rewrite, in the removal's order.
+   * @param changes - What the steps record as changed.
+   * @returns `moved` when every step ran, otherwise what {@link failedRemoval} decides.
+   * @example await this.runRemovalSteps(steps, changes) // => { outcome: 'moved' }
+   */
+  private async runRemovalSteps(
+    steps: (() => Promise<void>)[],
+    changes: StudyRemovalChanges,
+  ): Promise<StudyRemoval> {
+    try {
+      for (const step of steps) await step()
+      return { outcome: 'moved' }
+    } catch (error) {
+      return this.failedRemoval(thrownMessage(error), changes)
+    }
   }
 
   /** Gives {@link removeStudy} the evidence directory only when it is a real directory: an absent path, a file, a symbolic link or a path that cannot be inspected is left alone and is no error. @example await this.realDirectories('/…/agent/instance/run') // => ['/…/agent/instance/run'] */

@@ -1640,6 +1640,87 @@ async function check(page, options) {
       afterMovingOn.focus === 'overview-tab',
   })
 
+  /** Publishes a Study message with the revision of the one before it, as a host message does that was sent before the pane's request arrived. */
+  const republish = (studies, chosen, extra = {}) => {
+    savedRevision -= 1
+    return library(studies, chosen, extra)
+  }
+  await library([shownStudy, otherStudy], shownStudy.id)
+  const beforeChoice = await removalControl()
+  await page.selectOption('#studies', otherStudy.id)
+  const rightAfterChoice = await removalControl()
+  // A message the host sent before the request arrived still shows the earlier study.
+  await republish([shownStudy, otherStudy], shownStudy.id)
+  const afterEarlierMessage = await removalControl()
+  await deleteButton.focus()
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Space')
+  await deleteButton.click({ force: true })
+  await republish([shownStudy, otherStudy], shownStudy.id, { loading: true })
+  const whileHostLoads = await removalControl()
+  await deleteButton.click({ force: true })
+  const afterPresses = await removalControl()
+  await library([shownStudy, otherStudy], otherStudy.id)
+  const onceShown = await removalControl()
+  await deleteButton.click()
+  const askedForChosen = await removalControl()
+  cases.push({
+    name: 'while a chosen saved study is still opening the list keeps it and the delete button waits with its reason and sends nothing; once the host shows it the button deletes that study',
+    actual: {
+      rightAfterChoice,
+      afterEarlierMessage,
+      whileHostLoads,
+      afterPresses,
+      onceShown,
+      askedForChosen,
+    },
+    passed:
+      rightAfterChoice.chosen === otherStudy.id &&
+      rightAfterChoice.histories === beforeChoice.histories + 1 &&
+      rightAfterChoice.ariaDisabled === 'true' &&
+      rightAfterChoice.reason === 'Wait for the chosen saved study to open.' &&
+      afterEarlierMessage.chosen === otherStudy.id &&
+      afterEarlierMessage.ariaDisabled === 'true' &&
+      afterEarlierMessage.reason ===
+        'Wait for the chosen saved study to open.' &&
+      whileHostLoads.chosen === otherStudy.id &&
+      whileHostLoads.ariaDisabled === 'true' &&
+      afterPresses.deletes.length === beforeChoice.deletes.length &&
+      onceShown.chosen === otherStudy.id &&
+      onceShown.ariaDisabled === null &&
+      onceShown.reason === null &&
+      askedForChosen.deletes.length === beforeChoice.deletes.length + 1 &&
+      JSON.stringify(askedForChosen.deletes.at(-1)) ===
+        JSON.stringify([otherStudy.id, savedRevision]),
+  })
+
+  // The host starts loading the chosen entry and then shows the earlier study again: the open failed.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await page.selectOption('#studies', otherStudy.id)
+  await republish([shownStudy, otherStudy], shownStudy.id, { loading: true })
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    errors: ['Error: Study archive is unavailable.'],
+  })
+  const afterFailedOpen = await removalControl()
+  // The host answers with another revision without ever loading: the request was refused as stale.
+  await page.selectOption('#studies', otherStudy.id)
+  await library([shownStudy, otherStudy], shownStudy.id)
+  const afterRefusedRequest = await removalControl()
+  await deleteButton.click()
+  const askedForShown = await removalControl()
+  cases.push({
+    name: 'when the chosen saved study does not open the list returns to the shown study and the delete button is offered for it',
+    actual: { afterFailedOpen, afterRefusedRequest, askedForShown },
+    passed:
+      afterFailedOpen.chosen === shownStudy.id &&
+      afterFailedOpen.ariaDisabled === null &&
+      afterFailedOpen.reason === null &&
+      afterRefusedRequest.chosen === shownStudy.id &&
+      afterRefusedRequest.ariaDisabled === null &&
+      JSON.stringify(askedForShown.deletes.at(-1)) ===
+        JSON.stringify([shownStudy.id, savedRevision]),
+  })
+
   const runRefusal =
     'The last run did not start: Study library is full at its maximum of 256 saved studies. Delete a saved study from Saved studies in the Study workspace before starting another run. Existing learning was kept.'
   await library([shownStudy], shownStudy.id, { runRefusal })
