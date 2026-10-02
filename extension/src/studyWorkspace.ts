@@ -130,6 +130,11 @@ import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { projectLearningSummary } from './utils/projectLearningSummary'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
+import {
+  type OpenRequestSettled,
+  type PaneOpenRequest,
+  readOpenRequest,
+} from './utils/readOpenRequest'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
 import { selectStudy } from './utils/selectStudy'
@@ -166,6 +171,8 @@ const actionSchema = z.enum([
 const FIRST_REPLAY_POSITION_WARNING =
   'Wait for the first confirmed replay position before selecting a presentation.'
 const revisionShape = { revision: z.number().int().nonnegative() }
+// The number a Study pane gives its request to open a Saved studies entry; {@link StudyWorkspace.receivePaneMessage} answers it.
+const openRequestShape = { openRequest: z.number().int().positive().optional() }
 const NODE_HISTORY_READER_PAGE_SIZE = 20
 const messageSchema = z.discriminatedUnion('type', [
   webviewFocusReceiptSchema,
@@ -208,6 +215,7 @@ const messageSchema = z.discriminatedUnion('type', [
     type: z.literal('history'),
     ...revisionShape,
     studyId: studyIdSchema,
+    ...openRequestShape,
   }),
   z.strictObject({
     type: z.literal('delete-study'),
@@ -218,6 +226,7 @@ const messageSchema = z.discriminatedUnion('type', [
     type: z.literal('node-history'),
     ...revisionShape,
     studyId: studyIdSchema,
+    ...openRequestShape,
   }),
   z.strictObject({
     type: z.literal('node-history-understanding'),
@@ -275,6 +284,12 @@ const messageSchema = z.discriminatedUnion('type', [
     action: z.enum(['select', 'restore', 'save-preference']),
   }),
 ])
+
+/** The Saved studies list's choice of a saved study, as the Study pane sends it. @example const message: HistoryPaneMessage = { type: 'history', revision: 4, studyId } */
+type HistoryPaneMessage = Extract<
+  z.infer<typeof messageSchema>,
+  { type: 'history' }
+>
 type WorkspaceContext = Pick<
   vscode.ExtensionContext,
   'extensionPath' | 'subscriptions'
@@ -470,6 +485,11 @@ export class StudyWorkspace {
   private pendingHistory?: number
   /** The request number of a Node test history that is still opening; a removal's neighbour and a delete request give way to it like to {@link pendingHistory}. */
   private pendingNodeHistory?: number
+  /** Replies owed to the webviews whose open request started a Recording load that is still in flight; {@link flushDeferredOpenReplies} posts them when the load has ended. */
+  private deferredOpenReplies: {
+    webview: Pick<vscode.Webview, 'postMessage'>
+    openRequest: PaneOpenRequest['openRequest']
+  }[] = []
   private rendering: Promise<void> = Promise.resolve()
   private refreshing?: Promise<void>
   private timer?: ReturnType<typeof setInterval>
@@ -4526,6 +4546,7 @@ export class StudyWorkspace {
             this.dropReplayViewport()
             this.app.webview.html = capturedAppHtml(this.message())
           }
+          this.flushDeferredOpenReplies()
           this.publish()
         },
         save: (bundle) =>
@@ -6671,7 +6692,7 @@ export class StudyWorkspace {
       }
     })
     panel.webview.onDidReceiveMessage((message) => {
-      void this.receive(message, 'context', panel).catch((error) => {
+      void this.receivePaneMessage(message, 'context', panel).catch((error) => {
         if (this.contextPanel === panel)
           this.report(this.panelFailureKind(message), error)
       })
@@ -6880,10 +6901,12 @@ export class StudyWorkspace {
               localResourceRoots: [],
             }
             view.webview.onDidReceiveMessage((message) => {
-              void this.receive(message, 'context', view).catch((error) => {
-                if (this.summaryView === view)
-                  this.report(this.panelFailureKind(message), error)
-              })
+              void this.receivePaneMessage(message, 'context', view).catch(
+                (error) => {
+                  if (this.summaryView === view)
+                    this.report(this.panelFailureKind(message), error)
+                },
+              )
             })
             view.onDidDispose(() => {
               if (this.summaryView === view) {
@@ -6923,10 +6946,12 @@ export class StudyWorkspace {
             // Disposed or replaced panel documents cannot send actions into a later replay.
             view.webview.onDidReceiveMessage((message) => {
               if (this.moments === view)
-                void this.receive(message, 'moments', view).catch((error) => {
-                  if (this.moments === view)
-                    this.report(this.panelFailureKind(message), error)
-                })
+                void this.receivePaneMessage(message, 'moments', view).catch(
+                  (error) => {
+                    if (this.moments === view)
+                      this.report(this.panelFailureKind(message), error)
+                  },
+                )
             })
             view.onDidDispose(() => {
               if (this.moments === view) {
@@ -8404,6 +8429,73 @@ export class StudyWorkspace {
       : 'control'
   }
 
+  /**
+   * Receives a webview's message and, when it asked to open a Saved studies entry by number, answers that webview once the request has ended.
+   * Called by the three webview message listeners instead of {@link receive}, so a request the reader refuses, discards or fails releases the pane that waits for it. The reply goes to the sending webview only: the same Study message reaches several panes, and each counts its own requests.
+   * @param value - The raw webview message.
+   * @param origin - The pane family the webview belongs to.
+   * @param owner - The panel or view whose webview sent the message.
+   * @throws Whatever {@link receive} throws; the reply is posted first.
+   * @example void this.receivePaneMessage(message, 'context', panel).catch((error) => this.report('control', error))
+   */
+  private async receivePaneMessage(
+    value: unknown,
+    origin: 'context' | 'moments',
+    owner: vscode.WebviewPanel | vscode.WebviewView,
+  ): Promise<void> {
+    const request = readOpenRequest(value)
+    // A saved study chosen during Recording opens its recording, whose load outlives the call below.
+    const opensRecording = request?.type === 'history' && this.recordingActive
+    try {
+      await this.receive(value, origin, owner)
+    } finally {
+      if (request)
+        this.settleOpenRequest(
+          owner.webview,
+          request.openRequest,
+          opensRecording,
+        )
+    }
+  }
+
+  /**
+   * Answers a pane's open request, or keeps the answer while the Recording load that request started is still in flight; called by {@link receivePaneMessage}.
+   * @param webview - The webview that sent the request.
+   * @param openRequest - The number the pane gave its request.
+   * @param opensRecording - Whether the request arrived as a saved-study choice during Recording.
+   * @example this.settleOpenRequest(panel.webview, 3, false)
+   */
+  private settleOpenRequest(
+    webview: Pick<vscode.Webview, 'postMessage'>,
+    openRequest: PaneOpenRequest['openRequest'],
+    opensRecording: boolean,
+  ): void {
+    if (opensRecording && this.playback?.state().readiness === 'loading') {
+      this.deferredOpenReplies.push({ webview, openRequest })
+      return
+    }
+    this.postOpenRequestSettled(webview, openRequest)
+  }
+
+  /** Posts the replies kept by {@link settleOpenRequest} once no Recording load is in flight; called by the playback controller's change callback. @example this.flushDeferredOpenReplies() */
+  private flushDeferredOpenReplies(): void {
+    if (this.playback?.state().readiness === 'loading') return
+    for (const reply of this.deferredOpenReplies.splice(0))
+      this.postOpenRequestSettled(reply.webview, reply.openRequest)
+  }
+
+  /** Tells one webview that the open request it numbered has ended; called by {@link settleOpenRequest} and {@link flushDeferredOpenReplies}. @example this.postOpenRequestSettled(panel.webview, 3) */
+  private postOpenRequestSettled(
+    webview: Pick<vscode.Webview, 'postMessage'>,
+    openRequest: PaneOpenRequest['openRequest'],
+  ): void {
+    const reply: OpenRequestSettled = {
+      type: 'open-request-settled',
+      openRequest,
+    }
+    void webview.postMessage(reply)
+  }
+
   /** Accepts only bounded named UI messages, rejecting stale controls before dispatch. @example await this.receive(message) */
   private async receive(
     value: unknown,
@@ -8875,49 +8967,115 @@ export class StudyWorkspace {
         await this.nodeHistoryPlaybackController.seek(message.positionMs)
       }
     }
-    if (message.type === 'history') {
-      if (this.recordingActive) {
-        await this.openRecording(message.studyId)
-        return
-      }
-      const request = ++this.historyRequest
-      this.pendingHistory = request
-      this.loading = true
-      this.lastRendered = undefined
-      this.publish()
-      try {
-        const archive = await this.readSavedArchive(message.studyId)
-        if (
-          this.pendingHistory !== request ||
-          message.revision !== this.revision ||
-          this.closing
-        )
-          return
-        this.pendingHistory = undefined
-        this.selectedArchive = archive
-        // Browser selection retires the separate Node journal and its historical debugger context.
-        if (await this.retireNodeHistorySelection()) {
-          // Closing a native preview can publish a new reader revision; the owned history request still controls this switch.
-          if (
-            this.pendingHistory !== undefined ||
-            request !== this.historyRequest ||
-            this.closing
-          )
-            return
-        }
-        await this.showSavedStudy(archive)
-      } catch (error) {
-        if (
-          this.pendingHistory !== request ||
-          message.revision !== this.revision ||
-          this.closing
-        )
-          return
-        this.pendingHistory = undefined
-        this.report('archive', error)
-        await this.renderSelection(true, true)
-      }
+    if (message.type === 'history') await this.openChosenStudy(message)
+  }
+
+  /**
+   * Opens the saved study the learner chose in Saved studies; called by {@link receive} for a `history` message.
+   * During Recording the choice opens that study's recording. Otherwise the request takes a history request number and owns the reader until it has shown the study, failed, or been overtaken by a newer choice; {@link pendingHistory} only marks the time its archive is being read.
+   * @param message - The pane's choice with the revision the pane had seen.
+   * @example await this.openChosenStudy({ type: 'history', revision: this.revision, studyId })
+   */
+  private async openChosenStudy(message: HistoryPaneMessage): Promise<void> {
+    if (this.recordingActive) {
+      await this.openRecording(message.studyId)
+      return
     }
+    const request = ++this.historyRequest
+    this.pendingHistory = request
+    this.loading = true
+    this.lastRendered = undefined
+    this.publish()
+    try {
+      await this.showChosenStudy(message, request)
+    } catch (error) {
+      await this.reportFailedChoice(request, message.revision, error)
+    } finally {
+      await this.releaseStaleHistoryRequest(request)
+    }
+  }
+
+  /**
+   * Reads the chosen archive and shows it, unless the request went stale while the archive was read; called by {@link openChosenStudy}.
+   * A stale read touches nothing: neither the selection nor a Node test history the learner chose in the meantime.
+   * @param message - The pane's choice.
+   * @param request - The history request number this choice took.
+   * @example await this.showChosenStudy(message, request)
+   */
+  private async showChosenStudy(
+    message: HistoryPaneMessage,
+    request: number,
+  ): Promise<void> {
+    const archive = await this.readSavedArchive(message.studyId)
+    if (this.isStaleHistoryRead(request, message.revision)) return
+    this.pendingHistory = undefined
+    this.selectedArchive = archive
+    // Browser selection retires the separate Node journal and its historical debugger context.
+    await this.retireNodeHistorySelection()
+    // Closing a native preview can publish a new reader revision; the owned history request still controls this switch.
+    if (!this.isLatestHistoryRequest(request)) return
+    await this.showSavedStudy(archive)
+    this.publishChoiceOfClosedReader(request)
+  }
+
+  /**
+   * Ends the loading state of a choice made while the Study workspace is closed and publishes the chosen study to the panes that are still up; called by {@link showChosenStudy} once the study is selected.
+   * An open reader has rendered and published the study already. A closed one renders nothing, so without this the bottom panel would keep the earlier study and stay loading until the reader is opened.
+   * @param request - The history request number of the choice; a newer choice or a closing reader publishes its own state.
+   * @example this.publishChoiceOfClosedReader(request)
+   */
+  private publishChoiceOfClosedReader(request: number): void {
+    if (this.opened || !this.isLatestHistoryRequest(request)) return
+    this.loading = false
+    this.publish()
+  }
+
+  /** Says whether a saved-study read no longer owns the reader when it ends: a newer saved study or Node test history was chosen, the reader changed its revision, or it is closing. @example if (this.isStaleHistoryRead(request, message.revision)) return */
+  private isStaleHistoryRead(request: number, revision: number): boolean {
+    return (
+      this.pendingHistory !== request ||
+      !this.isLatestHistoryRequest(request) ||
+      revision !== this.revision
+    )
+  }
+
+  /**
+   * Reports a chosen saved study that failed while its request still owns the reader, and renders what is selected so the loading state ends; called by {@link openChosenStudy}.
+   * A failure of the archive read is a storage failure and leaves the earlier study selected. A failure after the read (the reader could not be arranged for the study) is a reading failure with the chosen study selected.
+   * @param request - The history request number of the failed choice.
+   * @param revision - The revision the pane had seen when it sent the choice.
+   * @param error - What the read or the arrangement threw.
+   * @example await this.reportFailedChoice(request, message.revision, error)
+   */
+  private async reportFailedChoice(
+    request: number,
+    revision: number,
+    error: unknown,
+  ): Promise<void> {
+    if (!this.isLatestHistoryRequest(request)) return
+    if (this.pendingHistory !== request) {
+      this.report('reading', error)
+      await this.renderShownSelection()
+      return
+    }
+    // A read that failed for a reader that changed meanwhile is discarded without a line; releaseStaleHistoryRequest ends it.
+    if (revision !== this.revision) return
+    this.pendingHistory = undefined
+    this.report('archive', error)
+    await this.renderSelection(true, true)
+  }
+
+  /**
+   * Ends a saved-study request that was discarded while its archive was still marked as opening; called last by {@link openChosenStudy}.
+   * Without this the marker would keep refusing delete requests and holding back every render until another entry is chosen. A request that showed its study or reported its failure has cleared the marker itself, and a newer saved-study choice owns it by then.
+   * @param request - The history request number of the choice that just ended.
+   * @example await this.releaseStaleHistoryRequest(request)
+   */
+  private async releaseStaleHistoryRequest(request: number): Promise<void> {
+    if (this.pendingHistory !== request) return
+    this.pendingHistory = undefined
+    // Renders asked for while the marker was set returned early, so nothing else shows the selection; a newer choice or a closing reader needs no render from here.
+    if (this.isLatestHistoryRequest(request)) await this.renderShownSelection()
   }
 
   /** Names the study whose files a confirmed removal is moving right now, for the writers and readers that must leave it alone. @example if (this.movingStudyId() === id) return */
@@ -8927,7 +9085,7 @@ export class StudyWorkspace {
       : undefined
   }
 
-  /** Refuses to open or play a study whose files are on their way to the Trash and may be half moved; called by {@link readSavedArchive}, {@link openRecording} and {@link loadPlayback}. @throws `Study archive is unavailable.` for the moving study. @example this.assertStudyNotMoving(id) */
+  /** Refuses to open, play or save a study whose files are on their way to the Trash and may be half moved; called by {@link readSavedArchive}, {@link openRecording}, {@link loadPlayback} and {@link saveLearningReplay}. @throws `Study archive is unavailable.` for the moving study. @example this.assertStudyNotMoving(id) */
   private assertStudyNotMoving(studyId: string): void {
     if (this.movingStudyId() === studyId)
       throw new Error(STUDY_REMOVAL_REFUSALS.unavailable)
@@ -9154,12 +9312,14 @@ export class StudyWorkspace {
 
   /**
    * Moves a confirmed study to the system Trash and settles the removal's outcome; called by {@link holdStudyAsMoving} while the removal state is `moving`.
-   * Waits for this window's accepted writes of the study first, forgets the study only when something moved, and shows a neighbour when the shown study left.
+   * Waits for this window's accepted writes of the study first, forgets the study only when something moved, and shows a neighbour when the shown study left. Once every file moved, the outcome line is settled whatever happens to the step that shows what follows.
    * @param studyId - The confirmed entry.
    * @example await this.moveSavedStudy(studyId)
    */
   private async moveSavedStudy(studyId: string): Promise<void> {
     const messages = studyRemovalMessages()
+    // A saved study or Node test history chosen from here on owns the reader; the neighbour gives way to it.
+    const choiceGeneration = this.historyRequest
     await this.settleStudyWrites(studyId)
     const neighbours = this.removalNeighbours(studyId)
     const evidence = await this.studyEvidenceToMove(studyId)
@@ -9174,8 +9334,8 @@ export class StudyWorkspace {
       return
     }
     await this.forgetRemovedStudy(studyId)
-    if (removal.outcome === 'partly-moved') {
-      // The study is still listed and stays chosen, so deleting it again finishes the removal.
+    if (removal.outcome !== 'moved') {
+      // Partly moved: the study is still listed and stays chosen, so deleting it again finishes the removal.
       this.settleStudyRemoval({
         status: 'failed',
         studyId,
@@ -9183,8 +9343,39 @@ export class StudyWorkspace {
       })
       return
     }
-    await this.showAfterRemoval(studyId, neighbours)
+    this.reportUnreleasedLock(removal.unreleasedLock)
+    await this.showAfterCompletedRemoval(studyId, neighbours, choiceGeneration)
     await this.settleMovedStudy(studyId, evidence.isLeftInPlace)
+  }
+
+  /** Tells the learner in the reader's storage line that a completed removal could not release the storage lock; the next successful checkpoint write or Retry storage retires the line, and a write the lock still blocks reports it again. @example this.reportUnreleasedLock(removal.unreleasedLock) */
+  private reportUnreleasedLock(cause: string | undefined): void {
+    if (cause === undefined) return
+    this.report(
+      'archive',
+      new Error(studyRemovalMessages().lockNotReleased(cause)),
+    )
+  }
+
+  /**
+   * Shows what follows a study that has left the library, without letting a failure of that step take the removal's outcome with it; called by {@link moveSavedStudy} after every file moved.
+   * A study that cannot be arranged (a presentation change or a reader close is pending) is reported in the reader's own line, and the reader shows no study.
+   * @param studyId - The study that was moved.
+   * @param neighbours - The candidates from {@link removalNeighbours}, nearest first.
+   * @param choiceGeneration - The history request number from before the removal's first step.
+   * @example await this.showAfterCompletedRemoval(studyId, neighbours, choiceGeneration)
+   */
+  private async showAfterCompletedRemoval(
+    studyId: string,
+    neighbours: string[],
+    choiceGeneration: number,
+  ): Promise<void> {
+    try {
+      await this.showAfterRemoval(studyId, neighbours, choiceGeneration)
+    } catch (error) {
+      this.report('reading', error)
+      await this.showNoStudyAfterRemoval()
+    }
   }
 
   /**
@@ -9280,16 +9471,46 @@ export class StudyWorkspace {
     }
   }
 
-  /** After a study left the library: drops the archives the reader still held of it, follows the ledger that no longer names it, and shows a neighbour when it was the shown study. @example await this.showAfterRemoval(studyId, neighbours) */
+  /**
+   * After a study left the library: drops the archives the reader still held of it, follows the ledger that no longer names it, and shows a neighbour when it is still the selection and nothing was chosen meanwhile; called by {@link showAfterCompletedRemoval}.
+   * Both are read after the ledger read, so a choice that completes during it wins. A Node test history never changes the saved-study selection, so a choice is recognised by the request number it took, not by the selected study.
+   * @param studyId - The study that was moved.
+   * @param neighbours - The candidates from {@link removalNeighbours}, nearest first.
+   * @param choiceGeneration - The history request number from before the removal's first step.
+   * @example await this.showAfterRemoval(studyId, neighbours, choiceGeneration)
+   */
   private async showAfterRemoval(
     studyId: string,
     neighbours: string[],
+    choiceGeneration: number,
   ): Promise<void> {
-    const wasShown = this.selection.studyId === studyId
     this.activeArchive = withoutStudy(this.activeArchive, studyId)
     this.selectedArchive = withoutStudy(this.selectedArchive, studyId)
     await this.refreshProgress()
-    if (wasShown) await this.showRemovalNeighbour(neighbours)
+    // A saved study chosen meanwhile is the selection already.
+    if (this.selection.studyId !== studyId) return
+    if (this.historyRequest !== choiceGeneration) {
+      await this.leaveRemovedSelection()
+      return
+    }
+    await this.showRemovalNeighbour(studyId, neighbours)
+  }
+
+  /** Takes the removed study out of the selection when the learner's own choice owns the reader: a choice that is still opening shows itself, or no study when it fails; one that has ended (a shown Node test history, a failed open) leaves the reader with no saved study. @example await this.leaveRemovedSelection() */
+  private async leaveRemovedSelection(): Promise<void> {
+    if (this.studyOpening()) {
+      this.selectNoStudy()
+      return
+    }
+    await this.showNoStudyAfterRemoval()
+  }
+
+  /** Leaves the reader with no saved study after the shown one was removed and none follows it: selects none, renders and saves that selection. @example await this.showNoStudyAfterRemoval() */
+  private async showNoStudyAfterRemoval(): Promise<void> {
+    this.selectedArchive = undefined
+    this.selectNoStudy()
+    await this.renderShownSelection()
+    await this.saveSelection()
   }
 
   /** Names the current run when the library refused it at its admission and no removal has made room for it yet. @example this.refusedRunAwaitingRoom()?.id */
@@ -9363,8 +9584,8 @@ export class StudyWorkspace {
     return undefined
   }
 
-  /** Renders the reader's selection after a removal changed it; a closed reader renders nothing, and a rendering failure is reported like any other. @example await this.renderAfterRemoval() */
-  private async renderAfterRemoval(): Promise<void> {
+  /** Renders the reader's current selection after a removal or a discarded request changed what is shown; a closed reader renders nothing, and a rendering failure is reported like any other. @example await this.renderShownSelection() */
+  private async renderShownSelection(): Promise<void> {
     if (!this.opened || this.closing) return
     await this.renderSelection(true, true).catch((error: unknown) =>
       this.report('reading', error),
@@ -9372,28 +9593,28 @@ export class StudyWorkspace {
   }
 
   /**
-   * Shows the nearest remaining saved study after the shown one was removed, or no study when none can be opened; called by {@link showAfterRemoval}.
-   * A study the learner chose in the meantime wins: one that is still opening shows itself, and one chosen while the neighbour was read replaces it.
+   * Shows the nearest remaining saved study after the shown one was removed, or no study when none can be opened; called by {@link showAfterRemoval} when nothing was chosen during the removal.
+   * A study the learner chooses while the neighbour is read wins, and neither that choice nor a closing reader finds the removed study still selected.
+   * @param studyId - The study that was moved.
    * @param neighbours - The candidates from {@link removalNeighbours}, nearest first.
-   * @example await this.showRemovalNeighbour([olderStudyId])
+   * @example await this.showRemovalNeighbour(removedStudyId, [olderStudyId])
    */
-  private async showRemovalNeighbour(neighbours: string[]): Promise<void> {
-    if (this.studyOpening()) {
-      // The pending choice shows itself, or no study when it fails; the removed study is no longer the selection either way.
-      this.selectNoStudy()
-      return
-    }
+  private async showRemovalNeighbour(
+    studyId: string,
+    neighbours: string[],
+  ): Promise<void> {
     const request = ++this.historyRequest
     const shown = await this.firstReadableStudy(neighbours)
-    if (!this.isLatestHistoryRequest(request)) return
-    this.selectedArchive = shown
-    if (shown) {
-      await this.showSavedStudy(shown, () => this.renderAfterRemoval())
+    if (!this.isLatestHistoryRequest(request)) {
+      if (this.selection.studyId === studyId) await this.leaveRemovedSelection()
       return
     }
-    this.selectNoStudy()
-    await this.renderAfterRemoval()
-    await this.saveSelection()
+    if (!shown) {
+      await this.showNoStudyAfterRemoval()
+      return
+    }
+    this.selectedArchive = shown
+    await this.showSavedStudy(shown, () => this.renderShownSelection())
   }
 
   /** Says whether no saved study or Node test history was chosen since this request took its number, on a reader that is not closing. @example if (!this.isLatestHistoryRequest(request)) return */
@@ -9401,7 +9622,7 @@ export class StudyWorkspace {
     return request === this.historyRequest && !this.closing
   }
 
-  /** Leaves the reader without a selected study after the shown one was removed and nothing replaces it yet. @example this.selectNoStudy() */
+  /** Leaves the reader without a selected study after the shown one was removed and nothing replaces it yet; called by {@link leaveRemovedSelection} and {@link showNoStudyAfterRemoval}. @example this.selectNoStudy() */
   private selectNoStudy(): void {
     this.readerSelectionRevision++
     this.selection = { ...NO_STUDY_SELECTION }

@@ -545,9 +545,8 @@ export class StudyService {
   /** Reserves intent before prerequisite I/O so duplicate starts cannot create two runtimes. @example service.start(input).runUri */
   start(input: StartInput) {
     this.assertMutable(input.instanceId)
-    // A refused run had no effect, so repeating its start asks the library again instead of replaying the refusal.
-    this.forgetStoppedRefusal(input.key)
-    const previous = this.startKeys.get(input.key)
+    // A refused run had no effect, so its key is free: the repeat is checked as a new start, and the refused run is forgotten only once that start is accepted.
+    const { previous, refusal } = this.retainedStart(input.key)
     if (previous && previous.profile !== input.profile)
       throw new StudyError(
         'IDEMPOTENCY_CONFLICT',
@@ -581,7 +580,7 @@ export class StudyService {
     this.presentationController?.assertPresentationIdle()
     if ([...this.records.values()].some((record) => !record.stopped))
       throw new StudyError('BUSY', 'Another run still owns resources.')
-    this.reserveRunSlot()
+    this.reserveRunSlot(refusal)
     const createdAt = this.now()
     const timeout = REPOSITORY_RUN_TIMEOUT_MS
     const record: StudyRecord = {
@@ -614,13 +613,16 @@ export class StudyService {
   }
 
   /**
-   * Keeps the {@link MAX_RUNS} bound of retained runs before {@link StudyService.start} reserves another one.
+   * Keeps the {@link MAX_RUNS} bound of retained runs before {@link StudyService.start} reserves another one; it is the last step that can reject a start.
    * A refused or removed run holds no history, so it gives up its slot before a start is refused for the bound.
+   * @param refusal - The stopped refused run whose start this one repeats; it is forgotten first, so the new run takes its slot and its key.
    * @throws A `LIMIT_EXCEEDED` {@link StudyError} when every retained run holds history.
    * @example
    * this.reserveRunSlot() // with 16 retained runs, one of them refused: forgets that run and returns
+   * this.reserveRunSlot(refusal) // forgets the refused run the start repeats, then returns
    */
-  private reserveRunSlot(): void {
+  private reserveRunSlot(refusal?: StudyRecord): void {
+    if (refusal) this.forgetRecord(refusal)
     if (this.records.size < MAX_RUNS) return
     if (this.evictOldestExcludedRecord()) return
     throw new StudyError(
@@ -651,20 +653,30 @@ export class StudyService {
   }
 
   /**
-   * Forgets the run a start key names when the study library refused it and it has ended, so the same start begins a new run once room was made; called first by {@link StudyService.start}.
-   * A refused run that is still stopping keeps its record, and its receipt is replayed.
+   * Reads what a start key already names; called first by {@link StudyService.start}.
+   * A run the study library refused and that has ended had no effect, so its key is free: it is returned apart from `previous`, no conflict check applies to it, and {@link StudyService.reserveRunSlot} forgets it once every guard of the repeat has passed. A repeat that a guard rejects therefore leaves the refused run and its receipt as they were.
    * @param key - The start key of the incoming start.
+   * @returns
+   * - No retained run for the key: both undefined
+   * - A refused run that has ended: `refusal`
+   * - Any other retained run, including a refused run that is still stopping: `previous`, whose receipt a matching start replays
    * @example
-   * this.forgetStoppedRefusal('explain-login') // the run refused under this key is no longer retained
+   * this.retainedStart('explain-login') // => { previous: undefined, refusal } once the library refused that run and it ended
    */
-  private forgetStoppedRefusal(key: string): void {
-    const refused = this.startKeys.get(key)
-    if (refused?.historyExcluded === 'refused-at-admission' && refused.stopped)
-      this.forgetRecord(refused)
+  private retainedStart(key: string): {
+    previous: StudyRecord | undefined
+    refusal: StudyRecord | undefined
+  } {
+    const named = this.startKeys.get(key)
+    const isStoppedRefusal =
+      named?.historyExcluded === 'refused-at-admission' && named.stopped
+    return isStoppedRefusal
+      ? { previous: undefined, refusal: named }
+      : { previous: named, refusal: undefined }
   }
 
   /**
-   * Drops one retained run with every start key that names it; called by {@link StudyService.evictOldestExcludedRecord} and {@link StudyService.forgetStoppedRefusal}.
+   * Drops one retained run with every start key that names it; called by {@link StudyService.evictOldestExcludedRecord} and {@link StudyService.reserveRunSlot}.
    * A later start with one of its keys begins a new run instead of replaying the forgotten receipt.
    * @param record - A run that holds no history.
    * @example

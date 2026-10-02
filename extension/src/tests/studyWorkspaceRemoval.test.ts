@@ -4,6 +4,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rm,
   unlink,
   utimes,
@@ -13,6 +14,7 @@ import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
+import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { RecordingStore } from '../recordingStore'
@@ -83,7 +85,7 @@ function requestRemoval(harness: Harness, studyId: string): Promise<void> {
 
 /** Chooses one entry of Saved studies, as the Study pane's list does, and waits until the reader shows it. @example await chooseStudy(harness, study.id) */
 async function chooseStudy(harness: Harness, studyId: string): Promise<void> {
-  // The list only exists in an open Study pane, and a closed reader never finishes loading a chosen study.
+  // The choice is made in the Study pane's own list, which exists only while the Study workspace is open.
   await harness.reader.open()
   await harness.reader['receive'](
     {
@@ -155,6 +157,26 @@ function sendChoice(
     { type, revision: harness.reader.inspect().view!.revision, studyId },
     'context',
   )
+}
+
+/**
+ * Sends one message through the Study pane's webview, as the pane itself does, so the reader's reply to an open request reaches the harness.
+ * It does not wait: the webview route answers nothing to its sender, so a test waits for the public outcome.
+ * @param harness - The reader whose pane sends.
+ * @param message - The pane message without its revision; the revision the pane has seen is added.
+ * @example sendFromPane(harness, { type: 'history', studyId: study.id, openRequest: 3 })
+ */
+function sendFromPane(
+  harness: Harness,
+  message: { type: 'history' | 'node-history'; studyId: string } & Record<
+    string,
+    unknown
+  >,
+): void {
+  harness.receive({
+    ...message,
+    revision: harness.reader.inspect().view!.revision,
+  })
 }
 
 /** Names where the agent server of the reader's editor keeps the raw evidence of one run. @example evidenceDirectoryOf(harness, study) // '<storage>/agent/<instance>/<run>' */
@@ -1898,6 +1920,773 @@ test('after a chosen saved study and a chosen Node test history each failed to o
   }
 })
 
+// Value: protects=a chosen saved study whose request is discarded as stale gives the reader and the delete button back; fails_when=the discarded request keeps its opening marker, so the reader stays loading and every delete request answers "Wait for the chosen saved study to open."; why_new=only failed opens were tested, not a discarded one; seam=the library's archive read, held by the test, and a recording open that fails meanwhile
+test('a chosen saved study whose open is discarded because the reader changed meanwhile leaves the earlier study shown and a delete request asked', async (context) => {
+  // Arrange: a recorded saved run is shown; another saved study is chosen and its archive read is held. A recording open that fails meanwhile changes the reader's revision.
+  const harness = await recordedReaderHarness()
+  try {
+    const other = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await chooseStudy(harness, harness.studyId)
+    const otherRead = holdArchiveRead(context, other.id)
+    const revisionAtChoice = harness.reader.inspect().view!.revision
+    const opening = sendChoice(harness, 'history', other.id)
+    await otherRead.started
+    harness.reader['replaceUnavailableReplayDebugger'] =
+      async (): Promise<void> => {
+        throw new Error('The historical debugger did not start.')
+      }
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'failed',
+      'the failed recording open',
+      2_000,
+    )
+    const revisionAfterFailedOpen = harness.reader.inspect().view!.revision
+    // Act: the held read ends after the reader changed; the learner then asks to delete the shown study and cancels.
+    otherRead.release()
+    await opening
+    harness.answerWarningDialogs(async () => undefined)
+    await requestRemoval(harness, harness.studyId)
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.notEqual(revisionAfterFailedOpen, revisionAtChoice)
+    assert.equal(view.model.selection.studyId, harness.studyId)
+    assert.equal(harness.reader['loading'], false)
+    assert.equal(harness.warningDialogs.length, 1)
+    assert.equal(view.studyRemoval, undefined)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a chosen saved study whose read fails after the reader changed gives the reader and the delete button back and adds no storage line; fails_when=the failed stale read keeps its opening marker, or its failure is reported for a view the learner already left; why_new=the discarded request that is tested has a read that succeeds, and the failed reads that are tested are not stale; seam=none
+test('a chosen saved study whose archive read fails after the reader changed meanwhile leaves the earlier study shown without a storage failure line, and a delete request is asked', async (context) => {
+  // Arrange: a recorded saved run is shown; another saved study is chosen and its archive read is held. A recording open that fails meanwhile changes the reader's revision.
+  const harness = await recordedReaderHarness()
+  try {
+    const other = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await chooseStudy(harness, harness.studyId)
+    const readCheckpoint = LearningLibrary.prototype.readCheckpoint
+    let otherReadStarted!: () => void, failOtherRead!: () => void
+    const started = new Promise<void>((resolve) => {
+        otherReadStarted = resolve
+      }),
+      held = new Promise<void>((resolve) => {
+        failOtherRead = resolve
+      })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'readCheckpoint',
+      async function (this: LearningLibrary, id: string) {
+        if (id === other.id) {
+          otherReadStarted()
+          await held
+          throw new Error('The archive could not be read.')
+        }
+        return readCheckpoint.call(this, id)
+      },
+    )
+    const revisionAtChoice = harness.reader.inspect().view!.revision
+    const opening = sendChoice(harness, 'history', other.id)
+    await started
+    harness.reader['replaceUnavailableReplayDebugger'] =
+      async (): Promise<void> => {
+        throw new Error('The historical debugger did not start.')
+      }
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'failed',
+      'the failed recording open',
+      2_000,
+    )
+    const revisionAfterFailedOpen = harness.reader.inspect().view!.revision
+    // Act: the held read fails after the reader changed; the learner then asks to delete the shown study and cancels.
+    failOtherRead()
+    await opening
+    harness.answerWarningDialogs(async () => undefined)
+    await requestRemoval(harness, harness.studyId)
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.notEqual(revisionAfterFailedOpen, revisionAtChoice)
+    assert.equal(view.model.selection.studyId, harness.studyId)
+    assert.equal(harness.reader['loading'], false)
+    assert.deepEqual(
+      structuredClone(
+        view.errors.filter((line) =>
+          line.includes('The archive could not be read.'),
+        ),
+      ),
+      [],
+    )
+    assert.equal(harness.warningDialogs.length, 1)
+    assert.equal(view.studyRemoval, undefined)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a choice the learner overtook with another saved study reports nothing when its own archive read fails later; fails_when=the failure of the overtaken read is reported as a reading failure or re-renders the reader although a newer choice owns it; why_new=the overlapping choices that are tested both open, and the failed reads that are tested belong to the latest choice; seam=none
+test('a choice overtaken by a newer saved study adds no failure line when its own archive read fails afterwards, and the newer study stays shown', async (context) => {
+  // Arrange: three saved studies; the oldest is shown. The archive read of the first choice is held and fails after the second choice was shown.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      overtaken = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z'),
+      newer = await saveEarlierStudy(harness, '2026-09-20T00:00:03.000Z')
+    await chooseStudy(harness, shown.id)
+    const readCheckpoint = LearningLibrary.prototype.readCheckpoint
+    let overtakenReadStarted!: () => void, failOvertakenRead!: () => void
+    const started = new Promise<void>((resolve) => {
+        overtakenReadStarted = resolve
+      }),
+      held = new Promise<void>((resolve) => {
+        failOvertakenRead = resolve
+      })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'readCheckpoint',
+      async function (this: LearningLibrary, id: string) {
+        if (id === overtaken.id) {
+          overtakenReadStarted()
+          await held
+          throw new Error('The overtaken archive could not be read.')
+        }
+        return readCheckpoint.call(this, id)
+      },
+    )
+    const overtakenOpening = sendChoice(harness, 'history', overtaken.id)
+    await started
+    await sendChoice(harness, 'history', newer.id)
+    const shownBeforeFailure =
+      harness.reader.inspect().view!.model.selection.studyId
+    // Act
+    failOvertakenRead()
+    await overtakenOpening
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(shownBeforeFailure, newer.id)
+    assert.equal(view.model.selection.studyId, newer.id)
+    assert.equal(view.study?.id, newer.id)
+    assert.equal(view.loading, false)
+    assert.deepEqual(
+      structuredClone(
+        view.errors.filter((line) =>
+          line.includes('The overtaken archive could not be read.'),
+        ),
+      ),
+      [],
+    )
+    assert.equal(harness.reader['errors'].has('reading'), false)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a chosen saved study that was read but could not be arranged ends its loading state and says why; fails_when=a failure after the archive read is dropped because the opening marker was already cleared, so the reader loads forever without a reason; why_new=every tested failure happened at the archive read; seam=the reader's open, which rejects as it does while a presentation change is pending
+test('a chosen saved study whose arrangement is refused after its archive was read stops loading and names the reason', async () => {
+  // Arrange: an earlier saved study; a run that was followed live, then stopped and saved, is the shown study. Arranging the reader is refused.
+  const harness = await workspaceHarness()
+  try {
+    const earlier = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const { record } = await startRun(harness)
+    const liveStudyId = `${harness.service.instanceId}_${record.id}`
+    await harness.reader.open()
+    await harness.reader.action('stop')
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.studies.some((entry) => entry.id === liveStudyId),
+      'the saved study of the finished run',
+      2_000,
+    )
+    harness.reader.open = async (): Promise<void> => {
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        'A presentation change or reader close is pending. Read its state before another control.',
+      )
+    }
+    // Act
+    await sendChoice(harness, 'history', earlier.id)
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(view.loading, false)
+    assert.equal(view.model.selection.studyId, earlier.id)
+    assert.equal(harness.reader['errors'].has('reading'), true)
+    assert.deepEqual(
+      structuredClone(
+        view.errors.filter((line) => line.includes('presentation change')),
+      ),
+      [
+        'Error: A presentation change or reader close is pending. Read its state before another control.',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Node test history the learner chose after a saved study, and already sees, is not taken away when the older saved-study read ends; fails_when=the older request only checks its own marker and the revision, continues, and retires the newer Node test history; why_new=overlapping choices of the two kinds were only tested during a removal; seam=the library's archive read, held by the test
+test('a saved-study read that ends after a newer Node test history was chosen and shown leaves that Node test history shown', async (context) => {
+  // Arrange: a shown saved study, a second saved study whose archive read is held, and a Node test history.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      slow = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await chooseStudy(harness, shown.id)
+    const slowRead = holdArchiveRead(context, slow.id)
+    const opening = sendChoice(harness, 'history', slow.id)
+    await slowRead.started
+    await sendChoice(harness, 'node-history', nodeHistory.studyId)
+    const shownBeforeRelease =
+      harness.reader.inspect().view!.nodeHistory?.header.studyId
+    // Act
+    slowRead.release()
+    await opening
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(shownBeforeRelease, nodeHistory.studyId)
+    assert.equal(view.nodeHistory?.header.studyId, nodeHistory.studyId)
+    assert.equal(view.loading, false)
+    assert.notEqual(view.model.selection.studyId, slow.id)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a chosen entry the reader refuses before it loads still releases the pane that waits for it; fails_when=the reader answers no open request, so the pane cannot tell a refused choice from one still on its way and its delete button waits until another entry is chosen; why_new=the pane guessed the end of an open from revisions and loading flags; seam=the Study pane's webview, stubbed at the vscode boundary, and a presentation message held by the test
+test('a saved study chosen while a presentation change is pending is refused and its pane is told that the request ended', async () => {
+  // Arrange: a saved study is listed; a presentation change is held half-way.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.open()
+    const held = harness.holdPresentationMessage()
+    release = held.release
+    const state = harness.reader.presentationState()
+    const change = harness.reader
+      .changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'living-book',
+        action: 'select',
+      })
+      .catch(() => undefined)
+    await held.started
+    // Act
+    sendFromPane(harness, {
+      type: 'history',
+      studyId: study.id,
+      openRequest: 3,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the reply to the open request',
+      1_000,
+    )
+    const view = harness.reader.inspect().view!
+    held.release()
+    await change
+    // Assert
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'context', openRequest: 3 },
+    ])
+    assert.notEqual(view.model.selection.studyId, study.id)
+    assert.deepEqual(
+      structuredClone(
+        view.errors.filter((line) => line.includes('presentation change')),
+      ),
+      [
+        'Error: A presentation change or reader close is pending. Read its state before another control.',
+      ],
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a Node test history chosen during Recording is refused with its sentence and the pane that chose it is released; fails_when=the refusal is thrown before any loading state, the pane never hears of it and keeps "Wait for the chosen saved study to open."; why_new=the refusal existed, its answer to the pane did not; seam=the summary webview, stubbed at the vscode boundary
+test('a Node test history chosen during Recording is refused with its sentence and its pane is told that the request ended', async () => {
+  // Arrange: a saved recorded run whose recording is open, and a saved Node test history.
+  const harness = await recordedReaderHarness()
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    // Act
+    sendFromPane(harness, {
+      type: 'node-history',
+      studyId: nodeHistory.studyId,
+      openRequest: 4,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the reply to the open request',
+      1_000,
+    )
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'summary', openRequest: 4 },
+    ])
+    assert.equal(view.nodeHistory, undefined)
+    assert.equal(
+      view.errors.includes(
+        'Error: Close browser replay before opening a separate Node test history.',
+      ),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study chosen during Recording keeps its pane waiting while that recording loads, and releases it when the load failed; fails_when=the reply is posted as soon as the open was accepted, so the delete button names the study shown before while another recording is on its way, or it is never posted after a failed load; why_new=a recording open outlives the message that started it; seam=the reader's replay-debugger preparation, held and then failed by the test
+test('a saved study chosen during Recording is answered only once its recording load has ended', async () => {
+  // Arrange: a saved recorded run whose recording is open; the next recording load is held before it can fail.
+  const harness = await recordedReaderHarness()
+  try {
+    const other = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    let failLoad!: () => void, loadEntered!: () => void
+    const loadStarted = new Promise<void>((resolve) => {
+        loadEntered = resolve
+      }),
+      loadHeld = new Promise<void>((resolve) => {
+        failLoad = resolve
+      })
+    harness.reader['replaceUnavailableReplayDebugger'] =
+      async (): Promise<void> => {
+        loadEntered()
+        await loadHeld
+        throw new Error('The historical debugger did not start.')
+      }
+    // Act: the choice starts the other study's recording load; the load then fails.
+    sendFromPane(harness, {
+      type: 'history',
+      studyId: other.id,
+      openRequest: 5,
+    })
+    await loadStarted
+    // The message that started the load has been handled to its end once the pending microtasks have run.
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve)
+    })
+    const readinessWhileLoading = harness.controller.state().readiness,
+      repliesWhileLoading = harness.openRequestReplies()
+    failLoad()
+    await waitUntil(
+      () => harness.controller.state().readiness === 'failed',
+      'the failed recording load',
+      2_000,
+    )
+    // Assert
+    assert.equal(readinessWhileLoading, 'loading')
+    assert.deepEqual(repliesWhileLoading, [])
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'summary', openRequest: 5 },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a pane waiting for a recording load is answered when the Study workspace closes before that load has ended; fails_when=the held-back reply is posted only by a load that finishes or fails, so an abandoned load leaves the delete button waiting; why_new=the only held-back reply that is tested ends by a failed load; seam=none
+test('a saved study chosen in the bottom panel during Recording is answered when the Study workspace is closed before its recording has loaded', async () => {
+  // Arrange: a saved recorded run whose recording is open; the next recording load is held and never ends by itself.
+  const harness = await recordedReaderHarness()
+  let endHeldLoad = (): void => {}
+  try {
+    const other = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    let hasLoadStarted = false
+    const loadHeld = new Promise<void>((resolve) => {
+      endHeldLoad = resolve
+    })
+    harness.reader['replaceUnavailableReplayDebugger'] =
+      async (): Promise<void> => {
+        hasLoadStarted = true
+        await loadHeld
+      }
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: harness.reader.inspect().view!.revision,
+      studyId: other.id,
+      openRequest: 2,
+    })
+    await waitUntil(
+      () => hasLoadStarted,
+      'the held load of the chosen recording',
+      2_000,
+    )
+    // The message that started the load has been handled to its end once the pending microtasks have run.
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve)
+    })
+    const readinessWhileLoading = harness.controller.state().readiness,
+      repliesWhileLoading = harness.openRequestReplies()
+    // Act: the learner closes the Study workspace while the chosen recording is still loading.
+    await harness.reader.close()
+    // Assert
+    assert.equal(readinessWhileLoading, 'loading')
+    assert.deepEqual(repliesWhileLoading, [])
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'moments', openRequest: 2 },
+    ])
+    assert.equal(harness.reader.inspect().opened, false)
+  } finally {
+    endHeldLoad()
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study chosen during Recording that starts no recording load is answered at once; fails_when=every choice made during Recording waits for a playback change, which a refused choice never causes; why_new=the Recording cases either hold a recording load or choose a Node test history; seam=none
+test('a saved study chosen during Recording with an outdated view is refused, answered at once and leaves the open recording as it is', async () => {
+  // Arrange: a saved recorded run whose recording is open and ready, and another saved study.
+  const harness = await recordedReaderHarness()
+  try {
+    const other = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    const outdatedRevision = harness.reader.inspect().view!.revision - 1
+    // Act: the pane's choice carries a revision the reader has left behind.
+    harness.receive({
+      type: 'history',
+      revision: outdatedRevision,
+      studyId: other.id,
+      openRequest: 7,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the reply to the open request',
+      1_000,
+    )
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'summary', openRequest: 7 },
+    ])
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.controller.state().studyId, harness.studyId)
+    assert.equal(
+      view.errors.includes(
+        'Error: The displayed study changed. Inspect the current view before acting.',
+      ),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a chosen saved study that opens is answered too, so a pane never waits on a request the reader has finished; fails_when=only refusals are answered and a pane whose Study message was dropped keeps its choice; why_new=open requests had no number; seam=the Study pane's webview, stubbed at the vscode boundary
+test('a chosen saved study that opens is shown and its pane is told that the request ended', async () => {
+  // Arrange: two saved studies; the older one is shown.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await chooseStudy(harness, shown.id)
+    // Act
+    sendFromPane(harness, {
+      type: 'history',
+      studyId: chosen.id,
+      openRequest: 6,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the reply to the open request',
+      1_000,
+    )
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(view.model.selection.studyId, chosen.id)
+    assert.equal(view.loading, false)
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'context', openRequest: 6 },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study chosen in the bottom panel while the Study workspace is closed is shown in that panel; fails_when=a closed reader selects the study but publishes nothing and stays loading, so the panel keeps the earlier study's content and, once the request is answered, its list falls back to that earlier study as if the choice had been ignored; why_new=found natively on the candidate: after a fresh editor start the bottom panel is up while the Study workspace is closed; seam=the bottom panel's webview, stubbed at the vscode boundary
+test('a saved study chosen in the bottom panel while the Study workspace is closed is shown there and stops loading', async () => {
+  // Arrange: two saved studies; the older one is shown, then the Study workspace is closed and the bottom panel is resolved again, as after an editor restart.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await chooseStudy(harness, shown.id)
+    await harness.reader.close()
+    await harness.resolveRestoredObservedMoments()
+    const library = await harness.reader.learningStorage()
+    // Act
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: harness.playbackPanelMessages.at(-1)!.revision,
+      studyId: chosen.id,
+      openRequest: 1,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the reply to the open request',
+      1_000,
+    )
+    // Assert
+    const panel = harness.playbackPanelMessages.at(-1)!
+    assert.equal(harness.reader.inspect().opened, false)
+    assert.equal(panel.model.selection.studyId, chosen.id)
+    assert.equal(panel.loading, false)
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'moments', openRequest: 1 },
+    ])
+    assert.equal((await library.readProgress()).selection?.studyId, chosen.id)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a choice overtaken on a closed Study workspace does not end the loading state of the newer choice in the bottom panel; fails_when=the overtaken choice publishes itself as shown once its selection is saved, while the newer study is still being read; why_new=the closed-reader case makes a single choice; seam=none
+test('a choice overtaken in the bottom panel of a closed Study workspace leaves the newer choice loading until that study is shown', async (context) => {
+  // Arrange: three saved studies; the oldest is shown, then the Study workspace is closed and the bottom panel is resolved again. The selection save of the first choice and the archive read of the second are held.
+  const harness = await workspaceHarness()
+  let releaseSelectionSave = (): void => {}
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      overtaken = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z'),
+      newer = await saveEarlierStudy(harness, '2026-09-20T00:00:03.000Z')
+    await chooseStudy(harness, shown.id)
+    await harness.reader.close()
+    await harness.resolveRestoredObservedMoments()
+    const library = await harness.reader.learningStorage()
+    const select = LearningLibrary.prototype.select
+    let isSelectionSaveHeld = false
+    const selectionSaveReleased = new Promise<void>((resolve) => {
+      releaseSelectionSave = resolve
+    })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'select',
+      async function (
+        this: LearningLibrary,
+        selection: Parameters<LearningLibrary['select']>[0],
+      ) {
+        if (selection.studyId === overtaken.id && !isSelectionSaveHeld) {
+          isSelectionSaveHeld = true
+          await selectionSaveReleased
+        }
+        return select.call(this, selection)
+      },
+    )
+    const newerRead = holdArchiveRead(context, newer.id)
+    // Act: the second choice arrives while the first one's selection is being saved; that save then ends while the second study is still being read.
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: harness.playbackPanelMessages.at(-1)!.revision,
+      studyId: overtaken.id,
+      openRequest: 1,
+    })
+    await waitUntil(
+      () => isSelectionSaveHeld,
+      'the held selection save of the first choice',
+      1_000,
+    )
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: harness.playbackPanelMessages.at(-1)!.revision,
+      studyId: newer.id,
+      openRequest: 2,
+    })
+    await newerRead.started
+    releaseSelectionSave()
+    await waitUntil(
+      () => harness.openRequestReplies().length === 1,
+      'the reply to the overtaken choice',
+      1_000,
+    )
+    const panelWhileNewerOpens = harness.playbackPanelMessages.at(-1)!,
+      repliesWhileNewerOpens = harness.openRequestReplies()
+    newerRead.release()
+    await waitUntil(
+      () => harness.openRequestReplies().length === 2,
+      'the reply to the newer choice',
+      1_000,
+    )
+    // Assert
+    const panel = harness.playbackPanelMessages.at(-1)!
+    assert.deepEqual(repliesWhileNewerOpens, [
+      { webview: 'moments', openRequest: 1 },
+    ])
+    assert.equal(panelWhileNewerOpens.loading, true)
+    assert.equal(harness.reader.inspect().opened, false)
+    assert.equal(panel.model.selection.studyId, newer.id)
+    assert.equal(panel.loading, false)
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'moments', openRequest: 1 },
+      { webview: 'moments', openRequest: 2 },
+    ])
+    assert.equal((await library.readProgress()).selection?.studyId, newer.id)
+  } finally {
+    releaseSelectionSave()
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=two choices made one after the other are each answered by their own number, so the pane releases the right one; fails_when=the reader keeps one request slot, answers only the newer choice or answers the older number twice; why_new=open requests had no number; seam=the library's archive read, held by the test
+test('two overlapping choices from one pane are each answered once with their own number', async (context) => {
+  // Arrange: three saved studies; the oldest is shown, and the archive read of the first choice is held.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      slow = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z'),
+      quick = await saveEarlierStudy(harness, '2026-09-20T00:00:03.000Z')
+    await chooseStudy(harness, shown.id)
+    const slowRead = holdArchiveRead(context, slow.id)
+    // Act: the second choice overtakes the first, whose read then ends.
+    sendFromPane(harness, { type: 'history', studyId: slow.id, openRequest: 1 })
+    await slowRead.started
+    sendFromPane(harness, {
+      type: 'history',
+      studyId: quick.id,
+      openRequest: 2,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length === 1,
+      'the reply to the newer choice',
+      1_000,
+    )
+    const repliesBeforeRelease = harness.openRequestReplies()
+    slowRead.release()
+    await waitUntil(
+      () => harness.openRequestReplies().length === 2,
+      'the reply to the overtaken choice',
+      1_000,
+    )
+    // Assert
+    assert.deepEqual(repliesBeforeRelease, [
+      { webview: 'context', openRequest: 2 },
+    ])
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'context', openRequest: 2 },
+      { webview: 'context', openRequest: 1 },
+    ])
+    assert.equal(
+      harness.reader.inspect().view!.model.selection.studyId,
+      quick.id,
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a choice sent without a request number opens its study as before and is not answered; fails_when=the reader replies to every history message, so an agent-side or older sender receives a message it never asked for; why_new=the reply is new; seam=the Study pane's webview, stubbed at the vscode boundary
+test('a chosen saved study sent without a request number opens and no reply is posted', async () => {
+  // Arrange: two saved studies; the older one is shown.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await chooseStudy(harness, shown.id)
+    // Act
+    sendFromPane(harness, { type: 'history', studyId: chosen.id })
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view!.model.selection.studyId === chosen.id &&
+        !harness.reader.inspect().view!.loading,
+      'the chosen saved study',
+      1_000,
+    )
+    // Assert
+    assert.deepEqual(harness.openRequestReplies(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a request number that is not a positive integer is rejected like any malformed reader message; fails_when=the number is read loosely, so a zero or a text opens a study or is answered; why_new=the field is new; seam=the Study pane's webview, stubbed at the vscode boundary
+test('a choice whose request number is zero or a text is rejected as an unsupported message and is not answered', async () => {
+  // Arrange: two saved studies; the older one is shown.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await chooseStudy(harness, shown.id)
+    // Act: a zero, then a text.
+    sendFromPane(harness, {
+      type: 'history',
+      studyId: chosen.id,
+      openRequest: 0,
+    })
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.errors.includes('Error: Unsupported reader message.'),
+      'the rejected zero',
+      1_000,
+    )
+    const selectionAfterZero =
+      harness.reader.inspect().view!.model.selection.studyId
+    harness.reader['errors'].delete('control')
+    sendFromPane(harness, {
+      type: 'history',
+      studyId: chosen.id,
+      openRequest: 'x',
+    })
+    await waitUntil(
+      () => harness.reader['errors'].has('control'),
+      'the rejected text',
+      1_000,
+    )
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(selectionAfterZero, shown.id)
+    assert.equal(view.model.selection.studyId, shown.id)
+    assert.equal(
+      view.errors.includes('Error: Unsupported reader message.'),
+      true,
+    )
+    assert.deepEqual(harness.openRequestReplies(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a study whose recording is on its way to the screen is never moved underneath it; fails_when=the refusal looks only at a Recording that is already active, so a delete right after pressing Recording moves the files the load is reading; why_new=the Recording refusal was only tested once the recording had opened; seam=the reader's replay-debugger preparation, held by the test
 test('a removal is refused while a recording is still opening, also when the open is accepted while the confirmation is waiting', async () => {
   // Arrange: a saved recorded run; the load of its recording is held before Recording becomes active.
@@ -2300,6 +3089,427 @@ test('a reader closed while the neighbour of the removed study of a finished liv
       (await library.readProgress()).selection?.studyId,
       neighbour.id,
     )
+    // The closed reader no longer names the study that went to the Trash.
+    assert.equal(
+      harness.reader.inspect().view!.model.selection.studyId,
+      neighbour.id,
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a removal that moved every file says so even when the storage lock cannot be released, and no waiting checkpoint writes the study back; fails_when=the reader reads the lock's failure as "nothing was deleted", keeps the run as a checkpoint candidate and resumes its held-back write; why_new=no reader test made the lock release fail after the moves; seam=the editor's Trash, stubbed at the vscode boundary, which loses the lock file with the last move
+test('a removal whose storage lock cannot be released after every file moved reports the study as moved, names the lock in the reader and writes no waiting checkpoint', async (context) => {
+  // Arrange: a recorded, stopped and saved run; its next study save is held and a newer checkpoint waits behind it. The lock file disappears with the archive's move.
+  const harness = await recordedReaderHarness()
+  try {
+    const directory = harness.reader.inspect().libraryDirectory!
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    let studySaves = 0
+    let releaseFirstSave!: () => void
+    const firstSaveHeld = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve
+    })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        study: Parameters<LearningLibrary['saveStudy']>[0],
+      ) {
+        studySaves++
+        if (studySaves === 1) await firstSaveHeld
+        return saveStudy.call(this, study)
+      },
+    )
+    const snapshotUri = harness.service.state(harness.record).participants
+      .browser.snapshotUri!
+    const explain = (key: string, interpretation: string) =>
+      harness.service.explain({
+        instanceId: harness.service.instanceId,
+        runId: harness.record.id,
+        key,
+        snapshotUri,
+        sourceHash: sha256('const nextTheme = "dark";\n'),
+        valuePaths: ['value:nextTheme'],
+        interpretation,
+      })
+    await explain('write-in-flight', 'The first later explanation.')
+    await harness.reader['refresh']()
+    await waitUntil(() => studySaves === 1, 'the held study save', 2_000)
+    await explain('waiting-checkpoint', 'The second later explanation.')
+    await harness.reader['refresh']()
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    harness.beforeTrashMoves(async (path) => {
+      if (path.endsWith('.study.v3.json'))
+        await rm(join(directory, 'writer.lock'))
+    })
+    // Act: the learner confirms while the first save is in flight; every file then moves and the lock release fails.
+    const removal = requestRemoval(harness, harness.studyId)
+    await waitUntil(
+      () => harness.reader.inspect().view!.studyRemoval?.status === 'moving',
+      'the confirmed removal',
+      2_000,
+    )
+    releaseFirstSave()
+    await removal
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(structuredClone(view.studyRemoval), {
+      status: 'moved',
+      studyId: harness.studyId,
+      text: 'Saved study moved to the Trash. The library now holds 0 of 64 saved studies.',
+    })
+    assert.equal(
+      view.studies.some((entry) => entry.id === harness.studyId),
+      false,
+    )
+    assert.equal(studySaves, 1)
+    assert.deepEqual(await studyFiles(harness), [])
+    assert.equal(harness.record.historyExcluded, 'removed-by-learner')
+    assert.deepEqual(
+      structuredClone(
+        view.errors.filter((line) => line.includes('storage lock')),
+      ),
+      [
+        `Error: Learning storage lock could not be released after the removal: ENOENT: no such file or directory, unlink '${join(await realpath(directory), 'writer.lock')}'`,
+      ],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a removal keeps its outcome line when the reader cannot arrange the study that follows; fails_when=the arrangement's rejection skips the outcome, so the learner sees a control error and no "moved" line, with a neighbour selected that was never shown; why_new=the neighbour was only tested with an arrangement that succeeds; seam=the reader's open, which rejects as it does while a presentation change is pending
+test('a removal whose next study cannot be arranged still reports the study as moved, shows no study and names the arrangement failure', async () => {
+  // Arrange: an earlier saved study; a run that was followed live, then stopped and saved, is the shown study. Arranging the reader is refused.
+  const harness = await workspaceHarness()
+  try {
+    const library = await harness.reader.learningStorage()
+    const neighbour = await saveEarlierStudy(
+      harness,
+      '2026-09-20T00:00:01.000Z',
+    )
+    const { record } = await startRun(harness)
+    const liveStudyId = `${harness.service.instanceId}_${record.id}`
+    await harness.reader.open()
+    await harness.reader.action('stop')
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.studies.some((entry) => entry.id === liveStudyId),
+      'the saved study of the finished run',
+      2_000,
+    )
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    harness.reader.open = async (): Promise<void> => {
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        'A presentation change or reader close is pending. Read its state before another control.',
+      )
+    }
+    // Act
+    await requestRemoval(harness, liveStudyId)
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(structuredClone(view.studyRemoval), {
+      status: 'moved',
+      studyId: liveStudyId,
+      text: 'Saved study moved to the Trash. The library now holds 1 of 64 saved studies.',
+    })
+    assert.equal(view.model.selection.studyId, undefined)
+    assert.equal((await library.readProgress()).selection?.studyId, undefined)
+    assert.equal(
+      view.studies.some((entry) => entry.id === neighbour.id),
+      true,
+    )
+    assert.deepEqual(
+      structuredClone(
+        view.errors.filter((line) => line.includes('presentation change')),
+      ),
+      [
+        'Error: A presentation change or reader close is pending. Read its state before another control.',
+      ],
+    )
+    assert.equal(harness.reader['errors'].has('control'), false)
+    assert.equal(harness.reader['errors'].has('reading'), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a removal that makes room for a refused run still tells the learner to start it again when the study that follows cannot be arranged; fails_when=the arrangement's rejection skips the outcome, so the "did not start" line stays although the library has room and no next step is named; why_new=the failed arrangement was only tested without a refused run, and the next step only with an arrangement that succeeds; seam=none
+test('a removal that makes room for a refused run names the next step and retires the refusal line although the next study cannot be arranged', async () => {
+  // Arrange: a library of two that the saved study of a finished live run fills, a run refused on it, and a reader that refuses to be arranged.
+  const harness = await workspaceHarness()
+  try {
+    harness.setSavedStudyCapacity(2)
+    await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const { record } = await startRun(harness)
+    const liveStudyId = `${harness.service.instanceId}_${record.id}`
+    await harness.reader.open()
+    await harness.reader.action('stop')
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.studies.some((entry) => entry.id === liveStudyId),
+      'the saved study of the finished run',
+      2_000,
+    )
+    const refused = await startRun(harness)
+    await waitUntil(() => refused.record.stopped, 'the end of the refused run')
+    const refusalBefore = harness.reader.inspect().view!.runRefusal
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    harness.reader.open = async (): Promise<void> => {
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        'A presentation change or reader close is pending. Read its state before another control.',
+      )
+    }
+    // Act
+    await requestRemoval(harness, liveStudyId)
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(refused.record.error?.message, FULL_LIBRARY_REFUSAL)
+    assert.equal(
+      refusalBefore,
+      `The last run did not start: ${FULL_LIBRARY_REFUSAL}`,
+    )
+    assert.deepEqual(structuredClone(view.studyRemoval), {
+      status: 'moved',
+      studyId: liveStudyId,
+      text: 'Saved study moved to the Trash. The library now holds 1 of 2 saved studies. Ask your editor agent to start the run again.',
+    })
+    assert.equal(view.runRefusal, undefined)
+    assert.equal(view.model.selection.studyId, undefined)
+    assert.equal(harness.reader['errors'].has('control'), false)
+    assert.equal(harness.reader['errors'].has('reading'), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a study of which no file left the library stays the reader's study when only the ledger write-back failed; fails_when=that failure is treated as a partial removal, so the run is dropped from history and never saved again although its study is whole; why_new=the reader was only tested with a write-back that succeeds; seam=the editor's Trash, stubbed at the vscode boundary, which blocks the ledger path before it refuses the move
+test('a removal that moved no file and cannot write the ledger back says that nothing was deleted and keeps the run saved and offered for Save learning replay', async () => {
+  // Arrange: a recorded, stopped and saved run, chosen so the ledger names its study, without a recording directory, so the ledger is rewritten before the first file move. That move is refused after the ledger path was blocked.
+  const harness = await recordedReaderHarness()
+  try {
+    const directory = harness.reader.inspect().libraryDirectory!
+    await chooseStudy(harness, harness.studyId)
+    await rm(join(directory, 'recordings.v2', harness.studyId), {
+      recursive: true,
+    })
+    const ledgerPath = join(directory, 'progress.repository.v4.json')
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    harness.beforeTrashMoves(async () => {
+      await rm(ledgerPath, { recursive: true })
+      await mkdir(join(ledgerPath, 'blocked'), { recursive: true })
+    })
+    harness.rejectTrashMoves(() => true)
+    // Act
+    await requestRemoval(harness, harness.studyId)
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(view.studyRemoval?.status, 'failed')
+    assert.match(
+      view.studyRemoval?.text ?? '',
+      new RegExp(
+        `^The saved study could not be moved to the Trash\\. Nothing was deleted\\. Trash refused ${harness.studyId}\\.study\\.meta\\.v3\\.json; the learner ledger could not be written back: EISDIR`,
+      ),
+    )
+    assert.deepEqual(harness.trashMoves, [])
+    assert.equal(
+      view.studies.some((entry) => entry.id === harness.studyId),
+      true,
+    )
+    assert.equal(view.model.selection.studyId, harness.studyId)
+    assert.equal(harness.record.historyExcluded, undefined)
+    assert.equal(harness.saveStatus.visible, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=after a removal the reader never keeps the removed study selected when a newer choice took over and then failed; fails_when=the overtaken neighbour returns without changing the selection, so later selection saves fail with "Study archive is unavailable."; why_new=the overtaken neighbour was only tested with a newer choice that opens; seam=the library's archive read, held and failed by the test
+test('a newer choice that fails to open while the neighbour of a removed study is being read leaves the reader with no study selected', async (context) => {
+  // Arrange: three studies; the middle one is shown and removed, the oldest is its neighbour, the newest is chosen meanwhile and cannot be read.
+  const harness = await workspaceHarness()
+  try {
+    const library = await harness.reader.learningStorage()
+    const neighbour = await saveEarlierStudy(
+        harness,
+        '2026-09-20T00:00:01.000Z',
+      ),
+      removed = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:03.000Z')
+    await chooseStudy(harness, removed.id)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    const readCheckpoint = LearningLibrary.prototype.readCheckpoint
+    let neighbourReadStarted!: () => void, releaseNeighbourRead!: () => void
+    const started = new Promise<void>((resolve) => {
+        neighbourReadStarted = resolve
+      }),
+      released = new Promise<void>((resolve) => {
+        releaseNeighbourRead = resolve
+      })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'readCheckpoint',
+      async function (this: LearningLibrary, id: string) {
+        if (id === chosen.id) throw new Error('The chosen archive is damaged.')
+        if (id === neighbour.id) {
+          neighbourReadStarted()
+          await released
+        }
+        return readCheckpoint.call(this, id)
+      },
+    )
+    // Act
+    const removal = requestRemoval(harness, removed.id)
+    await started
+    await sendChoice(harness, 'history', chosen.id)
+    releaseNeighbourRead()
+    await removal
+    await harness.reader['saveSelection']()
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(view.model.selection.studyId, undefined)
+    assert.equal(view.studyRemoval?.status, 'moved')
+    assert.equal((await library.readProgress()).selection?.studyId, undefined)
+    assert.deepEqual(
+      structuredClone(
+        view.errors.filter((line) => line.includes('unavailable')),
+      ),
+      [],
+    )
+    assert.deepEqual(
+      structuredClone(view.errors.filter((line) => line.includes('damaged'))),
+      ['Error: The chosen archive is damaged.'],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a study the learner chose and saw while a removal was reading the ledger stays the reader's study; fails_when=the removal decides before that read that the removed study is shown, and then replaces the newer choice with the neighbour; why_new=the existing tests choose while the neighbour is read or while files move; seam=the library's ledger read after the moves, held by the test
+test('a saved study chosen and shown while a removal reads the ledger stays shown and saved, and the neighbour is never read', async (context) => {
+  // Arrange: three studies; the middle one is shown and removed. The ledger read that follows its two file moves is held.
+  const harness = await workspaceHarness()
+  try {
+    const library = await harness.reader.learningStorage()
+    const neighbour = await saveEarlierStudy(
+        harness,
+        '2026-09-20T00:00:01.000Z',
+      ),
+      removed = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:03.000Z')
+    await chooseStudy(harness, removed.id)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    const readProgress = LearningLibrary.prototype.readProgress
+    let ledgerReadStarted!: () => void, releaseLedgerRead!: () => void
+    let heldOnce = false
+    const started = new Promise<void>((resolve) => {
+        ledgerReadStarted = resolve
+      }),
+      released = new Promise<void>((resolve) => {
+        releaseLedgerRead = resolve
+      })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'readProgress',
+      async function (this: LearningLibrary) {
+        if (harness.trashMoves.length === 2 && !heldOnce) {
+          heldOnce = true
+          ledgerReadStarted()
+          await released
+        }
+        return readProgress.call(this)
+      },
+    )
+    const readCheckpoint = LearningLibrary.prototype.readCheckpoint
+    const archiveReads: string[] = []
+    context.mock.method(
+      LearningLibrary.prototype,
+      'readCheckpoint',
+      function (this: LearningLibrary, id: string) {
+        archiveReads.push(id)
+        return readCheckpoint.call(this, id)
+      },
+    )
+    // Act
+    const removal = requestRemoval(harness, removed.id)
+    await started
+    await sendChoice(harness, 'history', chosen.id)
+    const shownBeforeRelease =
+      harness.reader.inspect().view!.model.selection.studyId
+    releaseLedgerRead()
+    await removal
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(shownBeforeRelease, chosen.id)
+    assert.equal(view.model.selection.studyId, chosen.id)
+    assert.equal(view.study?.id, chosen.id)
+    assert.equal((await library.readProgress()).selection?.studyId, chosen.id)
+    assert.equal(archiveReads.includes(neighbour.id), false)
+    assert.equal(view.studyRemoval?.status, 'moved')
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a Node test history the learner chose and saw while a study was being deleted stays shown; fails_when=the removal compares only the saved-study selection, which a Node test history never changes, and shows the neighbour over it; why_new=the existing Node test history case is still opening when the removal settles; seam=the editor's Trash, held by the test
+test('a Node test history chosen and shown while a removal moves files stays shown, and the neighbour is never read', async (context) => {
+  // Arrange: two saved studies and a Node test history; the shown study's removal is moving files when the history is chosen and shown.
+  const harness = await workspaceHarness()
+  try {
+    const library = await harness.reader.learningStorage()
+    const neighbour = await saveEarlierStudy(
+        harness,
+        '2026-09-20T00:00:01.000Z',
+      ),
+      removed = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await chooseStudy(harness, removed.id)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    const readCheckpoint = LearningLibrary.prototype.readCheckpoint
+    const archiveReads: string[] = []
+    context.mock.method(
+      LearningLibrary.prototype,
+      'readCheckpoint',
+      function (this: LearningLibrary, id: string) {
+        archiveReads.push(id)
+        return readCheckpoint.call(this, id)
+      },
+    )
+    const trashMove = harness.holdTrashMove()
+    const removal = requestRemoval(harness, removed.id)
+    await trashMove.started
+    await sendChoice(harness, 'node-history', nodeHistory.studyId)
+    const shownWhileMoving =
+      harness.reader.inspect().view!.nodeHistory?.header.studyId
+    // Act
+    trashMove.release()
+    await removal
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(shownWhileMoving, nodeHistory.studyId)
+    assert.equal(view.nodeHistory?.header.studyId, nodeHistory.studyId)
+    assert.equal(view.loading, false)
+    assert.equal(view.model.selection.studyId, undefined)
+    assert.equal(archiveReads.includes(neighbour.id), false)
+    assert.equal((await library.readProgress()).selection?.studyId, undefined)
+    assert.equal(view.studyRemoval?.status, 'moved')
   } finally {
     context.mock.restoreAll()
     await harness.close()

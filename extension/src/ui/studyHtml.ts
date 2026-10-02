@@ -20,6 +20,7 @@ import type { StudyCatalogEntry } from '../studySchemas'
 import type { StudyDescriptor } from '../utils/describeStudy'
 import { installShortcutHelp } from '../utils/installShortcutHelp'
 import type { projectLearningSummary } from '../utils/projectLearningSummary'
+import type { OpenRequestSettled } from '../utils/readOpenRequest'
 
 import { STUDY_STYLES, STUDY_UI_OPTIONS, STUDY_SHORTCUTS } from './constants'
 
@@ -167,10 +168,10 @@ function studyClient(
   let current: StudyViewMessage | undefined
   // A saved study that cannot be opened is chosen in this pane only; the host hears of it when the learner deletes it.
   let unopenableChoice: string | undefined
-  // The entry this pane asked the host to open and that is not shown yet; the list keeps it chosen and the delete button waits for it.
-  let openingChoice:
-    | { studyId: string; revision: number | undefined; sawLoading: boolean }
-    | undefined
+  // The entry this pane asked the host to open and that is not shown yet; the list keeps it chosen and the delete button waits for it. The host answers the request by its number when it ended without showing the entry.
+  let openingChoice: { studyId: string; requestId: number } | undefined
+  // Counts this pane's open requests; each webview counts its own, and the host answers only the webview that asked.
+  let openRequestCount = 0
   // The removal outcome this pane stopped showing because the learner chose an entry the host is not told about.
   let dismissedRemoval: string | undefined
   // This pane's own delete request, so only the pane the learner used moves focus when the request is answered.
@@ -817,10 +818,15 @@ function studyClient(
     dismissedRemoval = JSON.stringify(current?.studyRemoval)
     if (current) renderStudyRemoval(current)
   }
-  /** Asks the host to open a chosen entry and remembers the choice until the host shows it; the delete button waits at once, because until then a delete would name the study shown before. @example askHostToOpen(entry.id, false) */
+  /** Asks the host to open a chosen entry under a new request number and remembers the choice until the host shows it or answers that number; the delete button waits at once, because until then a delete would name the study shown before. @example askHostToOpen(entry.id, false) */
   const askHostToOpen = (studyId: string, isNodeHistory: boolean): void => {
-    openingChoice = { studyId, revision: current?.revision, sawLoading: false }
-    send({ type: isNodeHistory ? 'node-history' : 'history', studyId })
+    const requestId = ++openRequestCount
+    openingChoice = { studyId, requestId }
+    send({
+      type: isNodeHistory ? 'node-history' : 'history',
+      studyId,
+      openRequest: requestId,
+    })
     if (current) renderStudyRemoval(current)
   }
   /** Follows the learner's choice in the Saved studies list: an entry that cannot be opened is only chosen, any other is opened by the host and remembered until the host shows it. @example chooseSavedStudy(entry.id) */
@@ -837,28 +843,42 @@ function studyClient(
   /** Names the saved study or Node test history the host shows. @example shownStudyId(message) // => 'window_run' */
   const shownStudyId = (message: StudyViewMessage): string | undefined =>
     message.nodeHistory?.header.studyId ?? message.model.selection.studyId
-  /** Says whether the host ended the open this pane asked for without showing the entry: it stopped loading after it had started, or it answers with another revision, which means the open failed or the request was refused as stale. A message with the request's revision that never loaded left the host before the request arrived. @example openEnded(choice, message) */
-  const openEnded = (
-    choice: NonNullable<typeof openingChoice>,
-    message: StudyViewMessage,
-  ): boolean =>
-    !message.loading &&
-    (choice.sawLoading || message.revision !== choice.revision)
-  /** Says whether the entry this pane asked for needs no more waiting: the host shows it, the open ended without it, or the entry left the list. @example openingSettled(choice, message) */
+  /** Says whether a Study message ends the wait for the entry this pane asked for: the host shows it, or the entry left the list. An open that ended without showing the entry is answered by the host's reply instead, which {@link settleOpenRequest} follows. @example openingSettled(choice, message) */
   const openingSettled = (
     choice: NonNullable<typeof openingChoice>,
     message: StudyViewMessage,
   ): boolean =>
     shownStudyId(message) === choice.studyId ||
-    openEnded(choice, message) ||
     !message.studies.some((study) => study.id === choice.studyId)
   /** Keeps or forgets the entry this pane asked the host to open, on every Study message before the list's value is set. @example followOpeningChoice(message) */
   const followOpeningChoice = (message: StudyViewMessage): void => {
     const choice = openingChoice
-    if (!choice) return
-    openingChoice = openingSettled(choice, message)
-      ? undefined
-      : { ...choice, sawLoading: choice.sawLoading || message.loading }
+    if (choice && openingSettled(choice, message)) openingChoice = undefined
+  }
+  /** Names the entry this pane keeps chosen whatever the host shows: one that cannot be opened, else one the host is still opening, so the list never falls back to the study shown before. @example keptChoice() // => 'window_run' */
+  const keptChoice = (): string | undefined =>
+    unopenableChoice ?? openingChoice?.studyId
+  /**
+   * Puts the Saved studies list on the entry this pane keeps chosen, else on the entry the host shows, and renders the delete control for it.
+   * Called on every Study message after the list's options are set, and when the host answers this pane's open request.
+   * @param message - The current Study message.
+   * @param fallback - The list's value to keep when neither this pane nor the host names an entry.
+   * @example showChosenEntry(message, studies.value)
+   */
+  const showChosenEntry = (
+    message: StudyViewMessage,
+    fallback: string,
+  ): void => {
+    const studies = element('studies')
+    if (!(studies instanceof HTMLSelectElement)) return
+    studies.value = keptChoice() ?? shownStudyId(message) ?? fallback
+    renderStudyRemoval(message)
+  }
+  /** Follows the host's reply to an open request: when it names the request this pane still waits for, the open ended without showing the entry (refused, discarded or failed), so the list returns to the shown study and the delete button is released. A reply to an earlier request changes nothing. @example settleOpenRequest({ type: 'open-request-settled', openRequest: 3 }) */
+  const settleOpenRequest = (reply: OpenRequestSettled): void => {
+    if (openingChoice?.requestId !== reply.openRequest) return
+    openingChoice = undefined
+    if (current) showChosenEntry(current, chosenStudyId())
   }
   /** Names a Saved studies entry by its kind; an unloaded configured entry must not borrow the selected article's title through a shared profile ID. @example studyKindLabel(entry, message.profiles) // => 'Repository browser study' */
   const studyKindLabel = (
@@ -979,7 +999,7 @@ function studyClient(
   }
   /**
    * Renders the Saved studies section's delete control: whether it can be used and why not, the note for an entry that cannot be opened, the last removal's outcome, and the focus after this pane's own request was answered.
-   * Called on every Study message after the list's value is set, and when the learner chooses an entry that cannot be opened.
+   * Called by {@link showChosenEntry} on every Study message and on the host's reply to an open request, by {@link askHostToOpen} when the learner chooses an entry the host opens, and by {@link chooseUnopenable} when the learner chooses an entry that cannot be opened.
    * @param message - The current Study message.
    * @example renderStudyRemoval(message)
    */
@@ -998,8 +1018,14 @@ function studyClient(
   }
   window.addEventListener('message', (event) => {
     const message:
-      StudyViewMessage | PresentationPoseCapture | PresentationPoseRestore =
-      event.data
+      | StudyViewMessage
+      | PresentationPoseCapture
+      | PresentationPoseRestore
+      | OpenRequestSettled = event.data
+    if (message?.type === 'open-request-settled') {
+      settleOpenRequest(message)
+      return
+    }
     if (message?.type === 'capture-presentation-pose') {
       capturePose(message)
       return
@@ -1702,14 +1728,7 @@ function studyClient(
       )
         unopenableChoice = undefined
       followOpeningChoice(message)
-      // An entry the host is still opening stays chosen, so the list never falls back to the study shown before.
-      studies.value =
-        unopenableChoice ??
-        openingChoice?.studyId ??
-        message.nodeHistory?.header.studyId ??
-        model.selection.studyId ??
-        previous
-      renderStudyRemoval(message)
+      showChosenEntry(message, previous)
       const nodeHistories = message.nodeHistoryCatalog ?? []
       const nodeHistory = message.nodeHistory
       text(

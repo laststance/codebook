@@ -42,6 +42,10 @@ test('a removal is worded with the Trash, the room it left and the next step whe
     messages.partlyMoved('EPERM: operation not permitted'),
     'The saved study was only partly moved to the Trash; delete it again to finish. EPERM: operation not permitted',
   )
+  assert.equal(
+    messages.lockNotReleased('EPERM: operation not permitted, unlink'),
+    'Learning storage lock could not be released after the removal: EPERM: operation not permitted, unlink',
+  )
 })
 
 // Value: protects=Windows learners read the word their system uses in every removal text; fails_when=one text bypasses the platform word; why_new=removal texts are new; seam=none

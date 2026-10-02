@@ -82,7 +82,7 @@ Package builds require a POSIX host (macOS or Linux); Windows builds are rejecte
 ```sh
 pnpm --dir extension install --frozen-lockfile
 pnpm --dir extension package
-pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.23.vsix"
+pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.24.vsix"
 ```
 
 The package command checks pnpm, clears only the extension compiler output, rebuilds, bundles production modules and stages an explicit file allowlist. Test/application fixtures and experimental dependencies are rejected. The independent checker validates archive entries, hashes, manifests and dependency notices before accepting the VSIX.
@@ -299,7 +299,11 @@ Only you remove saved material; an agent has no tool for it. In the Study pane, 
 - After the removal an agent that reads the run's evidence (`manifest`, `events`, observations, explanations) or adds an explanation gets `EVIDENCE_UNAVAILABLE` with `The learner moved this saved study to the Trash.`; the run resource itself still answers and names the same reason.
 - The button says why it cannot be used: `Wait for the chosen saved study to open.`, `Choose a saved study to delete.`, `Node test histories cannot be deleted here yet.`, `Stop the run before deleting its study.` or `Choose Overview or Live to leave Recording before deleting this study.` (also while a recording is still opening).
 - An entry that cannot be opened (an older format, or a study whose catalog file is missing) can still be chosen and deleted.
-- If the Trash refuses, nothing is deleted and the line says so. If only part of the study could be moved, the study stays listed; delete it again to finish.
+- If the Trash refuses, the line starts with `The saved study could not be moved to the Trash. Nothing was deleted.` and names the cause: the study, its recording and its run are as they were, and the run can still be saved with **Save learning replay**. If only part of the study could be moved, the line says `The saved study was only partly moved to the Trash; delete it again to finish.` and the study stays listed; the same delete finishes the removal.
+- While a study is being moved, it cannot be opened or played, **Save learning replay** for its run is refused with `Study archive is unavailable.`, and an agent's `codebook_explain` for that run answers `BUSY` with `The learner is deleting this run's saved study; wait for it to finish.`; the agent can repeat the call.
+- A cause that names the storage lock (`Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.`) means that another Codebook window is writing, or that an interrupted session left the file `writer.lock` in the learning storage. When the lock could not be released after every file had moved, the study is deleted and the line says so; the pane additionally shows `Learning storage lock could not be released after the removal: <cause>` among its errors, and later saves can be refused until the lock is resolved.
+- When the next study cannot be arranged after a removal (for example while a presentation change is pending), the removal's line is shown all the same, no study is shown and the pane's errors name the reason; choose a study in **Saved studies** to continue.
+- The delete button waits only while the entry you chose is opening. A choice the reader could not open (it names the reason among its errors) puts the list back on the study that is shown.
 - A run the library refused can be started again with the same request once there is room: the agent repeats its `codebook_start` with the same key and a new run begins.
 - Not covered yet: Node test histories, a recording that has no study, removing several studies at once, and a study whose run is still held by another window of the same workspace.
 
