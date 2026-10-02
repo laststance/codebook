@@ -1,7 +1,7 @@
 # Cycle 0040 — Removal failure paths: a completed deletion is reported as completed, and a choice that could not open releases the delete button
 
 Type: product-increment\
-Status: planning\
+Status: implementing\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -33,7 +33,7 @@ Why now: the delivery review of 0.2.23.0 reproduced two regressions on the learn
   - P5. The delete button that keeps waiting comes from a pane that cannot tell a refused request from a message that left the host earlier; a request number the host acknowledges makes the two different.
   - P6, P7. A selection left on the removed study, and a completed choice replaced by the neighbour, come from two checks made at the wrong moment; moving them closes both.
   - P8. A lost refusal comes from `start()` forgetting the refused record before its guards; forgetting it after them keeps the receipt when the repeat is rejected.
-- Smallest observable outcome: Issue #74 acceptance criteria 1 to 35.
+- Smallest observable outcome: Issue #74 acceptance criteria 1 to 35 and, from the engineering review, 36 to 41.
 - In scope: Issue #74 P1 to P9 and native N9-a to N9-d.
 - Out of scope (still in PRODUCT_GOAL):
   - `withStorageLock` for the other writers, and removing a stale `writer.lock`.
@@ -119,8 +119,11 @@ Frozen before implementation; the plan review may amend it, and amendments are r
 | AC8 / P3 | A refused sidecar move after a recording moved is still `partly-moved` and a second removal finishes | Store test | Guard |
 | AC9 / P4 | A `history` request discarded as stale: `loading: false`, the earlier study shown, a delete request opens the dialog | Workspace test | Red/green, control |
 | AC10 / P4 | A delete request during a newer load is still refused with the opening sentence | Workspace test | Guard |
-| AC11 to AC14 / P5 | The host acknowledges an open request it refused before loading, a Node test history refused during Recording, a Recording open only once its load ended, and an open that showed its study; `ready` clears it | Workspace tests | Red/green, control |
-| AC15 to AC18 / P5 | The pane releases the button on the acknowledgement, keeps waiting without it, releases a Node test history choice, and Cycle 0039's two cases still pass | Chromium DOM cases | Output; red/green for 15 and 17 |
+| AC11 to AC14 / P5 (ER1) | The webview that sent an open request receives its reply after a refusal before loading, after a Node test history refused during Recording, only once a Recording load ended, and after its study was shown | Workspace tests through the webview route | Red/green, control |
+| AC15 to AC18 / P5 (ER1) | The pane releases the button on the reply, keeps waiting without it, releases a Node test history choice, and Cycle 0039's two cases still pass | Chromium DOM cases | Output; red/green for 15 and 17 |
+| AC36 to AC38 / P5 (ER9) | Two overlapping requests each get their own reply; a message without `openRequest` gets none; a malformed `openRequest` is rejected | Workspace tests | Red/green and control for 36; guards |
+| AC39, AC40 / P4 (ER3) | An arrangement that rejects after the read ends loading with the failure under `reading`; a saved-study read that ends after a newer Node test history was shown leaves it shown | Workspace tests | Red/green, control |
+| AC41 / P7 (ER4) | A Node test history shown during the removal stays shown; the neighbour is not read | Workspace test | Red/green, control |
 | AC19, AC20 / P6 | An overtaken neighbour whose newer choice fails, and a reader closed while the neighbour is read: the selection no longer names the removed study | Workspace tests | Red/green, control |
 | AC21 / P7 | A choice shown while the removal reads the ledger stays shown and saved; the neighbour is not read | Workspace test | Red/green, control |
 | AC22, AC23 / P8 | A repeat of a refused key rejected by `BUSY`, `PRESENTATION_UNAVAILABLE`, `UNSUPPORTED_PROFILE` or `INVALID_CONFIGURATION` keeps the refusal; the later repeat begins a new run | Service tests | Red/green, control |
@@ -137,6 +140,38 @@ Frozen before implementation; the plan review may amend it, and amendments are r
 
 Frozen inputs for the native checks: the prepared declaration is version 1 of the private `artifacts/cycle-0036/native/n5-expectations.json`; the protected files are those listed under the entry evidence; the native expectations of this cycle are frozen in the private `artifacts/cycle-0040/native/` before the candidate runs.
 
+## Plan review, 2026-10-02
+
+### Engineering review
+
+`/plan-eng-review` ran on Issue #74 on 2026-10-02: the scope challenge, the architecture, code-quality, test and performance sections against the source on `97dd1e9`, and one outside voice (Codex CLI, read-only, 3 findings, all confirmed on the quoted lines). The owner is away, so each issue was decided on its own with the recommended option under D045. Result: 9 amendments (ER1 to ER9), 0 unresolved decisions, 0 critical gaps; 8 findings and 6 added test gaps, each mapped to a task (T1 to T7). The scope (P1 to P9, N9) is accepted as filed; the amendments change how P1, P2, P4, P5, P6, P7 and P8 are built and add six criteria.
+
+**What the filed plan had wrong against the source.**
+
+- P5 put the acknowledgement into the published Study message with a counter per pane. `publish()` posts one message to the context panel and, in the summary composition, to the summary view (`studyWorkspace.ts:5991-5993`), so two panes would count from 1 and release each other's choices. A single host slot recorded before `receive`'s owner check (`:8413-8424`) could also be overwritten by a retired pane (outside voice).
+- P4 released the marker only for a stale read. An exception after the archive was read is swallowed as well: the marker is cleared at `:8896`, and the catch at `:8910-8915` returns whenever the marker is not this request's (outside voice). An older read can also continue after a newer Node test history was chosen and then retires that choice (`:8890-8899`; this review).
+- P7 compared `selection.studyId`. A Node test history never changes it, so one chosen and shown during the removal was still replaced by the neighbour (outside voice).
+- P5's `try`/`finally` inside `receive` would have moved the complexity category of the reader's largest function against the unchanged health baseline.
+- P2 did not say that `selectedArchive` and the selection already name the neighbour when its arrangement rejects (`:9389`, `:9420-9422`).
+
+**Amendments.**
+
+- ER1 (P5). The host answers an open request with a reply posted only to the webview that sent it; no shared state. `history` and `node-history` accept `openRequest: z.number().int().positive().optional()`. A wrapper `receivePaneMessage(value, origin, owner)` replaces `receive` at the three webview call sites; `receive` is not changed. The wrapper reads `openRequest` with a small non-strict schema, awaits `receive`, and in `finally` posts `{ type: 'open-request-settled', openRequest }` to `owner.webview`. For a `history` message that arrived while Recording was active the reply waits until the playback readiness is no longer `loading` (queued, flushed by the playback `changed` callback). The pane's choice is `{ studyId, requestId }`, forgotten when the host shows the entry, when the entry left the list, or when the reply with its number arrives; `openEnded`, `sawLoading` and the remembered revision go. No `settledOpenRequest` field and no `ready` reset.
+- ER2 (P2). The fallback is the reader's existing no-study state through one private method, `showNoStudyAfterRemoval()` (`selectedArchive = undefined`, `selectNoStudy()`, guarded render, `saveSelection()`), used by the guard in `moveSavedStudy` and by the no-neighbour branch of `showRemovalNeighbour`. The failure is reported under `reading`.
+- ER3 (P4). The handler body moves to `openChosenStudy(message)` with helpers. (a) A read is stale when the marker is not this request's, the request is not the latest history request, the revision changed or the reader is closing; a stale read touches nothing. (b) A failure before the marker was cleared is reported under `archive` and the selection rendered, as today. (c) A failure after the marker was cleared is reported under `reading` and the current selection rendered, when the request is still the latest. (d) In `finally`, a marker that is still this request's is cleared, and the current selection is rendered when the request is still the latest and the reader is not closing, because every render asked for while the marker was set returned early (`:6066`, `:6074`). The guarded render is `renderAfterRemoval`, renamed `renderShownSelection`.
+- ER4 (P6, P7). A choice made during the removal wins by generation: `moveSavedStudy` remembers `historyRequest` before its first await. `showAfterRemoval`, after the ledger read: the selection no longer names the removed study → nothing to show; `historyRequest` changed → no neighbour (a choice still opening shows itself and the selection is set to no study without rendering; a choice that already ended gets `showNoStudyAfterRemoval()`); otherwise the neighbour. `showRemovalNeighbour` takes the removed id and, when overtaken or closing after the neighbour was read, sets the selection to no study if it still names the removed study.
+- ER5 (P1). The reader's sentence is `studyRemovalMessages().lockNotReleased(cause)` = `Learning storage lock could not be released after the removal: <cause>`, reported under `archive` after `forgetRemovedStudy` and before the neighbour; `archive` is retired by the next successful checkpoint write and by Retry storage. `removalAfterLockFailure` is a pure utility with a type-only import of `StudyRemoval`.
+- ER6 (P8). `retainedStart(key)` returns `{ previous }` or, for a stopped refusal, `{ refusal }`; `reserveRunSlot(refusal?)` forgets the refusal first, so no guard can reject afterwards and the new run takes the refusal's slot. `forgetStoppedRefusal` is removed.
+- ER7 (P3). Cycle 0039's control "the `partly-moved` answer naming both failures when the write-back fails" is retired with the behavior; its test expects `nothing-moved` naming both failures.
+- ER8 (tests). Reader tests of P5 send through the webview route (`harness.receive`), and the harness records what a webview receives besides Study messages. The direct calls of `reader['receive']` stay and keep proving the unacknowledged path.
+- ER9 (criteria). Criteria 11 to 14 are read with the reply instead of a message field, and 14 loses its `ready` half; 15 to 17 use the reply message. New: 36 (defect, P5) two overlapping `history` requests from one webview each get exactly one reply with their own number; 37 (guard, P5) a `history` message without `openRequest` opens its study as today and no reply is posted; 38 (guard, P5) `openRequest: 0` and `openRequest: 'x'` are rejected as "Unsupported reader message."; 39 (defect, P4) a request whose archive was read and whose arrangement then rejects ends with `loading: false`, the chosen study selected and the failure under `reading`; 40 (defect, P4) a saved-study read that ends after a newer Node test history was chosen and shown leaves that Node test history shown; 41 (defect, P7) a Node test history chosen and shown while the removal moves files or reads the ledger stays shown, the neighbour's archive is not read and the saved selection does not name the removed study.
+
+Implementation order (one implementer): T1 library (P1, P3) → T2 service (P8) → T3 reader (P1 report, P2, P6/P7) → T4 reader (P4) → T5 host and pane (P5) → T6 texts (P9) → T7 controls, gates, package and install, N9.
+
+Not in scope after the review: `withStorageLock` for other writers and stale-lock removal; the Node test history handler's own stale return with `loading` still true (`studyWorkspace.ts:8606-8611`: no blocking marker, not reproduced, recorded as an observation); carried findings 14 to 17.
+
+Review records (private, under the project's gstack state): the report appended to the spec archive `specs/20261002-215802-94430-cycle-0040--removal-failure-paths-a-completed-deletion-is-re.md` (decision ledger, the removal and open-request diagrams, the coverage map, the failure-mode table, tasks T1 to T7), the test plan `ryotamurakami-codex-cycle-0040-removal-failure-paths-eng-review-test-plan-20261002-221222.md`, the task list `tasks-eng-review-20261002-221222.jsonl`, and the Codex voice's text with the spec gate's answer under the ignored `artifacts/cycle-0040/reviews/`. The same amendments are posted as a comment on Issue #74. The spec text with the amendments went to Codex CLI for the quality gate and the outside voice.
+
 ## Attempts and evidence
 
 No observations yet.
@@ -149,7 +184,7 @@ No observations yet.
 
 ## Next action
 
-- Exact next action: run `/plan-eng-review` on Issue #74, record its amendments here and on the issue, then implement P1 and P3 in the library with their red tests.
+- Exact next action: implement T1 (P1 and P3 in the library) with its red tests, then T2 to T7 in the order of the engineering review.
 - Changed files / branch / active processes: this record, PROJECT_STATE, README and the CodeRabbit mapping on `codex/cycle-0040-removal-failure-paths`; no editor, recorder, dev server or database container is running.
 - State updated in PROJECT_STATE.md: the active cycle, the checkout, tracking and the next action.
 - Durable decisions updated: none.
