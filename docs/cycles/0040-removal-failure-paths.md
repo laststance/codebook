@@ -328,6 +328,23 @@ This cycle adds no element. The screens the takes show, against region 2 of the 
 - Protected state: Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`, bundled skill `39f03be0`; the dashboard at `1936e41` with only the untracked `.codebook/`; no listener on port 3000; the database container exited. Running by this trial: Cursor with the QA profile and the QA workspace file, and the private OBS copy with its recording stopped. VS Code is not running.
 - Gap audit: no acceptance row changes against the audit above; the source changed only inside this cycle's scope (T1 to T6 and the closed-reader fix `17cc306`).
 
+### Reviews before delivery, 2026-10-02
+
+| Review | Source cut and coverage | Findings |
+| --- | --- | --- |
+| Local CodeRabbit CLI 0.8.2 (`coderabbit review --agent --committed --base-commit 97dd1e9`, no credits) | `a3684ef` against `97dd1e9`, 19 files | 1, minor: the test harness records every reply a webview panel receives as `context`, whatever the panel's kind, so a reply to another panel could not be told apart in a test. Valid for the harness; the reader posts a reply only to the webview that sent an open request, and no test depends on the difference. Carried |
+| `open-code-review-delegate` (OCR 1.12.11, range `97dd1e9..HEAD`; the host reviews) | 19 changed files: 10 eligible, 10 reviewed, 0 skipped; excluded by OCR's defaults and reported apart: 5 Markdown files and 4 test files | 0 critical, 0 high, 1 medium, 4 low |
+
+OCR findings (the host's own reading of the diff; none reproduced, none fixed, all carried):
+
+1. **Medium. A reply held back for a Recording load is posted only from the playback controller's change callback** (`settleOpenRequest`, `flushDeferredOpenReplies`). If that load ends without another change callback (the reader is closed while a recording chosen in the bottom panel is still loading), the reply stays queued until a later playback change, and the bottom panel's delete button keeps "Wait for the chosen saved study to open." until another entry is chosen.
+2. **Low. The reply is posted when the message was handled; a Study message that shows the chosen entry may still be queued behind it.** The pane would then put the list back on the earlier study for one message, with the delete button enabled for the entry the list shows at that moment.
+3. **Low. `publishChoiceOfClosedReader` reads `opened`**; a choice that arrives while the reader is still opening would end the loading state and publish before the open's own render.
+4. **Low (closed by a run). The closed-reader test had no red run on `97dd1e9` on record.** Run during the review: red on `97dd1e9`, where it stops at its first wait because no reply exists there (`artifacts/cycle-0040/red/closed-reader-base.tap`); its publish assertion is what is red on `2b2eef6`.
+5. **Low (by design, ER4). After a choice made during the removal has failed, the reader shows no study instead of the neighbour**; the learner chooses again.
+
+Private records (ignored `artifacts/cycle-0040/reviews/`): `coderabbit-a3684ef.jsonl` with its empty `.err`, `ocr-preview.json`, `ocr-rules.json`, `ocr-a3684ef.md`. The branch diff went to CodeRabbit's service through its local CLI. This is a host review plus one external pass, not an independent provider review of every file; nothing critical was found, so nothing was changed.
+
 ## Result and decision
 
 - Result: pending the delivery. The hypothesis held for P1 to P9: every defect criterion's test is red on `97dd1e9` and green on the branch with a control (32 of 32), no stored format, tool shape or timeout changed, and Cycle 0039's two pane cases still pass. Native N9 passed in both hosts on candidate 2 (N9-a to N9-e and criterion 35).
