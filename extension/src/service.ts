@@ -577,12 +577,7 @@ export class StudyService {
     this.presentationController?.assertPresentationIdle()
     if ([...this.records.values()].some((record) => !record.stopped))
       throw new StudyError('BUSY', 'Another run still owns resources.')
-    // A refused or removed run holds no history, so it gives up its slot before a start is refused for the bound.
-    if (this.records.size >= MAX_RUNS && !this.evictOldestExcludedRecord())
-      throw new StudyError(
-        'LIMIT_EXCEEDED',
-        `This instance retains at most ${MAX_RUNS} runs; no history was evicted.`,
-      )
+    this.reserveRunSlot()
     const createdAt = this.now()
     const timeout = REPOSITORY_RUN_TIMEOUT_MS
     const record: StudyRecord = {
@@ -615,29 +610,43 @@ export class StudyService {
   }
 
   /**
-   * Frees one retained-run slot at the {@link MAX_RUNS} bound by forgetting the oldest run whose history is excluded, with its start keys; called by {@link StudyService.start} when every slot is taken.
-   * Runs that hold history are never evicted.
+   * Keeps the {@link MAX_RUNS} bound of retained runs before {@link StudyService.start} reserves another one.
+   * A refused or removed run holds no history, so it gives up its slot before a start is refused for the bound.
+   * @throws A `LIMIT_EXCEEDED` {@link StudyError} when every retained run holds history.
+   * @example
+   * this.reserveRunSlot() // with 16 retained runs, one of them refused: forgets that run and returns
+   */
+  private reserveRunSlot(): void {
+    if (this.records.size < MAX_RUNS) return
+    if (this.evictOldestExcludedRecord()) return
+    throw new StudyError(
+      'LIMIT_EXCEEDED',
+      `This instance retains at most ${MAX_RUNS} runs; no history was evicted.`,
+    )
+  }
+
+  /**
+   * Frees one retained-run slot by forgetting the oldest run whose history is excluded, with its start keys; called by {@link StudyService.reserveRunSlot} when every slot is taken.
+   * Runs that hold history, and a run still waiting for its admission, are never evicted.
    * @returns
    * - `true`: one refused or removed run was forgotten
    * - `false`: every retained run holds history, so nothing changed
    * @example
-   * if (this.records.size >= MAX_RUNS && !this.evictOldestExcludedRecord()) throw new StudyError('LIMIT_EXCEEDED', '…')
+   * this.evictOldestExcludedRecord() // => true after a run was refused at its admission
    */
   private evictOldestExcludedRecord(): boolean {
     // Map iteration follows insertion order, so the first excluded record is the oldest.
-    for (const record of this.records.values()) {
-      if (
-        record.historyExcluded !== 'refused-at-admission' &&
-        record.historyExcluded !== 'removed-by-learner'
-      )
-        continue
-      this.records.delete(record.id)
-      // A later start with one of its keys begins a new run instead of replaying the forgotten receipt.
-      for (const [key, keyedRecord] of this.startKeys)
-        if (keyedRecord === record) this.startKeys.delete(key)
-      return true
-    }
-    return false
+    const evicted = [...this.records.values()].find(
+      (record) =>
+        record.historyExcluded === 'refused-at-admission' ||
+        record.historyExcluded === 'removed-by-learner',
+    )
+    if (!evicted) return false
+    this.records.delete(evicted.id)
+    // A later start with one of its keys begins a new run instead of replaying the forgotten receipt.
+    for (const [key, keyedRecord] of this.startKeys)
+      if (keyedRecord === evicted) this.startKeys.delete(key)
+    return true
   }
 
   /** Admits the next fixed action while replaying every original receipt across later steps and cleanup. @example service.action({...run, key:'operation', action:'repository-click'}) */
@@ -1034,8 +1043,7 @@ export class StudyService {
 
   /** Reserves a monotonic reader checkpoint before I/O so even same-material retries cannot accept an older completion. @example const revision = service.beginHistory(record, signature) */
   beginHistory(record: StudyRecord, signature: string): number | undefined {
-    if (record.profile === NODE_TEST_PROFILE || record.historyExcluded)
-      return undefined
+    if (this.holdsNoStudyHistory(record)) return undefined
     if (
       this.records.get(record.id) !== record ||
       this.state(record).materialSignature !== signature
@@ -1044,6 +1052,13 @@ export class StudyService {
     const revision = (record.historyReceipt?.revision ?? 0) + 1
     record.historyReceipt = { revision, signature, status: 'pending' }
     return revision
+  }
+
+  /** Says whether a run is no checkpoint candidate: a Node test run keeps its own journal, and an excluded run was refused, removed or is still awaiting admission. @example this.holdsNoStudyHistory(record) // => true for a refused run */
+  private holdsNoStudyHistory(record: StudyRecord): boolean {
+    return (
+      record.profile === NODE_TEST_PROFILE || Boolean(record.historyExcluded)
+    )
   }
 
   /**
@@ -1950,30 +1965,41 @@ export class StudyService {
    * await this.admitStudy(record) // on a full library: record.historyExcluded === 'refused-at-admission'
    */
   private async admitStudy(record: StudyRecord): Promise<void> {
-    if (!this.recordings) return
-    const capacity = this.recordings.capacityStatus()
-    let admitted = false
-    try {
-      // An invalid limit is a setting the learner can fix, so it is refused here instead of failing the library read.
-      admitted =
-        capacity.limit !== undefined &&
-        (await this.recordings.admitsStudy(`${this.instanceId}_${record.id}`))
-    } catch (error) {
-      // Another failure of the read is no refusal: the run ends as a failed preparation and stays a checkpoint candidate.
-      record.historyExcluded = undefined
-      throw error
-    }
-    if (admitted) {
-      record.historyExcluded = undefined
-      return
-    }
-    record.historyExcluded = 'refused-at-admission'
-    throw new StudyError(
-      'PREREQUISITE_MISSING',
-      capacity.limit === undefined
-        ? INVALID_SAVED_STUDY_LIMIT_MESSAGE
-        : fullLibraryMessage('run', capacity.limit),
+    const recordings = this.recordings
+    if (!recordings) return
+    const refusal = await this.studyRefusal(recordings, record).catch(
+      (error: unknown) => {
+        // Another failure of the read is no refusal: the run ends as a failed preparation and stays a checkpoint candidate.
+        record.historyExcluded = undefined
+        throw error
+      },
     )
+    record.historyExcluded = refusal ? 'refused-at-admission' : undefined
+    if (refusal) throw new StudyError('PREREQUISITE_MISSING', refusal)
+  }
+
+  /**
+   * Names why the study library cannot keep a run's study; called by {@link StudyService.admitStudy}.
+   * @param recordings - The store whose capacity setting and library are asked.
+   * @param record - The configured run that was just reserved.
+   * @returns
+   * - the setting sentence when the saved-study limit is invalid (the library is not read)
+   * - the "library is full" sentence for this limit when the library refuses the study
+   * - `undefined` when the library can keep the study
+   * @throws The library read's own error.
+   * @example
+   * await this.studyRefusal(recordings, record) // => 'Study library is full. …' on a full library
+   */
+  private async studyRefusal(
+    recordings: NonNullable<StudyService['recordings']>,
+    record: StudyRecord,
+  ): Promise<string | undefined> {
+    const limit = recordings.capacityStatus().limit
+    // An invalid limit is a setting the learner can fix, so it is refused here instead of failing the library read.
+    if (limit === undefined) return INVALID_SAVED_STUDY_LIMIT_MESSAGE
+    return (await recordings.admitsStudy(`${this.instanceId}_${record.id}`))
+      ? undefined
+      : fullLibraryMessage('run', limit)
   }
 
   /** Serializes release after acquisitions and accepted explanation writes settle. @example await this.stopRecord(record) */

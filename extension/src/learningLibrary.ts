@@ -44,9 +44,11 @@ import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { decodeLearnerProgress } from './utils/decodeLearnerProgress'
 import { decodeRetainedStudy } from './utils/decodeRetainedStudy'
 import { fullLibraryMessage } from './utils/fullLibraryMessage'
+import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStudy'
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { savedStudyLimit } from './utils/savedStudyLimit'
+import { withoutStudyReferences } from './utils/withoutStudyReferences'
 import { withStorageLock } from './utils/withStorageLock'
 
 /** Moves one file or directory of a saved study to the system Trash; injected into {@link LearningLibrary.removeStudy} so the library stays free of the editor API. @example const moveToTrash: StudyMover = (path) => workspace.fs.delete(Uri.file(path), { recursive: true, useTrash: true }) */
@@ -402,63 +404,48 @@ export class LearningLibrary {
   removeStudy(id: string, moveToTrash: StudyMover): Promise<StudyRemoval> {
     const identity = studyIdSchema.parse(id)
     let didStorageChange = false
+    const trash = (path: string) => (): Promise<void> => moveToTrash(path)
     return this.locked(async (): Promise<StudyRemoval> => {
       // Lowest format first: the highest archive is the last move, so the study is listed until then.
-      const archives = STUDY_STORAGE_FORMATS.toReversed().map((storage) =>
-        join(this.directory, `${identity}${storage.archiveSuffix}`),
+      const archives = await this.existingPaths(
+        STUDY_STORAGE_FORMATS.toReversed().map(
+          (storage) => `${identity}${storage.archiveSuffix}`,
+        ),
       )
-      const keptArchives = []
-      for (const path of archives)
-        if (await this.optionalStat(path)) keptArchives.push(path)
-      if (!keptArchives.length) throw new Error('Study archive is unavailable.')
+      if (!archives.length) throw new Error('Study archive is unavailable.')
       // The ledger is read before the first move, so an unreadable ledger changes nothing.
-      const progress = await this.readProgress()
-      for (const storage of RECORDING_STORAGE_FORMATS) {
-        const recording = join(this.directory, storage.directory, identity)
-        if (!(await this.optionalStat(recording))) continue
-        await moveToTrash(recording)
-        didStorageChange = true
-      }
-      if (await this.playbackNames(identity)) {
-        await moveToTrash(join(this.directory, PLAYBACK_PREFERENCE_FILE))
-        didStorageChange = true
-      }
-      const namesSelection = progress.selection?.studyId === identity,
-        namesRepositoryReturn = progress.repositoryReturn?.studyId === identity
-      // Learner decisions name no study; only the two navigation references to the removed study are dropped.
-      if (namesSelection || namesRepositoryReturn) {
-        const { selection, repositoryReturn, ...decisionsAndReading } = progress
-        const { studyId: _removedStudyId, ...selectionWithoutStudy } =
-          selection ?? {}
-        await atomicPrivateWrite(
-          join(this.directory, PROGRESS_REPOSITORY_FILE),
-          {
-            ...decisionsAndReading,
-            ...(selection
-              ? {
-                  selection: namesSelection ? selectionWithoutStudy : selection,
-                }
-              : {}),
-            ...(repositoryReturn && !namesRepositoryReturn
-              ? { repositoryReturn }
-              : {}),
-          },
-          PROGRESS_LIMIT_BYTES,
-        )
-        didStorageChange = true
-      }
-      for (const storage of STUDY_STORAGE_FORMATS) {
-        if (!storage.metadataSuffix) continue
-        const sidecar = join(
-          this.directory,
-          `${identity}${storage.metadataSuffix}`,
-        )
-        if (!(await this.optionalStat(sidecar))) continue
-        await moveToTrash(sidecar)
-        didStorageChange = true
-      }
-      for (const archive of keptArchives) {
-        await moveToTrash(archive)
+      const ledger = withoutStudyReferences(await this.readProgress(), identity)
+      const recordings = await this.existingPaths(
+        RECORDING_STORAGE_FORMATS.map((storage) =>
+          join(storage.directory, identity),
+        ),
+      )
+      const sidecars = await this.existingPaths(
+        STUDY_STORAGE_FORMATS.flatMap((storage) =>
+          storage.metadataSuffix
+            ? [`${identity}${storage.metadataSuffix}`]
+            : [],
+        ),
+      )
+      const steps: (() => Promise<void>)[] = [
+        ...recordings.map(trash),
+        ...(await this.playbackPathsNaming(identity)).map(trash),
+        // Learner decisions name no study; only the two navigation references to the removed study are dropped.
+        ...(ledger
+          ? [
+              (): Promise<void> =>
+                atomicPrivateWrite(
+                  join(this.directory, PROGRESS_REPOSITORY_FILE),
+                  ledger,
+                  PROGRESS_LIMIT_BYTES,
+                ),
+            ]
+          : []),
+        ...sidecars.map(trash),
+        ...archives.map(trash),
+      ]
+      for (const step of steps) {
+        await step()
         didStorageChange = true
       }
       return { outcome: 'moved' }
@@ -468,25 +455,25 @@ export class LearningLibrary {
     }))
   }
 
-  /** Tells {@link removeStudy} whether the playback position file remembers this study; a file that is absent or cannot be parsed remembers nothing and is left in place. @example await this.playbackNames(study.id) // => true */
-  private async playbackNames(studyId: string): Promise<boolean> {
-    const path = join(this.directory, PLAYBACK_PREFERENCE_FILE)
-    if (!(await this.optionalStat(path))?.isFile()) return false
-    try {
-      const preference: unknown = JSON.parse(
-        (
-          await readBoundedFile(path, PLAYBACK_PREFERENCE_LIMIT_BYTES)
-        ).toString(),
-      )
-      return (
-        typeof preference === 'object' &&
-        preference !== null &&
-        'studyId' in preference &&
-        preference.studyId === studyId
-      )
-    } catch {
-      return false
+  /** Keeps the paths under the library directory that exist, in the given order, so {@link removeStudy} skips what a study never had or an earlier removal already moved. @example await this.existingPaths(['a.study.v3.json']) // => ['/…/a.study.v3.json'] */
+  private async existingPaths(names: string[]): Promise<string[]> {
+    const existing: string[] = []
+    for (const name of names) {
+      const path = join(this.directory, name)
+      if (await this.optionalStat(path)) existing.push(path)
     }
+    return existing
+  }
+
+  /** Gives {@link removeStudy} the playback position file when it remembers this study; a file that is absent or cannot be read or parsed remembers nothing and is left in place. @example await this.playbackPathsNaming(study.id) // => ['/…/playback.v1.json'] */
+  private async playbackPathsNaming(studyId: string): Promise<string[]> {
+    const path = join(this.directory, PLAYBACK_PREFERENCE_FILE)
+    const names = await readBoundedFile(path, PLAYBACK_PREFERENCE_LIMIT_BYTES)
+      .then((bytes) =>
+        playbackPreferenceNamesStudy(JSON.parse(bytes.toString()), studyId),
+      )
+      .catch(() => false)
+    return names ? [path] : []
   }
 
   /** Explicit Retry repairs current archive sidecars while unsupported historical bytes stay untouched. @example await library.reconcile() */

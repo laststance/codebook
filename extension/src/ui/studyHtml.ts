@@ -405,37 +405,18 @@ function studyClient(
   element('studies').addEventListener('change', (event) => {
     if (!(event.target instanceof HTMLSelectElement) || !event.target.value)
       return
-    const selectedStudyId = event.target.value
-    const entry = current?.studies.find((study) => study.id === selectedStudyId)
-    // A configured study that cannot be opened is only chosen for deletion: nothing is loaded and the host is not asked.
-    if (
-      current &&
-      entry &&
-      entry.format !== 'node-test-history' &&
-      entry.metadata === 'unavailable'
-    ) {
-      unopenableChoice = selectedStudyId
-      dismissedRemoval = JSON.stringify(current.studyRemoval)
-      renderStudyRemoval(current)
-      return
-    }
-    unopenableChoice = undefined
-    if (entry?.format === 'node-test-history')
-      send({ type: 'node-history', studyId: entry.id })
-    else send({ type: 'history', studyId: selectedStudyId })
+    chooseSavedStudy(event.target.value)
   })
-  element('delete-study').addEventListener('click', (event) => {
-    const studies = element('studies')
+  element('delete-study').addEventListener('click', () => {
+    const studyId = chosenStudyId()
+    // The button stays focusable while it cannot be used, so its reason can be read; it then sends nothing.
     if (
-      !(event.currentTarget instanceof HTMLElement) ||
-      !(studies instanceof HTMLSelectElement) ||
-      // The button stays focusable while it cannot be used, so its reason can be read; it then sends nothing.
-      event.currentTarget.getAttribute('aria-disabled') === 'true' ||
-      !studies.value
+      element('delete-study').getAttribute('aria-disabled') === 'true' ||
+      !studyId
     )
       return
-    removalRequest = { studyId: studies.value, started: false }
-    send({ type: 'delete-study', studyId: studies.value })
+    removalRequest = { studyId, started: false }
+    send({ type: 'delete-study', studyId })
   })
   element('node-history-previous').addEventListener('click', () => {
     if (current?.nodeHistory && (current.nodeHistoryPage ?? 0) > 0)
@@ -816,6 +797,151 @@ function studyClient(
       })
     })
   }
+  type SavedStudyEntry = StudyViewMessage['studies'][number]
+  type StudyRemoval = StudyViewMessage['studyRemoval']
+  /** Reads the entry chosen in the Saved studies list; empty when none is. @example chosenStudyId() // => 'window_run' */
+  const chosenStudyId = (): string => {
+    const studies = element('studies')
+    return studies instanceof HTMLSelectElement ? studies.value : ''
+  }
+  /** Says whether an entry is a configured study that cannot be opened; it can still be chosen and deleted. A Node test history that cannot be opened is not such an entry. @example cannotBeOpened(staleEntry) // => true */
+  const cannotBeOpened = (entry: SavedStudyEntry | undefined): boolean =>
+    entry?.metadata === 'unavailable' && entry.format !== 'node-test-history'
+  /** Keeps an entry that cannot be opened as this pane's choice: nothing is loaded, the host is not asked, and the outcome of an earlier removal gives way. @example chooseUnopenable(staleEntry.id) */
+  const chooseUnopenable = (studyId: string): void => {
+    unopenableChoice = studyId
+    dismissedRemoval = JSON.stringify(current?.studyRemoval)
+    if (current) renderStudyRemoval(current)
+  }
+  /** Follows the learner's choice in the Saved studies list: an entry that cannot be opened is only chosen, any other is opened by the host. @example chooseSavedStudy(entry.id) */
+  const chooseSavedStudy = (studyId: string): void => {
+    const entry = current?.studies.find((study) => study.id === studyId)
+    if (cannotBeOpened(entry)) {
+      chooseUnopenable(studyId)
+      return
+    }
+    unopenableChoice = undefined
+    send({
+      type: entry?.format === 'node-test-history' ? 'node-history' : 'history',
+      studyId,
+    })
+  }
+  /** Names a Saved studies entry by its kind; an unloaded configured entry must not borrow the selected article's title through a shared profile ID. @example studyKindLabel(entry, message.profiles) // => 'Repository browser study' */
+  const studyKindLabel = (
+    study: SavedStudyEntry,
+    profiles: StudyViewMessage['profiles'],
+  ): string =>
+    study.format === 'node-test-history'
+      ? 'Node test history'
+      : study.profile === 'repository-browser'
+        ? 'Repository browser study'
+        : (profiles.find((profile) => profile.id === study.profile)?.title ??
+          'Unknown scenario')
+  /** Says whether a removal waits for its confirmation or is moving files. @example removalInProgress(message.studyRemoval) */
+  const removalInProgress = (removal: StudyRemoval): boolean => {
+    const status = removal?.status
+    return status === 'confirming' || status === 'moving'
+  }
+  /** Says why the chosen entry cannot be deleted, first match wins; empty when it can. @example chosenStudyRefusal(message, nodeEntry) // => 'Node test histories cannot be deleted here yet.' */
+  const chosenStudyRefusal = (
+    message: StudyViewMessage,
+    chosen: SavedStudyEntry,
+  ): string => {
+    const refusals: [applies: boolean, sentence: string][] = [
+      [
+        chosen.format === 'node-test-history',
+        options.studyRemovalRefusals.nodeHistory,
+      ],
+      [
+        message.unstoppedStudyId === chosen.id,
+        options.studyRemovalRefusals.runNotStopped,
+      ],
+      [
+        message.contentTab === 'recording',
+        options.studyRemovalRefusals.recordingOpen,
+      ],
+    ]
+    return refusals.find(([applies]) => applies)?.[1] ?? ''
+  }
+  /** Says why the delete button cannot be used; empty when it can, and while a removal is in progress, which the status line names instead. @example removalReason(message, undefined, false) // => 'Choose a saved study to delete.' */
+  const removalReason = (
+    message: StudyViewMessage,
+    chosen: SavedStudyEntry | undefined,
+    inProgress: boolean,
+  ): string => {
+    if (inProgress) return ''
+    if (!chosen) return options.studyRemovalRefusals.nothingChosen
+    return chosenStudyRefusal(message, chosen)
+  }
+  /** Shows whether the delete button can be used and the reason beside it; with no saved study there is nothing to delete and nothing to explain. @example showRemovalControl(message, '', false) */
+  const showRemovalControl = (
+    message: StudyViewMessage,
+    reason: string,
+    inProgress: boolean,
+  ): void => {
+    const hasStudies = message.studies.length > 0
+    element('delete-study-row').hidden = !hasStudies
+    if (inProgress || reason)
+      element('delete-study').setAttribute('aria-disabled', 'true')
+    else element('delete-study').removeAttribute('aria-disabled')
+    text('delete-study-reason', reason)
+    element('delete-study-reason').hidden = !reason || !hasStudies
+  }
+  /** Gives the removal outcome this pane shows; an outcome the learner dismissed stays hidden only while the host still reports that same outcome. @example visibleRemoval(message.studyRemoval) */
+  const visibleRemoval = (removal: StudyRemoval): StudyRemoval => {
+    if (dismissedRemoval !== JSON.stringify(removal))
+      dismissedRemoval = undefined
+    return dismissedRemoval ? undefined : removal
+  }
+  /** Says whether a removal ended without moving the whole study, which the status line shows as an error. @example removalFailed({ status: 'refused', studyId }) // => true */
+  const removalFailed = (removal: StudyRemoval): boolean =>
+    removal !== undefined && ['refused', 'failed'].includes(removal.status)
+  /** Shows the last removal's progress or outcome under the delete button. @example showRemovalStatus(message.studyRemoval) */
+  const showRemovalStatus = (removal: StudyRemoval): void => {
+    const shown = visibleRemoval(removal)
+    text('delete-study-status', shown?.text ?? '')
+    element('delete-study-status').classList.toggle(
+      'error',
+      removalFailed(shown),
+    )
+  }
+  /** Reads the status of the removal this pane asked for; nothing when the host reports no removal or one of another study. @example ownRemovalStatus(removalRequest, message.studyRemoval) // => 'moved' */
+  const ownRemovalStatus = (
+    request: { studyId: string },
+    removal: StudyRemoval,
+  ): string | undefined =>
+    removal?.studyId === request.studyId ? removal.status : undefined
+  /** Says whether focus still rests where the learner left it when asking: on the delete button, or nowhere, in a pane that has focus. @example focusRestsOnDeleteButton() */
+  const focusRestsOnDeleteButton = (): boolean =>
+    document.hasFocus() &&
+    (document.activeElement === element('delete-study') ||
+      document.activeElement === document.body)
+  /** Moves focus once after this pane's own request was answered: to the list after a removal, to the button after Cancel, a refusal or a failure. @example focusAfterRemoval(true) */
+  const focusAfterRemoval = (moved: boolean): void => {
+    if (!focusRestsOnDeleteButton()) return
+    element(moved ? 'studies' : 'delete-study').focus({ preventScroll: true })
+  }
+  /**
+   * Follows this pane's own delete request so that only the pane the learner used moves focus, once: while a removal is in progress the request has started (or, for another study's removal, was not taken); it is answered when that removal ends, when Cancel clears the field, or when the host refuses at once.
+   * @param removal - The removal the host reports.
+   * @param inProgress - Whether that removal is confirming or moving.
+   * @example answerRemovalRequest(message.studyRemoval, false)
+   */
+  const answerRemovalRequest = (
+    removal: StudyRemoval,
+    inProgress: boolean,
+  ): void => {
+    const request = removalRequest
+    if (!request) return
+    const ownStatus = ownRemovalStatus(request, removal)
+    if (inProgress) {
+      removalRequest = ownStatus ? { ...request, started: true } : undefined
+      return
+    }
+    if (!request.started && ownStatus !== 'refused') return
+    removalRequest = undefined
+    focusAfterRemoval(ownStatus === 'moved')
+  }
   /**
    * Renders the Saved studies section's delete control: whether it can be used and why not, the note for an entry that cannot be opened, the last removal's outcome, and the focus after this pane's own request was answered.
    * Called on every Study message after the list's value is set, and when the learner chooses an entry that cannot be opened.
@@ -823,65 +949,17 @@ function studyClient(
    * @example renderStudyRemoval(message)
    */
   const renderStudyRemoval = (message: StudyViewMessage): void => {
-    const studies = element('studies'),
-      deleteStudy = element('delete-study')
-    if (!(studies instanceof HTMLSelectElement)) return
-    const chosen = message.studies.find((study) => study.id === studies.value),
-      removal = message.studyRemoval,
-      inProgress =
-        removal?.status === 'confirming' || removal?.status === 'moving'
-    // First match wins; a removal in progress is named by the status line instead of a reason.
-    const reason = inProgress
-      ? ''
-      : !chosen
-        ? options.studyRemovalRefusals.nothingChosen
-        : chosen.format === 'node-test-history'
-          ? options.studyRemovalRefusals.nodeHistory
-          : message.unstoppedStudyId === chosen.id
-            ? options.studyRemovalRefusals.runNotStopped
-            : message.contentTab === 'recording'
-              ? options.studyRemovalRefusals.recordingOpen
-              : ''
-    // With no saved study there is nothing to delete and nothing to explain.
-    element('delete-study-row').hidden = !message.studies.length
-    if (inProgress || reason) deleteStudy.setAttribute('aria-disabled', 'true')
-    else deleteStudy.removeAttribute('aria-disabled')
-    text('delete-study-reason', reason)
-    element('delete-study-reason').hidden = !reason || !message.studies.length
-    element('study-unopenable').hidden = !(
-      chosen &&
-      chosen.format !== 'node-test-history' &&
-      chosen.metadata === 'unavailable'
+    const chosenId = chosenStudyId(),
+      chosen = message.studies.find((study) => study.id === chosenId),
+      inProgress = removalInProgress(message.studyRemoval)
+    showRemovalControl(
+      message,
+      removalReason(message, chosen, inProgress),
+      inProgress,
     )
-    // A dismissed outcome stays hidden only while the host still reports that same outcome.
-    if (dismissedRemoval !== JSON.stringify(removal))
-      dismissedRemoval = undefined
-    text('delete-study-status', dismissedRemoval ? '' : (removal?.text ?? ''))
-    element('delete-study-status').classList.toggle(
-      'error',
-      removal?.status === 'refused' || removal?.status === 'failed',
-    )
-    if (!removalRequest) return
-    const own = removal?.studyId === removalRequest.studyId
-    if (inProgress) {
-      // Another study's removal holds the single flight, so this pane's request was not taken.
-      if (own) removalRequest.started = true
-      else removalRequest = undefined
-      return
-    }
-    // Answered: the dialog was answered and the move ended, or the host refused at once. Cancel clears the field.
-    if (!removalRequest.started && !(own && removal?.status === 'refused'))
-      return
-    removalRequest = undefined
-    // Focus moves once, only in the pane the learner used and only when it still rests on the button or nowhere.
-    if (
-      document.hasFocus() &&
-      (document.activeElement === deleteStudy ||
-        document.activeElement === document.body)
-    )
-      (own && removal?.status === 'moved' ? studies : deleteStudy).focus({
-        preventScroll: true,
-      })
+    element('study-unopenable').hidden = !cannotBeOpened(chosen)
+    showRemovalStatus(message.studyRemoval)
+    answerRemovalRequest(message.studyRemoval, inProgress)
   }
   window.addEventListener('message', (event) => {
     const message:
@@ -1564,7 +1642,6 @@ function studyClient(
     const studies = element('studies')
     if (studies instanceof HTMLSelectElement) {
       const previous = studies.value
-      // Unloaded configured entries must not borrow the selected article's title through a shared profile ID.
       replace('studies', message.studies, () => {
         if (!message.studies.length) {
           const placeholder = document.createElement('option')
@@ -1575,15 +1652,7 @@ function studyClient(
         return message.studies.map((study) => {
           const option = document.createElement('option')
           option.value = study.id
-          const label =
-            study.format === 'node-test-history'
-              ? 'Node test history'
-              : study.profile === 'repository-browser'
-                ? 'Repository browser study'
-                : (message.profiles.find(
-                    (profile) => profile.id === study.profile,
-                  )?.title ?? 'Unknown scenario')
-          option.textContent = `${label}${study.format === 'legacy-v1' ? ' (legacy)' : ''} · ${new Date(study.savedAt).toLocaleString()} · ${study.outcome} · ${study.id.slice(-8)}`
+          option.textContent = `${studyKindLabel(study, message.profiles)}${study.format === 'legacy-v1' ? ' (legacy)' : ''} · ${new Date(study.savedAt).toLocaleString()} · ${study.outcome} · ${study.id.slice(-8)}`
           // A configured study that cannot be opened can still be chosen for deletion; a Node test history cannot be deleted here.
           option.disabled =
             study.metadata === 'unavailable' &&

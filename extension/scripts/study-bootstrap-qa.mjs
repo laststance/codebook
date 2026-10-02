@@ -1304,9 +1304,13 @@ async function check(page, options) {
     page.evaluate(() => {
       const visible = (id) =>
           document.getElementById(id).getClientRects().length > 0,
+        // The text of a line the learner can see; null while the line is hidden.
+        shownText = (id) =>
+          visible(id) ? document.getElementById(id).textContent : null,
         control = document.getElementById('delete-study'),
         list = document.getElementById('studies'),
-        status = document.getElementById('delete-study-status')
+        status = document.getElementById('delete-study-status'),
+        sent = (type) => window.sent.filter((message) => message.type === type)
       return {
         heading: document.querySelector('#saved-studies h2').textContent,
         options: [...list.options].map((option) => [
@@ -1319,21 +1323,17 @@ async function check(page, options) {
         ariaDisabled: control.getAttribute('aria-disabled'),
         disabledAttribute: control.hasAttribute('disabled'),
         describedBy: control.getAttribute('aria-describedby'),
-        reason: visible('delete-study-reason')
-          ? document.getElementById('delete-study-reason').textContent
-          : null,
-        note: visible('study-unopenable')
-          ? document.getElementById('study-unopenable').textContent
-          : null,
+        reason: shownText('delete-study-reason'),
+        note: shownText('study-unopenable'),
         status: status.textContent,
         statusIsError: status.classList.contains('error'),
         statusRole: `${status.getAttribute('role')}/${status.getAttribute('aria-live')}`,
-        focus: document.activeElement?.id ?? null,
-        deletes: window.sent
-          .filter((message) => message.type === 'delete-study')
-          .map((message) => [message.studyId, message.revision]),
-        histories: window.sent.filter((message) => message.type === 'history')
-          .length,
+        focus: document.activeElement.id,
+        deletes: sent('delete-study').map((message) => [
+          message.studyId,
+          message.revision,
+        ]),
+        histories: sent('history').length,
       }
     })
   const deleteButton = page.getByRole('button', {
