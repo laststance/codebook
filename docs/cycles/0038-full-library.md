@@ -2,8 +2,8 @@
 
 Type: product-increment\
 Status: validating\
-Result: pending\
-Delivery: not-applicable\
+Result: demonstrated\
+Delivery: committed\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/70\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -16,6 +16,7 @@ Owner authority:
 - Standing direction of 2026-10-01: "CRITICAL が出た場合だけ直して。止まらないで最後まで進めて。", "全部選択肢はレコメンドでええで", "返事ができないので、選択肢はReccomendをpickしてください" and "そのまま最後まで進めて". This cycle takes the recommended option at every decision point and records each one below.
 - D040: VS Code practical trials use Copilot Chat **Auto**; the Codex Extension only after observed credit exhaustion.
 - Owner statement of 2026-10-02: Codex automatic review is off for this repository. A delivery has no Codex cloud step; CI and the separate exact-HEAD gate remain.
+- Owner direction of 2026-10-02, during this cycle's reviews: "今回のPRをマージしたら一旦作業を中断してください。" The standing goal to continue cycle after cycle was cleared by the owner at the same time. After this cycle's PR is merged and its records are closed, work pauses: no next cycle is specified or started until the owner says so.
 
 ## Question and authorized scope
 
@@ -128,6 +129,24 @@ The context was compacted during the native trial: N7-a to N7-c were done in VS 
 - The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 with native Run and Debug (Variables `amount: 120`, `amountInCents: 12000`, `status: 'pending'`, Call Stack `createInvoice actions.ts:24`), the Create Invoice application above the stopped `actions.ts`, standard chat with the `/codebook` request and the bottom "Recording explanation · Save learning replay"; region 2 with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", the Learning summary with its sequence diagram, "Before database insert", "I understand this step" and the transport at 00:42 / 02:18 with "Jump back" and "Unrecorded interval"; region 3 with the DeepWiki chapters, the article with "Relevant source files", the flow diagram, the Ask composer, "Update LLM Wiki", "On this page", "Open in VS Code" and "Change location"; the shortcut strip with the "Keyboard shortcuts ?" control and the searchable dialog.
 - Checkout: `codex/cycle-0038-full-library` at `29147a6`, clean, not pushed; no PR open. Running at that moment, all started by this trial: VS Code and Cursor with the QA workspace, the private OBS, the database container; the QA workspace file in its temporary state (limit 67 and two chat settings).
 - Gap audit: no product source changed since the fourth entry, so the audit stands.
+
+### Entry after compaction, 2026-10-02 (sixth in this cycle)
+
+The context was compacted during `/ship`: its tests, the plan audit and the coverage audit had run, the coverage audit's five added tests were uncommitted, and the delivery review had not started. No product source was edited and no runtime trial ran between the compaction and the entry. The mandatory entry was repeated on the files on disk before the delivery review read the diff:
+
+- Read in full: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md`.
+- The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 with native Run and Debug (Variables `amount: 120`, `amountInCents: 12000`, `status: 'pending'`, Call Stack `createInvoice actions.ts:24`), the Create Invoice application above the stopped `actions.ts`, standard chat with the `/codebook` request and the bottom "Recording explanation · Save learning replay"; region 2 with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", the Learning summary with its sequence diagram, "Before database insert", "I understand this step" and the transport at 00:42 / 02:18 with "Jump back" and "Unrecorded interval"; region 3 with the DeepWiki chapters, the article with "Relevant source files", the flow diagram, the Ask composer, "Update LLM Wiki", "On this page", "Open in VS Code" and "Change location"; the shortcut strip with the "Keyboard shortcuts ?" control and the searchable dialog.
+- Checkout: `codex/cycle-0038-full-library` at `6468921`, not pushed, with this record and three test files uncommitted; no PR open; no trial running. Protected hashes (`0ac38ba2`, `8d6e64c2`, `80ba41bd`, `d578b9e3`, bundled skill `39f03be0`), the dashboard (`1936e41`, only the untracked `.codebook/`), port 3000 (no listener), OBS (not running) and the database container (stopped) are as recorded above.
+- Gap audit: no product source changed since the fourth entry, so the audit stands.
+
+### Entry after compaction, 2026-10-02 (seventh in this cycle)
+
+The context was compacted during the second pass of the delivery review: five of its six readers had answered, the red team was still reading, and no edit was pending. The mandatory entry was repeated on the files on disk before that pass was closed and recorded. This note was written after the reviews were bound to their tree, because a record edit during an open review pass would have changed the tree the pass is bound to.
+
+- Read in full: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules and `docs/plans/bundled-codebook-skill.md`.
+- The approved PNG (SHA-256 `f189ee82…caf2aa`, verified again) was opened with the image viewer. Observed: region 1 with native Run and Debug (Variables `amount: 120`, `amountInCents: 12000`, `status: 'pending'`, Call Stack `createInvoice actions.ts:24`), the Create Invoice application above the stopped `actions.ts`, standard chat with the `/codebook` request and the bottom "Recording explanation · Save learning replay"; region 2 with "Replay: Creating an invoice", "(recorded state)" Variables and Call Stack, "Recorded application · 00:42", "actions.ts (recorded source)", the Learning summary with its sequence diagram, "Before database insert", "I understand this step" and the transport at 00:42 / 02:18 with "Jump back" and "Unrecorded interval"; region 3 with the DeepWiki chapters, the article with "Relevant source files", the flow diagram, the Ask composer, "Update LLM Wiki", "On this page", "Open in VS Code" and "Change location"; the shortcut strip with the "Keyboard shortcuts ?" control and the searchable dialog.
+- Checkout: `codex/cycle-0038-full-library` at `3e955d6`, not pushed, with this record uncommitted; no PR open; no trial running.
+- Gap audit: the product source is the native candidate's (`29147a6`); only test files changed since the fourth entry, so the audit stands.
 
 ## Source-gap audit and selected increment
 
@@ -422,17 +441,73 @@ What did not go as planned, and limits:
 - Not exercised natively: the "Moving the saved study to the Trash…" text (the move ended between two frame samples), a failed or partial move, an entry that cannot be opened (criterion 26), the Windows wording (criterion 27) and the limit of 256. They hold at mechanism level only.
 - Aqua Voice's transparent floating panel refused clicks in the bottom centre of the screen until access to it was granted; it is click-through and was not used. The Cursor take contains about three minutes without input (the fifth entry above).
 
+### Reviews and delivery review, 2026-10-02
+
+Under the owner's standing direction only a critical finding is fixed; every other finding is recorded here and carried. No reviewer rated a product finding critical or P1. The product source that was reviewed is the native candidate's (`29147a6`); the delivery review added and changed tests only.
+
+| Review | Scope | Result |
+| --- | --- | --- |
+| Local CodeRabbit CLI (no credits) | `6468921` against `b72ecb1`, 39 files | 1 finding, major: a checkpoint held back during a removal is not rescheduled when nothing was moved. Carried |
+| `open-code-review-delegate` | 22 of 22 eligible files reviewed by two fresh host subagents, 0 skipped; 17 default exclusions (5 Markdown, 12 tests) | 0 critical, 0 high, 2 medium, 12 low. Carried |
+| `/ship` coverage audit | 30 code paths of the diff | Five tests added to three existing files (`40b354b`); 87% value-weighted coverage against a target of 80%; four paths without a test (below) |
+| `/ship` plan audit | 48 plan items | 43 done, 5 changed, none missing; scope clean |
+| `/ship` delivery review, pass 1 | Core checklist, five specialists (testing, maintainability, security, performance, simplification), a red team, exploratory QA | 0 critical product findings. One required QA check failed: the full suite failed once in a reader test (below). Fixed in the test (`3e955d6`) |
+| `/ship` delivery review, pass 2 (after that fix, no edit) | The same six readers and the QA revalidation | 0 critical; 13 new informational findings, 28 of pass 1 confirmed; converged |
+| `/ship` adversarial review | A Claude subagent, Codex CLI adversarial, Codex CLI structured (`codex review --base main`) | Claude: 11 findings, none critical, "Ship as-is". Codex adversarial: three P2, read from the code. Codex structured: two P2, both reproduced by the reviewer; no P1, gate passed |
+
+The delivery review and the adversarial review are bound to one tree (`34e7742c`: `3e955d6` plus this record's edits at that time); the release metadata and the record edits after it are checked against that tree before the push.
+
+**The one fix.** The full suite failed once (1,675 of 1,676): "a removal the Trash refuses at its first move deletes nothing, and a later explanation of that run is still saved" read `historyOutcome.status` as `pending`. The writer reports a checkpoint as saved only after it has listed the catalog again, which follows the write on disk; the test waited for the disk only. Run alone it passed; with 48 copies running at once it failed 48 of 48. The test now also waits for the public outcome, and under the same load it passes 48 of 48. No product source changed.
+
+**Gates after that fix** (on `3e955d6`): `pnpm --dir extension test` 1,676 of 1,676; `test:package` 192 of 192; the hook test 4 of 4; `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` exit 0; the emit comparison without a difference; the 38 controls held 38 of 38 on an exact replay. Two notes from the QA runs: one control row (criterion 30, "a queued position save settles first") passed once with its fix removed while six review agents were running, and held on the replay; its test delays the queued save by 50 ms, so the control depends on the machine's load (not proven; carried as a test-quality item). And the `dead-code` gate fails after `test:package` followed by the fast emit, because `dist/build.json` is then missing and fallow keeps that result in its ignored cache; the gates are to be run after a full build.
+
+**Carried findings: product behavior.** Sources in brackets; "reproduced" only where a reviewer ran it.
+
+1. A checkpoint that waited behind a write while a removal was moving is not written after the removal moved nothing; it stays `pending` until the next material change, Retry storage or retirement. A forced checkpoint is also skipped while a study is moving, so a retirement in that window saves no final state. (CodeRabbit, OCR, core checklist, testing, maintainability, Claude adversarial.)
+2. `removeStudy` answers `partly-moved` when only the ledger was rewritten and the first file move was refused. The reader then excludes this window's run although the study is intact, which contradicts criterion 29 for that case; a second attempt answers "Nothing was deleted". Needs a study without a recording that the ledger names, and a Trash that refuses. (OCR medium, core checklist, Claude adversarial.)
+3. The delete button can act on the study shown before while a newly chosen entry is still loading; the dialog names the study it will move. (OCR medium, core checklist.)
+4. A removal confirmed while a recording open of that study is still waiting for the historical debugger is not refused; the load then activates Recording on the removed study and its playback fails. No file is written. (OCR, Claude adversarial; Codex structured, reproduced.)
+5. The neighbour opened after a removal replaces a study the learner chose while the neighbour was loading, and that selection is saved. (Codex adversarial; Codex structured, reproduced.) The neighbour is also selected without the re-arrangement the list's own choice performs, so a removal made from a live composition can leave that composition up. (OCR, Claude adversarial; inferred.)
+6. A start that repeats the refused run's key and signature replays the refused answer until that record is evicted, although the pane says "Ask your editor agent to start the run again." (Red team, Claude adversarial.)
+7. The run's raw evidence under the extension's `agent/<instance>/<run>` storage (screenshots, pause snapshots, sealed source, explanations) is not moved by a removal, no product code deletes it, and the run's resources keep serving it while the server instance lives. The dialog and the README name the archive, the catalog file and the recording only. (Security, red team.)
+8. Restoring a trashed study at the ceiling of 256 gives 257 archives, and `entries()` then throws for the list, the usage, the admission and a save. A removal leaves three or four loose items in the Trash that a hand restore must place; a restored study stays "removed" for the window that deleted it (no position save, the run stays excluded) until a reload. Restoring was not exercised. (Red team, Claude adversarial.)
+9. The Trash route is verified on macOS only. Where the editor cannot move extension storage to the Trash every removal ends "Nothing was deleted", and at 256 the refusal names a remedy that cannot work; DR19 is not implemented. (Red team, Claude adversarial; inferred.)
+10. A run that fails before the admission (no workspace, no repository store) on a full library is still a checkpoint candidate: "History not saved" is shown and Retry storage can write it later. The order keeps the error precedence of those two checks. (Claude adversarial.)
+11. An unreadable ledger ends every removal as "Nothing was deleted" with the ledger's error. (Claude adversarial.)
+12. `LearningLibrary.list()` reads each archive's size outside its per-entry guard, so an archive trashed between the directory read and that read rejects the whole listing; a concurrent checkpoint of another run can then be reported "History not saved". A window of milliseconds. (Red team, Claude adversarial.)
+13. The storage lock is now held across the editor's Trash calls; a host killed in the middle leaves the lock file, and later writes in every window fail until it is cleared (the existing behavior of an interrupted writer). (Claude adversarial.)
+14. `existingPaths()` checks only that a path exists. If a recording root was replaced by a link to another directory, a directory there named after the study id would be moved to the Trash; `RecordingStore.location()` refuses that structure, the removal does not. Needs the private storage to be altered first. (Codex adversarial; inferred.)
+15. `RecordingStore.active` keeps the writer of every run started in a window. With removal and eviction a window can record, delete and run again without bound, so finished writers' journals and frame-hash sets accumulate. (Codex adversarial; the engineering review carried the same note.)
+16. With the limit lowered below the stored count the outcome line reads like "The library now holds 69 of 64 saved studies." and names no next step. (Red team.)
+17. The refusal an agent receives tells its reader to delete a saved study without naming the learner as the one who does it; only the help resource says so. A refused run's resource still lists `read-history` in `nextActions`. (Security; core checklist.)
+18. Publishing a Repository Wiki article revision that still links a removed study fails with the raw "Study archive is unavailable." (Red team.)
+19. Smaller items: the list can show blank instead of `No saved study yet` after its last entry leaves; a removal that moved nothing does not read the catalog again; a stale refused outcome can answer a new request early (focus only); the "cannot be opened, can still be deleted" note also shows for an entry Retry storage would repair; `firstReadableStudy` reads the neighbours one after another while the removal stays `moving`. (OCR, red team, performance.)
+
+**Carried findings: tests and code quality.** The full lists are in the private review records named below.
+
+- Coverage: the four paths the audit left without a test (a delete request with a stale revision; the room read failing after a move; a Save learning replay in flight at the confirmation; a study-less recording that stays in place); no negative test for an id that is not a study identity at `removeStudy` or in the message; the removal tests use the v3 archive and `recordings.v2` only (the current formats were removed in the native trial); the hidden Save learning replay item and its rejection are asserted only after `retire()`, which passes without the new guards; `firstReadableStudy`'s skip of an unreadable neighbour is not reached; the moving-study guard is not tested through the controller's `open` or the pane's `history` message; the failure branches after a successful move; the webview's new logic runs only in the hand-run DOM script, which exits 1 for the carried wide-sequence case.
+- Test quality: the five audit tests have no row in the control table (the audit ran a control for each in `dist`); expected texts follow `process.platform`, so the suite assumes a POSIX host; several tests reach private members; twelve utility tests carry no value header; one test name contradicts its last assertion; the control of criterion 30 depends on load.
+- CI: `extension/test-timings.json` was not recorded again, so the new test files are planned at one second each. The shard times of this delivery's CI run are compared with the one-minute target at the delivery closure.
+- Code quality: a redundant `.catch` in `admitStudy`; three copies of "Study archive is unavailable."; `savedStudyIdentityLine` repeats the list's label rule; stale JSDoc on `showRemovalNeighbour`, `withoutStudy` and `capacityStatus`; `historyExcluded` is checked in three idioms; a parameter typed through `Parameters<…>` where `StudyRecord` is imported; bare revisions in the DOM script; nested ternaries in `state()` and `studyKindLabel`. Advisory simplifications: `usage()` and `excludeHistory`'s parameter each have one caller or value, and `fullLibraryMessage` could hold its six sentences whole.
+
+Private records (ignored `artifacts/cycle-0038/reviews/`): `coderabbit-6468921.jsonl`, `ocr-batch-a.md`, `ocr-batch-b.md`, `ship-step9-pass1.md`, `ship-step9-pass2.md`, `ship-step11.md` with the two raw Codex outputs. The exploratory QA report with its 40 captures is in the ignored `.gstack/qa-reports/ship-c38-20261002-133935/`. The branch diff went to CodeRabbit's service through its local CLI and to Codex CLI for the two outside passes.
+
 ## Result and decision
 
-- Result: pending
+- Result: demonstrated at mechanism and bounded development-native level. Criteria 1 to 20 and 26 to 32 hold through tests, controls and gates; criteria 21 to 25 passed natively in VS Code 1.140.0 and Cursor 3.23.12 on candidate `5b697c76`. Not demonstrated: the Windows wording natively (criterion 27, mechanism only), an entry that cannot be opened natively (criterion 26, mechanism only), and the sub-case of criterion 12 that has no reachable arrangement. Criterion 29 does not hold in the case of carried finding 2.
+- Decision: keep E1 to E4 as built. The hypothesis held: excluding the refused record stops the later write, and the Trash route gives room back in both hosts without a permanent delete.
+- AC rows after this cycle: AC-SAVE gains the admission that leaves nothing behind and the learner's removal (mechanism and bounded native in both hosts); AC-LEARNING: decisions survive a removal (mechanism); AC-ENTRY: the Saved studies section and its control (DOM cases and both hosts); AC-LIVE and AC-REPLAY: regression checks passed (N7-c, N7-d). All thirteen rows stay short of integrated acceptance.
 
 ## Handoff
 
-Not yet.
+- Before: a full library at the maximum limit refused every configured run with no removal, and a refused run could be written later into the room the learner made. After: both are closed at mechanism level and observed natively; the carried findings above are the remaining gaps of this increment.
+- Review, CI, merge, packaging and installation are separate: the reviews are complete with nothing critical; CI, the exact-HEAD gate and the merge follow the pull request; the installed candidate in both QA profiles is the pre-release build (`5b697c76`, 0.2.21 metadata), and 0.2.22.0 itself is not installed or published.
+- The owner's direction of 2026-10-02 applies after the merge: work pauses, and no next cycle is specified or started until the owner says so.
 
 ## Next action
 
-- Exact next action: the reviews (local CodeRabbit CLI without credits, `open-code-review-delegate`; only a critical finding is fixed), then `/ship` with the version 0.2.22.0, CI, the separate exact-HEAD gate and the merge. Native N7-a to N7-d and criterion 25 passed on the candidate above.
-- Changed files / branch / active processes: the cycle's source, tests, QA script and documents on `codex/cycle-0038-full-library` (`98915d7` to `29147a6` and this record), not pushed; no active processes. Both QA profiles run the candidate (0.2.21 metadata, runtime `5b697c76`).
-- State updated in PROJECT_STATE.md: active cycle status and the one next action.
+- Exact next action: push, open the pull request as 0.2.22.0, wait for CI, run the separate exact-HEAD gate, merge in its own step, confirm CI on `main`, close Issue #70 by hand with the carried findings named, and record the delivery closure. Then pause.
+- When work resumes, the first candidates from this cycle are carried findings 1 to 5 (each is a small reader or library change with a test), finding 7 (what a deletion leaves on disk) and finding 6 (the same-key start); after them the list in PROJECT_STATE.
+- Changed files / branch / active processes: the cycle's source, tests, QA script, documents and release metadata on `codex/cycle-0038-full-library`; no active processes. Both QA profiles run the pre-release candidate (0.2.21 metadata, runtime `5b697c76`).
+- State updated in PROJECT_STATE.md: active cycle status, the AC-SAVE row and the one next action.
 - Durable decisions updated: none.
