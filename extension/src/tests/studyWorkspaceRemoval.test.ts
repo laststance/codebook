@@ -2166,6 +2166,10 @@ test('a saved study chosen during Recording is answered only once its recording 
       openRequest: 5,
     })
     await loadStarted
+    // The message that started the load has been handled to its end once the pending microtasks have run.
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve)
+    })
     const readinessWhileLoading = harness.controller.state().readiness,
       repliesWhileLoading = harness.openRequestReplies()
     failLoad()

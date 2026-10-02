@@ -1724,7 +1724,8 @@ async function check(page, options) {
   await library([shownStudy, otherStudy], shownStudy.id)
   await settleOpenRequest(await lastOpenRequest())
   const afterRefusedRequest = await removalControl()
-  await deleteButton.click()
+  // Forced, so a button that still waits is a failed case instead of a harness timeout.
+  await deleteButton.click({ force: true })
   const askedForShown = await removalControl()
   cases.push({
     name: 'when the chosen saved study does not open the list returns to the shown study and the delete button is offered for it',
