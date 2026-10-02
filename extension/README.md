@@ -82,7 +82,7 @@ Package builds require a POSIX host (macOS or Linux); Windows builds are rejecte
 ```sh
 pnpm --dir extension install --frozen-lockfile
 pnpm --dir extension package
-pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.21.vsix"
+pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.22.vsix"
 ```
 
 The package command checks pnpm, clears only the extension compiler output, rebuilds, bundles production modules and stages an explicit file allowlist. Test/application fixtures and experimental dependencies are rejected. The independent checker validates archive entries, hashes, manifests and dependency notices before accepting the VSIX.
@@ -266,7 +266,7 @@ Run resources distinguish current control state from historical snapshot/source/
 
 Resource identity is validated after the MCP SDK's URL normalization. Safe dot-segment aliases can resolve to the same canonical resource; they do not bypass instance/study/hash checks. Clients should follow returned canonical URIs.
 
-Limits: 8 MCP sessions, 32 concurrent HTTP requests, 1 MiB + 64 KiB HTTP envelopes (separate from the 1 MiB book-document cap), 8 KiB headers, 5 s body reads; 1 active/16 retained runs per instance, no history eviction; 32 explanation intents/run, 8,192 characters and up to 10 distinct captured paths; PNG ≤8 MiB. Configured runtime source resources allow TypeScript ≤256 KiB, the selected JavaScript module ≤8 MiB and its source map ≤16 MiB; build discovery reads selected-route webpack chunks ≤32 MiB each, ≤128 MiB total, ≤2,048 candidates and ≤30 seconds. Discovery and `codebook://help/repository-browser` expose the source and chunk limits through `profile.limits`. Evidence buffering is capped at 10,000 events / 4 MiB retained event bytes / 16 MiB pending writes. Overflow is an explicit failed run followed by owned cleanup.
+Limits: 8 MCP sessions, 32 concurrent HTTP requests, 1 MiB + 64 KiB HTTP envelopes (separate from the 1 MiB book-document cap), 8 KiB headers, 5 s body reads; 1 active/16 retained runs per instance, no history eviction (from 0.2.22, when all 16 are taken the oldest run that was refused at the study-library admission, or whose saved study you deleted, gives up its place; such a run holds no history); 32 explanation intents/run, 8,192 characters and up to 10 distinct captured paths; PNG ≤8 MiB. Configured runtime source resources allow TypeScript ≤256 KiB, the selected JavaScript module ≤8 MiB and its source map ≤16 MiB; build discovery reads selected-route webpack chunks ≤32 MiB each, ≤128 MiB total, ≤2,048 candidates and ≤30 seconds. Discovery and `codebook://help/repository-browser` expose the source and chunk limits through `profile.limits`. Evidence buffering is capped at 10,000 events / 4 MiB retained event bytes / 16 MiB pending writes. Overflow is an explicit failed run followed by owned cleanup.
 
 
 ## Validation
