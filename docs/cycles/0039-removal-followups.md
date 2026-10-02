@@ -1,9 +1,9 @@
 # Cycle 0039 — Removal follow-ups: a deletion acts on the chosen study, reports what moved, and takes the run's raw evidence with it
 
 Type: product-increment\
-Status: validating\
+Status: closed\
 Result: demonstrated (criterion 25 PARTIAL)\
-Delivery: PR-open\
+Delivery: merged\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/72\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -101,6 +101,10 @@ The working context was compacted a third time while the native trial N8 ran in 
 ### Entry after compaction, 2026-10-02 (fourth in this cycle, during native N8-d)
 
 The working context was compacted a fourth time while N8-d ran in Cursor, after the deletion half and with the Saved studies list open. The OBS main take kept recording. One click was sent to Cursor before the entry was repeated (the entry `57bbb9ae` was chosen in the open list); no further input followed until the entry was done. The mandatory entry was then repeated from the files on disk: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review. The approved PNG was opened with the image viewer again (hash `f189ee82…caf2aa` verified; the four regions as described above). Checkout `codex/cycle-0039-removal-followups` at `6239fea` with one uncommitted test file of the delivery's coverage pass; the dashboard at `1936e41` with only the untracked `.codebook/`; the database container running for the trial (stopped at cleanup). Gap audit: no product source changed since the second entry's audit, so the affected rows stay AC-SAVE, AC-LEARNING and AC-ENTRY with AC-LIVE and AC-REPLAY as regressions.
+
+### Entry after compaction, 2026-10-02 (fifth in this cycle, during the delivery)
+
+The working context was compacted a fifth time while the delivery's documentation audit ran, after the reviews were bound and before the release commits. No implementation or runtime trial was left; the remaining work was the commits, the verification, the push, the pull request and the merge. The mandatory entry was repeated from the files on disk before any of them: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review. The approved PNG was opened with the image viewer again (hash `f189ee82…caf2aa` verified; the four regions as described above). Checkout `codex/cycle-0039-removal-followups` at `40a1f0f` with the nine uncommitted record and release files; Node 24.21.0, pnpm 12.4.2; the four protected hashes and the bundled skill as at the entry, the dashboard at `1936e41` with only the untracked `.codebook/`, no listener on port 3000, no recorder process, the database container stopped. Gap audit: the product source is the reviewed tree's, so the affected rows stay AC-SAVE, AC-LEARNING and AC-ENTRY with AC-LIVE and AC-REPLAY as regressions. This entry is written with the delivery closure, not before the push, so that the documents the audit had read stayed byte-identical until the merge.
 
 ## Source-gap audit and selected increment
 
@@ -328,7 +332,7 @@ Image comparison: the approved PNG was viewed again at the fourth entry. In both
 
 Limits and observations:
 
-- **The Trash was emptied by something else during the trial.** The eight items of the two VS Code removals were seen in `~/.Trash` at 19:41, 19:47 and 19:53 and were gone at 20:20, when it held only the four Cursor items. This session ran no command that empties the Trash. The two VS Code studies can no longer be restored from it; the Cursor study's four items are still there.
+- **The Trash was emptied by something else during the trial.** The eight items of the two VS Code removals were seen in `~/.Trash` at 19:41, 19:47 and 19:53 and were gone at 20:20, when it held only the four Cursor items. This session ran no command that empties the Trash. The two VS Code studies can no longer be restored from it; the Cursor study's four items are still there. (Added at the closure: the Trash was empty at 21:45 JST, and the owner said the same evening that they had emptied it themselves, "ゴミ箱は自分で空にしたので大丈夫です。". Nothing else on the Mac is involved.)
 - N8-a's four stops, save and reopen were shown on a run with a new key, not on the same-key run.
 - The owner used the Mac twice during the trial: at 19:34 a dictation landed in an unsaved editor buffer (reverted through File > Revert File; the file on disk never changed), and from 19:59 to 20:12 another application was in front. No screen call was made meanwhile; OBS kept recording the QA window.
 - A compaction fell into each host's take. In Cursor one click was sent before the entry was repeated (above).
@@ -386,9 +390,24 @@ Private records (ignored `artifacts/cycle-0039/reviews/`): `ship-step9-pass1.md`
 - Review, CI, merge, packaging, publication and installed verification are separate: the delivery review is complete with the named exception; CI, the exact-HEAD gate and the merge follow the pull request; 0.2.23.0 is not packaged for installation or published; both QA profiles run the pre-release candidate `41bdbdfb`.
 - Issue #72 stays open through the merge (the pull request links it without a closing keyword) and is closed by hand with criterion 25's PARTIAL outcome and the carried findings named.
 
+## Delivery closure, 2026-10-02
+
+- **Pull request.** [PR #73](https://github.com/laststance/codebook/pull/73), "v0.2.23.0 fix: a deletion acts on the chosen saved study, says what moved and takes the run's raw evidence with it", opened ready for review from head `7f3ae0d` (14 commits over `471ad67`), its description starting with `@coderabbitai ignore` and linking Issue #72 without a closing reference. The harness screenshot of the waiting delete button is attached; the native recordings stay private.
+- **Documentation audit.** One audit of the delivery (`/document-release` as a subagent, 403 s): status current, no file edited, no blocker; its 94 input hashes equal the files after the audit and after both release commits. It names three shipped behaviors that the extension README does not describe (the `BUSY` answer of `codebook_explain` during a deletion, Save learning replay refused while its study moves, recovery for the carried failure paths); they are in the CHANGELOG only.
+- **Release metadata.** `VERSION` 0.2.23.0; `extension/package.json`, `EXTENSION_VERSION`, the package test's expected version and the README's package path 0.2.23; the CHANGELOG entry with nine known limits.
+- **Verification on the release tree before the push.** Against the reviewed tree `0b224fc0` only documents and the version literals had changed (tree `8972411f`). `pnpm --dir extension test` 1,720 of 1,720; `test:package` 192 of 192; the hook test 4 of 4; `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` exit 0; the build; the emit comparison 630 files without a difference; the health baseline and the bundled skill unchanged.
+- **CI on the head `7f3ae0d`.** 20 of 20 check runs passed: Test run 37008285795 in twelve jobs of 38 to 48 s, package 37008285800 (89 s), Build 37008285904, TypeCheck 37008285789, Lint 37008285811, Format 37008285958, Fallow 37008285764, and the two Socket Security checks.
+- **Gate and merge.** The read-only exact-HEAD gate passed in its own step (local, remote and pull-request head equal; not a draft; mergeable and clean; base `main` not moved; no closing reference; 20 of 20 check runs successful; no review thread; clean working tree); the squash merge ran in a separate step with `--match-head-commit` and produced `97dd1e9` on `main` at 2026-10-02T12:44:20Z. No Codex cloud step (switched off by the owner). The squash commit's tree equals the head's (`8972411f`).
+- **CI on `main` `97dd1e9`.** 19 of 19 check runs passed: Test run 37008503930 in twelve jobs of 37 to 49 s, package 37008503987 (88 s), Build 37008503817, TypeCheck 37008503920, Lint 37008503866, Format 37008503823, Fallow 37008503860, Socket Security.
+- **Tracking.** Issue #72 stayed open through the merge and was closed by hand at 2026-10-02T12:46:19Z with criterion 25's PARTIAL outcome and the carried findings 1 to 18 named. Goal Issue #1 stays open.
+- **Not done by this delivery.** No VSIX of 0.2.23.0 was packaged for installation, nothing was installed or published; both QA profiles still run the pre-release candidate `41bdbdfb` (0.2.22 metadata, runtime `9f91a95d`). No Stage 1, Stage 2 or final acceptance credit.
+- **Protected state after the delivery.** Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`, bundled skill `39f03be0`; the dashboard at `1936e41` with only the untracked `.codebook/`; no listener on port 3000; no recorder process; the database container stopped. The system Trash is empty: the owner emptied it themselves, so the three studies deleted in N8 cannot be restored.
+- **Owner directions during the delivery.** The findings of the delivery review are carried ("持ち越しで大丈夫です。"). From the next delivery on, the red team, the three adversarial passes and the documentation audit start together; the audit, the only writer among them, runs in its own worktree so that the reviewed tree does not change.
+- **The pre-push credential guard** reported 35 medium findings of the kind "personal or internal" in the pushed diff and did not block; the repository is private. They were not triaged one by one.
+
 ## Next action
 
-- Exact next action: CI on the pull request head, the separate exact-HEAD gate and the merge in its own step; then close Issue #72 by hand and plan the next cycle through `/spec`, with findings 7 and 8 of the delivery as its first candidates.
-- Changed files / branch / active processes: the product and test files of T1 to T5, this record and PROJECT_STATE.md on `codex/cycle-0039-removal-followups`; no editor, recorder, dev server or database container of the trial is running.
-- State updated in PROJECT_STATE.md: the resume, the active cycle, tracking and the next action.
-- Durable decisions updated: D045.
+- Exact next action: specify the next cycle through `/spec`. Its first candidates are findings 7 and 8 of the delivery (a completed removal reported as one that did nothing, and a lost "moved" line), because they are regressions of 0.2.23.0 on the learner's only way to make room; with them the other failure-path findings on the same control (2, 9 to 13), each a small reader, library or service change with a test.
+- Changed files / branch / active processes: the delivery is on `main` (`97dd1e9`); these closure records are on `codex/cycle-0039-closure` (records only) and are carried to `main` by the next cycle's branch; no editor, recorder, dev server or database container is running.
+- State updated in PROJECT_STATE.md: the delivered product, tracking and the next action.
+- Durable decisions updated: none.
