@@ -201,6 +201,45 @@ test('a Vitest listing that outlives its deadline is stopped and reported', asyn
   }
 })
 
+test('cancelling a listing keeps the reason of the run while an exited member of its group is not reaped yet', async (context) => {
+  // Arrange
+  const vitest = await stubVitest(
+    `setTimeout(() => writeFileSync(output, '[]'), 30_000);`,
+  )
+  const cancellation = new AbortController()
+  const kill = process.kill.bind(process)
+  let unreapedProbes = 2
+  // macOS answers EPERM to a probe of a group that holds only exited members their parent has not reaped yet.
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid < 0 && signal === 0 && unreapedProbes > 0) {
+        unreapedProbes -= 1
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      }
+      return kill(pid, signal)
+    },
+  )
+  try {
+    // Act
+    const listing = listVitestTestFiles({
+      node: process.execPath,
+      program: vitest.program,
+      workspace: vitest.directory,
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: cancellation.signal,
+    })
+    setTimeout(() => cancellation.abort(new Error('run cancelled')), 200)
+    // Assert
+    await assert.rejects(listing, /run cancelled/)
+    assert.equal(unreapedProbes, 0)
+  } finally {
+    await rm(vitest.directory, { recursive: true, force: true })
+  }
+})
+
 test('cancelling a listing releases a SIGTERM-resistant launcher and its helper before rejecting', async () => {
   // Arrange
   const vitest = await stubVitest(`
