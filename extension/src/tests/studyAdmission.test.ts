@@ -4,11 +4,11 @@ import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 import { RepositoryBookStore } from '../repositoryBook'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { StudyError } from '../errors'
 import { StudyService } from '../service'
 import { createRecordingObserver } from '../utils/createRecordingObserver'
 
@@ -245,7 +245,7 @@ test('a run whose recording slots alone are used up still prepares and reports i
   assert.equal(recording.status, 'failed')
   assert.equal(
     recording.reason,
-    'Recording unavailable before input: Error: Recording library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another session. Existing recordings were kept.',
+    'Recording unavailable before input: Error: Recording library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study that has a recording from Saved studies in the Study workspace, before starting another session. Existing recordings were kept.',
   )
 })
 

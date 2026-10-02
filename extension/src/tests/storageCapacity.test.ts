@@ -244,7 +244,7 @@ test('saving a new study into a full library still reports the limit setting and
   // Act / Assert
   await assert.rejects(library.saveStudy(second.study), {
     message:
-      'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, then retry storage. Existing learning was kept.',
+      'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, then retry storage. Existing learning was kept.',
   })
   assert.deepEqual(await library.readStudy(first.study.id), first.study)
 })
