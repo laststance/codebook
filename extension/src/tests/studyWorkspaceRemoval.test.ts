@@ -2739,6 +2739,11 @@ test('a reader closed while the neighbour of the removed study of a finished liv
       (await library.readProgress()).selection?.studyId,
       neighbour.id,
     )
+    // The closed reader no longer names the study that went to the Trash.
+    assert.equal(
+      harness.reader.inspect().view!.model.selection.studyId,
+      neighbour.id,
+    )
   } finally {
     context.mock.restoreAll()
     await harness.close()
