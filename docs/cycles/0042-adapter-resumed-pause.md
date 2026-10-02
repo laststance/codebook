@@ -423,6 +423,17 @@ Candidates found by N11 (not fixed here, per the amendment rule):
 2. An agent's click target that matches nothing costs 20 s and ends the run in preparation; the text reads `click target click-target-missing` and gives no hint about the elements that exist.
 3. A required inspection of the binding that the stopped line itself assigns ends the run after its snapshot is committed (`Required inspection value:user is unavailable…`).
 
+### Local reviews, 2026-10-03
+
+Both ran on the committed branch at `fb32ca9` (everything since `main` `784a9da`, including Cycle 0041's closure records). Only a critical finding would have been fixed; there was none.
+
+| Review | Coverage | Findings |
+| --- | --- | --- |
+| Local CodeRabbit CLI 0.8.2 (committed changes against `main`; no `--use-credits`) | 27 of 27 changed files | 2 minor, the same point twice: README's line on Issue #78 says a pause the debugger makes and resumes by itself no longer ends a run; it should say a pause away from the expected stop's line, because a resume of a pause on that line still fails (ER12). Carried to the release documentation of `/ship` |
+| `open-code-review-delegate` (ocr 1.12.11, range mode; the host reviews, so this is not an independent provider) | 13 of 13 eligible files reviewed, 0 skipped; 14 excluded by default and reported apart (4 Markdown, 10 test files) | 0 critical, 0 high, 0 medium, 2 low: (1) the verifier's line reader answers the nearest mapping at or before a location, so a declared pause before the first mapping of its generated line would be held and adopted only after the 3 s wait (ER4): correct, 3 s slower, not seen in N11; (2) the two harnesses build the same `Debugger.paused` payload in two places |
+
+Private outputs: `artifacts/cycle-0042/reviews/` (`coderabbit-1.txt`, `ocr-preview.json`, `ocr-rules.json`, `ocr-report.md`).
+
 ## Result and decision
 
 - Result: **demonstrated.** The pause js-debug makes for itself after a continuation (its module entry breakpoint) no longer ends a live run: at mechanism level (`7301116`: 23 tests, 13 of the 15 run-level ones red on `784a9da`, 22 of 22 controls) and natively in both hosts on candidate F1. The declarations that failed in Cycle 0041 and R pass on their first run with the pause retired (N11-a in VS Code; N11-b P2 and P2b in Cursor), and the same retirement happened inside both Cursor runs of the natural request. The guards (a pause the adapter announces, a resume nobody reserved, a pause on another line of the stop's module) hold at mechanism level only; no native run produced them.
