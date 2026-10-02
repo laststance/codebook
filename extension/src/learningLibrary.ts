@@ -40,6 +40,7 @@ import {
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { type StudyCatalogEntry } from './studySchemas'
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
+import { atomicPrivateBytes } from './utils/atomicPrivateBytes'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { decodeLearnerProgress } from './utils/decodeLearnerProgress'
 import { decodeRetainedStudy } from './utils/decodeRetainedStudy'
@@ -48,6 +49,7 @@ import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStu
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { savedStudyLimit } from './utils/savedStudyLimit'
+import { thrownMessage } from './utils/thrownMessage'
 import { withoutStudyReferences } from './utils/withoutStudyReferences'
 import { withStorageLock } from './utils/withStorageLock'
 
@@ -57,12 +59,20 @@ export type StudyMover = (path: string) => Promise<void>
 /**
  * What a removal changed on disk.
  * - `moved`: every file of the study is in the system Trash.
- * - `nothing-moved`: the removal failed before anything changed.
- * - `partly-moved`: a later step failed; the study is still listed and a second removal finishes it.
+ * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes.
+ * - `partly-moved`: a step failed after at least one path went to the Trash, or the ledger could not be written back; the study is still listed and a second removal finishes it.
  */
 export type StudyRemoval =
   | { outcome: 'moved' }
   | { outcome: 'nothing-moved' | 'partly-moved'; cause: string }
+
+/** What {@link LearningLibrary.removeStudy} has changed so far, read when a step fails to tell `nothing-moved` from `partly-moved`. @example const changes: StudyRemovalChanges = { movedPathCount: 0 } */
+type StudyRemovalChanges = {
+  /** Paths that went to the system Trash. */
+  movedPathCount: number
+  /** The ledger's bytes before this removal rewrote it; absent while the ledger is untouched. */
+  ledgerBytesBefore?: string | Buffer
+}
 
 /** Retains learner choices and bounded sealed studies across editor restarts without restoring runtime authority. @example const library = new LearningLibrary(directory, workspaceKey) */
 export class LearningLibrary {
@@ -389,22 +399,27 @@ export class LearningLibrary {
    * Moves every file of one saved study to the system Trash as one unit under the storage lock; called by {@link StudyWorkspace} after the learner confirmed the removal.
    * Order, each step skipping a path that does not exist:
    * 1. the recording directories of every recording format,
-   * 2. the playback position file when it names this study (a file that cannot be parsed is left alone),
-   * 3. the ledger, rewritten only when its selection or repository return names this study,
-   * 4. the catalog sidecars of every study format,
-   * 5. the archives from the lowest format to the highest.
+   * 2. the raw evidence directory of the study's run, when the caller names one and it is a real directory,
+   * 3. the playback position file when it names this study (a file that cannot be parsed is left alone),
+   * 4. the ledger, rewritten only when its selection or repository return names this study,
+   * 5. the catalog sidecars of every study format,
+   * 6. the archives from the lowest format to the highest.
    * The recording goes first and the archive last, so a failure never leaves a recording without its study, and the study stays listed by its highest format until the last move.
    * @param id - The saved study to remove.
    * @param moveToTrash - Moves one path to the system Trash.
+   * @param evidenceDirectory - The directory that holds the raw evidence of the study's run; omitted when it must stay in place.
    * @returns What changed on disk; an expected failure, including a lock held by another writer, is a result and not a rejection.
    * @throws When `id` is not a study identity.
    * @example
    * await library.removeStudy(study.id, moveToTrash) // => { outcome: 'moved' }
+   * await library.removeStudy(study.id, moveToTrash, evidenceDirectory) // the run's raw evidence moves too
    */
-  removeStudy(id: string, moveToTrash: StudyMover): Promise<StudyRemoval> {
+  removeStudy(
+    id: string,
+    moveToTrash: StudyMover,
+    evidenceDirectory?: string,
+  ): Promise<StudyRemoval> {
     const identity = studyIdSchema.parse(id)
-    let didStorageChange = false
-    const trash = (path: string) => (): Promise<void> => moveToTrash(path)
     return this.locked(async (): Promise<StudyRemoval> => {
       // Lowest format first: the highest archive is the last move, so the study is listed until then.
       const archives = await this.existingPaths(
@@ -414,7 +429,8 @@ export class LearningLibrary {
       )
       if (!archives.length) throw new Error('Study archive is unavailable.')
       // The ledger is read before the first move, so an unreadable ledger changes nothing.
-      const ledger = withoutStudyReferences(await this.readProgress(), identity)
+      const progress = await this.readProgress(),
+        ledger = withoutStudyReferences(progress, identity)
       const recordings = await this.existingPaths(
         RECORDING_STORAGE_FORMATS.map((storage) =>
           join(storage.directory, identity),
@@ -427,32 +443,107 @@ export class LearningLibrary {
             : [],
         ),
       )
+      const changes: StudyRemovalChanges = { movedPathCount: 0 }
+      const trash = (path: string) => async (): Promise<void> => {
+        await moveToTrash(path)
+        changes.movedPathCount += 1
+      }
       const steps: (() => Promise<void>)[] = [
         ...recordings.map(trash),
+        ...(await this.realDirectories(evidenceDirectory)).map(trash),
         ...(await this.playbackPathsNaming(identity)).map(trash),
         // Learner decisions name no study; only the two navigation references to the removed study are dropped.
         ...(ledger
-          ? [
-              (): Promise<void> =>
-                atomicPrivateWrite(
-                  join(this.directory, PROGRESS_REPOSITORY_FILE),
-                  ledger,
-                  PROGRESS_LIMIT_BYTES,
-                ),
-            ]
+          ? [(): Promise<void> => this.rewriteLedger(ledger, progress, changes)]
           : []),
         ...sidecars.map(trash),
         ...archives.map(trash),
       ]
-      for (const step of steps) {
-        await step()
-        didStorageChange = true
-      }
-      return { outcome: 'moved' }
+      return this.runRemovalSteps(steps, changes)
     }).catch((error): StudyRemoval => ({
-      outcome: didStorageChange ? 'partly-moved' : 'nothing-moved',
-      cause: error instanceof Error ? error.message : String(error),
+      outcome: 'nothing-moved',
+      cause: thrownMessage(error),
     }))
+  }
+
+  /**
+   * Runs the steps of a removal in order and stops at the first that fails; called by {@link removeStudy} under the storage lock.
+   * @param steps - The moves and the ledger rewrite, in the removal's order.
+   * @param changes - What the steps record as changed.
+   * @returns `moved` when every step ran, otherwise what {@link failedRemoval} decides.
+   * @example await this.runRemovalSteps(steps, changes) // => { outcome: 'moved' }
+   */
+  private async runRemovalSteps(
+    steps: (() => Promise<void>)[],
+    changes: StudyRemovalChanges,
+  ): Promise<StudyRemoval> {
+    try {
+      for (const step of steps) await step()
+      return { outcome: 'moved' }
+    } catch (error) {
+      return this.failedRemoval(thrownMessage(error), changes)
+    }
+  }
+
+  /** Gives {@link removeStudy} the evidence directory only when it is a real directory: an absent path, a file, a symbolic link or a path that cannot be inspected is left alone and is no error. @example await this.realDirectories('/…/agent/instance/run') // => ['/…/agent/instance/run'] */
+  private async realDirectories(path: string | undefined): Promise<string[]> {
+    if (!path) return []
+    const isRealDirectory = await lstat(path).then(
+      (stat) => stat.isDirectory(),
+      () => false,
+    )
+    return isRealDirectory ? [path] : []
+  }
+
+  /**
+   * Rewrites the ledger without the removed study's references and remembers its bytes from before, so {@link failedRemoval} can write them back when no path moved.
+   * @param ledger - The ledger without the references.
+   * @param before - The ledger as it was read; its text is what is written back when the repository ledger file did not exist yet (it was projected from a historical file).
+   * @param changes - Receives the bytes once the rewrite succeeded.
+   * @example await this.rewriteLedger(ledger, progress, changes)
+   */
+  private async rewriteLedger(
+    ledger: LearnerProgress,
+    before: LearnerProgress,
+    changes: StudyRemovalChanges,
+  ): Promise<void> {
+    const path = join(this.directory, PROGRESS_REPOSITORY_FILE)
+    const bytesBefore = (await this.optionalStat(path))
+      ? await readBoundedFile(path, PROGRESS_LIMIT_BYTES)
+      : JSON.stringify(before)
+    await atomicPrivateWrite(path, ledger, PROGRESS_LIMIT_BYTES)
+    changes.ledgerBytesBefore = bytesBefore
+  }
+
+  /**
+   * Decides the outcome of a removal whose step failed, by what went to the Trash; called by {@link removeStudy} under the storage lock.
+   * @param cause - The failed step's message.
+   * @param changes - What the removal changed before the failure.
+   * @returns
+   * - `partly-moved` when at least one path went to the Trash
+   * - `nothing-moved` when no path moved; a rewritten ledger is written back to its bytes first
+   * - `partly-moved` naming both failures when that write-back fails
+   * @example await this.failedRemoval('Trash refused a.study.v3.json', { movedPathCount: 0 }) // => { outcome: 'nothing-moved', cause: 'Trash refused a.study.v3.json' }
+   */
+  private async failedRemoval(
+    cause: string,
+    changes: StudyRemovalChanges,
+  ): Promise<StudyRemoval> {
+    if (changes.movedPathCount > 0) return { outcome: 'partly-moved', cause }
+    if (changes.ledgerBytesBefore === undefined)
+      return { outcome: 'nothing-moved', cause }
+    try {
+      await atomicPrivateBytes(
+        join(this.directory, PROGRESS_REPOSITORY_FILE),
+        changes.ledgerBytesBefore,
+      )
+      return { outcome: 'nothing-moved', cause }
+    } catch (error) {
+      return {
+        outcome: 'partly-moved',
+        cause: `${cause}; the learner ledger could not be written back: ${thrownMessage(error)}`,
+      }
+    }
   }
 
   /** Keeps the paths under the library directory that exist, in the given order, so {@link removeStudy} skips what a study never had or an earlier removal already moved. @example await this.existingPaths(['a.study.v3.json']) // => ['/…/a.study.v3.json'] */

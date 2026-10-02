@@ -15,7 +15,7 @@ test('a removal is worded with the Trash, the room it left and the next step whe
     messages.confirmDetail(
       'Repository browser study · 9/20/2026 · demonstrated · 22222222',
     ),
-    'Repository browser study · 9/20/2026 · demonstrated · 22222222\n\nAny saved recording for this study moves with it. What you marked as understood is kept. Repository Wiki links to this study will show as unavailable.',
+    'Repository browser study · 9/20/2026 · demonstrated · 22222222\n\nAny saved recording moves with it, and so does the raw evidence of its run unless another Codebook window may still be using it. What you marked as understood is kept. Repository Wiki links to this study will show as unavailable.',
   )
   assert.equal(messages.moving, 'Moving the saved study to the Trash…')
   assert.equal(
@@ -29,6 +29,10 @@ test('a removal is worded with the Trash, the room it left and the next step whe
   assert.equal(
     messages.moved({ count: 3 }, false),
     'Saved study moved to the Trash.',
+  )
+  assert.equal(
+    messages.moved({ count: 63, limit: 64 }, true, true),
+    "Saved study moved to the Trash. The library now holds 63 of 64 saved studies. Ask your editor agent to start the run again. The run's raw evidence was left in place because its Codebook window may still be open.",
   )
   assert.equal(
     messages.nothingMoved('EPERM: operation not permitted'),
@@ -50,6 +54,10 @@ test('on Windows every removal text says Recycle Bin', () => {
     'Move this saved study to the Recycle Bin?',
   )
   assert.equal(messages.confirmButton, 'Move to Recycle Bin')
+  assert.equal(
+    messages.confirmDetail('Repository browser study'),
+    'Repository browser study\n\nAny saved recording moves with it, and so does the raw evidence of its run unless another Codebook window may still be using it. What you marked as understood is kept. Repository Wiki links to this study will show as unavailable.',
+  )
   assert.equal(messages.moving, 'Moving the saved study to the Recycle Bin…')
   assert.equal(
     messages.moved({ count: 1, limit: 2 }, false),

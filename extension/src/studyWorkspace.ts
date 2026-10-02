@@ -6,28 +6,29 @@ import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import {
-  NODE_TEST_PROFILE,
-  REPOSITORY_BROWSER_PROFILE,
-  REPOSITORY_READER_DEBOUNCE_MS,
-  REPOSITORY_SOURCE_LIMIT_BYTES,
+  AGENT_STORAGE_DIRECTORY,
   HORIZONTAL_EDITOR_ORIENTATION,
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
   MAX_SOURCE_DOCUMENTS,
+  NODE_TEST_PROFILE,
   PLAYBACK_SECOND_MS,
-  REPLAY_VIEWPORT_RECEIPT_LIMIT,
-  REPOSITORY_MIN_EDITOR_GROUP_COUNT,
-  STUDY_EDITOR_GROUP_COUNT,
-  STUDY_REFRESH_INTERVAL_MS,
-  STUDY_REMOVAL_REFUSALS,
-  STUDY_SOURCE_SCHEME,
   PRESENTATION_MODE_IDS,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
+  REPLAY_VIEWPORT_RECEIPT_LIMIT,
+  REPOSITORY_BROWSER_PROFILE,
+  REPOSITORY_MIN_EDITOR_GROUP_COUNT,
+  REPOSITORY_READER_DEBOUNCE_MS,
+  REPOSITORY_SOURCE_LIMIT_BYTES,
+  STUDY_EDITOR_GROUP_COUNT,
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
   STUDY_PRESENTATIONS,
+  STUDY_REFRESH_INTERVAL_MS,
+  STUDY_REMOVAL_REFUSALS,
+  STUDY_SOURCE_SCHEME,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
 import { StudyError } from './errors'
@@ -36,7 +37,7 @@ import {
   repositorySelectionSchema,
   type RepositorySelection,
 } from './learnerSchemas'
-import { LearningLibrary } from './learningLibrary'
+import { LearningLibrary, type StudyRemoval } from './learningLibrary'
 import type {
   NodeTestHistoryIndex,
   NodeTestHistoryLearningDecision,
@@ -115,6 +116,7 @@ import {
   type ViewportDeliveryLog,
 } from './utils/describeViewportDelivery'
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
+import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { focusWebview } from './utils/focusWebview'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
@@ -131,6 +133,7 @@ import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
 import { selectStudy } from './utils/selectStudy'
+import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
 import { untilAborted } from './utils/untilAborted'
@@ -372,6 +375,8 @@ export class StudyWorkspace {
   private readonly archiveWrites = new Map<string, Promise<void>>()
   /** The learner's last removal of a saved study, from its confirmation dialog to its outcome; while it is `moving`, its study is neither written nor opened. */
   private studyRemoval?: StudyRemovalView
+  /** The move of the study a confirmed removal is taking to the Trash, settled without a rejection; a forced {@link checkpoint} of that study waits for it. */
+  private studyMove?: Promise<void>
   /** The current run when the last removal ended; a later run retires that removal's outcome line. */
   private studyRemovalRunId?: string
   /** Studies this window moved to the system Trash; a position save still queued for one of them writes nothing. */
@@ -463,6 +468,8 @@ export class StudyWorkspace {
   private repositoryNavigation?: number
   private repositoryRecordingOpen?: { studyId: string; revision: number }
   private pendingHistory?: number
+  /** The request number of a Node test history that is still opening; a removal's neighbour and a delete request give way to it like to {@link pendingHistory}. */
+  private pendingNodeHistory?: number
   private rendering: Promise<void> = Promise.resolve()
   private refreshing?: Promise<void>
   private timer?: ReturnType<typeof setInterval>
@@ -4653,8 +4660,10 @@ export class StudyWorkspace {
     record: StudyRecord,
     force = false,
   ): Promise<void> {
-    const signature = service.state(record).materialSignature,
-      id = `${service.instanceId}_${record.id}`
+    const id = `${service.instanceId}_${record.id}`
+    // Retirement must not lose the final state of a study whose removal then moves nothing, so a forced checkpoint waits for the move.
+    if (force && this.movingStudyId() === id) await this.studyMove
+    const signature = service.state(record).materialSignature
     // A study on its way to the Trash is not captured again; saved material is not captured twice.
     if (this.skipsCheckpoint(id, signature, force)) return
     const checkpointRevision = service.beginHistory(record, signature)
@@ -4867,6 +4876,8 @@ export class StudyWorkspace {
         'No recorded Codebook session is available. Explain a real code path first.',
       )
     const studyId = `${service.instanceId}_${record.id}`
+    // The removal waits for a save in flight and a forced checkpoint waits for the removal, so no save starts during the move.
+    this.assertStudyNotMoving(studyId)
     // A delayed click must never stop the newer run now owned by the workspace.
     if (expectedStudyId !== undefined && expectedStudyId !== studyId)
       throw new Error(
@@ -8587,6 +8598,7 @@ export class StudyWorkspace {
           'Close browser replay before opening a separate Node test history.',
         )
       const request = ++this.historyRequest
+      this.pendingNodeHistory = request
       this.loading = true
       this.publish()
       try {
@@ -8709,6 +8721,10 @@ export class StudyWorkspace {
         this.loading = false
         this.report('archive', error)
         this.publish()
+      } finally {
+        // A newer Node history request owns the marker by then.
+        if (this.pendingNodeHistory === request)
+          this.pendingNodeHistory = undefined
       }
     }
     if (message.type === 'node-history-understanding') {
@@ -8889,10 +8905,7 @@ export class StudyWorkspace {
           )
             return
         }
-        this.selectArchive(archive)
-        if (this.liveComposition || this.summaryComposition) await this.open()
-        await this.renderSelection(true, true)
-        await this.saveSelection()
+        await this.showSavedStudy(archive)
       } catch (error) {
         if (
           this.pendingHistory !== request ||
@@ -8982,11 +8995,13 @@ export class StudyWorkspace {
   /**
    * Says why a saved study cannot be removed right now; checked when the request arrives and again after the confirmation dialog, which can stay open while the reader changes.
    * @param studyId - The entry the learner chose in Saved studies.
-   * @returns The refusal sentence, first match wins: a Node test history, an entry no catalog lists, the study of a run that has not stopped, an open Recording. `undefined` when the study can be removed.
+   * @returns The refusal sentence, first match wins: another entry that is still opening, a Node test history, an entry no catalog lists, the study of a run that has not stopped, a Recording that is open or opening. `undefined` when the study can be removed.
    * @example this.studyRemovalRefusal(nodeHistoryId) // => 'Node test histories cannot be deleted here yet.'
    */
   private studyRemovalRefusal(studyId: string): string | undefined {
     const refusals: [applies: boolean, sentence: string][] = [
+      // The pane may still show the entry before the one the learner chose; a delete names what is shown once it has opened.
+      [this.studyOpening(), STUDY_REMOVAL_REFUSALS.studyOpening],
       [
         this.nodeHistoryCatalog.some((history) => history.studyId === studyId),
         STUDY_REMOVAL_REFUSALS.nodeHistory,
@@ -8999,9 +9014,23 @@ export class StudyWorkspace {
         this.unstoppedStudyId() === studyId,
         STUDY_REMOVAL_REFUSALS.runNotStopped,
       ],
-      [this.recordingActive, STUDY_REMOVAL_REFUSALS.recordingOpen],
+      [this.recordingOpenOrOpening(), STUDY_REMOVAL_REFUSALS.recordingOpen],
     ]
     return refusals.find(([applies]) => applies)?.[1]
+  }
+
+  /** Says whether a saved study or a Node test history the learner chose is still opening; until it is shown, a removal's neighbour and a delete request give way to it. @example if (this.studyOpening()) return */
+  private studyOpening(): boolean {
+    return (
+      this.pendingHistory !== undefined || this.pendingNodeHistory !== undefined
+    )
+  }
+
+  /** Says whether Recording is open, or an accepted open is still loading: the controller reports the load from the moment it accepts the open, before the reader marks Recording as active. @example if (this.recordingOpenOrOpening()) return STUDY_REMOVAL_REFUSALS.recordingOpen */
+  private recordingOpenOrOpening(): boolean {
+    return (
+      this.recordingActive || this.playback?.state().readiness === 'loading'
+    )
   }
 
   /** Publishes a removal's outcome and remembers the run it ended under, so a later run retires the line. @example this.settleStudyRemoval({ status: 'refused', studyId, text }) */
@@ -9076,7 +9105,25 @@ export class StudyWorkspace {
     // One removal at a time: a second request while the dialog is open or files are moving opens no second dialog.
     if (this.studyRemovalInProgress()) return
     if (!(await this.studyRemovalConfirmed(studyId))) return
-    // From here to the outcome checkpoint(), persistArchive(), the position save and the readers skip this study.
+    const move = this.holdStudyAsMoving(studyId)
+    // A forced checkpoint of this study waits for the move instead of skipping the study.
+    this.studyMove = move.catch(() => undefined)
+    try {
+      await move
+    } finally {
+      this.studyMove = undefined
+      this.resumeHeldBackWrite(studyId)
+    }
+  }
+
+  /**
+   * Keeps a confirmed study in the `moving` state for as long as {@link moveSavedStudy} runs; called by {@link removeSavedStudy}.
+   * From here to the outcome {@link checkpoint}, {@link persistArchive}, the position save and the readers leave this study alone.
+   * @param studyId - The confirmed entry.
+   * @throws What the move throws unexpectedly; the study is then no longer held as moving, and the failure reaches the reader's error lines.
+   * @example await this.holdStudyAsMoving(studyId)
+   */
+  private async holdStudyAsMoving(studyId: string): Promise<void> {
     this.studyRemoval = {
       status: 'moving',
       studyId,
@@ -9086,7 +9133,6 @@ export class StudyWorkspace {
     try {
       await this.moveSavedStudy(studyId)
     } finally {
-      // An unexpected failure must not leave the study held as moving; the failure itself reaches the reader's error lines.
       if (this.movingStudyId() === studyId) {
         this.studyRemoval = undefined
         this.publish()
@@ -9095,7 +9141,19 @@ export class StudyWorkspace {
   }
 
   /**
-   * Moves a confirmed study to the system Trash and settles the removal's outcome; called by {@link removeSavedStudy} while the removal state is `moving`.
+   * Writes the checkpoint a removal held back, once that removal ended without moving anything; called by {@link removeSavedStudy} when the move has settled.
+   * {@link forgetRemovedStudy} drops the entry as soon as something moved, so an entry that is still pending belongs to a study that is whole. Without this the entry would wait for a material change, Retry storage or retirement.
+   * @param studyId - The study whose removal just ended.
+   * @example this.resumeHeldBackWrite(studyId)
+   */
+  private resumeHeldBackWrite(studyId: string): void {
+    if (!this.pendingArchives.has(studyId)) return
+    // The writer reports its own failure; a caller of the removal has nothing to add to it.
+    void this.persistArchive(studyId).catch(() => undefined)
+  }
+
+  /**
+   * Moves a confirmed study to the system Trash and settles the removal's outcome; called by {@link holdStudyAsMoving} while the removal state is `moving`.
    * Waits for this window's accepted writes of the study first, forgets the study only when something moved, and shows a neighbour when the shown study left.
    * @param studyId - The confirmed entry.
    * @example await this.moveSavedStudy(studyId)
@@ -9104,14 +9162,8 @@ export class StudyWorkspace {
     const messages = studyRemovalMessages()
     await this.settleStudyWrites(studyId)
     const neighbours = this.removalNeighbours(studyId)
-    const removal = await this.library!.removeStudy(studyId, (path) =>
-      Promise.resolve(
-        vscode.workspace.fs.delete(vscode.Uri.file(path), {
-          recursive: true,
-          useTrash: true,
-        }),
-      ),
-    )
+    const evidence = await this.studyEvidenceToMove(studyId)
+    const removal = await this.moveStudyFiles(studyId, evidence.directory)
     if (removal.outcome === 'nothing-moved') {
       // Nothing changed on disk, so nothing changes here: the run stays a checkpoint candidate and its pending entry is kept.
       this.settleStudyRemoval({
@@ -9132,7 +9184,58 @@ export class StudyWorkspace {
       return
     }
     await this.showAfterRemoval(studyId, neighbours)
-    await this.settleMovedStudy(studyId)
+    await this.settleMovedStudy(studyId, evidence.isLeftInPlace)
+  }
+
+  /**
+   * Decides whether the raw evidence of a study's run goes to the Trash with the study; called by {@link moveSavedStudy} before the first move.
+   * The evidence of a run of this window always goes (the run has stopped). The evidence of another instance stays while that instance's connection descriptor exists, because its window may still be running or serving the run.
+   * @param studyId - The confirmed entry.
+   * @returns The directory to move, or `isLeftInPlace` when existing evidence stays for another window.
+   * @example await this.studyEvidenceToMove(studyId) // => { directory: '/…/agent/<instance>/<run>', isLeftInPlace: false }
+   */
+  private async studyEvidenceToMove(
+    studyId: string,
+  ): Promise<{ directory?: string; isLeftInPlace: boolean }> {
+    const directory = studyEvidenceDirectory(
+      join(this.context.globalStorageUri.fsPath, AGENT_STORAGE_DIRECTORY),
+      studyId,
+    )
+    const isLeftInPlace =
+      directory !== undefined &&
+      (await evidenceInUseElsewhere(directory, this.service?.instanceId))
+    return isLeftInPlace ? { isLeftInPlace } : { directory, isLeftInPlace }
+  }
+
+  /**
+   * Hands a confirmed study to {@link LearningLibrary.removeStudy} with the editor's Trash as the mover; called by {@link moveSavedStudy}.
+   * For a run of this window the removal runs inside {@link StudyService.withEvidenceHeld}, so no explanation is written into the evidence directory while it moves.
+   * @param studyId - The confirmed entry.
+   * @param evidenceDirectory - The run's raw evidence when it moves with the study.
+   * @returns What the removal changed on disk.
+   * @example await this.moveStudyFiles(studyId, evidenceDirectory) // => { outcome: 'moved' }
+   */
+  private moveStudyFiles(
+    studyId: string,
+    evidenceDirectory?: string,
+  ): Promise<StudyRemoval> {
+    const remove = (): Promise<StudyRemoval> =>
+      this.library!.removeStudy(
+        studyId,
+        (path) =>
+          Promise.resolve(
+            vscode.workspace.fs.delete(vscode.Uri.file(path), {
+              recursive: true,
+              useTrash: true,
+            }),
+          ),
+        evidenceDirectory,
+      )
+    const service = this.service,
+      record = this.recordOfStudy(studyId)
+    return service && record
+      ? service.withEvidenceHeld(record, remove)
+      : remove()
   }
 
   /** Waits for this window's writes of a study that were accepted before its removal was confirmed, so they settle before the first move: a checkpoint write, a Save learning replay and a playback position save. @example await this.settleStudyWrites(studyId) */
@@ -9143,14 +9246,21 @@ export class StudyWorkspace {
     await this.playback?.saved()
   }
 
-  /** Excludes this window's run of a removed study from history, so the service stops reporting saved material for it; a study of an earlier session has no run here. @example this.excludeRemovedRun(studyId) */
-  private excludeRemovedRun(studyId: string): void {
+  /** Finds the run of this window's service that a saved study belongs to; a study of an earlier session or another window has no run here. @example this.recordOfStudy(studyId)?.stopped */
+  private recordOfStudy(studyId: string): StudyRecord | undefined {
     const service = this.service
-    if (!service) return
-    const record = [...service.records.values()].find(
-      (candidate) => `${service.instanceId}_${candidate.id}` === studyId,
+    return (
+      service &&
+      [...service.records.values()].find(
+        (candidate) => `${service.instanceId}_${candidate.id}` === studyId,
+      )
     )
-    if (record) service.excludeHistory(record, 'removed-by-learner')
+  }
+
+  /** Excludes this window's run of a removed study from history, so the service stops reporting saved material for it and stops serving its evidence. @example this.excludeRemovedRun(studyId) */
+  private excludeRemovedRun(studyId: string): void {
+    const record = this.recordOfStudy(studyId)
+    if (record) this.service?.excludeHistory(record, 'removed-by-learner')
   }
 
   /** Makes this window forget a study of which something went to the Trash: it is never written again, its run is excluded from history, and the list is read again. @example await this.forgetRemovedStudy(studyId) */
@@ -9195,9 +9305,13 @@ export class StudyWorkspace {
    * Reports a completed removal with the room the library now has, read once; when that room answers a run the library refused, its "did not start" line is retired and the learner is told to ask for the run again.
    * Both admission refusals are answered by room under a valid limit, so no refusal reason is stored.
    * @param studyId - The study that was moved.
-   * @example await this.settleMovedStudy(studyId)
+   * @param isEvidenceLeftInPlace - Whether the run's raw evidence stayed because another Codebook window may still use it; the line then says so.
+   * @example await this.settleMovedStudy(studyId, false)
    */
-  private async settleMovedStudy(studyId: string): Promise<void> {
+  private async settleMovedStudy(
+    studyId: string,
+    isEvidenceLeftInPlace: boolean,
+  ): Promise<void> {
     const usage = await this.library!.usage().catch(() => ({
       count: this.catalog.length,
       limit: undefined,
@@ -9209,7 +9323,11 @@ export class StudyWorkspace {
     this.settleStudyRemoval({
       status: 'moved',
       studyId,
-      text: studyRemovalMessages().moved(usage, Boolean(answeredRun)),
+      text: studyRemovalMessages().moved(
+        usage,
+        Boolean(answeredRun),
+        isEvidenceLeftInPlace,
+      ),
     })
   }
 
@@ -9254,22 +9372,65 @@ export class StudyWorkspace {
   }
 
   /**
-   * Shows the nearest remaining saved study after the shown one was removed, or no study when none can be opened; called by {@link removeSavedStudy}.
+   * Shows the nearest remaining saved study after the shown one was removed, or no study when none can be opened; called by {@link showAfterRemoval}.
+   * A study the learner chose in the meantime wins: one that is still opening shows itself, and one chosen while the neighbour was read replaces it.
    * @param neighbours - The candidates from {@link removalNeighbours}, nearest first.
    * @example await this.showRemovalNeighbour([olderStudyId])
    */
   private async showRemovalNeighbour(neighbours: string[]): Promise<void> {
-    this.historyRequest++
-    this.pendingHistory = undefined
-    const shown = await this.firstReadableStudy(neighbours)
-    this.selectedArchive = shown
-    if (shown) this.selectArchive(shown)
-    else {
-      this.readerSelectionRevision++
-      this.selection = { ...NO_STUDY_SELECTION }
+    if (this.studyOpening()) {
+      // The pending choice shows itself, or no study when it fails; the removed study is no longer the selection either way.
+      this.selectNoStudy()
+      return
     }
+    const request = ++this.historyRequest
+    const shown = await this.firstReadableStudy(neighbours)
+    if (!this.isLatestHistoryRequest(request)) return
+    this.selectedArchive = shown
+    if (shown) {
+      await this.showSavedStudy(shown, () => this.renderAfterRemoval())
+      return
+    }
+    this.selectNoStudy()
     await this.renderAfterRemoval()
     await this.saveSelection()
+  }
+
+  /** Says whether no saved study or Node test history was chosen since this request took its number, on a reader that is not closing. @example if (!this.isLatestHistoryRequest(request)) return */
+  private isLatestHistoryRequest(request: number): boolean {
+    return request === this.historyRequest && !this.closing
+  }
+
+  /** Leaves the reader without a selected study after the shown one was removed and nothing replaces it yet. @example this.selectNoStudy() */
+  private selectNoStudy(): void {
+    this.readerSelectionRevision++
+    this.selection = { ...NO_STUDY_SELECTION }
+  }
+
+  /**
+   * Shows one saved study in the reader: selects it, arranges the reader when a live or summary composition is up, renders and saves the selection; called for an entry the learner chose and for the neighbour of a removed study, so both arrive the same way.
+   * @param archive - The saved study to show.
+   * @param render - The render step; the neighbour passes one that skips a closed reader and reports its own failure.
+   * @example await this.showSavedStudy(archive)
+   */
+  private async showSavedStudy(
+    archive: RetainedStudy,
+    render: () => Promise<void> = () => this.renderSelection(true, true),
+  ): Promise<void> {
+    this.selectArchive(archive)
+    // A live or summary composition is arranged for what it showed; a saved study needs the reader's own arrangement.
+    if (this.needsReaderArrangement()) await this.open()
+    await render()
+    await this.saveSelection()
+  }
+
+  /** Says whether an open reader still shows a live or summary composition, which a saved study replaces through {@link open}. @example if (this.needsReaderArrangement()) await this.open() */
+  private needsReaderArrangement(): boolean {
+    return (
+      (this.liveComposition || this.summaryComposition) &&
+      this.opened &&
+      !this.closing
+    )
   }
 
   /**

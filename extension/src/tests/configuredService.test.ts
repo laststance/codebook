@@ -879,3 +879,20 @@ test('API 1.5 discovery exposes the bounded configured profile and its executabl
   assert.equal(service.records.size, 0)
   assert.equal(runtimes.length, 0)
 })
+
+// Value: protects=an agent learns that the start a full library refused is the one to repeat after the learner made room; fails_when=the help still only says to reuse a key on response loss, so the agent invents a new key or gives up; why_new=repeating a refused start used to replay the refusal; seam=none
+test('configured help tells an agent that a start the library refused can be repeated with the same key and begins a new run', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.sequence[0],
+    'codebook_start with profile repository-browser, full configuration and a stable key returns immediately. Reuse the complete identical input on response loss; never retry input with a new key. A start the library refused can be repeated with the same key after room was made; it begins a new run.',
+  )
+})

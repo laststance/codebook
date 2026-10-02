@@ -12,6 +12,7 @@ import {
   type LearnerDecision,
   type StudyArchive,
 } from '../studyModel'
+import type * as AtomicPrivateBytesModule from '../utils/atomicPrivateBytes'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 import type * as AtomicPrivateWriteModule from '../utils/atomicPrivateWrite'
 import { decodeLearnerProgress } from '../utils/decodeLearnerProgress'
@@ -235,8 +236,9 @@ test('a rejected atomic rename retains the old value and cleans its own incomple
   const path = join(directory, 'progress.repository.v4.json')
   await writeFile(path, 'old value')
   const filesystem = await import('node:fs/promises')
-  const writer = await loadModule<typeof AtomicPrivateWriteModule>(
-    resolve(__dirname, '../utils/atomicPrivateWrite.js'),
+  // The JSON writer publishes through the byte writer, which owns the rename.
+  const byteWriter = await loadModule<typeof AtomicPrivateBytesModule>(
+    resolve(__dirname, '../utils/atomicPrivateBytes.js'),
     {
       'node:fs/promises': {
         ...filesystem,
@@ -245,6 +247,10 @@ test('a rejected atomic rename retains the old value and cleans its own incomple
         },
       },
     },
+  )
+  const writer = await loadModule<typeof AtomicPrivateWriteModule>(
+    resolve(__dirname, '../utils/atomicPrivateWrite.js'),
+    { './atomicPrivateBytes': byteWriter },
   )
   // Act / Assert
   await assert.rejects(

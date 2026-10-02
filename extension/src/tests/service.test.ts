@@ -681,3 +681,241 @@ test('a seventeenth start is accepted after the learner removed the saved study 
     await harness.close()
   }
 })
+
+// Value: protects=after a saved study went to the Trash, an agent that reads the run's evidence is told why it is gone instead of getting a raw file error or stale bytes; fails_when=a removed run keeps serving its manifest, events or explanations, or the bare run resource stops answering; why_new=a deletion left the evidence in place before, so nothing had to be refused; seam=none
+test('the evidence resources of a run whose saved study the learner removed answer that the evidence is unavailable, and the run resource still answers', async () => {
+  // Arrange: a stopped run with one committed explanation.
+  const harness = await createHarness(),
+    service = harness.service
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'removed-evidence',
+    }),
+    record = service.record(receipt)
+  try {
+    await record.preparation
+    service.action({ ...receipt, key: 'module', action: 'repository-click' })
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!
+    const explained = await service.explain({
+      ...receipt,
+      key: 'explanation',
+      snapshotUri,
+      sourceHash: snapshotSourceHashes(service.snapshot(record, snapshotUri))
+        .typescript,
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'The theme is dark at the captured statement.',
+    })
+    await service.stop(receipt)
+    const manifestUri = service.uri(record.id, 'manifest'),
+      eventsUri = service.uri(record.id, 'events/0')
+    const eventsBefore = await readResource(service, eventsUri)
+    // Act
+    service.excludeHistory(record, 'removed-by-learner')
+    // Assert
+    const unavailable = (error: unknown): boolean =>
+      error instanceof StudyError &&
+      error.code === 'EVIDENCE_UNAVAILABLE' &&
+      error.message === 'The learner moved this saved study to the Trash.'
+    assert.ok('text' in eventsBefore)
+    await assert.rejects(readResource(service, manifestUri), unavailable)
+    await assert.rejects(readResource(service, eventsUri), unavailable)
+    await assert.rejects(
+      readResource(service, explained.explanationUri),
+      unavailable,
+    )
+    const run = await readResource(service, service.uri(record.id))
+    assert.ok('text' in run)
+    assert.deepEqual(
+      JSON.parse(run.text),
+      JSON.parse(JSON.stringify(service.state(record))),
+    )
+    assert.equal(
+      service.state(record).historyOutcome.reason,
+      'The learner moved this saved study to the Trash.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an explanation is never written into an evidence directory that is in the Trash; fails_when=explain accepts a removed run and fails later with a raw file error, or writes a file; why_new=a stopped run accepts explanations, and its directory can now be gone; seam=none
+test('an explanation for a run whose saved study the learner removed is refused as unavailable evidence and writes nothing', async () => {
+  // Arrange: a stopped run with a captured stop.
+  const harness = await createHarness(),
+    service = harness.service
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'removed-explain',
+    }),
+    record = service.record(receipt)
+  try {
+    await record.preparation
+    service.action({ ...receipt, key: 'module', action: 'repository-click' })
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!
+    const sourceHash = snapshotSourceHashes(
+      service.snapshot(record, snapshotUri),
+    ).typescript
+    await service.stop(receipt)
+    const evidence = harness.runtimes[0]!.evidence
+    let saves = 0
+    evidence.save = async (): Promise<void> => {
+      saves++
+    }
+    service.excludeHistory(record, 'removed-by-learner')
+    // Act / Assert
+    assert.throws(
+      () =>
+        service.explain({
+          ...receipt,
+          key: 'late',
+          snapshotUri,
+          sourceHash,
+          valuePaths: ['value:nextTheme'],
+          interpretation: 'The theme is dark.',
+        }),
+      (error) =>
+        error instanceof StudyError &&
+        error.code === 'EVIDENCE_UNAVAILABLE' &&
+        error.message === 'The learner moved this saved study to the Trash.',
+    )
+    assert.equal(saves, 0)
+    assert.equal(record.explanationKeys.size, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the evidence directory moves only after every explanation write that was already accepted has finished, and no new one starts meanwhile; fails_when=the removal runs while an explanation is still being written (the file lands in a directory that is already in the Trash, or the move takes a half-written file), or an explanation is accepted during the move; why_new=the removal did not touch the evidence directory before; seam=the evidence writer's save, held by the test
+test('a removal of a run’s study waits for an explanation that is being written and refuses a new explanation until it has finished', async () => {
+  // Arrange: a stopped run whose first explanation write is held open.
+  const harness = await createHarness(),
+    service = harness.service
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'held-evidence',
+    }),
+    record = service.record(receipt)
+  let releaseWrite = (): void => {},
+    releaseRemoval = (): void => {}
+  try {
+    await record.preparation
+    service.action({ ...receipt, key: 'module', action: 'repository-click' })
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!
+    const explanation = {
+      ...receipt,
+      snapshotUri,
+      sourceHash: snapshotSourceHashes(service.snapshot(record, snapshotUri))
+        .typescript,
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'The theme is dark.',
+    }
+    await service.stop(receipt)
+    const evidence = harness.runtimes[0]!.evidence,
+      originalSave = evidence.save.bind(evidence)
+    const order: string[] = []
+    const writeHeld = new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    evidence.save = async (name, contents): Promise<void> => {
+      order.push('explanation write started')
+      await writeHeld
+      await originalSave(name, contents)
+      order.push('explanation write finished')
+    }
+    const firstExplanation = service.explain({ ...explanation, key: 'first' })
+    await waitUntil(() => order.length === 1, 'the held explanation write')
+    const removalHeld = new Promise<void>((resolve) => {
+      releaseRemoval = resolve
+    })
+    // Act: the removal starts while the write is held; a second explanation arrives during the removal.
+    const removal = service.withEvidenceHeld(record, async () => {
+      order.push('removal started')
+      await removalHeld
+      return 'removed'
+    })
+    const refusedWhileWaiting = explainRefusal(() =>
+      service.explain({ ...explanation, key: 'second' }),
+    )
+    releaseWrite()
+    await waitUntil(() => order.includes('removal started'), 'the removal')
+    const refusedWhileMoving = explainRefusal(() =>
+      service.explain({ ...explanation, key: 'third' }),
+    )
+    releaseRemoval()
+    const removalResult = await removal
+    await firstExplanation
+    const acceptedAfterwards = await service.explain({
+      ...explanation,
+      key: 'fourth',
+    })
+    // Assert
+    assert.deepEqual(order.slice(0, 3), [
+      'explanation write started',
+      'explanation write finished',
+      'removal started',
+    ])
+    assert.equal(removalResult, 'removed')
+    assert.deepEqual(refusedWhileWaiting, {
+      code: 'BUSY',
+      message:
+        "The learner is deleting this run's saved study; wait for it to finish.",
+    })
+    assert.deepEqual(refusedWhileMoving, refusedWhileWaiting)
+    assert.match(acceptedAfterwards.explanationUri, /\/explanations\//)
+    assert.equal(record.explanationKeys.size, 2)
+  } finally {
+    releaseWrite()
+    releaseRemoval()
+    await harness.close()
+  }
+})
+
+/** Reads the code and message of the {@link StudyError} a synchronous explain call throws, so a test can hard-code both. @example explainRefusal(() => service.explain(input)) // => { code: 'BUSY', message: '…' } */
+function explainRefusal(explain: () => unknown): {
+  code?: string
+  message?: string
+} {
+  try {
+    explain()
+    return {}
+  } catch (error) {
+    return error instanceof StudyError
+      ? { code: error.code, message: error.message }
+      : { message: String(error) }
+  }
+}
+
+// Value: protects=a removal that fails leaves the run able to take explanations again; fails_when=the hold is not released when the removal throws; why_new=the hold is new; seam=none
+test('a removal that throws releases the run for explanations again', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    service = harness.service
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'failed-hold',
+    }),
+    record = service.record(receipt)
+  try {
+    await record.preparation
+    await service.stop(receipt)
+    // Act
+    await assert.rejects(
+      service.withEvidenceHeld(record, async () => {
+        throw new Error('Trash refused')
+      }),
+      /Trash refused/,
+    )
+    // Assert
+    assert.equal(record.evidenceHeld, false)
+  } finally {
+    await harness.close()
+  }
+})

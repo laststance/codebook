@@ -1,9 +1,9 @@
 # Cycle 0038 — Full library: a refused run leaves nothing behind, and the learner can remove a saved study
 
 Type: product-increment\
-Status: validating\
+Status: closed\
 Result: demonstrated\
-Delivery: committed\
+Delivery: merged\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/70\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -501,13 +501,27 @@ Private records (ignored `artifacts/cycle-0038/reviews/`): `coderabbit-6468921.j
 ## Handoff
 
 - Before: a full library at the maximum limit refused every configured run with no removal, and a refused run could be written later into the room the learner made. After: both are closed at mechanism level and observed natively; the carried findings above are the remaining gaps of this increment.
-- Review, CI, merge, packaging and installation are separate: the reviews are complete with nothing critical; CI, the exact-HEAD gate and the merge follow the pull request; the installed candidate in both QA profiles is the pre-release build (`5b697c76`, 0.2.21 metadata), and 0.2.22.0 itself is not installed or published.
-- The owner's direction of 2026-10-02 applies after the merge: work pauses, and no next cycle is specified or started until the owner says so.
+- Review, CI, merge, packaging and installation are separate: the reviews are complete with nothing critical; CI passed, the exact-HEAD gate passed and the merge ran in its own step (the delivery closure below); the installed candidate in both QA profiles is the pre-release build (`5b697c76`, 0.2.21 metadata), and 0.2.22.0 itself is not installed or published.
+- The owner's direction of 2026-10-02 applies now that the pull request is merged: work is paused, and no next cycle is specified or started until the owner says so.
+
+## Delivery closure, 2026-10-02
+
+- **Pull request.** [PR #71](https://github.com/laststance/codebook/pull/71), "v0.2.22.0 feat: let the learner delete a saved study, and keep a run the library refused out of it", opened as a draft from head `8132bf8` (16 commits over `b72ecb1`), its description starting with `@coderabbitai ignore` and linking Issue #70 without a closing reference.
+- **Release metadata.** `VERSION` 0.2.22.0; `extension/package.json`, `EXTENSION_VERSION`, the package test's expected version and the README's package path 0.2.22. The delivery's documentation audit added one clause each to `extension/README.md` (the retained-run slot a refused or deleted run gives up) and `docs/qa/test-execution.md` (the removal partition).
+- **Verification on the release tree before the push.** Against the reviewed tree only documents and the four version literals had changed. `pnpm --dir extension test` 1,676 of 1,676; `test:package` 192 of 192; the hook test 4 of 4; `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` exit 0; the emit comparison 622 files without a difference.
+- **CI on the head `8132bf8`.** 20 of 20 check runs passed: Test run 36972909267 in twelve jobs of 38 to 47 s (the new test files run although the timings were not recorded again; every job stayed under the one-minute target), package 36972909245 (79 s), Build 36972909329, TypeCheck 36972909369, Lint 36972909312, Format 36972909318, Fallow 36972909219, and the two Socket Security checks.
+- **Gate and merge.** The pull request was marked ready; the read-only exact-HEAD gate passed in its own step (local, remote and pull-request head equal; not a draft; mergeable and clean; base `main` not moved; no closing reference; 20 of 20 check runs successful; no review thread; clean working tree); the squash merge ran in a separate step with `--match-head-commit` and produced `471ad67` on `main` at 2026-10-02T06:20:20Z. No Codex cloud step (switched off by the owner). The squash commit's tree equals the head's.
+- **CI on `main` `471ad67`.** 19 of 19 check runs passed: Test run 36973070035 in twelve jobs of 34 to 51 s, package 36973070067 (127 s), Build 36973069983, TypeCheck 36973069960, Lint 36973069965, Format 36973069954, Fallow 36973069999, Socket Security.
+- **Tracking.** Issue #70 stayed open through the merge and was closed by hand with the outcome, the criteria that hold at mechanism level only and the carried findings 1 to 19 named. Goal Issue #1 stays open.
+- **Not done by this delivery.** No VSIX of 0.2.22.0 was packaged for installation, nothing was installed or published; both QA profiles still run the pre-release candidate (0.2.21 metadata, runtime `5b697c76`). No Stage 1, Stage 2 or final acceptance credit.
+- **Protected state after the delivery.** Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `d578b9e3`, bundled skill `39f03be0`; the dashboard at `1936e41` with only the untracked `.codebook/`; no listener on port 3000; no recorder process; the database container stopped. The two QA studies deleted in N7 are still in the system Trash, which was not emptied.
+- **Setup incident during the verification.** The pinned pnpm 12.4.2 was missing from the local corepack cache (`~/.cache/node` had been recreated at 14:25 JST with only 10.33.4; not by this work), so the first test run ended before any test with a missing module. corepack fetched 12.4.2 again and verified it against the hash pinned in `extension/package.json`; the runs above followed.
+- **Pause.** On the owner's direction of 2026-10-02 work stops here. This closure is committed on `codex/cycle-0038-closure` (records only, from `main` `471ad67`); it is not merged, and no next cycle is specified or started.
 
 ## Next action
 
-- Exact next action: push, open the pull request as 0.2.22.0, wait for CI, run the separate exact-HEAD gate, merge in its own step, confirm CI on `main`, close Issue #70 by hand with the carried findings named, and record the delivery closure. Then pause.
+- Exact next action: none until the owner resumes work. On resume: bring this closure branch's records to `main` with the next change, then create the next cycle through `/spec`.
 - When work resumes, the first candidates from this cycle are carried findings 1 to 5 (each is a small reader or library change with a test), finding 7 (what a deletion leaves on disk) and finding 6 (the same-key start); after them the list in PROJECT_STATE.
-- Changed files / branch / active processes: the cycle's source, tests, QA script, documents and release metadata on `codex/cycle-0038-full-library`; no active processes. Both QA profiles run the pre-release candidate (0.2.21 metadata, runtime `5b697c76`).
-- State updated in PROJECT_STATE.md: active cycle status, the AC-SAVE row and the one next action.
+- Changed files / branch / active processes: the delivery is on `main` (`471ad67`); the closure records are on `codex/cycle-0038-closure`; no active processes. Both QA profiles run the pre-release candidate (0.2.21 metadata, runtime `5b697c76`).
+- State updated in PROJECT_STATE.md: the delivered product, no active cycle (paused), tracking and the next action.
 - Durable decisions updated: none.

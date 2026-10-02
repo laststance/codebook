@@ -82,7 +82,7 @@ Package builds require a POSIX host (macOS or Linux); Windows builds are rejecte
 ```sh
 pnpm --dir extension install --frozen-lockfile
 pnpm --dir extension package
-pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.22.vsix"
+pnpm --dir extension package:check "$PWD/artifacts/packages/codebook-0.2.23.vsix"
 ```
 
 The package command checks pnpm, clears only the extension compiler output, rebuilds, bundles production modules and stages an explicit file allowlist. Test/application fixtures and experimental dependencies are rejected. The independent checker validates archive entries, hashes, manifests and dependency notices before accepting the VSIX.
@@ -291,13 +291,16 @@ The messages for a study that cannot be saved and for a recording that cannot st
 
 #### Delete a saved study
 
-Only you remove saved material; an agent has no tool for it. In the Study pane, **Saved studies** lists every saved study of the opened workspace, newest first. Choose one and press **Delete saved study…**. A native dialog names the study and asks **Move this saved study to the Trash?**; **Move to Trash** moves its archive, its catalog file and any saved recording to the system Trash (Recycle Bin on Windows), where you can restore them with the operating system. Codebook has no permanent delete. Afterwards the pane shows a line such as `Saved study moved to the Trash. The library now holds 63 of 64 saved studies.`; when the removal made room for a run that was refused, the line ends with `Ask your editor agent to start the run again.`
+Only you remove saved material; an agent has no tool for it. In the Study pane, **Saved studies** lists every saved study of the opened workspace, newest first. Choose one and press **Delete saved study…**. A native dialog names the study and asks **Move this saved study to the Trash?**; **Move to Trash** moves its archive, its catalog file, any saved recording and the raw evidence of its run (the screenshots, the sealed source and the event journal in the extension's agent storage) to the system Trash (Recycle Bin on Windows), where you can restore them with the operating system. Codebook has no permanent delete. Afterwards the pane shows a line such as `Saved study moved to the Trash. The library now holds 63 of 64 saved studies.`; when the removal made room for a run that was refused, the line ends with `Ask your editor agent to start the run again.`
 
 - When the deleted study was the one shown, the pane shows the next older study (the next newer one when none is older).
 - What you marked as understood is kept. A Repository Wiki link to the removed study shows as unavailable.
-- The button says why it cannot be used: `Choose a saved study to delete.`, `Node test histories cannot be deleted here yet.`, `Stop the run before deleting its study.` or `Choose Overview or Live to leave Recording before deleting this study.`
+- The raw evidence stays in place when the run belongs to another Codebook window that may still be open; the line then ends with `The run's raw evidence was left in place because its Codebook window may still be open.` Evidence of runs that were never saved as a study is not touched.
+- After the removal an agent that reads the run's evidence (`manifest`, `events`, observations, explanations) or adds an explanation gets `EVIDENCE_UNAVAILABLE` with `The learner moved this saved study to the Trash.`; the run resource itself still answers and names the same reason.
+- The button says why it cannot be used: `Wait for the chosen saved study to open.`, `Choose a saved study to delete.`, `Node test histories cannot be deleted here yet.`, `Stop the run before deleting its study.` or `Choose Overview or Live to leave Recording before deleting this study.` (also while a recording is still opening).
 - An entry that cannot be opened (an older format, or a study whose catalog file is missing) can still be chosen and deleted.
 - If the Trash refuses, nothing is deleted and the line says so. If only part of the study could be moved, the study stays listed; delete it again to finish.
+- A run the library refused can be started again with the same request once there is room: the agent repeats its `codebook_start` with the same key and a new run begins.
 - Not covered yet: Node test histories, a recording that has no study, removing several studies at once, and a study whose run is still held by another window of the same workspace.
 
 Existing studies, recordings and learner decisions are never evicted. Lowering the limit does not hide existing history or prevent updates to a previously admitted study. The fixed catalog ceiling is 256; per-recording frame/byte limits remain unchanged. Raising a count limit permits more disk use, not larger individual recordings.

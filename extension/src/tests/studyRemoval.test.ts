@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
   rename,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -61,10 +63,8 @@ async function removalStorage(context: TestContext, limit: number) {
   }
 }
 
-/** Saves one distinct configured study with a finished recording, as a stopped explained run leaves it. @example const study = await saveStudyWithRecording(storage) */
-async function saveStudyWithRecording(
-  storage: Awaited<ReturnType<typeof removalStorage>>,
-) {
+/** Saves one distinct configured study without a recording, as a run leaves it whose recording was never started. @example const study = await saveStudy(storage) */
+async function saveStudy(storage: Awaited<ReturnType<typeof removalStorage>>) {
   const study = createConfiguredStudy(),
     runId = randomUUID()
   for (const observation of study.observations)
@@ -75,6 +75,29 @@ async function saveStudyWithRecording(
   study.runId = runId
   study.id = `${study.instanceId}_${runId}`
   await storage.library.saveStudy(study)
+  return study
+}
+
+/** Makes the learner ledger name a saved study as its selection, as opening the study in the reader does. @example await selectStudy(storage, study.id) */
+async function selectStudy(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  studyId: string,
+): Promise<void> {
+  await storage.library.select({
+    studyId,
+    profile: 'repository-browser',
+    itemId: 'repository/interface/theme',
+    follow: false,
+    tab: 'overview',
+  })
+}
+
+/** Saves one distinct configured study with a finished recording, as a stopped explained run leaves it. @example const study = await saveStudyWithRecording(storage) */
+async function saveStudyWithRecording(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+) {
+  const study = await saveStudy(storage),
+    runId = study.runId
   const recording = await storage.recordings.start(
     {
       workspaceKey: study.workspaceKey,
@@ -463,6 +486,295 @@ test('a removal queued between a study save and a playback position save complet
     (await readdir(storage.directory)).includes('writer.lock'),
     false,
   )
+})
+
+// Value: protects=a removal that fails at its first file move is reported as having moved nothing, and the learner ledger is exactly as before; fails_when=the ledger rewrite alone is counted as a change (the study is then reported as partly moved although every file is still there), or the rewritten ledger is left without its reference to a study that still exists; why_new=every earlier refused-move test arranged a ledger that did not name the study; seam=the injected mover
+test('a removal whose first file move the Trash refuses after the ledger was rewritten moves nothing and leaves the ledger byte-identical', async (context) => {
+  // Arrange: a study without a recording that the ledger names; the Trash refuses its catalog sidecar, the first file move.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await selectStudy(storage, study.id)
+  const ledgerPath = join(storage.directory, 'progress.repository.v4.json')
+  const ledgerBefore = await readFile(ledgerPath)
+  const filesBefore = await filesBelow(storage.directory)
+  storage.rejectMovesOf((path) => path.endsWith('.study.meta.v3.json'))
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'nothing-moved',
+    cause: `Trash refused ${study.id}.study.meta.v3.json`,
+  })
+  assert.deepEqual(storage.moved, [])
+  assert.equal((await readFile(ledgerPath)).equals(ledgerBefore), true)
+  assert.deepEqual(await filesBelow(storage.directory), filesBefore)
+  assert.equal(
+    (await storage.library.readProgress()).selection?.studyId,
+    study.id,
+  )
+})
+
+// Value: protects=a study that consists of its archive alone is still there, with the ledger naming it, after the Trash refused that archive; fails_when=the ledger rewrite is the only step before the archive and is counted as a partial removal; why_new=the smallest study (no sidecar, no recording) makes the ledger rewrite the only change before the failure; seam=the injected mover
+test('a removal of a study that has only its archive, refused by the Trash, moves nothing and leaves the ledger byte-identical', async (context) => {
+  // Arrange: one archive, no sidecar, no recording, and a ledger that names the study.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await selectStudy(storage, study.id)
+  await rm(join(storage.directory, `${study.id}.study.meta.v3.json`))
+  const ledgerPath = join(storage.directory, 'progress.repository.v4.json')
+  const ledgerBefore = await readFile(ledgerPath)
+  storage.rejectMovesOf((path) => path.endsWith('.study.v3.json'))
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'nothing-moved',
+    cause: `Trash refused ${study.id}.study.v3.json`,
+  })
+  assert.deepEqual(storage.moved, [])
+  assert.equal((await readFile(ledgerPath)).equals(ledgerBefore), true)
+  assert.deepEqual(await storage.library.readStudy(study.id), study)
+})
+
+// Value: protects=a removal that changed the ledger and could not undo it says so, instead of claiming that nothing changed; fails_when=a failed write-back is swallowed and the outcome stays "nothing moved" while the ledger no longer names the study; why_new=the write-back is new; seam=the injected mover, which blocks the ledger path before it refuses the move
+test('a removal that moved nothing and cannot write the ledger back is reported as partly moved and names both failures', async (context) => {
+  // Arrange: the ledger names the study; the mover puts a directory in the ledger's place and then refuses the archive.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await selectStudy(storage, study.id)
+  await rm(join(storage.directory, `${study.id}.study.meta.v3.json`))
+  const ledgerPath = join(storage.directory, 'progress.repository.v4.json')
+  const refusingMover: StudyMover = async () => {
+    await rm(ledgerPath)
+    await mkdir(join(ledgerPath, 'blocked'), { recursive: true })
+    throw new Error('Trash refused the archive')
+  }
+  // Act
+  const removal = await storage.library.removeStudy(study.id, refusingMover)
+  // Assert
+  assert.match(
+    JSON.stringify(removal),
+    /^\{"outcome":"partly-moved","cause":"Trash refused the archive; the learner ledger could not be written back: EISDIR/,
+  )
+  assert.deepEqual(
+    (await readdir(storage.directory)).filter((name) => name.endsWith('.tmp')),
+    [],
+  )
+})
+
+// Value: protects=a ledger that so far existed only as a historical file reads the same after a removal that moved nothing; fails_when=the write-back needs the repository ledger file to have existed, or leaves the ledger without the selection of a study that is still there; why_new=the write-back has a second source for its bytes when the repository ledger file is created by the removal itself; seam=the injected mover
+test('a removal that moved nothing leaves a ledger read from a historical file with the same selection and the historical file untouched', async (context) => {
+  // Arrange: the only ledger file is a historical one whose selection names the study.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const historicalPath = join(storage.directory, 'progress.v4.json')
+  const historicalLedger = JSON.stringify({
+    version: 4,
+    workspaceKey: storage.workspaceKey,
+    decisions: [],
+    selection: {
+      studyId: study.id,
+      profile: 'repository-browser',
+      itemId: 'repository/interface/theme',
+      follow: false,
+      tab: 'overview',
+    },
+  })
+  await writeFile(historicalPath, historicalLedger)
+  const progressBefore = await storage.library.readProgress()
+  storage.rejectMovesOf(() => true)
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'nothing-moved',
+    cause: `Trash refused ${study.id}.study.meta.v3.json`,
+  })
+  assert.deepEqual(await storage.library.readProgress(), progressBefore)
+  assert.equal(progressBefore.selection?.studyId, study.id)
+  assert.equal(await readFile(historicalPath, 'utf8'), historicalLedger)
+})
+
+// Value: protects=deleting a saved study also takes the raw evidence of its run (screenshots, sealed source, events) out of the extension's storage; fails_when=the evidence directory stays behind, or moves after the study so that a failure leaves it orphaned; why_new=the removal did not know the evidence directory; seam=the injected mover
+test('removing a saved study moves the raw evidence directory of its run after the recording and before the catalog sidecar', async (context) => {
+  // Arrange: a study with a recording, and its run's evidence directory beside the learning directory.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const evidenceDirectory = join(
+    storage.directory,
+    '..',
+    'agent',
+    study.instanceId,
+    study.runId,
+  )
+  await mkdir(evidenceDirectory, { recursive: true })
+  await writeFile(join(evidenceDirectory, 'events.jsonl'), '{"sequence":1}\n')
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    evidenceDirectory,
+  )
+  // Assert
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    join('recordings.v2', study.id),
+    join('..', 'agent', study.instanceId, study.runId),
+    `${study.id}.study.meta.v3.json`,
+    `${study.id}.study.v3.json`,
+  ])
+  await assert.rejects(lstat(evidenceDirectory), { code: 'ENOENT' })
+})
+
+// Value: protects=a removal follows no link and moves no stray file out of the agent storage; fails_when=the evidence path is moved without checking that it is a real directory; why_new=the evidence step is new; seam=the injected mover
+test('an evidence path that is a file or a symbolic link is left in place and the removal still completes', async (context) => {
+  // Arrange: one study whose evidence path is a file, one whose evidence path links to a directory elsewhere.
+  const storage = await removalStorage(context, 4)
+  const studyWithFile = await saveStudy(storage),
+    studyWithLink = await saveStudy(storage)
+  const agentDirectory = join(storage.directory, '..', 'agent'),
+    linkedDirectory = join(storage.directory, '..', 'elsewhere')
+  const evidenceFile = join(agentDirectory, 'file-run'),
+    evidenceLink = join(agentDirectory, 'link-run')
+  await mkdir(agentDirectory)
+  await mkdir(linkedDirectory)
+  await writeFile(evidenceFile, 'not a directory')
+  await symlink(linkedDirectory, evidenceLink)
+  // Act
+  const removalWithFile = await storage.library.removeStudy(
+    studyWithFile.id,
+    storage.moveToTrash,
+    evidenceFile,
+  )
+  const removalWithLink = await storage.library.removeStudy(
+    studyWithLink.id,
+    storage.moveToTrash,
+    evidenceLink,
+  )
+  // Assert
+  assert.deepEqual(removalWithFile, { outcome: 'moved' })
+  assert.deepEqual(removalWithLink, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    `${studyWithFile.id}.study.meta.v3.json`,
+    `${studyWithFile.id}.study.v3.json`,
+    `${studyWithLink.id}.study.meta.v3.json`,
+    `${studyWithLink.id}.study.v3.json`,
+  ])
+  assert.equal(await readFile(evidenceFile, 'utf8'), 'not a directory')
+  assert.equal((await lstat(evidenceLink)).isSymbolicLink(), true)
+})
+
+// Value: protects=a study whose run left no evidence directory is removed as before; fails_when=a named evidence path that does not exist stops the removal; why_new=the evidence step is new and most older studies have no evidence directory left; seam=the injected mover
+test('a removal that names an evidence directory that does not exist moves the study as before', async (context) => {
+  // Arrange
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    join(storage.directory, '..', 'agent', study.instanceId, study.runId),
+  )
+  // Assert
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    `${study.id}.study.meta.v3.json`,
+    `${study.id}.study.v3.json`,
+  ])
+})
+
+// Value: protects=evidence that already went to the Trash is counted: a later refusal is a partial removal the learner can finish; fails_when=the evidence move is not counted as a moved path; why_new=the evidence step is new; seam=the injected mover
+test('a removal whose sidecar move the Trash refuses after the evidence moved is reported as partly moved', async (context) => {
+  // Arrange: a study without a recording whose run left evidence; the Trash refuses the catalog sidecar.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const evidenceDirectory = join(
+    storage.directory,
+    '..',
+    'agent',
+    study.instanceId,
+    study.runId,
+  )
+  await mkdir(evidenceDirectory, { recursive: true })
+  storage.rejectMovesOf((path) => path.endsWith('.study.meta.v3.json'))
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    evidenceDirectory,
+  )
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'partly-moved',
+    cause: `Trash refused ${study.id}.study.meta.v3.json`,
+  })
+  assert.deepEqual(storage.moved, [
+    join('..', 'agent', study.instanceId, study.runId),
+  ])
+})
+
+// Value: protects=a Trash that takes the recording but refuses the raw evidence leaves a removal the learner finishes by deleting again; fails_when=a refused evidence move is swallowed or the second removal trips over the recording that is gone; why_new=only a refusal after the evidence had moved was tested; seam=the injected mover
+test('a removal whose evidence move the Trash refuses after the recording moved is reported as partly moved, and a second removal moves the evidence and the rest of the study', async (context) => {
+  // Arrange: a study with a recording whose run left evidence; the Trash takes the recording and refuses the evidence directory.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const evidenceDirectory = join(
+    storage.directory,
+    '..',
+    'agent',
+    study.instanceId,
+    study.runId,
+  )
+  await mkdir(evidenceDirectory, { recursive: true })
+  await writeFile(join(evidenceDirectory, 'events.jsonl'), '{"sequence":1}\n')
+  storage.rejectMovesOf(
+    (path) => path === join('..', 'agent', study.instanceId, study.runId),
+  )
+  // Act
+  const first = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    evidenceDirectory,
+  )
+  const movedByFirst = [...storage.moved]
+  const evidenceLeftByFirst = await readdir(evidenceDirectory)
+  storage.rejectMovesOf(() => false)
+  const second = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    evidenceDirectory,
+  )
+  // Assert
+  assert.deepEqual(first, {
+    outcome: 'partly-moved',
+    cause: `Trash refused ${study.runId}`,
+  })
+  assert.deepEqual(movedByFirst, [join('recordings.v2', study.id)])
+  assert.deepEqual(evidenceLeftByFirst, ['events.jsonl'])
+  assert.deepEqual(second, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    join('recordings.v2', study.id),
+    join('..', 'agent', study.instanceId, study.runId),
+    `${study.id}.study.meta.v3.json`,
+    `${study.id}.study.v3.json`,
+  ])
+  await assert.rejects(lstat(evidenceDirectory), { code: 'ENOENT' })
+  assert.deepEqual(
+    (await filesBelow(storage.directory)).filter(([path]) =>
+      path.includes(study.id),
+    ),
+    [],
+  )
+  assert.deepEqual(await storage.library.list(), [])
 })
 
 // Value: protects=the count sentence after a removal and the "would a run be admitted now" question read the same figures the admission uses; fails_when=usage counts a study twice across formats or fails under an invalid limit; why_new=usage is new; seam=none
