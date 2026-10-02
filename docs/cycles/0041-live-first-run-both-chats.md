@@ -1,7 +1,7 @@
 # Cycle 0041 — Live first run in both chats: a too-strict text condition says how it differs, and a natural request is run in Copilot Chat and Cursor Agent
 
 Type: product-increment with a bounded native experiment\
-Status: implementing\
+Status: validating\
 Result: pending\
 Delivery: local-only\
 Goal version: 9\
@@ -159,7 +159,61 @@ Review records (private, under the project's gstack state): the report appended 
 
 ## Attempts and evidence
 
-No observations yet.
+### Implementation, 2026-10-03
+
+| Task | Commit | What changed |
+| --- | --- | --- |
+| T1 to T4 | `a9a9b0b` | Page function: `inspectDom` compares a `text` condition with whitespace collapsed on both sides and reports `textDifference: 'surrounding-text'` (helpers nested in the function, because it is serialized with `toString()`). Run: `domResultSchema` accepts that one value and fails the read for any other; `waitForDom` takes its hint from the new pure utility `configuredConditionHint`. Texts: five sentences in `constants.ts`, the two help fields in `resources.ts`, the condition sentence of `extension/README.md`. Tests: the harness takes replaceable before conditions and a settable before failure; eleven tests in four files. |
+
+Decisions taken during the implementation (recommended options, the owner is away):
+
+- **The after-phase hint has no run-level test.** The harness reaches a before timeout in one read; an after timeout needs the whole click and continuation. The after sentence is covered by the utility's unit test and its control; the run passes the phase through one call that the before tests exercise.
+- **Two complexity findings were removed, not baselined.** The first version of `textFailure` and `attributeConditionHint` had a cyclomatic complexity of 5 each. The null fallback moved into `collapseWhitespace`, and the phase choice became two lookup records; `health` passes against the unchanged baseline. `inspectDom` stays in its baselined category (cyclomatic 25 before and after).
+- **`extension/README.md` was changed too.** Its step 4 said "text/attribute comparisons are literal"; it now states the rule the help states.
+
+### Red on `db8d188`, green on the branch
+
+Procedure: a detached worktree of `db8d188` under `/tmp`, this branch's four test files and the harness copied into it, `node extension/scripts/build-fast.mjs`, then `node --test --test-timeout=30000 --test-force-exit` per file. The private outputs are under `artifacts/cycle-0041/red/`.
+
+| File | Tests | Red on `db8d188` | New and green on `db8d188` (guards) |
+| --- | --- | --- | --- |
+| `configuredAdapter.test.ts` | 17 | 2: the whitespace cases hold (criterion 1); the surrounding-text relation without page text (2, 4; its bare-mismatch half is criterion 3) | 0 |
+| `configuredConditionHint.test.ts` | 4 | 4: the file cannot load, the utility does not exist (criterion 10) | 0 |
+| `configuredRuntime.test.ts` | 53 | 3: the timeout text for surrounding text (5), for a bare mismatch (6), an unknown relation rejected at once (9) | 1: the two attribute sentences through the run (8) |
+| `configuredService.test.ts` | 20 | 1: the two help texts (11) | 0 |
+
+Every other test of these files passes on `db8d188`. On the branch all four files pass (17, 4, 53, 20). Criterion 7's refusal ("Configured after conditions were already true before application input") is covered by the existing run-level tests, which pass unchanged.
+
+### Disabled-fix controls (criterion 14)
+
+Private runner `artifacts/cycle-0041/controls/run-controls.mjs` (the Cycle 0040 runner with this cycle's rows): each row copies one compiled file, removes one fix from `extension/dist`, runs the named test alone and restores the copy. Run `controls-2.log`, on the final source: **11 of 11 held**, every file restored, the hash over `dist` identical before and after (`28c598c0…`). The first run (`controls-1.log`, 11 of 11) was on the source before the complexity change.
+
+| Criterion | Fix removed from `dist` | Test that must fail |
+| --- | --- | --- |
+| 1 | whitespace is not collapsed | the whitespace cases hold |
+| 2 | the page reports no relation | the surrounding-text relation |
+| 5 | the schema drops the relation; and the timeout text takes no text hint | the timeout text for surrounding text (2 rows) |
+| 6 | the timeout text takes no text hint | the timeout text for a bare mismatch |
+| 9 | the schema drops the relation | an unknown relation rejected at once |
+| 10 | no text hint; the relation is ignored; the after phase gets the before sentence | the utility's rule test and its phase test (3 rows) |
+| 11 | the rule sentence; the icon-button sentence | the help test (2 rows) |
+
+### Gates on `a9a9b0b` (criteria 12, 13)
+
+| Gate | Result |
+| --- | --- |
+| `pnpm --dir extension test` | 1,762 of 1,762 (1,751 on `db8d188` plus 11), 117 s |
+| `pnpm --dir extension test:package` (after every test process ended) | 192 of 192 |
+| `node --test .codex/restore-product-context.test.mjs` | 4 of 4 |
+| `typecheck`, `lint`, `format:check`, `dead-code`, `dupes`, `health` | exit 0 each |
+| `node extension/scripts/build-fast.mjs --check` | 638 files, 0 differences |
+| Criterion 13 | no change in `extension/fallow-health-baseline.json`, `extension/test-timings.json`, any `extension/src/*Schemas.ts` or `extension/skills`; the bundled skill is `39f03be0` |
+
+Private logs: `artifacts/cycle-0041/gates/`. The package suite ran before the README sentence changed; it is run again on the release tree.
+
+### Candidate 1
+
+`artifacts/packages/codebook-0.2.24-c41-live-first-run-20261003.vsix`, source `a9a9b0b` (clean checkout), VSIX SHA-256 `1aa69857deb2f20ab1fd3378bc9cb8cacb1f0b8d616bc403fa30e92d826b026c`, sourceHash `818059bb1257aa14…`, 29 entries, 0.2.24 metadata, bundled skill `39f03be0`; `check-package.mjs` passed.
 
 ## Result and decision
 
