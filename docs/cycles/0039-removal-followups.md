@@ -1,7 +1,7 @@
 # Cycle 0039 — Removal follow-ups: a deletion acts on the chosen study, reports what moved, and takes the run's raw evidence with it
 
 Type: product-increment\
-Status: implementing\
+Status: validating\
 Result: pending\
 Delivery: local-only\
 Goal version: 9\
@@ -89,6 +89,10 @@ Order: R2 and R7 library → R6 and R7 service and resources → R1, R4, R5, R7 
 ### Entry after compaction, 2026-10-02 (before implementation)
 
 The working context was compacted after the engineering review. Before any product source was changed, the mandatory entry was repeated from the files on disk: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review. The approved PNG was opened with the image viewer again (hash `f189ee82…caf2aa` verified; the four regions as described above). Checkout `codex/cycle-0039-removal-followups` at `a9a4a40`, clean; Node 24.21.0, pnpm 12.4.2; the protected hashes, the dashboard (`1936e41`, only the untracked `.codebook/`), port 3000, the recorder and the database container are as at the entry. No product source differs from `471ad67`, so the source-gap audit below stands.
+
+### Entry after compaction, 2026-10-02 (second in this cycle, during the gates)
+
+The working context was compacted again after T1 to T5 were written and while the gates (T6) ran. Before any further gate, control or runtime trial, the mandatory entry was repeated from the files on disk: full reads of PRODUCT_GOAL (v9), the replay, Wiki and shortcut contracts, IMPLEMENTATION, PROJECT_STATE, DESIGN, this record, DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review. The approved PNG was opened with the image viewer again (hash `f189ee82…caf2aa` verified; the four regions as described above). Checkout `codex/cycle-0039-removal-followups` at `0cdecda` with the uncommitted pane, README and test edits that became `0fa07d5`; Node 24.21.0, pnpm 12.4.2; the protected hashes, the dashboard (`1936e41`, only the untracked `.codebook/`), port 3000, the recorder and the database container are as at the entry. Gap audit: the product source differs from `471ad67` in the files this cycle names (library, service, resources, reader, pane, utilities, constants), so the affected rows stay AC-SAVE, AC-LEARNING and AC-ENTRY with AC-LIVE and AC-REPLAY as regressions; the other rows carry forward.
 
 ## Source-gap audit and selected increment
 
@@ -180,7 +184,83 @@ Review records (private, under the project's gstack state): the report appended 
 
 ## Attempts and evidence
 
-No observations yet.
+### Implementation T1 to T5, 2026-10-02 (mechanism level)
+
+Base for "red on base" is `471ad67` in a separate worktree (`/tmp/c39-base`); the changed test files are copied there, emitted with `scripts/build-fast.mjs` and run with `node --test --test-timeout=15000 --test-force-exit` (two reader tests wait forever on the base without a per-test timeout). Logs: the private `artifacts/cycle-0039/red-green/`.
+
+| Step | Commit | What changed | Tests | On `471ad67` |
+| --- | --- | --- | --- | --- |
+| T1 library (R2, R7) | `bd7824f`, shaped in `0fa07d5` | `removeStudy(id, moveToTrash, evidenceDirectory?)` keeps Cycle 0038's order and adds the evidence directory after the recordings (a real directory only: `lstat`, no link, no file); the outcome of a failed removal is decided by moved paths; a ledger that was rewritten is written back byte for byte when no path moved, and a failed write-back is `partly-moved` naming both failures; the raw writer is the new `utils/atomicPrivateBytes`, which `atomicPrivateWrite` now publishes through | `studyRemoval.test.ts` (20) | 6 red: the two byte-identical ledgers, the ledger read from a historical file, the failed write-back, the evidence order, a refused sidecar after the evidence moved. Green there (the base never moves evidence): a file or link as evidence path, a missing evidence directory, and the 12 existing tests |
+| T2 service and resources (R6, R7) | `bd7824f` | `start()` forgets a refused record that has stopped before its profile-conflict check (`forgetStoppedRefusal`, `forgetRecord`); `assertEvidenceAvailable` refuses a removed run's suffix resources and its `explain()` with `EVIDENCE_UNAVAILABLE`; `withEvidenceHeld` waits for accepted explanation writes and the evidence queue, and `explain()` answers `BUSY` while it runs; one help sentence | `studyAdmission.test.ts` (17), `service.test.ts` (20), `configuredService.test.ts` (19) | 3 + 4 + 1 red. Green there: a start repeated while its run awaits the admission or is still ending, and a repeated start of an admitted run |
+| T3 reader (R1, R3 host, R4, R5, R7) | `0cdecda` | the move's promise is kept while a study moves and a forced checkpoint waits for it; a held-back write is resumed after the removal; `studyOpening` (a pending saved study or Node test history) refuses a delete request and makes the neighbour give way; the Recording refusal also reads `readiness === 'loading'` from the playback controller; the neighbour takes a request number and arrives through the same `showSavedStudy` as a chosen entry; the evidence path comes from `utils/studyEvidenceDirectory`, stays in place while another instance's connection descriptor exists (`utils/evidenceInUseElsewhere`), and the removal of this window's run runs inside the evidence hold | `studyWorkspaceRemoval.test.ts` (47), `studyEvidence.test.ts` (2) | 15 of the 19 new reader tests red (two by the 15 s timeout: both "while a chosen saved study is still opening" cases open a dialog nothing answers). Green there: retirement during a removal that moves, Save learning replay refused during the move, and the two "recording open failed" cases |
+| T4 pane (R3) | `0fa07d5`, one test wait in `a589ef3` | the pane remembers `{ studyId, revision, sawLoading }` from the moment it asks the host to open an entry, keeps that entry as the list's value, and holds the delete button back (`aria-disabled`) with `Wait for the chosen saved study to open.` until the host shows it, the open ends or the entry leaves the list | two Chromium DOM cases in `extension/scripts/study-bootstrap-qa.mjs` | the first case (criterion 7) fails on the base (67 of 69 there); the second (criterion 8: a failed open returns to the shown study) passes there |
+| T5 texts | `bd7824f`, `0cdecda`, `0fa07d5` | the dialog detail, the "left in place" sentence of the success line, the `studyOpening` reason, the `BUSY` sentence, the help sentence, and the README section "Delete a saved study" | `studyRemovalMessages.test.ts` (3), the dialog test of the reader partition, `configuredService.test.ts` | 2 + 1 red (texts) |
+
+In total 32 node tests and one DOM case are red on `471ad67` and green on the branch; the same files on the branch: 20, 17, 20, 19, 47, 3 and 2, all passing.
+
+### Gates on `a589ef3`, 2026-10-02 (criterion 23)
+
+| Gate | Result |
+| --- | --- |
+| `pnpm --dir extension test` | 1,715 of 1,715, twice in a row; no failure, cancellation or skip |
+| `pnpm --dir extension test:package` (after every extension test process of this checkout had ended) | 192 of 192 |
+| `node --test .codex/restore-product-context.test.mjs` | 4 of 4 |
+| `typecheck`, `lint`, `format:check`, `dead-code`, `dupes`, `health` | each exit 0; `extension/fallow-health-baseline.json` is unchanged |
+| `node extension/scripts/build-fast.mjs --check` | 630 files, 0 differences from the compiler's output |
+| `node extension/scripts/study-bootstrap-qa.mjs verify artifacts/cycle-0039/bootstrap-renderer` | 69 cases, 68 passed. Both new cases pass, and the screenshot `saved-studies-opening.png` was opened and looked at: the list shows the chosen entry, the button is dimmed with its focus ring, and the line under it reads "Wait for the chosen saved study to open." The one failure is the carried "wide saved sequence remains reachable by keyboard inside its own scroll area" (Cycle 0033, PROJECT_STATE candidate 4); the script therefore exits 1 |
+| Bundled skill | `39f03be0`, unchanged (criterion 24) |
+
+`7f47bb2` adds that one screenshot call to the DOM script; `lint`, `format:check`, the package suite, the emit comparison and the DOM script were run again on it with the same results.
+
+Two of the three full runs before these did not pass. What their failures were:
+
+- **"a rejected atomic rename retains the old value and cleans its own incomplete temporary file"** injected its rename failure into `atomicPrivateWrite.js`, which no longer owns the rename (it moved to `atomicPrivateBytes.js` in T1). The test now loads the byte writer with the injected rename and hands it to the JSON writer; its assertions are unchanged. A test defect of this cycle, fixed in `0fa07d5`.
+- **"cancelling a listing releases a SIGTERM-resistant launcher and its helper before rejecting"** failed once with `kill EPERM` from `process.kill(-processGroup, 0)` in `utils/listVitestTestFiles.ts`. That file and its test are unchanged since Cycle 0030 (`d2b96fb`, `d526695`); the test passed in three runs alone and in the four later full runs. Not caused by this cycle and not reproduced; carried as a finding (the group probe treats only `ESRCH` as "gone", and macOS can answer `EPERM` for a group whose members have exited but are not reaped yet).
+- **"a checkpoint that waited behind a write during a removal that moved nothing is written afterwards without another trigger"** (new in this cycle) failed once in a full run on `0fa07d5`, at its last assertion: the writer's queue still held the entry. The writer reports `saved`, then saves the recording context, then drops its entry, and the test read the queue right after the reported outcome. The test now waits for the entry to leave the queue (`a589ef3`); the product is unchanged. The partition then passed five times alone and in both full runs.
+
+Criterion 24, source search and diff review of `471ad67..a589ef3`: 14 product source files changed (`constants.ts`, `extension.ts`, `learningLibrary.ts`, `resources.ts`, `service.ts`, `studyWorkspace.ts`, `ui/studyHtml.ts` and seven utilities, three of them new). No schema file, `package.json` or skill file changed; no stored format version, MCP tool name, required argument or timeout constant changed. `constants.ts` gains the `studyOpening` sentence and the two names `AGENT_STORAGE_DIRECTORY` and `CONNECTION_DESCRIPTOR_SUFFIX`, which `extension.ts` now uses for the paths it already wrote. The only call that removes learning material is still `vscode.workspace.fs.delete(Uri.file(path), { recursive: true, useTrash: true })` in `studyWorkspace.ts` (`moveStudyFiles`), and `removeStudy` has that one caller.
+
+### Disabled-fix controls, 2026-10-02 (criterion 22, ER15)
+
+A private script (`artifacts/cycle-0039/controls/run-controls.mjs`) removes one fix from the compiled `extension/dist`, runs the one named test (or, for the pane, the DOM script) and expects exactly that test to fail, then restores the file byte for byte. Run on `a589ef3`: **36 of 36 held**, every file restored, and the hash over all of `dist` is the same before and after (`bb212962…`). Log: `artifacts/cycle-0039/controls/controls-2.log` (the first run, on `0fa07d5`, also held 36 of 36: `controls-1.log`, `14e9ae30…`).
+
+| Criterion | Fix removed | Held |
+| --- | --- | --- |
+| 3 | the outcome decided by moved paths (the ledger rewrite counts again, as on the base); the write-back | yes, yes |
+| 4 | the write-back for a study with only its archive; the write-back of a ledger projected from a historical file; the `partly-moved` answer naming both failures when the write-back fails | yes, yes, yes |
+| 6 | the outcome decided by moved paths, against the reader test (the run stays saved and offered for Save learning replay) | yes |
+| 18 | the evidence step of the removal (against the order test and the refused-sidecar test); the real-directory check (against the file-or-link test and the missing-directory test) | yes, yes, yes, yes |
+| 15 | forgetting a stopped refused record (against the new-run, the still-full and the other-arguments tests) | yes, yes, yes |
+| 16 | the `stopped` condition of that forgetting | yes |
+| 20 | the guard in `readResource`; the guard in `explain()` | yes, yes |
+| ER13 | the wait for accepted explanation writes; the `BUSY` answer during the hold; the release in `finally`; the reader's use of the hold | yes, yes, yes, yes |
+| 1 | the resumed write after the removal | yes |
+| 2 | the forced checkpoint's wait for the move | yes |
+| ER3 addition | Save learning replay refused for a moving study | yes (the test does not finish without it and is cancelled by the control's 20 s limit: the deadlock described below) |
+| 9 | the `studyOpening` refusal (against the request and against the confirmed answer); the Node test history marker | yes, yes, yes |
+| 10 | the `readiness === 'loading'` term of the Recording refusal | yes |
+| 12 | the neighbour's request-number check | yes |
+| 13 | the neighbour giving way to a pending choice; the Node test history marker | yes, yes |
+| 14 | the reader arrangement in the shared "show this saved study" path | yes |
+| 19 | the evidence path handed to the removal (against the QA-study test and the own-run test) | yes, yes |
+| ER12 | the connection-descriptor check | yes |
+| 7 (pane) | the `studyOpening` reason of the button; the remembered choice as the list's value | yes, yes (the named DOM case fails; 67 of 69) |
+
+Guard criteria have no control (ER15): 5, 8, 11, the replay cases of 16 apart from the row above, 17 and 21.
+
+### Decisions made while implementing
+
+Recommended option each time; none changes an acceptance criterion's observable result unless stated.
+
+- **Criterion 6 needs an arrangement no ordinary flow produces.** A study without a recording directory whose run still offers Save learning replay does not occur together, so the reader test removes the recording directory in its arrangement before the removal is confirmed. The first refused move is then the sidecar's, after the ledger rewrite, which is the case R2 is about.
+- **Save learning replay is refused while its study moves** (an addition to ER3). The removal waits for a save in flight (`settleStudyWrites`), and a forced checkpoint now waits for the removal; a save that starts during the move would wait for the checkpoint and be waited for by the removal. `saveLearningReplay` therefore calls `assertStudyNotMoving` first. The test exists and its control shows the wait that never ends without the guard.
+- **The write-back uses the bytes that were on disk.** `rewriteLedger` reads the repository ledger file's bytes before it rewrites them; when that file did not exist yet (the ledger was projected from a historical file) the write-back is `JSON.stringify` of the ledger as read, so the selection is the same and the historical file is untouched (its own test).
+- **A raw writer was split out.** `utils/atomicPrivateBytes` writes given bytes through a temporary file and a rename; `atomicPrivateWrite` keeps its size check and publishes through it. No stored format changes.
+- **An evidence path that cannot be inspected is left alone.** `realDirectories` treats any `lstat` failure as "not a real directory", so an unreadable agent storage does not fail a removal.
+- **Two constants name paths that already existed**: `AGENT_STORAGE_DIRECTORY` (`agent`) and `CONNECTION_DESCRIPTOR_SUFFIX` (`.connection.json`), now shared by `extension.ts`, the reader and `evidenceInUseElsewhere`.
+- **The two apostrophes in new sentences are straight** (`run's`), as in the specification's text.
+- **The code is shaped for the health gate, and the baseline is not changed.** The first T4 and T1 code added one moderate finding each (`chooseSavedStudy`, the removal's locked function); `askHostToOpen` and `runRemovalSteps` were split out until every new or touched function has a cyclomatic complexity of 4 or lower.
+- **The DOM gate passes with one carried failure** (the wide-sequence case), as in Cycles 0033 to 0038.
 
 ## Result and decision
 
@@ -192,7 +272,7 @@ Pending.
 
 ## Next action
 
-- Exact next action: implement T1 to T6 in the order of the plan review (library, service, reader, pane, texts, controls and gates), then package and install a candidate and run N8-a to N8-d.
-- Changed files / branch / active processes: this record, PROJECT_STATE.md, DECISIONS.md, README.md and `.coderabbit.yaml` on `codex/cycle-0039-removal-followups`; no active processes.
+- Exact next action: package a candidate from the committed branch, install it in both QA profiles, freeze the N8 expectations and run N8-a to N8-d; then the reviews (local CodeRabbit CLI, `open-code-review-delegate`), `/ship`, CI, the separate exact-HEAD gate and the merge.
+- Changed files / branch / active processes: the product and test files of T1 to T5, this record and PROJECT_STATE.md on `codex/cycle-0039-removal-followups` (`7f47bb2` plus the records); no active processes.
 - State updated in PROJECT_STATE.md: the resume, the active cycle, tracking and the next action.
 - Durable decisions updated: D045.
