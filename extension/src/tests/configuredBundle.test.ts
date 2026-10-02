@@ -446,3 +446,23 @@ test('a declared line counts as mapped at whichever column the sealed map reache
   })
   assert.deepEqual(unmappedLine, { positions: [], complete: true })
 })
+
+// Value: protects=the sealed map saying on which line of the cited source a generated location lies, which is how a live run tells its declared stop's pause from one the debug adapter makes for itself; fails_when=a location between two mappings loses its line, a missing column is not read as column 0, or a location before the first mapping or in another original of the bundle is given a line of the cited source; why_new=the verifier had no reader for the line of a generated location (Cycle 0042 ER1); seam=none
+test('the sealed map gives the cited source’s line for a generated location at or after a mapping, and none before the first mapping or in another original', () => {
+  // Arrange: generated 0:4 is line 1 of the cited source, generated line 1 is its line 2, generated line 2 belongs to the bundle's other original.
+  const verifier = createBundleVerifier({
+    ...bundle,
+    sourceMap: JSON.stringify({ ...payload, mappings: 'ICAA;AACA;ADDA' }),
+  })
+  // Act
+  const lines = [
+    verifier.originalLine({ lineNumber: 0, columnNumber: 4 }),
+    verifier.originalLine({ lineNumber: 0, columnNumber: 9 }),
+    verifier.originalLine({ lineNumber: 1, columnNumber: 3 }),
+    verifier.originalLine({ lineNumber: 1 }),
+    verifier.originalLine({ lineNumber: 0, columnNumber: 2 }),
+    verifier.originalLine({ lineNumber: 2, columnNumber: 0 }),
+  ]
+  // Assert
+  assert.deepEqual(lines, [1, 1, 2, 2, undefined, undefined])
+})

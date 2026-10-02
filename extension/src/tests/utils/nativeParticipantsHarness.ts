@@ -11,6 +11,7 @@ import { crossRuntimeRepositoryConfigSchema } from '../../repositoryConfigSchema
 import type { Participant } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
+import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { configuredStops } from '../../utils/configuredStops'
 
@@ -95,6 +96,18 @@ export async function nativeParticipantsHarness(
   let inputResolve = (): void => {},
     heldResponse: (() => void) | undefined,
     holdResponse = false
+  // Event controls for a test that sends the adapter's own pauses between the declared ones.
+  let nextPauseHeld = false,
+    inputHeld = false,
+    sourceBoundWaitExpired = false
+  // Where each participant's declared pause is reported in the generated module; 0:0 maps to the declared 1:1.
+  const pausedAt: Record<
+    Participant,
+    { lineNumber: number; columnNumber: number }
+  > = {
+    browser: { lineNumber: 0, columnNumber: 0 },
+    server: { lineNumber: 0, columnNumber: 0 },
+  }
   let revokeDuringDom = false,
     afterReadyBeforeInput = false
   const afterExpression = configuredDomExpression(
@@ -199,8 +212,10 @@ export async function nativeParticipantsHarness(
         })
         listeners[name].get('Debugger.resumed')?.({})
         currentIndex++
-        if (stops[currentIndex]) emitPause(stops[currentIndex]!.participant)
-        else inputResolve()
+        const next = stops[currentIndex]
+        // A held next pause or input is released by the test, after the events it sends in between.
+        if (next && !nextPauseHeld) emitPause(next.participant)
+        if (!next && !inputHeld) inputResolve()
         if (holdResponse)
           await new Promise<void>((resolve) => {
             heldResponse = resolve
@@ -250,7 +265,7 @@ export async function nativeParticipantsHarness(
       url: bundle(name).scriptUrl,
       executionContextId: 1,
     })
-  const emitPause = (name: Participant): void => {
+  const emitDeclaredPause = (name: Participant): void => {
     // Server code is first loaded by application input, never imported during preparation.
     emitScript(name)
     listeners[name].get('Debugger.paused')?.({
@@ -259,16 +274,22 @@ export async function nativeParticipantsHarness(
       callFrames: [
         {
           callFrameId: name,
-          location: { scriptId: name, lineNumber: 0, columnNumber: 0 },
+          location: { scriptId: name, ...pausedAt[name] },
         },
       ],
     })
+  }
+  const emitStopped = (name: Participant): void => {
     run.onEvent(sessions[name], {
       type: 'event',
       seq: ++sequence,
       event: 'stopped',
       body: { reason: 'breakpoint', threadId: 1 },
     })
+  }
+  const emitPause = (name: Participant): void => {
+    emitDeclaredPause(name)
+    emitStopped(name)
   }
   const proxy = (name: Participant) => ({
     name,
@@ -542,6 +563,27 @@ export async function nativeParticipantsHarness(
           }
         },
       },
+      './runtimeSupport/utils/waitUntil': {
+        waitUntil: async <Value>(
+          read: () => Value | Promise<Value>,
+          description: string,
+          timeoutMs?: number,
+          signal?: AbortSignal,
+        ) => {
+          // The capture bound is 3 s of real time; a test of its expiry looks once and then lets the real timeout contract end the wait.
+          if (
+            sourceBoundWaitExpired &&
+            description === 'source-bound CDP stop'
+          ) {
+            signal?.throwIfAborted()
+            const value = await read()
+            signal?.throwIfAborted()
+            if (value) return value
+            return waitUntil(read, description, 0, signal)
+          }
+          return waitUntil(read, description, timeoutMs, signal)
+        },
+      },
       './utils/readDevelopmentBundle': {
         readDevelopmentBundle: async (
           _workspace: string,
@@ -652,6 +694,67 @@ export async function nativeParticipantsHarness(
     },
     emitResume(name: Participant): void {
       listeners[name].get('Debugger.resumed')?.({})
+    },
+    /** Keeps a continuation from announcing the next declared stop, so a test can send other events first and then release the stop's two notifications in the order it needs. @example const next = harness.holdNextPause(); next.stopped(); next.paused() */
+    holdNextPause() {
+      nextPauseHeld = true
+      return {
+        /** Sends the held stop's DAP `stopped` alone. */
+        stopped: (): void => emitStopped(stops[currentIndex]!.participant),
+        /** Announces the held stop's module and sends its runtime pause alone. */
+        paused: (): void => emitDeclaredPause(stops[currentIndex]!.participant),
+      }
+    },
+    /** Keeps the input acknowledgement back after the last continuation, so a test can send events while the after conditions are still open. */
+    holdInput(): void {
+      inputHeld = true
+    },
+    releaseInput(): void {
+      inputHeld = false
+      inputResolve()
+    },
+    /** Reports a participant's declared pauses at this generated position instead of 0:0, as a breakpoint the debugger bound elsewhere in the module does. */
+    pauseAt(name: Participant, lineNumber: number, columnNumber: number): void {
+      pausedAt[name] = { lineNumber, columnNumber }
+    },
+    /** Announces a further script of a participant, as the runtime does for every module it parses. */
+    announceScript(name: Participant, scriptId: string, url: string): void {
+      listeners[name].get('Debugger.scriptParsed')?.({
+        scriptId,
+        url,
+        executionContextId: 1,
+      })
+    },
+    /** Reports a runtime pause with no debugger stop at a chosen generated place, as the debug adapter's own breakpoints and hooks arrive. */
+    emitUnannouncedPause(
+      name: Participant,
+      place: {
+        scriptId: string
+        lineNumber: number
+        columnNumber: number
+        functionName: string
+        hitBreakpoints: string[]
+      },
+    ): void {
+      listeners[name].get('Debugger.paused')?.({
+        reason: 'other',
+        hitBreakpoints: place.hitBreakpoints,
+        callFrames: [
+          {
+            callFrameId: 'adapter-frame',
+            functionName: place.functionName,
+            location: {
+              scriptId: place.scriptId,
+              lineNumber: place.lineNumber,
+              columnNumber: place.columnNumber,
+            },
+          },
+        ],
+      })
+    },
+    /** Ends the wait for an accepted stop's own pause after one look, as its 3 s bound would. */
+    expireSourceBoundWait(): void {
+      sourceBoundWaitExpired = true
     },
     // A changed native frame must not inherit a previously captured source pause.
     movePausedFrame(line: number, column = 1): void {

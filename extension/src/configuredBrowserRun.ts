@@ -71,12 +71,19 @@ import { describeCdpPause } from './utils/describeCdpPause'
 import { elapsedMsSince } from './utils/elapsedMsSince'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
+import { isPauseAtStop } from './utils/isPauseAtStop'
+import { isPauseInScript } from './utils/isPauseInScript'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
+import { pausePlace } from './utils/pausePlace'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { thrownMessage } from './utils/thrownMessage'
+import {
+  withUnannouncedPauses,
+  type UnannouncedPausePlace,
+} from './utils/withUnannouncedPauses'
 
 interface ConfiguredBrowserOptions {
   directory: string
@@ -101,7 +108,10 @@ type DebugParticipant = {
   gate: PauseGate
   selected?: vscode.DebugSession
   cdp?: Cdp
+  /** The pause of the expected declared stop: on its declared line in its module, or adopted after an announced pause stayed elsewhere in that module. `generation` is set once {@link ConfiguredBrowserRun.inspect} binds it to an accepted stop. */
   stopped?: { event: Protocol.Debugger.PausedEvent; generation?: number }
+  /** A pause away from the expected declared stop that no debugger stop was accepted for. The debug adapter makes such pauses for itself and resumes them; the resume retires it, and a deadline that expires meanwhile names it. */
+  unannouncedPause?: { event: Protocol.Debugger.PausedEvent }
   /** Every script this participant announced, by script id, so the journal can name the place of a pause in any of them. */
   scriptUrls: Map<string, string>
   /** The journal clock when the last pause was observed; cleared by its resume. */
@@ -705,7 +715,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
   }
 
-  /** Queues the next participant's pause until the original continuation has all receipts. @example this.onCdpPaused('server', event) */
+  /** Journals every pause the runtime reports and, during an action, hands it to {@link admitPause}; only a browser pause in a run that declares no browser stop keeps its own short bound. @example this.onCdpPaused('server', event) */
   private onCdpPaused(
     name: Participant,
     event: Protocol.Debugger.PausedEvent,
@@ -746,29 +756,127 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       return
     }
-    if (this.continuation) {
-      const next = this.stops[this.stopIndex + 1]
-      if (
-        !next ||
-        next.participant !== name ||
-        (name === this.continuation.participant && !this.continuation.cdp) ||
-        this.pendingCdpStop
-      ) {
-        this.fail(`Additional ${name} stop invalidated the declared operation`)
-        return
-      }
-      this.pendingCdpStop = { participant: name, event }
-      return
-    }
-    if (
-      this.stops[this.stopIndex]?.participant !== name ||
-      participant.stopped ||
-      this.snapshotReady
-    ) {
+    this.admitPause(name, event)
+  }
+
+  /**
+   * Decides what a pause during an action is, called by {@link onCdpPaused} (and through it by {@link beginAfter} when a queued pause is replayed).
+   * The debug adapter also pauses for breakpoints of its own and resumes them without announcing a stop, and its two channels have no common order, so the place of a pause decides, never which event was read first:
+   *
+   * ```
+   * participant already holds a pause ──► fail "Additional <name> stop ..."
+   * at the expected stop (its module, its declared line)
+   *     continuation in flight ──► pendingCdpStop, replayed by beginAfter
+   *     otherwise              ──► participant.stopped, bound by inspect
+   * anywhere else              ──► participant.unannouncedPause
+   *                                  resumed   → retireUnannouncedPause
+   *                                  announced → onEvent fails or inspect judges it
+   *                                  stays     → the progress deadline names it
+   * ```
+   * @param name - The participant whose runtime paused.
+   * @param event - The pause as the runtime reported it.
+   * @example
+   * ```ts
+   * this.admitPause('server', event) // a pause in getUser while auth.ts:23 is expected is held, not failed
+   * ```
+   */
+  private admitPause(
+    name: Participant,
+    event: Protocol.Debugger.PausedEvent,
+  ): void {
+    // A participant pauses once at a time; a second pause before the first one's resume is nobody's declared stop.
+    if (this.holdsPause(name)) {
       this.fail(`Additional ${name} stop invalidated the declared operation`)
       return
     }
-    participant.stopped = { event }
+    if (!isPauseAtStop(event, this.expectedStop(name))) {
+      this.participants[name].unannouncedPause = { event }
+      return
+    }
+    // The expected stop's pause becomes current only after the preceding continuation has all its receipts.
+    if (this.continuation) this.pendingCdpStop = { participant: name, event }
+    else this.participants[name].stopped = { event }
+  }
+
+  /** Tells {@link admitPause} whether a participant already holds a pause: its declared stop's, a queued one, or one nobody announced. @example this.holdsPause('server') // false while the server runs */
+  private holdsPause(name: Participant): boolean {
+    const participant = this.participants[name]
+    return Boolean(
+      participant.stopped ||
+      participant.unannouncedPause ||
+      this.pendingCdpStop?.participant === name,
+    )
+  }
+
+  /** Names the declared stop whose pause may arrive next, for {@link expectedStop}: the one after a continuation in flight, otherwise the current one until its snapshot is ready. After the last continuation there is none. @example this.nextStopToPause() // stops[1] while stop 0 is being continued */
+  private nextStopToPause(): PreparedStop | undefined {
+    if (this.continuation) return this.stops[this.stopIndex + 1]
+    return this.snapshotReady ? undefined : this.stops[this.stopIndex]
+  }
+
+  /** Gives {@link admitPause} the stop a participant's pause may belong to; a participant whose turn it is not has none. @example this.expectedStop('browser') // undefined while a server stop is next */
+  private expectedStop(name: Participant): PreparedStop | undefined {
+    const stop = this.nextStopToPause()
+    return stop?.participant === name ? stop : undefined
+  }
+
+  /** Names where a participant's pause is, by repository path and line inside a declared stop's module, for the journal and for an expired deadline. @example this.placeOf('server', event) // 'auth.ts:18' */
+  private placeOf(
+    name: Participant,
+    event: Protocol.Debugger.PausedEvent,
+  ): string {
+    return pausePlace(
+      event,
+      this.stops.filter((stop) => stop.participant === name),
+      this.participants[name].scriptUrls,
+    )
+  }
+
+  /**
+   * Retires a pause that no debugger stop announced when the runtime resumes it, called by {@link onCdpResumed}.
+   * The adapter made the pause for itself (a module entry breakpoint, its WebAssembly hook) and resumed it. No stop, receipt or generation of the run changes; the journal keeps where the pause was and how long it lasted. Nothing on either channel says who sent a resume, so a pause on the expected stop's line is never retired here.
+   * @param name - The participant whose runtime resumed.
+   * @param pausedForMs - How long the pause lasted on the journal clock, when its start was observed.
+   * @returns `true` when such a pause was held and is now retired.
+   * @example
+   * ```ts
+   * if (this.retireUnannouncedPause('server', 2)) return
+   * ```
+   */
+  private retireUnannouncedPause(
+    name: Participant,
+    pausedForMs: number | undefined,
+  ): boolean {
+    const participant = this.participants[name],
+      held = participant.unannouncedPause
+    if (!held) return false
+    participant.unannouncedPause = undefined
+    this.evidence.record('cdp.adapter-pause-retired', {
+      participant: name,
+      ...describeCdpPause(held.event, participant.scriptUrls),
+      place: this.placeOf(name, held.event),
+      pausedForMs,
+    })
+    return true
+  }
+
+  /** Lists where each participant is still paused with no announced stop, server first, for the text of a deadline that expires meanwhile. @example this.unannouncedPausePlaces() // [{ participant: 'server', place: 'auth.ts:18' }] */
+  private unannouncedPausePlaces(): UnannouncedPausePlace[] {
+    return (['server', 'browser'] as const).flatMap((name) => {
+      const held = this.participants[name].unannouncedPause
+      return held
+        ? [{ participant: name, place: this.placeOf(name, held.event) }]
+        : []
+    })
+  }
+
+  /** Tells {@link observeAfter} that no pause the adapter made for itself is still open on either participant, so completion is never certified while one of them is paused. @example this.adapterPausesRetired() // true */
+  private adapterPausesRetired(): boolean {
+    return (
+      !this.transientBrowserPause &&
+      !this.participants.server.unannouncedPause &&
+      !this.participants.browser.unannouncedPause
+    )
   }
 
   /** Attaches only the launched worker, then verifies its OS ownership through the native proxy before granting control. @example await this.selectServer() */
@@ -1200,13 +1308,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         generation: participant.gate.generation,
         stopIndex: this.stopIndex,
       })
-      // The adapter can auto-resume instrumentation while this participant has no owned pause.
-      if (
-        !participant.gate.current &&
-        continuation?.participant !== name &&
-        this.pendingDapStop?.participant !== name &&
-        this.pendingCdpStop?.participant !== name
-      ) {
+      // The adapter emits one for every resume, also of a pause it made and resumed by itself while this participant has no owned pause.
+      if (this.isIdleContinued(name)) {
         this.evidence.record('dap.idle-continued-ignored', {
           participant: name,
           sequence: event.seq,
@@ -1258,6 +1361,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (name === 'browser') this.browser.resumeViewport()
       this.beginAfter(continuation)
     }
+  }
+
+  /** Tells {@link isIdleContinued} whether a continuation of this participant still waits for the adapter's `continued`; the first one after the reserved resume request is that receipt. @example this.awaitsContinued('server') // true between the continue request and its continued */
+  private awaitsContinued(name: Participant): boolean {
+    const continuation = this.continuation
+    return continuation?.participant === name && !continuation.dap
+  }
+
+  /**
+   * Tells {@link onEvent} whether a `continued` belongs to nothing this run owns.
+   * The adapter announces every resume, also of a pause it made for itself, and that event may be read before the pause or after its resume. A continuation that already has its `continued`, such as the last one of a run, therefore does not make a later one a failure.
+   * @param name - The participant whose session announced `continued`.
+   * @returns `true` when the participant has no accepted pause, no queued announced stop and no continuation of its own still waiting for its `continued`.
+   * @example
+   * ```ts
+   * this.isIdleContinued('server') // true for the adapter's continued after the last continuation
+   * ```
+   */
+  private isIdleContinued(name: Participant): boolean {
+    return (
+      !this.participants[name].gate.current &&
+      this.pendingDapStop?.participant !== name &&
+      !this.awaitsContinued(name)
+    )
   }
 
   /**
@@ -1341,6 +1468,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.evidence.record('cdp.browser-adapter-pause-retired')
       return
     }
+    if (this.retireUnannouncedPause(name, pausedForMs)) return
     if (this.pendingCdpStop?.participant === name) {
       this.fail(
         `Queued ${name} stop resumed before prior continuation receipts completed`,
@@ -1378,6 +1506,70 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.fail('Selected debugger terminated')
   }
 
+  /**
+   * Finds the runtime pause that belongs to an accepted debugger stop, called by {@link inspect}.
+   * The pause may be read after its `stopped`, so the wait is bounded; it takes only a pause on the stop's declared line, which {@link admitPause} stored.
+   * @param stop - The declared stop whose `stopped` was accepted.
+   * @returns The stop's pause, not yet bound to a generation.
+   * @throws The wait's timeout when no pause arrives on the declared line and none stayed elsewhere in the stop's module.
+   * @example
+   * ```ts
+   * const stopped = await this.pauseOfAcceptedStop(stop)
+   * ```
+   */
+  private async pauseOfAcceptedStop(
+    stop: PreparedStop,
+  ): Promise<NonNullable<DebugParticipant['stopped']>> {
+    const participant = this.participants[stop.participant]
+    try {
+      return await waitUntil(
+        () => {
+          const candidate = participant.stopped
+          return candidate &&
+            candidate.generation === undefined &&
+            candidate.event.callFrames[0]?.location.scriptId ===
+              stop.script?.scriptId
+            ? candidate
+            : undefined
+        },
+        'source-bound CDP stop',
+        CAPTURE_TIMEOUT_MS,
+        this.abort.signal,
+      )
+    } catch (error) {
+      // An announced pause that stayed elsewhere in the stop's module is judged by the binding and frame checks, which say what is wrong.
+      const held = this.adoptPauseHeldInModule(stop)
+      if (!held) throw error
+      return held
+    }
+  }
+
+  /**
+   * Adopts a pause that stayed elsewhere in an accepted stop's module as that stop's pause, called by {@link pauseOfAcceptedStop} after its wait ended.
+   * The adapter resumes its own pauses within milliseconds, so a pause that outlasted the wait in the stop's own module is the announced one: a binding on another line, or another breakpoint in that file. A pause in any other script is left alone.
+   * @param stop - The declared stop whose `stopped` was accepted.
+   * @returns The adopted pause, or `undefined` when the run was cancelled or no such pause is held.
+   * @example
+   * ```ts
+   * const held = this.adoptPauseHeldInModule(stop) // then inspect reports "bound at 24:5, not on its declared line"
+   * ```
+   */
+  private adoptPauseHeldInModule(
+    stop: PreparedStop,
+  ): DebugParticipant['stopped'] {
+    const participant = this.participants[stop.participant],
+      held = participant.unannouncedPause
+    if (
+      this.abort.signal.aborted ||
+      !held ||
+      !isPauseInScript(held.event, stop.script)
+    )
+      return undefined
+    participant.unannouncedPause = undefined
+    participant.stopped = { event: held.event }
+    return participant.stopped
+  }
+
   /** Seals actual configured values and renderer pixels only while the exact source-bound pause remains current. @example await this.inspect(pause) */
   private async inspect(pause: PauseIdentity): Promise<void> {
     const stop = this.stops[this.stopIndex]!,
@@ -1385,20 +1577,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       phase = stop.participant === 'server' ? 'paused-server' : 'paused-browser'
     // A new stop cannot inherit the preceding stop's captured image.
     this.captures[phase] = { status: 'pending' }
-    const stopped = await waitUntil(
-      () => {
-        const candidate = participant.stopped
-        return candidate &&
-          candidate.generation === undefined &&
-          candidate.event.callFrames[0]?.location.scriptId ===
-            stop.script?.scriptId
-          ? candidate
-          : undefined
-      },
-      'source-bound CDP stop',
-      CAPTURE_TIMEOUT_MS,
-      this.abort.signal,
-    )
+    const stopped = await this.pauseOfAcceptedStop(stop)
     const current = (): void => {
       this.alive()
       if (!participant.gate.matches(pause) || participant.stopped !== stopped)
@@ -1710,7 +1889,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     this.track(this.observeAfter(continuation))
   }
-  /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion. @example await this.observeAfter(continuation) */
+  /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion, and waits until no participant is still paused at a pause the adapter made for itself. @example await this.observeAfter(continuation) */
   private async observeAfter(continuation: Continuation): Promise<void> {
     const current = (): void => {
       this.alive()
@@ -1736,8 +1915,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     current()
     await waitUntil(
-      () => !this.transientBrowserPause,
-      'browser adapter pause retirement',
+      () => this.adapterPausesRetired(),
+      'adapter pause retirement',
       ACTIVE_TIMEOUT_MS,
       this.abort.signal,
     )
@@ -1745,8 +1924,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.capture('after', current)
     current()
     await waitUntil(
-      () => !this.transientBrowserPause,
-      'browser adapter pause retirement',
+      () => this.adapterPausesRetired(),
+      'adapter pause retirement',
       ACTIVE_TIMEOUT_MS,
       this.abort.signal,
     )
@@ -2155,10 +2334,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     await this.evidence.flush()
   }
-  /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */
+  /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout; an expiry while a participant is paused with no announced stop also says where. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */
   private progressDeadline(milliseconds: number, reason: string): void {
     clearTimeout(this.progressTimer)
-    this.progressTimer = setTimeout(() => this.fail(reason), milliseconds)
+    // The pause that explains an expiry arrives after the deadline's text was chosen, so the text is completed when it expires.
+    this.progressTimer = setTimeout(
+      () =>
+        this.fail(withUnannouncedPauses(reason, this.unannouncedPausePlaces())),
+      milliseconds,
+    )
   }
   /** Rejects work after cancellation, source authority failure or trusted-workspace replacement. @example this.alive() */
   private alive(): void {

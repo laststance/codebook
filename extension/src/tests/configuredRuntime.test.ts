@@ -1220,3 +1220,116 @@ test('a resume after an observed pause is journaled with how long that pause las
   assert.equal(typeof afterPause === 'number' && afterPause < 1000, true)
   assert.equal(withoutPause, 'absent')
 })
+
+// Value: protects=an agent learning why a continuation reached no next stop: the page is still paused where the debug adapter paused it for itself (Cycle 0042 P2-1, the WebAssembly hook); fails_when=the deadline text ends without the sentence that names the participant and the place; why_new=a pause nobody announced was stored as the next stop's candidate and the deadline text did not mention it; seam=the run's timers, driven by the test clock
+test('a continuation that reaches no next stop while the browser stays paused with no debugger stop ends the run naming where it is paused', async (context) => {
+  // Arrange
+  const { run, suppressNextPause, announceScript, emitCdpPauseAt, advance } =
+    await configuredRuntimeHarness(context, undefined, [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'enabled', mode: 'value', required: true }],
+      },
+    ])
+  suppressNextPause()
+  await run.prepare()
+  announceScript('hook', 'eval-ca9ab6a4.cdp')
+  run.action('ordered', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+  await run.continue('browser', first.pause)
+  // Act: the adapter's hook pauses the page, nothing resumes it, and the active-progress budget passes.
+  emitCdpPauseAt({
+    scriptId: 'hook',
+    lineNumber: 0,
+    columnNumber: 219,
+    functionName: '',
+    hitBreakpoints: [],
+  })
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'next stop not hit')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s; its line must execute after the preceding continuation. The browser is paused at eval-ca9ab6a4.cdp 1:220 without a debugger stop.',
+  )
+  assert.equal(run.view().snapshots.length, 1)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=a run with two browser stops going on to the second when the browser's adapter pauses for its own entry breakpoint in another script and resumes it; fails_when=that pause is taken for the next declared stop, so its resume ends the run ("Selected browser resumed outside its owned continuation"); why_new=the short bound for the adapter's own browser pauses applies only to a run that declares no browser stop (Cycle 0042 ER1, ER7); seam=none
+test('a pause the debugger makes for itself in another script between two browser stops is retired, and the second stop is captured', async (context) => {
+  // Arrange
+  const {
+    run,
+    suppressNextPause,
+    announceScript,
+    emitCdpPauseAt,
+    manualResume,
+    emitPause,
+  } = await configuredRuntimeHarness(context, undefined, [
+    {
+      line: 1,
+      column: 7,
+      inspections: [{ path: 'enabled', mode: 'value', required: true }],
+    },
+  ])
+  suppressNextPause()
+  await run.prepare()
+  announceScript(
+    'actions',
+    'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts',
+  )
+  run.action('ordered', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+  await run.continue('browser', first.pause)
+  // Act: the adapter's entry breakpoint pauses and is resumed with no stopped event; then the second declared stop is hit.
+  emitCdpPauseAt({
+    scriptId: 'actions',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: ['br:2:0:0:actions'],
+  })
+  manualResume()
+  emitPause(7)
+  const second = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[1] && view.participants.browser.snapshot
+  }, 'second verified stop')
+  await run.continue('browser', second.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+  // Assert
+  assert.equal(run.view().failures.join('; '), '')
+  assert.equal(second.pause.generation, 2)
+  assert.equal(second.source.column, 7)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  const retired = run
+    .view()
+    .events.filter((event) => event.type === 'cdp.adapter-pause-retired')
+  assert.equal(retired.length, 1)
+  const detail = JSON.parse(JSON.stringify(retired[0]?.detail))
+  assert.equal(Number.isInteger(detail.pausedForMs), true)
+  assert.deepEqual(
+    { ...detail, pausedForMs: 'an integer, checked above' },
+    {
+      participant: 'browser',
+      url: 'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts',
+      line: 1,
+      column: 1,
+      functionName: '',
+      hitBreakpoints: ['br:2:0:0:actions'],
+      place: 'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts 1:1',
+      pausedForMs: 'an integer, checked above',
+    },
+  )
+})

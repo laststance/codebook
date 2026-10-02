@@ -45,6 +45,31 @@ export function createBundleVerifier(input: BundleSource) {
         endLine,
       )
     },
+    /**
+     * Maps a generated location of this module back to a line of the sealed original, so a pause can be placed in source terms before any debugger frame exists.
+     * Called by {@link isPauseAtStop} to tell a declared stop's pause from one the debug adapter makes for itself, and by {@link pausePlace} to name where a participant is paused.
+     * @param location - A generated position in this module; a missing column is column 0.
+     * @returns
+     * - The 1-based original line of the nearest mapping at or before the location
+     * - `undefined` before the first mapping, and for a mapping that names another original of the bundle
+     * @example
+     * verifier.originalLine({ lineNumber: 0, columnNumber: 0 }) // => 1
+     */
+    originalLine(
+      location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'>,
+    ): number | undefined {
+      const mapping = sourceMap.findEntry(
+        location.lineNumber,
+        location.columnNumber ?? 0,
+      )
+      // The map answers the nearest earlier mapping, so only a location before the first one has no entry.
+      if (
+        !('originalSource' in mapping) ||
+        !isSameOriginal(mapping.originalSource, originalPath)
+      )
+        return undefined
+      return mapping.originalLine + 1
+    },
     /** Confirms exact source and generated coordinates for the guarded paused inspector. @example verifier.verify(js, tsx, location, 'script-1', 19, 5) */
     verify(
       executed: string,
@@ -85,6 +110,15 @@ export function createBundleVerifier(input: BundleSource) {
         )
       return { ...hashes, scriptId, scriptLocation: location, mapping }
     },
+  }
+}
+
+/** Compares a mapping's original with this module's for {@link createBundleVerifier}; an original that cannot be canonicalized is another one, so a pause handler that asks never throws. @example isSameOriginal('/src/./theme.tsx', '/src/theme.tsx') // true */
+function isSameOriginal(source: string, originalPath: string): boolean {
+  try {
+    return canonicalSource(source) === originalPath
+  } catch {
+    return false
   }
 }
 
