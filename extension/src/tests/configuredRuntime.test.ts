@@ -36,6 +36,34 @@ test('internal browser setup stops do not consume the configured learning pause 
   assert.equal(commands.filter((command) => command === 'continue').length, 1)
 })
 
+test('a required value inspection of an object commits the stop with an object marker and the run continues to completion', async (context) => {
+  // Arrange: the agent asked for value:nextTheme, which is an application object at the pause.
+  const { run, useObjectValue, commands } =
+    await configuredRuntimeHarness(context)
+  useObjectValue()
+  await run.prepare()
+  // Act
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'configured learning pause',
+  )
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(
+    () => run.view().status === 'completed',
+    'configured completion',
+  )
+  await run.stop()
+  // Assert: the pause is not the end of the run; the object's members are not captured facts.
+  assert.deepEqual(snapshot.values['value:nextTheme'], { type: 'object' })
+  assert.deepEqual(
+    snapshot.unavailableValues.map((value) => value.path),
+    ['value:renderLocal'],
+  )
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(commands.filter((command) => command === 'continue').length, 1)
+})
+
 test('VS Code startup cannot hit Codebook’s click breakpoint before the learner input', async (context) => {
   // Arrange: the installed host can report a breakpoint stop while the page hydrates.
   const { run, stopOnStartupWhenOwnedBreakpointPresent, mouse, commands } =

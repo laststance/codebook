@@ -7,6 +7,7 @@ import type { DebugSession } from 'vscode'
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../../configuredStudySchemas'
+import { REPOSITORY_LITERAL_LIMIT_CHARS } from '../../constants'
 import type * as OwnedRepositoryBreakpointModule from '../../ownedRepositoryBreakpoint'
 import type { BundleSource } from '../../repositoryBundle'
 import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
@@ -138,6 +139,7 @@ export async function configuredRuntimeHarness(
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
   let rejectedCapture: string | undefined,
     requiredValueUnavailable = false,
+    requiredValueObject = false,
     requiredValueUndefined = false
   let hideViewportAtPause = false,
     viewportReady = true
@@ -375,10 +377,12 @@ export async function configuredRuntimeHarness(
             result: {
               value: runInNewContext(parameters?.expression ?? '', {
                 nextTheme: requiredValueUnavailable
-                  ? { rejected: true }
-                  : requiredValueUndefined
-                    ? undefined
-                    : 'dark',
+                  ? 'x'.repeat(REPOSITORY_LITERAL_LIMIT_CHARS + 1)
+                  : requiredValueObject
+                    ? { email: 'learner@example.com' }
+                    : requiredValueUndefined
+                      ? undefined
+                      : 'dark',
                 setTheme() {},
                 enabled: false,
                 selection: null,
@@ -735,6 +739,10 @@ export async function configuredRuntimeHarness(
     },
     useUndefinedValue(): void {
       requiredValueUndefined = true
+    },
+    /** Makes the required inspection's path an application object, whose members the capture does not bound. */
+    useObjectValue(): void {
+      requiredValueObject = true
     },
     suppressInputPause(): void {
       emitInputPause = false
