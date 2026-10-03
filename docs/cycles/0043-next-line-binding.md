@@ -259,6 +259,18 @@ On this host (WSL2, Node 24.21.0, pnpm 12.4.2), in this order, each exit 0:
 
 Criterion 14: `extension/fallow-health-baseline.json`, every `extension/src/*Schemas.ts`, the manifest's `contributes` and `extension/skills/` (bundled skill `39f03be0`) are unchanged against `f9ac394`. Health findings: 519 on base and 519 on the branch, none new; no function added by this cycle is among them. Touched functions that were findings before, cyclomatic and cognitive on base and branch: `armStop` 11/12 and 11/12, `inspect` 21/25 and 21/25, `beginAfter` 10/7 and 10/7, `action` 8/4 and 8/4, `prepareOwned` 20/19 and 20/19, the owner's `onResponse` 42/31 and 42/31, `validateConfiguredStudyEvidence` 96/103 and 94/102. `isRefreshedFrameAtStop` reached cyclomatic 5 in a first cut and was split.
 
+### Candidate 1 and the native preparation on the Windows host, 2026-10-03 (in progress)
+
+- Candidate 1: `artifacts/packages/codebook-0.2.26.vsix` (ignored), SHA-256 `b8da1251c19e88f0aedc1613a67feeb68b73a2224b7b8c42251803b4bd4ccd74`, 29 entries, isolated load passed, built from `50ced47` (product source `f234179`), 0.2.26 metadata. Not installed anywhere yet.
+- Private QA folder outside every repository: `/home/murakami/codebook-qa` (WSL).
+  - Database: this user cannot use Docker (not in the `docker` group, `sudo` asks for a password), so the dashboard's `docker compose` service was not used. A user-space PostgreSQL 18.4 (`embedded-postgres` binaries, data in `codebook-qa/pgdata`) listens on `localhost:54320` with the compose file's user, password and database; `pnpm db:seed` created and filled the four tables. The compose file names PostgreSQL 16. Start: `pg_ctl -D pgdata -o "-p 54320 -c listen_addresses=localhost" -l pg.log -w start` with the binaries under `node_modules/@embedded-postgres/linux-x64/native/bin`; stop with `pg_ctl -D pgdata stop`. It is running now.
+  - Dashboard: dependencies installed with its own pnpm 12.6.0; an ignored `.env.local` holds `POSTGRES_URL`, a generated `AUTH_SECRET` and `AUTH_TRUST_HOST=true`. The checkout is still at `1936e41` and clean. Its `.node-version` names 26.10.0; this host has 24.21.0.
+  - Chrome: no Chrome on Windows (Edge only). Chrome for Testing 154.0.8037.92 for Linux is unpacked at `codebook-qa/chrome-linux64/chrome` and starts in WSL; `codebook.chromeExecutable` must point at it (its default is the macOS path).
+  - Desktop control: `node /home/murakami/codebook-qa/wmcp.mjs <Tool> '<json>' [--out file.png]` calls the Windows-MCP server once (Screenshot, Click, Type, Shortcut, Snapshot, App). The display is 3840 × 2160; a screenshot is half that size, so its coordinates are doubled for a click.
+- Editors found on this host (read from key names of their state stores, no secret read): VS Code 1.140.0 for Windows has no GitHub session (no `github.auth` secret), no user extension and has never connected to WSL, so Copilot Chat cannot run until the owner signs in; that is a credential and outside this session's authorization (D045). Cursor 3.23.12 for Windows is signed in and has its WSL remote server installed (`~/.cursor-server`).
+- The extension is a workspace extension with a managed, headless Chrome in the workspace (`hostBrowser.ts`: `browserLaunchLocation: 'workspace'`), so it runs in the WSL extension host. Whether its Cursor route (`cursor.browserView.*`), its setup command and its MCP connection work through Cursor's WSL remote is not known yet; that is the next probe.
+- Next step of this preparation: install candidate 1 into Cursor's WSL remote, open a private QA workspace file on the dashboard (settings `codebook.chromeExecutable`, `codebook.nodeExecutable`), run "Codebook: Set Up AI Chat", then freeze N12's expectations for this host before the first submission.
+
 ## Result and decision
 
 - Result: pending
@@ -267,7 +279,7 @@ Criterion 14: `extension/fallow-health-baseline.json`, every `extension/src/*Sch
 
 ## Next action
 
-- Exact next action: implement L in the order of the engineering review's tasks (the rule and its table; the run's sites and the position test; the owner; the refresh predicate; the deadline texts; the saved-study predicate; the help; the harness fixture and the tests; the controls), then the gates of criterion 13.
+- Exact next action: L is implemented and its gates passed on `f234179` (see "Attempts and evidence"). Continue the native preparation on the Windows host from "Candidate 1 and the native preparation": install candidate 1 into Cursor's WSL remote, open the private QA workspace, run the public setup, freeze N12's expectations for this host and run what the host allows (VS Code's Copilot Chat needs the owner's GitHub sign-in and is NOT RUN until then). Then the records (PROJECT_STATE's AC-LIVE row), the local reviews (CodeRabbit CLI is not installed on this host yet; `open-code-review-delegate` is not among this host's skills), the test timings (T) and `/ship` as 0.2.27.0.
 - Changed files / branch / active processes: this record, D047 and PROJECT_STATE on `codex/cycle-0043-next-line-binding`. No editor, recorder, development server or database container is running.
 - State updated in PROJECT_STATE.md: the active cycle, the assignment (D047), the checkout and the development target's path on this host.
 - Durable decisions updated: D047.
