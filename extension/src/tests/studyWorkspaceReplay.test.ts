@@ -698,6 +698,17 @@ for (const initial of [
           ),
         true,
       )
+      // The line names why the layout was not confirmed (Cycle 0044, 0033-L1), here a grid that never settled.
+      assert.equal(
+        harness.reader
+          .inspect()
+          .view!.errors.some((error) =>
+            error.includes(
+              'arrange the Codebook panes manually. Cause: Error: Timed out waiting for settled reader grid',
+            ),
+          ),
+        true,
+      )
       assert.equal(harness.runtimes.length, 0)
 
       await harness.reader.open()

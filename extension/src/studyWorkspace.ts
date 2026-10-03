@@ -348,6 +348,8 @@ export class StudyWorkspace {
   private recordingActive = false
   private replayViewport?: BrowserViewport
   private replayNeedsReveal = false
+  /** Why the latest {@link rememberLayout} read failed, so the layout line the learner reads names the cause; `undefined` when it settled. */
+  private layoutReceiptFailure?: string
   private replayDelivery: ViewportDeliveryLog = { receipts: [], omitted: 0 }
   /** The replay paint phase in progress, from {@link beginReplayPaint} until its {@link endReplayPaint}. */
   private replayPaint?: { token: object; startedAt: number }
@@ -8118,10 +8120,11 @@ export class StudyWorkspace {
         )
       ) {
         this.layoutReceipt = undefined
+        // The receipt read's own failure (a changed group, a grid that never settled) is the cause; keep it readable instead of replacing it.
         this.report(
           'layout',
           new Error(
-            'The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.',
+            `The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.${this.layoutReceiptFailure ? ` Cause: ${this.layoutReceiptFailure}` : ''}`,
           ),
         )
         return
@@ -8138,6 +8141,7 @@ export class StudyWorkspace {
     retainedGroups: readonly vscode.TabGroup[],
   ): Promise<StudyWorkspace['layoutReceipt']> {
     this.assertLifetime(lifetime)
+    this.layoutReceiptFailure = undefined
     const groups = vscode.window.tabGroups.all.map((group) => ({
       group,
       column: group.viewColumn,
@@ -8184,6 +8188,7 @@ export class StudyWorkspace {
       PRESENTATION_READY_TIMEOUT_MS,
     ).catch((error) => {
       this.assertLifetime(lifetime)
+      this.layoutReceiptFailure = String(error)
       this.report('layout', error)
       return undefined
     })
