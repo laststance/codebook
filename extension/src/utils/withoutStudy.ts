@@ -1,5 +1,5 @@
 /**
- * Lets go of something the reader holds for a saved study once that study was removed; called by {@link StudyWorkspace} for its held archives and its Save learning replay state.
+ * Lets go of something that names a saved study once that study was removed; called by {@link StudyWorkspace} for its held archives and its Save learning replay state, and by {@link withoutStudyReferences} for the ledger's repository return.
  * @param held - What the reader holds, named by its study through `id` or `studyId`.
  * @param studyId - The study that was removed.
  * @returns `undefined` when `held` belongs to that study, otherwise `held` unchanged.

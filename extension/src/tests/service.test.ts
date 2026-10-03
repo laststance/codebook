@@ -12,8 +12,13 @@ import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
+import { studyEvidenceDirectory } from '../utils/studyEvidenceDirectory'
+import { systemTrashName } from '../utils/systemTrashName'
 
 import { ControlledRuntime, createHarness } from './helpers'
+
+// The product names the system Trash the way the host's operating system does; the expected texts follow it, so the suite also holds on Windows ("Recycle Bin").
+const TRASH = systemTrashName()
 
 test('runtime success remains pending or partial until the latest terminal reader checkpoint is saved', async () => {
   // Arrange: the runtime outcome is injected; this tests the product persistence contract, not execution success.
@@ -717,7 +722,7 @@ test('the evidence resources of a run whose saved study the learner removed answ
     const unavailable = (error: unknown): boolean =>
       error instanceof StudyError &&
       error.code === 'EVIDENCE_UNAVAILABLE' &&
-      error.message === 'The learner moved this saved study to the Trash.'
+      error.message === `The learner moved this saved study to the ${TRASH}.`
     assert.ok('text' in eventsBefore)
     await assert.rejects(readResource(service, manifestUri), unavailable)
     await assert.rejects(readResource(service, eventsUri), unavailable)
@@ -733,7 +738,7 @@ test('the evidence resources of a run whose saved study the learner removed answ
     )
     assert.equal(
       service.state(record).historyOutcome.reason,
-      'The learner moved this saved study to the Trash.',
+      `The learner moved this saved study to the ${TRASH}.`,
     )
   } finally {
     await harness.close()
@@ -780,7 +785,7 @@ test('an explanation for a run whose saved study the learner removed is refused 
       (error) =>
         error instanceof StudyError &&
         error.code === 'EVIDENCE_UNAVAILABLE' &&
-        error.message === 'The learner moved this saved study to the Trash.',
+        error.message === `The learner moved this saved study to the ${TRASH}.`,
     )
     assert.equal(saves, 0)
     assert.equal(record.explanationKeys.size, 0)
@@ -1082,5 +1087,35 @@ test('an evidence event recorded after a removed run’s evidence directory left
     )
   } finally {
     await stopped.harness.close()
+  }
+})
+
+// Value: protects=the directory a removal moves as a run's raw evidence is the directory the run really writes it to; fails_when=the service's evidence layout and the removal's derivation drift apart, so a removal moves nothing or another run's evidence (0039-F17a); why_new=both sides were tested against their own literal paths; seam=none
+test('the evidence directory a removal derives for a study is the directory its run writes evidence to', async () => {
+  // Arrange: a real run of the service, whose runtime receives its evidence directory.
+  const harness = await createHarness(),
+    service = harness.service
+  try {
+    const receipt = service.start({
+        instanceId: service.instanceId,
+        profile: PROFILE_ID,
+        configuration: harness.configuration,
+        key: 'evidence-directory',
+      }),
+      record = service.record(receipt)
+    await record.preparation
+    // Act
+    const derived = studyEvidenceDirectory(
+      harness.directory,
+      `${service.instanceId}_${record.id}`,
+    )
+    // Assert
+    assert.equal(derived, harness.runtimes[0]!.evidence.directory)
+    assert.equal(
+      derived,
+      join(harness.directory, service.instanceId, record.id),
+    )
+  } finally {
+    await harness.close()
   }
 })

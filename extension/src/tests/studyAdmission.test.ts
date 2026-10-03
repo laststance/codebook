@@ -12,9 +12,13 @@ import { readResource } from '../resources'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { StudyService } from '../service'
 import { createRecordingObserver } from '../utils/createRecordingObserver'
+import { systemTrashName } from '../utils/systemTrashName'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+
+// The product names the system Trash the way the host's operating system does; the expected texts follow it, so the suite also holds on Windows ("Recycle Bin").
+const TRASH = systemTrashName()
 
 /**
  * Starts one configured run through the real service with a study library and a recording store that share a directory and a limit; the runtime and its application are the controlled harness.
@@ -801,13 +805,13 @@ test('the run resource of a run whose saved study the learner removed reports it
   assert.equal(state.historyOutcome.status, 'unavailable')
   assert.equal(
     state.historyOutcome.reason,
-    'The learner moved this saved study to the Trash.',
+    `The learner moved this saved study to the ${TRASH}.`,
   )
   assert.equal(state.historyOutcome.savedSignature, undefined)
   assert.equal(state.recording.status, 'failed')
   assert.equal(
     state.recording.reason,
-    'The learner moved this saved study to the Trash.',
+    `The learner moved this saved study to the ${TRASH}.`,
   )
   assert.equal(state.recording.contextStatus, 'unavailable')
   assert.equal(
@@ -866,6 +870,49 @@ test('a run refused on a full study library after the Trash refused a removal na
   // Assert
   assert.equal(
     started.record.error?.message,
-    'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run; this editor could not move a saved study to the Trash in this session. Only the learner can change the setting; an editor agent cannot. Existing learning was kept.',
+    `Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run; this editor could not move a saved study to the ${TRASH} in this session. Only the learner can change the setting; an editor agent cannot. Existing learning was kept.`,
+  )
+})
+
+// Value: protects=an agent that publishes a Repository Wiki revision whose link names a deleted saved study is told which study is gone; fails_when=the publish fails with the library's bare "Study archive is unavailable." (0038-F18); why_new=no publish linked a study the library no longer holds; seam=none
+test('publishing a Repository Wiki revision that links a saved study the library no longer holds is refused as an unavailable book that names that study', async (context) => {
+  // Arrange: a published article; its next revision links an observation of a study that is not in the library.
+  const started = await startRunWithStorage(context, 2, 'nothing')
+  const removedStudyId =
+    '33333333-3333-4333-8333-333333333333_44444444-4444-4444-8444-444444444444'
+  // Act
+  const publish = started.service.repository!.publish({
+    bookId: 'interface',
+    expectedRevision: 1,
+    key: 'links-removed-study',
+    document: {
+      title: 'Interface',
+      summary: 'Two citations.',
+      nodes: [
+        {
+          id: 'theme',
+          title: 'Theme',
+          sections: [{ title: 'Theme', text: 'Source-derived explanation.' }],
+          anchors: started.harness.definition.descriptor.anchors,
+          observations: [
+            {
+              studyId: removedStudyId,
+              observationId: 'browser-session:1',
+              sourceHash: 'a'.repeat(64),
+            },
+          ],
+        },
+      ],
+      edges: [],
+    },
+  })
+  // Assert
+  await assert.rejects(
+    publish,
+    (error) =>
+      error instanceof StudyError &&
+      error.code === 'BOOK_UNAVAILABLE' &&
+      error.message ===
+        `Linked saved study ${removedStudyId} is no longer in the study library; it was deleted or never saved.`,
   )
 })

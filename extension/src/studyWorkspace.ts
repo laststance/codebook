@@ -9584,6 +9584,8 @@ export class StudyWorkspace {
   private async forgetRemovedStudy(studyId: string): Promise<void> {
     this.removedStudyIds.add(studyId)
     this.excludeRemovedRun(studyId)
+    // The recording went to the Trash with the study; this window's writer of it is not kept.
+    this.recordings?.release(studyId)
     this.archiveSignatures.delete(studyId)
     this.historyReceipts.delete(studyId)
     this.loadedHistory.delete(studyId)
