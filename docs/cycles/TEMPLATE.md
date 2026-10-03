@@ -46,6 +46,14 @@ Open the actual PNG; metadata or a prompt is not inspection. Use [the evidence t
 
 A read receipt or file's existence cannot satisfy this audit. UNKNOWN requires a concrete inspection action. Update affected rows after implementation/verification.
 
+## Carried defects
+
+Every defect the previous cycle left unfixed, copied in whole from its record under the [cycle rule](../../AGENTS.md#cycle-rule-every-carried-defect-is-fixed-in-the-next-cycle). None is optional; the cycle closes only when every row is closed.
+
+| Source (cycle, finding label) | Fix, or the evidence that closes it | Test that fails without the fix | Closed |
+| --- | --- | --- | --- |
+| | | | |
+
 ## Validation contract
 
 Freeze expectations before evaluating the implementation. Fill versions, actual targets, exact real-project/source binding (identify isolated mechanism-test inputs separately), setup, and commands while planning.
@@ -75,5 +83,6 @@ No observations yet. For each attempt: date, source revision/dirty state, versio
 - Exact next action:
 - Changed files / branch / active processes:
 - State updated in PROJECT_STATE.md:
-- Durable decisions updated:
+- Owner rules stated in the required reads:
+- Defects this cycle leaves unfixed (all go to the next cycle's Issue):
 - At most one next candidate and why (after evidence):

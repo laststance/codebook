@@ -1,6 +1,6 @@
 # Durable decisions
 
-Record the date, source, reason, and affected goal/cycle. Link superseded decisions rather than silently deleting their context. These are decisions, not a task backlog.
+Closed log. D001 to D047 stay because older records cite their numbers; no entry is added after D047. A rule the owner sets is stated in the required read that governs the work ([AGENTS.md](AGENTS.md#authority-and-completion)). Superseded decisions are linked, not deleted. These are decisions, not a task backlog.
 
 > Historical authority: D029 supersedes every earlier ten-reviewer, random-pool, consecutive-pass and reset-to-zero acceptance provision (including earlier goal-continuation, D021/D022/D023/D027 references). Earlier decisions and observations remain historical; their other product and delivery requirements remain in force.
 
