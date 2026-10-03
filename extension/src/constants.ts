@@ -80,6 +80,8 @@ export const MAX_STUDY_OBSERVATIONS = 2
 export const MAX_STUDY_LINKS = 5
 export const DEFAULT_SAVED_STUDY_LIMIT = 64
 export const MAX_SAVED_STUDIES = 256
+// How many replies to pane open requests the reader keeps while a Recording load is in flight; beyond it the oldest is posted at once.
+export const MAX_DEFERRED_OPEN_REPLIES = 32
 // The one sentence for a saved study whose archive is gone or on its way to the Trash: read by the library, the reader and the removal refusals.
 export const STUDY_ARCHIVE_UNAVAILABLE_MESSAGE = 'Study archive is unavailable.'
 // Why a saved study cannot be removed right now; the Study pane shows them beside its button and the host repeats them when it refuses.
