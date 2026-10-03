@@ -1,9 +1,12 @@
 import { z } from 'zod'
 
+/** The one rule for the number a Study pane gives its open request: a positive integer; shared with the reader's message schema. @example openRequestNumberSchema.safeParse(3).success // => true */
+export const openRequestNumberSchema = z.number().int().positive()
+
 // Not strict on purpose: the reader's own message schema decides whether the whole message is valid; this only finds the number to answer.
 const paneOpenRequestSchema = z.object({
   type: z.enum(['history', 'node-history']),
-  openRequest: z.number().int().positive(),
+  openRequest: openRequestNumberSchema,
 })
 
 /** The kind of Saved studies entry a Study pane asked to open, and the number the pane gave that request. @example const request: PaneOpenRequest = { type: 'history', openRequest: 3 } */

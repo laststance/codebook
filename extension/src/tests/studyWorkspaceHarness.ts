@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 import type { RepositorySelection } from '../learnerSchemas'
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
+import type { PlaybackController } from '../playbackController'
 import type {
   PresentationPoseCapture,
   PresentationPoseRestore,
@@ -413,7 +414,8 @@ export async function workspaceHarness(
   const postedMessages: StudyViewMessage[] = []
   // What a webview receives besides Study messages: the reader's replies to a pane's open requests, with the webview that got each.
   const openRequestReplies: {
-    webview: 'context' | 'summary' | 'moments'
+    /** The pane that was answered: `context` for the Study pane's panel, `summary` and `moments` for the two views, and the panel's own view type for any other panel, so a reply to a wrong panel is told apart. */
+    webview: string
     openRequest: number
   }[] = []
   let heldPresentationMessage:
@@ -548,6 +550,8 @@ export async function workspaceHarness(
       ? nativeReaderColumn(options.viewColumn)
       : options?.viewColumn
     const value = {
+      // As the editor's WebviewPanel names it, so a test can find one panel among the native ones.
+      viewType: kind,
       blockInnerFocus: false,
       webview: {
         html: '',
@@ -566,7 +570,7 @@ export async function workspaceHarness(
         ) => {
           if (message.type === 'open-request-settled') {
             openRequestReplies.push({
-              webview: 'context',
+              webview: kind === 'codebook.studyContext' ? 'context' : kind,
               openRequest: message.openRequest,
             })
             return true
@@ -2566,6 +2570,7 @@ export async function workspaceHarness(
     addForeignDraft(column = groups[0]!.viewColumn) {
       const tab = {
         input: new TabInputText(Uri.file(join(harness.directory, 'notes.txt'))),
+        label: 'notes.txt',
         isDirty: true,
       }
       groups.find((group) => group.viewColumn === column)!.tabs.push(tab)
@@ -3168,5 +3173,94 @@ export async function articleRecordingLayoutHarness(
   } catch (error) {
     await harness.close()
     throw error
+  }
+}
+
+type WorkspaceReader = InstanceType<
+  (typeof StudyWorkspaceModule)['StudyWorkspace']
+>
+
+/**
+ * Gathers in one place what a reader test needs from inside the reader and its playback controller to arrange a race or to wait for an awaited outcome, so the tests themselves name no private member.
+ * The webview route ({@link workspaceHarness}'s `receive`) answers nothing to its sender; `receive` here is the same handling, awaited.
+ * @param harness - The reader, and its playback controller when the harness has one.
+ * @example
+ * await readerSeams(harness).receive({ type: 'delete-study', revision, studyId }, 'context')
+ * readerSeams(harness).debuggerReplacement = async () => { throw new Error('The historical debugger did not start.') }
+ */
+export function readerSeams(harness: {
+  reader: WorkspaceReader
+  controller?: PlaybackController
+}) {
+  const reader = harness.reader
+  return {
+    /** Handles one pane message as the webview route does and settles when the reader has handled it. */
+    receive: (message: unknown, origin: 'context' | 'moments'): Promise<void> =>
+      reader['receive'](message, origin),
+    /** Handles one pane message of a given panel through the reply-owing route. */
+    receiveFromPanel: (
+      message: unknown,
+      origin: 'context' | 'moments',
+      panel: unknown,
+    ): Promise<void> =>
+      Reflect.apply(reader['receivePaneMessage'], reader, [
+        message,
+        origin,
+        panel,
+      ]),
+    /** Runs one reader refresh, as the reader's timer does. */
+    refresh: (): Promise<void> => reader['refresh'](),
+    /** Counts the study checkpoints that wait to be written. */
+    queuedStudyWrites: (): number => reader['pendingArchives'].size,
+    /** Says whether the reader holds an error line of one kind. */
+    hasErrorOfKind: (kind: string): boolean => reader['errors'].has(kind),
+    /** Drops the reader's error line of one kind, as the action that retires it does. */
+    dropErrorOfKind: (kind: string): boolean => reader['errors'].delete(kind),
+    isLoading: (): boolean => reader['loading'],
+    isRecordingActive: (): boolean => reader['recordingActive'],
+    isLiveArrangement: (): boolean => reader['liveComposition'],
+    /** Makes one checkpoint of a run, forced as Retry storage and retirement force it. */
+    checkpoint: (
+      ...input: Parameters<WorkspaceReader['checkpoint']>
+    ): Promise<void> => reader['checkpoint'](...input),
+    readSavedArchive: (studyId: string) => reader['readSavedArchive'](studyId),
+    saveSelection: (): Promise<void> => reader['saveSelection'](),
+    /** The reader's step that starts or replaces the historical debugger before a recording load; a test replaces it to hold or fail that load. */
+    get debuggerReplacement(): WorkspaceReader['replaceUnavailableReplayDebugger'] {
+      return reader['replaceUnavailableReplayDebugger'].bind(reader)
+    },
+    set debuggerReplacement(
+      step: WorkspaceReader['replaceUnavailableReplayDebugger'],
+    ) {
+      reader['replaceUnavailableReplayDebugger'] = step
+    },
+    /** The reader's retirement of a shown Node test history; a test replaces it to hold a saved-study choice between its read and its showing. */
+    get nodeHistoryRetirement(): () => Promise<void> {
+      return reader['retireNodeHistorySelection'].bind(reader)
+    },
+    set nodeHistoryRetirement(step: () => Promise<void>) {
+      reader['retireNodeHistorySelection'] = step
+    },
+    /** The reader's storage initialisation, the first step of an open; a test replaces it to hold an open in progress. */
+    get initialization(): () => Promise<void> {
+      return reader['initialize'].bind(reader)
+    },
+    set initialization(step: () => Promise<void>) {
+      reader['initialize'] = step
+    },
+    /** The mark a close in progress sets. */
+    get isClosing(): boolean {
+      return reader['closing']
+    },
+    set isClosing(closing: boolean) {
+      reader['closing'] = closing
+    },
+    /** Saves a playback position the way the controller does when playback is left. */
+    savePlaybackPosition: (
+      ...input: Parameters<PlaybackController['dependencies']['save']>
+    ): Promise<void> => harness.controller!['dependencies'].save(...input),
+    /** Reports a playback change to the reader, as the controller does on every state change. */
+    reportPlaybackChange: (): void =>
+      harness.controller!['dependencies'].changed(),
   }
 }

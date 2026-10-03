@@ -1,13 +1,6 @@
+import { assertOwnedProcessGroup } from './assertOwnedProcessGroup'
+import { isUnreapedProcessGroupError } from './isUnreapedProcessGroupError'
 import { systemErrorCode } from './systemErrorCode'
-
-/**
- * Error codes that mean the signal had no member to reach: the group is gone (`ESRCH`), or, on macOS, it holds only exited members that their
- * parent has not reaped yet (`EPERM`).
- */
-const NO_MEMBER_TO_SIGNAL_ERROR_CODES: ReadonlySet<string> = new Set([
-  'ESRCH',
-  'EPERM',
-])
 
 /**
  * Sends a signal to every member of an owned process group and treats a group with nobody left to receive it as already released.
@@ -17,7 +10,8 @@ const NO_MEMBER_TO_SIGNAL_ERROR_CODES: ReadonlySet<string> = new Set([
  *
  * @param processGroup - Process group id, the pid of the detached group leader.
  * @param signal - The signal to deliver.
- * @throws Any failure other than "no member could receive the signal".
+ * @throws A `RangeError` for a group id that is not an integer greater than 1, and any failure other than "no member could receive the signal": the
+ * group is gone (`ESRCH`) or, on macOS, holds only exited members not reaped yet (`EPERM`, see {@link isUnreapedProcessGroupError}).
  * @example
  * ```ts
  * signalProcessGroup(child.pid, 'SIGTERM')
@@ -27,10 +21,14 @@ export function signalProcessGroup(
   processGroup: number,
   signal: NodeJS.Signals,
 ): void {
+  assertOwnedProcessGroup(processGroup)
   try {
     process.kill(-processGroup, signal)
   } catch (error) {
-    if (!NO_MEMBER_TO_SIGNAL_ERROR_CODES.has(systemErrorCode(error)))
+    if (
+      systemErrorCode(error) !== 'ESRCH' &&
+      !isUnreapedProcessGroupError(error)
+    )
       throw error
   }
 }

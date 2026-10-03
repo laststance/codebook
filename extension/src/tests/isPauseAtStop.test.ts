@@ -28,6 +28,8 @@ const pauseAt = (
 const stopOnLine23: PauseStopTarget = {
   script: { scriptId: '9' },
   source: { line: 23 },
+  // The rule of a stop whose citation ends on its declared line: no other line may be its binding.
+  acceptsBoundLine: (line) => line === 23,
   verifier: {
     originalLine: (location) =>
       location.lineNumber === 32

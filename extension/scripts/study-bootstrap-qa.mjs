@@ -77,6 +77,8 @@ async function command(arguments_, label) {
 
 /** Exercises initial paint and replacement without host state, then releases an actual typed product model. @example await check(page, options) */
 async function check(page, options) {
+  /** Derives a Study message's revision from the first message's by its distance in the flow, so no case carries a bare revision number of its own. @example revisionAt(1) // the second message's revision */
+  const revisionAt = (step) => options.message.revision + step
   const errors = []
   page.on('pageerror', (error) => errors.push(String(error)))
   page.setDefaultTimeout(5_000)
@@ -186,7 +188,7 @@ async function check(page, options) {
           await page.setViewportSize({ width: 260, height: 750 })
           const observed = {
             ...options.message,
-            revision: 2,
+            revision: revisionAt(1),
             liveState: 'paused',
             liveTitle: 'Repository operation',
             model: {
@@ -215,7 +217,7 @@ async function check(page, options) {
                 message.type === 'rendered' && message.revision === 2,
             ),
           )
-          await publish({ ...observed, revision: 3 })
+          await publish({ ...observed, revision: revisionAt(2) })
           await page.waitForFunction(() =>
             window.sent.some(
               (message) =>
@@ -253,7 +255,7 @@ async function check(page, options) {
               !revealed.retiredModeSelector,
           })
           await page.evaluate(() => window.scrollTo(0, 0))
-          await publish({ ...observed, revision: 4 })
+          await publish({ ...observed, revision: revisionAt(3) })
           await page.waitForFunction(() =>
             window.sent.some(
               (message) =>
@@ -266,7 +268,7 @@ async function check(page, options) {
           })
           const longExplanation = {
             ...observed,
-            revision: 5,
+            revision: revisionAt(4),
             model: {
               ...observed.model,
               observation: {
@@ -333,7 +335,7 @@ async function check(page, options) {
       await page.setViewportSize({ width: 600, height: 800 })
       const replay = {
         ...options.message,
-        revision: 6,
+        revision: revisionAt(5),
         contentTab: 'recording',
         moments: [4000, 1000, 9000].map((elapsedMs, index) => ({
           id: `recorded-${index}`,
@@ -343,7 +345,7 @@ async function check(page, options) {
           at: '2026-09-27T00:00:00.000Z',
         })),
         recording: {
-          revision: 7,
+          revision: revisionAt(6),
           mode: 'paused',
           readiness: 'ready',
           presentedMs: 2000,
@@ -815,7 +817,7 @@ async function check(page, options) {
       // Arrange: the Node history reader alone, with its selected stop shown by the native session.
       const nodeReader = {
         ...options.message,
-        revision: 6,
+        revision: revisionAt(5),
         nodeHistoryEventCount: 1,
         nodeHistory: {
           header: { studyId: 'node-study' },
@@ -1114,7 +1116,7 @@ async function check(page, options) {
       }
       const learning = {
         ...replay,
-        revision: 8,
+        revision: revisionAt(7),
         recording: { ...replay.recording, learningSummary },
         model: {
           ...replay.model,
@@ -1290,7 +1292,7 @@ async function check(page, options) {
       await page.locator('[data-summary-step="derive"]').focus()
       await publish({
         ...learning,
-        revision: 9,
+        revision: revisionAt(8),
         recording: { ...learning.recording, presentedMs: 6000 },
       })
       cases.push({
@@ -1304,7 +1306,7 @@ async function check(page, options) {
       })
       await publish({
         ...learning,
-        revision: 10,
+        revision: revisionAt(9),
         recording: {
           ...learning.recording,
           readiness: 'loading',
@@ -1319,7 +1321,7 @@ async function check(page, options) {
             .isDisabled()) &&
           (await page.locator('[data-summary-step="derive"]').isDisabled()),
       })
-      await publish({ ...replay, revision: 11 })
+      await publish({ ...replay, revision: revisionAt(10) })
       cases.push({
         name: 'switching to older history hides previous learning material',
         passed:
@@ -1330,7 +1332,7 @@ async function check(page, options) {
       await page.setViewportSize({ width: 1200, height: 180 })
       await publish({
         ...options.message,
-        revision: 6,
+        revision: revisionAt(5),
         contentTab: 'recording',
         playbackPanelVisible: true,
         repositoryArticleAvailable: true,
@@ -1342,7 +1344,7 @@ async function check(page, options) {
           recordingSave: { status: 'finalized', contextStatus: 'saved' },
         },
         recording: {
-          revision: 7,
+          revision: revisionAt(6),
           mode: 'paused',
           readiness: 'ready',
           cleared: false,
@@ -1392,7 +1394,7 @@ async function check(page, options) {
       })
       await publish({
         ...options.message,
-        revision: 7,
+        revision: revisionAt(6),
         contentTab: 'recording',
         playbackPanelVisible: true,
         errors: [
@@ -1401,7 +1403,7 @@ async function check(page, options) {
           ),
         ],
         recording: {
-          revision: 7,
+          revision: revisionAt(6),
           mode: 'paused',
           readiness: 'ready',
           cleared: false,
@@ -1613,7 +1615,7 @@ async function check(page, options) {
       recordingSave: { status: 'finalized', contextStatus: 'saved' },
     },
     recording: {
-      revision: 7,
+      revision: revisionAt(6),
       mode: 'paused',
       readiness: 'ready',
       cleared: false,
@@ -2029,6 +2031,165 @@ async function check(page, options) {
       refusalWithStorageError.retryVisible,
   })
   await page.screenshot({ path: `${options.output}/run-refusal.png` })
+
+  // The only saved study leaves the library: the list shows its placeholder instead of a blank.
+  await library([shownStudy], shownStudy.id)
+  const beforeLastStudyLeft = await removalControl()
+  await library([], undefined)
+  const afterLastStudyLeft = await removalControl()
+  cases.push({
+    name: 'after the only saved study left the library the list shows No saved study yet instead of a blank',
+    actual: { beforeLastStudyLeft, afterLastStudyLeft },
+    passed:
+      beforeLastStudyLeft.chosen === shownStudy.id &&
+      afterLastStudyLeft.chosen === '' &&
+      afterLastStudyLeft.shownText === 'No saved study yet' &&
+      !afterLastStudyLeft.buttonVisible,
+  })
+
+  // An earlier refusal for the same study is still shown when the learner asks again: it does not answer the new request.
+  const refusedBefore = {
+    status: 'refused',
+    studyId: shownStudy.id,
+    text: 'Choose Overview or Live to leave Recording before deleting this study.',
+  }
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: refusedBefore,
+  })
+  await deleteButton.focus()
+  await page.keyboard.press('Enter')
+  // A message for another reason still carries the earlier refusal.
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: refusedBefore,
+    busy: true,
+  })
+  const whileNewRequestWaits = await removalControl()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: movingShown,
+  })
+  await library([otherStudy], otherStudy.id, { studyRemoval: movedShown })
+  const afterNewRequestWasAnswered = await removalControl()
+  cases.push({
+    name: 'a refusal that was already shown does not answer a new delete request: focus moves to the list only when the new removal has ended',
+    actual: { whileNewRequestWaits, afterNewRequestWasAnswered },
+    passed:
+      whileNewRequestWaits.focus === 'delete-study' &&
+      afterNewRequestWasAnswered.focus === 'studies' &&
+      afterNewRequestWasAnswered.chosen === otherStudy.id,
+  })
+
+  // A current-format entry whose catalog checkpoint is stale can be repaired by Retry storage; the delete-only note is for files no Retry can repair.
+  const repairableReason =
+      'Catalog unavailable; retry storage. Error: Archive changed after its catalog checkpoint.',
+    repairableStudy = savedStudy('window_run-repair7', {
+      profile: undefined,
+      outcome: 'unverified',
+      metadata: 'unavailable',
+      reason: repairableReason,
+    })
+  await library([shownStudy, repairableStudy, legacyStudy], shownStudy.id, {
+    errors: [repairableReason],
+  })
+  await page.selectOption('#studies', repairableStudy.id)
+  const repairableChosen = await page.evaluate(() => {
+    const shownText = (id) =>
+      document.getElementById(id)?.getClientRects().length
+        ? document.getElementById(id).textContent
+        : null
+    return {
+      deleteOnlyNote: shownText('study-unopenable'),
+      repairNote: shownText('study-repairable'),
+      retryVisible:
+        document.querySelector('[data-action="retry"]').getClientRects()
+          .length > 0,
+    }
+  })
+  await page.selectOption('#studies', legacyStudy.id)
+  const legacyChosen = await page.evaluate(() => {
+    const shownText = (id) =>
+      document.getElementById(id)?.getClientRects().length
+        ? document.getElementById(id).textContent
+        : null
+    return {
+      deleteOnlyNote: shownText('study-unopenable'),
+      repairNote: shownText('study-repairable'),
+    }
+  })
+  cases.push({
+    name: 'a saved study whose catalog checkpoint is stale names Retry storage as its repair, and only a file no Retry can repair gets the delete-only note',
+    actual: { repairableChosen, legacyChosen },
+    passed:
+      repairableChosen.deleteOnlyNote === null &&
+      repairableChosen.repairNote ===
+        "This saved study's catalog checkpoint is missing or out of date. Use Retry storage / refresh to repair it; it can also be deleted." &&
+      repairableChosen.retryVisible &&
+      legacyChosen.deleteOnlyNote ===
+        'This saved study cannot be opened. It can still be deleted.' &&
+      legacyChosen.repairNote === null,
+  })
+
+  // Retry storage is offered for what it can answer: not for a layout notice or a refused control alone.
+  const retryVisible = () =>
+    page.evaluate(
+      () =>
+        document.querySelector('[data-action="retry"]').getClientRects()
+          .length > 0,
+    )
+  const layoutNotice =
+      'Error: Existing editor groups were preserved because the editor did not retain the requested Codebook layout.',
+    controlRefusal =
+      'Error: Close browser replay before opening a separate Node test history.'
+  await library([shownStudy], shownStudy.id, {
+    errors: [layoutNotice],
+    unretryableErrorCount: 1,
+  })
+  const retryBesideLayoutNotice = await retryVisible()
+  await library([shownStudy], shownStudy.id, {
+    errors: [controlRefusal],
+    unretryableErrorCount: 1,
+  })
+  const retryBesideControlRefusal = await retryVisible()
+  await library([shownStudy], shownStudy.id, {
+    errors: [layoutNotice, 'Error: History not saved: disk is read-only'],
+    unretryableErrorCount: 1,
+  })
+  const retryBesideStorageError = await retryVisible()
+  cases.push({
+    name: 'a layout notice or a refused control alone does not offer Retry storage; a storage error beside it does',
+    actual: {
+      retryBesideLayoutNotice,
+      retryBesideControlRefusal,
+      retryBesideStorageError,
+    },
+    passed:
+      !retryBesideLayoutNotice &&
+      !retryBesideControlRefusal &&
+      retryBesideStorageError,
+  })
+
+  // A pane document that is loaded again numbers its open requests above every number of the document before it, so a late reply to an old request names no new one.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await page.selectOption('#studies', otherStudy.id)
+  const lastRequestOfFirstDocument = await lastOpenRequest()
+  await page.waitForTimeout(5)
+  await page.evaluate(() => {
+    window.sent = []
+  })
+  await page.setContent(options.html.context)
+  await page.waitForFunction(() =>
+    window.sent.some((message) => message.type === 'ready'),
+  )
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await page.selectOption('#studies', otherStudy.id)
+  const firstRequestOfSecondDocument = await lastOpenRequest()
+  cases.push({
+    name: 'a pane document that is loaded again numbers its open requests above those of the document before it',
+    actual: { lastRequestOfFirstDocument, firstRequestOfSecondDocument },
+    passed:
+      Number.isInteger(lastRequestOfFirstDocument) &&
+      Number.isInteger(firstRequestOfSecondDocument) &&
+      firstRequestOfSecondDocument > lastRequestOfFirstDocument,
+  })
   return { cases, errors }
 }
 
@@ -2041,7 +2202,21 @@ const report = {
     .digest('hex'),
   cases: [],
 }
-const server = createServer((_request, response) => {
+// The check and its fixtures are served to the page instead of being passed as one command argument: together they exceed the size a single argument may have on Linux (E2BIG).
+const flow = {
+  check: check.toString(),
+  options: {
+    html: { context: studyHtml('context'), moments: studyHtml('moments') },
+    message,
+    output,
+  },
+}
+const server = createServer((request, response) => {
+  if (request.url === '/flow.json') {
+    response.setHeader('Content-Type', 'application/json')
+    response.end(JSON.stringify(flow))
+    return
+  }
   response.setHeader('Content-Type', 'text/html')
   response.end('<!doctype html><title>Codebook bootstrap verification</title>')
 })
@@ -2057,13 +2232,13 @@ try {
     'video-start',
   )
   recording = true
-  // The flow carries both product documents; a file keeps it under Linux's limit for one command-line argument.
-  const flowPath = `${output}/flow.code.js`
-  await writeFile(
-    flowPath,
-    `async page => (${check.toString()})(page, ${JSON.stringify({ html: { context: studyHtml('context'), moments: studyHtml('moments') }, message, output, url: `http://127.0.0.1:${server.address().port}/` })})`,
+  const result = await command(
+    [
+      'run-code',
+      `async page => { const url = ${JSON.stringify(`http://127.0.0.1:${server.address().port}/`)}; await page.goto(url); const flow = await page.evaluate(async () => (await fetch('/flow.json')).json()); return (0, eval)('(' + flow.check + ')')(page, { ...flow.options, url }) }`,
+    ],
+    'flow',
   )
-  const result = await command(['run-code', '--filename', flowPath], 'flow')
   Object.assign(
     report,
     JSON.parse(result.split('### Result\n')[1].split('\n###')[0]),

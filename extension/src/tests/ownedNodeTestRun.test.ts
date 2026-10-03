@@ -26,6 +26,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.declaredStops - Ordered checked stops, all at the same source line as a loop body would declare them.
  * @param options.observedLine - Line the native debugger reports for every breakpoint pause.
  * @param options.duringRetire - Learner action performed while the owned breakpoint is being retired.
+ * @param options.adapterPauseAfterContinue - After each Codebook continue the debug adapter pauses for a breakpoint of its own and resumes it: no `stopped`, only the `continued` it announces for its own resume, before the next declared stop.
  * @param options.exitAfterEntry - The test process exits after the entry pause, as when Vitest skips the cited test.
  * @param options.reportFailure - Error the Vitest report check raises after the process finishes.
  * @param options.reportStatus - Actual assertion result reported by Vitest, independent of the process exit code.
@@ -44,6 +45,7 @@ async function nodeRunHarness({
   declaredStops = 1,
   observedLine = 1,
   duringRetire,
+  adapterPauseAfterContinue,
   exitAfterEntry,
   reportFailure,
   reportStatus = 'passed',
@@ -56,6 +58,7 @@ async function nodeRunHarness({
   declaredStops?: number
   observedLine?: number
   duringRetire?: () => void
+  adapterPauseAfterContinue?: boolean
   exitAfterEntry?: boolean
   reportFailure?: Error
   reportStatus?: 'passed' | 'failed'
@@ -164,6 +167,15 @@ async function nodeRunHarness({
           )
           return {}
         }
+        // js-debug announces the resume of a pause it made for itself (module entry breakpoint, WebAssembly hook) and never a stop for it.
+        if (adapterPauseAfterContinue)
+          queueMicrotask(() =>
+            tracker?.onDidSendMessage?.({
+              type: 'event',
+              event: 'continued',
+              body: { threadId: 1 },
+            }),
+          )
         // Each continuation before a declared stop reaches the line again; the final one lets the test finish.
         if (++continued <= declaredStops)
           queueMicrotask(() => stopped('breakpoint', [OWNED_BREAKPOINT_ID]))
@@ -685,6 +697,38 @@ test('advancing is refused after the learner stepped to a later pause, so it can
 test('Codebook finishes a two-stop Node test even though its own continue requests pass through the pause-revoking tracker', async () => {
   // Arrange
   const harness = await nodeRunHarness({ declaredStops: 2 })
+  try {
+    await harness.run.prepare()
+    harness.calls.length = 0
+
+    // Act
+    await harness.run.advance()
+    const result = await harness.run.complete()
+
+    // Assert
+    assert.deepEqual(harness.calls, [
+      'retire',
+      'arm',
+      'continue',
+      'retire',
+      'continue',
+      'result',
+      'verify',
+    ])
+    assert.equal(result.exitCode, 0)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0044 (0042-ER-limit2): the inspection the review left open. The Node path reads only the debugger's DAP events, where the adapter's own pause shows as one extra `continued` before the next stop; that `continued` finds no accepted pause and drops none.
+test('a pause the debugger makes for itself and resumes between two declared Node stops keeps both stops and the test finishes', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    adapterPauseAfterContinue: true,
+  })
   try {
     await harness.run.prepare()
     harness.calls.length = 0

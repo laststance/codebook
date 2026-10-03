@@ -1,6 +1,7 @@
 import type { Protocol } from 'devtools-protocol'
 
 import {
+  REPOSITORY_PAUSE_URL_LIMIT_CHARS,
   UNANNOUNCED_PAUSE_UNKNOWN_PLACE,
   UNANNOUNCED_PAUSE_UNKNOWN_SCRIPT,
 } from '../constants'
@@ -8,7 +9,7 @@ import {
 import type { PauseStopTarget } from './isPauseAtStop'
 
 /** A declared stop as a place can be named after it: the comparison target plus the repository path the declaration cites. */
-export type PausePlaceStop = PauseStopTarget & {
+export type PausePlaceStop = Omit<PauseStopTarget, 'acceptsBoundLine'> & {
   source: { path: string; line: number }
 }
 
@@ -20,7 +21,7 @@ export type PausePlaceStop = PauseStopTarget & {
  * @param scriptUrls - Every script the participant announced, by script id.
  * @returns
  * - In a declared stop's module, where the sealed map gives a line: `<repository path>:<line>`
- * - In any other script with a known URL: `<script URL> <line>:<column>`, the 1-based generated position the journal's `cdp.pause-observed` also holds
+ * - In any other script with a known URL: `<script URL> <line>:<column>`, the URL cut to {@link REPOSITORY_PAUSE_URL_LIMIT_CHARS}, the 1-based generated position the journal's `cdp.pause-observed` also holds
  * - In a script with no known URL: `an unknown script <line>:<column>`
  * - With an empty stack: `an unknown place`
  * @example
@@ -57,5 +58,6 @@ function generatedPlace(
   location: Protocol.Debugger.Location,
   url: string | undefined,
 ): string {
-  return `${url || UNANNOUNCED_PAUSE_UNKNOWN_SCRIPT} ${location.lineNumber + 1}:${(location.columnNumber ?? 0) + 1}`
+  // A script URL can be of any length; the deadline's sentence keeps a bounded prefix so the saved reason stays within its limit.
+  return `${url?.slice(0, REPOSITORY_PAUSE_URL_LIMIT_CHARS) || UNANNOUNCED_PAUSE_UNKNOWN_SCRIPT} ${location.lineNumber + 1}:${(location.columnNumber ?? 0) + 1}`
 }

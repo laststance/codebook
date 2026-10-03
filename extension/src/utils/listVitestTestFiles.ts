@@ -161,11 +161,12 @@ export async function listVitestTestFiles(
         : { file: entry.file, projectName: entry.projectName },
     )
   } finally {
+    // A release that cannot confirm the group ended keeps the listing's own outcome (its files or the run's reason) instead of replacing it.
+    const isReleased = await (release?.() ?? Promise.resolve()).then(
+      () => true,
+      () => false,
+    )
     // Never remove the listing destination while an owned process may still be writing it.
-    try {
-      await release?.()
-    } finally {
-      await rm(directory, { recursive: true, force: true })
-    }
+    if (isReleased) await rm(directory, { recursive: true, force: true })
   }
 }

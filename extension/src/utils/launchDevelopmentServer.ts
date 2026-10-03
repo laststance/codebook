@@ -12,7 +12,9 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { isEndpointClosed } from '../runtimeSupport/utils/isEndpointClosed'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
+import { isUnreapedProcessGroupError } from './isUnreapedProcessGroupError'
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
+import { systemErrorCode } from './systemErrorCode'
 import { verifyServerInspectorOwnership } from './verifyServerInspectorOwnership'
 
 /** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @example const app = launchDevelopmentServer(target, node, record); await app.ready(signal) */
@@ -215,12 +217,11 @@ export function launchDevelopmentServer(
           try {
             process.kill(-child.pid, 'SIGTERM')
           } catch (cause) {
-            if (!(
-              cause &&
-              typeof cause === 'object' &&
-              'code' in cause &&
-              cause.code === 'ESRCH'
-            ))
+            // A group whose exited members macOS has not reaped yet answers EPERM; the exit wait below decides.
+            if (
+              systemErrorCode(cause) !== 'ESRCH' &&
+              !isUnreapedProcessGroupError(cause)
+            )
               throw cause
           }
           const waitForExit = async (): Promise<void> => {
@@ -236,13 +237,8 @@ export function launchDevelopmentServer(
                   process.kill(-child.pid!, 0)
                   return false
                 } catch (cause) {
-                  if (
-                    cause &&
-                    typeof cause === 'object' &&
-                    'code' in cause &&
-                    cause.code === 'ESRCH'
-                  )
-                    return true
+                  if (systemErrorCode(cause) === 'ESRCH') return true
+                  if (isUnreapedProcessGroupError(cause)) return false
                   throw cause
                 }
               },
@@ -257,12 +253,10 @@ export function launchDevelopmentServer(
             try {
               process.kill(-child.pid, 'SIGKILL')
             } catch (cause) {
-              if (!(
-                cause &&
-                typeof cause === 'object' &&
-                'code' in cause &&
-                cause.code === 'ESRCH'
-              ))
+              if (
+                systemErrorCode(cause) !== 'ESRCH' &&
+                !isUnreapedProcessGroupError(cause)
+              )
                 throw cause
             }
             await waitForExit()

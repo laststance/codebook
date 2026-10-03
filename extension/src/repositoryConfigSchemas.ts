@@ -97,6 +97,45 @@ export const repositoryConditionSchema = z.discriminatedUnion('kind', [
     equals: literalSchema.nullable(),
   }),
 ])
+/** Where a page failure is: a declared condition by its index, or the click target when absent. */
+const conditionIndexSchema = z.number().int().nonnegative().optional()
+/**
+ * What the owned page reports for the declared DOM condition or click target that does not hold, read by {@link ConfiguredBrowserRun} and handed to {@link configuredConditionHint}.
+ * `textDifference` is a relation to the declared literal, never page text, and only a text mismatch may carry it; `candidates` holds counts of the page's controls, never their text, and only a missing click target may carry it. Any other key or value fails the read instead of being dropped.
+ */
+export const configuredDomFailureSchema = z.union([
+  z.strictObject({
+    conditionIndex: conditionIndexSchema,
+    reason: z.literal('text-mismatch'),
+    textDifference: z.literal('surrounding-text').optional(),
+  }),
+  z.strictObject({
+    conditionIndex: conditionIndexSchema,
+    reason: z.literal('click-target-missing'),
+    // How many controls the page holds, as counts only; absent in a page answer that predates it.
+    candidates: z
+      .strictObject({
+        button: z.number().int().nonnegative(),
+        link: z.number().int().nonnegative(),
+        field: z.number().int().nonnegative(),
+      })
+      .optional(),
+  }),
+  z.strictObject({
+    conditionIndex: conditionIndexSchema,
+    reason: z.enum([
+      'invalid-selector',
+      'selector-missing',
+      'selector-not-unique',
+      'not-visible',
+      'attribute-mismatch',
+      'click-target-not-unique',
+      'click-target-not-visible',
+      'click-target-disabled',
+      'click-target-obscured',
+    ]),
+  }),
+])
 const conditionsSchema = z
   .array(repositoryConditionSchema)
   .min(1)
@@ -264,3 +303,4 @@ export type RetainedRepositoryConfiguration = z.infer<
 >
 export type RepositoryInspection = z.infer<typeof repositoryInspectionSchema>
 export type RepositoryCondition = z.infer<typeof repositoryConditionSchema>
+export type ConfiguredDomFailure = z.infer<typeof configuredDomFailureSchema>

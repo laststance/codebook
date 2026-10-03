@@ -533,3 +533,28 @@ test('ten minutes of animated application frames retain every sampled moment wit
   assert.ok(writer.state().pendingHighWaterBytes <= 8_388_608)
   assert.equal(writer.state().pendingBytes, 0)
 })
+
+// Value: protects=a window that records and deletes studies for hours keeps no writer, journal or frame-hash set of a recording that is sealed or removed; fails_when=the store keeps the writer of every run started in the window (0038-F15, 0039-ER-b); why_new=the store never dropped a writer; seam=none
+test('the store keeps a recording’s writer only while it is being written: sealing it or removing its study releases the writer, and the sealed recording still lists as finalized', async (context) => {
+  // Arrange: one recording that is sealed, and one that is still being written when its study is removed.
+  const sealed = await recordingHarness(context),
+    removed = await recordingHarness(context)
+  const sealedWriter = await sealed.store.start(sealed.binding, 10)
+  sealedWriter.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+  await removed.store.start(removed.binding, 10)
+  const keptWhileWriting = [
+    sealed.store['active'].size,
+    removed.store['active'].size,
+  ]
+  // Act
+  await sealedWriter.finish(120)
+  removed.store.release(removed.binding.studyId)
+  // Assert
+  assert.deepEqual(keptWhileWriting, [1, 1])
+  assert.equal(sealed.store['active'].size, 0)
+  assert.equal(removed.store['active'].size, 0)
+  assert.deepEqual(
+    (await sealed.store.list()).map((entry) => [entry.studyId, entry.status]),
+    [[sealed.binding.studyId, 'finalized']],
+  )
+})

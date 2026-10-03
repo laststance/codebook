@@ -19,6 +19,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
+import { pausedIntervalBoundary } from './pausedIntervalBoundary'
 
 const phaseDetailSchema = z.object({
   phase: z.string(),
@@ -114,19 +115,7 @@ export function buildRecordingContext(
   // Seal only intervals with an observed retirement; an open pause supplies its exact receipt point only.
   const pausedIntervals = study.observations.flatMap((observation) => {
     if (!observation.debugger) return []
-    const boundary = events
-      .filter(
-        (event) =>
-          event.elapsedMs >= observation.elapsedMs &&
-          [
-            'continue.accepted',
-            'cdp.resumed',
-            'session.terminated',
-            'run.failed',
-            'cleanup.started',
-          ].includes(event.type),
-      )
-      .sort((left, right) => left.elapsedMs - right.elapsedMs)[0]
+    const boundary = pausedIntervalBoundary(observation, events)
     return boundary
       ? [
           {
