@@ -1,5 +1,5 @@
 export const API_VERSION = '1.5'
-export const EXTENSION_VERSION = '0.2.25'
+export const EXTENSION_VERSION = '0.2.26'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -547,6 +547,12 @@ export const REPOSITORY_DISCOVERY_TIMEOUT_MS = 30_000
 export const REPOSITORY_APPLICATION_LOG_LIMIT_BYTES = 262_144
 export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
 export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200
+export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT = 8
+export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT_CHARS = 512
+/** Where a participant is paused when its pause has an empty stack, in the sentence a deadline adds for a pause no debugger stop announced. */
+export const UNANNOUNCED_PAUSE_UNKNOWN_PLACE = 'an unknown place'
+/** Stands in that sentence for the URL of a script the runtime never announced; the generated position follows it. */
+export const UNANNOUNCED_PAUSE_UNKNOWN_SCRIPT = 'an unknown script'
 export const REPOSITORY_STACK_FRAME_LIMIT = 10
 
 export const REPLAY_DEBUG_TYPE = 'codebook-replay'

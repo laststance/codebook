@@ -613,6 +613,38 @@ export async function configuredRuntimeHarness(
     releases,
     emitPause,
     emitCdpPause,
+    /** Announces a script of the owned page, as the debugger does for every module it parses. */
+    announceScript(scriptId: string, url: string): void {
+      listeners.get('Debugger.scriptParsed')?.({
+        scriptId,
+        url,
+        executionContextId: 1,
+      })
+    },
+    /** Reports a pause at a chosen generated place with no DAP stop, as a pause the adapter makes for itself arrives. */
+    emitCdpPauseAt(place: {
+      scriptId: string
+      lineNumber: number
+      columnNumber: number
+      functionName: string
+      hitBreakpoints: string[]
+    }): void {
+      listeners.get('Debugger.paused')?.({
+        reason: 'other',
+        hitBreakpoints: place.hitBreakpoints,
+        callFrames: [
+          {
+            callFrameId: 'adapter-frame',
+            functionName: place.functionName,
+            location: {
+              scriptId: place.scriptId,
+              lineNumber: place.lineNumber,
+              columnNumber: place.columnNumber,
+            },
+          },
+        ],
+      })
+    },
     setScreenshot(base64: string): void {
       screenshot = base64
     },

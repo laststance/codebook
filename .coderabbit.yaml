@@ -142,7 +142,7 @@ knowledge_base:
       - 'DECISIONS.md'
       - 'DESIGN.md'
       # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
-      - files: 'docs/cycles/0041-live-first-run-both-chats.md'
+      - files: 'docs/cycles/0042-adapter-resumed-pause.md'
         applyTo: '**/*'
       - files: 'docs/designs/codebook.md'
         applyTo: 'extension/src/**'

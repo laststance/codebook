@@ -1,9 +1,9 @@
 # Cycle 0041 — Live first run in both chats: a too-strict text condition says how it differs, and a natural request is run in Copilot Chat and Cursor Agent
 
 Type: product-increment with a bounded native experiment\
-Status: validating\
+Status: closed\
 Result: demonstrated\
-Delivery: committed\
+Delivery: merged\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/76\
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -95,6 +95,15 @@ Order: K1 source (page helper, schema, utility, constants, help) → tests and h
 - The approved PNG was opened with the image viewer again; its SHA-256 is `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`. Observed as before: region 1 (native Run and Debug with Variables, Watch, Call Stack and Breakpoints, the Create Invoice application above the stopped `actions.ts`, the standard chat with the `/codebook` request, the bottom "Recording explanation · Save learning replay"), region 2 (the same composition with "Replay: Creating an invoice", the recorded-state labels, the Learning summary with its sequence diagram and the transport at 00:42 / 02:18 with "Unrecorded interval"), region 3 (the DeepWiki reader with its chapter list, "Relevant source files", the flow diagram, the Ask composer, "Update LLM Wiki" and "Output: project folder / Change location") and the shortcut strip. Region 1 stays this cycle's target; this delivery changes no element.
 - Checkout: `codex/cycle-0041-live-first-run-both-chats` at `da89e01`, clean, not pushed; `origin/main` at `db8d188`. No pull request open; Issue #76 and Goal Issue #1 open. Gap audit: no product source changed since candidate 1 (`a9a9b0b`), so the audit after the cycle (below) stands.
 - Live state at the entry: no editor, recorder, development server or database container running; the protected hashes as in criterion 18's row.
+
+### Entry after compaction, 2026-10-03 (after the merge, during the closure records)
+
+- The working context was compacted at about 04:30 JST, after the merge (`784a9da`), CI on `main`, the hand closure of Issue #76 and the creation of `codex/cycle-0041-closure`. No source was edited and no runtime trial ran after it; the only work was these records.
+- Read in full again from the files on disk: PRODUCT_GOAL (v9), `docs/specs/learning-replay.md`, `llm-wiki.md`, `keyboard-shortcuts.md`, IMPLEMENTATION, PROJECT_STATE (both pages), DESIGN, this record (both pages), DEVELOPMENT, the behavioral design, the test execution guide, the native recording procedure, the local TS rules, the bundled-skill plan and the Cycle 0029 state and interaction review.
+- The approved PNG was opened with the image viewer again; its SHA-256 is `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa`. Observed as before: region 1 (native Run and Debug with Variables, Watch, Call Stack and Breakpoints, the Create Invoice application above the stopped `actions.ts`, the standard chat with the `/codebook` request, the bottom "Recording explanation · Save learning replay"), region 2 (the same composition with "Replay: Creating an invoice", the recorded-state labels, the Learning summary with its sequence diagram and "I understand this step", and the transport at 00:42 / 02:18 with "Unrecorded interval"), region 3 (the DeepWiki reader with its chapter list, "Relevant source files", the flow diagram, the Ask composer, "Update LLM Wiki", "Open in VS Code" and "Output: project folder / Change location") and the shortcut strip with the searchable "Keyboard shortcuts" dialog.
+- Order, stated as it happened: the delivery closure below was drafted from the working summary before these reads were finished. Its statements were then checked against this record, `git` and the CI API (the two trees, the nine files of the release pass, the twelve commits, the job times, the issue states), and one unverified sentence about the new test files' run time was replaced.
+- Checkout: `codex/cycle-0041-closure` at `784a9da` with these three record files changed; `origin/main` at `784a9da`. No pull request open; Issue #76 closed, Goal Issue #1 open. Gap audit: no product source changed since the delivery, so the audit after the cycle (below) stands.
+- Live state at the entry: no editor, recorder, development server or database container running; the protected hashes as in the closure.
 
 ## Source-gap audit and selected increment
 
@@ -373,12 +382,27 @@ Whole-goal route check: all thirteen rows stay short of integrated acceptance. T
 
 ## Handoff
 
-- Delivered to a pull request by `/ship` as 0.2.25.0: the branch holds K1, the listing release fix, their tests and these records. CI, the separate exact-HEAD gate, the merge and the issue's closure follow; their results go into the delivery closure.
+- Delivered as 0.2.25.0 through PR #77 (`784a9da` on `main`): K1, the listing release fix, their tests and the records. The closure below holds CI, the gate, the merge and the issue's closure.
 - Both QA profiles run candidate 1 (0.2.24 metadata). Cursor's QA workspace now has a saved AI chat setup, and Cursor's deployed skill is `22f32374…` (publisher path of the 0.2.24 directory); installing another version there needs the setup again.
+
+## Delivery closure, 2026-10-03
+
+- **Pull request.** [PR #77](https://github.com/laststance/codebook/pull/77), "v0.2.25.0 fix: a text condition compares with whitespace collapsed and says when its element holds more text", opened ready for review from head `88d76bf` (12 commits over `db8d188`, the first of them Cycle 0040's closure record), its description starting with `@coderabbitai ignore` and linking Issue #76 without a closing reference. No image is attached: the cycle adds no element, and the native recordings stay private.
+- **Documentation audit.** One audit of the delivery (`/document-release` as a subagent in its own worktree, started with the red team and the adversarial passes on the reviewed tree `5dd0dbe4`): status current, no file edited, no blocker. The release pass edited documents after it (the changelog, the version literals and the README's package path, this record's delivery section and corrections, the state records, the root README's sentence); those edits were cross-checked by the driving session and are named in the pull request's documentation section. One of two audit attempts was used.
+- **Release metadata.** `VERSION` 0.2.25.0; `extension/package.json`, `EXTENSION_VERSION`, the package test's expected version and the README's package path 0.2.25; the CHANGELOG entry with six known limits, which names DX1's after case under "Changed".
+- **Verification on the release tree before the push.** Against the reviewed tree `5dd0dbe4` only documents and the version literals had changed (nine files, tree `a7d2a40d`). `pnpm --dir extension test` 1,774 of 1,774; `test:package` 192 of 192; the hook test 4 of 4; `typecheck`, `lint`, `format:check`, `dead-code`, `dupes` and `health` exit 0; the emit comparison 648 files without a difference; the health baseline, `test-timings.json` and the bundled skill unchanged.
+- **CI on the head `88d76bf`.** 22 of 22 check runs passed: Test run 37053961765 in twelve jobs of 36 to 55 s, package 37053961746 (102 s), Build 37053961648, TypeCheck 37053961641, Lint 37053961906, Format 37053961814, Fallow 37053961886, the two Socket Security checks and the two Codecov checks (`codecov/patch`, `codecov/project`).
+- **Gate and merge.** The read-only exact-HEAD gate passed in its own step (local, remote and pull-request head equal; not a draft; mergeable and clean; base `main` not moved; no closing reference; 22 of 22 check runs successful; no review thread); the squash merge ran in a separate step with `--match-head-commit` and produced `784a9da` on `main` at 2026-10-02T19:27:10Z. No Codex cloud step (switched off by the owner). The squash commit's tree equals the head's (`a7d2a40d`).
+- **CI on `main` `784a9da`.** 19 of 19 check runs passed: Test run 37054206055 in twelve jobs of 35 to 53 s, package 37054206054 (128 s), Build 37054205921, TypeCheck 37054205885, Lint 37054205878, Format 37054205798, Fallow 37054205845, Socket Security.
+- **Tracking.** Issue #76 stayed open through the merge and was closed by hand at 2026-10-02T19:29:57Z with the native outcomes that are not PASS (N10-a, N10-b, N10-b2), the listing fix that the delivery added, and the carried findings F1 to F10 named. Goal Issue #1 stays open.
+- **Not done by this delivery.** No VSIX of 0.2.25.0 was packaged for installation, nothing was installed or published; both QA profiles still run the pre-release candidate `1aa69857` (0.2.24 metadata, runtime `d198ea6a`), which does not hold the listing fix. No Stage 1, Stage 2 or final acceptance credit.
+- **Protected state after the delivery.** Code settings `0ac38ba2`, VS Code QA profile settings `8d6e64c2`, Cursor settings `80ba41bd`, Cursor codebook skill `22f32374` (the baseline since this cycle's public setup), bundled skill `39f03be0`; the dashboard at `1936e41` with only the untracked `.codebook/`; no listener on port 3000; no recorder process; no database container running. The system Trash is empty at the closure, and this session did not empty it.
+- **Scratch worktrees** `/tmp/c41-base` (`db8d188`, with copied test files and a build), `/tmp/c40-base` (`97dd1e9`, from Cycle 0040) and the documentation audit's worktree under the ignored `.claude/worktrees/` (`4790999`) are left in place: this session does not delete files permanently. Nothing in them is evidence (the base runs' outputs are under the ignored `artifacts/cycle-0041/red/`).
+- **Test job times (D14 of Cycle 0040).** The longest Test job took 55 s on the head and 53 s on `main` (job 2 of 12), under the one-minute target. `test-timings.json` was not recorded again: this delivery added no test to `studyWorkspaceRemoval.test.ts`, and its three new test files (`configuredConditionHint`, `isProcessGroupGone`, `signalProcessGroup`) are unknown to the timings and run once as whole files.
 
 ## Next action
 
-- Exact next action: CI on the pull request head, the separate exact-HEAD gate, the merge in its own step, CI on `main`, Issue #76 closed by hand with the N10 outcomes and the carried findings F1 to F10 named, and the next cycle through `/spec` (first candidate: the failure after a continuation from a server stop, with `/investigate` and `/plan-eng-review`).
-- Changed files / branch / active processes: the release commits on `codex/cycle-0041-live-first-run-both-chats`; no editor, recorder, dev server or database container is running.
-- State updated in PROJECT_STATE.md: the active cycle, the AC-LIVE and AC-SKILL rows and the next action.
+- Exact next action: specify the next cycle through `/spec`. Its first candidate is the failure after a continuation from a server stop (`/investigate` with a prepared declaration that tells the awaited line from the stop armed inside the continuation, and a journal entry that records where the extra pause is; then `/plan-eng-review`); after it F1 and F2 of the delivery review, the stop that binds on the next line, Cursor's setup after an update, and D1 to D5 on the Saved studies control.
+- Changed files / branch / active processes: the delivery is on `main` (`784a9da`); these closure records are on `codex/cycle-0041-closure` (records only) and are carried to `main` by the next cycle's branch; no editor, recorder, dev server or database container is running.
+- State updated in PROJECT_STATE.md: the delivered product, tracking, the active cycle, the AC-LIVE and AC-SKILL rows and the next action.
 - Durable decisions updated: none.
