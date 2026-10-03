@@ -70,6 +70,11 @@ test('a generated page the learner edited by hand stops the update before any ch
       { cause: 'edited-page', paths: ['index.html'], site: 'kept' },
     )
     assert.deepEqual(wiki.chatRequests, [])
+    assert.equal(wiki.warnings.length, 1)
+    assert.match(
+      wiki.warnings[0] ?? '',
+      /^Update not started \(\d{1,2}:\d{2}(?:\s?[AP]M)?\): a generated page was edited by hand \(index\.html\), and the publisher will not overwrite it\. Move your change aside or restore the page, then press Update LLM Wiki again\.$/,
+    )
     assert.equal(
       await readFile(join(wiki.outputDirectory, 'index.html'), 'utf8'),
       '<h1>My own wording</h1>',
@@ -141,6 +146,11 @@ test('a candidate the agent staged in a folder of its own name ends the watched 
         : {},
       { cause: 'learner-file', paths: ['pages/notes.html'], site: 'kept' },
     )
+    assert.equal(wiki.warnings.length, 1)
+    assert.match(
+      wiki.warnings[0] ?? '',
+      /^Update stopped at \d{1,2}:\d{2}(?:\s?[AP]M)?: it would overwrite your own file in the Wiki folder \(pages\/notes\.html\)\. Nothing was replaced\. Move or rename the file, then press Update LLM Wiki again\.$/,
+    )
     assert.equal(await wiki.hashOutput(), hashBefore)
   } finally {
     await wiki.close()
@@ -164,6 +174,11 @@ test('a candidate that exists before the click refuses the start as somebody els
       /^Another editor window or an earlier chat appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written \d{1,2}:\d{2}[^)]*\)\. Wait for it to finish, or delete that folder, then press Update LLM Wiki again\.$/,
     )
     assert.deepEqual(wiki.chatRequests, [])
+    assert.equal(wiki.errors.length, 1)
+    assert.match(
+      wiki.errors[0] ?? '',
+      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: Another editor window or an earlier chat appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written [^)]+\)\. Wait for it to finish, or delete that folder, then press Update LLM Wiki again\. The last usable site is kept\.$/,
+    )
   } finally {
     await wiki.close()
   }
@@ -297,7 +312,7 @@ test('a running Cursor update says the agent is preparing a new site once the re
   }
   try {
     // Act
-    await wiki.clickUpdate().catch(() => {})
+    await wiki.clickUpdate()
 
     // Assert
     assert.deepEqual(
