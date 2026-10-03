@@ -871,6 +871,9 @@ function studyClient(
   /** Names the entry this pane keeps chosen whatever the host shows: one that cannot be opened, else one the host is still opening, so the list never falls back to the study shown before. @example keptChoice() // => 'window_run' */
   const keptChoice = (): string | undefined =>
     unopenableChoice ?? openingChoice?.studyId
+  /** Gives the list's value for an entry: its id while the list holds it, else the empty value, so an entry that left the list shows the placeholder (or no chosen entry) instead of a blank. @example listedOrNone(message, removedStudyId) // => '' */
+  const listedOrNone = (message: StudyViewMessage, studyId: string): string =>
+    message.studies.some((study) => study.id === studyId) ? studyId : ''
   /**
    * Puts the Saved studies list on the entry this pane keeps chosen, else on the entry the host shows, and renders the delete control for it.
    * Called on every Study message after the list's options are set, and when the host answers this pane's open request.
@@ -884,11 +887,10 @@ function studyClient(
   ): void => {
     const studies = element('studies')
     if (!(studies instanceof HTMLSelectElement)) return
-    const chosen = keptChoice() ?? shownStudyId(message) ?? fallback
-    // An entry that left the list is no value of it: the list then shows its placeholder, or no chosen entry, instead of a blank.
-    studies.value = message.studies.some((study) => study.id === chosen)
-      ? chosen
-      : ''
+    studies.value = listedOrNone(
+      message,
+      keptChoice() ?? shownStudyId(message) ?? fallback,
+    )
     renderStudyRemoval(message)
   }
   /** Follows the host's reply to an open request: when it names the request this pane still waits for, the open ended without showing the entry (refused, discarded or failed), so the list returns to the shown study and the delete button is released. A reply to an earlier request changes nothing. @example settleOpenRequest({ type: 'open-request-settled', openRequest: 3 }) */
@@ -985,6 +987,15 @@ function studyClient(
     removal: StudyRemoval,
   ): string | undefined =>
     removal?.studyId === request.studyId ? removal.status : undefined
+  /** Says whether this pane's delete request has not started and has no answer yet: the host reports no refusal for it, or only the refusal that was already shown when the learner asked again, which belongs to the earlier request. @example awaitsOwnAnswer(removalRequest, message.studyRemoval, 'refused') */
+  const awaitsOwnAnswer = (
+    request: NonNullable<typeof removalRequest>,
+    removal: StudyRemoval,
+    ownStatus: string | undefined,
+  ): boolean =>
+    !request.started &&
+    (ownStatus !== 'refused' ||
+      JSON.stringify(removal) === request.outcomeAtRequest)
   /** Says whether focus still rests where the learner left it when asking: on the delete button, or nowhere, in a pane that has focus. @example focusRestsOnDeleteButton() */
   const focusRestsOnDeleteButton = (): boolean =>
     document.hasFocus() &&
@@ -1012,13 +1023,7 @@ function studyClient(
       removalRequest = ownStatus ? { ...request, started: true } : undefined
       return
     }
-    if (!request.started && ownStatus !== 'refused') return
-    // A refusal that was shown before the learner asked again belongs to the earlier request; the host has not answered this one yet.
-    if (
-      !request.started &&
-      JSON.stringify(removal) === request.outcomeAtRequest
-    )
-      return
+    if (awaitsOwnAnswer(request, removal, ownStatus)) return
     removalRequest = undefined
     focusAfterRemoval(ownStatus === 'moved')
   }

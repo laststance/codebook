@@ -93,14 +93,17 @@ export class LearningLibrary {
   /** Lists bounded sidecars without reading image blobs; incomplete catalog writes remain visible. @example await library.list() */
   async list(): Promise<StudyCatalogEntry[]> {
     const entries = await this.entries()
+    // An archive moved to the Trash between the directory read and its stat is no longer listed.
+    const present = (
+      await Promise.all(
+        entries.map(async (entry) => ({
+          entry,
+          stat: await this.archiveStatIfPresent(entry.path),
+        })),
+      )
+    ).flatMap(({ entry, stat }) => (stat ? [{ entry, stat }] : []))
     const catalog = await Promise.all(
-      entries.map(async (entry) => {
-        // An archive moved to the Trash between the directory read and its stat is no longer listed.
-        const stat = await this.archiveStat(entry.path).catch((error) => {
-          if (systemErrorCode(error) === 'ENOENT') return undefined
-          throw error
-        })
-        if (!stat) return []
+      present.map(async ({ entry, stat }) => {
         if (entry.format !== 'v3' && entry.format !== 'v4')
           return {
             id: entry.id,
@@ -141,9 +144,9 @@ export class LearningLibrary {
         }
       }),
     )
-    return catalog
-      .flat()
-      .sort((left, right) => right.savedAt.localeCompare(left.savedAt))
+    return catalog.sort((left, right) =>
+      right.savedAt.localeCompare(left.savedAt),
+    )
   }
 
   /** Prefers v3/v2 by existence, validates full bytes and never hides corruption with older history. @example await library.readStudy(id) */
@@ -572,11 +575,8 @@ export class LearningLibrary {
     if (changes.movedPathCount > 0) return { outcome: 'partly-moved', cause }
     if (changes.ledgerBytesBefore === undefined)
       return { outcome: 'nothing-moved', cause }
-    const path = join(this.directory, PROGRESS_REPOSITORY_FILE)
     try {
-      await (changes.ledgerBytesBefore === null
-        ? unlink(path)
-        : atomicPrivateBytes(path, changes.ledgerBytesBefore))
+      await this.restoreLedger(changes.ledgerBytesBefore)
       return { outcome: 'nothing-moved', cause }
     } catch (error) {
       // No file of the study left the library, so the study is whole; only the ledger lost its two references to it.
@@ -585,6 +585,14 @@ export class LearningLibrary {
         cause: `${cause}; the learner ledger could not be written back: ${thrownMessage(error)}`,
       }
     }
+  }
+
+  /** Puts the repository ledger file back as it was before {@link rewriteLedger}: its bytes, or no file when the rewrite created it. @example await this.restoreLedger(changes.ledgerBytesBefore) */
+  private restoreLedger(bytesBefore: Buffer | null): Promise<void> {
+    const path = join(this.directory, PROGRESS_REPOSITORY_FILE)
+    return bytesBefore === null
+      ? unlink(path)
+      : atomicPrivateBytes(path, bytesBefore)
   }
 
   /** Keeps the paths under the library directory that exist, in the given order, so {@link removeStudy} skips what a study never had or an earlier removal already moved. @example await this.existingPaths(['a.study.v3.json']) // => ['/…/a.study.v3.json'] */
@@ -639,6 +647,16 @@ export class LearningLibrary {
   private optionalStat(path: string) {
     return lstat(path).catch((error) => {
       if (error.code === 'ENOENT') return undefined
+      throw error
+    })
+  }
+
+  /** Gives {@link list} the stat of an archive, or nothing when the archive left the library since the directory was read; any other failure is the archive's own. @example await this.archiveStatIfPresent(path) */
+  private archiveStatIfPresent(
+    path: string,
+  ): Promise<Awaited<ReturnType<LearningLibrary['archiveStat']>> | undefined> {
+    return this.archiveStat(path).catch((error: unknown) => {
+      if (systemErrorCode(error) === 'ENOENT') return undefined
       throw error
     })
   }

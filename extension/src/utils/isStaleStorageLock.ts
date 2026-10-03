@@ -1,7 +1,7 @@
-import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 
 import { isProcessGone } from './isProcessGone'
+import { readRecordedOwner } from './readRecordedOwner'
 
 /**
  * Says whether a storage lock file was left by a writer process that no longer exists on this machine, so {@link withStorageLock} can take the lock over instead of refusing every later write until the file is removed by hand.
@@ -14,17 +14,6 @@ import { isProcessGone } from './isProcessGone'
  * await isStaleStorageLock('/storage/learning/writer.lock') // => true after the editor that wrote it was killed
  */
 export async function isStaleStorageLock(lockPath: string): Promise<boolean> {
-  const owner: unknown = await readFile(lockPath, 'utf8')
-    .then((text) => JSON.parse(text))
-    .catch(() => undefined)
-  if (
-    !owner ||
-    typeof owner !== 'object' ||
-    !('pid' in owner) ||
-    !('hostname' in owner) ||
-    typeof owner.pid !== 'number' ||
-    owner.hostname !== hostname()
-  )
-    return false
-  return isProcessGone(owner.pid)
+  const owner = await readRecordedOwner(lockPath)
+  return owner?.hostname === hostname() && isProcessGone(owner.pid)
 }

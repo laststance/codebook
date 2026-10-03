@@ -1,9 +1,10 @@
-import { lstat, readFile } from 'node:fs/promises'
+import { lstat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 import { CONNECTION_DESCRIPTOR_SUFFIX } from '../constants'
 
 import { isProcessGone } from './isProcessGone'
+import { readRecordedOwner } from './readRecordedOwner'
 import { systemErrorCode } from './systemErrorCode'
 
 /** Says whether a path exists, without following a final link; only a path that is absent counts as absent, one that cannot be inspected may exist. @example await isPresent('/storage/agent/instance.connection.json') // => true */
@@ -16,17 +17,8 @@ function isPresent(path: string): Promise<boolean> {
 
 /** Says whether a connection descriptor names an editor process that no longer exists, so a descriptor left by a crashed window keeps nothing in place; a descriptor without a process id (written by an earlier build) or one that cannot be read may still belong to a running window. @example await isDescriptorOwnerGone('/storage/agent/instance.connection.json') // => true after its window was killed */
 async function isDescriptorOwnerGone(descriptor: string): Promise<boolean> {
-  const owner: unknown = await readFile(descriptor, 'utf8')
-    .then((text) => JSON.parse(text))
-    .catch(() => undefined)
-  if (
-    !owner ||
-    typeof owner !== 'object' ||
-    !('pid' in owner) ||
-    typeof owner.pid !== 'number'
-  )
-    return false
-  return isProcessGone(owner.pid)
+  const owner = await readRecordedOwner(descriptor)
+  return owner !== undefined && isProcessGone(owner.pid)
 }
 
 /**

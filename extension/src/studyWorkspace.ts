@@ -8463,11 +8463,7 @@ export class StudyWorkspace {
     origin: 'context' | 'moments',
     owner: vscode.WebviewPanel | vscode.WebviewView,
   ): Promise<void> {
-    const request = readOpenRequest(value)
-    // The webview is taken now: a panel disposed while its message is handled throws when asked for it, which would replace the message's own error.
-    const webview = request ? owner.webview : undefined
-    // A saved study chosen during Recording opens its recording, whose load outlives the call below.
-    const opensRecording = request?.type === 'history' && this.recordingActive
+    const reply = this.openReplyOwedTo(value, owner)
     let isRejected = false
     try {
       await this.receive(value, origin, owner)
@@ -8477,12 +8473,37 @@ export class StudyWorkspace {
       throw error
     } finally {
       // A rejected message started no Recording load, so its reply is never kept for one.
-      if (request && webview)
+      if (reply)
         this.settleOpenRequest(
-          webview,
-          request.openRequest,
-          opensRecording && !isRejected,
+          reply.webview,
+          reply.openRequest,
+          reply.opensRecording && !isRejected,
         )
+    }
+  }
+
+  /**
+   * Reads, before a pane message is handled, the reply its sender is owed when it asked to open a Saved studies entry by number; called by {@link receivePaneMessage}.
+   * The webview is taken now: a panel disposed while its message is handled throws when asked for it, which would replace the message's own error.
+   * @returns The sender's webview, the request's number and whether the request arrived as a saved-study choice during Recording, whose load outlives the handling; `undefined` for a message that asks for no reply.
+   * @example const reply = this.openReplyOwedTo(message, panel)
+   */
+  private openReplyOwedTo(
+    value: unknown,
+    owner: vscode.WebviewPanel | vscode.WebviewView,
+  ):
+    | {
+        webview: Pick<vscode.Webview, 'postMessage'>
+        openRequest: PaneOpenRequest['openRequest']
+        opensRecording: boolean
+      }
+    | undefined {
+    const request = readOpenRequest(value)
+    if (!request) return undefined
+    return {
+      webview: owner.webview,
+      openRequest: request.openRequest,
+      opensRecording: request.type === 'history' && this.recordingActive,
     }
   }
 
@@ -9121,14 +9142,16 @@ export class StudyWorkspace {
       this.publishChoiceOfClosedReader(request)
       return
     }
-    // A marker cleared by a reader close or a recording load means the reader moved on while the archive was read; its failure adds no line.
-    if (this.pendingHistory !== request) return
-    // A read that failed for a reader that changed meanwhile is discarded without a line; releaseStaleHistoryRequest ends it.
-    if (revision !== this.revision) return
+    if (this.hasMovedOnFromRead(request, revision)) return
     this.pendingHistory = undefined
     this.report('archive', error)
     await this.renderSelection(true, true)
     this.publishChoiceOfClosedReader(request)
+  }
+
+  /** Says whether the reader moved on while a chosen archive was read, so the read's failure adds no line: its marker was cleared by a reader close or a recording load, or the reader's revision changed ({@link releaseStaleHistoryRequest} ends that request). @example if (this.hasMovedOnFromRead(request, revision)) return */
+  private hasMovedOnFromRead(request: number, revision: number): boolean {
+    return this.pendingHistory !== request || revision !== this.revision
   }
 
   /**
