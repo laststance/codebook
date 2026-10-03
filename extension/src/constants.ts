@@ -598,5 +598,7 @@ export const CHROME_LINUX_EXECUTABLE_NAMES = [
 ] as const
 /** `vscode.env.remoteName` of a WSL window: the only remote whose extension host owns the workspace files and processes like a local one. */
 export const WSL_REMOTE_NAME = 'wsl'
+/** How long a replay opened while another window has the desktop focus waits for the Codebook work window to gain focus before answering with the remedy. */
+export const RECORDING_WINDOW_FOCUS_WAIT_MS = 10_000
 /** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
 export const PLAYBACK_SEEK_STOP_SNAP_MS = 1
