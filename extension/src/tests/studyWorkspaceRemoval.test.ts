@@ -5,6 +5,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   unlink,
   utimes,
@@ -3102,7 +3103,7 @@ test('a reader closed while the neighbour of the removed study of a finished liv
 
 // Value: protects=a removal that moved every file says so even when the storage lock cannot be released, and no waiting checkpoint writes the study back; fails_when=the reader reads the lock's failure as "nothing was deleted", keeps the run as a checkpoint candidate and resumes its held-back write; why_new=no reader test made the lock release fail after the moves; seam=the editor's Trash, stubbed at the vscode boundary, which loses the lock file with the last move
 test('a removal whose storage lock cannot be released after every file moved reports the study as moved, names the lock in the reader and writes no waiting checkpoint', async (context) => {
-  // Arrange: a recorded, stopped and saved run; its next study save is held and a newer checkpoint waits behind it. The lock file disappears with the archive's move.
+  // Arrange: a recorded, stopped and saved run; its next study save is held and a newer checkpoint waits behind it. A directory takes the lock file's place with the archive's move, so the lock stays.
   const harness = await recordedReaderHarness()
   try {
     const directory = harness.reader.inspect().libraryDirectory!
@@ -3143,8 +3144,10 @@ test('a removal whose storage lock cannot be released after every file moved rep
     await harness.reader['refresh']()
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     harness.beforeTrashMoves(async (path) => {
-      if (path.endsWith('.study.v3.json'))
+      if (path.endsWith('.study.v3.json')) {
         await rm(join(directory, 'writer.lock'))
+        await mkdir(join(directory, 'writer.lock', 'kept'), { recursive: true })
+      }
     })
     // Act: the learner confirms while the first save is in flight; every file then moves and the lock release fails.
     const removal = requestRemoval(harness, harness.studyId)
@@ -3170,13 +3173,21 @@ test('a removal whose storage lock cannot be released after every file moved rep
     assert.equal(studySaves, 1)
     assert.deepEqual(await studyFiles(harness), [])
     assert.equal(harness.record.historyExcluded, 'removed-by-learner')
-    assert.deepEqual(
-      structuredClone(
-        view.errors.filter((line) => line.includes('storage lock')),
+    const lockLines = view.errors.filter((line) =>
+      line.includes('storage lock'),
+    )
+    assert.equal(lockLines.length, 1)
+    assert.equal(
+      lockLines[0]!.startsWith(
+        'Error: Learning storage lock could not be released after the removal: ',
       ),
-      [
-        `Error: Learning storage lock could not be released after the removal: ENOENT: no such file or directory, unlink '${join(await realpath(directory), 'writer.lock')}'`,
-      ],
+      true,
+    )
+    assert.equal(
+      lockLines[0]!.endsWith(
+        `unlink '${join(await realpath(directory), 'writer.lock')}'`,
+      ),
+      true,
     )
   } finally {
     context.mock.restoreAll()
@@ -3719,6 +3730,99 @@ test('a removal of this window’s run waits for an explanation that is being wr
       "Error: The learner is deleting this run's saved study; wait for it to finish.",
     )
     assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'moved')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a removal that made room but left the storage lock in place names no next step that the lock would refuse; fails_when=the moved line says "Ask your editor agent to start the run again" while `writer.lock` stays (0040-D8); why_new=the next step was only tested with a released lock; seam=the editor's Trash, stubbed at the vscode boundary, which puts a directory in the lock file's place with the last move
+test('a removal that makes room for a refused run but cannot release the storage lock names no next step and keeps the refusal line', async () => {
+  // Arrange: a library full at one study, a run refused on it, and a Trash after whose last move the lock stays.
+  const harness = await workspaceHarness()
+  try {
+    harness.setSavedStudyCapacity(1)
+    const earlier = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const refused = await startRun(harness)
+    await waitUntil(() => refused.record.stopped, 'the end of the refused run')
+    const directory = harness.reader.inspect().libraryDirectory!
+    harness.beforeTrashMoves(async (path) => {
+      if (path.endsWith('.study.v3.json')) {
+        await rm(join(directory, 'writer.lock'))
+        await mkdir(join(directory, 'writer.lock', 'kept'), { recursive: true })
+      }
+    })
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    // Act
+    await requestRemoval(harness, earlier.id)
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(structuredClone(view.studyRemoval), {
+      status: 'moved',
+      studyId: earlier.id,
+      text: 'Saved study moved to the Trash. The library now holds 0 of 1 saved studies.',
+    })
+    assert.equal(
+      view.runRefusal,
+      `The last run did not start: ${FULL_LIBRARY_REFUSAL}`,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study the learner restored from the Trash is treated as a saved study again by the window that removed it, without a reload; fails_when=the window keeps the restored id as removed and drops its position saves (0038-F8); why_new=no test restored a removed study; seam=the editor's Trash, stubbed at the vscode boundary, whose moves the test puts back
+test('a removed study restored from the Trash and listed again by Retry storage has its playback position saved again', async () => {
+  // Arrange: the recording of the study was opened and left; the study is removed, its files are put back from the Trash, and Retry storage lists it again.
+  const harness = await recordedReaderHarness()
+  try {
+    const directory = harness.reader.inspect().libraryDirectory!
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    const bundle = harness.controller.bundle()!
+    await harness.reader['receive'](
+      {
+        type: 'tab',
+        revision: harness.reader.inspect().view!.revision,
+        tab: 'overview',
+      },
+      'context',
+    )
+    await requestRemoval(harness, harness.studyId)
+    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'moved')
+    for (const [index, move] of harness.trashMoves.entries())
+      await rename(
+        join(harness.directory, 'trash', `${index + 1}-${basename(move.path)}`),
+        move.path,
+      )
+    // The restored position file is set aside, so only a new save can write one.
+    await rm(join(directory, 'playback.v1.json'), { force: true })
+    await harness.reader.action('retry')
+    // Act
+    await harness.controller['dependencies'].save({
+      ...bundle,
+      studyId: harness.studyId,
+    })
+    // Assert
+    assert.equal(
+      harness.reader
+        .inspect()
+        .view!.studies.some((entry) => entry.id === harness.studyId),
+      true,
+    )
+    const playback: unknown = JSON.parse(
+      await readFile(join(directory, 'playback.v1.json'), 'utf8'),
+    )
+    assert.equal(
+      playback && typeof playback === 'object' && 'studyId' in playback
+        ? playback.studyId
+        : undefined,
+      harness.studyId,
+    )
   } finally {
     await harness.close()
   }

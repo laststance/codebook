@@ -80,6 +80,8 @@ export const MAX_STUDY_OBSERVATIONS = 2
 export const MAX_STUDY_LINKS = 5
 export const DEFAULT_SAVED_STUDY_LIMIT = 64
 export const MAX_SAVED_STUDIES = 256
+// The one sentence for a saved study whose archive is gone or on its way to the Trash: read by the library, the reader and the removal refusals.
+export const STUDY_ARCHIVE_UNAVAILABLE_MESSAGE = 'Study archive is unavailable.'
 // Why a saved study cannot be removed right now; the Study pane shows them beside its button and the host repeats them when it refuses.
 export const STUDY_REMOVAL_REFUSALS = {
   nothingChosen: 'Choose a saved study to delete.',
@@ -88,7 +90,7 @@ export const STUDY_REMOVAL_REFUSALS = {
   recordingOpen:
     'Choose Overview or Live to leave Recording before deleting this study.',
   studyOpening: 'Wait for the chosen saved study to open.',
-  unavailable: 'Study archive is unavailable.',
+  unavailable: STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
 } as const
 // Where the agent server keeps each instance's connection descriptor and each run's raw evidence, below the extension's global storage.
 export const AGENT_STORAGE_DIRECTORY = 'agent'

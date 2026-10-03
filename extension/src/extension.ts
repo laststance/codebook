@@ -169,10 +169,15 @@ export function activate(
           storageRoot,
           `${service.instanceId}${CONNECTION_DESCRIPTOR_SUFFIX}`,
         )
-        await writeFile(descriptorPath, JSON.stringify(endpoint.descriptor), {
-          mode: PRIVATE_FILE_MODE,
-          flag: 'wx',
-        })
+        // The process id lets another window tell a descriptor left by a crashed window from a running one.
+        await writeFile(
+          descriptorPath,
+          JSON.stringify({ ...endpoint.descriptor, pid: process.pid }),
+          {
+            mode: PRIVATE_FILE_MODE,
+            flag: 'wx',
+          },
+        )
         return { endpoint, environment, descriptorPath, service }
       } catch (error) {
         try {

@@ -4551,7 +4551,7 @@ export class StudyWorkspace {
         },
         save: (bundle) =>
           // A position save that was still queued must not write the playback file of a study that went to the Trash.
-          this.removedStudyIds.has(bundle.studyId) ||
+          this.isRemovedStudy(bundle.studyId) ||
           this.movingStudyId() === bundle.studyId
             ? Promise.resolve()
             : this.recordings!.savePreference({
@@ -9345,7 +9345,11 @@ export class StudyWorkspace {
     }
     this.reportUnreleasedLock(removal.unreleasedLock)
     await this.showAfterCompletedRemoval(studyId, neighbours, choiceGeneration)
-    await this.settleMovedStudy(studyId, evidence.isLeftInPlace)
+    await this.settleMovedStudy(
+      studyId,
+      evidence.isLeftInPlace,
+      removal.unreleasedLock !== undefined,
+    )
   }
 
   /** Tells the learner in the reader's storage line that a completed removal could not release the storage lock; the next successful checkpoint write or Retry storage retires the line, and a write the lock still blocks reports it again. @example this.reportUnreleasedLock(removal.unreleasedLock) */
@@ -9448,6 +9452,14 @@ export class StudyWorkspace {
     )
   }
 
+  /** Says whether this window moved a study to the Trash and no later catalog read lists it again; a study the learner restored from the Trash is saved again without a reload. @example this.isRemovedStudy(studyId) // => false once Retry storage lists the restored study */
+  private isRemovedStudy(studyId: string): boolean {
+    return (
+      this.removedStudyIds.has(studyId) &&
+      !this.catalog.some((entry) => entry.id === studyId)
+    )
+  }
+
   /** Excludes this window's run of a removed study from history, so the service stops reporting saved material for it and stops serving its evidence. @example this.excludeRemovedRun(studyId) */
   private excludeRemovedRun(studyId: string): void {
     const record = this.recordOfStudy(studyId)
@@ -9527,19 +9539,22 @@ export class StudyWorkspace {
    * Both admission refusals are answered by room under a valid limit, so no refusal reason is stored.
    * @param studyId - The study that was moved.
    * @param isEvidenceLeftInPlace - Whether the run's raw evidence stayed because another Codebook window may still use it; the line then says so.
-   * @example await this.settleMovedStudy(studyId, false)
+   * @param isLockLeft - Whether the storage lock could not be released; the run cannot be saved while it stays, so the line names no next step for a refused run.
+   * @example await this.settleMovedStudy(studyId, false, false)
    */
   private async settleMovedStudy(
     studyId: string,
     isEvidenceLeftInPlace: boolean,
+    isLockLeft: boolean,
   ): Promise<void> {
     const usage = await this.library!.usage().catch(() => ({
       count: this.catalog.length,
       limit: undefined,
     }))
-    const answeredRun = libraryHasRoom(usage)
-      ? this.refusedRunAwaitingRoom()
-      : undefined
+    const answeredRun =
+      libraryHasRoom(usage) && !isLockLeft
+        ? this.refusedRunAwaitingRoom()
+        : undefined
     if (answeredRun) this.answeredRunRefusalId = answeredRun.id
     this.settleStudyRemoval({
       status: 'moved',

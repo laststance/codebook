@@ -882,19 +882,11 @@ export class RecordingStore {
       if (!stat) continue
       if (!stat.isDirectory())
         throw new Error('Recording root is not a regular directory.')
-      let count = 0
+      // More recordings than the maximum (one restored from the Trash into a full library) stay listed, so their studies can be deleted.
       for await (const entry of await opendir(directory)) {
-        if (++count > MAX_SAVED_STUDIES)
-          throw new Error(
-            'Recording library exceeds its directory limit; no history was deleted.',
-          )
         if (!entry.isDirectory())
           throw new Error('Recording library contains a non-directory entry.')
         identities.add(studyIdSchema.parse(entry.name))
-        if (identities.size > MAX_SAVED_STUDIES)
-          throw new Error(
-            'Recording library exceeds its directory limit; no history was deleted.',
-          )
       }
     }
     return [...identities]
