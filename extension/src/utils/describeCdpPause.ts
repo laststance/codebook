@@ -3,16 +3,19 @@ import type { Protocol } from 'devtools-protocol'
 import {
   REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT,
   REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT_CHARS,
+  REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS,
+  REPOSITORY_PAUSE_URL_LIMIT_CHARS,
 } from '../constants'
 
 /** Where a CDP pause is, in the generated script: what the run journal keeps about a pause the run may not own. */
 export interface CdpPausePlace {
-  /** The top frame's script URL, `''` when that script was never announced. */
+  /** The top frame's script URL, cut to {@link REPOSITORY_PAUSE_URL_LIMIT_CHARS}; `''` when that script was never announced. */
   url: string
   /** 1-based generated line of the top frame; absent for an empty stack. */
   line?: number
   /** 1-based generated column of the top frame; absent for an empty stack. */
   column?: number
+  /** The top frame's function name, cut to {@link REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS}. */
   functionName?: string
   /** The debugger's own ids of the breakpoints that were hit, bounded in count and length. */
   hitBreakpoints: string[]
@@ -31,7 +34,7 @@ function boundedBreakpointIds(event: Protocol.Debugger.PausedEvent): string[] {
  * @param event - The pause as the debugger reported it.
  * @param scriptUrls - Every script the participant announced, by script id.
  * @returns
- * - With a call frame: its script URL, 1-based generated position, function name and the bounded hit breakpoint ids
+ * - With a call frame: its bounded script URL, 1-based generated position, bounded function name and the bounded hit breakpoint ids
  * - With an empty stack: an empty URL and the bounded hit breakpoint ids
  * @example
  * describeCdpPause(
@@ -48,10 +51,17 @@ export function describeCdpPause(
   // An empty stack has no place; the hit breakpoints are still worth keeping.
   if (!frame) return { url: '', hitBreakpoints }
   return {
-    url: scriptUrls.get(frame.location.scriptId) ?? '',
+    // A script URL or function name can be of any length; the journal keeps a bounded prefix of each.
+    url: (scriptUrls.get(frame.location.scriptId) ?? '').slice(
+      0,
+      REPOSITORY_PAUSE_URL_LIMIT_CHARS,
+    ),
     line: frame.location.lineNumber + 1,
     column: (frame.location.columnNumber ?? 0) + 1,
-    functionName: frame.functionName,
+    functionName: frame.functionName?.slice(
+      0,
+      REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS,
+    ),
     hitBreakpoints,
   }
 }

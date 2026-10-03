@@ -24,8 +24,9 @@ test('a process group that no longer exists is reported gone', (context) => {
   assert.equal(isGone, true)
 })
 
-test('a process group whose exited members are not reaped yet is not reported gone', (context) => {
+test('a process group whose exited members are not reaped yet is not reported gone on macOS', (context) => {
   // Arrange
+  context.mock.property(process, 'platform', 'darwin')
   context.mock.method(process, 'kill', (): true => {
     throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
   })
@@ -55,4 +56,31 @@ test('a probe failure without a system error name is reported unchanged', (conte
   const probing = () => isProcessGroupGone(4242)
   // Assert
   assert.throws(probing, { message: 'probe interrupted' })
+})
+
+// Cycle 0044 (0041-F3): red while a Linux EPERM probe was read as "not gone yet", so the release waited silently until its timeout.
+test('a probe answered EPERM outside macOS is reported instead of read as a group that is still exiting', (context) => {
+  // Arrange
+  context.mock.property(process, 'platform', 'linux')
+  context.mock.method(process, 'kill', (): true => {
+    throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+  })
+  // Act
+  const probing = () => isProcessGroupGone(4242)
+  // Assert
+  assert.throws(probing, { message: 'kill EPERM', code: 'EPERM' })
+})
+
+// Cycle 0044 (0041-F8 / 0041-OCR1): red while group id 1 was probed, which asks about every process of the user.
+test('probing process group id 1 is refused before any probe is sent', (context) => {
+  // Arrange
+  const probe = context.mock.method(process, 'kill', (): true => true)
+  // Act
+  const probing = () => isProcessGroupGone(1)
+  // Assert
+  assert.throws(probing, {
+    name: 'RangeError',
+    message: 'Process group id 1 does not name one owned process group',
+  })
+  assert.equal(probe.mock.callCount(), 0)
 })

@@ -529,9 +529,15 @@ export const REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES = 100_000
 export const REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS = 4_194_304
 export const REPOSITORY_BINDING_HINT_EDGE_LINES = 20
 export const REPOSITORY_BINDING_HINT_NEAR_LINES = 40
+/** Begins the hint of a click target that matched no element; the page's control counts follow when it reported them. */
+export const CLICK_TARGET_MISSING_HINT =
+  ' The action selector matched no element on the page.'
+/** Ends that hint with what the agent can do without seeing the page. */
+export const CLICK_TARGET_MISSING_REMEDY_HINT =
+  " Read the component's source for the control's tag, id, name or attributes and declare a browser-native CSS selector that matches exactly one element; check entryPath when the page holds no such control."
 /** Appended to every timed-out `text` condition: the comparison rule, which the agent cannot read from the failure reason. Each hint begins with one space because it follows the reason's period. */
 export const TEXT_CONDITION_RULE_HINT =
-  " A text condition compares the element's whole text, child elements included, with whitespace collapsed."
+  " A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied."
 /** Added for a before `text` condition whose element holds the expected text beside other text; a visible condition is enough when only presence matters. */
 export const TEXT_BESIDE_OTHER_TEXT_BEFORE_HINT =
   ' Here the element holds the expected text beside other text; use a visible condition, or a selector whose element holds only that text.'
@@ -559,11 +565,26 @@ export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
 export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT = 8
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT_CHARS = 512
+/** Bounds a pause's script URL in the journal and in a deadline's place sentence; a URL can be of any length, and the saved study's reason holds at most {@link MAX_UI_TEXT_CHARS}. */
+export const REPOSITORY_PAUSE_URL_LIMIT_CHARS = 512
+/** Bounds a paused frame's function name in the journal. */
+export const REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS = 256
+/** How many pauses away from the expected stop (and how many idle `continued` events) one run journals; past it only their count is kept, so a hook that pauses in a loop cannot use up the journal. */
+export const REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT = 100
+/** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced. */
+export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = 3_000
+/** The same bound while the participant's stop is accepted and its own pause is still awaited: the held pause may then be the announced one, which the adapter never resumes by itself. */
+export const REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS = 1_000
 /** Where a participant is paused when its pause has an empty stack, in the sentence a deadline adds for a pause no debugger stop announced. */
 export const UNANNOUNCED_PAUSE_UNKNOWN_PLACE = 'an unknown place'
 /** Stands in that sentence for the URL of a script the runtime never announced; the generated position follows it. */
 export const UNANNOUNCED_PAUSE_UNKNOWN_SCRIPT = 'an unknown script'
 export const REPOSITORY_STACK_FRAME_LIMIT = 10
+/** Names the bounded wait for an accepted stop's own runtime pause; its timeout text and the test harnesses' substitution of that wait both key on it. */
+export const SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION = 'source-bound CDP stop'
+/** Names the waits before and after the after capture for every pause the debugger made for itself to be resumed. */
+export const ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION =
+  'adapter pause retirement'
 
 export const REPLAY_DEBUG_TYPE = 'codebook-replay'
 export const REPLAY_DEBUG_THREAD_ID = 1

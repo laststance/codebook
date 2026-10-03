@@ -1263,8 +1263,12 @@ export class StudyService {
   state(record: StudyRecord) {
     const runtime = record.runtime?.view()
     const evidenceFailure = record.runtime?.evidence.failure
+    // A runtime failure can quote adapter text of any length; the saved study's reason holds at most MAX_UI_TEXT_CHARS.
+    const runtimeFailure = runtime?.failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
     const terminalReason =
-      record.error?.message ?? evidenceFailure ?? runtime?.failures[0]
+      record.error?.message.slice(0, MAX_UI_TEXT_CHARS) ??
+      evidenceFailure?.slice(0, MAX_UI_TEXT_CHARS) ??
+      runtimeFailure
     const canControl =
       !this.stopping &&
       !record.stopping &&
@@ -1482,7 +1486,16 @@ export class StudyService {
           ? 'not-demonstrated'
           : (runtime?.finalOutcome ?? 'pending-teardown')),
       terminalReason,
-      error: record.error?.describe(),
+      // A failure inside the runtime has no tool error of its own; its text becomes the cause an agent can quote.
+      error:
+        record.error?.describe() ??
+        (runtimeFailure
+          ? new StudyError(
+              'RUNTIME_FAILED',
+              'The run failed in its runtime.',
+              runtimeFailure,
+            ).describe()
+          : undefined),
       cleanupError: record.cleanupError?.describe(),
       cleaned: record.stopped,
       resourcesReleased: runtime?.resourcesReleased ?? record.stopped,

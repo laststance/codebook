@@ -63,3 +63,24 @@ test('a held wait with an abort signal looks until the run is cancelled', async 
   await assert.rejects(waiting, /run stopped/)
   assert.equal(looks, 5)
 })
+
+// Value: protects=a test acting while the wait for a stop's own pause is open and then letting it expire; fails_when=a released hold keeps looking until the run is cancelled; why_new=Cycle 0044 merge of 0042-SR15/SR31 (their tests release the hold) with R9 (the handle had no user before); seam=none
+test('a held wait that the test releases ends as a timeout although its run is not cancelled', async () => {
+  // Arrange
+  const hold = createSourceBoundWaitHold(),
+    cancellation = new AbortController()
+  const held = hold.hold()
+  let looks = 0
+  // Act: the hold is released at the third look.
+  const waiting = hold.wait(
+    () => {
+      if (++looks === 3) held.release()
+      return undefined
+    },
+    'source-bound CDP stop',
+    cancellation.signal,
+  )
+  // Assert
+  await assert.rejects(waiting, /Timed out waiting for source-bound CDP stop/)
+  assert.equal(looks, 3)
+})

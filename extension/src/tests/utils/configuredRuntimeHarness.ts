@@ -20,6 +20,7 @@ import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
+import { debuggerPausedEvent } from './debuggerPausedEvent'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
 
@@ -28,6 +29,8 @@ interface BeforeFailure {
   conditionIndex?: number
   reason: string
   textDifference?: string
+  /** The page's control counts, sent with a missing click target. */
+  candidates?: { button: number; link: number; field: number }
 }
 
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
@@ -116,6 +119,8 @@ export async function configuredRuntimeHarness(
     rejectBinding = false,
     ready = true,
     beforeFailure: BeforeFailure = { conditionIndex: 0, reason: 'not-visible' },
+    afterFailure: BeforeFailure | undefined,
+    afterReadCount = 0,
     inputResolve = (): void => {},
     inputReject = (_error: Error): void => {},
     onClose = (): void => {},
@@ -265,20 +270,15 @@ export async function configuredRuntimeHarness(
     },
   }
   const emitCdpPause = (): void => {
-    listeners.get('Debugger.paused')?.({
-      reason: 'other',
-      hitBreakpoints: ['mapped-source'],
-      callFrames: [
-        {
-          callFrameId: 'selected-frame',
-          location: {
-            scriptId: 'actual',
-            lineNumber: currentLine - 1,
-            columnNumber: currentColumn - 1,
-          },
-        },
-      ],
-    })
+    listeners.get('Debugger.paused')?.(
+      debuggerPausedEvent({
+        callFrameId: 'selected-frame',
+        scriptId: 'actual',
+        lineNumber: currentLine - 1,
+        columnNumber: currentColumn - 1,
+        hitBreakpoints: ['mapped-source'],
+      }),
+    )
   }
   const emitPause = (column = 1, line = 1): void => {
     currentColumn = column
@@ -345,6 +345,16 @@ export async function configuredRuntimeHarness(
       parameters?: { expression?: string; type?: string },
       timeout?: number,
     ) {
+      // After the input, the after conditions answer the failure a test chose, and every read of them is counted.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === afterExpression &&
+        run.view().operation?.inputDispatched
+      ) {
+        afterReadCount++
+        if (afterFailure)
+          return { result: { value: { ready: false, failure: afterFailure } } }
+      }
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
@@ -649,6 +659,20 @@ export async function configuredRuntimeHarness(
     releases,
     emitPause,
     emitCdpPause,
+    /** Sets the source position the debugger reports as the paused top frame, for a pause a test sends in parts. */
+    setPausedFrame(column: number, line = 1): void {
+      currentColumn = column
+      currentLine = line
+    },
+    /** Sends the debugger's `stopped` alone, for a pause the runtime reported earlier. */
+    emitStopped(): void {
+      run.onEvent(selected, {
+        seq: ++requestSequence,
+        type: 'event',
+        event: 'stopped',
+        body: { threadId: 1, reason: 'breakpoint' },
+      })
+    },
     /** Announces a script of the owned page, as the debugger does for every module it parses. */
     announceScript(scriptId: string, url: string): void {
       listeners.get('Debugger.scriptParsed')?.({
@@ -665,21 +689,9 @@ export async function configuredRuntimeHarness(
       functionName: string
       hitBreakpoints: string[]
     }): void {
-      listeners.get('Debugger.paused')?.({
-        reason: 'other',
-        hitBreakpoints: place.hitBreakpoints,
-        callFrames: [
-          {
-            callFrameId: 'adapter-frame',
-            functionName: place.functionName,
-            location: {
-              scriptId: place.scriptId,
-              lineNumber: place.lineNumber,
-              columnNumber: place.columnNumber,
-            },
-          },
-        ],
-      })
+      listeners.get('Debugger.paused')?.(
+        debuggerPausedEvent({ callFrameId: 'adapter-frame', ...place }),
+      )
     },
     setScreenshot(base64: string): void {
       screenshot = base64
@@ -768,6 +780,14 @@ export async function configuredRuntimeHarness(
     failBeforeWith(failure: BeforeFailure): void {
       ready = false
       beforeFailure = failure
+    },
+    /** Makes the after conditions answer this failure on every read after the input, as an owned page whose result never appears does. */
+    failAfterWith(failure: BeforeFailure): void {
+      afterFailure = failure
+    },
+    /** How many times the run read the after conditions after the input. */
+    afterReads(): number {
+      return afterReadCount
     },
     suppressRetirementAck(): void {
       removedAck = false

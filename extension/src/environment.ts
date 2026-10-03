@@ -281,6 +281,9 @@ export async function createEnvironment(
           prerequisites.missing.join('; '),
         )
       control?.signal.throwIfAborted()
+      // A released run gets no further debugger events; keeping it would hold its journal and script maps for the window's life.
+      for (const [id, released] of runs)
+        if (released.view().cleaned) runs.delete(id)
       const run = new ConfiguredBrowserRun({
         directory,
         workspace,

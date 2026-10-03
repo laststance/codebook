@@ -452,6 +452,7 @@ test('the sealed map gives the cited source’s line for a generated location at
   // Arrange: generated 0:4 is line 1 of the cited source, generated line 1 is its line 2, generated line 2 belongs to the bundle's other original.
   const verifier = createBundleVerifier({
     ...bundle,
+    javascript: 'setTheme(otherTheme);\nnext();\nother();',
     sourceMap: JSON.stringify({ ...payload, mappings: 'ICAA;AACA;ADDA' }),
   })
   // Act
@@ -465,6 +466,40 @@ test('the sealed map gives the cited source’s line for a generated location at
   ]
   // Assert
   assert.deepEqual(lines, [1, 1, 2, 2, undefined, undefined])
+})
+
+// Cycle 0044 (0042-SR26 / 0042-OCR1): red while the reader answered the nearest earlier mapping for unmapped generated code, so such a pause counted as the declared stop's with a wrong place.
+test('the sealed map gives no source line for generated code after a segment without an original, on a line without a mapping, or past the end of the module', () => {
+  // Arrange: generated 0:0 is line 1 of the cited source, 0:6 starts a segment without an original, generated line 1 has no mapping, generated line 2 is line 2.
+  const verifier = createBundleVerifier({
+    ...bundle,
+    javascript: 'call();generated();\nunmapped();\nlast();',
+    sourceMap: JSON.stringify({ ...payload, mappings: 'ACAA,M;;AACA' }),
+  })
+  // Act
+  const lines = {
+    mapped: verifier.originalLine({ lineNumber: 0, columnNumber: 3 }),
+    generatedOnlySegment: verifier.originalLine({
+      lineNumber: 0,
+      columnNumber: 8,
+    }),
+    lineWithoutMapping: verifier.originalLine({
+      lineNumber: 1,
+      columnNumber: 3,
+    }),
+    lastMappedLine: verifier.originalLine({ lineNumber: 2, columnNumber: 0 }),
+    pastEndOfLine: verifier.originalLine({ lineNumber: 2, columnNumber: 500 }),
+    pastEndOfModule: verifier.originalLine({ lineNumber: 50, columnNumber: 0 }),
+  }
+  // Assert
+  assert.deepEqual(lines, {
+    mapped: 1,
+    generatedOnlySegment: undefined,
+    lineWithoutMapping: undefined,
+    lastMappedLine: 2,
+    pastEndOfLine: undefined,
+    pastEndOfModule: undefined,
+  })
 })
 
 // Value: protects=the binding rule and the declared-line check telling a comment the development build kept from code; fails_when=a mapping onto a `//` comment of the generated module is reported as a mapped position; why_new=Cycle 0043 N-2 (Next's webpack build maps `// Auth.js error messages…`); seam=none

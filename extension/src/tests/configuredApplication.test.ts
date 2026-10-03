@@ -181,6 +181,62 @@ test('a later stop retries an application signal failure instead of replaying it
   assert.equal(termCount, 2)
 })
 
+// Cycle 0044 (0041-F2): red while the closer accepted only ESRCH, so macOS's EPERM for an exited, unreaped member rejected close() with "kill EPERM".
+test('stopping the application resolves while macOS still answers its exited, unreaped group with EPERM', async (context) => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {}
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: 0,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  context.mock.property(process, 'platform', 'darwin')
+  let unreapedAnswers = 2
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: {
+        env: {},
+        kill(_pid: number, signal: string | number) {
+          // macOS answers EPERM to every signal, signal 0 included, until the exited members are reaped.
+          if (unreapedAnswers > 0) {
+            unreapedAnswers -= 1
+            throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+          }
+          if (signal === 0)
+            throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+          child.emit('exit')
+        },
+      },
+      require(name: string) {
+        return name === 'node:child_process'
+          ? { spawn: () => child }
+          : nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+  const server = exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    () => {},
+  )
+  child.emit('exit')
+  // Act
+  const stopping = server.close()
+  // Assert
+  await assert.doesNotReject(stopping)
+  assert.equal(unreapedAnswers, 0)
+})
+
 test('server inspection is opt-in and waits for complete stderr identity without accepting stdout lookalikes', async () => {
   // Arrange
   const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),

@@ -482,6 +482,135 @@ test('the configured environment routes only owned DAP responses and reveals imm
   assert.equal(instances.length, 1)
 })
 
+// Cycle 0044 (0042-SR1): red while a finished run stayed in the environment's run map for the window's life, with its journal and script maps.
+test('a released configured run is dropped when the next one is created, so the debugger sessions of a finished run are no longer routed', async (context) => {
+  // Arrange: constructor and host effects are controlled; the environment's run map and prerequisite decisions are real.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-environment-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  await writeFile(
+    join(directory, 'product.json'),
+    JSON.stringify({ version: '3.21.13', commit: 'fixture' }),
+  )
+  await mkdir(join(directory, 'node_modules/next/dist/bin'), {
+    recursive: true,
+  })
+  await writeFile(
+    join(directory, 'node_modules/next/dist/bin/next'),
+    'Next fixture',
+  )
+  const filesystem = await import('node:fs/promises'),
+    instances: OwnedRun[] = []
+  let factory: DebugAdapterTrackerFactory | undefined
+  class OwnedRun {
+    readonly id = `configured-run-${instances.length + 1}`
+    readonly activeSessions = new Set<string>()
+    readonly evidence = { record(): void {} }
+    cleaned = false
+    constructor() {
+      instances.push(this)
+    }
+    owner(session: DebugSession) {
+      return session.id === this.id
+    }
+    addSession(): void {}
+    onRequest(): void {}
+    onResponse(): void {}
+    onEvent(): void {}
+    view() {
+      return { status: 'ready', cleaned: this.cleaned, snapshots: [] }
+    }
+    terminated(): void {}
+    fail(): void {}
+    ownsDevelopmentLock() {
+      return undefined
+    }
+    isCleaning() {
+      return false
+    }
+  }
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
+    resolve(__dirname, '../environment.js'),
+    {
+      './configuredBrowserRun': { ConfiguredBrowserRun: OwnedRun },
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/external/node',
+      },
+      'node:fs/promises': { ...filesystem, access: async () => undefined },
+      'node:util': {
+        promisify: () => async (file: string) => ({
+          stdout:
+            file === 'node'
+              ? JSON.stringify({
+                  version: '24.21.0',
+                  executable: '/external/node',
+                })
+              : 'Chrome fixture',
+        }),
+      },
+      vscode: {
+        workspace: {
+          isTrusted: true,
+          workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+          getConfiguration: () => ({
+            get: (_key: string, fallback: string) => fallback,
+          }),
+        },
+        env: { appRoot: directory, appName: 'Cursor' },
+        version: '1.128.0',
+        extensions: { getExtension: () => ({}) },
+        debug: {
+          registerDebugAdapterTrackerFactory: (
+            _kind: string,
+            value: DebugAdapterTrackerFactory,
+          ) => {
+            factory = value
+            return disposable
+          },
+          onDidTerminateDebugSession: () => disposable,
+          onDidChangeActiveDebugSession: () => disposable,
+        },
+      },
+    },
+  )
+  const environment = await boundary.createEnvironment({
+    extensionPath: resolve(__dirname, '../..'),
+  })
+  context.after(() => environment.dispose())
+  const fixture = createConfiguredStudy()
+  const definition = configuredDefinitionSchema.parse({
+    configuration: fixture.configuration,
+    configurationHash: fixture.configurationHash,
+    descriptor: fixture.descriptor,
+  })
+  const session = (id: string): DebugSession => ({
+    id,
+    type: 'pwa-chrome',
+    name: id,
+    workspaceFolder: undefined,
+    configuration: { type: 'pwa-chrome', request: 'launch', name: id },
+    customRequest: async () => ({}),
+    getDebugProtocolBreakpoint: async () => undefined,
+  })
+  await environment.createRuntime(join(directory, 'first'), definition)
+  const routedWhileLive = await factory!.createDebugAdapterTracker(
+    session('configured-run-1'),
+  )
+  // Act: the first run is released, and a second one is created.
+  instances[0]!.cleaned = true
+  await environment.createRuntime(join(directory, 'second'), definition)
+  const routedAfterRelease = await factory!.createDebugAdapterTracker(
+    session('configured-run-1'),
+  )
+  const secondRouted = await factory!.createDebugAdapterTracker(
+    session('configured-run-2'),
+  )
+  // Assert
+  assert.notEqual(routedWhileLive, undefined)
+  assert.equal(routedAfterRelease, undefined)
+  assert.notEqual(secondRouted, undefined)
+})
+
 test('missing Node Chrome and debugger prerequisites identify configuration keys without starting a runtime', async () => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-prerequisite-'))

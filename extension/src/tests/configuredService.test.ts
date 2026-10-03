@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -548,6 +548,68 @@ test('configured explanations retain actual false and null facts while unavailab
   assert.equal(service.state(record).participants.browser.resumable, false)
 })
 
+// Cycle 0044 (0042-R1): red while a run that failed inside its runtime had no error in its resource, so an agent asked for the cause could only quote terminalReason.
+test('a run that fails inside its runtime gives its resource an error whose cause is the failure text', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'runtime-failure',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, key: 'click', action: 'repository-click' })
+  // Act
+  runtimes[0]!.failures.push(
+    'Selected server resumed outside its owned continuation',
+  )
+  runtimes[0]!.status = 'failed'
+  const resource = await readResource(service, receipt.runUri)
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({ code: z.string(), cause: z.string() }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.equal(
+    state.terminalReason,
+    'Selected server resumed outside its owned continuation',
+  )
+  assert.deepEqual(state.error, {
+    code: 'RUNTIME_FAILED',
+    cause: 'Selected server resumed outside its owned continuation',
+  })
+})
+
+// Cycle 0044 (0042-SR3): red while terminalReason carried a runtime failure of any length, which the saved study's 8,192-character reason refuses.
+test('a runtime failure longer than the saved reason limit is cut to that limit in the run resource', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'long-runtime-failure',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, key: 'click', action: 'repository-click' })
+  const longFailure = `The browser is paused at ${'u'.repeat(9_000)} without a debugger stop.`
+  // Act
+  runtimes[0]!.failures.push(longFailure)
+  runtimes[0]!.status = 'failed'
+  const state = service.state(record)
+  // Assert
+  assert.equal(state.terminalReason, longFailure.slice(0, 8_192))
+  assert.equal(state.error?.cause, longFailure.slice(0, 8_192))
+})
+
 test('a repository run exposes the Study link identity separately from its debugger session identity', async (context) => {
   // Arrange
   const { service, configuration } = await configuredServiceHarness(context)
@@ -709,11 +771,11 @@ test('configured help tells an agent that only the next stop is armed and where 
   )
   assert.match(
     contract.sourceBinding,
-    /Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, and never when that line does not run; declare the bound place instead, in a citation that covers it\. Two declared stops that bind on one place fail when the second binds; declare that place once\./,
+    /Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run \(the stop then ends at the 20 second deadline\); declare the bound place instead, in a citation that covers it\. Two declared stops that bind on one place fail when the second binds; declare that place once\./,
   )
   assert.match(
     contract.sourceBinding,
-    /A declared line without a mapped position \(a blank line, or a comment the generated module kept\) fails preparation before input; a blank or comment-only line fails there also when the map is too large to scan completely\./,
+    /A declared line without a mapped position \(a blank line, or a comment the generated module kept\) is accepted where the debugger binds it under the next rule; preparation fails before input only when no later line of the stop's citation can carry a position either\. The sealed map decides that; when it is too large to scan completely, the source text does: a line that is blank or only a comment carries none\./,
   )
   assert.match(
     contract.sequence[2] ?? '',
@@ -725,6 +787,107 @@ test('configured help tells an agent that only the next stop is armed and where 
   )
   assert.doesNotMatch(help.text, /exact position/)
   assert.doesNotMatch(help.text, /first stop of each participant/)
+})
+
+// Cycle 0044 (0042-SR19): red while the help said "Any other binding on another line fails at once" and "an unexpected pause or manual resume invalidates this operation", although a server binding fails about 3 s after its pause and a pause the debugger resumes by itself is retired; one sentence with Group 1's R18 (the pending-registration qualifier).
+test('configured help tells an agent when a binding on another line fails for each participant and that a pause the debugger resumes by itself is retired', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ sourceBinding: z.string(), sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.sourceBinding.includes(
+      'Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run (the stop then ends at the 20 second deadline); declare the bound place instead, in a citation that covers it.',
+    ),
+    true,
+  )
+  assert.doesNotMatch(help.text, /fails at once/)
+  // Cycle 0044 (0041-N10-1b, R3): one rule whatever the map's size; the help no longer says that every declared line without a mapped position fails preparation.
+  assert.equal(
+    contract.sourceBinding.includes(
+      "A declared line without a mapped position (a blank line, or a comment the generated module kept) is accepted where the debugger binds it under the next rule; preparation fails before input only when no later line of the stop's citation can carry a position either. The sealed map decides that; when it is too large to scan completely, the source text does: a line that is blank or only a comment carries none.",
+    ),
+    true,
+  )
+  assert.equal(
+    contract.sequence[3]?.endsWith(
+      "Earlier observations remain immutable. A manual or competing resume of a captured pause, or a second stop the debugger announces, invalidates this operation. A pause the debugger makes for itself away from the next declared stop's bound place and resumes by itself is retired: the journal records it as cdp.adapter-pause-retired with its place and pausedForMs (the first 100 such pauses of a run; the rest are counted), and the run goes on. A pause no stop announced that is resumed only after more than 3 seconds, or after more than 1 second while a stop of that participant is announced and still waits for its own pause, ends the run as a manual or competing resume. A stop announced for a pause that came before its turn (before the input was sent or before the preceding continuation was requested) fails naming that early pause.",
+    ),
+    true,
+  )
+  assert.doesNotMatch(help.text, /an unexpected pause or manual resume/)
+})
+
+// Cycle 0044 (0042-DOC1): red while the deadline place forms and the pause journal fields were documented only in source and CHANGELOG.
+test('configured help tells an agent that a run waits for the debugger’s own pauses, how a deadline names a paused place, and which journal entries record pauses', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.sequence[4]?.includes(
+      'A run does not complete while a pause the debugger made for itself is still open; if it stays open, the run fails at its 20 second deadline. A deadline that expires while a participant is paused with no announced stop adds where, for example "The server is paused at auth.ts:18 without a debugger stop." The place is <repository path>:<line> in a declared stop\'s module, <script URL> <line>:<column> in another announced script, "an unknown script <line>:<column>" in one never announced, and "an unknown place" for an empty stack. The journal records every pause as cdp.pause-observed (url, line, column, functionName, hitBreakpoints, stopIndex, continuation receipts) and every resume as cdp.resumed or cdp.adapter-pause-retired with pausedForMs.',
+    ),
+    true,
+  )
+})
+
+// Cycle 0044 (0041-DOC1): red while only the CHANGELOG said that an after condition already true before input is refused, and the README left the per-phase fix to the help.
+test('configured help and the extension README tell an agent that an after condition already true before the click is refused, and how to fix a condition of each phase', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ initialState: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.initialState.includes(
+      "A condition timeout identifies the failing one-based predicate and its phase without exposing page values: correct a before condition against the fresh page before input, an after condition against the page the action leaves. Codebook also reads action.after just before the click; when the after conditions already hold there, the run ends with 'Configured after conditions were already true before application input' and sends no input, because such a result cannot prove the action caused it; declare an after condition only the action makes true.",
+    ),
+    true,
+  )
+  assert.equal(
+    readme.includes(
+      'A condition timeout names its phase: correct a before condition against the fresh page before input, an after condition against the page the action leaves. Codebook also reads the after conditions just before the click; when they already hold there, the run ends with "Configured after conditions were already true before application input" and sends no input, so declare an after condition only the action makes true.',
+    ),
+    true,
+  )
+})
+
+// Cycle 0044 (0042-DOC2): red while the README labelled its setup section and current preview as 0.2.12 although the manifest is newer.
+test('the extension README names no release other than the manifest version as its current preview', async () => {
+  // Arrange
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+  const manifest = z
+    .object({ version: z.string() })
+    .parse(
+      JSON.parse(await readFile(join(__dirname, '../../package.json'), 'utf8')),
+    )
+  // Act
+  const namedCurrentVersions = [
+    ...readme.matchAll(
+      /existing (\d+\.\d+\.\d+) preview|identified\*\* (\d+\.\d+\.\d+) preview|current [^.]*?\*\*extension (\d+\.\d+\.\d+)/g,
+    ),
+  ].map((match) => match[1] ?? match[2] ?? match[3])
+  // Assert
+  assert.deepEqual(
+    namedCurrentVersions.filter((version) => version !== manifest.version),
+    [],
+  )
 })
 
 test('configured help tells an agent that a continuation whose next stop cannot be armed answers "Continue was not confirmed." and where the run’s reason is read', async (context) => {
@@ -749,7 +912,8 @@ test('configured help tells an agent that a continuation whose next stop cannot 
 })
 
 // Value: protects=an agent that reads the help once knowing what a text condition compares, in both fields that speak about conditions; fails_when=either sentence drifts, or the old "exact literals" wording comes back and contradicts the new rule; why_new=the help named no rule for whitespace and child text; seam=none
-test('configured help tells an agent that a text condition compares the whole text with whitespace collapsed, and what to declare for a button with an icon', async (context) => {
+// Cycle 0044 (0041-F6): red while the help said the text rule without the joined child texts and the characters it does not normalize.
+test('configured help tells an agent that a text condition compares the whole textContent trimmed with whitespace collapsed and child texts joined without a space, and what to declare for a button with an icon', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
   // Act
@@ -761,7 +925,7 @@ test('configured help tells an agent that a text condition compares the whole te
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.inspections.endsWith(
-      " DOM conditions use literals, never patterns, and all conditions must hold: a text condition compares the element's whole text, child elements included, with whitespace collapsed and trimmed on both sides; an attribute condition compares the entire value exactly.",
+      " DOM conditions use literals, never patterns, and all conditions must hold: a text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed on both sides; the texts of child elements are joined without a space, and CSS white-space, zero-width spaces and soft hyphens are not applied; an attribute condition compares the entire value exactly.",
     ),
     true,
   )

@@ -30,6 +30,8 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
   stopped = false
   dispatches = 0
   releases = 0
+  /** Failures the runtime itself reported, as a native coordinator does when an adapter event ends the run; a test pushes one and sets `status` to model that end. */
+  readonly failures: string[] = []
   constructor(
     directory: string,
     readonly definition: ConfiguredDefinition,
@@ -127,7 +129,7 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
       observed: undefined,
       links: [],
       captures: {},
-      failures: [],
+      failures: [...this.failures],
       events: this.evidence.events,
       artifactDirectory: this.evidence.directory,
       activeSessionIds: this.stopped ? [] : ['browser-session'],
