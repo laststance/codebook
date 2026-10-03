@@ -18,6 +18,7 @@ import {
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
+  READER_CLOSE_STORAGE_TIMEOUT_MS,
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
@@ -138,6 +139,7 @@ import {
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
 import { selectStudy } from './utils/selectStudy'
+import { settledWithin } from './utils/settledWithin'
 import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
@@ -596,8 +598,11 @@ export class StudyWorkspace {
     let reason = this.presentationReason
     if (!reason && this.opened && !this.closing && !layoutConfirmed) {
       if (!currentSourceReady)
+        // The reader's own pending recorded presentation is still placing the source: nothing for the learner to recover.
         reason =
-          'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.'
+          this.playback?.state().readiness === 'loading'
+            ? 'The recorded source is opening in its native pane.'
+            : 'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.'
       else if (!matchingColumns)
         reason =
           'The application or source pane is no longer in its Study destination. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
@@ -3580,6 +3585,8 @@ export class StudyWorkspace {
       }
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
+      // A presentation change may have started during the wait.
+      if (origin !== 'presentation') this.assertPresentationIdle()
     }
     const request = ++this.openRequest,
       historyRequest = this.historyRequest
@@ -4375,7 +4382,11 @@ export class StudyWorkspace {
       await this.playback
         ?.settle(undefined, PRESENTATION_READY_TIMEOUT_MS)
         .catch(() => {})
-      await this.playback?.saved()
+      // A storage write that never returns must not keep the reader closing: each wait below is bounded, and the write itself keeps running.
+      await settledWithin(
+        this.playback?.saved(),
+        READER_CLOSE_STORAGE_TIMEOUT_MS,
+      )
       this.dropReplayViewport()
       this.nodeHistoryPlaybackController?.dispose()
       this.nodeHistoryPlaybackController = undefined
@@ -4385,8 +4396,14 @@ export class StudyWorkspace {
       await this.replayDebuggerRetirement
       await this.rendering
       await this.outlineRendering
-      await Promise.allSettled(this.archiveWrites.values())
-      await this.library?.flush()
+      await settledWithin(
+        Promise.allSettled(this.archiveWrites.values()),
+        READER_CLOSE_STORAGE_TIMEOUT_MS,
+      )
+      await settledWithin(
+        this.library?.flush(),
+        READER_CLOSE_STORAGE_TIMEOUT_MS,
+      )
       const tabs = vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)
         .filter((tab) => this.ownsCapturedSourceTab(tab))
@@ -5260,9 +5277,11 @@ export class StudyWorkspace {
   ): Promise<BrowserViewport> {
     if (this.replayViewport) {
       if (this.replayNeedsReveal) {
-        this.replayNeedsReveal = false
-        await this.replayViewport.reveal(signal)
+        const reused = this.replayViewport
+        await reused.reveal(signal)
         signal.throwIfAborted()
+        // Only a completed handshake retires the owed reveal; an abandoned one leaves it to the next request.
+        if (this.replayViewport === reused) this.replayNeedsReveal = false
       }
       return this.replayViewport
     }

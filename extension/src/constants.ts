@@ -107,6 +107,8 @@ export const HORIZONTAL_EDITOR_ORIENTATION = 0
 export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1'
 export const PRESENTATION_PREFERENCE_VERSION = 1
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000
+/** How long closing the reader waits for each pending storage write (saved replay position, archive writes, library queue); a write still pending then keeps running. */
+export const READER_CLOSE_STORAGE_TIMEOUT_MS = 5_000
 export const STUDY_LAYOUT_STABLE_MISMATCH_MS = 750
 export const PRESENTATION_READING_LIMIT_PX = 10_000_000
 export const PRESENTATION_FOCUS_INDEX_LIMIT = 32
