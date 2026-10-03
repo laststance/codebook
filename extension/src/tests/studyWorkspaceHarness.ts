@@ -3299,6 +3299,10 @@ export function readerSeams(harness: {
       ]),
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
+    /** Leaves the reader without a selected study, as the removal of the last study that could be opened does. */
+    selectNoStudy: (): void => reader['selectNoStudy'](),
+    /** The reader's error lines, as its panes show them. */
+    errorLines: (): string[] => [...reader['errors'].values()],
     /** Counts the study checkpoints that wait to be written. */
     queuedStudyWrites: (): number => reader['pendingArchives'].size,
     /** Says whether the reader holds an error line of one kind. */

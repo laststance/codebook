@@ -5332,7 +5332,16 @@ export class StudyWorkspace {
     signal.throwIfAborted()
     this.recordingActive = true
     this.pendingHistory = undefined
-    this.selection = { ...this.selection, studyId, follow: false }
+    // A study this window still holds (a run of this session) is selected with its own item: paired with the item shown before, every reader update until the recording is read failed with "Selected item belongs to another configured article.", and that line stayed.
+    const heldStudy =
+      studyId === this.activeArchive?.id
+        ? this.activeArchive
+        : this.selectedArchive?.id === studyId
+          ? this.selectedArchive
+          : undefined
+    this.selection = heldStudy
+      ? selectStudy(heldStudy, this.selection)
+      : { ...this.selection, studyId, follow: false }
     this.showRecordingLoadingOnLiveViewport()
     const index = await this.recordings!.read(studyId)
     signal.throwIfAborted()
