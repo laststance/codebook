@@ -60,7 +60,7 @@ process.stdin.on('end', () => {
   }
 })
 
-test('Cursor Wiki update refuses a failed Agent response', () => {
+test('a Cursor agent reply that reports an error says the update did not complete and where to read the agent’s own message', () => {
   // Arrange
   const failed = JSON.stringify({
     type: 'result',
@@ -68,9 +68,59 @@ test('Cursor Wiki update refuses a failed Agent response', () => {
     is_error: true,
     result: 'Authentication failed',
   })
+
   // Act / Assert
-  assert.throws(() => parseCursorWikiUpdateResult(failed), /did not complete/)
-  assert.throws(() => parseCursorWikiUpdateResult('not json'), /unreadable/)
+  assert.throws(() => parseCursorWikiUpdateResult(failed), {
+    message:
+      'Cursor Agent ended without completing the update. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.',
+  })
+})
+
+test('a Cursor agent reply that is not the expected envelope says so and what to try', () => {
+  // Act / Assert
+  assert.throws(() => parseCursorWikiUpdateResult('not json'), {
+    message:
+      'Cursor Agent returned a result Codebook could not read. Update again; if it repeats, run the update in Cursor chat.',
+  })
+})
+
+test('a Cursor agent that exits with a code names the code and sends the learner to Cursor chat', async () => {
+  // Arrange
+  const privateHome = await mkdtemp(
+    join(tmpdir(), 'codebook-cursor-update-exit-'),
+  )
+  const projectRoot = join(privateHome, 'project')
+  const binaryDirectory = join(privateHome, '.local', 'bin')
+  await mkdir(projectRoot)
+  await mkdir(binaryDirectory, { recursive: true })
+  await writeFile(
+    join(binaryDirectory, 'cursor-agent'),
+    `#!${process.execPath}
+process.stdin.resume();
+process.stdin.on('end', () => process.exit(3));
+`,
+    { mode: 0o755 },
+  )
+  const previousHome = process.env.HOME
+  process.env.HOME = privateHome
+  try {
+    // Act
+    const failure: unknown = await runCursorWikiUpdate(
+      projectRoot,
+      '/codebook Update LLM Wiki for this opened repository.',
+    ).catch((error: unknown) => error)
+
+    // Assert
+    assert.ok(failure instanceof Error)
+    assert.equal(
+      failure.message,
+      'Cursor Agent stopped with exit code 3 before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.',
+    )
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME
+    else process.env.HOME = previousHome
+    await rm(privateHome, { recursive: true, force: true })
+  }
 })
 
 test('a Cursor agent that runs past its bound is stopped and the failure is named as a timeout', async () => {

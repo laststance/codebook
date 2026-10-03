@@ -27,7 +27,7 @@ export function parseCursorWikiUpdateResult(output: string): string {
     envelope = JSON.parse(output.trim())
   } catch {
     throw new Error(
-      'Cursor Agent returned an unreadable Wiki update result. Inspect the existing Wiki before retrying.',
+      'Cursor Agent returned a result Codebook could not read. Update again; if it repeats, run the update in Cursor chat.',
     )
   }
   if (
@@ -38,7 +38,7 @@ export function parseCursorWikiUpdateResult(output: string): string {
     typeof envelope.result !== 'string'
   )
     throw new Error(
-      'Cursor Agent did not complete the Wiki update. The last published Wiki remains available; inspect its status before retrying.',
+      'Cursor Agent ended without completing the update. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.',
     )
   return envelope.result
 }
@@ -105,18 +105,14 @@ export async function runCursorWikiUpdate(
       stop(timedOut)
     }, timeoutMs)
     const cancellation = cancellationToken?.onCancellationRequested(() =>
-      stop(
-        new Error(
-          'The Wiki update was cancelled. Inspect the last published Wiki before retrying.',
-        ),
-      ),
+      stop(new Error('The Wiki update was cancelled.')),
     )
     child.stdout.on('data', (chunk: Buffer) => {
       outputBytes += chunk.length
       if (outputBytes > WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES) {
         stop(
           new Error(
-            'Cursor Agent exceeded the Wiki update response limit. Inspect the published Wiki before retrying.',
+            'Cursor Agent exceeded the Wiki update response limit and was stopped. Run "/codebook Update LLM Wiki" in Cursor chat instead.',
           ),
         )
         return
@@ -139,7 +135,7 @@ export async function runCursorWikiUpdate(
               'Cursor Agent could not start the Wiki update. Check its installation and retry.',
             )
     })
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timeout)
       if (killTimer) clearTimeout(killTimer)
       cancellation?.dispose()
@@ -148,9 +144,10 @@ export async function runCursorWikiUpdate(
         return
       }
       if (code !== 0) {
+        // A reason says what happened and what to do; the page alone says what was kept.
         reject(
           new Error(
-            'Cursor Agent did not finish the Wiki update. Inspect the last published Wiki and its publication journal before retrying.',
+            `Cursor Agent stopped ${code === null ? `on signal ${signal ?? 'unknown'}` : `with exit code ${code}`} before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.`,
           ),
         )
         return

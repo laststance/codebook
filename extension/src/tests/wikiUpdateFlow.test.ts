@@ -478,7 +478,7 @@ test('a Cursor agent that ends its turn without publishing is a failure that kep
     assert.equal(status.state === 'failed' ? status.site : '', 'kept')
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Cursor Agent finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in the editor chat to see its own message.',
+      'Cursor Agent finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.',
     )
     assert.deepEqual(await readFile(wiki.manifestPath), manifestBefore)
   } finally {
@@ -541,6 +541,48 @@ test('a failure before any state is recorded says the update could not start, wi
       'Codebook could not start the Wiki update: The DeepWiki manifest does not identify this opened project.',
     ])
     assert.equal(wiki.status().state, 'idle')
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('the VS Code update request tells the chat that the publish must match the source within the 15 minute watch', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.deepEqual(wiki.chatRequests, [
+      {
+        name: 'workbench.action.chat.open',
+        query: `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(wiki.manifestPath)} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, and generated.revision is the full commit hash of HEAD. If you cannot publish, say why in your reply and stop. Then report changed pages and citations. Do not start a debugger or application.`,
+      },
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('the Cursor update request carries the same contract but asks for no report nobody would read', async () => {
+  // Arrange
+  const prompts: string[] = []
+  const wiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async (_root, prompt) => {
+      prompts.push(prompt)
+      return 'Updated'
+    },
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.deepEqual(prompts, [
+      `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(wiki.manifestPath)} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, and generated.revision is the full commit hash of HEAD. If you cannot publish, say why in your reply and stop. Do not start a debugger or application.`,
+    ])
   } finally {
     await wiki.close()
   }

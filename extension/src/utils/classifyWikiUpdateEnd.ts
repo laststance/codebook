@@ -114,7 +114,7 @@ export function classifyWikiUpdateEnd(
   // An agent can end its turn without publishing and without an error.
   return {
     state: 'failed',
-    reason: `${agent} finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in the editor chat to see its own message.`,
+    reason: `${agent} finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in ${facts.host === 'cursor' ? 'Cursor chat' : 'the editor chat'} to see its own message.`,
     site,
   }
 }

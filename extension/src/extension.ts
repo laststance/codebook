@@ -45,6 +45,7 @@ import {
   answerDeepWikiQuestion,
   answerDeepWikiQuestionWithPrompt,
 } from './utils/answerDeepWikiQuestion'
+import { buildWikiUpdatePrompt } from './utils/buildWikiUpdatePrompt'
 import {
   classifyWikiUpdateEnd,
   type WikiUpdateEndFacts,
@@ -777,14 +778,16 @@ export function activate(
         tokenAtStart,
         startedAtMs: Date.now(),
       }
-      wikiUpdateRun.begin(
-        run.host,
-        wikiOutput,
-        isCursorHost
-          ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
-          : WIKI_UPDATE_WATCH_TIMEOUT_MS,
-      )
-      const query = `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(join(outputDirectory, WIKI_MANIFEST_FILE))} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure, then report changed pages and citations. Do not start a debugger or application.`
+      const timeoutMs = isCursorHost
+        ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
+        : WIKI_UPDATE_WATCH_TIMEOUT_MS
+      wikiUpdateRun.begin(run.host, wikiOutput, timeoutMs)
+      const query = buildWikiUpdatePrompt({
+        manifestPath: join(outputDirectory, WIKI_MANIFEST_FILE),
+        timeoutMs,
+        // Nothing shows the Cursor CLI's reply to the learner, so its report is not asked for.
+        isReplyRead: !isCursorHost,
+      })
       if (!isCursorHost) {
         try {
           await vscode.commands.executeCommand('workbench.action.chat.open', {

@@ -268,7 +268,7 @@ test('an agent that ends its turn without publishing and without an error is a f
     state: 'failed',
     site: 'kept',
     reason:
-      'Cursor Agent finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in the editor chat to see its own message.',
+      'Cursor Agent finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.',
   })
 })
 
