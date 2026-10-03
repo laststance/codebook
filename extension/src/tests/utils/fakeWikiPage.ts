@@ -278,6 +278,7 @@ function buildRail(layout: FakeWikiPageLayout): PageElement[] {
  *
  * @param script - The served `codebook-qa.js`.
  * @param layout - Which right rail the page starts with.
+ * @param reader - What the fake reader answers at load; idle, current and reachable unless given.
  * @param loadedAt - When the page was loaded (ISO timestamp); the page clock starts there.
  * @returns The page after its first reads finished.
  *
@@ -292,14 +293,17 @@ function buildRail(layout: FakeWikiPageLayout): PageElement[] {
 export async function openFakeWikiPage(
   script: string,
   layout: FakeWikiPageLayout,
-  reader: Pick<FakeWikiReader, 'updateStatus' | 'freshness'> = {
-    updateStatus: { state: 'idle' },
-    freshness: 'current',
-  },
+  reader: Partial<Omit<FakeWikiReader, 'requests'>> = {},
   loadedAt: string = PAGE_LOADED_AT,
 ): Promise<FakeWikiPage> {
   const readerPrefix = '/w/fake-reader-token/'
-  const pageReader: FakeWikiReader = { ...reader, isDown: false, requests: [] }
+  const pageReader: FakeWikiReader = {
+    updateStatus: { state: 'idle' },
+    freshness: 'current',
+    isDown: false,
+    ...reader,
+    requests: [],
+  }
   const clock = createManualClock()
   const pendingTimers = new Set<number>()
   const loadedAtMs = Date.parse(loadedAt)

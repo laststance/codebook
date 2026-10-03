@@ -13,6 +13,8 @@ export type WikiUpdatePageSettings = {
   idlePollMs: number
   /** How long after a press of the update link the page waits for the run the learner confirms in the editor (ms). */
   startWaitMs: number
+  /** How many failed reads in a row a running update survives before the page says it lost contact. */
+  statusRetryLimit: number
   /** How many conflict paths the sentence names before "and N more". */
   pathLimit: number
   /** How many characters of a failure reason the sentence shows. */
@@ -36,6 +38,7 @@ export type WikiUpdatePageSettings = {
  *   statusPollMs: 2_000,
  *   idlePollMs: 15_000,
  *   startWaitMs: 120_000,
+ *   statusRetryLimit: 3,
  *   pathLimit: 3,
  *   reasonLimitChars: 200,
  * })
@@ -54,11 +57,21 @@ export function installWikiUpdateStatus(
     offerReload: boolean
   }
 
+  // Sites published earlier carry their own older stylesheet, so every rule of the update group comes from here.
+  const styles = document.createElement('style')
+  styles.textContent = [
+    // A held-back link stays a link: muted and dashed, so it also reads as unavailable in forced colours.
+    '.wiki-update[aria-disabled=true]{background:transparent;color:var(--muted,GrayText);border:1px dashed currentColor;cursor:not-allowed}',
+  ].join('')
+  document.head.append(styles)
+
   const freshnessLabel = document.querySelector<HTMLElement>(
     '[data-codebook-freshness]',
   )
   const updateLink = document.querySelector<HTMLElement>('.wiki-update')
+  const updateLinkLabel = updateLink?.textContent ?? ''
   const statusRegion = document.createElement('p')
+  statusRegion.id = 'codebook-update-status'
   statusRegion.setAttribute('data-codebook-update-status', '')
   statusRegion.setAttribute('role', 'status')
   statusRegion.setAttribute('aria-live', 'polite')
@@ -76,6 +89,11 @@ export function installWikiUpdateStatus(
   let answerAtPress: string | undefined
   let awaitingStartUntilMs = 0
   let didStartWaitPass = false
+  /** Reads that failed in a row, and whether the page has given up on its reader for now. */
+  let failedReadCount = 0
+  let isUnreachable = false
+  /** What is on the page now, serialized; empty while the status line says nothing. */
+  let shownSignature = ''
   let pollTimer = 0
   let lookCount = 0
 
@@ -137,6 +155,8 @@ export function installWikiUpdateStatus(
     const answerText = JSON.stringify(answer)
     const didRunEnd =
       lastAnswer?.state === 'running' && answer.state !== 'running'
+    failedReadCount = 0
+    isUnreachable = false
     if (isAwaitingStart) {
       // A press before the first answer takes that answer as its starting point.
       answerAtPress ??= answerText
@@ -151,9 +171,31 @@ export function installWikiUpdateStatus(
     return didRunEnd
   }
 
+  /** Takes in a read the reader did not answer. */
+  const noteFailedRead = (): void => {
+    failedReadCount += 1
+    // A run in progress outlives a few lost reads before the page gives up on it.
+    if (
+      lastAnswer?.state === 'running' &&
+      failedReadCount <= settings.statusRetryLimit
+    )
+      return
+    // A page that says nothing has nothing to take back.
+    if (!shownSignature) return
+    isUnreachable = true
+    isAwaitingStart = false
+  }
+
   /** Decides what the status line says from everything the page knows. */
   const describeShown = (): Shown | undefined => {
     const pageOnly = { detail: [], output: '', offerReload: false }
+    if (isUnreachable)
+      return {
+        state: 'unreachable',
+        lead: 'Lost contact with the editor',
+        rest: ', so the update status is unknown. Reopen this Wiki with “Codebook: Open DeepWiki in Browser” to see it. The pages you are reading are unchanged.',
+        ...pageOnly,
+      }
     // The page cannot see the editor's confirmation, so it says what it is waiting for and never claims a refusal.
     if (isAwaitingStart)
       return {
@@ -184,19 +226,30 @@ export function installWikiUpdateStatus(
     const text = shown
       ? shown.lead + shown.rest + (shown.output && ' ' + shown.output)
       : ''
+    shownSignature = shown ? JSON.stringify(shown) : ''
     statusRegion.textContent = text
     statusRegion.hidden = !text
     statusRegion.setAttribute('data-state', shown?.state ?? 'idle')
-    if (shown?.state === 'running')
-      updateLink?.setAttribute('aria-disabled', 'true')
-    else updateLink?.removeAttribute('aria-disabled')
+    if (!updateLink) return
+    // The link stays a focusable link while it is held back; its label and the status line say why.
+    const isRunning = shown?.state === 'running'
+    const label = isRunning ? 'Updating…' : updateLinkLabel
+    if (updateLink.textContent !== label) updateLink.textContent = label
+    if (isRunning) {
+      updateLink.setAttribute('aria-disabled', 'true')
+      updateLink.setAttribute('aria-describedby', statusRegion.id)
+    } else {
+      updateLink.removeAttribute('aria-disabled')
+      updateLink.removeAttribute('aria-describedby')
+    }
   }
 
   const scheduleNextLook = (): void => {
     window.clearTimeout(pollTimer)
     // A hidden tab keeps no timer; showing it again looks at once.
     if (document.hidden) return
-    const isWatchingClosely = isAwaitingStart || lastAnswer?.state === 'running'
+    const isWatchingClosely =
+      isAwaitingStart || (lastAnswer?.state === 'running' && !isUnreachable)
     pollTimer = window.setTimeout(
       () => {
         void look(false)
@@ -218,11 +271,13 @@ export function installWikiUpdateStatus(
         throw new Error('The update answer has no state.')
       // A finished run changes what the freshness label should say.
       if (noteAnswer(answer)) void refreshFreshness()
-      show()
-      scheduleNextLook()
     } catch {
-      statusRegion.hidden = true
+      if (lookNumber !== lookCount) return
+      noteFailedRead()
     }
+    show()
+    // A reader that stopped answering is asked again, so one lost read heals itself.
+    scheduleNextLook()
   }
 
   updateLink?.addEventListener('click', (event) => {
@@ -235,6 +290,7 @@ export function installWikiUpdateStatus(
     answerAtPress = lastAnswer && lastAnswerText
     awaitingStartUntilMs = Date.now() + settings.startWaitMs
     didStartWaitPass = false
+    isUnreachable = false
     show()
     scheduleNextLook()
   })

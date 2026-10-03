@@ -283,3 +283,150 @@ test('a look that finishes while the tab is hidden sets no timer', async () => {
   // Assert
   assert.equal(page.pendingTimerCount(), 0)
 })
+
+test('while an update runs the button reads Updating… and is described by the status line, and it reads Update LLM Wiki again when the run ends', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    { updateStatus: runningInVsCode, freshness: 'changed' },
+  )
+  const link = page.find('.wiki-update')
+  const labelWhileRunning = link?.textContent
+  const describedByWhileRunning = link?.getAttribute('aria-describedby')
+  const describingText = page.find('#codebook-update-status')?.textContent
+
+  // Act
+  page.reader.updateStatus = {
+    state: 'cancelled',
+    host: 'vscode',
+    finishedAt: '2026-10-03T12:10:00.000Z',
+    site: 'kept',
+    ...output,
+  }
+  await page.advance(2_000)
+
+  // Assert
+  assert.equal(labelWhileRunning, 'Updating…')
+  assert.equal(describedByWhileRunning, 'codebook-update-status')
+  assert.match(describingText ?? '', /^Updating LLM Wiki…/)
+  assert.equal(link?.textContent, 'Update LLM Wiki')
+  assert.equal(link?.getAttribute('aria-describedby'), null)
+  assert.equal(link?.tagName, 'a')
+})
+
+test('the held-back update button is drawn muted with a dashed border', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group')
+
+  // Assert
+  assert.ok(
+    page
+      .injectedStyles()
+      .includes(
+        '.wiki-update[aria-disabled=true]{background:transparent;color:var(--muted,GrayText);border:1px dashed currentColor;cursor:not-allowed}',
+      ),
+  )
+})
+
+test('when the reader stops answering during a run the page keeps the running line through three retries, then says contact was lost and frees the button', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    { updateStatus: runningInVsCode, freshness: 'changed' },
+  )
+  const status = page.find('[data-codebook-update-status]')
+  const link = page.find('.wiki-update')
+
+  // Act
+  page.reader.isDown = true
+  await page.advance(6_000)
+  const stateAfterThreeFailedReads = status?.getAttribute('data-state')
+  const linkAfterThreeFailedReads = link?.getAttribute('aria-disabled')
+  await page.advance(2_000)
+
+  // Assert
+  assert.equal(stateAfterThreeFailedReads, 'running')
+  assert.equal(linkAfterThreeFailedReads, 'true')
+  assert.equal(page.isShown(status), true)
+  assert.equal(
+    status?.textContent,
+    'Lost contact with the editor, so the update status is unknown. Reopen this Wiki with “Codebook: Open DeepWiki in Browser” to see it. The pages you are reading are unchanged.',
+  )
+  assert.equal(status?.getAttribute('data-state'), 'unreachable')
+  assert.equal(link?.getAttribute('aria-disabled'), null)
+  assert.equal(link?.textContent, 'Update LLM Wiki')
+  assert.equal((await page.click(link)).wasSwallowed, false)
+})
+
+test('the page shows the run again when its reader answers again', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    { updateStatus: runningInVsCode, freshness: 'changed' },
+  )
+  const status = page.find('[data-codebook-update-status]')
+  page.reader.isDown = true
+  await page.advance(8_000)
+  const stateWhileTheReaderWasGone = status?.getAttribute('data-state')
+
+  // Act
+  page.reader.isDown = false
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(stateWhileTheReaderWasGone, 'unreachable')
+  assert.equal(page.isShown(status), true)
+  assert.equal(status?.getAttribute('data-state'), 'running')
+  assert.match(status?.textContent ?? '', /^Updating LLM Wiki…/)
+  assert.equal(page.find('.wiki-update')?.getAttribute('aria-disabled'), 'true')
+})
+
+test('a result on screen gives way to the lost-contact sentence at the first failed read', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    {
+      updateStatus: {
+        state: 'timed-out',
+        host: 'vscode',
+        finishedAt: '2026-10-03T11:58:00.000Z',
+        timeoutMs: 900_000,
+        site: 'kept',
+        ...output,
+      },
+      freshness: 'changed',
+    },
+  )
+
+  // Act
+  page.reader.isDown = true
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(
+    page.find('[data-codebook-update-status]')?.getAttribute('data-state'),
+    'unreachable',
+  )
+})
+
+test('a page whose reader was gone before it read any status says nothing and keeps asking', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    isDown: true,
+  })
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(page.find('[data-codebook-update-status]')?.textContent, '')
+  assert.equal(page.pendingTimerCount(), 1)
+})
