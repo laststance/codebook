@@ -457,6 +457,8 @@ export class StudyWorkspace {
   private readonly disposables: vscode.Disposable[] = []
   private highlight?: vscode.TextEditorDecorationType
   private sourceUri?: vscode.Uri
+  /** The repository path declared for the captured source that {@link sourceUri} shows; none for a source-derived placeholder. Captured tabs are named by base name only, so this tells an earlier capture of the same file from another file of that name. */
+  private sourceDeclaredPath?: string
   private sourceGroup?: vscode.TabGroup
   private opened = false
   private sourceEntryPending = false
@@ -4650,6 +4652,7 @@ export class StudyWorkspace {
       this.repositoryLayoutOrigin = undefined
       this.repositoryLayoutRestored = undefined
       this.sourceUri = undefined
+      this.sourceDeclaredPath = undefined
       this.sourceGroup = undefined
       this.sourceRevision = undefined
       this.lastSelectionKey = undefined
@@ -6560,8 +6563,10 @@ export class StudyWorkspace {
           throw new Error(
             'Displayed captured source does not match the selected observation.',
           )
-        const previousUri = this.sourceUri
+        const previousUri = this.sourceUri,
+          previousDeclaredPath = this.sourceDeclaredPath
         this.sourceUri = uri
+        this.sourceDeclaredPath = declaredSourcePosition?.path
         // Every visible copy of the same immutable source describes the same selected stop.
         if (this.highlight)
           for (const visibleEditor of vscode.window.visibleTextEditors) {
@@ -6573,12 +6578,13 @@ export class StudyWorkspace {
                   : [new vscode.Range(position, position)],
               )
           }
-        // Replace transient source-derived revisions and an earlier capture of the same file (another run or study), so each source keeps one captured tab.
+        // Replace transient source-derived revisions and an earlier capture of the same file (another run or study), so each source keeps one captured tab. The file is the declared path: two routes' `page.tsx` share a tab name and keep a tab each.
         if (
           previousUri &&
           previousUri.toString() !== uri.toString() &&
           (previousUri.path.startsWith('/source-derived/') ||
-            basename(previousUri.path) === basename(uri.path))
+            (previousDeclaredPath !== undefined &&
+              previousDeclaredPath === declaredSourcePosition?.path))
         ) {
           const obsolete = vscode.window.tabGroups.all
             .flatMap((group) => group.tabs)
